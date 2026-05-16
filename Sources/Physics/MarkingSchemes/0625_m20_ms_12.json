@@ -1,0 +1,256 @@
+{
+    "metadata": {
+        "subject": "Physics",
+        "subject_code": "0625",
+        "paper_number": 1,
+        "paper_variant": 2,
+        "session_month": "May/June",
+        "session_year": 2020,
+        "paper_type": "mcq",
+        "maximum_mark": 40,
+        "scheme_format": "mcq",
+        "published": true
+    },
+    "questions": [
+        {
+            "id": "1",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "2",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        },
+        {
+            "id": "3",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "4",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "5",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "C"
+        },
+        {
+            "id": "6",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "7",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "8",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "9",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        },
+        {
+            "id": "10",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "C"
+        },
+        {
+            "id": "11",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        },
+        {
+            "id": "12",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        },
+        {
+            "id": "13",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "14",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "15",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "16",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "C"
+        },
+        {
+            "id": "17",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "18",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "C"
+        },
+        {
+            "id": "19",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        },
+        {
+            "id": "20",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "21",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "22",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "23",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "24",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "25",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "C"
+        },
+        {
+            "id": "26",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "27",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "C"
+        },
+        {
+            "id": "28",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "29",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "30",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "31",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "32",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "33",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "34",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "D"
+        },
+        {
+            "id": "35",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        },
+        {
+            "id": "36",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "C"
+        },
+        {
+            "id": "37",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        },
+        {
+            "id": "38",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        },
+        {
+            "id": "39",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "A"
+        },
+        {
+            "id": "40",
+            "marks": 1,
+            "type": "mcq",
+            "mcq_answer": "B"
+        }
+    ]
+}

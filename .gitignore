@@ -1,0 +1,45 @@
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+.venv
+lemely/
+venv/
+env/
+ENV/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Lemely runtime cache
+.lemely-cache/
+
+# Build artefacts
+build/
+dist/
+*.egg-info/
+
+# Local tool state
+.serena/
+.agents/
+.codex/
+.claude/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Secrets
+.env
+.env.local
