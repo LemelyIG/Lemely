@@ -19,8 +19,7 @@ pillow==12.2.0
 pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycparser==3.0
-pydantic==2.13.4
-pydantic_core==2.46.4
+pydantic>=2.11.10,<2.13
 Pygments==2.20.0
 PyMuPDF==1.27.2.3
 requests==2.34.0
