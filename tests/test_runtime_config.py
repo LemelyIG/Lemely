@@ -1,0 +1,85 @@
+"""Tests for lemely.runtime.config Settings loading and validation."""
+from __future__ import annotations
+
+import os
+import textwrap
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from pydantic import ValidationError
+
+from lemely_mvp.runtime.config import Settings, load_settings
+
+
+class _IsolatedEnv:
+    """Context manager that clears LEMELY_* env vars and CWD-side state."""
+
+    def __init__(self, **overrides: str) -> None:
+        self.overrides = overrides
+        self._snapshot: dict[str, str] = {}
+
+    def __enter__(self) -> "_IsolatedEnv":
+        self._snapshot = dict(os.environ)
+        for key in list(os.environ):
+            if key.startswith("LEMELY_") or key == "GEMINI_API_KEY":
+                del os.environ[key]
+        os.environ.update(self.overrides)
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        os.environ.clear()
+        os.environ.update(self._snapshot)
+
+
+class SettingsTests(unittest.TestCase):
+    def test_defaults_load_without_any_source(self) -> None:
+        with _IsolatedEnv():
+            with TemporaryDirectory() as tmp:
+                s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertEqual(s.gradio.host, "127.0.0.1")
+        self.assertEqual(s.gradio.port, 7860)
+        self.assertEqual(s.logging.level, "INFO")
+        self.assertEqual(s.logging.format, "auto")
+        self.assertEqual(s.gemini.model, "gemini-2.5-flash")
+        self.assertIsNone(s.gemini_api_key)
+
+    def test_extra_forbid_rejects_unknown_keys_in_toml(self) -> None:
+        with TemporaryDirectory() as tmp:
+            toml = Path(tmp) / "lemely.toml"
+            toml.write_text(textwrap.dedent("""
+                [gradio]
+                hsot = "0.0.0.0"
+            """).strip())
+            with _IsolatedEnv():
+                with self.assertRaises(ValidationError) as cm:
+                    load_settings(toml_path=toml, cwd=Path(tmp))
+        self.assertIn("hsot", str(cm.exception))
+
+    def test_env_overrides_toml(self) -> None:
+        with TemporaryDirectory() as tmp:
+            toml = Path(tmp) / "lemely.toml"
+            toml.write_text("[gradio]\nport = 5000\n")
+            with _IsolatedEnv(LEMELY_GRADIO__PORT="9000"):
+                s = load_settings(toml_path=toml, cwd=Path(tmp))
+        self.assertEqual(s.gradio.port, 9000)
+
+    def test_secret_redaction_in_dump(self) -> None:
+        with _IsolatedEnv(GEMINI_API_KEY="sk-secret-xyz"):
+            with TemporaryDirectory() as tmp:
+                s = load_settings(toml_path=None, cwd=Path(tmp))
+        dumped = s.model_dump(mode="json")
+        self.assertNotIn("sk-secret-xyz", str(dumped))
+
+    def test_toml_discovery_prefers_cwd_lemely_toml(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cwd = Path(tmp) / "cwd"
+            cwd.mkdir()
+            (cwd / "lemely.toml").write_text("[gradio]\nport = 4242\n")
+            with _IsolatedEnv():
+                s = load_settings(toml_path=None, cwd=cwd)
+        self.assertEqual(s.gradio.port, 4242)
+
+
+if __name__ == "__main__":
+    unittest.main()
