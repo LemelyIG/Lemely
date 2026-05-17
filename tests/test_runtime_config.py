@@ -22,7 +22,7 @@ class _IsolatedEnv:
     def __enter__(self) -> "_IsolatedEnv":
         self._snapshot = dict(os.environ)
         for key in list(os.environ):
-            if key.startswith("LEMELY_") or key == "GEMINI_API_KEY":
+            if key.startswith("LEMELY_"):
                 del os.environ[key]
         os.environ.update(self.overrides)
         return self
@@ -65,9 +65,13 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(s.gradio.port, 9000)
 
     def test_secret_redaction_in_dump(self) -> None:
-        with _IsolatedEnv(GEMINI_API_KEY="sk-secret-xyz"):
+        with _IsolatedEnv(LEMELY_GEMINI_API_KEY="sk-secret-xyz"):
             with TemporaryDirectory() as tmp:
                 s = load_settings(toml_path=None, cwd=Path(tmp))
+        # Guard: ensure the secret actually loaded, so the redaction assertion
+        # below isn't trivially true on an unset field.
+        self.assertIsNotNone(s.gemini_api_key)
+        self.assertEqual(s.gemini_api_key.get_secret_value(), "sk-secret-xyz")
         dumped = s.model_dump(mode="json")
         self.assertNotIn("sk-secret-xyz", str(dumped))
 
