@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any, Mapping
 
-from models import MarkScheme, QuestionType
+from lemely.core.loose_schemas import MarkScheme, QuestionType
 
 from lemely.core.schemas import (
     ConfidenceBand,

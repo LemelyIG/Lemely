@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from models import MarkScheme
+from lemely.core.loose_schemas import MarkScheme
 
 from lemely.io.metadata import parse_caie_filename_metadata
 from lemely.core.schemas import BatchParseItem, BatchParseResult, SourceLibraryEntry

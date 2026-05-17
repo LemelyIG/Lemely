@@ -4,8 +4,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from models import MarkScheme
-from prompts.mark_scheme_parsing import PARSER_SYSTEM_PROMPT, PARSER_USER_PROMPT
+from lemely.core.loose_schemas import MarkScheme
+from lemely.io.prompts.mark_scheme_parsing import PARSER_SYSTEM_PROMPT, PARSER_USER_PROMPT
 
 
 class GeminiMarkSchemeParser:
