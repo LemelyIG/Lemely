@@ -1,4 +1,4 @@
 """Cross-cutting runtime infrastructure: config, logging, errors."""
-from lemely_mvp.runtime import errors
+from lemely_mvp.runtime import errors, logging
 
-__all__ = ["errors"]
+__all__ = ["errors", "logging"]
