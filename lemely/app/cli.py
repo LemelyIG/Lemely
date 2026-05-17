@@ -1,16 +1,26 @@
+"""Click-based CLI entrypoint for lemely."""
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
+import click
+
+from lemely import __version__
 from lemely.core.analytics import generate_quiz, predict_grade, summarize_weaknesses
 from lemely.core.correction import correct_mcq_answers
+from lemely.core.schemas import (
+    AccuracyReport,
+    CorrectionResult,
+    CostEstimate,
+    WeaknessReport,
+)
 from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
 from lemely.io.parsers import GeminiMarkSchemeParser
-from lemely.core.schemas import AccuracyReport, CorrectionResult, CostEstimate, WeaknessReport
+from lemely.runtime.errors import LemelyError
+from lemely.runtime.logging import configure_logging
 
 
 def _dump_json(payload: Any) -> None:
@@ -18,7 +28,7 @@ def _dump_json(payload: Any) -> None:
         data = payload.model_dump(mode="json")
     else:
         data = payload
-    print(json.dumps(data, indent=2, sort_keys=True))
+    click.echo(json.dumps(data, indent=2, sort_keys=True))
 
 
 def _read_text_or_value(value: str) -> str:
@@ -32,10 +42,12 @@ def _load_json_file(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def estimate_cost(source_root: str | Path) -> CostEstimate:
+def _estimate_cost(source_root: str | Path) -> CostEstimate:
     root = Path(source_root)
     entries = index_source_library(root)
-    cached = sum(1 for entry in entries if entry.source_path.with_suffix(".json").exists())
+    cached = sum(
+        1 for entry in entries if entry.source_path.with_suffix(".json").exists()
+    )
     return CostEstimate(
         source_root=str(root),
         mark_scheme_pdfs=len(entries),
@@ -43,13 +55,13 @@ def estimate_cost(source_root: str | Path) -> CostEstimate:
         needs_parsing=len(entries) - cached,
         estimated_pdf_pages=None,
         token_policy=(
-            "Reuse structured JSON when present; batch-parse PDFs only during migration; "
-            "during correction send question-level mark-scheme slices only."
+            "Reuse structured JSON when present; batch-parse PDFs only during "
+            "migration; during correction send question-level mark-scheme slices only."
         ),
     )
 
 
-def build_accuracy_report(mark_scheme_path: str | Path, answers: str) -> AccuracyReport:
+def _build_accuracy_report(mark_scheme_path: str | Path, answers: str) -> AccuracyReport:
     scheme_json = Path(mark_scheme_path).read_text(encoding="utf-8")
     correction = correct_mcq_answers(scheme_json, answers)
     weaknesses = summarize_weaknesses(correction)
@@ -61,85 +73,139 @@ def build_accuracy_report(mark_scheme_path: str | Path, answers: str) -> Accurac
     )
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="lemely",
-        description="Accuracy-first educational assessment MVP CLI.",
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.version_option(__version__, "-V", "--version", prog_name="lemely")
+@click.option("--config", "config_path", type=click.Path(dir_okay=False), default=None)
+@click.option(
+    "--log-format",
+    type=click.Choice(["auto", "json", "console"]),
+    default="auto",
+    show_default=True,
+)
+@click.option(
+    "--log-level",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
+    default="INFO",
+    show_default=True,
+)
+@click.option("-v", "--verbose", is_flag=True, help="Shortcut for --log-level DEBUG.")
+@click.option("-q", "--quiet", is_flag=True, help="Shortcut for --log-level WARNING.")
+@click.option(
+    "--json/--no-json",
+    "json_output",
+    default=True,
+    help="Emit JSON to stdout (default for Phase 1; human renderer arrives in Task 10).",
+)
+@click.pass_context
+def cli(
+    ctx: click.Context,
+    config_path: str | None,
+    log_format: str,
+    log_level: str,
+    verbose: bool,
+    quiet: bool,
+    json_output: bool,
+) -> None:
+    """Accuracy-first educational assessment CLI."""
+    if verbose:
+        log_level = "DEBUG"
+    elif quiet:
+        log_level = "WARNING"
+    configure_logging(level=log_level, fmt=log_format)
+    ctx.ensure_object(dict)
+    ctx.obj["config_path"] = config_path
+    ctx.obj["json_output"] = json_output
+
+
+@cli.command("estimate-cost")
+@click.argument("source_root", type=click.Path(exists=True, file_okay=False))
+def estimate_cost_cmd(source_root: str) -> None:
+    _dump_json(_estimate_cost(source_root))
+
+
+@cli.command("parse-mark-schemes")
+@click.argument("source_root", type=click.Path(exists=True, file_okay=False))
+@click.option("--output-root", type=click.Path(file_okay=False), default=None)
+@click.option("--force", is_flag=True)
+@click.option("--use-gemini", is_flag=True)
+@click.option("--gemini-model", default="gemini-2.5-flash", show_default=True)
+def parse_mark_schemes_cmd(
+    source_root: str,
+    output_root: str | None,
+    force: bool,
+    use_gemini: bool,
+    gemini_model: str,
+) -> None:
+    parser = (
+        GeminiMarkSchemeParser(model=gemini_model, raw_output_dir=output_root)
+        if use_gemini
+        else None
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    _dump_json(
+        process_mark_scheme_batch(
+            source_root, output_root, force=force, parser=parser
+        )
+    )
 
-    estimate = sub.add_parser("estimate-cost", help="Estimate mark-scheme migration work.")
-    estimate.add_argument("source_root")
 
-    parse = sub.add_parser("parse-mark-schemes", help="Validate or batch parse mark-scheme PDFs.")
-    parse.add_argument("source_root")
-    parse.add_argument("--output-root", default=None)
-    parse.add_argument("--force", action="store_true")
-    parse.add_argument("--use-gemini", action="store_true")
-    parse.add_argument("--gemini-model", default="gemini-2.5-flash")
+@cli.command("correct-paper")
+@click.option("--mark-scheme", "mark_scheme", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--answers", required=True, help="Answer text, JSON object, or path to a file.")
+def correct_paper_cmd(mark_scheme: str, answers: str) -> None:
+    payload = _read_text_or_value(answers)
+    _dump_json(_build_accuracy_report(mark_scheme, payload))
 
-    correct = sub.add_parser("correct-paper", help="Correct MCQ answers against structured JSON.")
-    correct.add_argument("--mark-scheme", required=True)
-    correct.add_argument("--answers", required=True, help="Answer text, JSON object, or path to a file.")
 
-    grade = sub.add_parser("predict-grade", help="Predict grade from a correction JSON file.")
-    grade.add_argument("correction_json")
+@cli.command("predict-grade")
+@click.argument("correction_json", type=click.Path(exists=True, dir_okay=False))
+def predict_grade_cmd(correction_json: str) -> None:
+    correction = CorrectionResult.model_validate(_load_json_file(correction_json))
+    _dump_json(predict_grade(correction))
 
-    weaknesses = sub.add_parser("detect-weaknesses", help="Summarize weaknesses from correction JSON.")
-    weaknesses.add_argument("correction_json")
 
-    quiz = sub.add_parser("generate-quiz", help="Generate deterministic quiz prompts from weakness JSON.")
-    quiz.add_argument("weakness_json")
-    quiz.add_argument("--count", type=int, default=5)
+@cli.command("detect-weaknesses")
+@click.argument("correction_json", type=click.Path(exists=True, dir_okay=False))
+def detect_weaknesses_cmd(correction_json: str) -> None:
+    correction = CorrectionResult.model_validate(_load_json_file(correction_json))
+    _dump_json(summarize_weaknesses(correction))
 
-    return parser
+
+@cli.command("generate-quiz")
+@click.argument("weakness_json", type=click.Path(exists=True, dir_okay=False))
+@click.option("--count", type=int, default=5, show_default=True)
+def generate_quiz_cmd(weakness_json: str, count: int) -> None:
+    report = WeaknessReport.model_validate(_load_json_file(weakness_json))
+    _dump_json(generate_quiz(report, question_count=count))
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    """Top-level entrypoint used by main.py and console-script."""
+    import structlog
 
-    if args.command == "estimate-cost":
-        _dump_json(estimate_cost(args.source_root))
+    log = structlog.get_logger().bind(component="cli")
+    try:
+        cli.main(args=argv, standalone_mode=False, prog_name="lemely")
         return 0
-
-    if args.command == "parse-mark-schemes":
-        parser = (
-            GeminiMarkSchemeParser(model=args.gemini_model, raw_output_dir=args.output_root)
-            if args.use_gemini
-            else None
+    except click.UsageError as exc:
+        # Click prints its own message; map to exit code 2.
+        click.echo(exc.format_message(), err=True)
+        return 2
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except LemelyError as exc:
+        log.error(
+            "lemely_error",
+            error_type=type(exc).__name__,
+            error=str(exc),
         )
-        _dump_json(
-            process_mark_scheme_batch(
-                args.source_root,
-                args.output_root,
-                force=args.force,
-                parser=parser,
-            )
-        )
-        return 0
-
-    if args.command == "correct-paper":
-        answers = _read_text_or_value(args.answers)
-        _dump_json(build_accuracy_report(args.mark_scheme, answers))
-        return 0
-
-    if args.command == "predict-grade":
-        correction = CorrectionResult.model_validate(_load_json_file(args.correction_json))
-        _dump_json(predict_grade(correction))
-        return 0
-
-    if args.command == "detect-weaknesses":
-        correction = CorrectionResult.model_validate(_load_json_file(args.correction_json))
-        _dump_json(summarize_weaknesses(correction))
-        return 0
-
-    if args.command == "generate-quiz":
-        weakness_report = WeaknessReport.model_validate(_load_json_file(args.weakness_json))
-        _dump_json(generate_quiz(weakness_report, question_count=args.count))
-        return 0
-
-    raise AssertionError(f"Unhandled command: {args.command}")
+        return exc.exit_code
+    except KeyboardInterrupt:
+        log.warning("interrupted")
+        return 130
+    except Exception as exc:  # noqa: BLE001
+        log.exception("unexpected_error", error_type=type(exc).__name__)
+        return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    sys.exit(main(sys.argv[1:]))

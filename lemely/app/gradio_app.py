@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .cli import build_accuracy_report
+from .cli import _build_accuracy_report
 
 
 def run_correction_demo(mark_scheme_path: str, answers: str) -> dict[str, Any]:
-    return build_accuracy_report(Path(mark_scheme_path), answers).model_dump(mode="json")
+    return _build_accuracy_report(Path(mark_scheme_path), answers).model_dump(mode="json")
 
 
 def build_app():
