@@ -1,4 +1,9 @@
-"""Cross-cutting runtime infrastructure: config, logging, errors."""
-from lemely.runtime import errors, logging
+"""Cross-cutting runtime infrastructure: config, logging, errors.
 
-__all__ = ["errors", "logging"]
+Submodules are intentionally not re-exported here to avoid shadowing
+stdlib names (notably ``logging``). Import directly:
+
+    from lemely.runtime.logging import configure_logging
+    from lemely.runtime.errors import LemelyError
+    from lemely.runtime.config import load_settings
+"""

@@ -103,3 +103,9 @@ layers = [
 ]
 containers = ["lemely"]
 exhaustive = false
+
+[[tool.importlinter.contracts]]
+name = "Runtime must not depend on domain layers"
+type = "forbidden"
+source_modules = ["lemely.runtime"]
+forbidden_modules = ["lemely.core", "lemely.io", "lemely.app"]
