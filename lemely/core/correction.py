@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from models import MarkScheme, QuestionType
 
-from .schemas import (
+from lemely.core.schemas import (
     ConfidenceBand,
     CorrectedQuestion,
     CorrectionResult,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .schemas import (
+from lemely.core.schemas import (
     ConfidenceBand,
     CorrectionResult,
     GradePrediction,

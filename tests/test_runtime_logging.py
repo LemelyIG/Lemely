@@ -8,7 +8,7 @@ import unittest
 
 import structlog
 
-from lemely_mvp.runtime.logging import configure_logging
+from lemely.runtime.logging import configure_logging
 
 
 class LoggingConfigurationTests(unittest.TestCase):

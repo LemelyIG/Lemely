@@ -5,9 +5,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from lemely_mvp.mark_schemes import index_source_library, process_mark_scheme_batch
-from lemely_mvp.metadata import parse_caie_filename_metadata
-from lemely_mvp.schemas import BatchParseResult
+from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
+from lemely.io.metadata import parse_caie_filename_metadata
+from lemely.core.schemas import BatchParseResult
 
 
 REAL_MARK_SCHEME = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.json")

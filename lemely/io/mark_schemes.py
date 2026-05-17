@@ -9,8 +9,8 @@ from pydantic import ValidationError
 
 from models import MarkScheme
 
-from .metadata import parse_caie_filename_metadata
-from .schemas import BatchParseItem, BatchParseResult, SourceLibraryEntry
+from lemely.io.metadata import parse_caie_filename_metadata
+from lemely.core.schemas import BatchParseItem, BatchParseResult, SourceLibraryEntry
 
 ParserCallback = Callable[[Path], dict[str, Any] | MarkScheme]
 

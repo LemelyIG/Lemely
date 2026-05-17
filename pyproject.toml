@@ -39,10 +39,10 @@ dev = [
 lemely = "lemely.app.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["lemely_mvp"]
+packages = ["lemely"]
 
 [tool.hatch.build.targets.sdist]
-include = ["lemely_mvp", "tests", "README.md"]
+include = ["lemely", "tests", "README.md"]
 
 [tool.ruff]
 target-version = "py312"
@@ -55,7 +55,6 @@ ignore = ["D100", "D104", "D107"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "ANN", "D"]
 "lemely/app/cli.py" = ["T20"]
-"lemely_mvp/cli.py" = ["T20"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -73,16 +72,16 @@ module = ["gradio.*", "fitz.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-addopts = "-ra -q --strict-markers --cov=lemely_mvp --cov-report=term-missing --cov-fail-under=70"
+addopts = "-ra -q --strict-markers --cov=lemely --cov-report=term-missing --cov-fail-under=70"
 testpaths = ["tests"]
 markers = [
   "live: requires GEMINI_API_KEY and makes real API calls (skipped by default)",
 ]
 
 [tool.coverage.run]
-source = ["lemely_mvp"]
+source = ["lemely"]
 branch = true
-omit = ["lemely_mvp/gradio_app.py"]
+omit = ["lemely/app/gradio_app.py"]
 
 [tool.coverage.report]
 exclude_also = [
@@ -92,14 +91,15 @@ exclude_also = [
 ]
 
 [tool.importlinter]
-root_package = "lemely_mvp"
+root_package = "lemely"
 
 [[tool.importlinter.contracts]]
 name = "Layered architecture"
 type = "layers"
 layers = [
-  "lemely_mvp.cli",
-  "lemely_mvp.mark_schemes",
-  "lemely_mvp.correction",
-  "lemely_mvp.schemas",
+  "app",
+  "io",
+  "core",
 ]
+containers = ["lemely"]
+exhaustive = false

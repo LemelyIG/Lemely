@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from lemely_mvp.runtime import errors
+from lemely.runtime import errors
 
 
 class ExitCodeTests(unittest.TestCase):

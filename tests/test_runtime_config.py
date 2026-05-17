@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 
 from pydantic import ValidationError
 
-from lemely_mvp.runtime.config import Settings, load_settings
+from lemely.runtime.config import Settings, load_settings
 
 
 class _IsolatedEnv:

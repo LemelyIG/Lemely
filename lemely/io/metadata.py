@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .schemas import ExamMetadata
+from lemely.core.schemas import ExamMetadata
 
 
 _CAIE_MARK_SCHEME_RE = re.compile(

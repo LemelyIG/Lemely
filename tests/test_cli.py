@@ -5,7 +5,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from lemely_mvp.cli import main
+from lemely.app.cli import main
 
 
 REAL_MARK_SCHEME = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.json")

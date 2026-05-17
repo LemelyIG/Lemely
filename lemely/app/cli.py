@@ -6,11 +6,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .analytics import generate_quiz, predict_grade, summarize_weaknesses
-from .correction import correct_mcq_answers
-from .mark_schemes import index_source_library, process_mark_scheme_batch
-from .parsers import GeminiMarkSchemeParser
-from .schemas import AccuracyReport, CorrectionResult, CostEstimate, WeaknessReport
+from lemely.core.analytics import generate_quiz, predict_grade, summarize_weaknesses
+from lemely.core.correction import correct_mcq_answers
+from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
+from lemely.io.parsers import GeminiMarkSchemeParser
+from lemely.core.schemas import AccuracyReport, CorrectionResult, CostEstimate, WeaknessReport
 
 
 def _dump_json(payload: Any) -> None:
