@@ -19,7 +19,7 @@ from lemely.core.schemas import (
 )
 from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
 from lemely.io.parsers import GeminiMarkSchemeParser
-from lemely.runtime.errors import LemelyError
+from lemely.runtime.errors import LemelyError, ParseError
 from lemely.runtime.logging import configure_logging
 
 
@@ -39,7 +39,10 @@ def _read_text_or_value(value: str) -> str:
 
 
 def _load_json_file(path: str | Path) -> Any:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ParseError(f"Invalid JSON in {path}: {exc}") from exc
 
 
 def _estimate_cost(source_root: str | Path) -> CostEstimate:
@@ -107,6 +110,8 @@ def cli(
     json_output: bool,
 ) -> None:
     """Accuracy-first educational assessment CLI."""
+    if verbose and quiet:
+        raise click.UsageError("--verbose and --quiet are mutually exclusive.")
     if verbose:
         log_level = "DEBUG"
     elif quiet:
@@ -188,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except click.UsageError as exc:
         # Click prints its own message; map to exit code 2.
-        click.echo(exc.format_message(), err=True)
+        click.echo(f"Error: {exc.format_message()}", err=True)
         return 2
     except click.exceptions.Exit as exc:
         return int(exc.exit_code)
