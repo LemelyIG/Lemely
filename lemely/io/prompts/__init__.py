@@ -5,3 +5,8 @@ from lemely.io.prompts.answer_extraction import (  # noqa: F401
     build_extractor_user_prompt,
     build_question_manifest_hash_key,
 )
+from lemely.io.prompts.correction_ai import (  # noqa: F401
+    MARKER_SYSTEM_PROMPT,
+    VERSION as MARKER_PROMPT_VERSION,
+    build_marker_user_prompt,
+)
