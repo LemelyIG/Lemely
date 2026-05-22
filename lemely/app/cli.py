@@ -25,7 +25,6 @@ from lemely.core.schemas import (
     WeaknessReport,
 )
 from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
-from lemely.io.parsers import GeminiMarkSchemeParser
 from lemely.runtime.errors import LemelyError, ParseError
 from lemely.runtime.logging import configure_logging
 
@@ -73,6 +72,13 @@ def _load_json_file(path: str | Path) -> object:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ParseError(f"Invalid JSON in {path}: {exc}") from exc
+
+
+def _get_settings(ctx: click.Context):  # type: ignore[return]
+    from lemely.runtime.config import load_settings
+
+    cfg = ctx.obj.get("config_path")
+    return load_settings(toml_path=Path(cfg) if cfg else None)
 
 
 def _estimate_cost(source_root: str | Path) -> CostEstimate:
@@ -172,12 +178,12 @@ def estimate_cost_cmd(ctx: click.Context, source_root: str) -> None:
 @click.option("--output-root", type=click.Path(file_okay=False), default=None)
 @click.option("--force", is_flag=True)
 @click.option("--use-gemini", is_flag=True)
-@click.option("--gemini-model", default="gemini-2.5-flash", show_default=True)
+@click.option("--gemini-model", default=None,
+              help="Override gemini model (default: settings.gemini.model)")
 @click.option(
     "--on-error",
     type=click.Choice(["continue", "fail"]),
-    default="continue",
-    show_default=True,
+    default="continue", show_default=True,
 )
 @click.pass_context
 def parse_mark_schemes_cmd(
@@ -186,22 +192,28 @@ def parse_mark_schemes_cmd(
     output_root: str | None,
     force: bool,
     use_gemini: bool,
-    gemini_model: str,
+    gemini_model: str | None,
     on_error: str,
 ) -> None:
-    parser = (
-        GeminiMarkSchemeParser(model=gemini_model, raw_output_dir=output_root)
-        if use_gemini
-        else None
-    )
+    from lemely.io.gemini import GeminiClient
+    from lemely.io.parsers import GeminiMarkSchemeParser
+    from lemely.runtime.errors import PartialFailureError
+
+    parser = None
+    if use_gemini:
+        settings = _get_settings(ctx)
+        if gemini_model:
+            settings = settings.model_copy(
+                update={"gemini": settings.gemini.model_copy(update={"model": gemini_model})}
+            )
+        parser = GeminiMarkSchemeParser(GeminiClient(settings))
+
     result = process_mark_scheme_batch(source_root, output_root, force=force, parser=parser)
     _print_result(ctx, result)
     failures = [item for item in result.items if item.status in {"failed", "invalid_existing"}]
     if failures:
         if on_error == "fail":
             raise click.exceptions.Exit(ParseError.exit_code)
-        from lemely.runtime.errors import PartialFailureError
-
         raise click.exceptions.Exit(PartialFailureError.exit_code)
 
 
