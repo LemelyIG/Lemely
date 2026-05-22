@@ -15,6 +15,10 @@ from lemely.core.schemas import (
     CorrectionResult,
     CostEstimate,
     ExamMetadata,
+    ExtractedAnswer,
+    ExtractedAnswers,
+    SubjectResult,
+    WeaknessReport,
 )
 
 
@@ -119,6 +123,45 @@ class RendererTests(unittest.TestCase):
         self.assertIn("Failed", out)
         self.assertEqual(result.failed, 2)
         self.assertIn(" 2 ", out)
+
+
+class ExtractedAnswersRendererTests(unittest.TestCase):
+    def test_renders_low_confidence_highlighted(self) -> None:
+        ea = ExtractedAnswers(
+            paper_id="0625_test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.99),
+                ExtractedAnswer(question_id="2(a)", answer="osmosis", confidence=0.6),
+            ],
+        )
+        out = _render_to_str(renderers.render_extracted_answers(ea))
+        self.assertIn("1", out)
+        self.assertIn("2(a)", out)
+        self.assertIn("osmosis", out)
+
+
+class SubjectResultRendererTests(unittest.TestCase):
+    def test_renders_subject_grade_and_papers(self) -> None:
+        meta = ExamMetadata(
+            subject_code="0625", paper_number=2, paper_variant=1,
+            session_month="May/June", session_year=2020,
+        )
+        paper = CorrectionResult(metadata=meta, questions=[
+            CorrectedQuestion(
+                question_id="q1", awarded_marks=8, maximum_marks=10,
+                confidence=ConfidenceBand.HIGH, confidence_score=1.0,
+                needs_teacher_review=False,
+            ),
+        ])
+        sr = SubjectResult(
+            subject_code="0625", session_month="May/June", session_year=2020,
+            paper_results=[paper], weaknesses=WeaknessReport(weak_areas=[]),
+        )
+        tables = renderers.render_subject_result(sr)
+        out = "".join(_render_to_str(t) for t in tables)
+        self.assertIn("0625", out)
+        self.assertIn("80", out)  # 80% or 8/10
 
 
 if __name__ == "__main__":

@@ -14,8 +14,10 @@ if TYPE_CHECKING:
         BatchParseResult,
         CorrectionResult,
         CostEstimate,
+        ExtractedAnswers,
         GradePrediction,
         QuizPayload,
+        SubjectResult,
         WeaknessReport,
     )
 
@@ -48,7 +50,9 @@ def render_correction(result: CorrectionResult) -> Table:
     t.add_column("Marks", justify="right")
     t.add_column("Topic")
     t.add_column("Confidence")
+    t.add_column("Marker")
     t.add_column("Review?")
+    marker_glyph = {"deterministic": "✓", "ai": "AI", "missing": "—"}
     for q in result.questions:
         marks = f"{q.awarded_marks}/{q.maximum_marks}"
         style = "green" if q.awarded_marks == q.maximum_marks else "red"
@@ -60,6 +64,7 @@ def render_correction(result: CorrectionResult) -> Table:
             f"[{style}]{marks}[/]",
             escape(q.topic or "—"),
             q.confidence.value,
+            marker_glyph.get(q.marker_source, "?"),
             review,
         )
     return t
@@ -110,6 +115,58 @@ def render_batch_result(result: BatchParseResult) -> Table:
     t.add_row("Skipped (existing)", str(result.skipped))
     t.add_row("Failed", str(result.failed))
     return t
+
+
+def render_extracted_answers(result: ExtractedAnswers) -> Table:
+    t = Table(
+        title=f"Extracted answers — {escape(result.paper_id)}",
+        box=box.SIMPLE,
+    )
+    t.add_column("Question", justify="left")
+    t.add_column("Answer")
+    t.add_column("Confidence", justify="right")
+    t.add_column("Review?")
+    for a in result.answers:
+        low = a.confidence < 0.70
+        style = "yellow" if low else "green"
+        t.add_row(
+            escape(a.question_id),
+            f"[{style}]{escape(a.answer or '—')}[/]",
+            f"{a.confidence:.0%}",
+            "yes" if low else "",
+        )
+    return t
+
+
+def render_subject_result(result: SubjectResult) -> tuple[Table, Table, Table]:
+    """Returns (subject banner, per-paper breakdown, weakness table)."""
+    banner = Table(
+        title=f"Subject — {escape(result.subject_code)} "
+        f"{escape(result.session_month)} {result.session_year or 'Specimen'}",
+        box=box.SIMPLE,
+    )
+    banner.add_column("metric")
+    banner.add_column("value")
+    banner.add_row("Awarded / Max", f"{result.awarded_marks}/{result.maximum_marks}")
+    banner.add_row("Percentage", f"{result.percentage:.1f}%")
+    banner.add_row("Subject grade", escape(result.grade))
+    banner.add_row("Review?", "yes" if result.needs_teacher_review else "no")
+
+    papers = Table(title="Per-paper breakdown", box=box.SIMPLE)
+    papers.add_column("Paper", justify="right")
+    papers.add_column("Awarded", justify="right")
+    papers.add_column("Max", justify="right")
+    papers.add_column("Percentage", justify="right")
+    for p in result.paper_results:
+        pct = (p.awarded_marks / p.maximum_marks * 100.0) if p.maximum_marks else 0.0
+        papers.add_row(
+            f"{p.metadata.paper_number}{p.metadata.paper_variant}",
+            str(p.awarded_marks),
+            str(p.maximum_marks),
+            f"{pct:.1f}%",
+        )
+
+    return banner, papers, render_weakness_report(result.weaknesses)
 
 
 def render_quiz_payload(payload: QuizPayload) -> Table:
