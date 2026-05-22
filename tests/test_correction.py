@@ -1,8 +1,8 @@
 import unittest
 
-from lemely_mvp.analytics import generate_quiz, predict_grade, summarize_weaknesses
-from lemely_mvp.correction import correct_mcq_answers, parse_answer_input
-from lemely_mvp.schemas import ConfidenceBand
+from lemely.core.analytics import generate_quiz, predict_grade, summarize_weaknesses
+from lemely.core.correction import correct_mcq_answers, parse_answer_input
+from lemely.core.schemas import ConfidenceBand
 
 
 def minimal_mcq_mark_scheme():

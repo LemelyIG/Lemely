@@ -5,8 +5,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from lemely_mvp.cli import main
-
+from lemely.app.cli import main
 
 REAL_MARK_SCHEME = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.json")
 
@@ -18,7 +17,7 @@ def real_mcq_mark_scheme_text() -> str:
 def run_cli(*args):
     stream = StringIO()
     with redirect_stdout(stream):
-        exit_code = main(list(args))
+        exit_code = main(["--json", *args])
     return exit_code, json.loads(stream.getvalue())
 
 

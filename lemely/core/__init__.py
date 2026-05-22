@@ -1,6 +1,6 @@
-"""Week 1/2 MVP helpers for strict local marking workflows."""
+"""Pure logic — no disk, no network, no env."""
 
-from .schemas import (
+from lemely.core.schemas import (
     AccuracyReport,
     BatchParseItem,
     BatchParseResult,

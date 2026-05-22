@@ -5,10 +5,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from lemely_mvp.mark_schemes import index_source_library, process_mark_scheme_batch
-from lemely_mvp.metadata import parse_caie_filename_metadata
-from lemely_mvp.schemas import BatchParseResult
-
+from lemely.core.schemas import BatchParseResult
+from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
+from lemely.io.metadata import parse_caie_filename_metadata
 
 REAL_MARK_SCHEME = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.json")
 
@@ -57,7 +56,7 @@ class MarkSchemeLibraryTests(unittest.TestCase):
             result = process_mark_scheme_batch(
                 root,
                 output,
-                parser=lambda path: calls.append(path) or minimal_mcq_mark_scheme(),
+                parser=lambda path: calls.append(path) or real_mcq_mark_scheme(),
             )
 
         self.assertIsInstance(result, BatchParseResult)

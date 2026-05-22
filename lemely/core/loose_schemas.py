@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     field_validator,
     model_validator,
-    ConfigDict,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared enumerations
 # ---------------------------------------------------------------------------
 
 
-class PaperType(str, Enum):
+class PaperType(StrEnum):
     """Maps to the document header wording (Part 1 of the prompt)."""
 
     MCQ = "mcq"
@@ -34,12 +33,12 @@ class PaperType(str, Enum):
     SPEAKING = "speaking"
 
 
-class Tier(str, Enum):
+class Tier(StrEnum):
     CORE = "core"
     EXTENDED = "extended"
 
 
-class SchemeFormat(str, Enum):
+class SchemeFormat(StrEnum):
     """Overall format of the mark scheme, detected from content."""
 
     POINT_BASED = "point_based"
@@ -49,14 +48,14 @@ class SchemeFormat(str, Enum):
     MIXED = "mixed"
 
 
-class SessionMonth(str, Enum):
+class SessionMonth(StrEnum):
     MAY_JUNE = "May/June"
     OCT_NOV = "Oct/Nov"
     FEB_MAR = "Feb/Mar"
     SPECIMEN = "Specimen"
 
 
-class QuestionType(str, Enum):
+class QuestionType(StrEnum):
     """Part 3A of the prompt: question type taxonomy."""
 
     MCQ = "mcq"
@@ -77,30 +76,30 @@ class QuestionType(str, Enum):
     TICKBOX = "tickbox"
 
 
-class MathMarkType(str, Enum):
+class MathMarkType(StrEnum):
     """Part 3B of the prompt: mathematics mark code system."""
 
-    M = "M"       # Method mark
-    A = "A"       # Accuracy mark (dependent on preceding M)
-    B = "B"       # Independent mark
-    DEP = "dep"   # Explicitly dependent
-    FT = "ft"     # Follow-through
-    ISW = "isw"   # Ignore subsequent working
-    CAO = "cao"   # Correct answer only
-    OE = "oe"     # Or equivalent
-    SC = "SC"     # Special case
-    NFWW = "nfww" # Not from wrong working
-    SOI = "soi"   # Seen or implied
+    M = "M"  # Method mark
+    A = "A"  # Accuracy mark (dependent on preceding M)
+    B = "B"  # Independent mark
+    DEP = "dep"  # Explicitly dependent
+    FT = "ft"  # Follow-through
+    ISW = "isw"  # Ignore subsequent working
+    CAO = "cao"  # Correct answer only
+    OE = "oe"  # Or equivalent
+    SC = "SC"  # Special case
+    NFWW = "nfww"  # Not from wrong working
+    SOI = "soi"  # Seen or implied
 
 
-class MCQAnswer(str, Enum):
+class MCQAnswer(StrEnum):
     A = "A"
     B = "B"
     C = "C"
     D = "D"
 
 
-class IndicativeContentStrand(str, Enum):
+class IndicativeContentStrand(StrEnum):
     READING = "reading"
     WRITING = "writing"
     GENERAL = "general"
@@ -112,8 +111,7 @@ class IndicativeContentStrand(str, Enum):
 
 
 class CalculatedAnswer(BaseModel):
-    """
-    Part 4B — embedded in an AnswerPoint when a mark requires a
+    """Part 4B — embedded in an AnswerPoint when a mark requires a
     specific numerical result. Also used for toleranced measurements
     (Part 4C).
     """
@@ -131,13 +129,13 @@ class CalculatedAnswer(BaseModel):
     standard_form: str | None = Field(
         None,
         description="Standard form representation exactly as written, e.g. '1.6 × 10⁵'. "
-                    "Null if the mark scheme does not express it in standard form.",
+        "Null if the mark scheme does not express it in standard form.",
     )
     sig_figs: int | None = Field(
         None,
         ge=1,
         description="Number of significant figures required by the mark scheme. "
-                    "Null if not specified.",
+        "Null if not specified.",
     )
     dp: int | None = Field(
         None,
@@ -151,23 +149,22 @@ class CalculatedAnswer(BaseModel):
     unit_penalised: bool = Field(
         False,
         description="True if the mark is lost when the unit is wrong "
-                    "(common in structured theory papers).",
+        "(common in structured theory papers).",
     )
     accept_equivalent_forms: bool = Field(
         False,
         description="True when mark scheme says 'oe' — fractions, decimals, and "
-                    "standard form are all accepted.",
+        "standard form are all accepted.",
     )
     tolerance: str | None = Field(
         None,
         description="Measurement tolerance as a string, e.g. '± 0.2'. "
-                    "Used in Biology ATP and Geography fieldwork questions.",
+        "Used in Biology ATP and Geography fieldwork questions.",
     )
 
 
 class AnswerPoint(BaseModel):
-    """
-    Part 4A — a single discrete marking point within a point-based question.
+    """Part 4A — a single discrete marking point within a point-based question.
     Also used for individual items in list (4D), tickbox (4E), and
     special-case (4G) questions.
     """
@@ -181,7 +178,7 @@ class AnswerPoint(BaseModel):
     point: str = Field(
         ...,
         description="Exact text of the mark point, preserved from the source. "
-                    "Abbreviations are kept here; expansions go in `notes`.",
+        "Abbreviations are kept here; expansions go in `notes`.",
     )
     marks: int = Field(
         ...,
@@ -195,22 +192,22 @@ class AnswerPoint(BaseModel):
     is_alternative: bool = Field(
         False,
         description="True if this point is an OR/EITHER…OR alternative to the previous "
-                    "point — marks are not additive.",
+        "point — marks are not additive.",
     )
     is_optional: bool = Field(
         False,
         description="True if this point is one of a pool ('any N from') — "
-                    "candidates earn marks for selecting any N of these.",
+        "candidates earn marks for selecting any N of these.",
     )
     owtte: bool = Field(
         False,
         description="True if the mark scheme says 'owtte' (or words to that effect) "
-                    "or 'AW' (alternative wording) for this point.",
+        "or 'AW' (alternative wording) for this point.",
     )
     avp: bool = Field(
         False,
         description="True if the mark scheme says 'AVP' (alternative valid point) — "
-                    "used in Biology mark schemes.",
+        "used in Biology mark schemes.",
     )
     accept: list[str] = Field(
         default_factory=list,
@@ -219,27 +216,27 @@ class AnswerPoint(BaseModel):
     required_with: str | None = Field(
         None,
         description="ID of the AnswerPoint this point depends on. Used for A marks in "
-                    "Maths (dep on M mark) and chained science marks.",
+        "Maths (dep on M mark) and chained science marks.",
     )
     underlined_required: list[str] = Field(
         default_factory=list,
         description="Words that must appear verbatim for credit — these appear "
-                    "underlined in the original mark scheme.",
+        "underlined in the original mark scheme.",
     )
     tolerance: str | None = Field(
         None,
         description="Point-level tolerance string for non-numerical marks, "
-                    "e.g. '± half a small square'.",
+        "e.g. '± half a small square'.",
     )
     condition: str | None = Field(
         None,
         description="Conditional note for special-case marks, e.g. "
-                    "'Only if candidate has not earned M1'.",
+        "'Only if candidate has not earned M1'.",
     )
     is_correct: bool | None = Field(
         None,
         description="Tickbox questions only: True = correct option, False = distractor. "
-                    "Null for all other question types.",
+        "Null for all other question types.",
     )
     calculated_answer: CalculatedAnswer | None = Field(
         None,
@@ -247,12 +244,11 @@ class AnswerPoint(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_tickbox_correctness(self) -> "AnswerPoint":
+    def validate_tickbox_correctness(self) -> AnswerPoint:
         """Distractor points in tickbox questions should have marks=0."""
         if self.is_correct is False and self.marks != 0:
             raise ValueError(
-                f"AnswerPoint '{self.id}': distractor items (is_correct=False) "
-                "must have marks=0."
+                f"AnswerPoint '{self.id}': distractor items (is_correct=False) must have marks=0."
             )
         return self
 
@@ -268,7 +264,7 @@ class DrawingCriterion(BaseModel):
     requirement: str = Field(
         ...,
         description="Full text of what the candidate must produce, "
-                    "e.g. 'Single clear line, no shading'.",
+        "e.g. 'Single clear line, no shading'.",
     )
     marks: int = Field(..., ge=1, description="Marks available for this criterion.")
 
@@ -326,8 +322,7 @@ class DescriptorText(BaseModel):
 
 
 class LevelDescriptor(BaseModel):
-    """
-    Part 5 — one level within a levels-based or levels-of-response mark scheme.
+    """Part 5 — one level within a levels-based or levels-of-response mark scheme.
     Used for Literature, History, extended Geography, and English Language extended
     writing questions.
     """
@@ -338,7 +333,7 @@ class LevelDescriptor(BaseModel):
         ...,
         ge=0,
         description="Level number. 0 = no creditable response. Literature uses 0–8; "
-                    "History typically uses 0–4.",
+        "History typically uses 0–4.",
     )
     mark_range: list[int] = Field(
         ...,
@@ -349,12 +344,12 @@ class LevelDescriptor(BaseModel):
     descriptors: list[DescriptorText] = Field(
         ...,
         description="Descriptor entries labelled by AO label (e.g. 'AO1', 'AO2') "
-                    "or 'general' for non-AO-split descriptors.",
+        "or 'general' for non-AO-split descriptors.",
     )
     one_sided_threshold: bool | None = Field(
         None,
         description="History only: True if this level requires a one-sided argument, "
-                    "False if two-sided is needed. Null for non-History schemes.",
+        "False if two-sided is needed. Null for non-History schemes.",
     )
     min_explanations: int | None = Field(
         None,
@@ -367,15 +362,12 @@ class LevelDescriptor(BaseModel):
     def validate_mark_range(cls, v: list[int]) -> list[int]:
         lo, hi = v
         if lo > hi:
-            raise ValueError(
-                f"mark_range lower bound ({lo}) must be ≤ upper bound ({hi})."
-            )
+            raise ValueError(f"mark_range lower bound ({lo}) must be ≤ upper bound ({hi}).")
         return v
 
 
 class ReservedMark(BaseModel):
-    """
-    History / Geography fieldwork only — marks that are reserved for a
+    """History / Geography fieldwork only — marks that are reserved for a
     specific conclusion or hypothesis answer (HA, XHA, ^HA pattern).
     """
 
@@ -409,8 +401,7 @@ class IndicativeContentPoint(BaseModel):
 
 
 class BandedCriterion(BaseModel):
-    """
-    Part 6 — one level within a reading_criteria or writing_criteria banded table
+    """Part 6 — one level within a reading_criteria or writing_criteria banded table
     (English Language), or a Table A evaluation rubric (Geography).
     """
 
@@ -431,9 +422,7 @@ class BandedCriterion(BaseModel):
     def validate_mark_range(cls, v: list[int]) -> list[int]:
         lo, hi = v
         if lo > hi:
-            raise ValueError(
-                f"mark_range lower bound ({lo}) must be ≤ upper bound ({hi})."
-            )
+            raise ValueError(f"mark_range lower bound ({lo}) must be ≤ upper bound ({hi}).")
         return v
 
 
@@ -483,8 +472,7 @@ class AbbreviationLegend(BaseModel):
 
 
 class MarkSchemeMetadata(BaseModel):
-    """
-    Part 1 — header metadata extracted from the first page of the mark scheme.
+    """Part 1 — header metadata extracted from the first page of the mark scheme.
     All fields map directly to attributes described in the prompt.
     """
 
@@ -493,7 +481,7 @@ class MarkSchemeMetadata(BaseModel):
     subject: str = Field(
         ...,
         description="Full subject name as printed on the mark scheme, "
-                    "e.g. 'Physics', 'First Language English'.",
+        "e.g. 'Physics', 'First Language English'.",
     )
     subject_code: Annotated[str, Field(pattern=r"^\d{4}$")] = Field(
         ...,
@@ -504,14 +492,14 @@ class MarkSchemeMetadata(BaseModel):
         ge=1,
         le=9,
         description="Paper number extracted from the paper code suffix "
-                    "(digit immediately after '/'). E.g. '0580/42' → 4.",
+        "(digit immediately after '/'). E.g. '0580/42' → 4.",
     )
     paper_variant: int = Field(
         ...,
         ge=1,
         le=9,
         description="Paper variant extracted from the final digit of the paper code. "
-                    "E.g. '0580/42' → 2.",
+        "E.g. '0580/42' → 2.",
     )
     session_month: SessionMonth = Field(
         ...,
@@ -543,18 +531,18 @@ class MarkSchemeMetadata(BaseModel):
     assessment_objectives: list[str] = Field(
         default_factory=list,
         description="Assessment objective labels tested in this paper, "
-                    "e.g. ['AO1', 'AO2', 'R1', 'R2', 'W2'].",
+        "e.g. ['AO1', 'AO2', 'R1', 'R2', 'W2'].",
     )
     subject_specific_principles: list[str] = Field(
         default_factory=list,
         description="Subject-specific marking principles printed in the mark scheme "
-                    "(e.g. science semicolon-separator rule, maths misread rule). "
-                    "Captured verbatim as a list of strings.",
+        "(e.g. science semicolon-separator rule, maths misread rule). "
+        "Captured verbatim as a list of strings.",
     )
     published: bool = Field(
         True,
         description="True if the mark scheme is marked 'Published'. "
-                    "False for pre-standardisation or confidential versions.",
+        "False for pre-standardisation or confidential versions.",
     )
     source_document: str | None = Field(
         None,
@@ -562,11 +550,9 @@ class MarkSchemeMetadata(BaseModel):
     )
 
     @model_validator(mode="after")
-    def specimen_year_is_null(self) -> "MarkSchemeMetadata":
+    def specimen_year_is_null(self) -> MarkSchemeMetadata:
         if self.session_month == SessionMonth.SPECIMEN and self.session_year is not None:
-            raise ValueError(
-                "Specimen mark schemes do not have a session_year — set it to null."
-            )
+            raise ValueError("Specimen mark schemes do not have a session_year — set it to null.")
         return self
 
 
@@ -576,8 +562,7 @@ class MarkSchemeMetadata(BaseModel):
 
 
 class Question(BaseModel):
-    """
-    The central model. One Question object is created per numbered item
+    """The central model. One Question object is created per numbered item
     (or sub-part) in the mark scheme. The `parts` field allows arbitrary
     nesting to mirror the source hierarchy.
 
@@ -600,7 +585,7 @@ class Question(BaseModel):
     id: str = Field(
         ...,
         description="Unique hierarchical ID following Part 2 notation: "
-                    "'1', '2a', '1a_i', '1a_i_A'.",
+        "'1', '2a', '1a_i', '1a_i_A'.",
     )
     parent_id: str | None = Field(
         None,
@@ -615,7 +600,7 @@ class Question(BaseModel):
         ...,
         ge=0,
         description="Total marks available for this question/part. "
-                    "Set to 0 for container questions that only group sub-parts.",
+        "Set to 0 for container questions that only group sub-parts.",
     )
     type: QuestionType = Field(
         ...,
@@ -624,22 +609,22 @@ class Question(BaseModel):
     question_command: str | None = Field(
         None,
         description="The command word(s) as they appear in the question, "
-                    "e.g. 'explain why', 'calculate', 'describe', 'tick three'.",
+        "e.g. 'explain why', 'calculate', 'describe', 'tick three'.",
     )
     assessment_objectives: list[str] = Field(
         default_factory=list,
         description="AO labels tested by this specific question/part, "
-                    "e.g. ['AO1', 'AO2'] or ['R1', 'R5'].",
+        "e.g. ['AO1', 'AO2'] or ['R1', 'R5'].",
     )
     topic_hint: str | None = Field(
         None,
         description="Inferred syllabus topic. Set only when unambiguous from context. "
-                    "Null otherwise.",
+        "Null otherwise.",
     )
     scheme_format: SchemeFormat | None = Field(
         None,
         description="Format of this specific question's marking. May differ from the "
-                    "paper-level format in mixed papers.",
+        "paper-level format in mixed papers.",
     )
 
     # ------------------------------------------------------------------
@@ -649,13 +634,13 @@ class Question(BaseModel):
     answer_points: list[AnswerPoint] = Field(
         default_factory=list,
         description="Ordered list of mark points. Empty for levels_based and "
-                    "pure indicative_content questions.",
+        "pure indicative_content questions.",
     )
     select_count: int | None = Field(
         None,
         ge=1,
         description="For 'list' and 'tickbox' types: how many options the "
-                    "candidate must select / how many can be credited.",
+        "candidate must select / how many can be credited.",
     )
     penalty_rules: list[PenaltyRule] | None = Field(
         None,
@@ -678,18 +663,18 @@ class Question(BaseModel):
     level_descriptors: list[LevelDescriptor] | None = Field(
         None,
         description="Ordered list of level descriptors (highest level first is "
-                    "conventional but not enforced). Required for levels_based type.",
+        "conventional but not enforced). Required for levels_based type.",
     )
     reserved_marks: list[ReservedMark] | None = Field(
         None,
         description="History/Geography only: reserved marks for specific conclusions "
-                    "(HA, XHA, ^HA annotations).",
+        "(HA, XHA, ^HA annotations).",
     )
     marking_guidance: str | None = Field(
         None,
         description="Prose guidance printed in the mark scheme for holistic judgement, "
-                    "e.g. 'Award the highest mark if the response convincingly meets "
-                    "the level descriptor.'",
+        "e.g. 'Award the highest mark if the response convincingly meets "
+        "the level descriptor.'",
     )
 
     # ------------------------------------------------------------------
@@ -699,7 +684,7 @@ class Question(BaseModel):
     indicative_content: list[IndicativeContentPoint] | None = Field(
         None,
         description="Numbered content points from which candidates draw credit. "
-                    "Not exhaustive — examiners credit valid alternatives.",
+        "Not exhaustive — examiners credit valid alternatives.",
     )
     reading_criteria: list[BandedCriterion] | None = Field(
         None,
@@ -723,18 +708,18 @@ class Question(BaseModel):
         None,
         ge=1,
         description="Maximum word count the candidate's response must not exceed. "
-                    "Null if no limit is stated.",
+        "Null if no limit is stated.",
     )
     own_words_required: bool | None = Field(
         None,
         description="True if the mark scheme explicitly requires candidates to use "
-                    "their own words (common in English Language summary tasks).",
+        "their own words (common in English Language summary tasks).",
     )
     verbatim_lift_policy: str | None = Field(
         None,
         description="The mark scheme's stated policy on verbatim copying from the "
-                    "source text, e.g. 'Answers entirely in the words of the text "
-                    "should not be credited'.",
+        "source text, e.g. 'Answers entirely in the words of the text "
+        "should not be credited'.",
     )
 
     # ------------------------------------------------------------------
@@ -762,12 +747,12 @@ class Question(BaseModel):
     rejected_answers: list[str] = Field(
         default_factory=list,
         description="Answers the mark scheme explicitly states must NOT be accepted "
-                    "(marked 'R' or 'not' in the source).",
+        "(marked 'R' or 'not' in the source).",
     )
     ignored_answers: list[str] = Field(
         default_factory=list,
         description="Answers that must be ignored — neither credited nor penalised "
-                    "(marked 'I' or 'ignore' in the source).",
+        "(marked 'I' or 'ignore' in the source).",
     )
 
     # ------------------------------------------------------------------
@@ -777,18 +762,18 @@ class Question(BaseModel):
     notes: str | None = Field(
         None,
         description="Expanded examiner guidance: includes ecf conditions, guidance "
-                    "column content (Biology ATP), misread rules (Mathematics), and "
-                    "any other special conditions. Abbreviations expanded here.",
+        "column content (Biology ATP), misread rules (Mathematics), and "
+        "any other special conditions. Abbreviations expanded here.",
     )
 
     # ------------------------------------------------------------------
     # Sub-parts (recursive)
     # ------------------------------------------------------------------
 
-    parts: list["Question"] = Field(
+    parts: list[Question] = Field(
         default_factory=list,
         description="Nested sub-part questions in source order. Mirrors the "
-                    "hierarchical numbering from the mark scheme.",
+        "hierarchical numbering from the mark scheme.",
     )
 
     # ------------------------------------------------------------------
@@ -796,7 +781,7 @@ class Question(BaseModel):
     # ------------------------------------------------------------------
 
     @model_validator(mode="after")
-    def validate_type_constraints(self) -> "Question":
+    def validate_type_constraints(self) -> Question:
         t = self.type
         has_marking_content = bool(
             self.answer_points
@@ -809,15 +794,11 @@ class Question(BaseModel):
 
         # MCQ must have an answer letter
         if t == QuestionType.MCQ and self.mcq_answer is None:
-            raise ValueError(
-                f"Question '{self.id}': MCQ questions must set mcq_answer."
-            )
+            raise ValueError(f"Question '{self.id}': MCQ questions must set mcq_answer.")
 
         # Non-MCQ must NOT have an mcq_answer
         if t != QuestionType.MCQ and self.mcq_answer is not None:
-            raise ValueError(
-                f"Question '{self.id}': mcq_answer is only valid for MCQ questions."
-            )
+            raise ValueError(f"Question '{self.id}': mcq_answer is only valid for MCQ questions.")
 
         # levels_based must have descriptors, not answer_points
         if t == QuestionType.LEVELS_BASED:
@@ -880,16 +861,13 @@ class Question(BaseModel):
 
         # tickbox questions must have penalty_rules
         if t == QuestionType.TICKBOX and not self.penalty_rules:
-            raise ValueError(
-                f"Question '{self.id}': tickbox questions require penalty_rules."
-            )
+            raise ValueError(f"Question '{self.id}': tickbox questions require penalty_rules.")
 
         return self
 
     @model_validator(mode="after")
-    def validate_mark_point_sum(self) -> "Question":
-        """
-        For point-based questions: the sum of non-alternative, non-optional
+    def validate_mark_point_sum(self) -> Question:
+        """For point-based questions: the sum of non-alternative, non-optional
         points must not exceed the question's total marks. Optional (list)
         and alternative points are excluded because only N are credited.
         """
@@ -901,8 +879,7 @@ class Question(BaseModel):
             return self
 
         primary_points = [
-            p for p in self.answer_points
-            if not p.is_alternative and not p.is_optional
+            p for p in self.answer_points if not p.is_alternative and not p.is_optional
         ]
         total = sum(p.marks for p in primary_points)
         if self.marks > 0 and total > self.marks:
@@ -913,7 +890,7 @@ class Question(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_drawing_criteria_sum(self) -> "Question":
+    def validate_drawing_criteria_sum(self) -> Question:
         """Drawing criteria marks must sum to the question's total marks."""
         if self.type == QuestionType.DIAGRAM and self.drawing_criteria:
             total = sum(c.marks for c in self.drawing_criteria)
@@ -935,8 +912,7 @@ Question.model_rebuild()
 
 
 class MarkScheme(BaseModel):
-    """
-    Root model. Represents a single complete IGCSE mark scheme document.
+    """Root model. Represents a single complete IGCSE mark scheme document.
     Deserialise the JSON output of the LLM prompt directly into this model.
     """
 
@@ -949,19 +925,18 @@ class MarkScheme(BaseModel):
     abbreviation_legend: AbbreviationLegend = Field(
         default_factory=AbbreviationLegend,
         description="Standard CAIE abbreviations with their expanded meanings. "
-                    "Includes any paper-specific additions.",
+        "Includes any paper-specific additions.",
     )
     questions: list[Question] = Field(
         ...,
         min_length=1,
         description="All questions in source order. Top-level questions only — "
-                    "sub-parts are nested inside each question's `parts` list.",
+        "sub-parts are nested inside each question's `parts` list.",
     )
 
     @model_validator(mode="after")
-    def validate_maximum_mark(self) -> "MarkScheme":
-        """
-        For MCQ papers: the total marks across all top-level questions
+    def validate_maximum_mark(self) -> MarkScheme:
+        """For MCQ papers: the total marks across all top-level questions
         should equal the maximum_mark on the metadata.
         """
         if self.metadata.paper_type == PaperType.MCQ:
@@ -974,8 +949,7 @@ class MarkScheme(BaseModel):
         return self
 
     def get_question_by_id(self, question_id: str) -> Question | None:
-        """
-        Depth-first search for a question by its ID across the entire hierarchy.
+        """Depth-first search for a question by its ID across the entire hierarchy.
         Returns the first match or None if not found.
         """
 
@@ -991,11 +965,9 @@ class MarkScheme(BaseModel):
         return _search(self.questions)
 
     def all_questions_flat(self) -> list[Question]:
-        """
-        Returns every question in the document as a flat list (depth-first),
+        """Returns every question in the document as a flat list (depth-first),
         including all sub-parts at every level of nesting.
         """
-
         result: list[Question] = []
 
         def _collect(questions: list[Question]) -> None:
@@ -1007,8 +979,7 @@ class MarkScheme(BaseModel):
         return result
 
     def total_marks_by_type(self) -> dict[str, int]:
-        """
-        Returns a dict of question type → total marks available across
+        """Returns a dict of question type → total marks available across
         the entire paper (useful for paper-level analytics).
         """
         totals: dict[str, int] = {}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -11,7 +11,7 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ConfidenceBand(str, Enum):
+class ConfidenceBand(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
@@ -49,22 +49,22 @@ class BatchParseItem(StrictModel):
 class BatchParseResult(StrictModel):
     items: list[BatchParseItem]
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def total(self) -> int:
         return len(self.items)
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def parsed(self) -> int:
         return sum(1 for item in self.items if item.status == "parsed")
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def skipped(self) -> int:
         return sum(1 for item in self.items if item.status == "skipped_existing")
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def failed(self) -> int:
         return sum(1 for item in self.items if item.status in {"failed", "invalid_existing"})
@@ -92,7 +92,7 @@ class CorrectedQuestion(StrictModel):
     review_reason: str | None = None
 
     @model_validator(mode="after")
-    def validate_awarded_marks(self) -> "CorrectedQuestion":
+    def validate_awarded_marks(self) -> CorrectedQuestion:
         if self.awarded_marks > self.maximum_marks:
             raise ValueError("awarded_marks cannot exceed maximum_marks")
         return self
@@ -106,7 +106,7 @@ class CorrectionResult(StrictModel):
     needs_teacher_review: bool = False
 
     @model_validator(mode="after")
-    def calculate_totals(self) -> "CorrectionResult":
+    def calculate_totals(self) -> CorrectionResult:
         object.__setattr__(self, "awarded_marks", sum(q.awarded_marks for q in self.questions))
         object.__setattr__(self, "maximum_marks", sum(q.maximum_marks for q in self.questions))
         object.__setattr__(

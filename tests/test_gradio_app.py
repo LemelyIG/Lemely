@@ -1,10 +1,8 @@
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from lemely_mvp.gradio_app import build_app, run_correction_demo
-
+from lemely.app.gradio_app import build_app, run_correction_demo
 
 REAL_MARK_SCHEME = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.json")
 

@@ -1,0 +1,29 @@
+# lemely.toml — configuration template
+#
+# Precedence (highest wins): environment variables (LEMELY_*) > .env > this TOML > defaults.
+# Nested keys use double-underscore in env vars (e.g. LEMELY_GRADIO__PORT=9000).
+# All sections use extra='forbid'; unknown keys raise a validation error at startup.
+
+[gradio]
+host = "127.0.0.1"
+port = 7860
+max_file_size_mb = 25
+
+[paths]
+sources_dir = "Sources"
+output_dir = "outputs"
+cache_dir = ".lemely-cache"
+
+[logging]
+level = "INFO"
+format = "auto"
+
+[gemini]
+model = "gemini-2.5-flash"
+max_retries = 3
+backoff_seconds = 2.0
+# monthly_usd_ceiling = 25.0
+# per_run_token_ceiling = 200000
+
+# gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
+# gemini_api_key = "sk-..."

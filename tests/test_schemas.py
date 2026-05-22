@@ -2,7 +2,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from lemely_mvp.schemas import (
+from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
     CorrectedQuestion,
