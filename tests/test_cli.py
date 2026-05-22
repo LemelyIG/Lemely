@@ -18,7 +18,7 @@ def real_mcq_mark_scheme_text() -> str:
 def run_cli(*args):
     stream = StringIO()
     with redirect_stdout(stream):
-        exit_code = main(list(args))
+        exit_code = main(["--json", *args])
     return exit_code, json.loads(stream.getvalue())
 
 
