@@ -248,8 +248,7 @@ class AnswerPoint(BaseModel):
         """Distractor points in tickbox questions should have marks=0."""
         if self.is_correct is False and self.marks != 0:
             raise ValueError(
-                f"AnswerPoint '{self.id}': distractor items (is_correct=False) "
-                "must have marks=0."
+                f"AnswerPoint '{self.id}': distractor items (is_correct=False) must have marks=0."
             )
         return self
 
