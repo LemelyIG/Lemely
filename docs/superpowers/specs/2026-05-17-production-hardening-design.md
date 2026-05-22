@@ -3,14 +3,31 @@
 **Date:** 2026-05-17
 **Author:** Yassin Diab (lemelyig@gmail.com)
 **Status:** Approved — ready for implementation planning
+**Revised:** 2026-05-22 — multi-paper-type extraction, AI correction for non-MCQ, subject-level aggregation
 
 ---
 
+## Domain model: a CAIE subject is a set of papers
+
+A Cambridge IGCSE / O-Level / A-Level **subject** is graded as a *weighted combination of multiple papers* — not a single exam. A typical science subject has three components:
+
+| Paper | Type | Length | Typical max | Question shape |
+|---|---|---|---|---|
+| Paper 2 | MCQ | ~45 min | 40 | A/B/C/D per question |
+| Paper 4 | Theory / Structured | 1h15–2h | 80 | Short answers, calculations, explanations, diagrams, graphs, levels-based extended responses |
+| Paper 6 | Alternative to Practical (ATP) | ~1h | 40 | Experimental design, data analysis, error identification, diagrams |
+
+Maths splits into non-calculator + calculator papers; languages add listening/reading/writing/speaking components; computer-science papers are theory + programming. Coursework and oral components exist for some subjects but are out of scope (no scan to extract from).
+
+A **paper** is the unit of correction (one mark scheme, one scan, one `CorrectionResult`). A **subject** is the unit of grade prediction (sum of awarded marks across all papers a student sat in the same subject + session, against CAIE-style boundaries).
+
+This shapes everything downstream: extraction must produce per-part answers for any question type the mark scheme defines (not just MCQ letters); correction must mark theory/ATP responses against rubrics where the question is not MCQ; the UI must surface both per-paper and per-subject views.
+
 ## Summary
 
-Take the Week 1/2 MVP from a working CLI/Gradio prototype to a hardened production-grade single-user tool. Same problem domain (CAIE mark-scheme migration, MCQ correction, weakness analytics, grade prediction, quizzes), but with three install paths (`pipx`, source clone, Docker), strict configuration, structured logging, documented exit codes, enforced layered architecture, AI as a first-class production dependency (vision-based scanned-answer extraction and interactive AI-marked quizzes), and a CI/release pipeline.
+Take the Week 1/2 MVP from a working CLI/Gradio prototype to a hardened production-grade single-user tool. Same problem domain (CAIE mark-scheme migration, paper correction across MCQ/theory/ATP, weakness analytics, subject-level grade prediction, quizzes), but with three install paths (`pipx`, source clone, Docker), strict configuration, structured logging, documented exit codes, enforced layered architecture, AI as a first-class production dependency (vision-based scanned-answer extraction, rubric-based correction for non-MCQ questions, interactive AI-marked quizzes), and a CI/release pipeline.
 
-The deterministic core (MCQ correction against parsed mark schemes, grade prediction, weakness aggregation) remains the source of truth — that is the accuracy-critical loop and must not depend on LLM output. AI fills the surrounding workflow: parsing raw mark-scheme PDFs, extracting student answers from scanned papers, generating quizzes targeted to student weaknesses, and marking written quiz responses against rubrics.
+The deterministic core — MCQ correction against parsed mark schemes, weakness aggregation, grade-boundary arithmetic — remains the trust anchor. AI handles everything around it: parsing raw mark-scheme PDFs, extracting student answers from scanned papers of any type, marking non-MCQ responses against the mark scheme's `answer_points` / `level_descriptors` / `drawing_criteria` / rubrics, generating quizzes targeted to student weaknesses, and marking written quiz responses. AI-marked outcomes carry a `marker_source: "ai"` flag and a confidence score so teachers can distinguish them from deterministic results.
 
 ## Goals
 
@@ -49,7 +66,9 @@ lemely/
     metadata.py          # CAIE filename parsing
     mark_schemes.py      # Library indexing + batch processing
     parsers.py           # Gemini mark-scheme parser (existing)
-    answer_extraction.py # NEW — Gemini vision extractor for scanned papers
+    answer_extraction.py # NEW — Gemini vision extractor for scanned papers (any paper type)
+    correction_ai.py     # NEW — AI rubric marker for non-MCQ questions; hybrid orchestrator
+    subject.py           # NEW — multi-paper aggregation into SubjectResult
     quiz_generation.py   # NEW — Gemini quiz generator
     quiz_marking.py      # NEW — Hybrid deterministic/AI quiz marker
     loose_schemas.py     # was models/mark_scheme.py — disk-read JSON shape
@@ -209,10 +228,9 @@ CLI top-level handler maps every `LemelyError` to its declared exit code; `Keybo
 |---|---|---|---|
 | `estimate-cost` | `SOURCE_ROOT` | — | n/a |
 | `parse-mark-schemes` | `SOURCE_ROOT` | `--output-root`, `--force`, `--use-gemini`, `--gemini-model`, `--on-error` | `continue` |
-
-`--use-gemini` is retained as a per-invocation cost gate: omitting it makes `parse-mark-schemes` a pure validation/index pass over existing JSON (no API calls, free); passing it actually parses missing PDFs via the Gemini path. AI is required for the production correction workflow (A2 revised), but the operator still chooses *when* to spend tokens on library migration.
 | `extract-answers` | — | `--mark-scheme PATH`, `--scan PATH`, `--on-error` | `fail` |
-| `correct-paper` | — | `--mark-scheme PATH`, `--answers PATH`, `--on-error` | `fail` |
+| `correct-paper` | — | `--mark-scheme PATH`, `--answers PATH`, `--mcq-only`, `--on-error` | `fail` |
+| `aggregate-subject` | `CORRECTION_JSON...` (1..N) | `--subject-code`, `--session`, `--on-error` | `fail` |
 | `predict-grade` | `CORRECTION_JSON` | `--on-error` | `fail` |
 | `detect-weaknesses` | `CORRECTION_JSON` | `--on-error` | `fail` |
 | `generate-quiz` | `CORRECTION_JSON` | `--count`, `--mix balance\|mcq\|writing` | `fail` |
@@ -220,6 +238,14 @@ CLI top-level handler maps every `LemelyError` to its declared exit code; `Keybo
 | `ui` | — | `--host`, `--port` *(no `--share` flag)* | n/a |
 | `doctor` | — | — | n/a |
 | `version` | — | — | n/a |
+
+`--use-gemini` on `parse-mark-schemes` is retained as a per-invocation cost gate: omitting it makes the command a pure validation/index pass over existing JSON (no API calls, free); passing it actually parses missing PDFs via Gemini.
+
+`extract-answers` is paper-type-agnostic: it builds its extraction prompt from the question manifest in the supplied mark scheme, so theory and ATP papers extract free-text / numerical / drawing-description responses per question part (e.g. `1(a)(i)`), while MCQ papers extract single letters. The output schema (`ExtractedAnswers`) is uniform — `answer: str` carries whatever was written.
+
+`correct-paper` routes by question type: MCQ questions take the deterministic path (`core.correction.correct_mcq_answers`); non-MCQ questions are marked by `io.correction_ai` against the mark scheme's `answer_points` / `level_descriptors` / `drawing_criteria` / `plot_requirements` / `marking_guidance`. A paper with mixed types runs both passes and merges results into one `CorrectionResult`. The `--mcq-only` flag skips AI marking entirely (non-MCQ questions emit `marker_source: "missing"` with zero marks). Non-MCQ marking requires a valid `gemini_api_key`; absence is a `ConfigError` unless `--mcq-only` is set.
+
+`aggregate-subject` takes one or more per-paper `CorrectionResult` JSON files (all sharing the same `subject_code` + session) and produces a `SubjectResult`: summed awarded/maximum marks, weighted percentage, predicted subject grade against CAIE-style boundaries, and a weakness report aggregated across components. Mismatched subject codes or sessions are a `UsageError`.
 
 ### Rendering (human mode, `app/renderers.py`)
 
@@ -260,18 +286,25 @@ Real working MVP — full teacher workflow, not a demo surface.
 1. **Library** — browse mark-scheme PDFs, filter by subject/session/paper. Per-row "Parse" button for missing JSON; bulk "Parse all missing". Single concurrent parse job (Gradio queue `concurrency_count=1`). Cancel button. Job survives tab close for process lifetime; killed process loses in-progress work.
 
 2. **Correct a paper** — only file upload in the app.
-   - Select mark scheme (dropdown, typeahead from library).
+   - Select mark scheme (dropdown, typeahead from library). The selected scheme determines paper type; the UI adapts.
    - Upload **scanned student paper** (PDF / PNG / JPG, multi-page allowed, up to `max_file_size_mb`).
-   - **Extract** → `GeminiAnswerExtractor` → editable table `(question, answer, confidence)`.
-   - Teacher reviews/edits low-confidence rows.
-   - **Grade** → `correct_mcq_answers` against reviewed answers.
-   - Result panel: grade banner, per-question table, weakness summary, grade prediction.
-   - Save → writes `outputs/<subject>/<paper_code>__<YYYY-MM-DD-HHMMSS>/` containing `extracted_answers.json` (audit trail), `reviewed_answers.json`, `accuracy_report.json`.
+   - **Extract** → `GeminiAnswerExtractor` → editable table `(question_id, answer, confidence, marker_hint)`. For MCQ papers the `answer` column is constrained to A/B/C/D + blank. For theory/ATP papers the cells are free-text (single line for short answers, expandable multi-line for long responses; calculations show as text with unit hint). The table sorts by `question_id` following the mark scheme's hierarchical IDs (`1`, `1(a)`, `1(a)(i)` …).
+   - Teacher reviews/edits low-confidence rows. Rows below 0.7 confidence are highlighted; teachers must confirm or edit before grading.
+   - **Grade** → hybrid `correct_paper` (deterministic for MCQ questions, `io.correction_ai` for non-MCQ).
+   - Result panel: per-paper grade banner, per-question table (with `marker_source` column showing ✓ deterministic / 🤖 AI / — missing), weakness summary, paper-level grade prediction.
+   - Save → writes `outputs/<subject_code>/<session>/<paper_code>__<YYYY-MM-DD-HHMMSS>/` containing `extracted_answers.json` (audit trail), `reviewed_answers.json`, `accuracy_report.json`. The session directory groups all papers of the same subject + session.
    - Download JSON / Download HTML report.
 
-3. **Past results** — directory browser of `outputs/`. Sortable by date / subject / paper code. Click any row to re-render its saved `AccuracyReport` identically to Tab 2. Delete with confirmation. Nested expander per result shows its quizzes and attempts.
+3. **Subject result** — assemble a multi-paper subject grade.
+   - Source: pick subject_code + session from the dropdown (built from `outputs/`).
+   - Lists all per-paper `CorrectionResult`s in that subject+session. Allows including/excluding individual papers.
+   - **Aggregate** → runs `io.subject.aggregate_subject` → `SubjectResult` (sum awarded/max, weighted percentage, predicted subject grade, merged weakness report).
+   - Save → `outputs/<subject_code>/<session>/subject_result__<timestamp>.json`.
+   - Download JSON / Download HTML report (rolls up per-paper tables and a subject banner).
 
-4. **Quiz** — interactive, solvable in-UI.
+4. **Past results** — directory browser of `outputs/`. Sortable by date / subject / paper code / subject_result. Click any row to re-render its saved `AccuracyReport` or `SubjectResult` identically to Tabs 2/3. Delete with confirmation. Nested expander per paper shows its quizzes and attempts.
+
+5. **Quiz** — interactive, solvable in-UI.
    - Source: dropdown of past corrections in `outputs/` only. **No upload.**
    - Generate quiz → Gemini call → mixed-type questions targeting weak topics.
    - Distribution preset: `balance` (default) / `mcq` / `writing`. Count slider (default 8).
@@ -286,7 +319,7 @@ Real working MVP — full teacher workflow, not a demo surface.
    - "Generate follow-up quiz" button (targets `derived_weaknesses` from this attempt).
    - Saves `quiz.json`, `quiz_attempt.json`, `quiz_result.json` under `outputs/<subject>/<paper_code>__<correction_timestamp>/quizzes/<quiz_timestamp>/`.
 
-5. **Settings (read-only)** — table of every effective setting with value + source (`default` / `lemely.toml` / `env` / `cli`). `gemini_api_key` masked. Critical for debugging "why isn't my config taking effect."
+6. **Settings (read-only)** — table of every effective setting with value + source (`default` / `lemely.toml` / `env` / `cli`). `gemini_api_key` masked. Critical for debugging "why isn't my config taking effect."
 
 ### No uploads anywhere else
 
@@ -314,7 +347,8 @@ Shared infrastructure for every AI call in `lemely.io`.
 | Module | Schema | Default model | Cache key includes |
 |---|---|---|---|
 | `parsers.py` (mark scheme PDF → JSON) | `MarkScheme` (loose) | `gemini-2.5-flash` | file content hash, prompt version |
-| `answer_extraction.py` (scan → answers) | `ExtractedAnswers` | `gemini-2.5-flash` | scan content hash, MS id, prompt version |
+| `answer_extraction.py` (scan → answers, any paper type) | `ExtractedAnswers` | `gemini-2.5-flash` | scan content hash, MS question manifest hash, prompt version |
+| `correction_ai.py` (non-MCQ question + student answer → mark) | `AIMarkResponse` | `gemini-2.5-flash` | question subtree hash, student answer hash, prompt version |
 | `quiz_generation.py` (weakness → quiz) | `Quiz` | `gemini-2.5-flash` | correction id, count, mix, prompt version |
 | `quiz_marking.py` (attempt → result) | `QuizResult` | `gemini-2.5-flash` | quiz id, responses hash, prompt version |
 
@@ -324,14 +358,26 @@ Every cache key includes the corresponding prompt module's `VERSION` constant, s
 
 ## New schemas (in `lemely/core/schemas.py`, all `extra="forbid"`)
 
-- `ExtractedAnswers` — `paper_id`, `source_scan: Path`, `answers: list[ExtractedAnswer]`
-- `ExtractedAnswer` — `question_number`, `answer`, `confidence: float` (0–1), `source_region` (optional bounding box for debugging)
+- `ExtractedAnswer` — `question_id` (hierarchical, matches `Question.id` in the mark scheme), `answer: str` (the student's response: MCQ letter, free text, calculated value+unit, or description of a drawing), `confidence: float` (0–1), `source_region: str | None` (optional positional hint for debugging)
+- `ExtractedAnswers` — `paper_id`, `source_scan: str`, `answers: list[ExtractedAnswer]`
+- `AIMarkResponse` — `awarded_marks: int`, `confidence: float`, `matched_point_ids: list[str]`, `feedback: str`. Returned by `correction_ai` per-question; merged into `CorrectedQuestion`.
+- `SubjectResult` — `subject_code`, `session_month`, `session_year`, `paper_results: list[CorrectionResult]`, computed `awarded_marks`/`maximum_marks`/`percentage`/`grade`, aggregated `weaknesses: WeaknessReport`, `needs_teacher_review`.
 - `QuizQuestion` — discriminated union on `type` (`mcq` | `short_answer` | `long_form`); each variant has type-specific fields (`options`/`correct_option` for MCQ, `reference_answer`/`acceptable_variants`/`rubric` for short, `reference_answer`/`rubric` for long).
 - `Quiz` — `id`, `generated_at`, `source_correction_id`, `target_topics`, `questions`
 - `QuizResponse` — `question_id`, `student_answer` (typed per question)
 - `QuizAttempt` — `quiz_id`, `started_at`, `submitted_at`, `responses`
 - `QuestionMark` — `question_id`, `marks_awarded`, `max_marks`, `feedback`, `marker_confidence`, `marker_source: Literal["deterministic","ai","failed"]`
 - `QuizResult` — `quiz_id`, `attempt_id`, `marks`, `total_awarded`, `total_max`, `percentage`, `derived_weaknesses`, `suggested_followup_topics`
+
+### Extension to `CorrectedQuestion`
+
+The existing `CorrectedQuestion` gains three optional fields to carry AI-marking metadata uniformly across MCQ + non-MCQ paths:
+
+- `marker_source: Literal["deterministic","ai","missing"]` (default `"deterministic"`) — `"missing"` when `--mcq-only` is set and the question is non-MCQ.
+- `feedback: str | None` — short teacher-readable explanation (populated only for AI-marked questions).
+- `matched_point_ids: list[str]` — IDs of `AnswerPoint`s / `LevelDescriptor`s / `DrawingCriterion`s that earned marks (populated only by AI marker).
+
+These extensions are backwards-compatible: existing deterministic MCQ paths leave the new fields at their defaults.
 
 ---
 
@@ -518,11 +564,11 @@ lemely/* — imports updated; click CLI replaces argparse; renderers extracted;
 
 This spec is broad on purpose — it captures the full target shape. The implementation should be decomposed into a phased plan that ships value incrementally and keeps any single phase reviewable. A reasonable phasing:
 
-1. **Phase 1 — Foundations:** package rename + restructure to `lemely/{core,io,app,runtime}`, runtime modules (config, logging, errors), `pyproject.toml` + `requirements.lock`, click-based CLI with rendererscovering the *existing* commands only, ruff + mypy + import-linter + pre-commit + CI. No new features; same behaviour, harder shell. All current tests pass after migration.
+1. **Phase 1 — Foundations:** package rename + restructure to `lemely/{core,io,app,runtime}`, runtime modules (config, logging, errors), `pyproject.toml` + `requirements.lock`, click-based CLI with renderers covering the *existing* commands only, ruff + mypy + import-linter + pre-commit + CI. No new features; same behaviour, harder shell. All current tests pass after migration.
 
-2. **Phase 2 — Gemini infrastructure + scan extraction:** `lemely/io/gemini.py` (shared client + retry + cost-guard + cache + schema enforcement), `ExtractedAnswers` schema, `lemely/io/answer_extraction.py`, `extract-answers` CLI subcommand, Gradio Tab 2 reshaped around the scan → extract → review → grade flow. No quiz changes yet.
+2. **Phase 2 — Multi-paper-type extraction, correction, and subject aggregation:** `lemely/io/gemini.py` (shared client + retry + cost-guard + cache + schema enforcement); `ExtractedAnswer` / `ExtractedAnswers` / `SubjectResult` schemas; `CorrectedQuestion` extended with `marker_source` / `feedback` / `matched_point_ids`; `lemely/io/answer_extraction.py` (works for MCQ, theory, ATP — prompt is built from the mark scheme's question manifest); `lemely/io/correction_ai.py` (rubric-driven AI marker for non-MCQ + hybrid orchestrator routing MCQ→deterministic, non-MCQ→AI); `lemely/io/subject.py` (paper aggregation into `SubjectResult`); CLI subcommands `extract-answers`, `correct-paper` (updated for hybrid), `aggregate-subject`; Gradio Tab 2 reshaped around the scan → extract → review → grade flow with paper-type-aware editable cells; Gradio Tab 3 added for subject result assembly. No quiz changes yet.
 
-3. **Phase 3 — Interactive quizzes:** quiz schemas (discriminated unions for question types), `quiz_generation.py`, `quiz_marking.py` (deterministic fast-path + AI fallback), CLI subcommands (`generate-quiz` AI version, `mark-quiz-attempt`), Gradio Tab 4 interactive flow, Past Results nested quiz expander, follow-up quiz generation.
+3. **Phase 3 — Interactive quizzes:** quiz schemas (discriminated unions for question types), `quiz_generation.py`, `quiz_marking.py` (deterministic fast-path + AI fallback), CLI subcommands (`generate-quiz` AI version, `mark-quiz-attempt`), Gradio Tab 5 interactive flow, Past Results nested quiz expander, follow-up quiz generation.
 
 4. **Phase 4 — Packaging & release:** Dockerfile + compose, GHCR release workflow, PyPI trusted publishing, `CHANGELOG.md`, `docs/exit-codes.md`, `docs/contributing.md`, smoke-test workflow.
 
