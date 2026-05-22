@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TypedDict
+
 from lemely.core.schemas import (
     ConfidenceBand,
     CorrectionResult,
@@ -9,6 +11,14 @@ from lemely.core.schemas import (
     WeakArea,
     WeaknessReport,
 )
+
+
+class _TopicBucket(TypedDict):
+    awarded_marks: int
+    lost_marks: int
+    maximum_marks: int
+    question_ids: list[str]
+
 
 DEFAULT_GRADE_BOUNDARIES = {
     "A": 80.0,
@@ -20,26 +30,24 @@ DEFAULT_GRADE_BOUNDARIES = {
 
 
 def summarize_weaknesses(correction: CorrectionResult) -> WeaknessReport:
-    grouped: dict[str, dict[str, object]] = {}
+    grouped: dict[str, _TopicBucket] = {}
     for question in correction.questions:
         lost_marks = question.maximum_marks - question.awarded_marks
         topic = question.topic or "unknown"
         bucket = grouped.setdefault(
             topic,
-            {"awarded_marks": 0, "lost_marks": 0, "maximum_marks": 0, "question_ids": []},
+            _TopicBucket(awarded_marks=0, lost_marks=0, maximum_marks=0, question_ids=[]),
         )
-        bucket["awarded_marks"] = int(bucket["awarded_marks"]) + question.awarded_marks
-        bucket["lost_marks"] = int(bucket["lost_marks"]) + lost_marks
-        bucket["maximum_marks"] = int(bucket["maximum_marks"]) + question.maximum_marks
+        bucket["awarded_marks"] += question.awarded_marks
+        bucket["lost_marks"] += lost_marks
+        bucket["maximum_marks"] += question.maximum_marks
         if lost_marks > 0:
-            question_ids = bucket["question_ids"]
-            if isinstance(question_ids, list):
-                question_ids.append(question.question_id)
+            bucket["question_ids"].append(question.question_id)
 
     weak_areas = []
     for topic, bucket in grouped.items():
-        maximum_marks = int(bucket["maximum_marks"])
-        lost_marks = int(bucket["lost_marks"])
+        maximum_marks = bucket["maximum_marks"]
+        lost_marks = bucket["lost_marks"]
         if lost_marks <= 0:
             continue
         accuracy = 1.0 - (lost_marks / maximum_marks) if maximum_marks else 1.0
@@ -49,7 +57,7 @@ def summarize_weaknesses(correction: CorrectionResult) -> WeaknessReport:
                 lost_marks=lost_marks,
                 maximum_marks=maximum_marks,
                 accuracy=accuracy,
-                question_ids=list(bucket["question_ids"]),
+                question_ids=bucket["question_ids"],
             )
         )
 

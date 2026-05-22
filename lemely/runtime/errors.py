@@ -1,4 +1,5 @@
 """Exception hierarchy and exit-code mapping for the Lemely CLI."""
+
 from __future__ import annotations
 
 

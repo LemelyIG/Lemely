@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from .cli import _build_accuracy_report
 
 
-def run_correction_demo(mark_scheme_path: str, answers: str) -> dict[str, Any]:
-    return _build_accuracy_report(Path(mark_scheme_path), answers).model_dump(mode="json")
+def run_correction_demo(mark_scheme_path: str, answers: str) -> dict[str, object]:
+    result = _build_accuracy_report(Path(mark_scheme_path), answers).model_dump(mode="json")
+    return result
 
 
-def build_app():
+def build_app() -> object:
     try:
         import gradio as gr
     except ImportError as exc:
@@ -36,7 +36,7 @@ def build_app():
 
 
 def launch() -> None:
-    build_app().launch()
+    build_app().launch()  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """Tests for human-mode CLI renderers."""
+
 from __future__ import annotations
 
 import unittest
@@ -104,7 +105,9 @@ class RendererTests(unittest.TestCase):
                 BatchParseItem(source_path="a.pdf", output_path="a.json", status="parsed"),
                 BatchParseItem(source_path="b.pdf", output_path="b.json", status="parsed"),
                 BatchParseItem(source_path="c.pdf", output_path=None, status="skipped_existing"),
-                BatchParseItem(source_path="d.pdf", output_path=None, status="failed", message="boom"),
+                BatchParseItem(
+                    source_path="d.pdf", output_path=None, status="failed", message="boom"
+                ),
                 BatchParseItem(source_path="e.pdf", output_path=None, status="invalid_existing"),
             ],
         )

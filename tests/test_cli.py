@@ -7,7 +7,6 @@ from pathlib import Path
 
 from lemely.app.cli import main
 
-
 REAL_MARK_SCHEME = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.json")
 
 

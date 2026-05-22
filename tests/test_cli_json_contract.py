@@ -3,6 +3,7 @@
 Reuses the same real mark-scheme fixture at
 Sources/Physics/MarkingSchemes/0625_m20_ms_12.json that tests/test_cli.py uses.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,9 +48,7 @@ class JsonContractTests(unittest.TestCase):
             root = Path(tmp)
             (root / "0625_m20_ms_12.pdf").write_bytes(b"%PDF-1.4")
             (root / "0625_m20_ms_12.json").write_text(_real_ms_text(), "utf-8")
-            result = self.runner.invoke(
-                cli, ["--json", "parse-mark-schemes", str(root)]
-            )
+            result = self.runner.invoke(cli, ["--json", "parse-mark-schemes", str(root)])
         self.assertEqual(result.exit_code, 0, msg=result.output)
         data = json.loads(result.output)
         # Computed fields (total/parsed/skipped/failed) are in the JSON output
@@ -111,9 +110,7 @@ class JsonContractTests(unittest.TestCase):
             weak = Path(tmp) / "weak.json"
             weak.write_text(r2.output, "utf-8")
 
-            r3 = self.runner.invoke(
-                cli, ["--json", "generate-quiz", str(weak), "--count", "1"]
-            )
+            r3 = self.runner.invoke(cli, ["--json", "generate-quiz", str(weak), "--count", "1"])
             self.assertEqual(r3.exit_code, 0, msg=r3.output)
             QuizPayload.model_validate(json.loads(r3.output))
 

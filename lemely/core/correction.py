@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
 
 from lemely.core.loose_schemas import MarkScheme, QuestionType
-
 from lemely.core.schemas import (
     ConfidenceBand,
     CorrectedQuestion,
@@ -16,7 +15,7 @@ from lemely.core.schemas import (
 _ANSWER_RE = re.compile(r"^\s*(?P<question>[A-Za-z0-9_().-]+)\s*[:.)-]?\s*(?P<answer>\S+)\s*$")
 
 
-def parse_answer_input(answer_input: str | Mapping[str, Any]) -> dict[str, str]:
+def parse_answer_input(answer_input: str | Mapping[str, object]) -> dict[str, str]:
     if isinstance(answer_input, Mapping):
         return {
             str(question_id): str(answer).strip().upper()
@@ -58,7 +57,7 @@ def _exam_metadata(mark_scheme: MarkScheme) -> ExamMetadata:
     )
 
 
-def _load_mark_scheme(mark_scheme: MarkScheme | Mapping[str, Any] | str) -> MarkScheme:
+def _load_mark_scheme(mark_scheme: MarkScheme | Mapping[str, object] | str) -> MarkScheme:
     if isinstance(mark_scheme, MarkScheme):
         return mark_scheme
     if isinstance(mark_scheme, str):
@@ -67,8 +66,8 @@ def _load_mark_scheme(mark_scheme: MarkScheme | Mapping[str, Any] | str) -> Mark
 
 
 def correct_mcq_answers(
-    mark_scheme: MarkScheme | Mapping[str, Any] | str,
-    answer_input: str | Mapping[str, Any],
+    mark_scheme: MarkScheme | Mapping[str, object] | str,
+    answer_input: str | Mapping[str, object],
 ) -> CorrectionResult:
     scheme = _load_mark_scheme(mark_scheme)
     answers = parse_answer_input(answer_input)

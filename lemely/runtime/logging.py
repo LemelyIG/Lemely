@@ -1,4 +1,5 @@
 """structlog configuration: stderr-only, TTY-auto JSON vs console, secret redaction."""
+
 from __future__ import annotations
 
 import logging
@@ -7,23 +8,18 @@ from typing import IO, Any, Literal
 
 import structlog
 
-_SECRET_KEYS = frozenset(
-    {"api_key", "gemini_api_key", "password", "token", "authorization"}
-)
+_SECRET_KEYS = frozenset({"api_key", "gemini_api_key", "password", "token", "authorization"})
 
 
 def _redact(_logger: Any, _name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
     def walk(value: Any) -> Any:
         if isinstance(value, dict):
-            return {
-                k: ("***" if k.lower() in _SECRET_KEYS else walk(v))
-                for k, v in value.items()
-            }
+            return {k: ("***" if k.lower() in _SECRET_KEYS else walk(v)) for k, v in value.items()}
         if isinstance(value, list):
             return [walk(v) for v in value]
         return value
 
-    return walk(event_dict)  # type: ignore[return-value]
+    return walk(event_dict)  # type: ignore[no-any-return]
 
 
 def configure_logging(
@@ -49,16 +45,14 @@ def configure_logging(
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        _redact,
+        _redact,  # type: ignore[list-item]
     ]
 
     structlog.configure(
-        processors=shared_processors + [renderer],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, level)
-        ),
+        processors=[*shared_processors, renderer],
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level)),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=out),
+        logger_factory=structlog.PrintLoggerFactory(file=out),  # type: ignore[arg-type]
         cache_logger_on_first_use=True,
     )
 
@@ -69,9 +63,7 @@ def configure_logging(
 
     class _StructlogBridge(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
-            structlog.get_logger(record.name).log(
-                record.levelno, record.getMessage()
-            )
+            structlog.get_logger(record.name).log(record.levelno, record.getMessage())
 
     root.addHandler(_StructlogBridge(level=getattr(logging, level)))
     root.setLevel(getattr(logging, level))

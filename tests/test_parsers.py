@@ -1,7 +1,7 @@
 import unittest
 
-from lemely.io.parsers import GeminiMarkSchemeParser
 from lemely.core.loose_schemas import MarkScheme
+from lemely.io.parsers import GeminiMarkSchemeParser
 from lemely.io.prompts.mark_scheme_parsing import PARSER_SYSTEM_PROMPT, PARSER_USER_PROMPT
 
 

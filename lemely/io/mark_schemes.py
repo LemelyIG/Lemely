@@ -3,16 +3,14 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from pydantic import ValidationError
 
 from lemely.core.loose_schemas import MarkScheme
-
-from lemely.io.metadata import parse_caie_filename_metadata
 from lemely.core.schemas import BatchParseItem, BatchParseResult, SourceLibraryEntry
+from lemely.io.metadata import parse_caie_filename_metadata
 
-ParserCallback = Callable[[Path], dict[str, Any] | MarkScheme]
+ParserCallback = Callable[[Path], dict[str, object] | MarkScheme]
 
 
 def index_source_library(source_root: str | Path) -> list[SourceLibraryEntry]:
@@ -31,7 +29,7 @@ def _validate_mark_scheme_json(path: Path) -> MarkScheme:
     return MarkScheme.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
 
-def _coerce_mark_scheme(raw: dict[str, Any] | MarkScheme) -> MarkScheme:
+def _coerce_mark_scheme(raw: dict[str, object] | MarkScheme) -> MarkScheme:
     if isinstance(raw, MarkScheme):
         return raw
     return MarkScheme.model_validate(raw)

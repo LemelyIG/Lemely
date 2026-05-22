@@ -1,4 +1,5 @@
 """Tests for lemely doctor / lemely version subcommands."""
+
 from __future__ import annotations
 
 import json

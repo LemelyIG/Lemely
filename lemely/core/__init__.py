@@ -1,4 +1,5 @@
 """Pure logic — no disk, no network, no env."""
+
 from lemely.core.schemas import (
     AccuracyReport,
     BatchParseItem,

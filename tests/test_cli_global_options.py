@@ -1,7 +1,7 @@
 """Tests for click-based CLI global options."""
+
 from __future__ import annotations
 
-import json
 import unittest
 
 from click.testing import CliRunner

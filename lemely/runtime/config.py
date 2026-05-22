@@ -1,4 +1,5 @@
 """Settings loader: env > .env > lemely.toml > defaults. extra='forbid' everywhere."""
+
 from __future__ import annotations
 
 import os
@@ -6,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
 class GradioSettings(BaseModel):
@@ -54,17 +55,17 @@ class Settings(BaseSettings):
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls,
-        init_settings,
-        env_settings,
-        dotenv_settings,
-        file_secret_settings,
-    ):
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
         # Precedence: env > .env > init (which we use for TOML) > file-secrets > defaults
         return (
-            env_settings,        # highest: LEMELY_* env vars
-            dotenv_settings,     # .env file
-            init_settings,       # TOML payload from load_settings(**toml_data)
+            env_settings,  # highest: LEMELY_* env vars
+            dotenv_settings,  # .env file
+            init_settings,  # TOML payload from load_settings(**toml_data)
             file_secret_settings,
         )
 
@@ -80,9 +81,7 @@ def _discover_toml(cwd: Path) -> Path | None:
     return None
 
 
-def load_settings(
-    *, toml_path: Path | None = None, cwd: Path | None = None
-) -> Settings:
+def load_settings(*, toml_path: Path | None = None, cwd: Path | None = None) -> Settings:
     """Load Settings with precedence: env > .env > TOML > defaults.
 
     Args:

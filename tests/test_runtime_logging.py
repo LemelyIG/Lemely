@@ -1,4 +1,5 @@
 """Tests for lemely.runtime.logging configuration and redaction."""
+
 from __future__ import annotations
 
 import io

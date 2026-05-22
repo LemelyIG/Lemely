@@ -1,4 +1,5 @@
 """Walks lemely/core/ AST and asserts zero print() calls outside docstrings."""
+
 from __future__ import annotations
 
 import ast

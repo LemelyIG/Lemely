@@ -1,4 +1,5 @@
 """Tests for lemely.runtime.errors exception hierarchy."""
+
 from __future__ import annotations
 
 import unittest

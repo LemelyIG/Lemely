@@ -41,7 +41,7 @@ class GeminiMarkSchemeParser:
                 response_schema=MarkScheme.model_json_schema(),
                 system_instruction=PARSER_SYSTEM_PROMPT,
             ),
-            contents=[PARSER_USER_PROMPT, uploaded],
+            contents=[PARSER_USER_PROMPT, uploaded],  # type: ignore[arg-type]
         )
 
         raw_text = response.text or ""

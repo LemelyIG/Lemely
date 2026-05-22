@@ -1,4 +1,5 @@
 """Click-based CLI entrypoint for lemely."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,7 @@ import platform
 import sys
 from importlib import metadata as _md
 from pathlib import Path
-from typing import Any
+from typing import Literal, cast
 
 import click
 
@@ -29,15 +30,12 @@ from lemely.runtime.errors import LemelyError, ParseError
 from lemely.runtime.logging import configure_logging
 
 
-def _dump_json(payload: Any) -> None:
-    if hasattr(payload, "model_dump"):
-        data = payload.model_dump(mode="json")
-    else:
-        data = payload
+def _dump_json(payload: object) -> None:
+    data = payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload
     click.echo(json.dumps(data, indent=2, sort_keys=True))
 
 
-def _print_result(ctx: click.Context, payload: Any) -> None:
+def _print_result(ctx: click.Context, payload: object) -> None:
     if ctx.obj.get("json_output", False):
         _dump_json(payload)
         return
@@ -70,7 +68,7 @@ def _read_text_or_value(value: str) -> str:
     return value
 
 
-def _load_json_file(path: str | Path) -> Any:
+def _load_json_file(path: str | Path) -> object:
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -80,9 +78,7 @@ def _load_json_file(path: str | Path) -> Any:
 def _estimate_cost(source_root: str | Path) -> CostEstimate:
     root = Path(source_root)
     entries = index_source_library(root)
-    cached = sum(
-        1 for entry in entries if entry.source_path.with_suffix(".json").exists()
-    )
+    cached = sum(1 for entry in entries if entry.source_path.with_suffix(".json").exists())
     return CostEstimate(
         source_root=str(root),
         mark_scheme_pdfs=len(entries),
@@ -155,7 +151,10 @@ def cli(
         log_level = "DEBUG"
     elif quiet:
         log_level = "WARNING"
-    configure_logging(level=log_level, fmt=log_format)
+    configure_logging(
+        level=cast("Literal['DEBUG', 'INFO', 'WARNING', 'ERROR']", log_level),
+        fmt=cast("Literal['auto', 'json', 'console']", log_format),
+    )
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config_path
     ctx.obj["json_output"] = json_output
@@ -195,13 +194,9 @@ def parse_mark_schemes_cmd(
         if use_gemini
         else None
     )
-    result = process_mark_scheme_batch(
-        source_root, output_root, force=force, parser=parser
-    )
+    result = process_mark_scheme_batch(source_root, output_root, force=force, parser=parser)
     _print_result(ctx, result)
-    failures = [
-        item for item in result.items if item.status in {"failed", "invalid_existing"}
-    ]
+    failures = [item for item in result.items if item.status in {"failed", "invalid_existing"}]
     if failures:
         if on_error == "fail":
             raise click.exceptions.Exit(ParseError.exit_code)
@@ -211,7 +206,9 @@ def parse_mark_schemes_cmd(
 
 
 @cli.command("correct-paper")
-@click.option("--mark-scheme", "mark_scheme", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--mark-scheme", "mark_scheme", required=True, type=click.Path(exists=True, dir_okay=False)
+)
 @click.option("--answers", required=True, help="Answer text, JSON object, or path to a file.")
 @click.pass_context
 def correct_paper_cmd(ctx: click.Context, mark_scheme: str, answers: str) -> None:
@@ -276,15 +273,13 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
             toml_path=Path(ctx.obj["config_path"]) if ctx.obj.get("config_path") else None
         )
         record("config_loads", True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         record("config_loads", False, str(exc))
         _print_result(ctx, {"all_passed": False, "checks": checks})
         raise click.exceptions.Exit(ConfigError.exit_code) from exc
 
     # Accept GEMINI_API_KEY (standard) or LEMELY_GEMINI_API_KEY (prefixed).
-    has_key = bool(
-        (settings.gemini_api_key is not None) or os.environ.get("GEMINI_API_KEY")
-    )
+    has_key = bool((settings.gemini_api_key is not None) or os.environ.get("GEMINI_API_KEY"))
     record("gemini_api_key", has_key)
 
     record(
@@ -356,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         log.warning("interrupted")
         return 130
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.exception("unexpected_error", error_type=type(exc).__name__)
         return 1
 

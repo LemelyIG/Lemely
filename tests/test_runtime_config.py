@@ -1,4 +1,5 @@
 """Tests for lemely.runtime.config Settings loading and validation."""
+
 from __future__ import annotations
 
 import os
@@ -9,7 +10,7 @@ from tempfile import TemporaryDirectory
 
 from pydantic import ValidationError
 
-from lemely.runtime.config import Settings, load_settings
+from lemely.runtime.config import load_settings
 
 
 class _IsolatedEnv:
@@ -19,7 +20,7 @@ class _IsolatedEnv:
         self.overrides = overrides
         self._snapshot: dict[str, str] = {}
 
-    def __enter__(self) -> "_IsolatedEnv":
+    def __enter__(self) -> _IsolatedEnv:
         self._snapshot = dict(os.environ)
         for key in list(os.environ):
             if key.startswith("LEMELY_"):
@@ -34,9 +35,8 @@ class _IsolatedEnv:
 
 class SettingsTests(unittest.TestCase):
     def test_defaults_load_without_any_source(self) -> None:
-        with _IsolatedEnv():
-            with TemporaryDirectory() as tmp:
-                s = load_settings(toml_path=None, cwd=Path(tmp))
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
         self.assertEqual(s.gradio.host, "127.0.0.1")
         self.assertEqual(s.gradio.port, 7860)
         self.assertEqual(s.logging.level, "INFO")
@@ -47,13 +47,14 @@ class SettingsTests(unittest.TestCase):
     def test_extra_forbid_rejects_unknown_keys_in_toml(self) -> None:
         with TemporaryDirectory() as tmp:
             toml = Path(tmp) / "lemely.toml"
-            toml.write_text(textwrap.dedent("""
+            toml.write_text(
+                textwrap.dedent("""
                 [gradio]
                 hsot = "0.0.0.0"
-            """).strip())
-            with _IsolatedEnv():
-                with self.assertRaises(ValidationError) as cm:
-                    load_settings(toml_path=toml, cwd=Path(tmp))
+            """).strip()
+            )
+            with _IsolatedEnv(), self.assertRaises(ValidationError) as cm:
+                load_settings(toml_path=toml, cwd=Path(tmp))
         self.assertIn("hsot", str(cm.exception))
 
     def test_env_overrides_toml(self) -> None:
@@ -65,9 +66,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(s.gradio.port, 9000)
 
     def test_secret_redaction_in_dump(self) -> None:
-        with _IsolatedEnv(LEMELY_GEMINI_API_KEY="sk-secret-xyz"):
-            with TemporaryDirectory() as tmp:
-                s = load_settings(toml_path=None, cwd=Path(tmp))
+        with _IsolatedEnv(LEMELY_GEMINI_API_KEY="sk-secret-xyz"), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
         # Guard: ensure the secret actually loaded, so the redaction assertion
         # below isn't trivially true on an unset field.
         self.assertIsNotNone(s.gemini_api_key)

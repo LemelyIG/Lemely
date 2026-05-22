@@ -1,19 +1,23 @@
 """Human-mode (Rich) renderers for CLI output. Pure: take models, return renderables."""
+
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from rich import box
 from rich.markup import escape
 from rich.table import Table
 
-from lemely.core.schemas import (
-    AccuracyReport,
-    BatchParseResult,
-    CorrectionResult,
-    CostEstimate,
-    GradePrediction,
-    QuizPayload,
-    WeaknessReport,
-)
+if TYPE_CHECKING:
+    from lemely.core.schemas import (
+        AccuracyReport,
+        BatchParseResult,
+        CorrectionResult,
+        CostEstimate,
+        GradePrediction,
+        QuizPayload,
+        WeaknessReport,
+    )
 
 
 def render_cost_estimate(est: CostEstimate) -> Table:

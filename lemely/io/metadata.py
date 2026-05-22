@@ -5,7 +5,6 @@ from pathlib import Path
 
 from lemely.core.schemas import ExamMetadata
 
-
 _CAIE_MARK_SCHEME_RE = re.compile(
     r"^(?P<subject_code>\d{4})_(?P<session>[msw])(?P<year>\d{2})_ms_(?P<paper>\d)(?P<variant>\d)\.pdf$",
     re.IGNORECASE,
