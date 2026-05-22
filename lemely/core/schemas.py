@@ -90,6 +90,9 @@ class CorrectedQuestion(StrictModel):
     expected_answer: str | None = None
     topic: str | None = None
     review_reason: str | None = None
+    marker_source: Literal["deterministic", "ai", "missing"] = "deterministic"
+    feedback: str | None = None
+    matched_point_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_awarded_marks(self) -> CorrectedQuestion:
@@ -153,3 +156,70 @@ class AccuracyReport(StrictModel):
     correction: CorrectionResult
     weaknesses: WeaknessReport
     grade_prediction: GradePrediction
+
+
+class ExtractedAnswer(StrictModel):
+    question_id: str
+    answer: str
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    source_region: str | None = None
+
+
+class ExtractedAnswers(StrictModel):
+    paper_id: str
+    source_scan: str
+    answers: list[ExtractedAnswer]
+
+
+class AIMarkResponse(StrictModel):
+    awarded_marks: int = Field(..., ge=0)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    matched_point_ids: list[str] = Field(default_factory=list)
+    feedback: str
+
+
+class SubjectResult(StrictModel):
+    subject_code: str = Field(..., pattern=r"^\d{4}$")
+    session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]
+    session_year: int | None = Field(None, ge=2000, le=2100)
+    paper_results: list[CorrectionResult] = Field(..., min_length=1)
+    awarded_marks: int = 0
+    maximum_marks: int = 0
+    percentage: float = 0.0
+    grade: str = "U"
+    weaknesses: WeaknessReport
+    needs_teacher_review: bool = False
+
+    @model_validator(mode="after")
+    def validate_and_compute(self) -> SubjectResult:
+        for paper in self.paper_results:
+            m = paper.metadata
+            if m.subject_code != self.subject_code:
+                raise ValueError(
+                    f"paper subject_code {m.subject_code} != subject {self.subject_code}"
+                )
+            if m.session_month != self.session_month:
+                raise ValueError(
+                    f"paper session_month {m.session_month} != subject {self.session_month}"
+                )
+            if m.session_year != self.session_year:
+                raise ValueError(
+                    f"paper session_year {m.session_year} != subject {self.session_year}"
+                )
+
+        awarded = sum(p.awarded_marks for p in self.paper_results)
+        maximum = sum(p.maximum_marks for p in self.paper_results)
+        pct = (awarded / maximum * 100.0) if maximum else 0.0
+        grade = "U"
+        for cand, threshold in [("A", 80.0), ("B", 70.0), ("C", 60.0), ("D", 50.0), ("E", 40.0)]:
+            if pct >= threshold:
+                grade = cand
+                break
+        needs_review = any(p.needs_teacher_review for p in self.paper_results)
+
+        object.__setattr__(self, "awarded_marks", awarded)
+        object.__setattr__(self, "maximum_marks", maximum)
+        object.__setattr__(self, "percentage", round(pct, 2))
+        object.__setattr__(self, "grade", grade)
+        object.__setattr__(self, "needs_teacher_review", needs_review)
+        return self

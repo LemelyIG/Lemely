@@ -93,6 +93,7 @@ def correct_mcq_answers(
                     expected_answer=expected,
                     topic=question.topic_hint,
                     review_reason="missing answer",
+                    marker_source="deterministic",
                 )
             )
             continue
@@ -110,6 +111,7 @@ def correct_mcq_answers(
                     expected_answer=expected,
                     topic=question.topic_hint,
                     review_reason="invalid MCQ answer",
+                    marker_source="deterministic",
                 )
             )
             continue
@@ -126,6 +128,7 @@ def correct_mcq_answers(
                 student_answer=student_answer,
                 expected_answer=expected,
                 topic=question.topic_hint,
+                marker_source="deterministic",
             )
         )
 
