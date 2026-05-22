@@ -95,5 +95,62 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(quiz["questions"]), 1)
 
 
+def test_correct_paper_mcq_only_works_without_api_key():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scheme_path = root / "0625_m20_ms_12.json"
+        scheme_path.write_text(real_mcq_mark_scheme_text(), "utf-8")
+        answers = '{"1": "A", "2": "B"}'
+        exit_code, payload = run_cli(
+            "correct-paper",
+            "--mark-scheme", str(scheme_path),
+            "--answers", answers,
+            "--mcq-only",
+        )
+    assert exit_code == 0
+    assert "correction" in payload
+
+
+def test_extract_answers_requires_existing_scan():
+    with tempfile.TemporaryDirectory() as tmp:
+        scheme = Path(tmp) / "0625_m20_ms_12.json"
+        scheme.write_text(real_mcq_mark_scheme_text(), "utf-8")
+        exit_code = main([
+            "--json", "extract-answers",
+            "--mark-scheme", str(scheme),
+            "--scan", str(Path(tmp) / "nonexistent.png"),
+        ])
+    assert exit_code != 0
+
+
+def test_aggregate_subject_combines_three_papers():
+    with tempfile.TemporaryDirectory() as tmp:
+        from lemely.core.schemas import (
+            ConfidenceBand, CorrectedQuestion, CorrectionResult, ExamMetadata,
+        )
+        paths = []
+        for paper_num in (2, 4, 6):
+            meta = ExamMetadata(
+                subject_code="0625", paper_number=paper_num, paper_variant=1,
+                session_month="May/June", session_year=2020,
+            )
+            cr = CorrectionResult(metadata=meta, questions=[
+                CorrectedQuestion(
+                    question_id=f"q{paper_num}", awarded_marks=5, maximum_marks=10,
+                    confidence=ConfidenceBand.HIGH, confidence_score=1.0,
+                    needs_teacher_review=False, topic="kinematics",
+                ),
+            ])
+            p = Path(tmp) / f"paper{paper_num}.json"
+            p.write_text(cr.model_dump_json(indent=2), "utf-8")
+            paths.append(str(p))
+
+        exit_code, payload = run_cli("aggregate-subject", *paths)
+    assert exit_code == 0
+    assert payload["subject_code"] == "0625"
+    assert payload["awarded_marks"] == 15
+    assert payload["maximum_marks"] == 30
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,8 +20,10 @@ from lemely.core.schemas import (
     BatchParseResult,
     CorrectionResult,
     CostEstimate,
+    ExtractedAnswers,
     GradePrediction,
     QuizPayload,
+    SubjectResult,
     WeaknessReport,
 )
 from lemely.io.mark_schemes import index_source_library, process_mark_scheme_batch
@@ -48,6 +50,11 @@ def _print_result(ctx: click.Context, payload: object) -> None:
             console.print(table)
     elif isinstance(payload, BatchParseResult):
         console.print(renderers.render_batch_result(payload))
+    elif isinstance(payload, ExtractedAnswers):
+        console.print(renderers.render_extracted_answers(payload))
+    elif isinstance(payload, SubjectResult):
+        for table in renderers.render_subject_result(payload):
+            console.print(table)
     elif isinstance(payload, CostEstimate):
         console.print(renderers.render_cost_estimate(payload))
     elif isinstance(payload, WeaknessReport):
@@ -218,14 +225,60 @@ def parse_mark_schemes_cmd(
 
 
 @cli.command("correct-paper")
-@click.option(
-    "--mark-scheme", "mark_scheme", required=True, type=click.Path(exists=True, dir_okay=False)
-)
-@click.option("--answers", required=True, help="Answer text, JSON object, or path to a file.")
+@click.option("--mark-scheme", "mark_scheme", required=True,
+              type=click.Path(exists=True, dir_okay=False))
+@click.option("--answers", required=True,
+              help="Answer JSON object, ExtractedAnswers JSON file path, or simple text.")
+@click.option("--mcq-only", is_flag=True,
+              help="Skip AI marking for non-MCQ questions (they'll be marker_source=missing).")
+@click.option("--on-error", type=click.Choice(["continue", "fail"]),
+              default="fail", show_default=True)
 @click.pass_context
-def correct_paper_cmd(ctx: click.Context, mark_scheme: str, answers: str) -> None:
+def correct_paper_cmd(
+    ctx: click.Context,
+    mark_scheme: str,
+    answers: str,
+    mcq_only: bool,
+    on_error: str,
+) -> None:
+    import json as _json
+
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.correction_ai import correct_paper as hybrid_correct_paper
+    from lemely.io.gemini import GeminiClient
+
+    ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
+
     payload = _read_text_or_value(answers)
-    _print_result(ctx, _build_accuracy_report(mark_scheme, payload))
+    try:
+        ea = ExtractedAnswers.model_validate_json(payload)
+        extracted: object = ea
+    except Exception:
+        try:
+            ea_dict = _json.loads(payload)
+            if isinstance(ea_dict, dict):
+                extracted = ea_dict
+            else:
+                raise ValueError("Answers JSON must be an object.")
+        except Exception:
+            from lemely.core.correction import parse_answer_input
+            extracted = parse_answer_input(payload)
+
+    settings = _get_settings(ctx)
+    client = None if mcq_only else GeminiClient(settings)
+
+    correction = hybrid_correct_paper(
+        mark_scheme=ms,
+        extracted_answers=extracted,  # type: ignore[arg-type]
+        gemini_client=client,
+        mcq_only=mcq_only,
+    )
+    report = AccuracyReport(
+        correction=correction,
+        weaknesses=summarize_weaknesses(correction),
+        grade_prediction=predict_grade(correction),
+    )
+    _print_result(ctx, report)
 
 
 @cli.command("predict-grade")
@@ -338,6 +391,64 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
 
     if not all_passed:
         raise click.exceptions.Exit(ConfigError.exit_code)
+
+
+@cli.command("extract-answers")
+@click.option("--mark-scheme", "mark_scheme", required=True,
+              type=click.Path(exists=True, dir_okay=False))
+@click.option("--scan", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="Scanned student paper (PDF, PNG, or JPG).")
+@click.option("--on-error", type=click.Choice(["continue", "fail"]),
+              default="fail", show_default=True)
+@click.pass_context
+def extract_answers_cmd(
+    ctx: click.Context, mark_scheme: str, scan: str, on_error: str,
+) -> None:
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.answer_extraction import GeminiAnswerExtractor
+    from lemely.io.gemini import GeminiClient
+
+    settings = _get_settings(ctx)
+    ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
+    extractor = GeminiAnswerExtractor(GeminiClient(settings))
+    result = extractor(scan_path=Path(scan), mark_scheme=ms)
+    _print_result(ctx, result)
+
+
+@cli.command("aggregate-subject")
+@click.argument("correction_jsons", nargs=-1, required=True,
+                type=click.Path(exists=True, dir_okay=False))
+@click.option("--on-error", type=click.Choice(["continue", "fail"]),
+              default="fail", show_default=True)
+@click.pass_context
+def aggregate_subject_cmd(
+    ctx: click.Context, correction_jsons: tuple[str, ...], on_error: str,
+) -> None:
+    from lemely.io.subject import aggregate_subject
+
+    papers = [
+        CorrectionResult.model_validate(_load_json_file(p))
+        for p in correction_jsons
+    ]
+    _print_result(ctx, aggregate_subject(papers))
+
+
+@cli.command("ui")
+@click.option("--host", default=None)
+@click.option("--port", default=None, type=int)
+@click.pass_context
+def ui_cmd(ctx: click.Context, host: str | None, port: int | None) -> None:
+    from lemely.app.gradio_app import launch
+    from lemely.runtime.config import GradioSettings
+
+    settings = _get_settings(ctx)
+    if host is not None or port is not None:
+        cur = settings.gradio
+        settings = settings.model_copy(update={"gradio": GradioSettings(
+            host=host or cur.host, port=port or cur.port,
+            max_file_size_mb=cur.max_file_size_mb,
+        )})
+    launch(settings)
 
 
 def main(argv: list[str] | None = None) -> int:
