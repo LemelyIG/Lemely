@@ -5,16 +5,19 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel
+import structlog
+from pydantic import BaseModel, Field
 
 from lemely.core.loose_schemas import MarkScheme
+
+log = structlog.get_logger()
 
 
 class GoldenAnswer(BaseModel):
     """Ground truth for a single leaf question."""
 
     student_answer: str
-    awarded_marks: int
+    awarded_marks: int = Field(..., ge=0)
     notes: str | None = None
 
 
@@ -45,12 +48,13 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
         if not ms_path.exists() or not ans_path.exists():
             continue
 
-        mark_scheme = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
-        raw: dict[str, object] = json.loads(ans_path.read_text(encoding="utf-8"))
-        ground_truth = {
-            qid: GoldenAnswer.model_validate(v)
-            for qid, v in raw.items()
-        }
+        try:
+            mark_scheme = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
+            raw: dict[str, object] = json.loads(ans_path.read_text(encoding="utf-8"))
+            ground_truth = {qid: GoldenAnswer.model_validate(v) for qid, v in raw.items()}
+        except Exception as exc:
+            log.warning("golden_case_load_error", case_dir=str(case_dir), error=str(exc))
+            continue
         scan_path = case_dir / "scan.pdf"
         cases.append(GoldenCase(
             paper_id=case_dir.name,

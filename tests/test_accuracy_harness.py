@@ -77,3 +77,21 @@ class LoadGoldenCasesTests(unittest.TestCase):
             (case_dir / "answers.json").write_text(json.dumps(answers))
             cases = load_golden_cases(Path(tmp))
         self.assertEqual(cases[0].ground_truth["1"].notes, "owtte")
+
+    def test_multiple_cases_sorted_order(self):
+        from lemely.accuracy.harness import load_golden_cases
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_case_dir(Path(tmp), name="zzz_paper")
+            self._make_case_dir(Path(tmp), name="aaa_paper")
+            cases = load_golden_cases(Path(tmp))
+        self.assertEqual(len(cases), 2)
+        self.assertEqual(cases[0].paper_id, "aaa_paper")
+        self.assertEqual(cases[1].paper_id, "zzz_paper")
+
+    def test_skips_malformed_answers_json(self):
+        from lemely.accuracy.harness import load_golden_cases
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = self._make_case_dir(Path(tmp))
+            (case_dir / "answers.json").write_text("{ not valid json }")
+            cases = load_golden_cases(Path(tmp))
+        self.assertEqual(len(cases), 0)
