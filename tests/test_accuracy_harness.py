@@ -95,3 +95,77 @@ class LoadGoldenCasesTests(unittest.TestCase):
             (case_dir / "answers.json").write_text("{ not valid json }")
             cases = load_golden_cases(Path(tmp))
         self.assertEqual(len(cases), 0)
+
+
+class MetricComputationTests(unittest.TestCase):
+
+    def _qr(self, predicted: int, truth: int, confidence: float,
+             review: bool, is_mcq: bool = False) -> object:
+        from lemely.accuracy.harness import QuestionResult
+        return QuestionResult(
+            question_id="q",
+            question_type="mcq" if is_mcq else "theory",
+            predicted_marks=predicted,
+            truth_marks=truth,
+            confidence_score=confidence,
+            needs_teacher_review=review,
+        )
+
+    def test_all_correct_accuracy_is_1(self):
+        from lemely.accuracy.harness import _compute_metrics
+        results = [self._qr(2, 2, 0.95, False), self._qr(1, 1, 0.92, False)]
+        m = _compute_metrics(results)
+        self.assertAlmostEqual(m.mark_accuracy, 1.0)
+
+    def test_half_correct_accuracy(self):
+        from lemely.accuracy.harness import _compute_metrics
+        results = [self._qr(2, 2, 0.95, False), self._qr(0, 2, 0.72, True)]
+        m = _compute_metrics(results)
+        self.assertAlmostEqual(m.mark_accuracy, 0.5)
+
+    def test_theory_only_excludes_mcq(self):
+        from lemely.accuracy.harness import _compute_metrics
+        results = [
+            self._qr(1, 1, 1.0, False, is_mcq=True),   # MCQ correct
+            self._qr(0, 2, 0.72, True, is_mcq=False),  # theory wrong
+        ]
+        m = _compute_metrics(results)
+        self.assertAlmostEqual(m.mark_accuracy_theory, 0.0)
+
+    def test_flag_precision_high(self):
+        from lemely.accuracy.harness import _compute_metrics
+        results = [
+            self._qr(2, 2, 0.95, False),  # confident + correct
+            self._qr(0, 2, 0.91, False),  # confident + wrong
+        ]
+        m = _compute_metrics(results)
+        self.assertAlmostEqual(m.flag_precision_high, 0.5)
+
+    def test_flag_recall(self):
+        from lemely.accuracy.harness import _compute_metrics
+        results = [
+            self._qr(0, 2, 0.55, True),   # wrong + flagged
+            self._qr(0, 2, 0.91, False),  # wrong + not flagged
+        ]
+        m = _compute_metrics(results)
+        self.assertAlmostEqual(m.flag_recall, 0.5)
+
+    def test_no_wrong_flag_recall_is_one(self):
+        from lemely.accuracy.harness import _compute_metrics
+        results = [self._qr(2, 2, 0.97, False)]
+        m = _compute_metrics(results)
+        self.assertAlmostEqual(m.flag_recall, 1.0)
+
+    def test_calibration_bucket_assignment(self):
+        from lemely.accuracy.harness import _build_calibration
+        results = [
+            self._qr(1, 1, 0.95, False),  # 0.90–1.00 bucket, correct
+            self._qr(0, 1, 0.85, True),   # 0.80–0.90 bucket, wrong
+        ]
+        buckets = _build_calibration(results)
+        top = buckets[0]     # 0.90–1.00
+        second = buckets[1]  # 0.80–0.90
+        self.assertEqual(top.predictions, 1)
+        self.assertEqual(top.correct, 1)
+        self.assertEqual(second.predictions, 1)
+        self.assertEqual(second.correct, 0)
