@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 
-VERSION = "1"
+VERSION = "3"
 
 EXTRACTOR_SYSTEM_PROMPT = """
 You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
@@ -25,9 +25,27 @@ Different question types require different extraction:
 
 Each ExtractedAnswer needs:
 - question_id (string) — must match the mark scheme question id exactly (e.g. "1", "1(a)(i)").
-- answer (string) — see above; empty string if blank/unanswered.
-- confidence (float 0.0-1.0) — set below 0.7 when handwriting or layout makes you uncertain.
+- answer (string) — the final answer as described above; empty string if blank/unanswered.
+- confidence (float 0.0-1.0) — calibrated to these bands:
+  - 0.95–1.00: handwriting unambiguous; answer matches expected format exactly
+  - 0.80–0.95: answer clear but required minor interpretation (e.g. messy digit, standard form)
+  - 0.60–0.80: genuinely borderline — handwriting partially obscured or layout ambiguous
+  - 0.00–0.60: handwriting unclear, student skipped the question, or answer contradicts itself
 - source_region (string or null) — e.g. "page 2, q1a area".
+- working_out (string or null) — see below.
+
+**working_out field:**
+Capture everything the student wrote in designated working/annotation areas for that question.
+This includes:
+- Show-your-working boxes and rough-work space adjacent to the question.
+- Intermediate calculation steps, substituted values, and unit conversions written out.
+- Equations the student wrote before arriving at the final answer.
+- Annotations, labelled diagrams, or marginal notes in the allowed area for that question.
+- Crossed-out attempts that are still legible and relevant.
+
+Set working_out to null for MCQ questions or simple one-line recall questions where
+no working area is present. For all other question types, transcribe the working content
+faithfully even if messy or incomplete — a null here means no working was found at all.
 
 Do not invent answers. Do not extract questions absent from the manifest. If the student left
 a question blank, return answer="" with high confidence.
@@ -42,10 +60,15 @@ def _summarize_question(q: Question) -> str:
         parts.append(f"  command: {cmd[:120]}")
     if q.type == QuestionType.MCQ:
         parts.append("  expected answer shape: single letter A/B/C/D")
+        parts.append("  working_out: null (no working expected)")
     elif q.type in {QuestionType.CALCULATION, QuestionType.EQUATION}:
         parts.append("  expected answer shape: numerical value + unit if applicable")
+        parts.append("  working_out: transcribe all steps, substitutions, and intermediate values")
     elif q.type in {QuestionType.LEVELS_BASED, QuestionType.INDICATIVE_CONTENT}:
         parts.append("  expected answer shape: extended written response")
+        parts.append("  working_out: transcribe any planning notes or annotations in the allowed area")
+    else:
+        parts.append("  working_out: transcribe any working or annotations if present, else null")
     return "\n".join(parts)
 
 
@@ -73,7 +96,9 @@ def build_extractor_user_prompt(mark_scheme: MarkScheme) -> str:
         f"Question manifest:\n{manifest}\n\n"
         f"Return JSON: {{\"answers\": [ExtractedAnswer, ...]}}. Include one ExtractedAnswer "
         f"per leaf question above whose answer you can identify in the scan. Skip questions "
-        f"you cannot find at all (do not invent question_ids)."
+        f"you cannot find at all (do not invent question_ids). "
+        f"Populate working_out for non-MCQ questions that have visible working or annotations; "
+        f"set it to null where no working area exists."
     )
 
 
