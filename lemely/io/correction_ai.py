@@ -146,7 +146,7 @@ def _build_ai_corrected(
         maximum_marks=question.marks,
         confidence=confidence_band_for_score(mark.confidence),
         confidence_score=mark.confidence,
-        needs_teacher_review=mark.confidence < 0.7,
+        needs_teacher_review=mark.confidence < 0.80,
         student_answer=student_answer or None,
         expected_answer=None,
         topic=question.topic_hint,

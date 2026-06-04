@@ -28,7 +28,7 @@ model = "gemini-2.5-flash"
 
 # Escalation: re-mark with a stronger model when confidence < threshold.
 # escalation_model = "gemini-2.5-pro"
-# escalation_confidence_threshold = 0.6
+# escalation_confidence_threshold = 0.8
 
 # Thinking budget per task (tokens; 0 = disabled).
 # [gemini.thinking_budget_for]

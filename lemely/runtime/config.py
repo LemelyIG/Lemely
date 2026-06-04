@@ -39,7 +39,7 @@ class GeminiSettings(BaseModel):
     correction_model: str | None = None
     # Escalation: re-mark with a stronger model when marker confidence is low.
     escalation_model: str | None = None
-    escalation_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
     thinking_budget_for: dict[str, int] = Field(default_factory=dict)
     # Pricing overrides: model_name → [input_usd_per_1k, output_usd_per_1k].

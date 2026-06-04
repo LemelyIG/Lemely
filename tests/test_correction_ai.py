@@ -233,3 +233,31 @@ class ECFContextTests(unittest.TestCase):
         )
         self.assertIsNotNone(prior, "prior_results not passed to second build_marker_user_prompt call")
         self.assertIn("1(a)", prior)
+
+
+class ThresholdTests(unittest.TestCase):
+
+    def _make_question(self):
+        from lemely.core.loose_schemas import Question, QuestionType
+        return Question.model_construct(
+            id="2", marks=2, type=QuestionType.EXPLANATION,
+            answer_points=[], parts=[], assessment_objectives=[],
+            rejected_answers=[], ignored_answers=[],
+        )
+
+    def _make_mark(self, confidence: float):
+        from lemely.core.schemas import AIMarkResponse
+        return AIMarkResponse(
+            awarded_marks=1, confidence=confidence,
+            matched_point_ids=[], feedback="test",
+        )
+
+    def test_review_fires_below_0_80(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+        cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.75))
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_review_false_at_0_80(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+        cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.80))
+        self.assertFalse(cq.needs_teacher_review)
