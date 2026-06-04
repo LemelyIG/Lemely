@@ -121,3 +121,82 @@ class AnswerExtractorTests(unittest.TestCase):
         self.assertEqual(len(result.answers), 2)
         self.assertIn("gravity", result.answers[0].answer)
         self.assertIn("20 m/s", result.answers[1].answer)
+
+    def test_working_out_round_trips_through_extractor(self) -> None:
+        body = {"answers": [
+            {
+                "question_id": "1(b)",
+                "answer": "20 m/s",
+                "confidence": 0.9,
+                "source_region": "page 1, q1b",
+                "working_out": "v = d/t\nv = 100/5\nv = 20 m/s",
+            },
+        ]}
+        extractor = GeminiAnswerExtractor(_client_with_response(self.tmp, body))
+        result = extractor(scan_path=self.scan, mark_scheme=_theory_mark_scheme())
+        self.assertEqual(len(result.answers), 1)
+        self.assertEqual(result.answers[0].working_out, "v = d/t\nv = 100/5\nv = 20 m/s")
+
+    def test_mcq_working_out_is_none(self) -> None:
+        body = {"answers": [
+            {"question_id": "1", "answer": "A", "confidence": 0.99, "source_region": None, "working_out": None},
+        ]}
+        extractor = GeminiAnswerExtractor(_client_with_response(self.tmp, body))
+        result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+        self.assertIsNone(result.answers[0].working_out)
+
+
+class IDNormalizationTests(unittest.TestCase):
+
+    def test_canonical_id_strips_spaces_and_brackets(self):
+        from lemely.io.answer_extraction import _canonical_id
+        self.assertEqual(_canonical_id("1 a i"), _canonical_id("1(a)(i)"))
+
+    def test_canonical_id_strips_brackets_only(self):
+        from lemely.io.answer_extraction import _canonical_id
+        self.assertEqual(_canonical_id("1(a)"), _canonical_id("1a"))
+
+    def test_canonical_id_case_insensitive(self):
+        from lemely.io.answer_extraction import _canonical_id
+        self.assertEqual(_canonical_id("1(A)"), _canonical_id("1(a)"))
+
+    def test_normalize_matches_exact_id(self):
+        from lemely.io.answer_extraction import normalize_extracted_answers
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        manifest_ids = ["1", "1(a)", "1(b)"]
+        extracted = ExtractedAnswers(
+            paper_id="test", source_scan="scan.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1",    answer="A", confidence=0.9),
+                ExtractedAnswer(question_id="1(a)", answer="B", confidence=0.9),
+                ExtractedAnswer(question_id="1(b)", answer="C", confidence=0.9),
+            ],
+        )
+        normalized = normalize_extracted_answers(extracted, manifest_ids)
+        ids = {a.question_id for a in normalized.answers}
+        self.assertEqual(ids, {"1", "1(a)", "1(b)"})
+
+    def test_normalize_corrects_space_drift(self):
+        from lemely.io.answer_extraction import normalize_extracted_answers
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        manifest_ids = ["1(a)(i)"]
+        extracted = ExtractedAnswers(
+            paper_id="test", source_scan="scan.pdf",
+            answers=[ExtractedAnswer(question_id="1 a i", answer="X", confidence=0.7)],
+        )
+        normalized = normalize_extracted_answers(extracted, manifest_ids)
+        self.assertEqual(normalized.answers[0].question_id, "1(a)(i)")
+
+    def test_normalize_positional_fallback(self):
+        from lemely.io.answer_extraction import normalize_extracted_answers
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        manifest_ids = ["1(a)(i)"]
+        extracted = ExtractedAnswers(
+            paper_id="test", source_scan="scan.pdf",
+            answers=[
+                ExtractedAnswer(question_id="completely_unrecognised", answer="Y", confidence=0.6),
+            ],
+        )
+        normalized = normalize_extracted_answers(extracted, manifest_ids)
+        # Positional fallback: first extracted answer → first manifest ID
+        self.assertEqual(normalized.answers[0].question_id, "1(a)(i)")
