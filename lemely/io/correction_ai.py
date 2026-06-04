@@ -17,12 +17,14 @@ from lemely.core.schemas import (
     confidence_band_for_score,
 )
 from lemely.io.gemini import GeminiClient
+from lemely.io.validation import validate_mark_scheme
 from lemely.io.prompts.correction_ai import (
     MARKER_SYSTEM_PROMPT,
     VERSION,
     build_marker_user_prompt,
 )
 from lemely.runtime.errors import ConfigError
+from lemely.runtime.events import EventType, bus
 
 
 def _is_leaf_marked(q: Question) -> bool:
@@ -30,10 +32,17 @@ def _is_leaf_marked(q: Question) -> bool:
     return q.marks > 0 and not q.parts
 
 
-def _flatten_answers(extracted: ExtractedAnswers | Mapping[str, str]) -> dict[str, str]:
+def _flatten_answers(
+    extracted: ExtractedAnswers | Mapping[str, str],
+) -> dict[str, tuple[str, str | None, float]]:
+    """Return {question_id: (answer, working_out, confidence)} for every extracted answer."""
     if isinstance(extracted, ExtractedAnswers):
-        return {a.question_id: a.answer for a in extracted.answers}
-    return {str(k): str(v) for k, v in extracted.items()}
+        return {
+            a.question_id: (a.answer, a.working_out, a.confidence)
+            for a in extracted.answers
+        }
+    # Plain mapping fallback (Mapping[str, str]): no working_out or confidence available.
+    return {str(k): (str(v), None, 1.0) for k, v in extracted.items()}
 
 
 class AICorrector:
@@ -42,14 +51,50 @@ class AICorrector:
     def __init__(self, gemini_client: GeminiClient) -> None:
         self._client = gemini_client
 
-    def mark_question(self, question: Question, student_answer: str) -> AIMarkResponse:
-        return self._client.generate_structured(
+    def mark_question(
+        self,
+        question: Question,
+        student_answer: str,
+        student_working: str | None = None,
+    ) -> AIMarkResponse:
+        result = self._client.generate_structured(
             system_prompt=MARKER_SYSTEM_PROMPT,
-            user_prompt=build_marker_user_prompt(question, student_answer),
+            user_prompt=build_marker_user_prompt(question, student_answer, student_working),
             response_schema=AIMarkResponse,
             prompt_version=VERSION,
             extra_cache_key=f"q={question.id}",
+            task_tag="correction",
         )
+
+        # Auto-escalate when confidence is low and an escalation model is configured.
+        g = self._client._settings.gemini
+        if (
+            g.escalation_model
+            and g.escalation_model != g.model_for("correction")
+            and result.confidence < g.escalation_confidence_threshold
+        ):
+            bus.publish(
+                EventType.GEMINI_ESCALATE,
+                question_id=question.id,
+                confidence=result.confidence,
+                escalation_model=g.escalation_model,
+            )
+            escalation_prompt = (
+                build_marker_user_prompt(question, student_answer, student_working)
+                + "\n\nNOTE: A previous marking attempt returned low confidence. "
+                "Please re-evaluate carefully before responding."
+            )
+            result = self._client.generate_structured(
+                system_prompt=MARKER_SYSTEM_PROMPT,
+                user_prompt=escalation_prompt,
+                response_schema=AIMarkResponse,
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:escalated",
+                task_tag="correction",
+                model=g.escalation_model,
+            )
+
+        return result
 
 
 def _build_mcq_corrected(question: Question, answer: str | None) -> CorrectedQuestion:
@@ -142,6 +187,14 @@ def correct_paper(
     answers = _flatten_answers(extracted_answers)
     log = structlog.get_logger().bind(component="correct_paper")
 
+    # Validate mark scheme structure; warn but do not abort.
+    for w in validate_mark_scheme(scheme):
+        log.warning("mark_scheme_validation", question_id=w.question_id, message=w.message)
+        bus.publish(
+            EventType.WARNING,
+            message=f"Mark scheme validation [{w.question_id}]: {w.message}",
+        )
+
     leaves = [q for q in scheme.all_questions_flat() if _is_leaf_marked(q)]
     has_non_mcq = any(q.type != QuestionType.MCQ for q in leaves)
 
@@ -154,20 +207,54 @@ def correct_paper(
 
     corrected: list[CorrectedQuestion] = []
     for q in leaves:
-        student_answer = answers.get(q.id)
+        answer_tuple = answers.get(q.id)
+        student_answer = answer_tuple[0] if answer_tuple else None
+        student_working = answer_tuple[1] if answer_tuple else None
+
         if q.type == QuestionType.MCQ:
-            corrected.append(_build_mcq_corrected(q, student_answer))
+            cq = _build_mcq_corrected(q, student_answer)
+            corrected.append(cq)
+            bus.publish(
+                EventType.MARKING_PROGRESS,
+                question_id=q.id,
+                marker_source="deterministic",
+                confidence=1.0,
+                awarded=cq.awarded_marks,
+                max_marks=q.marks,
+            )
             continue
         if ai is None:
-            corrected.append(_build_missing_corrected(q, student_answer))
+            cq = _build_missing_corrected(q, student_answer)
+            corrected.append(cq)
+            bus.publish(
+                EventType.MARKING_PROGRESS,
+                question_id=q.id,
+                marker_source="missing",
+                confidence=0.0,
+                awarded=0,
+                max_marks=q.marks,
+            )
             continue
         try:
-            mark = ai.mark_question(q, student_answer or "")
+            mark = ai.mark_question(q, student_answer or "", student_working)
         except Exception as exc:
             log.warning("ai_marking_failed", question_id=q.id, error=str(exc))
             cq = _build_missing_corrected(q, student_answer)
             corrected.append(cq.model_copy(update={"review_reason": f"AI marking failed: {exc!s}"}))
+            bus.publish(
+                EventType.ERROR,
+                message=f"AI marking failed for q={q.id}: {exc!s}",
+            )
             continue
-        corrected.append(_build_ai_corrected(q, student_answer or "", mark))
+        cq = _build_ai_corrected(q, student_answer or "", mark)
+        corrected.append(cq)
+        bus.publish(
+            EventType.MARKING_PROGRESS,
+            question_id=q.id,
+            marker_source="ai",
+            confidence=mark.confidence,
+            awarded=cq.awarded_marks,
+            max_marks=q.marks,
+        )
 
     return CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected)
