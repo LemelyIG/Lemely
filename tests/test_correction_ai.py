@@ -261,3 +261,81 @@ class ThresholdTests(unittest.TestCase):
         from lemely.io.correction_ai import _build_ai_corrected
         cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.80))
         self.assertFalse(cq.needs_teacher_review)
+
+
+class ThinkingRetryTests(unittest.TestCase):
+    """Thinking retry fires before Pro escalation for borderline confidence."""
+
+    def test_thinking_retry_before_pro_escalation(self):
+        """When Flash confidence < threshold and correction_borderline budget > 0,
+        a second Flash call (with thinking) must precede any Pro escalation."""
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock
+
+        from lemely.core.loose_schemas import MarkScheme
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.io.correction_ai import correct_paper
+        from lemely.runtime.config import PathsSettings, load_settings
+
+        scheme = MarkScheme.model_validate({
+            "metadata": {
+                "subject": "Physics", "subject_code": "0625",
+                "paper_number": 4, "paper_variant": 2,
+                "session_month": "May/June", "session_year": 2020,
+                "paper_type": "theory_extended", "maximum_mark": 2,
+                "scheme_format": "point_based",
+            },
+            "questions": [{
+                "id": "1", "marks": 2, "type": "explanation",
+                "answer_points": [
+                    {"id": "p1", "point": "gravity", "marks": 1},
+                    {"id": "p2", "point": "speed",   "marks": 1},
+                ],
+            }],
+        })
+        extracted = ExtractedAnswers(
+            paper_id="test", source_scan="s.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="gravity", confidence=0.9)],
+        )
+
+        low_body  = json.dumps({"awarded_marks": 1, "confidence": 0.70,
+                                "matched_point_ids": [], "feedback": "borderline"})
+        high_body = json.dumps({"awarded_marks": 1, "confidence": 0.88,
+                                "matched_point_ids": [], "feedback": "clear"})
+
+        def _resp(body: str) -> MagicMock:
+            return MagicMock(
+                text=body,
+                candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+                usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with _IsolatedEnv():
+                s = load_settings(toml_path=None, cwd=Path(tmp))
+            s = s.model_copy(update={
+                "paths": PathsSettings(cache_dir=Path(tmp) / ".cache"),
+                "gemini": s.gemini.model_copy(update={
+                    "escalation_model": "gemini-2.5-pro",
+                    "escalation_confidence_threshold": 0.80,
+                    "thinking_budget_for": {"correction_borderline": 2000},
+                }),
+            })
+            mock_genai = MagicMock()
+            # Flash low-conf, then Flash+thinking high-conf (no Pro needed)
+            mock_genai.models.generate_content.side_effect = [_resp(low_body), _resp(high_body)]
+            mock_genai.files.upload.return_value = MagicMock()
+            from lemely.io.gemini import GeminiClient
+            client = GeminiClient(s, _genai_client=mock_genai)
+
+        correct_paper(scheme, extracted, gemini_client=client)
+
+        calls = mock_genai.models.generate_content.call_args_list
+        # Must have exactly 2 calls: Flash normal + Flash thinking (Pro NOT needed)
+        self.assertEqual(len(calls), 2,
+            f"Expected 2 API calls (Flash + thinking), got {len(calls)}")
+        # Second call must carry a ThinkingConfig (i.e. the thinking budget was applied).
+        second_call_repr = str(calls[1])
+        self.assertIn("ThinkingConfig", second_call_repr)

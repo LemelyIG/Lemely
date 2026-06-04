@@ -49,6 +49,7 @@ def render_example_toml() -> str:
     lines.append("# Thinking budget per task (tokens; 0 = disabled).")
     lines.append("# [gemini.thinking_budget_for]")
     lines.append("# mark_scheme = 8000")
+    lines.append("# correction_borderline = 2000  # retry borderline marks before Pro escalation")
     lines.append("")
     lines.append(f"max_retries = {s.gemini.max_retries}")
     lines.append(f"backoff_seconds = {s.gemini.backoff_seconds}")

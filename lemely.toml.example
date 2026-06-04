@@ -33,6 +33,7 @@ model = "gemini-2.5-flash"
 # Thinking budget per task (tokens; 0 = disabled).
 # [gemini.thinking_budget_for]
 # mark_scheme = 8000
+# correction_borderline = 2000  # retry borderline marks before Pro escalation
 
 max_retries = 3
 backoff_seconds = 2.0

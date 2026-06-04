@@ -72,7 +72,28 @@ class AICorrector:
             task_tag="correction",
         )
 
-        # Auto-escalate when confidence is low and an escalation model is configured.
+        # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
+        borderline_budget = g.thinking_budget_for.get("correction_borderline", 0)
+        if result.confidence < g.escalation_confidence_threshold and borderline_budget > 0:
+            bus.publish(
+                EventType.GEMINI_ESCALATE,
+                question_id=question.id,
+                confidence=result.confidence,
+                escalation_model=f"{g.model_for('correction')} (thinking)",
+            )
+            result = self._client.generate_structured(
+                system_prompt=MARKER_SYSTEM_PROMPT,
+                user_prompt=(
+                    user_prompt
+                    + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
+                ),
+                response_schema=AIMarkResponse,
+                prompt_version=VERSION,
+                extra_cache_key=f"q={question.id}:thinking",
+                task_tag="correction_borderline",
+            )
+
+        # Step 2: Pro escalation if confidence still below threshold.
         if (
             g.escalation_model
             and g.escalation_model != g.model_for("correction")
@@ -84,16 +105,13 @@ class AICorrector:
                 confidence=result.confidence,
                 escalation_model=g.escalation_model,
             )
-            escalation_prompt = (
-                build_marker_user_prompt(
-                    question, student_answer, student_working, prior_results
-                )
-                + "\n\nNOTE: A previous marking attempt returned low confidence. "
-                "Please re-evaluate carefully before responding."
-            )
             result = self._client.generate_structured(
                 system_prompt=MARKER_SYSTEM_PROMPT,
-                user_prompt=escalation_prompt,
+                user_prompt=(
+                    user_prompt
+                    + "\n\nNOTE: A previous marking attempt returned low confidence. "
+                    "Please re-evaluate carefully before responding."
+                ),
                 response_schema=AIMarkResponse,
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}:escalated",
