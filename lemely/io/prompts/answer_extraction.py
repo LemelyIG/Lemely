@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 
-VERSION = "4"
+VERSION = "5"
 
 EXTRACTOR_SYSTEM_PROMPT = """
 You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
@@ -49,6 +49,17 @@ faithfully even if messy or incomplete — a null here means no working was foun
 
 Do not invent answers. Do not extract questions absent from the manifest. If the student left
 a question blank, return answer="" with high confidence.
+
+**Type-specific failure mode guidance:**
+- **MCQ ambiguous:** If the circled letter is unclear (partial circle, crossing-out, overlap),
+  set confidence < 0.50 and describe exactly what you see in `source_region`. Do not guess
+  between two letters; pick the one with more evidence and flag the uncertainty.
+- **Calculation / Equation:** Preserve the student's exact units and standard form notation
+  (e.g. "1.6 x 10^-19 C" not "0.00000000000000000016 C"). If the final answer spans
+  multiple lines, record only the final stated value as `answer`; include earlier lines in
+  `working_out`.
+- **Crossed-out attempts:** Transcribe the final (non-crossed-out) attempt as `answer`.
+  Record any crossed-out but still legible earlier attempts in `working_out`.
 
 ---
 
