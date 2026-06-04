@@ -503,7 +503,7 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
         click.echo("\nTargets missed:", err=True)
         for f in failed:
             click.echo(f"  x {f}", err=True)
-        raise SystemExit(1)
+        raise click.exceptions.Exit(1)
 
 
 @cli.command("ui")
