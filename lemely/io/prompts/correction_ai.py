@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lemely.core.loose_schemas import Question
 
-VERSION = "3"
+VERSION = "4"
 
 MARKER_SYSTEM_PROMPT = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
@@ -66,6 +66,28 @@ Return:
 - matched_point_ids: ids of AnswerPoints / LevelDescriptors / DrawingCriteria the student satisfied.
 - feedback: one or two sentences a teacher can read; explain what was and was not credited,
   and cite the mark code (M1, A1, B1, ECF, etc.) where relevant.
+
+---
+
+## Worked Examples
+
+**Example 1 — exact mark-point match (confidence 0.95–1.00)**
+Mark scheme: "states that resistance increases with temperature (B1)"
+Student: "resistance goes up as temperature rises"
+-> awarded_marks=1, confidence=0.96, matched_point_ids=["p_resistance_temp"],
+   feedback="B1 awarded: student correctly states the relationship (owtte)."
+
+**Example 2 — owtte acceptance (confidence 0.80–0.95)**
+Mark scheme: "speed of light = 3.0 x 10^8 m/s (B1)"
+Student: "speed of light is 300 million metres per second"
+-> awarded_marks=1, confidence=0.85, matched_point_ids=["p_light_speed"],
+   feedback="B1 awarded: equivalent value stated in a different form (owtte)."
+
+**Example 3 — borderline rejection (confidence 0.60–0.80)**
+Mark scheme: "g = 9.81 N/kg (B1, cao)"
+Student: "g is approximately 10 N/kg"
+-> awarded_marks=0, confidence=0.68, matched_point_ids=[],
+   feedback="B1 not awarded: mark scheme requires cao; 10 N/kg is an approximation not accepted here."
 """
 
 

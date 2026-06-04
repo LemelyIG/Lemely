@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 
-VERSION = "3"
+VERSION = "4"
 
 EXTRACTOR_SYSTEM_PROMPT = """
 You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
@@ -49,6 +49,29 @@ faithfully even if messy or incomplete — a null here means no working was foun
 
 Do not invent answers. Do not extract questions absent from the manifest. If the student left
 a question blank, return answer="" with high confidence.
+
+---
+
+## Worked Examples
+
+**Example 1 — unambiguous MCQ (confidence 0.95–1.00)**
+Manifest entry: `- 1: type=mcq, marks=1`
+Student: large circled "B" with no ambiguity.
+-> question_id="1", answer="B", confidence=0.97, source_region="page 1 top-right", working_out=null
+
+**Example 2 — handwritten calculation (confidence 0.80–0.95)**
+Manifest entry: `- 3(b): type=calculation, marks=2`
+Student writes: "F = ma = 2.0 x 9.8 = 19.6 N" with intermediate steps in the working box.
+-> question_id="3(b)", answer="19.6 N", confidence=0.88,
+   source_region="page 3 q3b area",
+   working_out="F = ma = 2.0 x 9.8"
+
+**Example 3 — ambiguous MCQ, partially circled letter (confidence < 0.50)**
+Manifest entry: `- 5: type=mcq, marks=1`
+Student appears to circle both B and C; a faint line through B suggests B was reconsidered.
+-> question_id="5", answer="C", confidence=0.38,
+   source_region="page 5 q5: pencil circle overlapping B and C, faint strikethrough on B",
+   working_out=null
 """
 
 
