@@ -56,10 +56,16 @@ class AICorrector:
         question: Question,
         student_answer: str,
         student_working: str | None = None,
+        prior_results: dict[str, int] | None = None,
     ) -> AIMarkResponse:
+        g = self._client._settings.gemini
+        user_prompt = build_marker_user_prompt(
+            question, student_answer, student_working, prior_results
+        )
+
         result = self._client.generate_structured(
             system_prompt=MARKER_SYSTEM_PROMPT,
-            user_prompt=build_marker_user_prompt(question, student_answer, student_working),
+            user_prompt=user_prompt,
             response_schema=AIMarkResponse,
             prompt_version=VERSION,
             extra_cache_key=f"q={question.id}",
@@ -67,7 +73,6 @@ class AICorrector:
         )
 
         # Auto-escalate when confidence is low and an escalation model is configured.
-        g = self._client._settings.gemini
         if (
             g.escalation_model
             and g.escalation_model != g.model_for("correction")
@@ -80,7 +85,9 @@ class AICorrector:
                 escalation_model=g.escalation_model,
             )
             escalation_prompt = (
-                build_marker_user_prompt(question, student_answer, student_working)
+                build_marker_user_prompt(
+                    question, student_answer, student_working, prior_results
+                )
                 + "\n\nNOTE: A previous marking attempt returned low confidence. "
                 "Please re-evaluate carefully before responding."
             )
@@ -196,6 +203,8 @@ def correct_paper(
         )
 
     leaves = [q for q in scheme.all_questions_flat() if _is_leaf_marked(q)]
+    leaf_by_id: dict[str, Question] = {q.id: q for q in leaves}
+    prior_results_accumulated: dict[str, int] = {}  # question_id -> awarded_marks
     has_non_mcq = any(q.type != QuestionType.MCQ for q in leaves)
 
     if has_non_mcq and not mcq_only and gemini_client is None:
@@ -214,6 +223,7 @@ def correct_paper(
         if q.type == QuestionType.MCQ:
             cq = _build_mcq_corrected(q, student_answer)
             corrected.append(cq)
+            prior_results_accumulated[q.id] = cq.awarded_marks
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
@@ -226,6 +236,7 @@ def correct_paper(
         if ai is None:
             cq = _build_missing_corrected(q, student_answer)
             corrected.append(cq)
+            prior_results_accumulated[q.id] = 0
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
@@ -235,8 +246,18 @@ def correct_paper(
                 max_marks=q.marks,
             )
             continue
+        sibling_prior: dict[str, int] = {}
+        if q.parent_id is not None:
+            sibling_prior = {
+                qid: marks
+                for qid, marks in prior_results_accumulated.items()
+                if leaf_by_id[qid].parent_id == q.parent_id
+            }
         try:
-            mark = ai.mark_question(q, student_answer or "", student_working)
+            mark = ai.mark_question(
+                q, student_answer or "", student_working,
+                prior_results=sibling_prior or None,
+            )
         except Exception as exc:
             log.warning("ai_marking_failed", question_id=q.id, error=str(exc))
             cq = _build_missing_corrected(q, student_answer)
@@ -248,6 +269,7 @@ def correct_paper(
             continue
         cq = _build_ai_corrected(q, student_answer or "", mark)
         corrected.append(cq)
+        prior_results_accumulated[q.id] = cq.awarded_marks
         bus.publish(
             EventType.MARKING_PROGRESS,
             question_id=q.id,

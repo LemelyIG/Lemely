@@ -95,6 +95,7 @@ def build_marker_user_prompt(
     question: Question,
     student_answer: str,
     student_working: str | None = None,
+    prior_results: dict[str, int] | None = None,
 ) -> str:
     """Build the per-question marking prompt embedding the mark scheme subtree + student response."""
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
@@ -107,6 +108,16 @@ def build_marker_user_prompt(
     if student_working and student_working.strip():
         parts.append(
             f"WORKING (verbatim from scan, may be partial or messy):\n{student_working.strip()}\n"
+        )
+    if prior_results:
+        prior_lines = "\n".join(
+            f"  {qid}: {marks} mark(s) awarded"
+            for qid, marks in prior_results.items()
+        )
+        parts.append(
+            f"PRIOR PART RESULTS (same parent question, corrected before this part):\n"
+            f"{prior_lines}\n"
+            "Use these when applying ECF / follow-through rules.\n"
         )
     parts.append(
         f"Apply the mark scheme above. The maximum_marks for your awarded_marks field is "

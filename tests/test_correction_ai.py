@@ -11,13 +11,10 @@ from unittest.mock import MagicMock
 
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
-    ConfidenceBand,
-    CorrectedQuestion,
-    CorrectionResult,
     ExtractedAnswer,
     ExtractedAnswers,
 )
-from lemely.io.correction_ai import AICorrector, correct_paper
+from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ConfigError
@@ -147,3 +144,92 @@ class HybridCorrectPaperTests(unittest.TestCase):
         )
         q2 = next(q for q in result.questions if q.question_id == "2")
         self.assertEqual(q2.awarded_marks, 2)  # clamped
+
+
+class ECFContextTests(unittest.TestCase):
+    """correct_paper accumulates prior results and injects sibling context."""
+
+    def _multi_part_scheme(self):
+        from lemely.core.loose_schemas import MarkScheme
+        return MarkScheme.model_validate({
+            "metadata": {
+                "subject": "Physics", "subject_code": "0625",
+                "paper_number": 4, "paper_variant": 2,
+                "session_month": "May/June", "session_year": 2020,
+                "paper_type": "theory_extended", "maximum_mark": 4,
+                "scheme_format": "point_based",
+            },
+            "questions": [{
+                "id": "1", "marks": 0, "type": "explanation",
+                "parts": [
+                    {
+                        "id": "1(a)", "marks": 2, "type": "explanation",
+                        "parent_id": "1",
+                        "answer_points": [
+                            {"id": "p1", "point": "method", "marks": 1},
+                            {"id": "p2", "point": "answer", "marks": 1},
+                        ],
+                    },
+                    {
+                        "id": "1(b)", "marks": 2, "type": "explanation",
+                        "parent_id": "1",
+                        "answer_points": [
+                            {"id": "p3", "point": "uses result of (a)", "marks": 2},
+                        ],
+                    },
+                ],
+            }],
+        })
+
+    def test_prior_results_injected_for_second_part(self):
+        """build_marker_user_prompt for 1(b) must receive prior_results containing 1(a)."""
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.io.correction_ai import correct_paper
+
+        scheme = self._multi_part_scheme()
+        extracted = ExtractedAnswers(
+            paper_id="test", source_scan="s.pdf",
+            answers=[
+                ExtractedAnswer(question_id="1(a)", answer="v=20 m/s", confidence=0.9),
+                ExtractedAnswer(question_id="1(b)", answer="uses 20",  confidence=0.9),
+            ],
+        )
+        ai_body = json.dumps({
+            "awarded_marks": 1, "confidence": 0.9,
+            "matched_point_ids": [], "feedback": "ok",
+        })
+        mock_resp = MagicMock(
+            text=ai_body,
+            candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+            usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _client_with_seq(tmp, [mock_resp, mock_resp])
+
+        captured: list[dict] = []
+
+        import lemely.io.correction_ai as _corr_mod
+        import lemely.io.prompts.correction_ai as _prompt_mod
+
+        original_fn = _prompt_mod.build_marker_user_prompt
+
+        def _spy(*args, **kwargs):
+            captured.append({"args": args, "kwargs": kwargs})
+            return original_fn(*args, **kwargs)
+
+        with patch.object(_corr_mod, "build_marker_user_prompt", side_effect=_spy):
+            correct_paper(scheme, extracted, gemini_client=client)
+
+        self.assertEqual(len(captured), 2)
+        second_kwargs = captured[1]["kwargs"]
+        second_args   = captured[1]["args"]
+        prior = second_kwargs.get("prior_results") or (
+            second_args[3] if len(second_args) > 3 else None
+        )
+        self.assertIsNotNone(prior, "prior_results not passed to second build_marker_user_prompt call")
+        self.assertIn("1(a)", prior)
