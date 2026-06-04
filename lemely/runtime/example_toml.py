@@ -36,6 +36,20 @@ def render_example_toml() -> str:
 
     lines.append("[gemini]")
     lines.append(f'model = "{s.gemini.model}"')
+    lines.append("")
+    lines.append("# Per-task model overrides (omit a key to use the global `model` above).")
+    lines.append('# mark_scheme_model = "gemini-2.5-pro"   # one-off parse; accuracy matters')
+    lines.append('# extraction_model  = "gemini-2.5-flash" # vision-heavy, per paper')
+    lines.append('# correction_model  = "gemini-2.5-flash" # per question; highest call volume')
+    lines.append("")
+    lines.append("# Escalation: re-mark with a stronger model when confidence < threshold.")
+    lines.append('# escalation_model = "gemini-2.5-pro"')
+    lines.append(f"# escalation_confidence_threshold = {s.gemini.escalation_confidence_threshold}")
+    lines.append("")
+    lines.append("# Thinking budget per task (tokens; 0 = disabled).")
+    lines.append("# [gemini.thinking_budget_for]")
+    lines.append("# mark_scheme = 8000")
+    lines.append("")
     lines.append(f"max_retries = {s.gemini.max_retries}")
     lines.append(f"backoff_seconds = {s.gemini.backoff_seconds}")
     lines.append("# monthly_usd_ceiling = 25.0")
@@ -44,6 +58,14 @@ def render_example_toml() -> str:
 
     lines.append("# gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.")
     lines.append('# gemini_api_key = "sk-..."')
+    lines.append("")
+
+    lines.append("[accuracy_eval]")
+    lines.append(f"mark_accuracy_target = {s.accuracy_eval.mark_accuracy_target}")
+    lines.append(f"id_match_rate_target = {s.accuracy_eval.id_match_rate_target}")
+    lines.append(f"flag_precision_target = {s.accuracy_eval.flag_precision_target}")
+    lines.append(f"flag_recall_target = {s.accuracy_eval.flag_recall_target}")
+    lines.append("")
 
     return "\n".join(lines) + "\n"
 

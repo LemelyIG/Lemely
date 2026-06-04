@@ -8,7 +8,10 @@ import platform
 import sys
 from importlib import metadata as _md
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
+
+if TYPE_CHECKING:
+    from lemely.runtime.config import Settings
 
 import click
 
@@ -81,7 +84,7 @@ def _load_json_file(path: str | Path) -> object:
         raise ParseError(f"Invalid JSON in {path}: {exc}") from exc
 
 
-def _get_settings(ctx: click.Context):  # type: ignore[return]
+def _get_settings(ctx: click.Context) -> Settings:
     from lemely.runtime.config import load_settings
 
     cfg = ctx.obj.get("config_path")
@@ -431,6 +434,76 @@ def aggregate_subject_cmd(
         for p in correction_jsons
     ]
     _print_result(ctx, aggregate_subject(papers))
+
+
+@cli.command("measure-accuracy")
+@click.option(
+    "--golden", "golden_dir",
+    default="tests/golden",
+    type=click.Path(file_okay=False),
+    show_default=True,
+    help="Root directory containing golden test cases.",
+)
+@click.option(
+    "--results-dir",
+    default="tests/golden/results",
+    type=click.Path(file_okay=False),
+    show_default=True,
+    help="Directory to write timestamped result JSON.",
+)
+@click.pass_context
+def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) -> None:
+    """Measure correction accuracy against the golden dataset.
+
+    Exits non-zero if any metric falls below its configured target.
+    """
+    from lemely.accuracy.harness import (
+        format_report,
+        load_golden_cases,
+        measure_accuracy,
+        save_result,
+    )
+    from lemely.io.gemini import GeminiClient
+
+    settings = _get_settings(ctx)
+    golden_path = Path(golden_dir)
+
+    if not golden_path.exists():
+        raise click.ClickException(f"Golden directory not found: {golden_path}")
+
+    cases = load_golden_cases(golden_path)
+    if not cases:
+        raise click.ClickException(f"No golden cases found in {golden_path}")
+
+    click.echo(f"Loaded {len(cases)} golden case(s). Running accuracy measurement…")
+
+    client = GeminiClient(settings)
+    result = measure_accuracy(cases, client, settings)
+    click.echo(format_report(result, settings.accuracy_eval))
+
+    saved = save_result(result, Path(results_dir))
+    click.echo(f"\nResult saved → {saved}")
+
+    # Exit non-zero when any target is missed.
+    m = result.metrics
+    t = settings.accuracy_eval
+    failed = []
+    if m.mark_accuracy < t.mark_accuracy_target:
+        failed.append(f"mark_accuracy {m.mark_accuracy:.3f} < {t.mark_accuracy_target}")
+    if m.mark_accuracy_theory < t.mark_accuracy_target:
+        failed.append(f"mark_accuracy_theory {m.mark_accuracy_theory:.3f} < {t.mark_accuracy_target}")
+    if m.id_match_rate is not None and m.id_match_rate < t.id_match_rate_target:
+        failed.append(f"id_match_rate {m.id_match_rate:.3f} < {t.id_match_rate_target}")
+    if m.flag_precision_high < t.flag_precision_target:
+        failed.append(f"flag_precision_high {m.flag_precision_high:.3f} < {t.flag_precision_target}")
+    if m.flag_recall < t.flag_recall_target:
+        failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
+
+    if failed:
+        click.echo("\nTargets missed:", err=True)
+        for f in failed:
+            click.echo(f"  x {f}", err=True)
+        raise SystemExit(1)
 
 
 @cli.command("ui")

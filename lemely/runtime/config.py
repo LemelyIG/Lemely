@@ -33,10 +33,40 @@ class LoggingSettings(BaseModel):
 class GeminiSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = "gemini-2.5-flash"
+    # Per-task model overrides — each falls back to `model` when unset.
+    mark_scheme_model: str | None = None
+    extraction_model: str | None = None
+    correction_model: str | None = None
+    # Escalation: re-mark with a stronger model when marker confidence is low.
+    escalation_model: str | None = None
+    escalation_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    # Thinking budget: map of task_tag → token budget (0 = disabled / default).
+    thinking_budget_for: dict[str, int] = Field(default_factory=dict)
+    # Pricing overrides: model_name → [input_usd_per_1k, output_usd_per_1k].
+    # Built-in defaults exist for gemini-2.5-flash-lite/flash/pro; only set
+    # this if you use a different model or the API pricing changes.
+    pricing: dict[str, list[float]] = Field(default_factory=dict)
     max_retries: int = Field(default=3, ge=0)
     backoff_seconds: float = Field(default=2.0, gt=0)
     monthly_usd_ceiling: float | None = None
     per_run_token_ceiling: int | None = None
+
+    def model_for(self, task_tag: str) -> str:
+        """Resolve the Gemini model name for a task, falling back to the global default."""
+        mapping: dict[str, str | None] = {
+            "mark_scheme": self.mark_scheme_model,
+            "extraction": self.extraction_model,
+            "correction": self.correction_model,
+        }
+        return mapping.get(task_tag) or self.model
+
+
+class AccuracyEvalSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mark_accuracy_target: float = Field(default=0.95, ge=0.0, le=1.0)
+    id_match_rate_target: float = Field(default=0.99, ge=0.0, le=1.0)
+    flag_precision_target: float = Field(default=0.99, ge=0.0, le=1.0)
+    flag_recall_target: float = Field(default=0.85, ge=0.0, le=1.0)
 
 
 class Settings(BaseSettings):
@@ -50,6 +80,7 @@ class Settings(BaseSettings):
     paths: PathsSettings = PathsSettings()
     logging: LoggingSettings = LoggingSettings()
     gemini: GeminiSettings = GeminiSettings()
+    accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     gemini_api_key: SecretStr | None = None
 
     @classmethod

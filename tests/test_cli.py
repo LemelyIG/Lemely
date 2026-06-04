@@ -126,7 +126,10 @@ def test_extract_answers_requires_existing_scan():
 def test_aggregate_subject_combines_three_papers():
     with tempfile.TemporaryDirectory() as tmp:
         from lemely.core.schemas import (
-            ConfidenceBand, CorrectedQuestion, CorrectionResult, ExamMetadata,
+            ConfidenceBand,
+            CorrectedQuestion,
+            CorrectionResult,
+            ExamMetadata,
         )
         paths = []
         for paper_num in (2, 4, 6):
@@ -150,6 +153,25 @@ def test_aggregate_subject_combines_three_papers():
     assert payload["subject_code"] == "0625"
     assert payload["awarded_marks"] == 15
     assert payload["maximum_marks"] == 30
+
+
+class AccuracyEvalSettingsTests(unittest.TestCase):
+    def test_accuracy_eval_settings_defaults(self):
+        import os
+        from lemely.runtime.config import load_settings
+        snap = dict(os.environ)
+        for k in list(os.environ):
+            if k.startswith("LEMELY_"):
+                del os.environ[k]
+        try:
+            s = load_settings(toml_path=None)
+            self.assertAlmostEqual(s.accuracy_eval.mark_accuracy_target, 0.95)
+            self.assertAlmostEqual(s.accuracy_eval.id_match_rate_target, 0.99)
+            self.assertAlmostEqual(s.accuracy_eval.flag_precision_target, 0.99)
+            self.assertAlmostEqual(s.accuracy_eval.flag_recall_target, 0.85)
+        finally:
+            os.environ.clear()
+            os.environ.update(snap)
 
 
 if __name__ == "__main__":

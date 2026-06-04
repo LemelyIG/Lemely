@@ -20,6 +20,20 @@ format = "auto"
 
 [gemini]
 model = "gemini-2.5-flash"
+
+# Per-task model overrides (omit a key to use the global `model` above).
+# mark_scheme_model = "gemini-2.5-pro"   # one-off parse; accuracy matters
+# extraction_model  = "gemini-2.5-flash" # vision-heavy, per paper
+# correction_model  = "gemini-2.5-flash" # per question; highest call volume
+
+# Escalation: re-mark with a stronger model when confidence < threshold.
+# escalation_model = "gemini-2.5-pro"
+# escalation_confidence_threshold = 0.6
+
+# Thinking budget per task (tokens; 0 = disabled).
+# [gemini.thinking_budget_for]
+# mark_scheme = 8000
+
 max_retries = 3
 backoff_seconds = 2.0
 # monthly_usd_ceiling = 25.0
@@ -27,3 +41,10 @@ backoff_seconds = 2.0
 
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
 # gemini_api_key = "sk-..."
+
+[accuracy_eval]
+mark_accuracy_target = 0.95
+id_match_rate_target = 0.99
+flag_precision_target = 0.99
+flag_recall_target = 0.85
+
