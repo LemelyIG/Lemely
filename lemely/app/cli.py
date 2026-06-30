@@ -220,7 +220,11 @@ def parse_mark_schemes_cmd(
 
     result = process_mark_scheme_batch(source_root, output_root, force=force, parser=parser)
     _print_result(ctx, result)
-    failures = [item for item in result.items if item.status in {"failed", "invalid_existing"}]
+    failures = [
+        item
+        for item in result.items
+        if item.status in {"failed", "invalid_existing", "transient_failed"}
+    ]
     if failures:
         if on_error == "fail":
             raise click.exceptions.Exit(ParseError.exit_code)
