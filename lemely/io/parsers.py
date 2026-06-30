@@ -22,4 +22,5 @@ class GeminiMarkSchemeParser:
             file_paths=[pdf_path],
             response_schema=MarkScheme,
             prompt_version=VERSION,
+            task_tag="mark_scheme",
         )

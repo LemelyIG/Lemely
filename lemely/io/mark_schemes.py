@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import BatchParseItem, BatchParseResult, SourceLibraryEntry
 from lemely.io.metadata import parse_caie_filename_metadata
+from lemely.runtime.errors import ExternalServiceError, ParseError
 
 ParserCallback = Callable[[Path], dict[str, object] | MarkScheme]
 
@@ -92,7 +93,19 @@ def process_mark_scheme_batch(
                 mark_scheme.model_dump_json(indent=2),
                 encoding="utf-8",
             )
-        except (ValidationError, ValueError, OSError, TypeError) as exc:
+        except ExternalServiceError as exc:
+            # Recoverable Gemini outage (503 / rate limit) — record it as a distinct,
+            # retryable status and keep processing the rest of the batch instead of
+            # aborting the whole run.
+            items.append(
+                BatchParseItem(
+                    source_path=str(entry.source_path),
+                    output_path=str(output_path),
+                    status="transient_failed",
+                    message=str(exc),
+                )
+            )
+        except (ValidationError, ValueError, OSError, TypeError, ParseError) as exc:
             items.append(
                 BatchParseItem(
                     source_path=str(entry.source_path),

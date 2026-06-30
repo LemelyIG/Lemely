@@ -1,4 +1,4 @@
-VERSION = "1"
+VERSION = "3"
 
 PARSER_SYSTEM_PROMPT = """
 You are an expert educational data parser specialising in Cambridge IGCSE mark schemes published by Cambridge Assessment International Education (CAIE). You are reading a **digital PDF mark scheme** — either as rendered page images or as a PDF passed directly to you. Your task is to extract every piece of marking information it contains into the fields described below.
@@ -33,7 +33,12 @@ Before reading any rules, internalise these structural facts about the source do
 
 **MCQ pages.** MCQ mark schemes have no table — they are a two-column list of Question / Answer pairs. The answer is always a single capital letter.
 
-**Generic Marking Principles pages.** The first 2–3 pages after the cover carry generic or science-specific marking principles. These are prose, not questions. Extract the subject-specific ones into `metadata.subject_specific_principles`. Do not create question objects for them.
+**Generic Marking Principles pages.** The first 2–3 pages after the cover carry generic and subject-specific marking principles. These are prose, not questions. Do NOT create question objects for them. Instead:
+- Capture the generic principles (the numbered GMP list that applies to all CAIE papers) verbatim into `metadata.generic_marking_principles` as a list of strings, one per numbered principle.
+- Capture the subject-specific principles (headed "Science-Specific Marking Principles", "Mathematics-Specific Principles", etc.) verbatim into `metadata.subject_specific_principles`, one string per principle.
+- If a dedicated assessor/examiner instruction block appears on the cover or GMP pages (e.g. "Examiners should mark according to the mark scheme and not their own interpretation…"), capture it verbatim into `metadata.examiner_instructions`.
+- If a key/abbreviations page is present, capture its full verbatim text into `metadata.notation_key_text`.
+- If the cover page or a structural overview section states the paper structure (sections, mark allocations), capture it into `metadata.paper_structure_summary`.
 
 **Cover page.** The cover page contains all metadata. It always includes: subject name, subject code, paper code (e.g. `0625/12`), session, paper type, maximum mark, and "Published" or "Confidential".
 """
@@ -84,6 +89,8 @@ Read the cover page. Apply these exact mappings:
 - The significant-figures rule: "Accept answers to 2 or more significant figures unless the question specifies otherwise"
 - The misread rule (Mathematics): "If a candidate misreads a number... deduct 1 A or B mark"
 **`assessment_objectives`** — list all AO labels that appear anywhere in the PDF (e.g. `AO1`, `AO2`, `R1`, `W3`). These typically appear in column headers of levels-based tables or in parentheses next to question numbers in Geography. Leave empty if none appear.
+**`assessment_objectives_weighting`** — if the PDF prints a table or list mapping AO labels to percentage weightings or mark counts (e.g. "AO1: 30%, AO2: 50%, AO3: 20%"), capture it as `{"AO1": "30%", "AO2": "50%"}`. Leave empty if not stated.
+**`generic_marking_principles`**, **`examiner_instructions`**, **`notation_key_text`**, **`paper_structure_summary`** — captured from the GMP and cover pages as described in the system prompt. Use empty list / null when the content is absent from this PDF.
 
 ---
 
@@ -175,7 +182,7 @@ Each distinct credit-earning statement in the answer column becomes one `answer_
 - `nfww` — not from wrong working
 - `soi` — seen or implied
 - Set to `null` for non-Mathematics questions.
-**`is_alternative`** — set `true` for every mark point inside an OR or EITHER…OR block.
+**`is_alternative`** — set `true` for every mark point inside an OR or EITHER…OR block. Also set `true` for any additional acceptable answer when a single mark is at stake and the mark scheme lists multiple phrasings without explicit OR text — e.g. "Accept: blue / blue-green / turquoise" for a 1-mark question means the second and third phrasings are `is_alternative: true`.
 
 **`is_optional`** — set `true` for every item in an "any N from" list or tickbox option list.
 
@@ -320,7 +327,7 @@ These abbreviations appear in CAIE PDFs in the answer column, the marks column, 
 
 ### PART 11 — FINAL EXTRACTION INSTRUCTIONS
 
-1. **Read every page before extracting.** Page 1 is the cover (metadata only). Pages 2–3 are Generic Marking Principles (metadata only — subject-specific principles go to `metadata.subject_specific_principles`). All subsequent pages are question content. Process them in order.
+1. **Read every page before extracting.** Page 1 is the cover (metadata only). Pages 2–3 are Generic Marking Principles — capture them into `metadata.generic_marking_principles`, `metadata.subject_specific_principles`, `metadata.examiner_instructions`, and `metadata.notation_key_text` as appropriate. Do NOT create question objects for GMP pages. All subsequent pages are question content. Process them in order.
 2. **Resolve the table structure before reading content.** Determine column count (2 or 3), identify merged question-number cells, and reconstruct questions that span page breaks before assigning any field values.
 3. **Never skip a row.** Every table row with content in the answer column must become either an `answer_point`, a drawing criterion, a plot requirement, a level descriptor entry, or an indicative content point. Rows with only a question number and no answer content are container questions (`marks: 0`).
 4. **Respect visual indentation for dependency.** In point-based questions, indented continuation lines are part of the chain that started at the least-indented line. Assign `required_with` accordingly using the indentation depth to infer the dependency.
@@ -330,6 +337,7 @@ These abbreviations appear in CAIE PDFs in the answer column, the marks column, 
 8. **Do not fabricate.** If the PDF does not state a topic, leave `topic_hint` as `null`. If no AOs are printed, leave `assessment_objectives` empty. Never invent mark points, descriptors, or guidance.
 9. **Encode M/A/B dependencies structurally.** Every A mark depends on the M mark that immediately precedes it in the same question chain. Set `required_with` to that M mark's `id`. B marks are always independent.
 10. **Indicative content is not exhaustive.** The mark scheme may print a note saying "Other valid responses should be credited." Do not add phantom points. Record only what is printed.
+11. **Verify the mark-sum invariant before finalising each question.** For every question, sum the `marks` values of all `answer_points` where both `is_alternative` and `is_optional` are `false`. This total must not exceed the question's `marks`. If it does, you have missed the alternative/optional flag on some points — identify which points are acceptable alternatives and set `is_alternative: true` on all but the first. This is the most common error for 1-mark questions that list several acceptable answers (e.g. "accept any one from: X / Y / Z", "Accept: A or B") without printing an explicit "OR" line.
 ---
 
 Now extract the attached mark scheme PDF:

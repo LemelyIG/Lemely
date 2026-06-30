@@ -9,7 +9,6 @@ from lemely.core.schemas import (
     CorrectedQuestion,
     CorrectionResult,
     SubjectResult,
-    WeaknessReport,
 )
 from lemely.runtime.errors import UsageError
 
@@ -32,7 +31,8 @@ def aggregate_subject(papers: Sequence[CorrectionResult]) -> SubjectResult:
     """Combine per-paper corrections into a single SubjectResult.
 
     Args:
-        papers: 1+ CorrectionResults that must all share subject_code + session_month + session_year.
+        papers: 1+ CorrectionResults that must all share subject_code + session_month +
+            session_year.
 
     Raises:
         UsageError: empty list or mismatched subject/session across papers.
