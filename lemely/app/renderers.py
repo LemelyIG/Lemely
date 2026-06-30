@@ -114,6 +114,7 @@ def render_batch_result(result: BatchParseResult) -> Table:
     t.add_row("Parsed", str(result.parsed))
     t.add_row("Skipped (existing)", str(result.skipped))
     t.add_row("Failed", str(result.failed))
+    t.add_row("Transient (retry)", str(result.transient_failed))
     return t
 
 

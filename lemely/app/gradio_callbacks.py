@@ -7,14 +7,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
     AccuracyReport,
     CorrectionResult,
     ExtractedAnswers,
 )
 from lemely.io.mark_schemes import index_source_library
-
 
 # ----------------------------------------------------------------------
 # Tab 2 — Correct a paper
@@ -42,9 +40,15 @@ def parse_mark_scheme_path_from_label(label: str) -> Path:
 
 
 def extracted_to_table_rows(extracted: ExtractedAnswers) -> list[list[str]]:
-    """Convert ExtractedAnswers into editable Dataframe rows."""
+    """Convert ExtractedAnswers into editable Dataframe rows (5 columns)."""
     return [
-        [a.question_id, a.answer, f"{a.confidence:.0%}"]
+        [
+            a.question_id,
+            a.answer,
+            f"{a.confidence:.0%}",
+            a.working_out or "",
+            a.source_region or "",
+        ]
         for a in extracted.answers
     ]
 
