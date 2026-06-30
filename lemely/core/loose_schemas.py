@@ -90,6 +90,11 @@ class MathMarkType(StrEnum):
     SC = "SC"  # Special case
     NFWW = "nfww"  # Not from wrong working
     SOI = "soi"  # Seen or implied
+    ORA = "ora"  # Or reverse argument
+    BO = "bo"  # Benefit of the doubt
+    ALLOW = "allow"  # Acceptable phrasing variant
+    AW = "AW"  # Alternative wording
+    MP = "MP"  # Mark point  # Seen or implied
 
 
 class MCQAnswer(StrEnum):
@@ -533,11 +538,37 @@ class MarkSchemeMetadata(BaseModel):
         description="Assessment objective labels tested in this paper, "
         "e.g. ['AO1', 'AO2', 'R1', 'R2', 'W2'].",
     )
+    assessment_objectives_weighting: dict[str, str] = Field(
+        default_factory=dict,
+        description="AO code → weighting or description as printed in the mark scheme, "
+        "e.g. {'AO1': '30%', 'AO2': '50%'}. Empty when not stated.",
+    )
     subject_specific_principles: list[str] = Field(
         default_factory=list,
         description="Subject-specific marking principles printed in the mark scheme "
         "(e.g. science semicolon-separator rule, maths misread rule). "
         "Captured verbatim as a list of strings.",
+    )
+    generic_marking_principles: list[str] = Field(
+        default_factory=list,
+        description="Generic Marking Principles from the cover pages, captured verbatim "
+        "in order (e.g. GMP 1–6). These apply to all CAIE papers and govern general "
+        "award decisions such as marking contradictory responses.",
+    )
+    examiner_instructions: str | None = Field(
+        None,
+        description="Verbatim assessor/examiner instruction block from the cover page, "
+        "if present (e.g. 'Examiners should mark according to the mark scheme…').",
+    )
+    notation_key_text: str | None = Field(
+        None,
+        description="Verbatim text of the mark-scheme abbreviations/key page, "
+        "if a dedicated key page is present in the PDF.",
+    )
+    paper_structure_summary: str | None = Field(
+        None,
+        description="Brief prose description of the paper structure as stated on the cover "
+        "or introductory pages (e.g. 'Section A: 40 marks MCQ; Section B: 60 marks structured').",
     )
     published: bool = Field(
         True,

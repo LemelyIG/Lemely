@@ -42,7 +42,14 @@ class SourceLibraryEntry(StrictModel):
 class BatchParseItem(StrictModel):
     source_path: str
     output_path: str | None = None
-    status: Literal["skipped_existing", "parsed", "needs_parser", "invalid_existing", "failed"]
+    status: Literal[
+        "skipped_existing",
+        "parsed",
+        "needs_parser",
+        "invalid_existing",
+        "failed",
+        "transient_failed",
+    ]
     message: str | None = None
 
 
@@ -68,6 +75,12 @@ class BatchParseResult(StrictModel):
     @property
     def failed(self) -> int:
         return sum(1 for item in self.items if item.status in {"failed", "invalid_existing"})
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def transient_failed(self) -> int:
+        """Papers that failed on a recoverable Gemini error (e.g. 503). Re-run to retry."""
+        return sum(1 for item in self.items if item.status == "transient_failed")
 
 
 class CostEstimate(StrictModel):
@@ -163,6 +176,11 @@ class ExtractedAnswer(StrictModel):
     answer: str
     confidence: float = Field(..., ge=0.0, le=1.0)
     source_region: str | None = None
+    working_out: str | None = None
+    """Working steps, intermediate values, and annotations the student wrote in
+    allowed areas (e.g. rough-work boxes, show-your-working space). Populated for
+    calculation, equation, levels-based, and indicative-content questions; null for
+    MCQ and simple-recall questions where no working is expected."""
 
 
 class ExtractedAnswers(StrictModel):
