@@ -82,6 +82,27 @@ class MarkSchemeLibraryTests(unittest.TestCase):
         self.assertEqual(result.items[0].status, "parsed")
         self.assertEqual(saved["metadata"]["source_document"], "0625_m20_ms_12.pdf")
 
+    def test_batch_transient_failure_is_recorded_and_does_not_abort(self):
+        """A transient Gemini failure (503) on one paper must be recorded as
+        status='transient_failed' and must not abort the whole batch."""
+        from lemely.runtime.errors import ExternalServiceError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "out"
+            (root / "0625_m20_ms_12.pdf").write_bytes(b"%PDF-1.4")
+
+            def parser(_path):
+                raise ExternalServiceError("503 UNAVAILABLE high demand")
+
+            result = process_mark_scheme_batch(
+                root, output, force=True, parser=parser,
+            )
+
+        self.assertEqual(result.items[0].status, "transient_failed")
+        self.assertEqual(result.transient_failed, 1)
+        self.assertEqual(result.parsed, 0)
+
     def test_batch_summary_is_strict(self):
         with self.assertRaises(ValidationError):
             BatchParseResult(items=[], extra_field=True)

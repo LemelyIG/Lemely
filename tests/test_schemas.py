@@ -3,8 +3,8 @@ import unittest
 from pydantic import ValidationError
 
 from lemely.core.schemas import (
-    AIMarkResponse,
     AccuracyReport,
+    AIMarkResponse,
     ConfidenceBand,
     CorrectedQuestion,
     CorrectionResult,
@@ -97,6 +97,20 @@ class ExtractedAnswerTests(unittest.TestCase):
         self.assertEqual(ea.question_id, "1(a)(i)")
         self.assertEqual(ea.answer, "42 m/s")
         self.assertIsNone(ea.source_region)
+        self.assertIsNone(ea.working_out)
+
+    def test_working_out_populated(self) -> None:
+        ea = ExtractedAnswer(
+            question_id="2(b)",
+            answer="1.6 × 10⁵ N",
+            confidence=0.9,
+            working_out="F = ma\nF = 0.8 × 2.0 × 10⁵\nF = 1.6 × 10⁵ N",
+        )
+        self.assertEqual(ea.working_out, "F = ma\nF = 0.8 × 2.0 × 10⁵\nF = 1.6 × 10⁵ N")
+
+    def test_working_out_null_for_mcq(self) -> None:
+        ea = ExtractedAnswer(question_id="1", answer="B", confidence=0.99, working_out=None)
+        self.assertIsNone(ea.working_out)
 
     def test_confidence_out_of_range_raises(self) -> None:
         with self.assertRaises(ValidationError):

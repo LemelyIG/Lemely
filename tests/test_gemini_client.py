@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import unittest
@@ -11,13 +10,39 @@ from unittest.mock import MagicMock
 
 from pydantic import BaseModel
 
-from lemely.io.gemini import GeminiClient, _reset_process_counters
-from lemely.runtime.config import GeminiSettings, PathsSettings, load_settings
+from lemely.io.gemini import GeminiClient, _reset_process_counters, _strip_schema
+from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ExternalServiceError, ParseError
 
 
 class _SimpleSchema(BaseModel):
     value: str
+
+
+class _RecursiveSchema(BaseModel):
+    """Simulates Question.parts: list[Question] — Pydantic emits a circular $ref."""
+    value: str
+    children: list[_RecursiveSchema] = []
+
+
+class StripSchemaTests(unittest.TestCase):
+    def test_circular_ref_does_not_recurse(self) -> None:
+        """_strip_schema must not raise RecursionError on self-referential models."""
+        schema = _RecursiveSchema.model_json_schema()
+        # Sanity: Pydantic does generate a circular $ref for this model.
+        self.assertIn("$defs", schema)
+        result = _strip_schema(schema)
+        # Should complete without RecursionError and return a dict.
+        self.assertIsInstance(result, dict)
+
+    def test_circular_ref_replaced_with_object(self) -> None:
+        """The leaf of a circular $ref chain becomes {"type": "object"}."""
+        schema = _RecursiveSchema.model_json_schema()
+        result = _strip_schema(schema)
+        # Navigate to the children items — it should be {"type": "object"}.
+        props = result.get("properties", {})
+        children_items = props.get("children", {}).get("items", {})
+        self.assertEqual(children_items, {"type": "object"})
 
 
 def _mock_response(text: str, in_tok: int = 10, out_tok: int = 20) -> MagicMock:
@@ -108,6 +133,26 @@ class GeminiClientTests(unittest.TestCase):
         with self.assertRaises(ExternalServiceError):
             client.generate_structured(
                 system_prompt="s", user_prompt="u2",
+                response_schema=_SimpleSchema, prompt_version="1",
+            )
+
+    def test_transient_error_after_retries_raises_external_service_error(self) -> None:
+        """A 503 that survives all retries must surface as the public
+        ExternalServiceError, never the private _TransientError, so batch
+        callers can catch it without importing internals."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = RuntimeError(
+            "503 UNAVAILABLE. This model is currently experiencing high demand."
+        )
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(
+            _make_settings(self.tmp, max_retries=0),
+            _genai_client=mock_genai,
+        )
+
+        with self.assertRaises(ExternalServiceError):
+            client.generate_structured(
+                system_prompt="s", user_prompt="u",
                 response_schema=_SimpleSchema, prompt_version="1",
             )
 

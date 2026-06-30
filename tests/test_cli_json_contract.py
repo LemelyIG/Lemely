@@ -51,9 +51,9 @@ class JsonContractTests(unittest.TestCase):
             result = self.runner.invoke(cli, ["--json", "parse-mark-schemes", str(root)])
         self.assertEqual(result.exit_code, 0, msg=result.output)
         data = json.loads(result.output)
-        # Computed fields (total/parsed/skipped/failed) are in the JSON output
-        # but are not model inputs; strip them before validating the contract.
-        for key in ("total", "parsed", "skipped", "failed"):
+        # Computed fields (total/parsed/skipped/failed/transient_failed) are in the
+        # JSON output but are not model inputs; strip them before validating the contract.
+        for key in ("total", "parsed", "skipped", "failed", "transient_failed"):
             data.pop(key, None)
         BatchParseResult.model_validate(data)
 

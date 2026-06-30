@@ -17,7 +17,7 @@ class ParserHookTests(unittest.TestCase):
         parser = GeminiMarkSchemeParser(mock_client)
         self.assertIn("Cambridge IGCSE mark schemes", PARSER_SYSTEM_PROMPT)
         self.assertIn("Extract the following IGCSE mark scheme PDF", PARSER_USER_PROMPT)
-        self.assertEqual(VERSION, "1")
+        self.assertEqual(VERSION, "3")
         self.assertIn("questions", MarkScheme.model_json_schema()["properties"])
         self.assertIs(parser._client, mock_client)
 
