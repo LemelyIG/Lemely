@@ -41,7 +41,12 @@ class GeminiSettings(BaseModel):
     escalation_model: str | None = None
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
-    thinking_budget_for: dict[str, int] = Field(default_factory=dict)
+    # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
+    # the model tag "any N from" pools correctly (is_optional/is_alternative), which
+    # avoids spurious mark-point-sum validation failures during structured extraction.
+    thinking_budget_for: dict[str, int] = Field(
+        default_factory=lambda: {"mark_scheme": 8000}
+    )
     # Pricing overrides: model_name → [input_usd_per_1k, output_usd_per_1k].
     # Built-in defaults exist for gemini-2.5-flash-lite/flash/pro; only set
     # this if you use a different model or the API pricing changes.

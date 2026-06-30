@@ -52,24 +52,29 @@ line-length = 100
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "TCH", "RUF", "ANN", "D", "T20", "S"]
 # D100/D104/D107: module/package/__init__ docstrings not required.
 # D101/D102/D103: class/method/function docstrings deferred to a docs phase.
-# ANN101/ANN102: annotating self/cls is not conventional Python practice.
-ignore = ["D100", "D101", "D102", "D103", "D104", "D107", "ANN101", "ANN102"]
+ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "ANN", "D", "S106", "S107"]
 "tests/architecture/**" = ["S607", "S603"]
-"lemely/app/cli.py" = ["T20", "S106"]
 "lemely/runtime/logging.py" = ["ANN401"]
 # Prompt files contain long strings and non-ASCII characters by design.
-"lemely/io/prompts/**" = ["E501", "RUF001"]
+"lemely/io/prompts/**" = ["E501", "RUF001", "TCH"]
 # Pydantic model files need type imports at runtime; TCH would move them to TYPE_CHECKING.
 "lemely/core/schemas.py" = ["TCH"]
 "lemely/core/loose_schemas.py" = ["TCH", "D205", "RUF001", "UP042", "E741"]
 "lemely/runtime/config.py" = ["TCH"]
-# Prompts __init__ re-exports everything; F403 is intentional.
-"lemely/io/prompts/__init__.py" = ["F403"]
-"lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001"]
-"lemely/io/correction_ai.py" = ["BLE001"]
+# Prompts __init__ re-exports everything; F403 and F401 are intentional.
+"lemely/io/prompts/__init__.py" = ["F403", "F401"]
+"lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
+"lemely/io/parsers.py" = ["TCH"]
+"lemely/io/correction_ai.py" = ["BLE001", "ANN401", "TCH"]
+"lemely/io/subject.py" = ["TCH"]
+"lemely/io/answer_extraction.py" = ["ANN401", "TCH"]
+"lemely/app/gradio_app.py" = ["ANN401", "TCH"]
+"lemely/app/live_log.py" = ["TCH"]
+"lemely/app/gradio_callbacks.py" = ["ANN401", "TCH", "E501"]
+"lemely/app/cli.py" = ["T20", "S106", "ANN202"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -94,7 +99,9 @@ module = [
   "lemely.core.loose_schemas",
   "lemely.runtime.config",
   "lemely.runtime.logging",
+  "lemely.runtime.events",
   "lemely.app.gradio_app",
+  "lemely.app.live_log",
   "lemely.io.gemini",
   "lemely.io.answer_extraction",
   "lemely.io.correction_ai",
