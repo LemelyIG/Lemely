@@ -74,6 +74,46 @@ class AccuracyEvalSettings(BaseModel):
     flag_recall_target: float = Field(default=0.85, ge=0.0, le=1.0)
 
 
+class DetParserSettings(BaseModel):
+    """Tuning knobs for ``DeterministicMarkSchemeParser``.
+
+    All values have sensible defaults; override via ``lemely.toml`` under the
+    ``[det_parser]`` section or via ``LEMELY_DET_PARSER__*`` env vars.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Maximum mark value considered valid for a single mark-point cell.
+    # Prevents false-positive column detection on year numbers (e.g. "2019").
+    max_mark_per_point: int = Field(default=40, ge=1)
+
+    # PDF page range (0-indexed, exclusive end) to search for GMP text.
+    gmp_pages_start: int = Field(default=1, ge=0)
+    gmp_pages_end: int = Field(default=4, ge=1)
+
+    # Header keywords used to filter out per-page table-header rows.
+    # Extend this set (via TOML list-append) to suppress any additional
+    # column-header words specific to your papers.
+    header_keywords: frozenset[str] = frozenset(
+        {"question", "answer", "marks", "guidance", "notes", "input", "output"}
+    )
+
+    # Words on a cover-page line that indicate it is NOT the subject name.
+    skip_line_tokens: frozenset[str] = frozenset(
+        {"cambridge", "igcse", "mark scheme", "©", "maximum", "published", "confidential"}
+    )
+
+    # Reconciliation: compare leaf-mark total to metadata.maximum_mark.
+    # When True and the discrepancy exceeds the tolerance, raise ParseError
+    # (→ ChainedMarkSchemeParser hands the paper to Gemini).
+    escalate_on_mark_mismatch: bool = True
+    mark_reconcile_tolerance: int = Field(default=0, ge=0)
+
+    # When True, raise ParseError if any leaf question still has marks
+    # derived from the default (mark-cell not parseable → assumed 1).
+    escalate_on_defaulted_marks: bool = True
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -86,6 +126,7 @@ class Settings(BaseSettings):
     logging: LoggingSettings = LoggingSettings()
     gemini: GeminiSettings = GeminiSettings()
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
+    det_parser: DetParserSettings = DetParserSettings()
     gemini_api_key: SecretStr | None = None
 
     @classmethod
