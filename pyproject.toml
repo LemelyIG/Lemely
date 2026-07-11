@@ -21,6 +21,7 @@ dependencies = [
   "PyMuPDF>=1.27,<2",
   "Pillow>=12,<13",
   "jinja2>=3.1,<4",
+  "pdfplumber>=0.11,<1",
 ]
 
 [project.optional-dependencies]
@@ -68,6 +69,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/prompts/__init__.py" = ["F403", "F401"]
 "lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
 "lemely/io/parsers.py" = ["TCH"]
+"lemely/io/parsers_det.py" = ["TCH", "ANN401"]
 "lemely/io/correction_ai.py" = ["BLE001", "ANN401", "TCH"]
 "lemely/io/subject.py" = ["TCH"]
 "lemely/io/answer_extraction.py" = ["ANN401", "TCH"]
@@ -88,7 +90,7 @@ disallow_any_explicit = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["gradio.*", "fitz.*", "tomli"]
+module = ["gradio.*", "fitz.*", "tomli", "pdfplumber.*"]
 ignore_missing_imports = true
 
 # Pydantic's mypy plugin injects Any into generated __init__ signatures;
