@@ -52,6 +52,10 @@ _TOP_LEVEL_RE = re.compile(r"^\d+$")          # "1", "2", "40"
 _LEVEL_2_RE = re.compile(r"^\([a-z]\)$")      # "(a)", "(b)"
 _LEVEL_3_RE = re.compile(r"^\([ivx]+\)$")     # "(i)", "(ii)", "(iv)"
 
+# Compound Q-number: digit prefix + zero or more parenthesised sub-parts
+# Matches "1", "1(a)", "2(a)(i)", "1(g)(ii)" etc.
+_COMPOUND_Q_RE = re.compile(r"^(\d+)((?:\([a-z]+\))*)$")
+
 # ParseError triggers in the answer column
 _LEVEL_DESCRIPTOR_Q_RE = re.compile(r"^[Ll]evel\s+\d+$")
 _BAND_LANGUAGE_RE = re.compile(r"descriptors|marks\s+available|AO\d", re.IGNORECASE)
@@ -284,16 +288,22 @@ class DeterministicMarkSchemeParser:
         self, pdf: Any, metadata: MarkSchemeMetadata
     ) -> list[Question]:
         """Collect tables from question pages and route to MCQ or theory parser."""
-        # Skip cover (page 0) and typical GMP pages (1–2); start from page 2.
-        # Also try from page 1 for short documents.
         all_tables: list[list[list[str | None]]] = []
-        for start in (2, 1):
-            for page in pdf.pages[start:]:
-                tables = page.extract_tables()
-                if tables:
-                    all_tables.extend(tables)
-            if all_tables:
-                break
+
+        if metadata.paper_type == PaperType.MCQ:
+            # MCQ papers have no GMP section; questions start on page 1.
+            for page in pdf.pages[1:]:
+                all_tables.extend(page.extract_tables())
+        else:
+            # Theory papers: skip cover (page 0) and GMP pages (typically 1–2).
+            # Fall back to page 1 when the document is shorter than expected.
+            for start in (2, 1):
+                for page in pdf.pages[start:]:
+                    tables = page.extract_tables()
+                    if tables:
+                        all_tables.extend(tables)
+                if all_tables:
+                    break
 
         if not all_tables:
             raise ParseError(
@@ -312,11 +322,13 @@ class DeterministicMarkSchemeParser:
     def _parse_mcq_tables(
         self, tables: list[list[list[str | None]]]
     ) -> list[Question]:
-        """Extract an MCQ answer key from a table whose rightmost column is A/B/C/D."""
+        """Extract an MCQ answer key from tables whose answer column contains only A/B/C/D."""
+        all_questions: list[Question] = []
+        seen_ids: set[str] = set()
+
         for table in tables:
             if not table:
                 continue
-            # Filter to rows that have at least 2 non-empty cells
             data_rows = [
                 r for r in table if r and sum(1 for c in r if (c or "").strip()) >= 2
             ]
@@ -327,7 +339,6 @@ class DeterministicMarkSchemeParser:
             if answer_col is None:
                 continue
 
-            questions: list[Question] = []
             for row in data_rows:
                 if len(row) <= answer_col:
                     continue
@@ -336,13 +347,16 @@ class DeterministicMarkSchemeParser:
 
                 if not q_cell.isdigit() or ans_cell not in _MCQ_LETTERS:
                     continue
+                if q_cell in seen_ids:
+                    continue  # skip duplicate (same table repeated across pages)
 
                 try:
                     mcq_answer = MCQAnswer(ans_cell)
                 except ValueError:
                     continue
 
-                questions.append(
+                seen_ids.add(q_cell)
+                all_questions.append(
                     Question(
                         id=q_cell,
                         marks=1,
@@ -351,13 +365,12 @@ class DeterministicMarkSchemeParser:
                     )
                 )
 
-            if questions:
-                return questions
-
-        raise ParseError(
-            "Could not find an MCQ answer-key table "
-            "(expected a table with a column containing only A/B/C/D)"
-        )
+        if not all_questions:
+            raise ParseError(
+                "Could not find an MCQ answer-key table "
+                "(expected a table with a column containing only A/B/C/D)"
+            )
+        return all_questions
 
     # ------------------------------------------------------------------
     # Theory parser
@@ -367,11 +380,22 @@ class DeterministicMarkSchemeParser:
         self, tables: list[list[list[str | None]]]
     ) -> list[Question]:
         """Merge all theory tables and run the row state machine."""
+        _HEADER_KEYWORDS: frozenset[str] = frozenset(
+            {"question", "answer", "marks", "guidance", "notes"}
+        )
+
         merged: list[list[str | None]] = []
         for table in tables:
             for row in table:
-                if row and len(row) >= 2:
-                    merged.append(row)
+                if not row or len(row) < 2:
+                    continue
+                # Skip table-header rows (e.g. ['', 'Question', '', '', 'Answer', …])
+                # that appear at the top of each page's table and would otherwise
+                # be mistaken for continuation answer points.
+                cells_lower = {(c or "").strip().lower() for c in row}
+                if cells_lower & _HEADER_KEYWORDS:
+                    continue
+                merged.append(row)
 
         if not merged:
             raise ParseError(
@@ -384,12 +408,22 @@ class DeterministicMarkSchemeParser:
 
         # Column layout:
         #   col 0        → question number
-        #   col 1..n-3   → answer / mark-point text (merged)
-        #   col n-2      → guidance / notes (only when ≥ 4 columns)
-        #   col n-1      → marks (integer)
+        #   col 1..m-1   → answer / mark-point text (merged; may skip None cols)
+        #   col m        → marks (integer)
+        #   col m+1      → guidance / notes (only when present between answer and marks)
+        #
+        # For standard 3-col tables (q, answer, marks): marks_col=2, no guidance.
+        # For standard 4-col tables (q, answer, guidance, marks): marks_col=3.
+        # For sparse 9-col CAIE tables (data at 0, 3, 6): marks_col=6, no guidance.
+        # _find_marks_col_theory handles all these by scanning right-to-left.
         q_col = 0
-        marks_col = ncols - 1
-        guidance_col: int | None = ncols - 2 if ncols >= 4 else None
+        marks_col = _find_marks_col_theory(merged, ncols)
+        guidance_col: int | None = None
+        # Only treat col marks_col-1 as guidance when the table is the classic
+        # 4-column format (exactly ncols==4 with dense data), to avoid false
+        # positives on sparse wide tables.
+        if ncols == 4 and marks_col == 3:
+            guidance_col = 2
         answer_col_end = guidance_col if guidance_col is not None else marks_col
 
         return _run_theory_state_machine(merged, q_col, answer_col_end, guidance_col, marks_col)
@@ -414,6 +448,42 @@ def _find_mcq_answer_col(rows: list[list[str | None]]) -> int | None:
         if values and all(v in _MCQ_LETTERS for v in values):
             return col
     return None
+
+
+def _decompose_compound_q(q_cell: str) -> list[str] | None:
+    """Parse a compound Q-number into its component labels.
+
+    Examples::
+
+        "1"        → ["1"]
+        "1(a)"     → ["1", "(a)"]
+        "2(a)(i)"  → ["2", "(a)", "(i)"]
+        "(a)"      → None  (no digit prefix — handled by level patterns)
+    """
+    m = _COMPOUND_Q_RE.match(q_cell)
+    if not m:
+        return None
+    parts: list[str] = [m.group(1)]
+    for sub in re.findall(r"\([a-z]+\)", m.group(2)):
+        parts.append(sub)
+    return parts
+
+
+def _find_marks_col_theory(merged: list[list[str | None]], ncols: int) -> int:
+    """Return the rightmost column whose non-empty values are all small integers.
+
+    This handles sparse 9-column CAIE tables where marks sit at col 6 rather
+    than at the last column (col 8, which is a spacer full of ``None``).
+    """
+    for c in range(ncols - 1, -1, -1):
+        non_empty = [
+            ((row[c] if c < len(row) else None) or "").strip()
+            for row in merged
+        ]
+        non_empty = [v for v in non_empty if v]
+        if non_empty and all(v.isdigit() and int(v) <= 40 for v in non_empty):
+            return c
+    return ncols - 1  # fallback: last column
 
 
 def _make_id(labels: list[str]) -> str:
@@ -447,11 +517,26 @@ def _run_theory_state_machine(
     """Row-by-row state machine that builds nested ``Question`` objects.
 
     State:
-    - ``stack``         — Question objects at each nesting depth
-    - ``labels``        — raw Q-cell text for each stack level (for ID construction)
-    - ``current_points``— AnswerPoints accumulating for the deepest question
-    - ``next_is_alt``   — True when the next point should have ``is_alternative=True``
-    - ``point_idx``     — sequential counter for AnswerPoint IDs within a question
+    - ``stack``               — Question objects at each nesting depth
+    - ``labels``              — raw Q-cell text for each stack level (for ID construction)
+    - ``current_points``      — AnswerPoints accumulating for the deepest question
+    - ``next_is_alt``         — True when the next point should have ``is_alternative=True``
+    - ``point_idx``           — sequential counter for AnswerPoint IDs within a question
+    - ``q_row_had_answer``    — True when the Q-number row itself also carried answer text;
+                                used to trigger a marks recount in flush() so that multi-row
+                                questions (e.g. Q4 with 7×1-mark MPs) total correctly.
+                                When the Q-number row has *no* answer text (marks=0 container
+                                questions) the recount is skipped to preserve the explicit 0.
+
+    Two Q-number formats are supported:
+
+    * **Compound** (single cell, e.g. ``1(a)``, ``2(a)(i)``): the cell is
+      decomposed into components; the stack is diffed against the common prefix
+      of the previous question so intermediate parent nodes are created once and
+      re-used across rows.
+
+    * **Split** (separate cells, e.g. ``1`` then ``(a)`` then ``(i)``): handled
+      by the ``_LEVEL_2_RE`` / ``_LEVEL_3_RE`` path.
     """
     top_level: list[Question] = []
     stack: list[Question] = []
@@ -459,14 +544,25 @@ def _run_theory_state_machine(
     current_points: list[AnswerPoint] = []
     next_is_alt = False
     point_idx = 0
+    q_row_had_answer = False  # did the current question's own row carry an answer?
 
     def flush() -> None:
-        nonlocal point_idx, next_is_alt
+        nonlocal point_idx, next_is_alt, q_row_had_answer
         if stack and current_points:
             stack[-1].answer_points = list(current_points)
+            # Only recount when the Q-number row itself carried answer text.
+            # This covers multi-row questions (e.g. 7 MPs each on a separate row
+            # where the first row's marks column is just MP1's mark, not the
+            # question total).  Questions whose Q row has no answer text are
+            # explicit containers (marks=0) and must not be overwritten.
+            if q_row_had_answer:
+                total = sum(p.marks for p in current_points if p.marks)
+                if total > 0:
+                    stack[-1].marks = total
         current_points.clear()
         point_idx = 0
         next_is_alt = False
+        q_row_had_answer = False
 
     def unwind_to(target_depth: int) -> None:
         """Pop stack to ``target_depth``, linking each popped item to its parent."""
@@ -477,6 +573,20 @@ def _run_theory_state_machine(
                 stack[-1].parts.append(popped)
             else:
                 top_level.append(popped)
+
+    def push_question(comp: str, is_leaf: bool, marks_int: int | None, guidance_cell: str | None) -> None:
+        """Append ``comp`` to labels/stack, creating a ``Question`` node."""
+        labels.append(comp)
+        new_id = _make_id(labels)
+        parent_id = _make_id(labels[:-1]) if len(labels) > 1 else None
+        q = Question(
+            id=new_id,
+            parent_id=parent_id,
+            marks=marks_int if (is_leaf and marks_int is not None) else 0,
+            type=QuestionType.RECALL,
+            notes=guidance_cell if is_leaf else None,
+        )
+        stack.append(q)
 
     for row in rows:
         if not any((c or "").strip() for c in row):
@@ -517,37 +627,35 @@ def _run_theory_state_machine(
             )
 
         # Determine if this row starts a new question --------------------
-        # Check _LEVEL_3_RE before _LEVEL_2_RE: (i), (ii), (iv) are Roman
-        # numerals (level 3) even though 'i' is also a valid single letter.
-        # Letters not in [ivx] — e.g. (a), (b), (c) — fall through to level 2.
-        new_level: int | None = None
-        if _TOP_LEVEL_RE.match(q_cell):
-            new_level = 0
-        elif _LEVEL_3_RE.match(q_cell):
-            new_level = 2
-        elif _LEVEL_2_RE.match(q_cell):
-            new_level = 1
+        #
+        # Priority 1: compound Q-numbers like "1", "1(a)", "2(a)(i)".
+        # We diff the component list against the current label stack to find
+        # the deepest shared ancestor, unwind to it, then push the new nodes.
+        #
+        # Priority 2: standalone parenthesised labels "(a)" / "(i)" from
+        # split-row format tables (legacy / unit-test fixtures).
+        components = _decompose_compound_q(q_cell)
 
-        if new_level is not None:
-            # Finalise the current question chain and start a new one.
+        if components is not None:
             flush()
-            unwind_to(new_level)
 
-            labels.append(q_cell)
-            new_id = _make_id(labels)
-            parent_id = _make_id(labels[:-1]) if len(labels) > 1 else None
+            # Find the length of the common prefix between `components[:-1]`
+            # (all ancestors of the new leaf) and the current `labels` stack.
+            common_len = 0
+            for k, comp in enumerate(components[:-1]):
+                if k < len(labels) and labels[k] == comp:
+                    common_len = k + 1
+                else:
+                    break
 
-            q = Question(
-                id=new_id,
-                parent_id=parent_id,
-                marks=marks_int if marks_int is not None else 0,
-                type=QuestionType.RECALL,
-                notes=guidance_cell,
-            )
-            stack.append(q)
+            unwind_to(common_len)
 
-            # If the Q-number row also carries an answer / mark point on the
-            # same row (common in CAIE mark schemes), capture it immediately.
+            for k, comp in enumerate(components):
+                if k < common_len:
+                    continue  # already on stack (shared ancestor)
+                is_leaf = k == len(components) - 1
+                push_question(comp, is_leaf, marks_int, guidance_cell)
+
             if answer_cell:
                 point_idx += 1
                 current_points.append(
@@ -558,6 +666,41 @@ def _run_theory_state_machine(
                         is_alternative=False,
                     )
                 )
+                q_row_had_answer = True
+
+        elif _LEVEL_3_RE.match(q_cell):
+            # Check _LEVEL_3_RE before _LEVEL_2_RE: (i), (ii), (iv) are Roman
+            # numerals (level 3) even though 'i' is also a valid single letter.
+            flush()
+            unwind_to(2)
+            push_question(q_cell, True, marks_int, guidance_cell)
+            if answer_cell:
+                point_idx += 1
+                current_points.append(
+                    AnswerPoint(
+                        id=f"p{point_idx}",
+                        point=answer_cell,
+                        marks=marks_int if marks_int is not None else 1,
+                        is_alternative=False,
+                    )
+                )
+                q_row_had_answer = True
+
+        elif _LEVEL_2_RE.match(q_cell):
+            flush()
+            unwind_to(1)
+            push_question(q_cell, True, marks_int, guidance_cell)
+            if answer_cell:
+                point_idx += 1
+                current_points.append(
+                    AnswerPoint(
+                        id=f"p{point_idx}",
+                        point=answer_cell,
+                        marks=marks_int if marks_int is not None else 1,
+                        is_alternative=False,
+                    )
+                )
+                q_row_had_answer = True
 
         else:
             # Continuation row — add an AnswerPoint to the deepest question.
