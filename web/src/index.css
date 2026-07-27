@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+@import "@fontsource/instrument-serif/400.css";
+@import "@fontsource/instrument-serif/400-italic.css";
+@import "@fontsource-variable/work-sans";
+@import "@fontsource-variable/jetbrains-mono";
+
+/*
+ * Lemely design tokens — ported 1:1 from the Claude Design mock
+ * (design/project/Lemely Teacher.dc.html + Lemely Student.dc.html).
+ *
+ * Two portals share the type system (Instrument Serif / Work Sans / JetBrains
+ * Mono) but differ on accent + neutral hue:
+ *   - Teacher: amber accent (oklch hue 68), dark "ink" primary buttons
+ *   - Student: terracotta accent (oklch hue 35), accent primary buttons
+ *
+ * Semantic vars are defined per-portal under [data-portal="…"]; @theme inline
+ * maps Tailwind color utilities to those vars so `bg-surface`, `text-t2`,
+ * `text-accent`, `border-border` follow whichever portal scope is active.
+ */
+
+@theme inline {
+  /* Colors follow the active [data-portal] scope (see below). */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+
+  --color-ink: var(--ink);
+  --color-ink-hover: var(--ink-hover);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-on: var(--accent-on);
+
+  --color-t1: var(--t1);
+  --color-t2: var(--t2);
+  --color-t3: var(--t3);
+
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-err: var(--err);
+  --color-err-bg: var(--err-bg);
+
+  /* Shared type system. */
+  --font-sans: "Work Sans", system-ui, sans-serif;
+  --font-serif: "Instrument Serif", Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  /* Shared radius scale (mock uses 8–16px). */
+  --radius-sm: 8px;
+  --radius: 11px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+}
+
+/* ── Student portal (terracotta) — also the default scope ──────────────── */
+:root,
+[data-portal="student"] {
+  --bg: oklch(0.97 0.007 40);
+  --surface: oklch(0.995 0.003 40);
+  --surface-2: oklch(0.955 0.008 40);
+  --border: oklch(0.87 0.006 40);
+
+  --ink: oklch(0.2 0.02 35);
+  --ink-hover: oklch(0.28 0.02 35);
+
+  --accent: oklch(0.62 0.13 35);
+  --accent-hover: oklch(0.57 0.13 35);
+  --accent-subtle: oklch(0.94 0.04 35);
+  --accent-on: oklch(0.99 0.003 40);
+
+  --t1: oklch(0.2 0.02 35);
+  --t2: oklch(0.48 0.018 35);
+  --t3: oklch(0.65 0.01 35);
+
+  --ok: oklch(0.52 0.12 150);
+  --ok-bg: oklch(0.96 0.02 150);
+  --warn: oklch(0.62 0.11 70);
+  --warn-bg: oklch(0.93 0.05 70);
+  --err: oklch(0.52 0.14 20);
+  --err-bg: oklch(0.93 0.05 20);
+}
+
+/* ── Teacher portal (amber + ink) ─────────────────────────────────────── */
+[data-portal="teacher"] {
+  --bg: oklch(0.965 0.012 78);
+  --surface: oklch(0.995 0.005 80);
+  --surface-2: oklch(0.945 0.012 78);
+  --border: oklch(0.89 0.012 75);
+
+  --ink: oklch(0.19 0.015 60);
+  --ink-hover: oklch(0.28 0.015 60);
+
+  --accent: oklch(0.72 0.13 68);
+  --accent-hover: oklch(0.66 0.13 68);
+  --accent-subtle: oklch(0.94 0.055 68);
+  --accent-on: oklch(0.99 0.004 80);
+
+  --t1: oklch(0.22 0.015 60);
+  --t2: oklch(0.48 0.015 60);
+  --t3: oklch(0.66 0.012 60);
+
+  --ok: oklch(0.55 0.11 152);
+  --ok-bg: oklch(0.93 0.05 152);
+  --warn: oklch(0.72 0.13 68);
+  --warn-bg: oklch(0.94 0.055 68);
+  --err: oklch(0.58 0.13 22);
+  --err-bg: oklch(0.92 0.055 22);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--t1);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-subtle);
+}
+
+/* Screen entry + status animations from the mock (respect reduced motion). */
+@keyframes lm-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes lm-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes lm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.lm-screen {
+  animation: lm-in 0.32s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.lm-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.lm-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
