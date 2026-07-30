@@ -54,7 +54,7 @@ def _format_event(event: Event) -> str:
         return f"{ts}  ✗  error: {p.get('message', '')[:80]}"
     if t == EventType.DONE:
         return f"{ts}  ■  done"
-    return f"{ts}  {t.value} {p}"  # type: ignore[unreachable]
+    return f"{ts}  {t.value} {p}"
 
 
 class LiveLogBuffer:

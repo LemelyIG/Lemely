@@ -31,7 +31,13 @@ _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-pro": (0.001250, 0.005000),
 }
 
-_GEMINI_UNSUPPORTED_KEYS = {"additionalProperties", "additional_properties", "$defs", "title", "default"}
+_GEMINI_UNSUPPORTED_KEYS = {
+    "additionalProperties",
+    "additional_properties",
+    "$defs",
+    "title",
+    "default",
+}
 
 _process_input_tokens: int = 0
 _process_output_tokens: int = 0
@@ -40,7 +46,11 @@ _process_cost_by_task: dict[str, float] = {}
 
 
 def _reset_process_counters() -> None:
-    global _process_input_tokens, _process_output_tokens, _process_accumulated_usd, _process_cost_by_task
+    global \
+        _process_input_tokens, \
+        _process_output_tokens, \
+        _process_accumulated_usd, \
+        _process_cost_by_task
     _process_input_tokens = 0
     _process_output_tokens = 0
     _process_accumulated_usd = 0.0
@@ -75,7 +85,9 @@ def _resolve_pricing(model: str, settings: Settings) -> tuple[float, float]:
     return _DEFAULT_PRICING["gemini-2.5-flash"]
 
 
-def _resolve_refs(schema: Any, defs: dict[str, Any], _resolving: frozenset[str] = frozenset()) -> Any:
+def _resolve_refs(
+    schema: Any, defs: dict[str, Any], _resolving: frozenset[str] = frozenset()
+) -> Any:
     if isinstance(schema, dict):
         if "$ref" in schema:
             name = schema["$ref"].split("/")[-1]
@@ -84,7 +96,11 @@ def _resolve_refs(schema: Any, defs: dict[str, Any], _resolving: frozenset[str] 
                 # emit a generic object to break the cycle.
                 return {"type": "object"}
             return _resolve_refs(defs[name], defs, _resolving | {name})
-        return {k: _resolve_refs(v, defs, _resolving) for k, v in schema.items() if k not in _GEMINI_UNSUPPORTED_KEYS}
+        return {
+            k: _resolve_refs(v, defs, _resolving)
+            for k, v in schema.items()
+            if k not in _GEMINI_UNSUPPORTED_KEYS
+        }
     if isinstance(schema, list):
         return [_resolve_refs(i, defs, _resolving) for i in schema]
     return schema
@@ -180,11 +196,18 @@ class GeminiClient:
             active_model = g.model
 
         log = structlog.get_logger().bind(
-            component="gemini_client", model=active_model, task=task_tag or "untagged",
+            component="gemini_client",
+            model=active_model,
+            task=task_tag or "untagged",
         )
 
         cache_key = self._cache_key(
-            active_model, system_prompt, user_prompt, prompt_version, file_paths, extra_cache_key,
+            active_model,
+            system_prompt,
+            user_prompt,
+            prompt_version,
+            file_paths,
+            extra_cache_key,
         )
         cache_path = self._cache_path(cache_key)
 
@@ -196,9 +219,7 @@ class GeminiClient:
                 model=active_model,
                 cache_key=cache_key,
             )
-            return response_schema.model_validate_json(
-                cache_path.read_text(encoding="utf-8")
-            )
+            return response_schema.model_validate_json(cache_path.read_text(encoding="utf-8"))
 
         self._check_cost_ceiling()
 
@@ -209,7 +230,13 @@ class GeminiClient:
         )
         t0 = time.monotonic()
         raw_text = self._call_with_retry(
-            active_model, system_prompt, user_prompt, file_paths, response_schema, log, task_tag,
+            active_model,
+            system_prompt,
+            user_prompt,
+            file_paths,
+            response_schema,
+            log,
+            task_tag,
         )
         latency_ms = int((time.monotonic() - t0) * 1000)
         log.debug("gemini_latency_ms", latency_ms=latency_ms)
@@ -224,14 +251,19 @@ class GeminiClient:
                 raw_response=raw_text[:2000] + ("…" if len(raw_text) > 2000 else ""),
             )
             corrected = (
-                user_prompt
-                + f"\n\nYour previous response failed validation for "
+                user_prompt + f"\n\nYour previous response failed validation for "
                 f"{response_schema.__name__} with the following error:\n{exc}\n\n"
                 "Fix only the fields mentioned in the error above and return valid JSON "
                 "matching the schema exactly. Do not change any other fields."
             )
             raw_text = self._call_with_retry(
-                active_model, system_prompt, corrected, file_paths, response_schema, log, task_tag,
+                active_model,
+                system_prompt,
+                corrected,
+                file_paths,
+                response_schema,
+                log,
+                task_tag,
             )
             try:
                 result = response_schema.model_validate_json(raw_text)
@@ -287,7 +319,13 @@ class GeminiClient:
             ):
                 with attempt:
                     return self._call_once(
-                        model, system_prompt, user_prompt, file_paths, response_schema, log, task_tag,
+                        model,
+                        system_prompt,
+                        user_prompt,
+                        file_paths,
+                        response_schema,
+                        log,
+                        task_tag,
                     )
         except _TransientError as exc:
             # Retries exhausted on a transient (503/rate-limit) failure. Surface the
@@ -335,13 +373,19 @@ class GeminiClient:
             )
         except Exception as exc:
             msg = str(exc).lower()
-            if any(t in msg for t in ("500", "503", "rate limit", "resource exhausted", "connection")):
+            if any(
+                t in msg for t in ("500", "503", "rate limit", "resource exhausted", "connection")
+            ):
                 raise _TransientError(str(exc)) from exc
             raise ExternalServiceError(str(exc)) from exc
 
         latency_ms = int((time.monotonic() - t0) * 1000)
 
-        global _process_input_tokens, _process_output_tokens, _process_accumulated_usd, _process_cost_by_task
+        global \
+            _process_input_tokens, \
+            _process_output_tokens, \
+            _process_accumulated_usd, \
+            _process_cost_by_task
         in_tok = int(getattr(response.usage_metadata, "prompt_token_count", 0) or 0)
         out_tok = int(getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
         _process_input_tokens += in_tok
@@ -356,8 +400,10 @@ class GeminiClient:
 
         log.info(
             "gemini_call",
-            input_tokens=in_tok, output_tokens=out_tok,
-            usd_cost=usd_rounded, cache_hit=False,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            usd_cost=usd_rounded,
+            cache_hit=False,
         )
         bus.publish(
             EventType.GEMINI_CALL_END,

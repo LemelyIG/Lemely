@@ -5,8 +5,10 @@ no Gemini API call required.  Raises ``ParseError`` for question types that
 need AI assistance (levels-based, indicative content, image-only pages) so the
 caller can fall back to ``GeminiMarkSchemeParser``.
 """
+
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,9 +17,9 @@ from pydantic import ValidationError
 
 from lemely.core.loose_schemas import (
     AnswerPoint,
-    MCQAnswer,
     MarkScheme,
     MarkSchemeMetadata,
+    MCQAnswer,
     PaperType,
     Question,
     QuestionType,
@@ -48,9 +50,9 @@ _YEAR_RE = re.compile(r"\b(20\d{2})\b")
 _GMP_SPLIT_RE = re.compile(r"(?m)^(?:GMP\s*\d+|\d+\.)\s+")
 
 # Question-number column patterns
-_TOP_LEVEL_RE = re.compile(r"^\d+$")          # "1", "2", "40"
-_LEVEL_2_RE = re.compile(r"^\([a-z]\)$")      # "(a)", "(b)"
-_LEVEL_3_RE = re.compile(r"^\([ivx]+\)$")     # "(i)", "(ii)", "(iv)"
+_TOP_LEVEL_RE = re.compile(r"^\d+$")  # "1", "2", "40"
+_LEVEL_2_RE = re.compile(r"^\([a-z]\)$")  # "(a)", "(b)"
+_LEVEL_3_RE = re.compile(r"^\([ivx]+\)$")  # "(i)", "(ii)", "(iv)"
 
 # Compound Q-number: digit prefix + zero or more parenthesised sub-parts
 # Matches "1", "1(a)", "2(a)(i)", "1(g)(ii)" etc.
@@ -93,7 +95,7 @@ class DeterministicMarkSchemeParser:
 
     def __call__(self, pdf_path: Path) -> MarkScheme:
         try:
-            import pdfplumber  # type: ignore[import-untyped]
+            import pdfplumber
         except ImportError as exc:
             raise ImportError(
                 "pdfplumber is required for deterministic parsing. "
@@ -108,9 +110,7 @@ class DeterministicMarkSchemeParser:
         try:
             return MarkScheme(metadata=metadata, questions=questions)
         except ValidationError as exc:
-            raise ParseError(
-                f"MarkScheme validation failed for {pdf_path.name}: {exc}"
-            ) from exc
+            raise ParseError(f"MarkScheme validation failed for {pdf_path.name}: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Metadata extraction
@@ -149,9 +149,7 @@ class DeterministicMarkSchemeParser:
         if subject_code is None:
             raise ParseError(f"Cannot determine subject_code for {pdf_path.name}")
         if paper_number is None or paper_variant is None:
-            raise ParseError(
-                f"Cannot determine paper_number/paper_variant for {pdf_path.name}"
-            )
+            raise ParseError(f"Cannot determine paper_number/paper_variant for {pdf_path.name}")
 
         # --- Session month (cover page if filename didn't supply it) ---
         if session_month is None:
@@ -171,9 +169,7 @@ class DeterministicMarkSchemeParser:
         # --- Maximum mark ---
         m3 = _MAX_MARK_RE.search(cover_text)
         if not m3:
-            raise ParseError(
-                f"Cannot extract maximum_mark from cover page of {pdf_path.name}"
-            )
+            raise ParseError(f"Cannot extract maximum_mark from cover page of {pdf_path.name}")
         maximum_mark = int(m3.group(1))
 
         # --- Derived fields ---
@@ -284,9 +280,7 @@ class DeterministicMarkSchemeParser:
     # Question extraction (dispatch)
     # ------------------------------------------------------------------
 
-    def _extract_questions(
-        self, pdf: Any, metadata: MarkSchemeMetadata
-    ) -> list[Question]:
+    def _extract_questions(self, pdf: Any, metadata: MarkSchemeMetadata) -> list[Question]:
         """Collect tables from question pages and route to MCQ or theory parser."""
         all_tables: list[list[list[str | None]]] = []
 
@@ -319,9 +313,7 @@ class DeterministicMarkSchemeParser:
     # MCQ parser
     # ------------------------------------------------------------------
 
-    def _parse_mcq_tables(
-        self, tables: list[list[list[str | None]]]
-    ) -> list[Question]:
+    def _parse_mcq_tables(self, tables: list[list[list[str | None]]]) -> list[Question]:
         """Extract an MCQ answer key from tables whose answer column contains only A/B/C/D."""
         all_questions: list[Question] = []
         seen_ids: set[str] = set()
@@ -329,9 +321,7 @@ class DeterministicMarkSchemeParser:
         for table in tables:
             if not table:
                 continue
-            data_rows = [
-                r for r in table if r and sum(1 for c in r if (c or "").strip()) >= 2
-            ]
+            data_rows = [r for r in table if r and sum(1 for c in r if (c or "").strip()) >= 2]
             if not data_rows:
                 continue
 
@@ -376,9 +366,7 @@ class DeterministicMarkSchemeParser:
     # Theory parser
     # ------------------------------------------------------------------
 
-    def _parse_theory_tables(
-        self, tables: list[list[list[str | None]]]
-    ) -> list[Question]:
+    def _parse_theory_tables(self, tables: list[list[list[str | None]]]) -> list[Question]:
         """Merge all theory tables and run the row state machine."""
         _HEADER_KEYWORDS: frozenset[str] = frozenset(
             {"question", "answer", "marks", "guidance", "notes"}
@@ -398,9 +386,7 @@ class DeterministicMarkSchemeParser:
                 merged.append(row)
 
         if not merged:
-            raise ParseError(
-                "No valid theory table rows found — expected tables with ≥ 2 columns"
-            )
+            raise ParseError("No valid theory table rows found — expected tables with ≥ 2 columns")
 
         ncols = max(len(r) for r in merged)
         if ncols < 2:
@@ -441,9 +427,7 @@ def _find_mcq_answer_col(rows: list[list[str | None]]) -> int | None:
     num_cols = max(len(r) for r in rows)
     for col in range(num_cols - 1, 0, -1):  # rightmost first; skip col 0 (Q-number)
         values = [
-            (r[col] or "").strip().upper()
-            for r in rows
-            if len(r) > col and (r[col] or "").strip()
+            (r[col] or "").strip().upper() for r in rows if len(r) > col and (r[col] or "").strip()
         ]
         if values and all(v in _MCQ_LETTERS for v in values):
             return col
@@ -476,10 +460,7 @@ def _find_marks_col_theory(merged: list[list[str | None]], ncols: int) -> int:
     than at the last column (col 8, which is a spacer full of ``None``).
     """
     for c in range(ncols - 1, -1, -1):
-        non_empty = [
-            ((row[c] if c < len(row) else None) or "").strip()
-            for row in merged
-        ]
+        non_empty = [((row[c] if c < len(row) else None) or "").strip() for row in merged]
         non_empty = [v for v in non_empty if v]
         if non_empty and all(v.isdigit() and int(v) <= 40 for v in non_empty):
             return c
@@ -574,7 +555,9 @@ def _run_theory_state_machine(
             else:
                 top_level.append(popped)
 
-    def push_question(comp: str, is_leaf: bool, marks_int: int | None, guidance_cell: str | None) -> None:
+    def push_question(
+        comp: str, is_leaf: bool, marks_int: int | None, guidance_cell: str | None
+    ) -> None:
         """Append ``comp`` to labels/stack, creating a ``Question`` node."""
         labels.append(comp)
         new_id = _make_id(labels)
@@ -609,10 +592,8 @@ def _run_theory_state_machine(
         marks_cell = ((row[marks_col] if len(row) > marks_col else None) or "").strip()
 
         marks_int: int | None = None
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             marks_int = int(marks_cell)
-        except (ValueError, TypeError):
-            pass
 
         # ParseError triggers -------------------------------------------
         if _LEVEL_DESCRIPTOR_Q_RE.match(q_cell) and _BAND_LANGUAGE_RE.search(answer_cell):
@@ -621,10 +602,7 @@ def _run_theory_state_machine(
                 "marking — fall back to Gemini parser"
             )
         if _INDICATIVE_CONTENT_RE.search(answer_cell):
-            raise ParseError(
-                "Indicative-content section detected: "
-                "fall back to Gemini parser"
-            )
+            raise ParseError("Indicative-content section detected: fall back to Gemini parser")
 
         # Determine if this row starts a new question --------------------
         #

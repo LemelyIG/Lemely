@@ -1,9 +1,13 @@
 """Golden-dataset accuracy measurement harness for the Lemely pipeline."""
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import structlog
 from pydantic import BaseModel, Field
@@ -27,8 +31,8 @@ class GoldenCase:
 
     paper_id: str
     mark_scheme: MarkScheme
-    ground_truth: dict[str, GoldenAnswer]   # question_id -> GoldenAnswer
-    scan_path: Path | None = None           # present only when extraction test is possible
+    ground_truth: dict[str, GoldenAnswer]  # question_id -> GoldenAnswer
+    scan_path: Path | None = None  # present only when extraction test is possible
 
 
 def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
@@ -56,12 +60,14 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
             log.warning("golden_case_load_error", case_dir=str(case_dir), error=str(exc))
             continue
         scan_path = case_dir / "scan.pdf"
-        cases.append(GoldenCase(
-            paper_id=case_dir.name,
-            mark_scheme=mark_scheme,
-            ground_truth=ground_truth,
-            scan_path=scan_path if scan_path.exists() else None,
-        ))
+        cases.append(
+            GoldenCase(
+                paper_id=case_dir.name,
+                mark_scheme=mark_scheme,
+                ground_truth=ground_truth,
+                scan_path=scan_path if scan_path.exists() else None,
+            )
+        )
     return cases
 
 
@@ -69,12 +75,13 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
 # Per-question result and aggregate metric types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class QuestionResult:
     """Outcome for a single question in an accuracy measurement run."""
 
     question_id: str
-    question_type: str          # "mcq" | "theory"
+    question_type: str  # "mcq" | "theory"
     predicted_marks: int
     truth_marks: int
     confidence_score: float
@@ -95,7 +102,7 @@ class CalibrationBucket:
     """One confidence bucket in the calibration curve."""
 
     label: str
-    lower: float    # inclusive lower bound (0.00 for the bottom bucket)
+    lower: float  # inclusive lower bound (0.00 for the bottom bucket)
     predictions: int = 0
     correct: int = 0
 
@@ -110,7 +117,7 @@ class CalibrationBucket:
 
     @property
     def calibration_gap(self) -> float | None:
-        """actual_accuracy − stated_midpoint; negative = overconfident."""
+        """actual_accuracy - stated_midpoint; negative = overconfident."""
         if self.actual_accuracy is None:
             return None
         return self.actual_accuracy - self.stated_midpoint
@@ -120,7 +127,7 @@ class CalibrationBucket:
 class AccuracyMetrics:
     mark_accuracy: float
     mark_accuracy_theory: float
-    id_match_rate: float | None     # None when no extraction runs were performed
+    id_match_rate: float | None  # None when no extraction runs were performed
     flag_precision_high: float
     flag_recall: float
 
@@ -130,21 +137,22 @@ class AccuracyResult:
     metrics: AccuracyMetrics
     calibration: list[CalibrationBucket]
     question_results: list[QuestionResult]
-    prompt_versions: dict[str, str]     # {"extraction": "5", "correction": "4", "mark_scheme": "3"}
+    prompt_versions: dict[str, str]  # {"extraction": "5", "correction": "4", "mark_scheme": "3"}
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_calibration_buckets() -> list[CalibrationBucket]:
     """Return buckets in descending order of lower bound (highest confidence first)."""
     return [
-        CalibrationBucket("0.90–1.00", 0.90),
-        CalibrationBucket("0.80–0.90", 0.80),
-        CalibrationBucket("0.70–0.80", 0.70),
-        CalibrationBucket("0.60–0.70", 0.60),
-        CalibrationBucket("< 0.60",    0.00),
+        CalibrationBucket("0.90-1.00", 0.90),
+        CalibrationBucket("0.80-0.90", 0.80),
+        CalibrationBucket("0.70-0.80", 0.70),
+        CalibrationBucket("0.60-0.70", 0.60),
+        CalibrationBucket("< 0.60", 0.00),
     ]
 
 
@@ -166,22 +174,15 @@ def _compute_metrics(results: list[QuestionResult]) -> AccuracyMetrics:
     theory = [r for r in results if r.question_type == "theory"]
 
     mark_accuracy = sum(1 for r in results if r.is_correct) / total
-    mark_accuracy_theory = (
-        sum(1 for r in theory if r.is_correct) / len(theory)
-        if theory else 0.0
-    )
+    mark_accuracy_theory = sum(1 for r in theory if r.is_correct) / len(theory) if theory else 0.0
 
     confident = [r for r in results if r.is_confident]
     flag_precision_high = (
-        sum(1 for r in confident if r.is_correct) / len(confident)
-        if confident else 0.0
+        sum(1 for r in confident if r.is_correct) / len(confident) if confident else 0.0
     )
 
     wrong = [r for r in results if not r.is_correct]
-    flag_recall = (
-        sum(1 for r in wrong if r.needs_teacher_review) / len(wrong)
-        if wrong else 1.0
-    )
+    flag_recall = sum(1 for r in wrong if r.needs_teacher_review) / len(wrong) if wrong else 1.0
 
     return AccuracyMetrics(
         mark_accuracy=mark_accuracy,
@@ -205,10 +206,11 @@ def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]
 # Public measurement runner
 # ---------------------------------------------------------------------------
 
+
 def measure_accuracy(
     cases: list[GoldenCase],
-    gemini_client: object,   # GeminiClient | None
-    settings: object,        # Settings
+    gemini_client: object,  # GeminiClient | None
+    settings: object,  # Settings
 ) -> AccuracyResult:
     """Run correction over all golden cases using ground-truth answers; compute metrics."""
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
@@ -244,14 +246,16 @@ def measure_accuracy(
             if gt is None:
                 continue
             q_type = "mcq" if cq.marker_source == "deterministic" else "theory"
-            all_results.append(QuestionResult(
-                question_id=cq.question_id,
-                question_type=q_type,
-                predicted_marks=cq.awarded_marks,
-                truth_marks=gt.awarded_marks,
-                confidence_score=cq.confidence_score,
-                needs_teacher_review=cq.needs_teacher_review,
-            ))
+            all_results.append(
+                QuestionResult(
+                    question_id=cq.question_id,
+                    question_type=q_type,
+                    predicted_marks=cq.awarded_marks,
+                    truth_marks=gt.awarded_marks,
+                    confidence_score=cq.confidence_score,
+                    needs_teacher_review=cq.needs_teacher_review,
+                )
+            )
 
     return AccuracyResult(
         metrics=_compute_metrics(all_results),
@@ -269,6 +273,7 @@ def measure_accuracy(
 # Reporting + persistence
 # ---------------------------------------------------------------------------
 
+
 def format_report(result: AccuracyResult, targets: object) -> str:
     """Return a printable ASCII report with metric table and calibration curve."""
     m = result.metrics
@@ -280,21 +285,41 @@ def format_report(result: AccuracyResult, targets: object) -> str:
         return f">{v * 100:.0f}%"
 
     rows = [
-        ("Correction", "mark_accuracy",         m.mark_accuracy,
-         targets.mark_accuracy_target,  # type: ignore[attr-defined]
-         "% of questions where awarded_marks == ground truth"),
-        ("Correction", "mark_accuracy (theory)", m.mark_accuracy_theory,
-         targets.mark_accuracy_target,
-         "Same, theory-only (MCQ excluded)"),
-        ("Extraction", "id_match_rate",          m.id_match_rate,
-         targets.id_match_rate_target,
-         "% of leaf questions found in extracted output"),
-        ("Confidence", "flag_precision (HIGH)",  m.flag_precision_high,
-         targets.flag_precision_target,
-         "Of HIGH-confidence decisions, % actually correct"),
-        ("Confidence", "flag_recall",            m.flag_recall,
-         targets.flag_recall_target,
-         "Of wrong marks, % flagged for review"),
+        (
+            "Correction",
+            "mark_accuracy",
+            m.mark_accuracy,
+            targets.mark_accuracy_target,  # type: ignore[attr-defined]
+            "% of questions where awarded_marks == ground truth",
+        ),
+        (
+            "Correction",
+            "mark_accuracy (theory)",
+            m.mark_accuracy_theory,
+            targets.mark_accuracy_target,  # type: ignore[attr-defined]
+            "Same, theory-only (MCQ excluded)",
+        ),
+        (
+            "Extraction",
+            "id_match_rate",
+            m.id_match_rate,
+            targets.id_match_rate_target,  # type: ignore[attr-defined]
+            "% of leaf questions found in extracted output",
+        ),
+        (
+            "Confidence",
+            "flag_precision (HIGH)",
+            m.flag_precision_high,
+            targets.flag_precision_target,  # type: ignore[attr-defined]
+            "Of HIGH-confidence decisions, % actually correct",
+        ),
+        (
+            "Confidence",
+            "flag_recall",
+            m.flag_recall,
+            targets.flag_recall_target,  # type: ignore[attr-defined]
+            "Of wrong marks, % flagged for review",
+        ),
     ]
 
     sep = "─" * 100
@@ -308,7 +333,7 @@ def format_report(result: AccuracyResult, targets: object) -> str:
 
     lines.append("")
     lines.append(
-        f"{'Confidence bucket':<20} {'Predictions':>12} {'Accuracy':>10} {'Gap (actual−stated)':>20}"
+        f"{'Confidence bucket':<20} {'Predictions':>12} {'Accuracy':>10} {'Gap (actual-stated)':>20}"  # noqa: E501
     )
     lines.append("─" * 66)
     for b in result.calibration:
@@ -333,8 +358,9 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
 
     try:
         sha = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            text=True, stderr=subprocess.DEVNULL,
+            ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607
+            text=True,
+            stderr=subprocess.DEVNULL,
         ).strip()
     except Exception:
         sha = "unknown"
@@ -352,8 +378,10 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
         },
         "calibration": [
             {
-                "label": b.label, "lower": b.lower,
-                "predictions": b.predictions, "correct": b.correct,
+                "label": b.label,
+                "lower": b.lower,
+                "predictions": b.predictions,
+                "correct": b.correct,
                 "actual_accuracy": b.actual_accuracy,
                 "calibration_gap": b.calibration_gap,
             }
@@ -362,8 +390,10 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
         "prompt_versions": result.prompt_versions,
         "question_results": [
             {
-                "question_id": r.question_id, "question_type": r.question_type,
-                "predicted_marks": r.predicted_marks, "truth_marks": r.truth_marks,
+                "question_id": r.question_id,
+                "question_type": r.question_type,
+                "predicted_marks": r.predicted_marks,
+                "truth_marks": r.truth_marks,
                 "confidence_score": r.confidence_score,
                 "needs_teacher_review": r.needs_teacher_review,
                 "is_correct": r.is_correct,

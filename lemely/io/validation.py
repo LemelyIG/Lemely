@@ -1,4 +1,5 @@
 """Mark scheme structural validation — emits warnings, does not raise."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,7 +34,7 @@ def validate_mark_scheme(scheme: MarkScheme) -> list[ValidationWarning]:
     """Check structural invariants for all leaf questions; return warnings (not errors)."""
     warnings: list[ValidationWarning] = []
     for q in scheme.all_questions_flat():
-        if q.marks <= 0 or q.parts:        # skip containers and zero-mark items
+        if q.marks <= 0 or q.parts:  # skip containers and zero-mark items
             continue
         _check_leaf_question(q, warnings)
     return warnings
