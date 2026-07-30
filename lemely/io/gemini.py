@@ -135,6 +135,26 @@ class GeminiClient:
             self._raw_client = genai.Client(api_key=api_key)
         return self._raw_client
 
+    def check_reachable(self) -> None:
+        """Verify the Gemini API is reachable with the configured credentials.
+
+        Performs a lightweight ``models.list()`` request (no content generation,
+        so no token/USD cost) and forces it to execute. Used by ``lemely doctor``
+        to report real reachability rather than a stub.
+
+        Raises:
+            ExternalServiceError: no key is configured, the key is rejected, or
+                the API/network is unreachable.
+        """
+        if self._settings.gemini_api_key is None:
+            raise ExternalServiceError("No Gemini API key configured; cannot reach the API.")
+        try:
+            # models.list() returns a lazy pager; consume one item to force the
+            # HTTP round-trip that actually validates auth + connectivity.
+            next(iter(self._client.models.list()), None)
+        except Exception as exc:
+            raise ExternalServiceError(f"Gemini API not reachable: {exc}") from exc
+
     def _cache_key(
         self,
         model: str,

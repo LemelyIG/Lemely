@@ -491,11 +491,21 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         )
 
     if not no_network:
-        record(
-            "gemini_reachable",
-            False,
-            "live ping not yet implemented — pass --no-network to skip",
-        )
+        if not has_key:
+            record(
+                "gemini_reachable",
+                False,
+                "no API key configured; set GEMINI_API_KEY or pass --no-network to skip",
+            )
+        else:
+            from lemely.io.gemini import GeminiClient
+
+            try:
+                GeminiClient(settings).check_reachable()
+                record("gemini_reachable", True, "models.list() ok")
+            except Exception as exc:
+                # Any failure (auth, network, SDK) is a reachability failure to report.
+                record("gemini_reachable", False, str(exc))
 
     fatal_checks = [c for c in checks if c["name"] != "gradio_extra_installed"]
     all_passed = all(c["ok"] for c in fatal_checks)

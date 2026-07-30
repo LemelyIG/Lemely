@@ -97,3 +97,15 @@
   discovery (repo-root + ~/.config/lemely), needed because the rename would make a
   developer's local `monthly_usd_ceiling` key an `extra=forbid` error. Explicit
   `toml_path`/temp-cwd discovery still works.
+
+### D0.7 — `lemely doctor` real Gemini reachability (acceptance criterion)
+- **What:** Added `GeminiClient.check_reachable()` — a zero-token `models.list()`
+  round-trip that raises `ExternalServiceError` on missing key / auth failure /
+  network error. `doctor` (without `--no-network`) now calls it and reports the
+  actual result, replacing the hardcoded `gemini_reachable=False` "not yet
+  implemented" stub (audit §6/§10 #15). `--no-network` still skips it.
+- **Why:** Phase 0 acceptance requires "`lemely doctor` reports the real Gemini
+  reachability." `models.list()` validates credentials + connectivity without
+  generation, so it costs nothing against the $8 ledger.
+- **Tests:** live-ping reachable→all_passed; unreachable→exit 3 + gemini_reachable
+  false (both mock `check_reachable`, no real network in the suite).
