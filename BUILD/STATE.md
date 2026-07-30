@@ -56,8 +56,12 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        = "No new upgrade operations detected". Added tests/test_db_schema.py (metadata +
        real-PG integration, skips if PG down). Gates green: 402 passed / 84.92% cov;
        ruff/mypy/lint-imports clean.)
-- [ ] todo — Supabase Auth (GoTrue): email/password signup+login per role; parent phone-OTP
+- [~] doing — Supabase Auth (GoTrue): email/password signup+login per role; parent phone-OTP
        behind provider abstraction with a MOCK SMS provider (logs OTP; one switch to real)
+       (started 2026-07-30: D1.4 recorded. Building lemely/auth/ — GoTrue REST client (admin
+       create + password grant), SmsProvider protocol + MockSmsProvider, in-memory OTP store,
+       AuthService mirroring GoTrue users → public.users, FastAPI /api/auth router. Deps:
+       httpx→web extra, db extra→CI. Tests: fakes for hermetic CI + live skip-if-down.)
 - [ ] todo — FastAPI JWT validation middleware; replace the anonymous get_auth_context stub
 - [ ] todo — RBAC dependency on EVERY route; kill both IDOR endpoints
        (POST /student/plan, POST /student/onboarding); row-level ownership checks

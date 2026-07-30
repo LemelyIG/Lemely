@@ -3,6 +3,45 @@
 
 ## Phase 1
 
+### D1.4 — Auth backend split: GoTrue for email/password, self-signed HS256 for mock parent OTP
+- **What:** A new `lemely/auth/` package owns identity. Email/password signup+login go
+  through Supabase **GoTrue** (local stack): admin-create the user (service-role key,
+  email pre-confirmed for dev, `role` in `user_metadata`) and password grant for login;
+  every GoTrue user is mirrored 1:1 into `public.users` (id = `auth.users.id`, per D1.1)
+  with role/email/phone. Parent **phone-OTP** runs behind an `SmsProvider` protocol whose
+  `MockSmsProvider` logs the code; `AuthService` owns the OTP challenge lifecycle (generate
+  → store → deliver → verify) and, on successful verify, **mints a Supabase-compatible
+  access token self-signed with the shared HS256 `jwt_secret`** carrying the same claims
+  GoTrue issues (`sub`, `aud="authenticated"`, `role="authenticated"`, `exp`,
+  `app_metadata.role`, `phone`). Both token kinds therefore validate identically under the
+  (next task) JWT middleware.
+- **Why:** GoTrue's native phone OTP requires a real SMS provider (Twilio/etc.); the MISSION
+  mandates a MOCK provider now with "one config switch to a real provider later." Owning the
+  OTP challenge ourselves keeps the mock fully functional and testable offline, while the
+  `SmsProvider` seam is the exact switch point. Self-signing the OTP session token with the
+  same secret + claim shape GoTrue uses means the downstream validator needs no special case
+  — email/password and OTP tokens are indistinguishable to RBAC. We already hold the local
+  secret in `SupabaseSettings.jwt_secret`; this is a local-dev convenience, not a production
+  key-management pattern (a real deploy switches parent OTP to GoTrue+real SMS and drops the
+  self-signer).
+- **OTP challenge store is in-memory (TTL, default 300s, max 5 attempts), NOT a DB table:**
+  OTP challenges are ephemeral; adding a table would be a non-additive schema change outside
+  the P1.3 schema and buys nothing (a single-process dev/test server). Recorded so a later
+  multi-worker deploy knows to move it to Redis/DB. Deterministic in tests via injected
+  clock + RNG.
+- **Deps:** `httpx` added to the `web` extra (GoTrue REST client; already installed,
+  matches the async-free sync-httpx call style); `pyjwt[crypto]` stays in the `db` extra and
+  CI's test job now installs `db` too (needed to import `lemely.db`/`lemely.auth` at all).
+- **Testing:** hermetic unit tests use a `FakeAuthBackend` + `MockSmsProvider` + injected
+  clock/RNG and never touch the network; a live integration test hits the real local GoTrue
+  + Postgres and **skips cleanly when either is unreachable** (mirrors `test_db_schema.py`),
+  so CI stays green until a Supabase service block is added before the E2E acceptance task.
+- **Alternatives:** GoTrue admin `generate_link` magic-link exchange for the OTP session
+  (rejected: convoluted for phone, still needs an SMS-less verify hack, more moving parts);
+  a real DB OTP table (rejected: non-additive, unnecessary for single-process dev);
+  self-signing ALL tokens incl. email/password (rejected: throws away GoTrue's real
+  password hashing, refresh-token rotation, and account lifecycle we get for free).
+
 ### D1.1 — Auth identity mapping: `public.users.id` == Supabase `auth.users.id`, no cross-schema FK
 - **What:** Our application-owned `public.users` table uses a `UUID` primary key
   that is set to the Supabase GoTrue user id (`auth.users.id`) at signup time.
