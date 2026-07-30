@@ -125,6 +125,51 @@ class DetParserSettings(BaseModel):
     escalate_on_defaulted_marks: bool = True
 
 
+class DatabaseSettings(BaseModel):
+    """Connection settings for the application Postgres (local Supabase by default).
+
+    The default URL targets the local Supabase stack (`supabase start`), whose
+    Postgres listens on ``127.0.0.1:54322`` with the well-known local dev
+    credentials (``postgres:postgres``) — these are non-secret local defaults,
+    not production credentials. Override in production via
+    ``LEMELY_DATABASE__URL`` (a full SQLAlchemy URL) or ``lemely.toml``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Full SQLAlchemy URL. psycopg (v3) sync driver by default.
+    url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+    # Echo SQL to the logger (debugging only).
+    echo: bool = False
+    # QueuePool sizing.
+    pool_size: int = Field(default=5, ge=1)
+    max_overflow: int = Field(default=10, ge=0)
+    pool_pre_ping: bool = True
+
+
+class SupabaseSettings(BaseModel):
+    """Supabase Auth (GoTrue) validation + admin settings.
+
+    All defaults are the standard local-dev values printed by ``supabase status``.
+    The JWT secret and service-role key are used only server-side (JWT validation
+    and admin user creation); the anon key is the public client key. None of these
+    are production secrets — override via ``LEMELY_SUPABASE__*`` for real deploys.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Base URL of the local Supabase API gateway (Kong).
+    url: str = "http://127.0.0.1:54321"
+    # Shared HS256 secret GoTrue signs local JWTs with (well-known local default).
+    jwt_secret: SecretStr = SecretStr("super-secret-jwt-token-with-at-least-32-characters-long")
+    # Expected `aud` claim for user tokens.
+    jwt_audience: str = "authenticated"
+    # Public anon key (client-side). Populated from `supabase status` for local dev.
+    anon_key: SecretStr | None = None
+    # Service-role key (server-side admin: create users, etc.).
+    service_role_key: SecretStr | None = None
+
+
 class IntegritySettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     plagiarism_enabled: bool = True
@@ -152,6 +197,8 @@ class Settings(BaseSettings):
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
+    database: DatabaseSettings = DatabaseSettings()
+    supabase: SupabaseSettings = SupabaseSettings()
     # Accept the app-specific ``LEMELY_GEMINI_API_KEY`` plus the two unprefixed
     # names the google-genai SDK reads directly (``GEMINI_API_KEY`` /
     # ``GOOGLE_API_KEY``). Without these aliases only ``LEMELY_GEMINI_API_KEY``

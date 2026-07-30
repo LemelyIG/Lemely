@@ -34,9 +34,14 @@ gemini_spend_usd: 0.00
 
 ## Phase 1 — Database + Auth + Tenancy
 Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSION §4.
-- [ ] todo — Local Supabase stack committed: `supabase/` config, `supabase init/start`
+- [x] done — Local Supabase stack committed: `supabase/` config, `supabase init/start`
        (Docker), seed scripts, Makefile targets (db-up/db-down/db-reset/seed), docs
-- [ ] todo — SQLAlchemy 2 + Alembic wired to local Postgres; base config + first migration
+       (P1.1: supabase/config.toml + seed.sql; Makefile db-* + seed targets; docs/database.md.
+       DatabaseSettings/SupabaseSettings added to config. Static gates + suite green.)
+- [x] done — SQLAlchemy 2 + Alembic wired to local Postgres; base config + first migration
+       (P1.2: lemely/db/{base,session,seed}.py + migrations/env.py; empty 0001_baseline head;
+       Base w/ naming convention; alembic reads Settings.database.url. Live boot verified:
+       supabase start + alembic upgrade head applied against local Postgres.)
 - [ ] todo — Full relational schema (additive-only for later phases): users/profiles(role),
        schools, school_memberships(teacher↔school), seats, subscriptions+plan_tiers
        (manual activation flag), parent↔child links, classes, class_enrollments, subjects,
