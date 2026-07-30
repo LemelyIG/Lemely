@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 0
-last_updated: 2026-07-30T03:40:00Z
+last_updated: 2026-07-30T04:20:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -27,7 +27,9 @@ gemini_spend_usd: 0.00
        persisted. Also fixed example_toml trailing-newline drift. 393 passed, 84.66%)
 - [x] done — Single lockfile mechanism; .env.example; fix GEMINI_API_KEY mapping trap
 - [x] done — Remove dead: respx, live marker; leave lib/api.ts for Phase 2
-- [ ] todo — Quality gates green; phase report + screenshots N/A; PR develop→main; ntfy
+- [x] done — Acceptance: doctor real Gemini reachability (models.list zero-token ping)
+- [ ] doing — Quality gates green; phase report; merge develop; PR develop→main; ntfy
+       (report at reports/phase-0/REPORT.md; all gates green 395 passed/84.56%)
 
 ## Phase 1 — Database + Auth + Tenancy
 (orchestrator expands this checklist from MISSION.md §4 when Phase 0 completes;
