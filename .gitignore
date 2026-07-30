@@ -47,3 +47,6 @@ outputs/
 lemely.toml
 .tokensave
 .omc/
+
+# Supervisor runtime logs
+BUILD/logs/
