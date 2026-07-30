@@ -37,6 +37,10 @@ class GeminiSettings(BaseModel):
     mark_scheme_model: str | None = None
     extraction_model: str | None = None
     correction_model: str | None = None
+    generation_model: str | None = None
+    study_plan_model: str | None = None
+    integrity_model: str | None = None
+    scan_metadata_model: str | None = None
     # Escalation: re-mark with a stronger model when marker confidence is low.
     escalation_model: str | None = None
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
@@ -44,9 +48,7 @@ class GeminiSettings(BaseModel):
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
     # avoids spurious mark-point-sum validation failures during structured extraction.
-    thinking_budget_for: dict[str, int] = Field(
-        default_factory=lambda: {"mark_scheme": 8000}
-    )
+    thinking_budget_for: dict[str, int] = Field(default_factory=lambda: {"mark_scheme": 8000})
     # Pricing overrides: model_name → [input_usd_per_1k, output_usd_per_1k].
     # Built-in defaults exist for gemini-2.5-flash-lite/flash/pro; only set
     # this if you use a different model or the API pricing changes.
@@ -62,6 +64,10 @@ class GeminiSettings(BaseModel):
             "mark_scheme": self.mark_scheme_model,
             "extraction": self.extraction_model,
             "correction": self.correction_model,
+            "generation": self.generation_model,
+            "study_plan": self.study_plan_model,
+            "integrity": self.integrity_model,
+            "scan_metadata": self.scan_metadata_model,
         }
         return mapping.get(task_tag) or self.model
 
@@ -114,6 +120,14 @@ class DetParserSettings(BaseModel):
     escalate_on_defaulted_marks: bool = True
 
 
+class IntegritySettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plagiarism_enabled: bool = True
+    ai_detection_enabled: bool = False  # opt-in; Gemini call per question
+    plagiarism_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -127,6 +141,7 @@ class Settings(BaseSettings):
     gemini: GeminiSettings = GeminiSettings()
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
+    integrity: IntegritySettings = IntegritySettings()
     gemini_api_key: SecretStr | None = None
 
     @classmethod
