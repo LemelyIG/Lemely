@@ -82,6 +82,7 @@ class MathMarkType(StrEnum):
     M = "M"  # Method mark
     A = "A"  # Accuracy mark (dependent on preceding M)
     B = "B"  # Independent mark
+    C = "C"  # CAIE consequential/method mark (Physics / Sciences)
     DEP = "dep"  # Explicitly dependent
     FT = "ft"  # Follow-through
     ISW = "isw"  # Ignore subsequent working

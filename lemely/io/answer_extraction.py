@@ -32,7 +32,6 @@ def _build_paper_id(mark_scheme: MarkScheme) -> str:
     return f"{m.subject_code}_{session}_{year}_p{m.paper_number}{m.paper_variant}"
 
 
-
 def _canonical_id(q_id: str) -> str:
     """Strip whitespace, brackets, dots; lowercase — for fuzzy ID matching."""
     return re.sub(r"[\s()\[\].]", "", q_id).lower()
@@ -48,6 +47,7 @@ def normalize_extracted_answers(
     Second pass: positional fallback for any remaining unmatched answers.
     """
     import structlog as _sl
+
     _norm_log = _sl.get_logger().bind(component="id_normalization")
 
     canonical_map: dict[str, str] = {_canonical_id(mid): mid for mid in manifest_ids}
@@ -78,6 +78,41 @@ def normalize_extracted_answers(
 
     return extracted.model_copy(update={"answers": new_answers})
 
+
+# Gemini's self-reported confidence is often miscalibrated — it tends to be
+# overconfident on ambiguous handwriting and underconfident on clean MCQ answers.
+# This heuristic layer adjusts confidence using structural signals from the
+# extraction result itself, with zero extra API calls.
+def _calibrate_confidence(
+    answer: ExtractedAnswer,
+    question_type_hint: str | None = None,
+) -> float:
+    """Adjust raw Gemini confidence using structural signals from the extraction result."""
+    conf = answer.confidence
+    is_mcq_hint = question_type_hint == "mcq"
+
+    # Detect MCQ from answer content: single letter A/B/C/D
+    answer_stripped = answer.answer.strip()
+    looks_like_mcq_answer = answer_stripped.upper() in {"A", "B", "C", "D"}
+
+    if is_mcq_hint or looks_like_mcq_answer:
+        conf = min(1.0, conf + 0.1) if looks_like_mcq_answer else min(conf, 0.2)
+    else:
+        # Non-MCQ: check answer completeness
+        if len(answer_stripped) < 2:
+            conf = min(conf, 0.3)
+
+        # Working out present → slight boost (extractor found method, more reliable)
+        if answer.working_out:
+            conf = min(1.0, conf + 0.05)
+
+    # Source region present → slight boost (extractor located answer spatially)
+    if answer.source_region:
+        conf = min(1.0, conf + 0.03)
+
+    return conf
+
+
 class GeminiAnswerExtractor:
     def __init__(self, gemini_client: GeminiClient) -> None:
         self._client = gemini_client
@@ -93,7 +128,19 @@ class GeminiAnswerExtractor:
             extra_cache_key=manifest_key,
             task_tag="extraction",
         )
+        # Build a type-hint map from mark scheme for calibration
+        type_hint_map: dict[str, str] = {}
+        for q in mark_scheme.all_questions_flat():
+            if not q.parts and q.marks > 0:
+                type_hint_map[q.id] = q.type.value
+
         answers = raw.answers
+        calibrated: list[ExtractedAnswer] = []
+        for a in answers:
+            hint = type_hint_map.get(a.question_id)
+            new_conf = _calibrate_confidence(a, question_type_hint=hint)
+            calibrated.append(a.model_copy(update={"confidence": new_conf}))
+        answers = calibrated
         for a in answers:
             bus.publish(
                 EventType.EXTRACTION_PROGRESS,
@@ -102,8 +149,7 @@ class GeminiAnswerExtractor:
                 has_working=a.working_out is not None,
             )
         manifest_ids = [
-            q.id for q in mark_scheme.all_questions_flat()
-            if q.marks > 0 and not q.parts
+            q.id for q in mark_scheme.all_questions_flat() if q.marks > 0 and not q.parts
         ]
         normalized_result = normalize_extracted_answers(
             ExtractedAnswers(

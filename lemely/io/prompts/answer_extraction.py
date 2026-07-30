@@ -100,7 +100,9 @@ def _summarize_question(q: Question) -> str:
         parts.append("  working_out: transcribe all steps, substitutions, and intermediate values")
     elif q.type in {QuestionType.LEVELS_BASED, QuestionType.INDICATIVE_CONTENT}:
         parts.append("  expected answer shape: extended written response")
-        parts.append("  working_out: transcribe any planning notes or annotations in the allowed area")
+        parts.append(
+            "  working_out: transcribe any planning notes or annotations in the allowed area"
+        )
     else:
         parts.append("  working_out: transcribe any working or annotations if present, else null")
     return "\n".join(parts)
@@ -128,7 +130,7 @@ def build_extractor_user_prompt(mark_scheme: MarkScheme) -> str:
         f"Paper: {meta.subject_code}/{meta.paper_number}{meta.paper_variant} "
         f"{meta.session_month.value} {year} ({meta.paper_type.value}).\n\n"
         f"Question manifest:\n{manifest}\n\n"
-        f"Return JSON: {{\"answers\": [ExtractedAnswer, ...]}}. Include one ExtractedAnswer "
+        f'Return JSON: {{"answers": [ExtractedAnswer, ...]}}. Include one ExtractedAnswer '
         f"per leaf question above whose answer you can identify in the scan. Skip questions "
         f"you cannot find at all (do not invent question_ids). "
         f"Populate working_out for non-MCQ questions that have visible working or annotations; "
@@ -139,6 +141,7 @@ def build_extractor_user_prompt(mark_scheme: MarkScheme) -> str:
 def build_question_manifest_hash_key(mark_scheme: MarkScheme) -> str:
     """Hash the question id+type+marks tuple list so cache keys vary by paper, not just file."""
     import hashlib
+
     tokens = []
     for q in mark_scheme.all_questions_flat():
         tokens.append(f"{q.id}:{q.type.value}:{q.marks}")

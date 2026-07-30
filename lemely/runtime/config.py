@@ -37,6 +37,10 @@ class GeminiSettings(BaseModel):
     mark_scheme_model: str | None = None
     extraction_model: str | None = None
     correction_model: str | None = None
+    generation_model: str | None = None
+    study_plan_model: str | None = None
+    integrity_model: str | None = None
+    scan_metadata_model: str | None = None
     # Escalation: re-mark with a stronger model when marker confidence is low.
     escalation_model: str | None = None
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
@@ -44,9 +48,7 @@ class GeminiSettings(BaseModel):
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
     # avoids spurious mark-point-sum validation failures during structured extraction.
-    thinking_budget_for: dict[str, int] = Field(
-        default_factory=lambda: {"mark_scheme": 8000}
-    )
+    thinking_budget_for: dict[str, int] = Field(default_factory=lambda: {"mark_scheme": 8000})
     # Pricing overrides: model_name → [input_usd_per_1k, output_usd_per_1k].
     # Built-in defaults exist for gemini-2.5-flash-lite/flash/pro; only set
     # this if you use a different model or the API pricing changes.
@@ -62,6 +64,10 @@ class GeminiSettings(BaseModel):
             "mark_scheme": self.mark_scheme_model,
             "extraction": self.extraction_model,
             "correction": self.correction_model,
+            "generation": self.generation_model,
+            "study_plan": self.study_plan_model,
+            "integrity": self.integrity_model,
+            "scan_metadata": self.scan_metadata_model,
         }
         return mapping.get(task_tag) or self.model
 
@@ -72,6 +78,54 @@ class AccuracyEvalSettings(BaseModel):
     id_match_rate_target: float = Field(default=0.99, ge=0.0, le=1.0)
     flag_precision_target: float = Field(default=0.99, ge=0.0, le=1.0)
     flag_recall_target: float = Field(default=0.85, ge=0.0, le=1.0)
+
+
+class DetParserSettings(BaseModel):
+    """Tuning knobs for ``DeterministicMarkSchemeParser``.
+
+    All values have sensible defaults; override via ``lemely.toml`` under the
+    ``[det_parser]`` section or via ``LEMELY_DET_PARSER__*`` env vars.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Maximum mark value considered valid for a single mark-point cell.
+    # Prevents false-positive column detection on year numbers (e.g. "2019").
+    max_mark_per_point: int = Field(default=40, ge=1)
+
+    # PDF page range (0-indexed, exclusive end) to search for GMP text.
+    gmp_pages_start: int = Field(default=1, ge=0)
+    gmp_pages_end: int = Field(default=4, ge=1)
+
+    # Header keywords used to filter out per-page table-header rows.
+    # Extend this set (via TOML list-append) to suppress any additional
+    # column-header words specific to your papers.
+    header_keywords: frozenset[str] = frozenset(
+        {"question", "answer", "marks", "guidance", "notes", "input", "output"}
+    )
+
+    # Words on a cover-page line that indicate it is NOT the subject name.
+    skip_line_tokens: frozenset[str] = frozenset(
+        {"cambridge", "igcse", "mark scheme", "©", "maximum", "published", "confidential"}
+    )
+
+    # Reconciliation: compare leaf-mark total to metadata.maximum_mark.
+    # When True and the discrepancy exceeds the tolerance, raise ParseError
+    # (→ ChainedMarkSchemeParser hands the paper to Gemini).
+    escalate_on_mark_mismatch: bool = True
+    mark_reconcile_tolerance: int = Field(default=0, ge=0)
+
+    # When True, raise ParseError if any leaf question still has marks
+    # derived from the default (mark-cell not parseable → assumed 1).
+    escalate_on_defaulted_marks: bool = True
+
+
+class IntegritySettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plagiarism_enabled: bool = True
+    ai_detection_enabled: bool = False  # opt-in; Gemini call per question
+    plagiarism_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
 
 class Settings(BaseSettings):
@@ -86,6 +140,8 @@ class Settings(BaseSettings):
     logging: LoggingSettings = LoggingSettings()
     gemini: GeminiSettings = GeminiSettings()
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
+    det_parser: DetParserSettings = DetParserSettings()
+    integrity: IntegritySettings = IntegritySettings()
     gemini_api_key: SecretStr | None = None
 
     @classmethod

@@ -34,11 +34,13 @@ class GradioCallbackTests(unittest.TestCase):
             build_mark_scheme_dropdown_choices,
             parse_mark_scheme_path_from_label,
         )
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "0625_m20_ms_12.pdf").write_bytes(b"%PDF-1.4")
             (root / "0625_m20_ms_12.json").write_text(
-                REAL_MARK_SCHEME.read_text(encoding="utf-8"), "utf-8",
+                REAL_MARK_SCHEME.read_text(encoding="utf-8"),
+                "utf-8",
             )
             choices = build_mark_scheme_dropdown_choices(root)
         self.assertIsInstance(choices, list)
@@ -48,6 +50,7 @@ class GradioCallbackTests(unittest.TestCase):
 
     def test_subject_session_choices_groups_paper_outputs(self) -> None:
         from lemely.app.gradio_callbacks import build_subject_session_choices
+
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
             (out / "0625" / "MayJune_2020").mkdir(parents=True)

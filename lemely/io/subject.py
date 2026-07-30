@@ -44,7 +44,9 @@ def aggregate_subject(papers: Sequence[CorrectionResult]) -> SubjectResult:
     for p in papers[1:]:
         m = p.metadata
         if (m.subject_code, m.session_month, m.session_year) != (
-            ref.subject_code, ref.session_month, ref.session_year,
+            ref.subject_code,
+            ref.session_month,
+            ref.session_year,
         ):
             raise UsageError(
                 f"Paper subject/session mismatch: "

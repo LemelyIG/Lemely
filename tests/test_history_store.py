@@ -1,0 +1,83 @@
+"""Tests for Phase 2: HistoryStore persistence."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from lemely.core.history import PaperRecord, StudentHistory
+from lemely.core.schemas import ExamMetadata, WeakArea
+from lemely.io.history_store import HistoryStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def _make_record(student_id: str = "alice", grade: str = "B") -> PaperRecord:
+    return PaperRecord(
+        student_id=student_id,
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        awarded_marks=65,
+        maximum_marks=80,
+        percentage=81.25,
+        grade=grade,
+        weak_areas=[
+            WeakArea(
+                topic="Waves",
+                lost_marks=5,
+                maximum_marks=10,
+                accuracy=0.5,
+                question_ids=["3a"],
+            )
+        ],
+        recorded_at=datetime.now(UTC).isoformat(),
+    )
+
+
+class TestHistoryStore:
+    def test_load_unknown_student_returns_empty(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        history = store.load("nobody")
+        assert isinstance(history, StudentHistory)
+        assert history.records == []
+
+    def test_append_then_load_roundtrip(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        record = _make_record()
+        store.append("alice", record)
+        history = store.load("alice")
+        assert len(history.records) == 1
+        assert history.records[0].grade == "B"
+        assert history.records[0].weak_areas[0].topic == "Waves"
+
+    def test_two_appends_accumulate(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        store.append("alice", _make_record(grade="B"))
+        store.append("alice", _make_record(grade="A"))
+        history = store.load("alice")
+        assert len(history.records) == 2
+        grades = {r.grade for r in history.records}
+        assert grades == {"A", "B"}
+
+    def test_list_students(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        store.append("alice", _make_record("alice"))
+        store.append("bob", _make_record("bob"))
+        students = store.list_students()
+        assert "alice" in students
+        assert "bob" in students
+
+    def test_file_created_atomically(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        store.append("charlie", _make_record("charlie"))
+        path = tmp_path / "history" / "charlie.json"
+        assert path.exists()
+        # No temp files should remain
+        tmp_files = list((tmp_path / "history").glob(".charlie_*"))
+        assert tmp_files == []

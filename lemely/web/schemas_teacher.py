@@ -1,0 +1,371 @@
+"""Teacher-portal API DTOs (camelCase wire format).
+
+These models mirror the frontend teacher-portal contract in
+``web/src/portals/teacher/data.ts`` and ``screens/*``. They live apart from
+``lemely.web.schemas`` (which holds the portal-agnostic grading DTOs) so the
+teacher wire format can evolve without disturbing the shared converters.
+
+**Data provenance.** Every field on these DTOs is documented as either
+*data-backed* (computed from a :class:`CorrectionResult`, the
+:class:`HistoryStore`, parsed mark schemes, or the analytics helpers) or
+*structurally-empty* (a shape the mock renders that has no backend source yet —
+attendance, retention minutes, hand-written narratives). Structurally-empty
+collections default to empty and structurally-empty scalars to typed-neutral
+values; none of the mock's demo numbers are hard-coded.
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import Field
+
+from lemely.web.schemas import ApiModel, QuestionResultDTO, WeakAreaDTO
+
+PaperKind = Literal["graded", "review", "processing", "queued"]
+SchemeStatus = Literal["parsed", "pending", "custom"]
+
+
+class StatCardDTO(ApiModel):
+    """A single overview / class summary stat card.
+
+    All fields are data-backed: ``value``/``unit``/``foot`` are rendered from
+    real aggregates. ``valueTone``/``footTone`` are presentation hints the
+    backend chooses from computed thresholds, never from the mock.
+    """
+
+    key: str
+    value: str
+    unit: str | None = None
+    foot: str | None = None
+    valueTone: Literal["t1", "accent", "err"] = "t1"
+    footTone: Literal["t2", "ok", "err"] = "t2"
+
+
+class DetectedFieldDTO(ApiModel):
+    """One detected-metadata row for the grading console (all data-backed)."""
+
+    key: str
+    value: str
+
+
+class UploadResponseDTO(ApiModel):
+    """Response for ``POST /api/papers/upload``.
+
+    Data-backed: ``jobId`` (registry id), ``paperId``, and ``detected`` (from
+    :func:`ScanMetadataExtractor` over the scan, or empty when detection is
+    skipped/unavailable).
+    """
+
+    jobId: str
+    paperId: str
+    detected: list[DetectedFieldDTO] = Field(default_factory=list)
+
+
+class PipelineStepDTO(ApiModel):
+    """A grading-pipeline progress step.
+
+    Data-backed: ``label`` and ``count`` reflect the real per-stage counts
+    derived from the grading run; ``state`` is computed from those counts.
+    """
+
+    label: str
+    count: str
+    state: Literal["done", "active", "idle"]
+
+
+class BatchTabDTO(ApiModel):
+    """A grading batch filter tab with a live count (data-backed)."""
+
+    id: Literal["all", "review", "graded", "processing"]
+    label: str
+    count: str
+
+
+class PaperSummaryDTO(ApiModel):
+    """One paper card in the grading grid.
+
+    Data-backed: ``id``, ``name`` (student id), ``kind``/``status``,
+    ``awardedMarks``/``maxMarks``, ``confidence``, ``needsReview``. ``pageCount``
+    is *structurally-empty* (``None``) unless the pipeline recorded it — the mock's
+    "12 pg" has no backend source.
+    """
+
+    id: str
+    name: str
+    kind: PaperKind
+    status: str
+    awardedMarks: int | None = None
+    maxMarks: int | None = None
+    confidence: float | None = None
+    needsReview: bool = False
+    pageCount: int | None = None
+
+
+class PaperListDTO(ApiModel):
+    """Response for ``GET /api/papers`` — the batch grid plus its tabs."""
+
+    papers: list[PaperSummaryDTO] = Field(default_factory=list)
+    tabs: list[BatchTabDTO] = Field(default_factory=list)
+
+
+class PaperDetailDTO(ApiModel):
+    """Response for ``GET /api/papers/{id}``.
+
+    Data-backed: ``metadata`` (detected fields), ``pipeline`` steps, and the full
+    per-question ``questions`` list plus ``weakAreas`` from the stored
+    :class:`CorrectionResult`.
+    """
+
+    id: str
+    name: str
+    kind: PaperKind
+    awardedMarks: int
+    maxMarks: int
+    needsReview: bool
+    metadata: list[DetectedFieldDTO] = Field(default_factory=list)
+    pipeline: list[PipelineStepDTO] = Field(default_factory=list)
+    questions: list[QuestionResultDTO] = Field(default_factory=list)
+    weakAreas: list[WeakAreaDTO] = Field(default_factory=list)
+
+
+class QueueRowDTO(ApiModel):
+    """A low-confidence flagged item in the review queue.
+
+    Data-backed from stored corrections: ``paperId``, ``name`` (student id),
+    ``questionId``, ``topic``, ``confidence``, ``awardedMarks``/``maxMarks``.
+    """
+
+    paperId: str
+    name: str
+    questionId: str
+    topic: str | None = None
+    confidence: float | None = None
+    awardedMarks: int
+    maxMarks: int
+
+
+class GradingQueueDTO(ApiModel):
+    """Response for ``GET /api/grading/queue``."""
+
+    rows: list[QueueRowDTO] = Field(default_factory=list)
+
+
+class SchemeRowDTO(ApiModel):
+    """A parsed / pending / custom mark-scheme row.
+
+    Data-backed: ``doc`` (filename), ``paper``, ``session``, ``maxMarks``,
+    ``questionCount``, ``status``. All derived from the parsed
+    :class:`MarkScheme` on disk.
+    """
+
+    doc: str
+    paper: str
+    session: str
+    maxMarks: int | None = None
+    questionCount: int | None = None
+    status: SchemeStatus
+
+
+class SchemeListDTO(ApiModel):
+    """Response for ``GET /api/schemes`` — rows plus computed stats."""
+
+    schemes: list[SchemeRowDTO] = Field(default_factory=list)
+    stats: list[StatCardDTO] = Field(default_factory=list)
+
+
+class QuestionPoolDTO(ApiModel):
+    """A question-source pool for the quiz builder.
+
+    Data-backed: ``count`` reflects the real number of available questions in the
+    pool (0 when the pool is empty). ``label``/``detail`` describe the pool.
+    """
+
+    key: Literal["past", "ai", "mine"]
+    label: str
+    detail: str
+    count: int = 0
+
+
+class QuizPoolsDTO(ApiModel):
+    """Response for ``GET /api/quizzes/pools``."""
+
+    pools: list[QuestionPoolDTO] = Field(default_factory=list)
+
+
+class QuizTopicDTO(ApiModel):
+    """A selectable quiz topic with the marks-lost signal behind it.
+
+    Data-backed: ``topic``, ``marksLost``, ``marksAvailable`` come from the
+    aggregate :class:`WeaknessReport`. ``selected`` defaults to ``False`` — the
+    mock's pre-checked defaults are presentation state, not backend data.
+    """
+
+    topic: str
+    marksLost: int
+    marksAvailable: int
+    selected: bool = False
+
+
+class QuizTopicsDTO(ApiModel):
+    """Response for ``GET /api/quizzes/topics``."""
+
+    topics: list[QuizTopicDTO] = Field(default_factory=list)
+
+
+class PreviewQuestionDTO(ApiModel):
+    """One generated / selected preview question.
+
+    Data-backed: every field is taken from a real :class:`GeneratedQuestion`.
+    ``source`` is ``"ai"`` for generated items and ``"existing"`` for selected
+    pool items (inferred from ``sourceQuestionIds``).
+    """
+
+    topic: str
+    difficulty: Literal["foundation", "standard", "challenge"]
+    prompt: str
+    marks: int
+    source: Literal["ai", "existing"]
+    sourceQuestionIds: list[str] = Field(default_factory=list)
+
+
+class QuizPreviewDTO(ApiModel):
+    """Response for ``POST /api/quizzes/preview`` and ``/generate``."""
+
+    subjectCode: str
+    questions: list[PreviewQuestionDTO] = Field(default_factory=list)
+    estMinutes: int = 0
+
+
+class MasteryRowDTO(ApiModel):
+    """Per-topic mastery vs. a reference average.
+
+    Data-backed: ``topic``, ``value`` (class accuracy for the topic). ``national``
+    is *structurally-empty* (``None``) — no national benchmark source exists; the
+    mock's numbers are not reproduced. ``below`` is computed only when a reference
+    is present, otherwise ``False``.
+    """
+
+    topic: str
+    value: int
+    national: int | None = None
+    below: bool = False
+
+
+class DistributionBarDTO(ApiModel):
+    """A grade-distribution bar (data-backed count per grade)."""
+
+    grade: str
+    count: int
+
+
+class StudentRowDTO(ApiModel):
+    """A class roster row.
+
+    Data-backed: ``name`` (student id), ``grade``, ``mark`` (awarded/max of latest
+    paper), ``delta`` (percentage change vs. prior same paper, ``None`` when no
+    prior), ``weakTopic`` (weakest area of the latest paper). ``gradeAtRisk`` is
+    computed from ``grade``.
+    """
+
+    name: str
+    grade: str
+    mark: str
+    delta: float | None = None
+    weakTopic: str | None = None
+    gradeAtRisk: bool = False
+
+
+class ClassSummaryDTO(ApiModel):
+    """One class in ``GET /api/teacher/classes``.
+
+    Data-backed: ``id``, ``label``, ``studentCount``, ``average`` (mean latest
+    percentage across students).
+    """
+
+    id: str
+    label: str
+    studentCount: int
+    average: float | None = None
+
+
+class ClassListDTO(ApiModel):
+    """Response for ``GET /api/teacher/classes``."""
+
+    classes: list[ClassSummaryDTO] = Field(default_factory=list)
+
+
+class ClassDetailDTO(ApiModel):
+    """Response for ``GET /api/classes/{id}``.
+
+    Data-backed: ``stats``, ``mastery`` (per-topic accuracy), ``distribution``
+    (grade counts), ``students`` (roster). Fields the mock shows without a
+    backend source (bubble predictions, hours-saved narratives) are omitted.
+    """
+
+    id: str
+    label: str
+    stats: list[StatCardDTO] = Field(default_factory=list)
+    mastery: list[MasteryRowDTO] = Field(default_factory=list)
+    distribution: list[DistributionBarDTO] = Field(default_factory=list)
+    students: list[StudentRowDTO] = Field(default_factory=list)
+
+
+class AtRiskStudentDTO(ApiModel):
+    """An at-risk student on the overview.
+
+    Data-backed: ``name`` (student id), ``grade``, ``delta`` (falling trajectory
+    signal), ``weakTopic``. The mock's ``tag``/``note``/``action`` narratives have
+    no backend source and are omitted.
+    """
+
+    name: str
+    grade: str
+    delta: float | None = None
+    weakTopic: str | None = None
+
+
+class OverviewDTO(ApiModel):
+    """Response for ``GET /api/teacher/overview``.
+
+    Data-backed: ``stats`` (from history/analytics) and ``atRisk`` (students on a
+    falling trajectory). ``retention`` is *structurally-empty* — lesson-retention
+    minutes have no backend source, so the list is always empty rather than
+    reproducing the mock's bar heights.
+    """
+
+    stats: list[StatCardDTO] = Field(default_factory=list)
+    atRisk: list[AtRiskStudentDTO] = Field(default_factory=list)
+    retention: list[int] = Field(default_factory=list)
+
+
+__all__ = [
+    "AtRiskStudentDTO",
+    "BatchTabDTO",
+    "ClassDetailDTO",
+    "ClassListDTO",
+    "ClassSummaryDTO",
+    "DetectedFieldDTO",
+    "DistributionBarDTO",
+    "GradingQueueDTO",
+    "MasteryRowDTO",
+    "OverviewDTO",
+    "PaperDetailDTO",
+    "PaperKind",
+    "PaperListDTO",
+    "PaperSummaryDTO",
+    "PipelineStepDTO",
+    "PreviewQuestionDTO",
+    "QuestionPoolDTO",
+    "QueueRowDTO",
+    "QuizPoolsDTO",
+    "QuizPreviewDTO",
+    "QuizTopicDTO",
+    "QuizTopicsDTO",
+    "SchemeListDTO",
+    "SchemeRowDTO",
+    "SchemeStatus",
+    "StatCardDTO",
+    "StudentRowDTO",
+    "UploadResponseDTO",
+]

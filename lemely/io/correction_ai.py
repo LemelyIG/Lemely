@@ -17,12 +17,12 @@ from lemely.core.schemas import (
     confidence_band_for_score,
 )
 from lemely.io.gemini import GeminiClient
-from lemely.io.validation import validate_mark_scheme
 from lemely.io.prompts.correction_ai import (
     MARKER_SYSTEM_PROMPT,
     VERSION,
     build_marker_user_prompt,
 )
+from lemely.io.validation import validate_mark_scheme
 from lemely.runtime.errors import ConfigError
 from lemely.runtime.events import EventType, bus
 
@@ -37,10 +37,7 @@ def _flatten_answers(
 ) -> dict[str, tuple[str, str | None, float]]:
     """Return {question_id: (answer, working_out, confidence)} for every extracted answer."""
     if isinstance(extracted, ExtractedAnswers):
-        return {
-            a.question_id: (a.answer, a.working_out, a.confidence)
-            for a in extracted.answers
-        }
+        return {a.question_id: (a.answer, a.working_out, a.confidence) for a in extracted.answers}
     # Plain mapping fallback (Mapping[str, str]): no working_out or confidence available.
     return {str(k): (str(v), None, 1.0) for k, v in extracted.items()}
 
@@ -84,8 +81,7 @@ class AICorrector:
             result = self._client.generate_structured(
                 system_prompt=MARKER_SYSTEM_PROMPT,
                 user_prompt=(
-                    user_prompt
-                    + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
+                    user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
                 ),
                 response_schema=AIMarkResponse,
                 prompt_version=VERSION,
@@ -108,8 +104,7 @@ class AICorrector:
             result = self._client.generate_structured(
                 system_prompt=MARKER_SYSTEM_PROMPT,
                 user_prompt=(
-                    user_prompt
-                    + "\n\nNOTE: A previous marking attempt returned low confidence. "
+                    user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
                     "Please re-evaluate carefully before responding."
                 ),
                 response_schema=AIMarkResponse,
@@ -127,18 +122,30 @@ def _build_mcq_corrected(question: Question, answer: str | None) -> CorrectedQue
     expected = question.mcq_answer.value if question.mcq_answer else None
     if answer is None or answer == "":
         return CorrectedQuestion(
-            question_id=question.id, awarded_marks=0, maximum_marks=question.marks,
-            confidence=ConfidenceBand.LOW, confidence_score=0.0, needs_teacher_review=True,
-            student_answer=None, expected_answer=expected,
-            topic=question.topic_hint, review_reason="missing answer",
+            question_id=question.id,
+            awarded_marks=0,
+            maximum_marks=question.marks,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=0.0,
+            needs_teacher_review=True,
+            student_answer=None,
+            expected_answer=expected,
+            topic=question.topic_hint,
+            review_reason="missing answer",
             marker_source="deterministic",
         )
     if answer.upper() not in {"A", "B", "C", "D"}:
         return CorrectedQuestion(
-            question_id=question.id, awarded_marks=0, maximum_marks=question.marks,
-            confidence=ConfidenceBand.LOW, confidence_score=0.0, needs_teacher_review=True,
-            student_answer=answer, expected_answer=expected,
-            topic=question.topic_hint, review_reason="invalid MCQ answer",
+            question_id=question.id,
+            awarded_marks=0,
+            maximum_marks=question.marks,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=0.0,
+            needs_teacher_review=True,
+            student_answer=answer,
+            expected_answer=expected,
+            topic=question.topic_hint,
+            review_reason="invalid MCQ answer",
             marker_source="deterministic",
         )
     is_correct = answer.upper() == expected
@@ -146,15 +153,20 @@ def _build_mcq_corrected(question: Question, answer: str | None) -> CorrectedQue
         question_id=question.id,
         awarded_marks=question.marks if is_correct else 0,
         maximum_marks=question.marks,
-        confidence=ConfidenceBand.HIGH, confidence_score=1.0, needs_teacher_review=False,
-        student_answer=answer.upper(), expected_answer=expected,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=1.0,
+        needs_teacher_review=False,
+        student_answer=answer.upper(),
+        expected_answer=expected,
         topic=question.topic_hint,
         marker_source="deterministic",
     )
 
 
 def _build_ai_corrected(
-    question: Question, student_answer: str, mark: AIMarkResponse,
+    question: Question,
+    student_answer: str,
+    mark: AIMarkResponse,
 ) -> CorrectedQuestion:
     """Convert AIMarkResponse + question metadata into a CorrectedQuestion."""
     awarded = max(0, min(mark.awarded_marks, question.marks))
@@ -273,7 +285,9 @@ def correct_paper(
             }
         try:
             mark = ai.mark_question(
-                q, student_answer or "", student_working,
+                q,
+                student_answer or "",
+                student_working,
                 prior_results=sibling_prior or None,
             )
         except Exception as exc:

@@ -153,6 +153,7 @@ class GradePrediction(StrictModel):
     grade: str
     confidence: ConfidenceBand
     needs_teacher_review: bool = False
+    boundary_source: Literal["exact", "subject_default", "global_default"] = "global_default"
 
 
 class QuizQuestion(StrictModel):

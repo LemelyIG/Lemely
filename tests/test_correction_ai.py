@@ -22,25 +22,34 @@ from lemely.runtime.errors import ConfigError
 
 def _hybrid_paper_mark_scheme() -> MarkScheme:
     """Two questions: one MCQ + one short theory question."""
-    return MarkScheme.model_validate({
-        "metadata": {
-            "subject": "Physics", "subject_code": "0625",
-            "paper_number": 4, "paper_variant": 2,
-            "session_month": "May/June", "session_year": 2020,
-            "paper_type": "theory_extended", "maximum_mark": 3, "scheme_format": "mixed",
-        },
-        "questions": [
-            {"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"},
-            {
-                "id": "2", "marks": 2, "type": "explanation",
-                "question_command": "explain why",
-                "answer_points": [
-                    {"id": "p1", "point": "gravity acts on it", "marks": 1},
-                    {"id": "p2", "point": "no air resistance", "marks": 1},
-                ],
+    return MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 4,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_extended",
+                "maximum_mark": 3,
+                "scheme_format": "mixed",
             },
-        ],
-    })
+            "questions": [
+                {"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"},
+                {
+                    "id": "2",
+                    "marks": 2,
+                    "type": "explanation",
+                    "question_command": "explain why",
+                    "answer_points": [
+                        {"id": "p1", "point": "gravity acts on it", "marks": 1},
+                        {"id": "p2", "point": "no air resistance", "marks": 1},
+                    ],
+                },
+            ],
+        }
+    )
 
 
 class _IsolatedEnv:
@@ -87,7 +96,8 @@ class HybridCorrectPaperTests(unittest.TestCase):
 
     def _extracted(self, mcq_answer: str, theory_answer: str) -> ExtractedAnswers:
         return ExtractedAnswers(
-            paper_id="test", source_scan="scan.png",
+            paper_id="test",
+            source_scan="scan.png",
             answers=[
                 ExtractedAnswer(question_id="1", answer=mcq_answer, confidence=0.99),
                 ExtractedAnswer(question_id="2", answer=theory_answer, confidence=0.85),
@@ -151,41 +161,55 @@ class ECFContextTests(unittest.TestCase):
 
     def _multi_part_scheme(self):
         from lemely.core.loose_schemas import MarkScheme
-        return MarkScheme.model_validate({
-            "metadata": {
-                "subject": "Physics", "subject_code": "0625",
-                "paper_number": 4, "paper_variant": 2,
-                "session_month": "May/June", "session_year": 2020,
-                "paper_type": "theory_extended", "maximum_mark": 4,
-                "scheme_format": "point_based",
-            },
-            "questions": [{
-                "id": "1", "marks": 0, "type": "explanation",
-                "parts": [
+
+        return MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 4,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
                     {
-                        "id": "1(a)", "marks": 2, "type": "explanation",
-                        "parent_id": "1",
-                        "answer_points": [
-                            {"id": "p1", "point": "method", "marks": 1},
-                            {"id": "p2", "point": "answer", "marks": 1},
+                        "id": "1",
+                        "marks": 0,
+                        "type": "explanation",
+                        "parts": [
+                            {
+                                "id": "1(a)",
+                                "marks": 2,
+                                "type": "explanation",
+                                "parent_id": "1",
+                                "answer_points": [
+                                    {"id": "p1", "point": "method", "marks": 1},
+                                    {"id": "p2", "point": "answer", "marks": 1},
+                                ],
+                            },
+                            {
+                                "id": "1(b)",
+                                "marks": 2,
+                                "type": "explanation",
+                                "parent_id": "1",
+                                "answer_points": [
+                                    {"id": "p3", "point": "uses result of (a)", "marks": 2},
+                                ],
+                            },
                         ],
-                    },
-                    {
-                        "id": "1(b)", "marks": 2, "type": "explanation",
-                        "parent_id": "1",
-                        "answer_points": [
-                            {"id": "p3", "point": "uses result of (a)", "marks": 2},
-                        ],
-                    },
+                    }
                 ],
-            }],
-        })
+            }
+        )
 
     def test_prior_results_injected_for_second_part(self):
         """build_marker_user_prompt for 1(b) must receive prior_results containing 1(a)."""
         import json
         import tempfile
-        from pathlib import Path
         from unittest.mock import MagicMock, patch
 
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
@@ -193,16 +217,21 @@ class ECFContextTests(unittest.TestCase):
 
         scheme = self._multi_part_scheme()
         extracted = ExtractedAnswers(
-            paper_id="test", source_scan="s.pdf",
+            paper_id="test",
+            source_scan="s.pdf",
             answers=[
                 ExtractedAnswer(question_id="1(a)", answer="v=20 m/s", confidence=0.9),
-                ExtractedAnswer(question_id="1(b)", answer="uses 20",  confidence=0.9),
+                ExtractedAnswer(question_id="1(b)", answer="uses 20", confidence=0.9),
             ],
         )
-        ai_body = json.dumps({
-            "awarded_marks": 1, "confidence": 0.9,
-            "matched_point_ids": [], "feedback": "ok",
-        })
+        ai_body = json.dumps(
+            {
+                "awarded_marks": 1,
+                "confidence": 0.9,
+                "matched_point_ids": [],
+                "feedback": "ok",
+            }
+        )
         mock_resp = MagicMock(
             text=ai_body,
             candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
@@ -227,38 +256,50 @@ class ECFContextTests(unittest.TestCase):
 
         self.assertEqual(len(captured), 2)
         second_kwargs = captured[1]["kwargs"]
-        second_args   = captured[1]["args"]
+        second_args = captured[1]["args"]
         prior = second_kwargs.get("prior_results") or (
             second_args[3] if len(second_args) > 3 else None
         )
-        self.assertIsNotNone(prior, "prior_results not passed to second build_marker_user_prompt call")
+        self.assertIsNotNone(
+            prior, "prior_results not passed to second build_marker_user_prompt call"
+        )
         self.assertIn("1(a)", prior)
 
 
 class ThresholdTests(unittest.TestCase):
-
     def _make_question(self):
         from lemely.core.loose_schemas import Question, QuestionType
+
         return Question.model_construct(
-            id="2", marks=2, type=QuestionType.EXPLANATION,
-            answer_points=[], parts=[], assessment_objectives=[],
-            rejected_answers=[], ignored_answers=[],
+            id="2",
+            marks=2,
+            type=QuestionType.EXPLANATION,
+            answer_points=[],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
         )
 
     def _make_mark(self, confidence: float):
         from lemely.core.schemas import AIMarkResponse
+
         return AIMarkResponse(
-            awarded_marks=1, confidence=confidence,
-            matched_point_ids=[], feedback="test",
+            awarded_marks=1,
+            confidence=confidence,
+            matched_point_ids=[],
+            feedback="test",
         )
 
     def test_review_fires_below_0_80(self):
         from lemely.io.correction_ai import _build_ai_corrected
+
         cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.75))
         self.assertTrue(cq.needs_teacher_review)
 
     def test_review_false_at_0_80(self):
         from lemely.io.correction_ai import _build_ai_corrected
+
         cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.80))
         self.assertFalse(cq.needs_teacher_review)
 
@@ -279,31 +320,49 @@ class ThinkingRetryTests(unittest.TestCase):
         from lemely.io.correction_ai import correct_paper
         from lemely.runtime.config import PathsSettings, load_settings
 
-        scheme = MarkScheme.model_validate({
-            "metadata": {
-                "subject": "Physics", "subject_code": "0625",
-                "paper_number": 4, "paper_variant": 2,
-                "session_month": "May/June", "session_year": 2020,
-                "paper_type": "theory_extended", "maximum_mark": 2,
-                "scheme_format": "point_based",
-            },
-            "questions": [{
-                "id": "1", "marks": 2, "type": "explanation",
-                "answer_points": [
-                    {"id": "p1", "point": "gravity", "marks": 1},
-                    {"id": "p2", "point": "speed",   "marks": 1},
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 2,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 2,
+                        "type": "explanation",
+                        "answer_points": [
+                            {"id": "p1", "point": "gravity", "marks": 1},
+                            {"id": "p2", "point": "speed", "marks": 1},
+                        ],
+                    }
                 ],
-            }],
-        })
+            }
+        )
         extracted = ExtractedAnswers(
-            paper_id="test", source_scan="s.pdf",
+            paper_id="test",
+            source_scan="s.pdf",
             answers=[ExtractedAnswer(question_id="1", answer="gravity", confidence=0.9)],
         )
 
-        low_body  = json.dumps({"awarded_marks": 1, "confidence": 0.70,
-                                "matched_point_ids": [], "feedback": "borderline"})
-        high_body = json.dumps({"awarded_marks": 1, "confidence": 0.88,
-                                "matched_point_ids": [], "feedback": "clear"})
+        low_body = json.dumps(
+            {
+                "awarded_marks": 1,
+                "confidence": 0.70,
+                "matched_point_ids": [],
+                "feedback": "borderline",
+            }
+        )
+        high_body = json.dumps(
+            {"awarded_marks": 1, "confidence": 0.88, "matched_point_ids": [], "feedback": "clear"}
+        )
 
         def _resp(body: str) -> MagicMock:
             return MagicMock(
@@ -315,27 +374,33 @@ class ThinkingRetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with _IsolatedEnv():
                 s = load_settings(toml_path=None, cwd=Path(tmp))
-            s = s.model_copy(update={
-                "paths": PathsSettings(cache_dir=Path(tmp) / ".cache"),
-                "gemini": s.gemini.model_copy(update={
-                    "escalation_model": "gemini-2.5-pro",
-                    "escalation_confidence_threshold": 0.80,
-                    "thinking_budget_for": {"correction_borderline": 2000},
-                }),
-            })
+            s = s.model_copy(
+                update={
+                    "paths": PathsSettings(cache_dir=Path(tmp) / ".cache"),
+                    "gemini": s.gemini.model_copy(
+                        update={
+                            "escalation_model": "gemini-2.5-pro",
+                            "escalation_confidence_threshold": 0.80,
+                            "thinking_budget_for": {"correction_borderline": 2000},
+                        }
+                    ),
+                }
+            )
             mock_genai = MagicMock()
             # Flash low-conf, then Flash+thinking high-conf (no Pro needed)
             mock_genai.models.generate_content.side_effect = [_resp(low_body), _resp(high_body)]
             mock_genai.files.upload.return_value = MagicMock()
             from lemely.io.gemini import GeminiClient
+
             client = GeminiClient(s, _genai_client=mock_genai)
 
         correct_paper(scheme, extracted, gemini_client=client)
 
         calls = mock_genai.models.generate_content.call_args_list
         # Must have exactly 2 calls: Flash normal + Flash thinking (Pro NOT needed)
-        self.assertEqual(len(calls), 2,
-            f"Expected 2 API calls (Flash + thinking), got {len(calls)}")
+        self.assertEqual(
+            len(calls), 2, f"Expected 2 API calls (Flash + thinking), got {len(calls)}"
+        )
         # Second call must carry a ThinkingConfig (i.e. the thinking budget was applied).
         second_call_repr = str(calls[1])
         self.assertIn("ThinkingConfig", second_call_repr)

@@ -15,7 +15,9 @@ from lemely.io.subject import aggregate_subject
 from lemely.runtime.errors import UsageError
 
 
-def _paper(paper_number: int, awarded: int, maximum: int, topic: str = "kinematics") -> CorrectionResult:
+def _paper(
+    paper_number: int, awarded: int, maximum: int, topic: str = "kinematics"
+) -> CorrectionResult:
     return CorrectionResult(
         metadata=ExamMetadata(
             subject_code="0625",
@@ -54,8 +56,11 @@ class AggregateSubjectTests(unittest.TestCase):
     def test_mismatched_subject_raises_usage_error(self) -> None:
         p1 = _paper(2, 10, 10)
         p2_meta = ExamMetadata(
-            subject_code="9701", paper_number=2, paper_variant=1,
-            session_month="May/June", session_year=2020,
+            subject_code="9701",
+            paper_number=2,
+            paper_variant=1,
+            session_month="May/June",
+            session_year=2020,
         )
         p2 = CorrectionResult(metadata=p2_meta, questions=p1.questions)
         with self.assertRaises(UsageError):

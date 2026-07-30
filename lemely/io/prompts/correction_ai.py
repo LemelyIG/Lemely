@@ -111,8 +111,7 @@ def build_marker_user_prompt(
         )
     if prior_results:
         prior_lines = "\n".join(
-            f"  {qid}: {marks} mark(s) awarded"
-            for qid, marks in prior_results.items()
+            f"  {qid}: {marks} mark(s) awarded" for qid, marks in prior_results.items()
         )
         parts.append(
             f"PRIOR PART RESULTS (same parent question, corrected before this part):\n"
