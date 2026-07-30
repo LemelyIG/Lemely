@@ -10,13 +10,13 @@ CAIE mark types relevant to sciences:
   A — accuracy mark
   M — method mark (mathematics papers)
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
 from lemely.core.loose_schemas import MathMarkType
-
 
 # Matches the canonical CAIE mark-type notation:
 #   optional leading paren  →  optional letter  →  digits  →  optional closing paren

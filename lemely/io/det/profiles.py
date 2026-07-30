@@ -4,6 +4,7 @@ Profiles replace the hard-coded heuristics in the old ``_detect_paper_type``
 and ``_extract_subject_name`` methods, making the parser configurable on a
 per-subject basis without code changes.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
