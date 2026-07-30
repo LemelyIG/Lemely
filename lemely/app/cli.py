@@ -221,14 +221,14 @@ def parse_mark_schemes_cmd(
     gemini_model: str | None,
     on_error: str,
 ) -> None:
+    from lemely.io.det import DeterministicMarkSchemeParser
     from lemely.io.gemini import GeminiClient
     from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
-    from lemely.io.parsers_det import DeterministicMarkSchemeParser
     from lemely.runtime.errors import PartialFailureError
 
-    det_parser = DeterministicMarkSchemeParser()
+    settings = _get_settings(ctx)
+    det_parser = DeterministicMarkSchemeParser(cfg=settings.det_parser)
     if use_gemini:
-        settings = _get_settings(ctx)
         if gemini_model:
             settings = settings.model_copy(
                 update={"gemini": settings.gemini.model_copy(update={"model": gemini_model})}
@@ -491,11 +491,21 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         )
 
     if not no_network:
-        record(
-            "gemini_reachable",
-            False,
-            "live ping not yet implemented — pass --no-network to skip",
-        )
+        if not has_key:
+            record(
+                "gemini_reachable",
+                False,
+                "no API key configured; set GEMINI_API_KEY or pass --no-network to skip",
+            )
+        else:
+            from lemely.io.gemini import GeminiClient
+
+            try:
+                GeminiClient(settings).check_reachable()
+                record("gemini_reachable", True, "models.list() ok")
+            except Exception as exc:
+                # Any failure (auth, network, SDK) is a reachability failure to report.
+                record("gemini_reachable", False, str(exc))
 
     fatal_checks = [c for c in checks if c["name"] != "gradio_extra_installed"]
     all_passed = all(c["ok"] for c in fatal_checks)
@@ -788,6 +798,10 @@ def ui_cmd(ctx: click.Context, host: str | None, port: int | None) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Top-level entrypoint used by main.py and console-script."""
     import structlog
+
+    from lemely.runtime.budget_notify import register_budget_ntfy
+
+    register_budget_ntfy()
 
     log = structlog.get_logger().bind(component="cli")
     try:

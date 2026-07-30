@@ -442,24 +442,27 @@ def test_generate_quiz_use_ai_with_mocked_client() -> None:
 
             # generate_quiz_cmd imports GeminiClient and QuestionGenerator inside
             # the function body, so patch at the source module level.
-            with patch("lemely.io.gemini.GeminiClient"), patch("lemely.io.question_generation.QuestionGenerator") as MockQG:
-                    mock_instance = MagicMock()
-                    mock_instance.generate.return_value = fake_quiz
-                    MockQG.return_value = mock_instance
+            with (
+                patch("lemely.io.gemini.GeminiClient"),
+                patch("lemely.io.question_generation.QuestionGenerator") as MockQG,
+            ):
+                mock_instance = MagicMock()
+                mock_instance.generate.return_value = fake_quiz
+                MockQG.return_value = mock_instance
 
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "--json",
-                            "generate-quiz",
-                            str(weakness_file),
-                            "--use-ai",
-                            "--subject-code",
-                            "0625",
-                            "--count",
-                            "1",
-                        ],
-                    )
+                result = runner.invoke(
+                    cli,
+                    [
+                        "--json",
+                        "generate-quiz",
+                        str(weakness_file),
+                        "--use-ai",
+                        "--subject-code",
+                        "0625",
+                        "--count",
+                        "1",
+                    ],
+                )
 
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)

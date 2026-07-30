@@ -37,7 +37,9 @@ mark_scheme = 8000
 
 max_retries = 3
 backoff_seconds = 2.0
-# monthly_usd_ceiling = 25.0
+# Persistent cumulative-USD hard cap (survives process restarts).
+# total_usd_ceiling = 8.0
+# usd_warning_thresholds = [4.0, 6.0]
 # per_run_token_ceiling = 200000
 
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
@@ -48,4 +50,3 @@ mark_accuracy_target = 0.95
 id_match_rate_target = 0.99
 flag_precision_target = 0.99
 flag_recall_target = 0.85
-

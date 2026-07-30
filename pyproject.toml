@@ -38,7 +38,6 @@ dev = [
   "mypy>=1.13",
   "pre-commit>=4",
   "import-linter>=2.1",
-  "respx>=0.21",
 ]
 
 [project.scripts]
@@ -74,7 +73,6 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/prompts/__init__.py" = ["F403", "F401"]
 "lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
 "lemely/io/parsers.py" = ["TCH"]
-"lemely/io/parsers_det.py" = ["TCH", "ANN401", "RUF001", "RUF002", "RUF003"]
 "lemely/io/det/gmp.py" = ["ANN401"]
 "lemely/io/det/metadata.py" = ["ANN401", "RUF001"]
 "lemely/io/det/tables.py" = ["ANN401"]
@@ -129,6 +127,7 @@ module = [
   "lemely.runtime.config",
   "lemely.runtime.logging",
   "lemely.runtime.events",
+  "lemely.runtime.budget_notify",
   "lemely.app.gradio_app",
   "lemely.app.live_log",
   "lemely.io.gemini",
@@ -141,7 +140,6 @@ module = [
   "lemely.io.det.parser",
   "lemely.io.det.gmp",
   "lemely.io.study_plan_ai",
-  "lemely.io.parsers_det",
   "lemely.web.sse",
   "lemely.web.jobs",
   "lemely.web.schemas",
@@ -158,9 +156,6 @@ disallow_any_explicit = false
 [tool.pytest.ini_options]
 addopts = "-ra -q --strict-markers --cov=lemely --cov-report=term-missing --cov-fail-under=70"
 testpaths = ["tests"]
-markers = [
-  "live: requires GEMINI_API_KEY and makes real API calls (skipped by default)",
-]
 
 [tool.coverage.run]
 source = ["lemely"]

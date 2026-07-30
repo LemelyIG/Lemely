@@ -77,7 +77,16 @@ class _IsolatedEnv:
 def _make_settings(tmp: str, **gemini_overrides: object):
     with _IsolatedEnv():
         s = load_settings(toml_path=None, cwd=Path(tmp))
-    s = s.model_copy(update={"paths": PathsSettings(cache_dir=Path(tmp) / ".cache")})
+    # Redirect output_dir (persistent ledger lives here) and cache_dir into the
+    # tmp dir so the cross-run gemini_spend.json never touches the real repo.
+    s = s.model_copy(
+        update={
+            "paths": PathsSettings(
+                cache_dir=Path(tmp) / ".cache",
+                output_dir=Path(tmp) / "outputs",
+            )
+        }
+    )
     if gemini_overrides:
         s = s.model_copy(update={"gemini": s.gemini.model_copy(update=gemini_overrides)})
     return s
@@ -151,6 +160,73 @@ class GeminiClientTests(unittest.TestCase):
                 response_schema=_SimpleSchema,
                 prompt_version="1",
             )
+
+    def test_usd_ceiling_raises_from_persistent_ledger(self) -> None:
+        """The USD ceiling is enforced against the persistent ledger, so a
+        FRESH client instance is still blocked once the ledger is past ceiling."""
+        from lemely.io.cost_ledger import CostLedger
+
+        settings = _make_settings(self.tmp, total_usd_ceiling=8.0)
+        # Pre-load the on-disk ledger past $8 (simulating prior process spend).
+        ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
+        ledger.add(8.5, thresholds=[])
+
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "x"}')
+        mock_genai.files.upload.return_value = MagicMock()
+        # Brand-new client instance — enforcement must come from disk, not memory.
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        with self.assertRaises(ExternalServiceError):
+            client.generate_structured(
+                system_prompt="s",
+                user_prompt="u",
+                response_schema=_SimpleSchema,
+                prompt_version="1",
+            )
+        # The blocked call never reached the API.
+        self.assertEqual(mock_genai.models.generate_content.call_count, 0)
+
+    def test_budget_warning_published_once_per_threshold(self) -> None:
+        """Each warning threshold publishes BUDGET_WARNING exactly once, even
+        across multiple Gemini calls."""
+        from lemely.runtime.events import EventType, bus
+
+        # Large token counts so a single call comfortably crosses $4.
+        # flash pricing: 0.000150/1k in, 0.000600/1k out → tune to ~$4.5/call.
+        settings = _make_settings(
+            self.tmp,
+            total_usd_ceiling=None,  # disable the hard block for this test
+            usd_warning_thresholds=[4.0, 6.0],
+        )
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response(
+            '{"value": "x"}',
+            in_tok=10_000_000,
+            out_tok=5_000_000,
+        )
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        seen: list[float] = []
+
+        def _spy(**payload: object) -> None:
+            seen.append(float(payload["threshold"]))  # type: ignore[arg-type]
+
+        bus.subscribe(EventType.BUDGET_WARNING, _spy)
+        try:
+            for i in range(3):
+                client.generate_structured(
+                    system_prompt="s",
+                    user_prompt=f"u{i}",
+                    response_schema=_SimpleSchema,
+                    prompt_version="1",
+                )
+        finally:
+            bus.unsubscribe(EventType.BUDGET_WARNING, _spy)
+
+        # Both thresholds fired, each exactly once.
+        self.assertEqual(sorted(seen), [4.0, 6.0])
 
     def test_transient_error_after_retries_raises_external_service_error(self) -> None:
         """A 503 that survives all retries must surface as the public

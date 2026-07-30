@@ -648,7 +648,7 @@ async def upload_scheme(
     parsed :class:`MarkScheme` JSON is written to ``output_dir/schemes`` and the
     resulting row is returned. Parse failures surface as a 422.
     """
-    from lemely.io.parsers_det import DeterministicMarkSchemeParser
+    from lemely.io.det import DeterministicMarkSchemeParser
 
     schemes_dir = _schemes_dir(settings)
     # Sanitise the client filename to a basename before joining — the raw value
@@ -658,7 +658,7 @@ async def upload_scheme(
     _write_upload_capped(await scheme_pdf.read(), pdf_path)
 
     try:
-        scheme = DeterministicMarkSchemeParser()(pdf_path)
+        scheme = DeterministicMarkSchemeParser(cfg=settings.det_parser)(pdf_path)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Mark scheme parse failed: {exc}") from exc
 

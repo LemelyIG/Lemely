@@ -15,10 +15,16 @@ import tempfile
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from lemely.core.history import PaperRecord, StudentHistory
+import structlog
+from pydantic import ValidationError
+
+from lemely.core.history import HISTORY_SCHEMA_VERSION, PaperRecord, StudentHistory
+from lemely.runtime.errors import ParseError
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+log = structlog.get_logger(__name__)
 
 
 class HistoryStore:
@@ -56,15 +62,52 @@ class HistoryStore:
             raise
 
     def load(self, student_id: str) -> StudentHistory:
-        """Load a student's history. Returns empty StudentHistory if file absent."""
+        """Load a student's history.
+
+        A *missing* file is a legitimate empty history and returns an empty
+        ``StudentHistory``. A file that exists but is unreadable, not valid JSON,
+        carries an unsupported ``schema_version``, or fails schema validation is
+        surfaced as a ``ParseError`` — never silently treated as "no history"
+        (that would mask corruption and hide data loss).
+
+        Raises:
+            ParseError: the file exists but cannot be read/parsed/validated.
+        """
         path = self._path(student_id)
         if not path.exists():
             return StudentHistory(student_id=student_id)
+
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.error("history_read_failed", student_id=student_id, path=str(path), error=str(exc))
+            raise ParseError(f"Cannot read history file {path}: {exc}") from exc
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            log.error("history_corrupt_json", student_id=student_id, path=str(path), error=str(exc))
+            raise ParseError(f"Corrupt history file {path} (invalid JSON): {exc}") from exc
+
+        version = data.get("schema_version", 1) if isinstance(data, dict) else 1
+        if version > HISTORY_SCHEMA_VERSION:
+            log.error(
+                "history_schema_too_new",
+                student_id=student_id,
+                path=str(path),
+                found=version,
+                supported=HISTORY_SCHEMA_VERSION,
+            )
+            raise ParseError(
+                f"History file {path} has unsupported schema_version {version} "
+                f"(max supported {HISTORY_SCHEMA_VERSION}); refusing to misread it."
+            )
+
+        try:
             return StudentHistory.model_validate(data)
-        except Exception:
-            return StudentHistory(student_id=student_id)
+        except ValidationError as exc:
+            log.error("history_schema_mismatch", student_id=student_id, path=str(path))
+            raise ParseError(f"Corrupt history file {path} (schema mismatch): {exc}") from exc
 
     def list_students(self) -> list[str]:
         """Return all student IDs with recorded history."""

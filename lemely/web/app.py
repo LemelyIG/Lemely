@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from lemely.runtime.budget_notify import register_budget_ntfy
 from lemely.web.routers import meta, student, teacher
 
 
@@ -19,6 +20,7 @@ def create_app() -> FastAPI:
     Includes the meta/health router and the (initially empty) teacher and
     student portal routers so portal workers never edit this module.
     """
+    register_budget_ntfy()
     app = FastAPI(
         title="Lemely API",
         description="Backend for the Lemely Teacher and Student portals.",

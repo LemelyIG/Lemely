@@ -52,6 +52,52 @@ class DoctorTests(unittest.TestCase):
         payload = json.loads(result.output)
         self.assertTrue(payload["all_passed"])
 
+    def _run_doctor_with_env(self, tmp: str) -> object:
+        return self.runner.invoke(
+            cli,
+            ["--json", "doctor"],  # no --no-network: exercises the live ping
+            env={
+                "GEMINI_API_KEY": "test-key",
+                "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+            },
+        )
+
+    def test_doctor_live_ping_reports_reachable(self) -> None:
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            with patch("lemely.io.gemini.GeminiClient.check_reachable", return_value=None):
+                result = self._run_doctor_with_env(tmp)
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["all_passed"])
+        reach = next(c for c in payload["checks"] if c["name"] == "gemini_reachable")
+        self.assertTrue(reach["ok"])
+
+    def test_doctor_live_ping_reports_unreachable(self) -> None:
+        from unittest.mock import patch
+
+        from lemely.runtime.errors import ExternalServiceError
+
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            with patch(
+                "lemely.io.gemini.GeminiClient.check_reachable",
+                side_effect=ExternalServiceError("Gemini API not reachable: boom"),
+            ):
+                result = self._run_doctor_with_env(tmp)
+        self.assertEqual(result.exit_code, 3, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertFalse(payload["all_passed"])
+        reach = next(c for c in payload["checks"] if c["name"] == "gemini_reachable")
+        self.assertFalse(reach["ok"])
+        self.assertIn("not reachable", str(reach["detail"]))
+
 
 class VersionTests(unittest.TestCase):
     def test_version_subcommand_prints_known_keys(self) -> None:

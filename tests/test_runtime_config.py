@@ -14,21 +14,37 @@ from lemely.runtime.config import load_settings
 
 
 class _IsolatedEnv:
-    """Context manager that clears LEMELY_* env vars and CWD-side state."""
+    """Fully isolate Settings inputs: clears LEMELY_* and unprefixed key env
+    vars, AND chdirs into an empty temp dir so ``Settings(env_file=".env")``
+    cannot pick up a developer's real repo-root ``.env`` during the test.
+    """
 
     def __init__(self, **overrides: str) -> None:
         self.overrides = overrides
         self._snapshot: dict[str, str] = {}
+        self._prev_cwd: str = ""
+        self._tmp: TemporaryDirectory[str] | None = None
+
+    # Env vars that feed Settings but do not carry the LEMELY_ prefix
+    # (the google-genai SDK reads these directly; Settings aliases them too).
+    _UNPREFIXED = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
 
     def __enter__(self) -> _IsolatedEnv:
         self._snapshot = dict(os.environ)
         for key in list(os.environ):
-            if key.startswith("LEMELY_"):
+            if key.startswith("LEMELY_") or key in self._UNPREFIXED:
                 del os.environ[key]
         os.environ.update(self.overrides)
+        self._prev_cwd = os.getcwd()
+        self._tmp = TemporaryDirectory()
+        os.chdir(self._tmp.name)
         return self
 
     def __exit__(self, *_: object) -> None:
+        os.chdir(self._prev_cwd)
+        if self._tmp is not None:
+            self._tmp.cleanup()
+            self._tmp = None
         os.environ.clear()
         os.environ.update(self._snapshot)
 
@@ -74,6 +90,32 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(s.gemini_api_key.get_secret_value(), "sk-secret-xyz")
         dumped = s.model_dump(mode="json")
         self.assertNotIn("sk-secret-xyz", str(dumped))
+
+    def test_unprefixed_gemini_api_key_populates_settings(self) -> None:
+        # The env-mapping trap fix: an unprefixed GEMINI_API_KEY (what the
+        # google-genai SDK reads) must reach settings.gemini_api_key so the web
+        # portal's AI-feature gate sees the key, not just CLI/Gradio.
+        with _IsolatedEnv(GEMINI_API_KEY="sk-unprefixed"), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertIsNotNone(s.gemini_api_key)
+        assert s.gemini_api_key is not None
+        self.assertEqual(s.gemini_api_key.get_secret_value(), "sk-unprefixed")
+
+    def test_google_api_key_populates_settings(self) -> None:
+        with _IsolatedEnv(GOOGLE_API_KEY="sk-google"), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertIsNotNone(s.gemini_api_key)
+        assert s.gemini_api_key is not None
+        self.assertEqual(s.gemini_api_key.get_secret_value(), "sk-google")
+
+    def test_lemely_prefixed_key_wins_over_unprefixed(self) -> None:
+        with (
+            _IsolatedEnv(LEMELY_GEMINI_API_KEY="sk-lemely", GEMINI_API_KEY="sk-plain"),
+            TemporaryDirectory() as tmp,
+        ):
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        assert s.gemini_api_key is not None
+        self.assertEqual(s.gemini_api_key.get_secret_value(), "sk-lemely")
 
     def test_toml_discovery_prefers_cwd_lemely_toml(self) -> None:
         with TemporaryDirectory() as tmp:
