@@ -13,8 +13,12 @@ from __future__ import annotations
 import contextlib
 import queue
 import threading
+from collections import defaultdict
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class EventType(StrEnum):
@@ -58,6 +62,22 @@ class EventBus:
         """Initialise an empty bus with no subscribers."""
         self._lock = threading.Lock()
         self._queues: list[queue.SimpleQueue[Event | None]] = []
+        self._callbacks: dict[EventType, list[Callable[..., Any]]] = defaultdict(list)
+
+    def subscribe(self, event_type: EventType, callback: Callable[..., Any]) -> None:
+        """Register a callback invoked synchronously for each matching published event.
+
+        The callback receives the event payload as keyword arguments, matching the
+        ``publish(**payload)`` signature. Not safe for concurrent subscribe/unsubscribe
+        during publish; intended for test spies and lightweight listeners.
+        """
+        with self._lock:
+            self._callbacks[event_type].append(callback)
+
+    def unsubscribe(self, event_type: EventType, callback: Callable[..., Any]) -> None:
+        """Remove a previously registered callback; silently ignored if not found."""
+        with self._lock, contextlib.suppress(ValueError):
+            self._callbacks[event_type].remove(callback)
 
     def subscribe_queue(self) -> queue.SimpleQueue[Event | None]:
         """Return a new queue that will receive all subsequent published events."""
@@ -76,8 +96,11 @@ class EventBus:
         event = Event(event_type, payload)
         with self._lock:
             queues = list(self._queues)
+            callbacks = list(self._callbacks.get(event_type, []))
         for q in queues:
             q.put(event)
+        for cb in callbacks:
+            cb(**payload)
 
     def publish_done(self) -> None:
         """Publish a sentinel ``None`` to signal end-of-stream to all subscribers."""
