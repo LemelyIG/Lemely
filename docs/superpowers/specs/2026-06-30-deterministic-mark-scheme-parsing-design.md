@@ -1,6 +1,6 @@
 # Deterministic Mark Scheme Parser
 
-**Date:** 2026-06-30  
+**Date:** 2026-06-30
 **Status:** Approved for implementation
 
 ## Context
