@@ -445,7 +445,7 @@ def build_app(settings: Any = None) -> Any:
                 table_data: list[list[str]],
             ) -> Generator[tuple[str, str], None, None]:
                 """Parse the first selected row's PDF using DeterministicMarkSchemeParser."""
-                from lemely.io.parsers_det import DeterministicMarkSchemeParser
+                from lemely.io.det import DeterministicMarkSchemeParser
                 from lemely.runtime.errors import ParseError
 
                 # Find first row with a filename
@@ -471,7 +471,7 @@ def build_app(settings: Any = None) -> Any:
 
                 def _run() -> None:
                     try:
-                        parser = DeterministicMarkSchemeParser()
+                        parser = DeterministicMarkSchemeParser(cfg=settings.det_parser)
                         ms = parser(pdf_path)
                         out_path = pdf_path.with_suffix(".json")
                         out_path.write_text(ms.model_dump_json(indent=2), encoding="utf-8")

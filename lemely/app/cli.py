@@ -221,14 +221,14 @@ def parse_mark_schemes_cmd(
     gemini_model: str | None,
     on_error: str,
 ) -> None:
+    from lemely.io.det import DeterministicMarkSchemeParser
     from lemely.io.gemini import GeminiClient
     from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
-    from lemely.io.parsers_det import DeterministicMarkSchemeParser
     from lemely.runtime.errors import PartialFailureError
 
-    det_parser = DeterministicMarkSchemeParser()
+    settings = _get_settings(ctx)
+    det_parser = DeterministicMarkSchemeParser(cfg=settings.det_parser)
     if use_gemini:
-        settings = _get_settings(ctx)
         if gemini_model:
             settings = settings.model_copy(
                 update={"gemini": settings.gemini.model_copy(update={"model": gemini_model})}

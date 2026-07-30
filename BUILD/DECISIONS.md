@@ -48,3 +48,32 @@
 - **Why:** The FastAPI tests import `fastapi` (web extra) — CI omitting it was a
   latent failure once CI got past the (previously red) ruff-format step. Audit §9
   flagged the SPA has zero CI coverage.
+
+### D0.5 — DET parser: wire the modular `lemely/io/det/`, delete the monolith `parsers_det.py`
+- **What:** Adopt the staged modular package `lemely/io/det/` as the one
+  `DeterministicMarkSchemeParser`; delete `lemely/io/parsers_det.py`; rewire the
+  3 call sites (cli, gradio, teacher router) and rewrite the parser test suite to
+  target the modular package. Both expose the same
+  `DeterministicMarkSchemeParser.__call__(pdf_path) -> MarkScheme`; the modular one
+  additionally takes `cfg: DetParserSettings | None`.
+- **Why (evidence, not assumption):** Ran BOTH parsers head-to-head on the 4 real
+  Physics mark-scheme PDFs in `Sources/`:
+  - MCQ (`0625_m20_ms_12`) and alternative-practical (`0625_m21_ms_62`): identical,
+    correct output — leaf-mark total == `maximum_mark` (40 == 40) for both parsers.
+  - Theory (`0625_s19_ms_43`, `0625_s20_ms_31`): the **monolith silently returns
+    wrong totals** (88 and 76 vs the stated 80) with no error — audit blocker #10,
+    the exact "silent mis-parse" that poisons marking accuracy. The **modular parser
+    runs its Stage-4 reconciler**, detects the mismatch, and raises `ParseError` so
+    `ChainedMarkSchemeParser` routes the paper to Gemini instead of persisting
+    garbage. It also honors `DetParserSettings` (the monolith ignores it entirely).
+  - The modular package is already `mypy --strict` clean.
+- **Consequence (recorded honestly):** With the modular parser, theory papers can
+  no longer be "deterministically parsed" into a (wrong) scheme — they escalate to
+  Gemini via the chain. On the raw no-Gemini path (`parse-mark-schemes` without
+  `--use-gemini`) a theory paper now raises `ParseError` (fail-loud) instead of
+  writing a silently-wrong JSON. For an accuracy-first product this is the correct
+  trade: MCQ/practical stay fully deterministic; complex theory uses Gemini (the
+  intended chain design) rather than emitting numbers that don't sum to the max.
+- **Alternatives:** Keep the monolith and bolt reconciliation onto it (rejected:
+  duplicates work the modular package already does cleanly, and the monolith still
+  ignores `DetParserSettings`); keep both (rejected: MISSION requires picking one).
