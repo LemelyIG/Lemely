@@ -16,7 +16,13 @@ if TYPE_CHECKING:
 import click
 
 from lemely import __version__
-from lemely.core.analytics import generate_quiz, predict_grade, summarize_weaknesses
+from lemely.core.analytics import (
+    aggregate_weaknesses_from_history,
+    compare_performance,
+    generate_quiz,
+    predict_grade,
+    summarize_weaknesses,
+)
 from lemely.core.correction import correct_mcq_answers
 from lemely.core.schemas import (
     AccuracyReport,
@@ -82,6 +88,14 @@ def _load_json_file(path: str | Path) -> object:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ParseError(f"Invalid JSON in {path}: {exc}") from exc
+
+
+def _load_correction_result(path: str | Path) -> CorrectionResult:
+    """Load a CorrectionResult from a file that may be a bare result or an AccuracyReport."""
+    data = _load_json_file(path)
+    if isinstance(data, dict) and "correction" in data:
+        data = data["correction"]
+    return CorrectionResult.model_validate(data)
 
 
 def _get_settings(ctx: click.Context) -> Settings:
@@ -188,12 +202,14 @@ def estimate_cost_cmd(ctx: click.Context, source_root: str) -> None:
 @click.option("--output-root", type=click.Path(file_okay=False), default=None)
 @click.option("--force", is_flag=True)
 @click.option("--use-gemini", is_flag=True)
-@click.option("--gemini-model", default=None,
-              help="Override gemini model (default: settings.gemini.model)")
+@click.option(
+    "--gemini-model", default=None, help="Override gemini model (default: settings.gemini.model)"
+)
 @click.option(
     "--on-error",
     type=click.Choice(["continue", "fail"]),
-    default="continue", show_default=True,
+    default="continue",
+    show_default=True,
 )
 @click.pass_context
 def parse_mark_schemes_cmd(
@@ -220,7 +236,7 @@ def parse_mark_schemes_cmd(
         gemini = GeminiMarkSchemeParser(GeminiClient(settings))
         parser = ChainedMarkSchemeParser(primary=det_parser, fallback=gemini)
     else:
-        parser = det_parser
+        parser = det_parser  # type: ignore[assignment]
 
     result = process_mark_scheme_batch(source_root, output_root, force=force, parser=parser)
     _print_result(ctx, result)
@@ -236,14 +252,26 @@ def parse_mark_schemes_cmd(
 
 
 @cli.command("correct-paper")
-@click.option("--mark-scheme", "mark_scheme", required=True,
-              type=click.Path(exists=True, dir_okay=False))
-@click.option("--answers", required=True,
-              help="Answer JSON object, ExtractedAnswers JSON file path, or simple text.")
-@click.option("--mcq-only", is_flag=True,
-              help="Skip AI marking for non-MCQ questions (they'll be marker_source=missing).")
-@click.option("--on-error", type=click.Choice(["continue", "fail"]),
-              default="fail", show_default=True)
+@click.option(
+    "--mark-scheme", "mark_scheme", required=True, type=click.Path(exists=True, dir_okay=False)
+)
+@click.option(
+    "--answers",
+    required=True,
+    help="Answer JSON object, ExtractedAnswers JSON file path, or simple text.",
+)
+@click.option(
+    "--mcq-only",
+    is_flag=True,
+    help="Skip AI marking for non-MCQ questions (they'll be marker_source=missing).",
+)
+@click.option(
+    "--on-error", type=click.Choice(["continue", "fail"]), default="fail", show_default=True
+)
+@click.option("--student-id", default=None, help="Student ID for history recording.")
+@click.option(
+    "--record", is_flag=True, help="Append result to student history (requires --student-id)."
+)
 @click.pass_context
 def correct_paper_cmd(
     ctx: click.Context,
@@ -251,6 +279,8 @@ def correct_paper_cmd(
     answers: str,
     mcq_only: bool,
     on_error: str,
+    student_id: str | None,
+    record: bool,
 ) -> None:
     import json as _json
 
@@ -273,6 +303,7 @@ def correct_paper_cmd(
                 raise ValueError("Answers JSON must be an object.")
         except Exception:
             from lemely.core.correction import parse_answer_input
+
             extracted = parse_answer_input(payload)
 
     settings = _get_settings(ctx)
@@ -284,11 +315,42 @@ def correct_paper_cmd(
         gemini_client=client,
         mcq_only=mcq_only,
     )
+    from lemely.io.grade_boundaries import GradeBoundaryStore
+
+    store = GradeBoundaryStore()
+    boundaries, boundary_source = store.resolve(correction.metadata)
+    grade_pred = predict_grade(correction, boundaries=boundaries, boundary_source=boundary_source)
+    weaknesses = summarize_weaknesses(correction)
     report = AccuracyReport(
         correction=correction,
-        weaknesses=summarize_weaknesses(correction),
-        grade_prediction=predict_grade(correction),
+        weaknesses=weaknesses,
+        grade_prediction=grade_pred,
     )
+
+    if record:
+        if not student_id:
+            raise click.UsageError("--student-id is required when --record is set.")
+        import datetime
+
+        from lemely.core.history import PaperRecord
+        from lemely.io.history_store import HistoryStore
+
+        settings = _get_settings(ctx)
+        history_store = HistoryStore(settings.paths.output_dir / "history")
+        history_store.append(
+            student_id,
+            PaperRecord(
+                student_id=student_id,
+                metadata=correction.metadata,
+                awarded_marks=correction.awarded_marks,
+                maximum_marks=correction.maximum_marks,
+                percentage=grade_pred.percentage,
+                grade=grade_pred.grade,
+                weak_areas=weaknesses.weak_areas,
+                recorded_at=datetime.datetime.now(datetime.UTC).isoformat(),
+            ),
+        )
+
     _print_result(ctx, report)
 
 
@@ -296,25 +358,65 @@ def correct_paper_cmd(
 @click.argument("correction_json", type=click.Path(exists=True, dir_okay=False))
 @click.pass_context
 def predict_grade_cmd(ctx: click.Context, correction_json: str) -> None:
-    correction = CorrectionResult.model_validate(_load_json_file(correction_json))
-    _print_result(ctx, predict_grade(correction))
+    from lemely.io.grade_boundaries import GradeBoundaryStore
+
+    correction = _load_correction_result(correction_json)
+    store = GradeBoundaryStore()
+    boundaries, boundary_source = store.resolve(correction.metadata)
+    _print_result(
+        ctx, predict_grade(correction, boundaries=boundaries, boundary_source=boundary_source)
+    )
+
+
+@cli.command("compare-performance")
+@click.option("--student-id", required=True, help="Student ID to look up in the history store.")
+@click.pass_context
+def compare_performance_cmd(ctx: click.Context, student_id: str) -> None:
+    from lemely.io.history_store import HistoryStore
+
+    settings = _get_settings(ctx)
+    store = HistoryStore(settings.paths.output_dir / "history")
+    history = store.load(student_id)
+    if not history.records:
+        raise click.UsageError(f"No history records found for student '{student_id}'.")
+    latest = history.records[-1]
+    _print_result(ctx, compare_performance(history, latest))
 
 
 @cli.command("detect-weaknesses")
 @click.argument("correction_json", type=click.Path(exists=True, dir_okay=False))
 @click.pass_context
 def detect_weaknesses_cmd(ctx: click.Context, correction_json: str) -> None:
-    correction = CorrectionResult.model_validate(_load_json_file(correction_json))
+    correction = _load_correction_result(correction_json)
     _print_result(ctx, summarize_weaknesses(correction))
 
 
 @cli.command("generate-quiz")
 @click.argument("weakness_json", type=click.Path(exists=True, dir_okay=False))
 @click.option("--count", type=int, default=5, show_default=True)
+@click.option(
+    "--use-ai", is_flag=True, help="Generate real questions via Gemini (requires API key)."
+)
+@click.option(
+    "--subject-code", default=None, help="CAIE subject code (e.g. 0625). Required with --use-ai."
+)
 @click.pass_context
-def generate_quiz_cmd(ctx: click.Context, weakness_json: str, count: int) -> None:
+def generate_quiz_cmd(
+    ctx: click.Context, weakness_json: str, count: int, use_ai: bool, subject_code: str | None
+) -> None:
     report = WeaknessReport.model_validate(_load_json_file(weakness_json))
-    _print_result(ctx, generate_quiz(report, question_count=count))
+    if use_ai:
+        if not subject_code:
+            raise click.UsageError("--subject-code is required when --use-ai is set.")
+        from lemely.io.gemini import GeminiClient
+        from lemely.io.question_generation import QuestionGenerator
+
+        client = GeminiClient(_get_settings(ctx))
+        _print_result(
+            ctx, QuestionGenerator(client).generate(report, subject_code=subject_code, count=count)
+        )
+    else:
+        _print_result(ctx, generate_quiz(report, question_count=count))
 
 
 @cli.command("version")
@@ -405,48 +507,190 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
 
 
 @cli.command("extract-answers")
-@click.option("--mark-scheme", "mark_scheme", required=True,
-              type=click.Path(exists=True, dir_okay=False))
-@click.option("--scan", required=True, type=click.Path(exists=True, dir_okay=False),
-              help="Scanned student paper (PDF, PNG, or JPG).")
-@click.option("--on-error", type=click.Choice(["continue", "fail"]),
-              default="fail", show_default=True)
+@click.option(
+    "--mark-scheme", "mark_scheme", required=True, type=click.Path(exists=True, dir_okay=False)
+)
+@click.option(
+    "--scan",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Scanned student paper (PDF, PNG, or JPG).",
+)
+@click.option(
+    "--on-error", type=click.Choice(["continue", "fail"]), default="fail", show_default=True
+)
+@click.option(
+    "--detect-metadata",
+    is_flag=True,
+    help="Derive ExamMetadata from scan via Gemini vision and cross-check against mark scheme.",
+)
 @click.pass_context
 def extract_answers_cmd(
-    ctx: click.Context, mark_scheme: str, scan: str, on_error: str,
+    ctx: click.Context,
+    mark_scheme: str,
+    scan: str,
+    on_error: str,
+    detect_metadata: bool,
 ) -> None:
     from lemely.core.loose_schemas import MarkScheme
     from lemely.io.answer_extraction import GeminiAnswerExtractor
     from lemely.io.gemini import GeminiClient
 
     settings = _get_settings(ctx)
+    client = GeminiClient(settings)
     ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
-    extractor = GeminiAnswerExtractor(GeminiClient(settings))
+
+    if detect_metadata and ms.metadata is not None:
+        from lemely.core.schemas import ExamMetadata
+        from lemely.io.scan_metadata import ScanMetadataExtractor, cross_check_metadata
+
+        scan_meta = ScanMetadataExtractor(client)(Path(scan))
+        raw_month = ms.metadata.session_month
+        ms_exam_meta = ExamMetadata(
+            subject_code=ms.metadata.subject_code or "",
+            paper_number=ms.metadata.paper_number or 0,
+            paper_variant=ms.metadata.paper_variant or 0,
+            session_month=raw_month.value if raw_month is not None else "May/June",
+            session_year=ms.metadata.session_year,
+        )
+        cross_check_metadata(scan_meta, ms_exam_meta)
+
+    extractor = GeminiAnswerExtractor(client)
     result = extractor(scan_path=Path(scan), mark_scheme=ms)
     _print_result(ctx, result)
 
 
+@cli.command("study-plan")
+@click.option("--student-id", required=True, help="Student ID to load history for.")
+@click.option("--weekly-hours", type=float, required=True, help="Hours available per week.")
+@click.option(
+    "--profile",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Optional StudentProfile JSON file.",
+)
+@click.option("--use-ai", is_flag=True, help="Enrich plan with AI narrative (requires API key).")
+@click.pass_context
+def study_plan_cmd(
+    ctx: click.Context,
+    student_id: str,
+    weekly_hours: float,
+    profile: str | None,
+    use_ai: bool,
+) -> None:
+    from lemely.core.study import StudentProfile
+    from lemely.core.study_plan import build_study_plan
+    from lemely.io.history_store import HistoryStore
+
+    settings = _get_settings(ctx)
+    store = HistoryStore(settings.paths.output_dir / "history")
+    history = store.load(student_id)
+    profile_obj = StudentProfile.model_validate(_load_json_file(profile)) if profile else None
+    weaknesses = aggregate_weaknesses_from_history(history)
+    plan = build_study_plan(profile_obj, weaknesses, weekly_hours=weekly_hours)
+    if use_ai:
+        from lemely.io.gemini import GeminiClient
+        from lemely.io.study_plan_ai import StudyPlanNarrator
+
+        plan = StudyPlanNarrator(GeminiClient(settings)).narrate(plan)
+    _print_result(ctx, plan)
+
+
+@cli.command("check-integrity")
+@click.option(
+    "--answers",
+    "answers_json",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="ExtractedAnswers JSON file.",
+)
+@click.option(
+    "--mark-scheme", "mark_scheme", required=True, type=click.Path(exists=True, dir_okay=False)
+)
+@click.pass_context
+def check_integrity_cmd(ctx: click.Context, answers_json: str, mark_scheme: str) -> None:
+    from lemely.core.integrity_schemas import IntegrityReport
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.core.plagiarism import PlagiarismChecker
+
+    settings = _get_settings(ctx)
+    ea = ExtractedAnswers.model_validate(_load_json_file(answers_json))
+    ms = MarkScheme.model_validate(_load_json_file(mark_scheme))
+    checker = PlagiarismChecker(settings.integrity.plagiarism_threshold)
+
+    answer_map: dict[str, str] = {str(a.question_id): (a.answer or "") for a in ea.answers}
+    expected_map: dict[str, str] = {}
+    for q in ms.questions:
+        key = str(q.id)
+        points = q.answer_points or []
+        expected_map[key] = " ".join(str(p) for p in points)
+
+    findings = []
+    for qid, student_text in answer_map.items():
+        expected_text = expected_map.get(qid, "")
+        if student_text and expected_text:
+            findings.append(checker.check(qid, student_text, expected_text))
+
+    report = IntegrityReport(
+        findings=findings,
+        needs_teacher_review=any(f.flagged for f in findings),
+    )
+    _print_result(ctx, report)
+
+
+@cli.command("teacher-quiz")
+@click.option("--subject", required=True, help="CAIE subject code (e.g. 0625).")
+@click.option("--topics", multiple=True, help="Target topics (repeat for multiple).")
+@click.option(
+    "--count", type=int, default=10, show_default=True, help="Number of questions to build."
+)
+@click.pass_context
+def teacher_quiz_cmd(
+    ctx: click.Context,
+    subject: str,
+    topics: tuple[str, ...],
+    count: int,
+) -> None:
+    from lemely.core.schemas import WeakArea, WeaknessReport
+    from lemely.io.gemini import GeminiClient
+    from lemely.io.question_generation import QuestionGenerator
+    from lemely.io.teacher_quiz import TeacherQuizBuilder
+
+    settings = _get_settings(ctx)
+    client = GeminiClient(settings)
+    generator = QuestionGenerator(client)
+    weak_areas = [
+        WeakArea(topic=t, lost_marks=1, maximum_marks=1, accuracy=0.0, question_ids=[])
+        for t in topics
+    ]
+    weaknesses = WeaknessReport(weak_areas=weak_areas)
+    builder = TeacherQuizBuilder(generator)
+    _print_result(ctx, builder.build(subject, weaknesses, count=count, topics=list(topics)))
+
+
 @cli.command("aggregate-subject")
-@click.argument("correction_jsons", nargs=-1, required=True,
-                type=click.Path(exists=True, dir_okay=False))
-@click.option("--on-error", type=click.Choice(["continue", "fail"]),
-              default="fail", show_default=True)
+@click.argument(
+    "correction_jsons", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False)
+)
+@click.option(
+    "--on-error", type=click.Choice(["continue", "fail"]), default="fail", show_default=True
+)
 @click.pass_context
 def aggregate_subject_cmd(
-    ctx: click.Context, correction_jsons: tuple[str, ...], on_error: str,
+    ctx: click.Context,
+    correction_jsons: tuple[str, ...],
+    on_error: str,
 ) -> None:
     from lemely.io.subject import aggregate_subject
 
-    papers = [
-        CorrectionResult.model_validate(_load_json_file(p))
-        for p in correction_jsons
-    ]
+    papers = [_load_correction_result(p) for p in correction_jsons]
     _print_result(ctx, aggregate_subject(papers))
 
 
 @cli.command("measure-accuracy")
 @click.option(
-    "--golden", "golden_dir",
+    "--golden",
+    "golden_dir",
     default="tests/golden",
     type=click.Path(file_okay=False),
     show_default=True,
@@ -499,11 +743,15 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
     if m.mark_accuracy < t.mark_accuracy_target:
         failed.append(f"mark_accuracy {m.mark_accuracy:.3f} < {t.mark_accuracy_target}")
     if m.mark_accuracy_theory < t.mark_accuracy_target:
-        failed.append(f"mark_accuracy_theory {m.mark_accuracy_theory:.3f} < {t.mark_accuracy_target}")
+        failed.append(
+            f"mark_accuracy_theory {m.mark_accuracy_theory:.3f} < {t.mark_accuracy_target}"
+        )
     if m.id_match_rate is not None and m.id_match_rate < t.id_match_rate_target:
         failed.append(f"id_match_rate {m.id_match_rate:.3f} < {t.id_match_rate_target}")
     if m.flag_precision_high < t.flag_precision_target:
-        failed.append(f"flag_precision_high {m.flag_precision_high:.3f} < {t.flag_precision_target}")
+        failed.append(
+            f"flag_precision_high {m.flag_precision_high:.3f} < {t.flag_precision_target}"
+        )
     if m.flag_recall < t.flag_recall_target:
         failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
 
@@ -525,10 +773,15 @@ def ui_cmd(ctx: click.Context, host: str | None, port: int | None) -> None:
     settings = _get_settings(ctx)
     if host is not None or port is not None:
         cur = settings.gradio
-        settings = settings.model_copy(update={"gradio": GradioSettings(
-            host=host or cur.host, port=port or cur.port,
-            max_file_size_mb=cur.max_file_size_mb,
-        )})
+        settings = settings.model_copy(
+            update={
+                "gradio": GradioSettings(
+                    host=host or cur.host,
+                    port=port or cur.port,
+                    max_file_size_mb=cur.max_file_size_mb,
+                )
+            }
+        )
     launch(settings)
 
 
