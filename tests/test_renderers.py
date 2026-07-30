@@ -144,19 +144,31 @@ class ExtractedAnswersRendererTests(unittest.TestCase):
 class SubjectResultRendererTests(unittest.TestCase):
     def test_renders_subject_grade_and_papers(self) -> None:
         meta = ExamMetadata(
-            subject_code="0625", paper_number=2, paper_variant=1,
-            session_month="May/June", session_year=2020,
+            subject_code="0625",
+            paper_number=2,
+            paper_variant=1,
+            session_month="May/June",
+            session_year=2020,
         )
-        paper = CorrectionResult(metadata=meta, questions=[
-            CorrectedQuestion(
-                question_id="q1", awarded_marks=8, maximum_marks=10,
-                confidence=ConfidenceBand.HIGH, confidence_score=1.0,
-                needs_teacher_review=False,
-            ),
-        ])
+        paper = CorrectionResult(
+            metadata=meta,
+            questions=[
+                CorrectedQuestion(
+                    question_id="q1",
+                    awarded_marks=8,
+                    maximum_marks=10,
+                    confidence=ConfidenceBand.HIGH,
+                    confidence_score=1.0,
+                    needs_teacher_review=False,
+                ),
+            ],
+        )
         sr = SubjectResult(
-            subject_code="0625", session_month="May/June", session_year=2020,
-            paper_results=[paper], weaknesses=WeaknessReport(weak_areas=[]),
+            subject_code="0625",
+            session_month="May/June",
+            session_year=2020,
+            paper_results=[paper],
+            weaknesses=WeaknessReport(weak_areas=[]),
         )
         tables = renderers.render_subject_result(sr)
         out = "".join(_render_to_str(t) for t in tables)

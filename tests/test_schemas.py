@@ -132,7 +132,9 @@ class ExtractedAnswerTests(unittest.TestCase):
 
 class AIMarkResponseTests(unittest.TestCase):
     def test_valid_response(self) -> None:
-        r = AIMarkResponse(awarded_marks=2, confidence=0.85, matched_point_ids=["p1"], feedback="ok")
+        r = AIMarkResponse(
+            awarded_marks=2, confidence=0.85, matched_point_ids=["p1"], feedback="ok"
+        )
         self.assertEqual(r.awarded_marks, 2)
 
     def test_negative_marks_rejected(self) -> None:
@@ -143,8 +145,11 @@ class AIMarkResponseTests(unittest.TestCase):
 class CorrectedQuestionMarkerSourceTests(unittest.TestCase):
     def test_default_marker_source_is_deterministic(self) -> None:
         cq = CorrectedQuestion(
-            question_id="1", awarded_marks=1, maximum_marks=1,
-            confidence=ConfidenceBand.HIGH, confidence_score=1.0,
+            question_id="1",
+            awarded_marks=1,
+            maximum_marks=1,
+            confidence=ConfidenceBand.HIGH,
+            confidence_score=1.0,
             needs_teacher_review=False,
         )
         self.assertEqual(cq.marker_source, "deterministic")
@@ -153,10 +158,15 @@ class CorrectedQuestionMarkerSourceTests(unittest.TestCase):
 
     def test_ai_marked_question_accepts_feedback(self) -> None:
         cq = CorrectedQuestion(
-            question_id="1", awarded_marks=2, maximum_marks=3,
-            confidence=ConfidenceBand.MEDIUM, confidence_score=0.8,
-            needs_teacher_review=False, marker_source="ai",
-            feedback="Missed point p3.", matched_point_ids=["p1", "p2"],
+            question_id="1",
+            awarded_marks=2,
+            maximum_marks=3,
+            confidence=ConfidenceBand.MEDIUM,
+            confidence_score=0.8,
+            needs_teacher_review=False,
+            marker_source="ai",
+            feedback="Missed point p3.",
+            matched_point_ids=["p1", "p2"],
         )
         self.assertEqual(cq.marker_source, "ai")
         self.assertEqual(cq.feedback, "Missed point p3.")
@@ -166,14 +176,19 @@ class SubjectResultTests(unittest.TestCase):
     def _paper(self, awarded: int, maximum: int) -> CorrectionResult:
         return CorrectionResult(
             metadata=ExamMetadata(
-                subject_code="0625", paper_number=2, paper_variant=1,
-                session_month="May/June", session_year=2020,
+                subject_code="0625",
+                paper_number=2,
+                paper_variant=1,
+                session_month="May/June",
+                session_year=2020,
             ),
             questions=[
                 CorrectedQuestion(
                     question_id="q1",
-                    awarded_marks=awarded, maximum_marks=maximum,
-                    confidence=ConfidenceBand.HIGH, confidence_score=1.0,
+                    awarded_marks=awarded,
+                    maximum_marks=maximum,
+                    confidence=ConfidenceBand.HIGH,
+                    confidence_score=1.0,
                     needs_teacher_review=False,
                 )
             ],
@@ -181,7 +196,9 @@ class SubjectResultTests(unittest.TestCase):
 
     def test_subject_result_sums_marks(self) -> None:
         sr = SubjectResult(
-            subject_code="0625", session_month="May/June", session_year=2020,
+            subject_code="0625",
+            session_month="May/June",
+            session_year=2020,
             paper_results=[self._paper(30, 40), self._paper(60, 80), self._paper(35, 40)],
             weaknesses=WeaknessReport(weak_areas=[]),
         )
@@ -193,13 +210,18 @@ class SubjectResultTests(unittest.TestCase):
     def test_subject_result_rejects_mismatched_subject(self) -> None:
         p1 = self._paper(10, 10)
         p2_meta = ExamMetadata(
-            subject_code="0972", paper_number=2, paper_variant=1,
-            session_month="May/June", session_year=2020,
+            subject_code="0972",
+            paper_number=2,
+            paper_variant=1,
+            session_month="May/June",
+            session_year=2020,
         )
         p2 = CorrectionResult(metadata=p2_meta, questions=p1.questions)
         with self.assertRaises(ValidationError):
             SubjectResult(
-                subject_code="0625", session_month="May/June", session_year=2020,
+                subject_code="0625",
+                session_month="May/June",
+                session_year=2020,
                 paper_results=[p1, p2],
                 weaknesses=WeaknessReport(weak_areas=[]),
             )

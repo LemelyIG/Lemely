@@ -21,6 +21,7 @@ class _SimpleSchema(BaseModel):
 
 class _RecursiveSchema(BaseModel):
     """Simulates Question.parts: list[Question] — Pydantic emits a circular $ref."""
+
     value: str
     children: list[_RecursiveSchema] = []
 
@@ -54,7 +55,8 @@ def _mock_response(text: str, in_tok: int = 10, out_tok: int = 20) -> MagicMock:
     cand.finish_reason = finish
     resp.candidates = [cand]
     resp.usage_metadata = MagicMock(
-        prompt_token_count=in_tok, candidates_token_count=out_tok,
+        prompt_token_count=in_tok,
+        candidates_token_count=out_tok,
     )
     return resp
 
@@ -94,8 +96,10 @@ class GeminiClientTests(unittest.TestCase):
 
         for _ in range(2):
             r = client.generate_structured(
-                system_prompt="sys", user_prompt="user",
-                response_schema=_SimpleSchema, prompt_version="1",
+                system_prompt="sys",
+                user_prompt="user",
+                response_schema=_SimpleSchema,
+                prompt_version="1",
             )
             self.assertEqual(r.value, "hi")
         self.assertEqual(mock_genai.models.generate_content.call_count, 1)
@@ -110,30 +114,42 @@ class GeminiClientTests(unittest.TestCase):
         client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
 
         r1 = client.generate_structured(
-            system_prompt="s", user_prompt="u", response_schema=_SimpleSchema, prompt_version="1",
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
         )
         r2 = client.generate_structured(
-            system_prompt="s", user_prompt="u", response_schema=_SimpleSchema, prompt_version="2",
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="2",
         )
         self.assertEqual((r1.value, r2.value), ("v1", "v2"))
 
     def test_cost_guard_raises_after_token_ceiling(self) -> None:
         mock_genai = MagicMock()
         mock_genai.models.generate_content.return_value = _mock_response(
-            '{"value": "x"}', in_tok=500, out_tok=600,
+            '{"value": "x"}',
+            in_tok=500,
+            out_tok=600,
         )
         mock_genai.files.upload.return_value = MagicMock()
         settings = _make_settings(self.tmp, per_run_token_ceiling=100)
         client = GeminiClient(settings, _genai_client=mock_genai)
 
         client.generate_structured(
-            system_prompt="s", user_prompt="u1",
-            response_schema=_SimpleSchema, prompt_version="1",
+            system_prompt="s",
+            user_prompt="u1",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
         )
         with self.assertRaises(ExternalServiceError):
             client.generate_structured(
-                system_prompt="s", user_prompt="u2",
-                response_schema=_SimpleSchema, prompt_version="1",
+                system_prompt="s",
+                user_prompt="u2",
+                response_schema=_SimpleSchema,
+                prompt_version="1",
             )
 
     def test_transient_error_after_retries_raises_external_service_error(self) -> None:
@@ -152,8 +168,10 @@ class GeminiClientTests(unittest.TestCase):
 
         with self.assertRaises(ExternalServiceError):
             client.generate_structured(
-                system_prompt="s", user_prompt="u",
-                response_schema=_SimpleSchema, prompt_version="1",
+                system_prompt="s",
+                user_prompt="u",
+                response_schema=_SimpleSchema,
+                prompt_version="1",
             )
 
     def test_schema_validation_failure_raises_parse_error(self) -> None:
@@ -167,6 +185,8 @@ class GeminiClientTests(unittest.TestCase):
 
         with self.assertRaises(ParseError):
             client.generate_structured(
-                system_prompt="s", user_prompt="u",
-                response_schema=_SimpleSchema, prompt_version="1",
+                system_prompt="s",
+                user_prompt="u",
+                response_schema=_SimpleSchema,
+                prompt_version="1",
             )

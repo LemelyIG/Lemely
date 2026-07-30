@@ -96,7 +96,10 @@ class MarkSchemeLibraryTests(unittest.TestCase):
                 raise ExternalServiceError("503 UNAVAILABLE high demand")
 
             result = process_mark_scheme_batch(
-                root, output, force=True, parser=parser,
+                root,
+                output,
+                force=True,
+                parser=parser,
             )
 
         self.assertEqual(result.items[0].status, "transient_failed")

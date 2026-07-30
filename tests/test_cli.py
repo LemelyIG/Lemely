@@ -103,8 +103,10 @@ def test_correct_paper_mcq_only_works_without_api_key():
         answers = '{"1": "A", "2": "B"}'
         exit_code, payload = run_cli(
             "correct-paper",
-            "--mark-scheme", str(scheme_path),
-            "--answers", answers,
+            "--mark-scheme",
+            str(scheme_path),
+            "--answers",
+            answers,
             "--mcq-only",
         )
     assert exit_code == 0
@@ -115,11 +117,16 @@ def test_extract_answers_requires_existing_scan():
     with tempfile.TemporaryDirectory() as tmp:
         scheme = Path(tmp) / "0625_m20_ms_12.json"
         scheme.write_text(real_mcq_mark_scheme_text(), "utf-8")
-        exit_code = main([
-            "--json", "extract-answers",
-            "--mark-scheme", str(scheme),
-            "--scan", str(Path(tmp) / "nonexistent.png"),
-        ])
+        exit_code = main(
+            [
+                "--json",
+                "extract-answers",
+                "--mark-scheme",
+                str(scheme),
+                "--scan",
+                str(Path(tmp) / "nonexistent.png"),
+            ]
+        )
     assert exit_code != 0
 
 
@@ -131,19 +138,30 @@ def test_aggregate_subject_combines_three_papers():
             CorrectionResult,
             ExamMetadata,
         )
+
         paths = []
         for paper_num in (2, 4, 6):
             meta = ExamMetadata(
-                subject_code="0625", paper_number=paper_num, paper_variant=1,
-                session_month="May/June", session_year=2020,
+                subject_code="0625",
+                paper_number=paper_num,
+                paper_variant=1,
+                session_month="May/June",
+                session_year=2020,
             )
-            cr = CorrectionResult(metadata=meta, questions=[
-                CorrectedQuestion(
-                    question_id=f"q{paper_num}", awarded_marks=5, maximum_marks=10,
-                    confidence=ConfidenceBand.HIGH, confidence_score=1.0,
-                    needs_teacher_review=False, topic="kinematics",
-                ),
-            ])
+            cr = CorrectionResult(
+                metadata=meta,
+                questions=[
+                    CorrectedQuestion(
+                        question_id=f"q{paper_num}",
+                        awarded_marks=5,
+                        maximum_marks=10,
+                        confidence=ConfidenceBand.HIGH,
+                        confidence_score=1.0,
+                        needs_teacher_review=False,
+                        topic="kinematics",
+                    ),
+                ],
+            )
             p = Path(tmp) / f"paper{paper_num}.json"
             p.write_text(cr.model_dump_json(indent=2), "utf-8")
             paths.append(str(p))
@@ -158,7 +176,9 @@ def test_aggregate_subject_combines_three_papers():
 class AccuracyEvalSettingsTests(unittest.TestCase):
     def test_accuracy_eval_settings_defaults(self):
         import os
+
         from lemely.runtime.config import load_settings
+
         snap = dict(os.environ)
         for k in list(os.environ):
             if k.startswith("LEMELY_"):

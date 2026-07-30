@@ -2,6 +2,7 @@
 
 All tests use synthetic pdfplumber data — no real PDFs required.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -16,7 +17,6 @@ from lemely.io.parsers_det import (
     _run_theory_state_machine,
 )
 from lemely.runtime.errors import ParseError
-
 
 # ---------------------------------------------------------------------------
 # Helpers to build fake pdfplumber Page / PDF objects
@@ -58,6 +58,7 @@ def _mcq_cover(n: int) -> str:
         "Cambridge IGCSE™\nPhysics\n"
         f"0625/12 Mark Scheme February/March 2020\nMaximum Mark: {n}\nPublished\n"
     )
+
 
 _THEORY_COVER = """\
 Cambridge IGCSE™
@@ -129,9 +130,9 @@ class MCQExtractionTests(unittest.TestCase):
         table = [[str(i + 1), answer_cycle[i % 4]] for i in range(num_questions)]
         pages = [
             _fake_page(text=_mcq_cover(num_questions)),  # cover (mark matches count)
-            _fake_page(),                                  # GMP page 1
-            _fake_page(),                                  # GMP page 2
-            _fake_page(tables=[table]),                    # question table
+            _fake_page(),  # GMP page 1
+            _fake_page(),  # GMP page 2
+            _fake_page(tables=[table]),  # question table
         ]
         return _fake_pdf(pages)
 
@@ -189,9 +190,8 @@ class MCQExtractionTests(unittest.TestCase):
             _fake_page(tables=[[["1", "some text"], ["2", "other text"]]]),
         ]
         parser = DeterministicMarkSchemeParser()
-        with patch("pdfplumber.open", return_value=_fake_pdf(pages)):
-            with self.assertRaises(ParseError):
-                parser(Path("0625_m20_ms_12.pdf"))
+        with patch("pdfplumber.open", return_value=_fake_pdf(pages)), self.assertRaises(ParseError):
+            parser(Path("0625_m20_ms_12.pdf"))
 
 
 # ---------------------------------------------------------------------------
@@ -485,16 +485,14 @@ class MetadataExtractionTests(unittest.TestCase):
         bad_cover = "Cambridge IGCSE\n0625/42 Mark Scheme\nPublished\n"
         parser = DeterministicMarkSchemeParser()
         pdf = self._make_minimal_theory_pdf(bad_cover)
-        with patch("pdfplumber.open", return_value=pdf):
-            with self.assertRaises(ParseError):
-                parser(Path("0625_s19_ms_42.pdf"))
+        with patch("pdfplumber.open", return_value=pdf), self.assertRaises(ParseError):
+            parser(Path("0625_s19_ms_42.pdf"))
 
     def test_raises_parse_error_when_no_tables(self) -> None:
         pages = [_fake_page(text=_THEORY_COVER), _fake_page(), _fake_page(), _fake_page()]
         parser = DeterministicMarkSchemeParser()
-        with patch("pdfplumber.open", return_value=_fake_pdf(pages)):
-            with self.assertRaises(ParseError):
-                parser(Path("0625_s19_ms_42.pdf"))
+        with patch("pdfplumber.open", return_value=_fake_pdf(pages)), self.assertRaises(ParseError):
+            parser(Path("0625_s19_ms_42.pdf"))
 
     def test_published_flag_detected(self) -> None:
         parser = DeterministicMarkSchemeParser()
