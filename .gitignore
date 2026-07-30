@@ -30,7 +30,6 @@ dist/
 .serena/
 .agents/
 .codex/
-.claude/
 
 # IDE / OS
 .idea/

@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Edit(*)",
+      "Write(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "WebSearch",
+      "WebFetch(*)",
+      "Task(*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(**/.env)",
+      "Bash(git push --force*)",
+      "Bash(rm -rf /*)",
+      "Bash(sudo *)"
+    ],
+    "additionalDirectories": []
+  }
+}
