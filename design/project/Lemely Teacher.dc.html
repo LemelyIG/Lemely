@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--am:oklch(0.72 0.13 68);--am-hover:oklch(0.66 0.13 68);--am-soft:oklch(0.94 0.055 68);--ink:oklch(0.19 0.015 60);--bg:oklch(0.965 0.012 78);--surf:oklch(0.995 0.005 80);--bd:oklch(0.89 0.012 75);--t1:oklch(0.22 0.015 60);--t2:oklch(0.48 0.015 60);--t3:oklch(0.66 0.012 60);--gr:oklch(0.55 0.11 152);--gr-bg:oklch(0.93 0.05 152);--rs:oklch(0.58 0.13 22);--rs-bg:oklch(0.92 0.055 22)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--t1);font-family:'Work Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--am-hover);text-decoration:none}
+a:hover{color:var(--ink)}
+::selection{background:var(--am-soft)}
+@keyframes lm-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes lm-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes lm-spin{to{transform:rotate(360deg)}}
+.lm-screen{animation:lm-in .3s cubic-bezier(.2,.7,.3,1) both}
+.lm-scroll::-webkit-scrollbar{width:10px;height:10px}
+.lm-scroll::-webkit-scrollbar-thumb{background:oklch(0.89 0.012 75);border-radius:6px;border:3px solid transparent;background-clip:content-box}
+@media (max-width:1240px){.lm-cols{grid-template-columns:1fr !important}}
+@media (max-width:1080px){.lm-head{flex-wrap:wrap;row-gap:10px}.lm-body{padding:22px !important}}
+@media (max-width:860px){.lm-side{display:none !important}}
+</style>
+</helmet>
+
+<div style="display:flex;min-height:100vh">
+
+  <aside class="lm-side" style="width:252px;flex:none;border-right:1px solid var(--bd);padding:22px 14px;display:flex;flex-direction:column;gap:24px;position:sticky;top:0;height:100vh">
+    <div style="display:flex;align-items:center;gap:10px;padding:0 8px">
+      <div style="width:26px;height:26px;border-radius:50%;background:var(--am);color:oklch(0.99 0.004 80);display:flex;align-items:center;justify-content:center;font-family:'Instrument Serif',Georgia,serif;font-size:16px;font-style:italic">l</div>
+      <div style="font-family:'Instrument Serif',Georgia,serif;font-size:24px">Lemely</div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:3px">
+      <sc-for list="{{ navItems }}" as="it" hint-placeholder-count="5">
+        <button onClick="{{ it.go }}" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;cursor:pointer;font-family:inherit;font-size:14px;padding:10px 12px;border-radius:11px;background:{{ it.bg }};border:1px solid {{ it.bd }};color:{{ it.fg }};font-weight:{{ it.fw }};box-shadow:{{ it.sh }};transition:background .16s" style-hover="background:oklch(0.985 0.008 78)">
+          <span style="width:16px;height:16px;flex:none;display:flex;align-items:flex-end;justify-content:center;gap:2px">
+            <sc-for list="{{ it.icon }}" as="bar" hint-placeholder-count="3">
+              <span style="width:{{ bar.w }};height:{{ bar.h }};border-radius:{{ bar.r }};background:{{ it.iconColor }};transform:{{ bar.tf }}"></span>
+            </sc-for>
+          </span>
+          <span style="flex:1">{{ it.label }}</span>
+          <span style="font-size:11px;font-family:'JetBrains Mono',monospace;background:{{ it.badgeBg }};color:{{ it.badgeFg }};padding:1px 7px;border-radius:20px">{{ it.badge }}</span>
+        </button>
+      </sc-for>
+    </div>
+
+    <div>
+      <div style="font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--t3);padding:0 12px 9px;font-weight:500">Recent classes</div>
+      <div style="display:flex;flex-direction:column;gap:1px">
+        <sc-for list="{{ recentClasses }}" as="c" hint-placeholder-count="4">
+          <div style="display:flex;align-items:center;gap:11px;padding:7px 12px;font-size:13.5px;color:var(--t2);cursor:pointer;border-radius:9px" style-hover="background:oklch(0.985 0.008 78)">
+            <span style="width:6px;height:6px;border-radius:50%;background:{{ c.dot }}"></span>{{ c.label }}
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="margin-top:auto;border-top:1px solid var(--bd);padding-top:14px;display:flex;flex-direction:column;gap:12px">
+      <a href="Lemely Student.dc.html" style="font-size:11.5px;color:var(--t3);padding:0 4px">Open the student portal →</a>
+      <div style="display:flex;align-items:center;gap:11px;padding:0 4px">
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--am-soft);color:oklch(0.45 0.10 68);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">HS</div>
+        <div style="line-height:1.25">
+          <div style="font-size:13px;font-weight:500">Mr H. Sabry</div>
+          <div style="font-size:11px;color:var(--t2)">Physics dept · CAIE</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div class="lm-body" style="flex:1;padding:30px 34px;max-width:1480px;width:100%">
+
+      <!-- ═══════ OVERVIEW ═══════ -->
+      <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+      <div class="lm-screen" style="display:flex;flex-direction:column;gap:24px">
+        <div class="lm-head" style="display:flex;align-items:flex-end;gap:20px">
+          <div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3)">Helwan Science Centre · Sunday 27 July</div>
+            <div style="font-family:'Instrument Serif',Georgia,serif;font-size:40px;line-height:1.08;margin-top:8px">Good morning, Mr Sabry.</div>
+            <div style="font-size:14.5px;color:var(--t2);margin-top:8px;max-width:62ch;text-wrap:pretty">Twenty-eight papers were graded overnight. Twelve answers want your eyes, three students want your attention, and one topic wants re-teaching to the whole of 11-B.</div>
+          </div>
+          <div style="flex:1"></div>
+          <button onClick="{{ goReview }}" style="border:0;background:var(--ink);color:oklch(0.98 0.005 80);font-family:inherit;font-size:13.5px;font-weight:500;padding:12px 20px;border-radius:10px;cursor:pointer" style-hover="background:oklch(0.28 0.015 60)">Open review queue →</button>
+        </div>
+
+        <div class="lm-cols" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
+          <sc-for list="{{ overviewStats }}" as="s" hint-placeholder-count="4">
+            <div style="background:var(--surf);border:1px solid var(--bd);border-radius:13px;padding:18px 20px">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">{{ s.k }}</div>
+              <div style="display:flex;align-items:baseline;gap:6px;margin-top:8px">
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-size:40px;line-height:1;color:{{ s.color }}">{{ s.v }}</div>
+                <div style="font-size:13px;color:var(--t2)">{{ s.unit }}</div>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:{{ s.footColor }};margin-top:8px">{{ s.foot }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div class="lm-cols" style="display:grid;grid-template-columns:1fr 1.2fr;gap:20px;align-items:start">
+          <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;overflow:hidden">
+            <div style="padding:18px 20px 13px">
+              <div style="font-family:'Instrument Serif',Georgia,serif;font-size:22px">Needs you</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-top:5px">Flagged by trajectory, not by one bad day</div>
+            </div>
+            <sc-for list="{{ atRisk }}" as="r" hint-placeholder-count="3">
+              <div style="border-top:1px solid var(--bd);padding:15px 20px;display:flex;gap:13px;align-items:flex-start">
+                <div style="width:32px;height:32px;flex:none;border-radius:50%;background:{{ r.avBg }};color:{{ r.avFg }};display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:600">{{ r.initials }}</div>
+                <div style="flex:1">
+                  <div style="display:flex;align-items:center;gap:9px">
+                    <div style="font-size:13.5px;font-weight:500">{{ r.name }}</div>
+                    <div style="font-size:10.5px;background:{{ r.tagBg }};color:{{ r.tagFg }};border-radius:20px;padding:2px 9px">{{ r.tag }}</div>
+                    <div style="flex:1"></div>
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:{{ r.deltaColor }}">{{ r.delta }}</div>
+                  </div>
+                  <div style="font-size:12.5px;color:var(--t2);margin-top:5px;line-height:1.45;text-wrap:pretty">{{ r.note }}</div>
+                  <div style="display:flex;gap:8px;margin-top:11px">
+                    <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:11.5px;padding:6px 11px;border-radius:8px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">{{ r.action }}</button>
+                    <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:11.5px;padding:6px 11px;border-radius:8px;cursor:pointer;color:var(--t2)" style-hover="background:oklch(0.97 0.01 78)">Message parents</button>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:20px">
+            <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;padding:20px">
+              <div style="display:flex;align-items:baseline;gap:10px">
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-size:22px">Lesson retention</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t3)">MOMENTS &amp; EQUILIBRIUM · 22 MIN · 21 VIEWERS</div>
+              </div>
+              <div style="font-size:12.5px;color:var(--t2);margin:10px 0 18px;text-wrap:pretty">Two replay spikes, both on the worked example where the substitution step is skipped. Worth re-recording those ninety seconds.</div>
+              <div style="display:flex;align-items:flex-end;gap:2px;height:80px">
+                <sc-for list="{{ retention }}" as="r" hint-placeholder-count="22">
+                  <div style="flex:1;border-radius:2px 2px 0 0;background:{{ r.color }};height:{{ r.h }}"></div>
+                </sc-for>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--t3);font-family:'JetBrains Mono',monospace;margin-top:7px"><span>00:00</span><span>08:40</span><span>14:10</span><span>22:00</span></div>
+            </div>
+
+            <div style="background:var(--ink);color:oklch(0.95 0.008 78);border-radius:14px;padding:22px;display:flex;gap:22px;align-items:center">
+              <div style="flex:1">
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-size:22px">This week you would have spent 9 hours marking</div>
+                <div style="font-size:13px;opacity:.7;margin-top:8px;line-height:1.5;text-wrap:pretty">You spent 34 minutes, all of it on the twelve answers Lemely refused to guess at.</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-size:46px;line-height:1;color:var(--am)">38h</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;opacity:.6;letter-spacing:.08em">SAVED THIS MONTH</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ═══════ GRADING BATCH ═══════ -->
+      <sc-if value="{{ isGrading }}" hint-placeholder-val="{{ true }}">
+      <div class="lm-screen" style="display:flex;flex-direction:column;gap:20px">
+        <div class="lm-head" style="display:flex;align-items:flex-end;gap:18px;padding-bottom:18px;border-bottom:1px solid var(--bd)">
+          <div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3)">New batch · 0625/31 · May/June 2020</div>
+            <div style="font-family:'Instrument Serif',Georgia,serif;font-size:34px;line-height:1.1;margin-top:6px">Grading 24 papers</div>
+          </div>
+          <div style="flex:1"></div>
+          <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:13px;padding:11px 18px;border-radius:10px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">Pause</button>
+          <button onClick="{{ goReview }}" style="border:0;background:var(--ink);color:oklch(0.98 0.005 80);font-family:inherit;font-size:13px;font-weight:500;padding:11px 18px;border-radius:10px;cursor:pointer" style-hover="background:oklch(0.28 0.015 60)">Open review queue →</button>
+        </div>
+
+        <div class="lm-cols" style="display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;padding:18px 20px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">Detected from page 1</div>
+                <div style="flex:1"></div>
+                <span style="width:6px;height:6px;border-radius:50%;background:var(--gr)"></span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t2)">99% match</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px 14px;margin-top:18px">
+                <sc-for list="{{ detected }}" as="d" hint-placeholder-count="6">
+                  <div>
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">{{ d.k }}</div>
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:15px;margin-top:4px">{{ d.v }}</div>
+                  </div>
+                </sc-for>
+              </div>
+              <button style="display:flex;align-items:center;width:100%;margin-top:20px;border:1px solid var(--bd);background:transparent;font-family:inherit;font-size:13px;padding:11px 14px;border-radius:9px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">
+                <span style="flex:1;text-align:left">Use custom mark scheme</span><span style="color:var(--t3)">→</span>
+              </button>
+            </div>
+
+            <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;padding:20px;display:flex;gap:20px;align-items:center">
+              <svg viewBox="0 0 100 100" style="width:92px;height:92px;flex:none;transform:rotate(-90deg)">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="oklch(0.92 0.012 78)" stroke-width="10"></circle>
+                <circle cx="50" cy="50" r="42" fill="none" stroke="var(--am)" stroke-width="10" stroke-linecap="round" stroke-dasharray="{{ donut }}"></circle>
+              </svg>
+              <div style="flex:1">
+                <div style="font-size:15px;font-weight:600">Auto-grading in progress</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--t2);margin-top:5px">~2 min remaining</div>
+                <div style="display:flex;gap:22px;margin-top:14px">
+                  <div><div style="font-family:'Instrument Serif',serif;font-size:26px;line-height:1">14</div><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t3);margin-top:3px">AUTO-CONFIRMED</div></div>
+                  <div><div style="font-family:'Instrument Serif',serif;font-size:26px;line-height:1;color:var(--rs)">2</div><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t3);margin-top:3px">NEED REVIEW</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;padding:18px 20px">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:14px">Pipeline</div>
+              <sc-for list="{{ pipeline }}" as="p" hint-placeholder-count="5">
+                <div style="display:flex;align-items:center;gap:12px;padding:9px 0">
+                  <span style="width:19px;height:19px;flex:none;border-radius:50%;background:{{ p.dotBg }};border:1.5px solid {{ p.dotBorder }};color:{{ p.dotFg }};display:flex;align-items:center;justify-content:center;font-size:10px;font-family:'JetBrains Mono',monospace">{{ p.mark }}</span>
+                  <span style="flex:1;font-size:13.5px;color:{{ p.fg }}">{{ p.label }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--t2)">{{ p.count }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="border:1px dashed var(--bd);border-radius:14px;padding:26px;text-align:center;background:oklch(0.975 0.01 78)">
+              <div style="font-size:14px;font-weight:500">Drop more scans</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t3);margin-top:7px">PDF · JPG · PNG · or scan with phone</div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+              <div style="display:flex;gap:4px;background:oklch(0.945 0.012 78);padding:4px;border-radius:11px">
+                <sc-for list="{{ batchTabs }}" as="t" hint-placeholder-count="4">
+                  <button onClick="{{ t.go }}" style="border:0;cursor:pointer;font-family:inherit;font-size:13px;padding:8px 14px;border-radius:8px;background:{{ t.bg }};color:{{ t.fg }};font-weight:{{ t.fw }};box-shadow:{{ t.sh }}">{{ t.label }} <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:{{ t.countFg }}">{{ t.count }}</span></button>
+                </sc-for>
+              </div>
+              <div style="flex:1"></div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3)">Detected · MS 0625/31 v3</div>
+              <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:12.5px;padding:8px 14px;border-radius:9px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">Change</button>
+            </div>
+
+            <div class="lm-cols" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+              <sc-for list="{{ papers }}" as="p" hint-placeholder-count="9">
+                <div onClick="{{ p.go }}" style="border:1px solid {{ p.border }};border-radius:13px;overflow:hidden;background:var(--surf);cursor:pointer;transition:transform .14s" style-hover="transform:translateY(-2px)">
+                  <div style="position:relative;height:150px;background:oklch(0.975 0.008 78);border-bottom:1px solid var(--bd);padding:12px 13px;overflow:hidden">
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:8.5px;color:var(--t3);letter-spacing:.06em">0625/31 · MAY 2020</div>
+                    <div style="display:flex;flex-direction:column;gap:6px;margin-top:9px;opacity:{{ p.pageOpacity }}">
+                      <sc-for list="{{ p.lines }}" as="l" hint-placeholder-count="7">
+                        <div style="height:3px;border-radius:2px;background:oklch(0.87 0.01 78);width:{{ l.w }}"></div>
+                      </sc-for>
+                    </div>
+                    <div style="position:absolute;top:10px;right:10px;width:20px;height:20px;border-radius:50%;background:{{ p.flagBg }};color:oklch(0.99 0.004 80);font-size:10px;display:{{ p.flagShow }};align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace">!</div>
+                    <div style="position:absolute;inset:0;display:{{ p.spinShow }};align-items:center;justify-content:center">
+                      <div style="width:34px;height:34px;border-radius:50%;border:3px solid oklch(0.90 0.012 78);border-top-color:var(--am);animation:lm-spin 1s linear infinite"></div>
+                    </div>
+                  </div>
+                  <div style="padding:12px 13px">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <div style="font-size:13.5px;font-weight:500;flex:1">{{ p.name }}</div>
+                      <div style="font-size:10.5px;background:{{ p.chipBg }};color:{{ p.chipFg }};border-radius:20px;padding:2px 9px">{{ p.status }}</div>
+                    </div>
+                    <div style="display:flex;align-items:baseline;gap:8px;margin-top:9px">
+                      <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:{{ p.confColor }}">{{ p.conf }}</div>
+                      <div style="flex:1"></div>
+                      <div style="font-family:'JetBrains Mono',monospace;font-size:15px">{{ p.score }}</div>
+                    </div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ═══════ REVIEW ═══════ -->
+      <sc-if value="{{ isReview }}" hint-placeholder-val="{{ true }}">
+      <div class="lm-screen" style="display:flex;flex-direction:column;gap:20px">
+        <div class="lm-head" style="display:flex;align-items:flex-end;gap:18px;padding-bottom:18px;border-bottom:1px solid var(--bd)">
+          <div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="font-family:'Instrument Serif',Georgia,serif;font-size:34px;line-height:1.1">Review AI grading</div>
+              <div style="background:var(--am-soft);color:oklch(0.44 0.10 68);font-size:11.5px;padding:3px 11px;border-radius:20px">Live</div>
+            </div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--t2);margin-top:7px">12 answers · 0625/31 · May/June 2020</div>
+          </div>
+          <div style="flex:1"></div>
+          <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:13px;padding:11px 18px;border-radius:10px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">Filter</button>
+          <button style="border:0;background:var(--ink);color:oklch(0.98 0.005 80);font-family:inherit;font-size:13px;font-weight:500;padding:11px 18px;border-radius:10px;cursor:pointer" style-hover="background:oklch(0.28 0.015 60)">Approve all (12)</button>
+        </div>
+
+        <div class="lm-cols" style="display:grid;grid-template-columns:1fr 1.05fr 262px;gap:20px;align-items:start">
+
+          <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;padding:18px">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="width:34px;height:34px;border-radius:9px;background:var(--am-soft);color:oklch(0.44 0.10 68);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">{{ current.initials }}</div>
+              <div style="flex:1">
+                <div style="font-size:14px;font-weight:500">{{ current.name }}</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t2);margin-top:2px">0625/31 · {{ current.q }}</div>
+              </div>
+              <button onClick="{{ prev }}" style="width:30px;height:30px;border:1px solid var(--bd);background:var(--surf);border-radius:8px;cursor:pointer;color:var(--t2)" style-hover="background:oklch(0.97 0.01 78)">‹</button>
+              <button onClick="{{ next }}" style="width:30px;height:30px;border:1px solid var(--bd);background:var(--surf);border-radius:8px;cursor:pointer;color:var(--t2)" style-hover="background:oklch(0.97 0.01 78)">›</button>
+            </div>
+
+            <div style="border:1px solid var(--bd);border-radius:11px;padding:18px;margin-top:16px;background:oklch(0.985 0.008 80)">
+              <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;color:var(--t3)">
+                <span>CAMBRIDGE IGCSE PHYSICS · 0625/31</span><span>{{ current.page }}</span>
+              </div>
+              <div style="font-size:13.5px;line-height:1.55;margin-top:14px;text-wrap:pretty"><span style="font-weight:600">{{ current.qLabel }}</span> {{ current.prompt }}</div>
+              <div style="font-family:'Instrument Serif',Georgia,serif;font-style:italic;font-size:19px;line-height:1.9;color:oklch(0.42 0.09 255);margin-top:18px">
+                <sc-for list="{{ current.working }}" as="w" hint-placeholder-count="4">
+                  <div><span style="background:{{ w.hl }};padding:0 3px;border-radius:3px">{{ w.t }}</span></div>
+                </sc-for>
+              </div>
+              <div style="border-top:1px dashed var(--bd);margin-top:18px;padding-top:12px;display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t3)">
+                <span>scanned · 09:14</span><span style="color:var(--rs)">✕ {{ current.marks }}</span>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:9px;margin-top:16px;justify-content:center">
+              <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:12.5px;padding:9px 16px;border-radius:9px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">Re-scan</button>
+              <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:12.5px;padding:9px 16px;border-radius:9px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">Edit transcript</button>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;align-items:center;gap:14px;padding-bottom:14px;border-bottom:1px solid var(--bd)">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);line-height:1.5">{{ current.q }} · mark scheme<br>alignment</div>
+              <div style="flex:1"></div>
+              <div style="font-size:11.5px;color:var(--t2);line-height:1.3;text-align:right">AI<br>confidence</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--rs)">{{ current.conf }}</div>
+              <div style="width:80px;height:6px;border-radius:3px;background:oklch(0.92 0.012 78)"><div style="height:100%;border-radius:3px;background:var(--rs);width:{{ current.confW }}"></div></div>
+            </div>
+
+            <div style="display:flex;align-items:baseline;gap:12px">
+              <div style="font-family:'Instrument Serif',Georgia,serif;font-size:24px">Marking points</div>
+              <div style="flex:1"></div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--t2)">{{ current.total }}</div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:9px">
+              <sc-for list="{{ current.points }}" as="p" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:26px 44px 1fr 50px;gap:12px;align-items:start;background:{{ p.bg }};border:1px solid {{ p.border }};border-radius:11px;padding:13px 14px">
+                  <span style="width:20px;height:20px;border-radius:5px;background:{{ p.markBg }};color:oklch(0.99 0.004 80);display:flex;align-items:center;justify-content:center;font-size:11px">{{ p.mark }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--t2)">{{ p.code }}</span>
+                  <span>
+                    <span style="display:block;font-size:13px;line-height:1.4">{{ p.text }}</span>
+                    <span style="display:block;font-family:'Instrument Serif',Georgia,serif;font-style:italic;font-size:13.5px;color:var(--t2);margin-top:4px">{{ p.note }}</span>
+                  </span>
+                  <span style="text-align:right">
+                    <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--t2)">{{ p.conf }}</span>
+                    <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:13px;margin-top:4px;color:{{ p.awardColor }}">{{ p.award }}</span>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="border:1px solid var(--bd);border-radius:12px;padding:16px 18px;background:var(--surf)">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="width:22px;height:22px;border-radius:6px;background:var(--am-soft);display:flex;align-items:center;justify-content:center">
+                  <span style="width:8px;height:8px;background:var(--am);transform:rotate(45deg)"></span>
+                </span>
+                <div>
+                  <div style="font-size:13.5px;font-weight:500">Why Lemely flagged this</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--t3);margin-top:2px">CONFIDENCE BELOW 0.90</div>
+                </div>
+              </div>
+              <div style="font-size:13px;line-height:1.55;color:var(--t2);margin-top:12px;text-wrap:pretty">{{ current.why }}</div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:6px">
+              <div style="font-size:13px;color:var(--t2)">Award:</div>
+              <sc-for list="{{ awards }}" as="a" hint-placeholder-count="4">
+                <button onClick="{{ a.go }}" style="border:1px solid {{ a.border }};background:{{ a.bg }};color:{{ a.fg }};font-family:'JetBrains Mono',monospace;font-size:13px;padding:9px 16px;border-radius:9px;cursor:pointer">{{ a.label }}</button>
+              </sc-for>
+              <div style="flex:1"></div>
+              <button onClick="{{ next }}" style="border:0;background:var(--ink);color:oklch(0.98 0.005 80);font-family:inherit;font-size:13px;font-weight:500;padding:11px 20px;border-radius:10px;cursor:pointer" style-hover="background:oklch(0.28 0.015 60)">✓ Confirm &amp; next</button>
+            </div>
+          </div>
+
+          <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;overflow:hidden">
+            <div style="padding:15px 16px 12px;font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">Review queue · 12</div>
+            <sc-for list="{{ queue }}" as="q" hint-placeholder-count="5">
+              <button onClick="{{ q.go }}" style="display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;border:0;border-top:1px solid var(--bd);background:{{ q.bg }};font-family:inherit;cursor:pointer;padding:12px 16px" style-hover="background:oklch(0.975 0.01 78)">
+                <span style="width:26px;height:26px;border-radius:50%;background:{{ q.avBg }};color:{{ q.avFg }};display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600">{{ q.initials }}</span>
+                <span>
+                  <span style="display:block;font-size:12.5px;font-weight:{{ q.fw }}">{{ q.name }}</span>
+                  <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--t3);margin-top:2px">{{ q.meta }}</span>
+                </span>
+                <span style="text-align:right">
+                  <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:{{ q.confColor }}">{{ q.conf }}</span>
+                  <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--t3);margin-top:2px">{{ q.marks }}</span>
+                </span>
+              </button>
+            </sc-for>
+            <div style="border-top:1px solid var(--bd);padding:16px">
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--t2)"><span>Auto-graded</span><span style="font-family:'JetBrains Mono',monospace">156 / 168</span></div>
+              <div style="height:6px;border-radius:3px;background:oklch(0.92 0.012 78);margin-top:9px"><div style="height:100%;width:93%;border-radius:3px;background:var(--gr)"></div></div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--t3);margin-top:8px">93% AT CONFIDENCE ≥ 0.90</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ═══════ CLASSES ═══════ -->
+      <sc-if value="{{ isClasses }}" hint-placeholder-val="{{ true }}">
+      <div class="lm-screen" style="display:flex;flex-direction:column;gap:20px">
+        <div class="lm-head" style="display:flex;align-items:flex-end;gap:18px;padding-bottom:18px;border-bottom:1px solid var(--bd)">
+          <div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3)">Class · Y11 Physics · 24 students</div>
+            <div style="font-family:'Instrument Serif',Georgia,serif;font-size:34px;line-height:1.1;margin-top:6px">How is the class doing?</div>
+          </div>
+          <div style="flex:1"></div>
+          <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:13px;padding:11px 16px;border-radius:10px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">Topic</button>
+          <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:13px;padding:11px 16px;border-radius:10px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">May/June 2020 · Paper 3 ›</button>
+          <button onClick="{{ goGrading }}" style="border:0;background:var(--ink);color:oklch(0.98 0.005 80);font-family:inherit;font-size:13px;font-weight:500;padding:11px 18px;border-radius:10px;cursor:pointer" style-hover="background:oklch(0.28 0.015 60)">Upload scans</button>
+        </div>
+
+        <div class="lm-cols" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
+          <sc-for list="{{ classStats }}" as="s" hint-placeholder-count="4">
+            <div style="background:var(--surf);border:1px solid var(--bd);border-radius:13px;padding:18px 20px">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">{{ s.k }}</div>
+              <div style="display:flex;align-items:baseline;gap:6px;margin-top:8px">
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-size:40px;line-height:1;color:{{ s.color }}">{{ s.v }}</div>
+                <div style="font-size:13px;color:var(--t2)">{{ s.unit }}</div>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:{{ s.footColor }};margin-top:8px">{{ s.foot }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div class="lm-cols" style="display:grid;grid-template-columns:1.35fr 1fr;gap:20px;align-items:start">
+          <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;padding:22px">
+            <div style="display:flex;align-items:baseline;gap:12px">
+              <div>
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-size:23px">Topic mastery vs. nationwide</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3);margin-top:5px">IGCSE Physics · 16,400 schools</div>
+              </div>
+              <div style="flex:1"></div>
+              <div style="display:flex;gap:14px;font-size:11.5px;color:var(--t2)">
+                <span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:var(--am)"></span>Your class</span>
+                <span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:var(--t3)"></span>Nationwide</span>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px;margin-top:22px">
+              <sc-for list="{{ mastery }}" as="m" hint-placeholder-count="6">
+                <div style="display:grid;grid-template-columns:118px 1fr 92px;gap:14px;align-items:center">
+                  <div style="font-size:13px;color:{{ m.labelColor }}">{{ m.topic }}</div>
+                  <div style="position:relative;height:12px;border-radius:6px;background:oklch(0.94 0.012 78)">
+                    <div style="position:absolute;left:0;top:0;bottom:0;border-radius:6px;background:{{ m.color }};width:{{ m.w }}"></div>
+                    <div style="position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--t1);left:{{ m.natW }}"></div>
+                  </div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:12.5px"><span style="font-weight:500">{{ m.val }}</span> <span style="color:var(--t3)">vs {{ m.nat }}</span></div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:16px;background:var(--rs-bg);border-radius:12px;padding:16px 18px;margin-top:22px">
+              <div style="flex:1">
+                <div style="font-size:13.5px;font-weight:500;color:oklch(0.36 0.10 22)">Thermal physics is 15 points below the national average</div>
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-style:italic;font-size:14px;color:oklch(0.42 0.07 22);margin-top:5px;text-wrap:pretty">14 of 24 students lost marks on specific heat capacity. Likely worth a re-teach.</div>
+              </div>
+              <button style="border:0;background:var(--ink);color:oklch(0.98 0.005 80);font-family:inherit;font-size:12.5px;padding:10px 16px;border-radius:9px;cursor:pointer;white-space:nowrap" style-hover="background:oklch(0.28 0.015 60)">Lesson plan</button>
+            </div>
+          </div>
+
+          <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;padding:22px">
+            <div style="font-family:'Instrument Serif',Georgia,serif;font-size:23px">Predicted grades</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3);margin-top:5px">From this paper · official CAIE boundaries</div>
+
+            <div style="display:flex;align-items:flex-end;gap:8px;height:150px;margin-top:26px">
+              <sc-for list="{{ distribution }}" as="d" hint-placeholder-count="7">
+                <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:8px;height:100%">
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:12.5px">{{ d.n }}</div>
+                  <div style="width:100%;border-radius:5px 5px 0 0;background:{{ d.color }};height:{{ d.h }}"></div>
+                  <div style="font-family:'Instrument Serif',Georgia,serif;font-size:17px;color:var(--t2)">{{ d.g }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="border:1px solid var(--bd);border-radius:11px;padding:15px 16px;margin-top:22px;background:oklch(0.98 0.008 78)">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3)">Bubble students</div>
+              <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:11px">
+                <sc-for list="{{ bubble }}" as="b" hint-placeholder-count="3">
+                  <div style="display:flex;align-items:center;gap:7px;font-size:12.5px">
+                    <span style="width:6px;height:6px;border-radius:50%;background:var(--am)"></span>{{ b.name }} <span style="color:var(--t3)">→</span> <span style="font-family:'Instrument Serif',serif;font-size:15px">{{ b.to }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="font-size:12px;color:var(--t2);margin-top:12px;line-height:1.45;text-wrap:pretty">Three students are within four marks of the next grade. All three lost those marks in the same two topics.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;overflow:hidden">
+          <div style="display:flex;align-items:flex-end;gap:12px;padding:20px 22px 16px">
+            <div>
+              <div style="font-family:'Instrument Serif',Georgia,serif;font-size:23px">Students</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3);margin-top:5px">Sorted by predicted mark</div>
+            </div>
+            <div style="flex:1"></div>
+            <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:12.5px;padding:9px 15px;border-radius:9px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">+ Generate group quiz</button>
+          </div>
+          <div style="display:grid;grid-template-columns:1.6fr 80px 80px 70px 1fr 40px;gap:14px;padding:9px 22px;background:oklch(0.965 0.012 78);border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3)">
+            <div>Student</div><div>Grade</div><div>Mark</div><div>Δ</div><div>Weakest topic</div><div></div>
+          </div>
+          <sc-for list="{{ students }}" as="s" hint-placeholder-count="7">
+            <div style="display:grid;grid-template-columns:1.6fr 80px 80px 70px 1fr 40px;gap:14px;align-items:center;padding:13px 22px;border-bottom:1px solid var(--bd)">
+              <div style="display:flex;align-items:center;gap:11px">
+                <span style="width:28px;height:28px;border-radius:50%;background:{{ s.avBg }};color:{{ s.avFg }};display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600">{{ s.initials }}</span>
+                <span style="font-size:13.5px">{{ s.name }}</span>
+              </div>
+              <div style="font-family:'Instrument Serif',Georgia,serif;font-size:19px;color:{{ s.gradeColor }}">{{ s.grade }}</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:13px">{{ s.mark }}</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:{{ s.deltaColor }}">{{ s.delta }}</div>
+              <div style="font-size:12.5px;color:var(--t2)">{{ s.weak }}</div>
+              <div style="text-align:right;color:var(--t3)">›</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ═══════ AI QUIZZES ═══════ -->
+      <sc-if value="{{ isQuizzes }}" hint-placeholder-val="{{ true }}">
+      <div class="lm-screen" style="display:flex;flex-direction:column;gap:0">
+        <div class="lm-head" style="display:flex;align-items:flex-end;gap:18px;padding-bottom:18px;border-bottom:1px solid var(--bd)">
+          <div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3)">New AI quiz · draft</div>
+            <div style="font-family:'Instrument Serif',Georgia,serif;font-size:34px;line-height:1.1;margin-top:6px">Build a quiz</div>
+          </div>
+          <div style="flex:1"></div>
+          <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:13px;padding:11px 18px;border-radius:10px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">Save draft</button>
+          <button style="display:flex;align-items:center;gap:9px;border:0;background:var(--ink);color:oklch(0.98 0.005 80);font-family:inherit;font-size:13px;font-weight:500;padding:11px 18px;border-radius:10px;cursor:pointer" style-hover="background:oklch(0.28 0.015 60)">
+            <span style="width:8px;height:8px;background:var(--am);transform:rotate(45deg)"></span>Generate · {{ qLen }} questions
+          </button>
+        </div>
+
+        <div class="lm-cols" style="display:grid;grid-template-columns:1fr 1.18fr;gap:0;align-items:stretch">
+          <div style="padding:28px 34px 34px 0;display:flex;flex-direction:column;gap:26px">
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:10px">Title</div>
+              <div style="border:1px solid var(--bd);background:var(--surf);border-radius:11px;padding:14px 16px;font-size:15px">Y11 · Thermal physics catch-up</div>
+            </div>
+
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:10px">Target difficulty</div>
+              <div style="display:flex;gap:4px;background:oklch(0.945 0.012 78);padding:5px;border-radius:12px">
+                <sc-for list="{{ difficulties }}" as="d" hint-placeholder-count="5">
+                  <button onClick="{{ d.go }}" style="flex:1;border:1px solid {{ d.bd }};cursor:pointer;font-family:'Instrument Serif',Georgia,serif;font-size:21px;padding:11px 0;border-radius:9px;background:{{ d.bg }};color:{{ d.fg }};box-shadow:{{ d.sh }}">{{ d.label }}</button>
+                </sc-for>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--t2);line-height:1.6;margin-top:12px">{{ difficultyNote }}</div>
+            </div>
+
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:10px">Topics to include</div>
+              <div style="display:flex;flex-wrap:wrap;gap:9px">
+                <sc-for list="{{ topics }}" as="t" hint-placeholder-count="5">
+                  <button onClick="{{ t.go }}" style="display:flex;align-items:center;gap:7px;border:1px solid {{ t.bd }};background:{{ t.bg }};color:{{ t.fg }};font-family:inherit;font-size:13px;padding:8px 15px;border-radius:20px;cursor:pointer">
+                    <span style="display:{{ t.tick }};font-size:11px">✓</span>{{ t.label }}
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:10px">Question pool</div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <sc-for list="{{ pools }}" as="p" hint-placeholder-count="3">
+                  <button onClick="{{ p.go }}" style="display:flex;align-items:center;gap:14px;width:100%;text-align:left;border:1px solid {{ p.bd }};background:var(--surf);border-radius:11px;padding:14px 16px;cursor:pointer;font-family:inherit" style-hover="background:oklch(0.985 0.008 78)">
+                    <span style="width:20px;height:20px;flex:none;border-radius:5px;background:{{ p.boxBg }};border:1.5px solid {{ p.boxBd }};color:oklch(0.98 0.005 80);display:flex;align-items:center;justify-content:center;font-size:11px">{{ p.mark }}</span>
+                    <span>
+                      <span style="display:block;font-size:14px;color:var(--t1)">{{ p.label }}</span>
+                      <span style="display:block;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--t2);margin-top:3px">{{ p.detail }}</span>
+                    </span>
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:12px">Quiz length · {{ qLen }} questions</div>
+              <input type="range" min="5" max="30" value="{{ qLen }}" onChange="{{ setLen }}" style="width:100%;accent-color:oklch(0.19 0.015 60);height:20px">
+              <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t3);margin-top:6px">
+                <span>5</span><span>{{ estMinutes }}</span><span>30</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="background:oklch(0.955 0.014 78);border-left:1px solid var(--bd);border-radius:0 14px 14px 0;padding:28px 30px;display:flex;flex-direction:column;gap:18px">
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <div style="flex:1">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">Preview · 4 of {{ qLen }} shown</div>
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-size:26px;margin-top:7px">Y11 · Thermal physics catch-up</div>
+              </div>
+              <div style="background:var(--am);color:oklch(0.99 0.004 80);font-size:12px;padding:5px 12px;border-radius:20px;white-space:nowrap">Grade {{ difficulty }} target</div>
+              <div style="border:1px solid var(--bd);background:var(--surf);font-family:'JetBrains Mono',monospace;font-size:11.5px;padding:5px 11px;border-radius:20px;white-space:nowrap">{{ estMinutes }}</div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <sc-for list="{{ preview }}" as="q" hint-placeholder-count="4">
+                <div style="background:var(--surf);border:1px solid var(--bd);border-radius:12px;padding:16px 18px">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--t2)">{{ q.n }}</span>
+                    <span style="border:1px solid {{ q.srcBd }};background:{{ q.srcBg }};color:{{ q.srcFg }};font-family:'JetBrains Mono',monospace;font-size:11px;padding:3px 10px;border-radius:20px">{{ q.source }}</span>
+                    <span style="flex:1"></span>
+                    <span style="width:22px;height:22px;border-radius:50%;background:{{ q.gradeBg }};color:{{ q.gradeFg }};display:flex;align-items:center;justify-content:center;font-family:'Instrument Serif',Georgia,serif;font-size:13px">{{ q.grade }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--t3)">[{{ q.marks }}]</span>
+                  </div>
+                  <div style="font-family:'Instrument Serif',Georgia,serif;font-style:italic;font-size:17px;line-height:1.45;margin-top:12px;text-wrap:pretty">{{ q.text }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <button style="border:1px dashed var(--bd);background:transparent;font-family:inherit;font-size:13px;padding:14px;border-radius:12px;cursor:pointer;color:var(--t2)" style-hover="background:oklch(0.975 0.012 78)">+ Show all {{ qLen }} questions</button>
+
+            <div style="background:var(--surf);border:1px solid var(--bd);border-radius:12px;padding:18px;display:flex;align-items:center;gap:16px;margin-top:auto">
+              <span style="width:32px;height:32px;flex:none;border-radius:9px;background:var(--am-soft);display:flex;align-items:center;justify-content:center">
+                <span style="width:11px;height:11px;background:var(--am);transform:rotate(45deg)"></span>
+              </span>
+              <div style="flex:1">
+                <div style="font-size:14px;font-weight:500">Predicted class average</div>
+                <div style="display:flex;gap:18px;margin-top:7px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--t2)">
+                  <span style="font-size:14px;color:var(--t1)">{{ predictedAvg }}</span>
+                  <span>4 likely to fall under 50%</span>
+                  <span>3 likely above 90%</span>
+                </div>
+              </div>
+              <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:12.5px;padding:9px 15px;border-radius:9px;cursor:pointer;color:var(--t1);white-space:nowrap" style-hover="background:oklch(0.97 0.01 78)">Adjust difficulty</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ═══════ MARK SCHEMES ═══════ -->
+      <sc-if value="{{ isSchemes }}" hint-placeholder-val="{{ true }}">
+      <div class="lm-screen" style="display:flex;flex-direction:column;gap:20px">
+        <div class="lm-head" style="display:flex;align-items:flex-end;gap:18px;padding-bottom:18px;border-bottom:1px solid var(--bd)">
+          <div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3)">Library · Sources / · 214 documents</div>
+            <div style="font-family:'Instrument Serif',Georgia,serif;font-size:34px;line-height:1.1;margin-top:6px">Mark schemes</div>
+          </div>
+          <div style="flex:1"></div>
+          <button style="border:1px solid var(--bd);background:var(--surf);font-family:inherit;font-size:13px;padding:11px 18px;border-radius:10px;cursor:pointer;color:var(--t1)" style-hover="background:oklch(0.97 0.01 78)">Upload your own</button>
+          <button style="border:0;background:var(--ink);color:oklch(0.98 0.005 80);font-family:inherit;font-size:13px;font-weight:500;padding:11px 18px;border-radius:10px;cursor:pointer" style-hover="background:oklch(0.28 0.015 60)">Parse 6 pending</button>
+        </div>
+
+        <div class="lm-cols" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
+          <sc-for list="{{ schemeStats }}" as="s" hint-placeholder-count="4">
+            <div style="background:var(--surf);border:1px solid var(--bd);border-radius:13px;padding:18px 20px">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)">{{ s.k }}</div>
+              <div style="display:flex;align-items:baseline;gap:6px;margin-top:8px">
+                <div style="font-family:'Instrument Serif',Georgia,serif;font-size:40px;line-height:1;color:{{ s.color }}">{{ s.v }}</div>
+                <div style="font-size:13px;color:var(--t2)">{{ s.unit }}</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="background:var(--surf);border:1px solid var(--bd);border-radius:14px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:minmax(0,1.6fr) 84px 104px 62px 74px 92px;gap:14px;padding:10px 22px;background:oklch(0.965 0.012 78);border-bottom:1px solid var(--bd);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--t3)">
+            <div>Document</div><div>Paper</div><div>Session</div><div>Marks</div><div>Questions</div><div>Status</div>
+          </div>
+          <sc-for list="{{ schemes }}" as="m" hint-placeholder-count="8">
+            <div style="display:grid;grid-template-columns:minmax(0,1.6fr) 84px 104px 62px 74px 92px;gap:14px;align-items:center;padding:13px 22px;border-bottom:1px solid var(--bd)">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:12.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.doc }}</div>
+              <div style="font-size:13px;color:var(--t2)">{{ m.paper }}</div>
+              <div style="font-size:13px;color:var(--t2)">{{ m.session }}</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:12.5px">{{ m.marks }}</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--t2)">{{ m.questions }}</div>
+              <div><span style="font-size:11.5px;background:{{ m.chipBg }};color:{{ m.chipFg }};border-radius:20px;padding:3px 11px">{{ m.status }}</span></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      </sc-if>
+
+    </div>
+  </main>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  state = { screen: 'grading', tab: 'all', qi: 0, award: null, difficulty: 'A', qLen: 12,
+    topics: { 'Specific heat capacity': 1, 'Latent heat': 1, 'Kinetic theory': 1, 'Conduction & convection': 0, 'Thermal expansion': 0 },
+    pools: { past: 1, ai: 1, mine: 0 } };
+
+  toggleTopic = (t) => () => this.setState(s => ({ topics: { ...s.topics, [t]: s.topics[t] ? 0 : 1 } }));
+  togglePool = (p) => () => this.setState(s => ({ pools: { ...s.pools, [p]: s.pools[p] ? 0 : 1 } }));
+
+  go(screen) { return () => this.setState({ screen }); }
+
+  renderVals() {
+    const s = this.state;
+    const AM = 'var(--am)', GR = 'var(--gr)', RS = 'var(--rs)', T1 = 'var(--t1)', T2 = 'var(--t2)', T3 = 'var(--t3)';
+    const icons = {
+      overview: [{ w: '12px', h: '12px', r: '50%', tf: 'none' }],
+      grading: [{ w: '11px', h: '14px', r: '2px', tf: 'none' }, { w: '4px', h: '4px', r: '1px', tf: 'none' }],
+      classes: [{ w: '3px', h: '7px', r: '1px', tf: 'none' }, { w: '3px', h: '13px', r: '1px', tf: 'none' }, { w: '3px', h: '10px', r: '1px', tf: 'none' }],
+      schemes: [{ w: '6px', h: '13px', r: '1px', tf: 'none' }, { w: '6px', h: '13px', r: '1px', tf: 'none' }],
+      quizzes: [{ w: '9px', h: '9px', r: '2px', tf: 'rotate(45deg)' }]
+    };
+    const nav = (id, label, key, badge) => {
+      const on = s.screen === id;
+      return { label, badge: badge || '', go: this.go(id), icon: icons[key],
+        bg: on ? 'var(--surf)' : 'transparent', bd: on ? 'var(--bd)' : 'transparent',
+        fg: on ? T1 : 'oklch(0.38 0.015 60)', fw: on ? '500' : '400',
+        sh: on ? '0 1px 3px oklch(0.2 0.02 60 / .07)' : 'none',
+        iconColor: on ? AM : 'oklch(0.62 0.02 60)',
+        badgeBg: badge ? 'var(--rs-bg)' : 'transparent', badgeFg: badge ? 'oklch(0.42 0.10 22)' : 'transparent' };
+    };
+
+    const item = (n, w) => ({ w });
+    const lines = (n) => [92, 78, 88, 64, 84, 72, 58].slice(0, n).map(w => ({ w: w + '%' }));
+
+    const paper = (name, status, conf, score, kind) => {
+      const map = {
+        graded: { chipBg: 'var(--gr-bg)', chipFg: 'oklch(0.36 0.09 152)', border: 'var(--bd)', confColor: T2, flagShow: 'none', spinShow: 'none', pageOpacity: '1' },
+        review: { chipBg: 'var(--rs-bg)', chipFg: 'oklch(0.40 0.10 22)', border: 'oklch(0.84 0.06 22)', confColor: RS, flagShow: 'flex', spinShow: 'none', pageOpacity: '1' },
+        processing: { chipBg: 'var(--am-soft)', chipFg: 'oklch(0.42 0.10 68)', border: 'var(--bd)', confColor: T3, flagShow: 'none', spinShow: 'flex', pageOpacity: '.45' },
+        queued: { chipBg: 'oklch(0.93 0.008 78)', chipFg: T2, border: 'var(--bd)', confColor: T3, flagShow: 'none', spinShow: 'none', pageOpacity: '.45' }
+      };
+      return { name, status, conf, score, kind, lines: lines(7), flagBg: RS, go: this.go('review'), ...map[kind] };
+    };
+    const allPapers = [
+      paper('Amelia Chen', 'Graded', 'conf 96% · 12 pg', '71/80', 'graded'),
+      paper('Jonas Akinyi', 'Review', 'conf 78% · 12 pg', '58/80', 'review'),
+      paper('Yuki Tanaka', 'Graded', 'conf 92% · 12 pg', '64/80', 'graded'),
+      paper('Priya Shah', 'Graded', 'conf 94% · 12 pg', '68/80', 'graded'),
+      paper('Daniel Park', 'Review', 'conf 61% · 12 pg', '49/80', 'review'),
+      paper('Lina Hassan', 'Processing', '12 pg', '—', 'processing'),
+      paper('Marco Silva', 'Processing', '12 pg', '—', 'processing'),
+      paper('Aarav Patel', 'Queued', '12 pg', '—', 'queued'),
+      paper('Sofia Reyes', 'Queued', '12 pg', '—', 'queued')
+    ];
+    const filterMap = { all: null, review: 'review', graded: 'graded', processing: 'processing' };
+    const wanted = filterMap[s.tab];
+    const papers = wanted ? allPapers.filter(p => p.kind === wanted || (wanted === 'processing' && p.kind === 'queued')) : allPapers;
+
+    const tab = (id, label, count) => {
+      const on = s.tab === id;
+      return { label, count, go: () => this.setState({ tab: id }),
+        bg: on ? 'var(--surf)' : 'transparent', fg: on ? T1 : T2, fw: on ? '500' : '400',
+        countFg: on ? AM : T3, sh: on ? '0 1px 3px oklch(0.2 0.02 60 / .08)' : 'none' };
+    };
+
+    const pipe = (label, count, state) => ({
+      label, count,
+      mark: state === 'done' ? '✓' : state === 'active' ? '●' : '',
+      dotBg: state === 'done' ? 'var(--gr)' : 'transparent',
+      dotBorder: state === 'done' ? 'var(--gr)' : state === 'active' ? AM : 'var(--bd)',
+      dotFg: state === 'done' ? 'oklch(0.99 0.004 80)' : AM,
+      fg: state === 'idle' ? T3 : T1
+    });
+
+    const flagged = [
+      { initials: 'JA', name: 'Jonas Akinyi', q: 'Q5(b)', page: 'Page 7', qLabel: '5 (b)',
+        prompt: 'The beam is in equilibrium. Calculate the force F applied at the 60 cm mark.',
+        working: [{ t: 'clockwise = anticlockwise', hl: 'transparent' }, { t: '200 = (2.0 × 10) + (F × 60)', hl: 'transparent' }, { t: 'F = 200 ÷ 60', hl: 'oklch(0.92 0.055 22)' }, { t: '= 3.3 N', hl: 'transparent' }],
+        marks: '2/4', conf: '78%', confW: '78%', total: '4 marks total',
+        points: [
+          { code: 'C1', text: '(sum of) clockwise moments = (sum of) anticlockwise moments', note: '', conf: '97%', award: '+1', state: 'ok' },
+          { code: 'C1', text: '200 = (2.0 × 10) + (F × 60)', note: '', conf: '95%', award: '+1', state: 'ok' },
+          { code: 'C1', text: 'F = (200 – 20) ÷ 60 OR 180 ÷ 60', note: 'Student divided 200 by 60', conf: '88%', award: '0', state: 'no' },
+          { code: 'A1', text: '(F =) 3.0 (N)', note: 'Depends on the previous mark point — cannot award', conf: '78%', award: '0', state: 'dep' }
+        ],
+        why: 'The student subtracted nothing before dividing, but the written line is ambiguous — "200" may be a corrected "180". The mark scheme requires the subtraction to be seen. Award C1 only if you read the original as 180.' },
+      { initials: 'DP', name: 'Daniel Park', q: 'Q12(c)', page: 'Page 15', qLabel: '12 (c)',
+        prompt: 'The half-life of the source is 12 days. Calculate the mass remaining after 36 days.',
+        working: [{ t: '36 / 12 = 3 half-lives', hl: 'transparent' }, { t: '36 ÷ 6', hl: 'oklch(0.92 0.055 22)' }, { t: '= 6 mg', hl: 'transparent' }],
+        marks: '1/3', conf: '61%', confW: '61%', total: '3 marks total',
+        points: [
+          { code: 'C1', text: 'idea of three half-lives', note: '', conf: '94%', award: '+1', state: 'ok' },
+          { code: 'C1', text: '36 ÷ 8', note: 'Student wrote 36 ÷ 6 — halved three times incorrectly', conf: '71%', award: '0', state: 'no' },
+          { code: 'A1', text: '4.5 (mg)', note: 'Answer given as 6 mg', conf: '61%', award: '0', state: 'no' }
+        ],
+        why: 'Handwriting on the divisor is unclear at 300 dpi — the character reads as either 6 or 8. If it is an 8, both remaining marks are earned. Sent to you rather than guessed.' },
+      { initials: 'AC', name: 'Amelia Chen', q: 'Q6(c)(ii)', page: 'Page 9', qLabel: '6 (c) (ii)',
+        prompt: 'Explain why the two plates must be placed at equal distances from the heater.',
+        working: [{ t: 'so the test is fair', hl: 'transparent' }, { t: 'both get the same heat', hl: 'oklch(0.94 0.045 68)' }],
+        marks: '1/2', conf: '64%', confW: '64%', total: '2 marks total',
+        points: [
+          { code: 'B1', text: '(for a valid comparison all independent) variables must be the same', note: '"so the test is fair" — accepted as owtte', conf: '82%', award: '+1', state: 'ok' },
+          { code: 'B1', text: 'plates / discs should be equal distances (from heater) (owtte)', note: 'Distance is never named explicitly', conf: '64%', award: '0', state: 'no' }
+        ],
+        why: 'The second mark point needs distance to be stated. "Both get the same heat" implies it without saying it — this is exactly the kind of borderline wording a marker should decide, not a model.' }
+    ];
+    const cur = flagged[s.qi % flagged.length];
+    const ptStyle = { ok: { bg: 'var(--gr-bg)', border: 'oklch(0.86 0.05 152)', markBg: 'var(--gr)', mark: '✓', awardColor: 'oklch(0.36 0.09 152)' },
+      no: { bg: 'var(--rs-bg)', border: 'oklch(0.86 0.05 22)', markBg: RS, mark: '✕', awardColor: 'oklch(0.40 0.10 22)' },
+      dep: { bg: 'oklch(0.965 0.008 78)', border: 'var(--bd)', markBg: 'oklch(0.78 0.01 60)', mark: '–', awardColor: T2 } };
+    const current = { ...cur, points: cur.points.map(p => ({ ...p, ...ptStyle[p.state] })) };
+
+    const maxAward = current.points.length;
+    const awardOpts = [current.marks.split('/')[0], String(Number(current.marks.split('/')[0]) + 1), current.marks.split('/')[1]]
+      .map(n => n + '/' + current.marks.split('/')[1]).concat(['Skip']);
+    const awards = awardOpts.map((label, i) => {
+      const on = s.award === null ? i === 0 : s.award === i;
+      return { label, go: () => this.setState({ award: i }),
+        bg: on ? 'var(--ink)' : 'var(--surf)', fg: on ? 'oklch(0.98 0.005 80)' : T1,
+        border: on ? 'var(--ink)' : 'var(--bd)' };
+    });
+
+    const queue = [
+      ['AC', 'Amelia Chen', 'Q6(c)(ii) · Thermal', '64%', '1/2', 2],
+      ['JA', 'Jonas Akinyi', 'Q5(b) · Moments', '78%', '2/4', 0],
+      ['YT', 'Yuki Tanaka', 'Q8(a)(ii) · Waves', '81%', '0/1', 0],
+      ['PS', 'Priya Shah', 'Q3(a)(i) · Thermal', '84%', '1/2', 2],
+      ['DP', 'Daniel Park', 'Q12(c) · Radioactivity', '61%', '1/3', 1]
+    ].map(q => {
+      const on = flagged[s.qi % flagged.length].name === q[1];
+      return { initials: q[0], name: q[1], meta: q[2], conf: q[3], marks: q[4],
+        go: () => this.setState({ qi: q[5], award: null }),
+        bg: on ? 'var(--surf)' : 'transparent', fw: on ? '600' : '400',
+        avBg: on ? 'var(--am-soft)' : 'oklch(0.93 0.008 78)', avFg: on ? 'oklch(0.44 0.10 68)' : T2,
+        confColor: parseInt(q[3]) < 70 ? RS : T2 };
+    });
+
+    const mastery = [
+      ['Kinematics', 88, 84], ['Forces', 82, 80], ['Waves', 71, 74],
+      ['Electricity', 76, 75], ['Atomic physics', 64, 70], ['Thermal physics', 58, 73]
+    ].map(m => ({
+      topic: m[0], val: m[1], nat: m[2], w: m[1] + '%', natW: m[2] + '%',
+      color: m[1] >= m[2] ? AM : 'oklch(0.68 0.11 22)',
+      labelColor: m[1] >= m[2] ? T1 : 'oklch(0.48 0.10 22)'
+    }));
+
+    const dist = [['A*', 4], ['A', 7], ['B', 6], ['C', 4], ['D', 2], ['E', 1], ['U', 0]];
+    const distribution = dist.map(d => ({
+      g: d[0], n: d[1], h: Math.max(2, (d[1] / 7) * 100) + '%',
+      color: d[0] === 'A*' ? 'var(--gr)' : d[0] === 'A' ? AM : d[0] === 'B' ? 'oklch(0.82 0.09 68)' : d[0] === 'E' ? 'oklch(0.82 0.07 22)' : 'oklch(0.86 0.008 78)'
+    }));
+
+    const stu = (name, grade, mark, delta, weak) => {
+      const i = name.split(' ').map(w => w[0]).join('');
+      return { name, grade, mark, delta, weak, initials: i,
+        avBg: 'oklch(0.93 0.01 78)', avFg: T2,
+        gradeColor: grade === 'A*' || grade === 'A' ? T1 : grade === 'D' || grade === 'E' ? RS : T1,
+        deltaColor: delta.charAt(0) === '−' ? RS : GR };
+    };
+
+    return {
+      navItems: [
+        nav('overview', 'Overview', 'overview'),
+        nav('grading', 'Grading', 'grading', '12'),
+        nav('classes', 'Classes', 'classes'),
+        nav('schemes', 'Mark schemes', 'schemes'),
+        nav('quizzes', 'AI quizzes', 'quizzes')
+
+      ],
+      recentClasses: [
+        { label: 'Y11 · Physics', dot: AM }, { label: 'Y10 · Physics', dot: 'oklch(0.85 0.01 78)' },
+        { label: 'Y11 · Chemistry', dot: 'oklch(0.85 0.01 78)' }
+      ],
+      isOverview: s.screen === 'overview', isGrading: s.screen === 'grading',
+      isReview: s.screen === 'review', isClasses: s.screen === 'classes',
+      isQuizzes: s.screen === 'quizzes', isSchemes: s.screen === 'schemes',
+
+      difficulty: s.difficulty, qLen: s.qLen,
+      estMinutes: '~' + Math.round(s.qLen * 2.5) + ' min',
+      setLen: (e) => { const v = Number(e.target.value); this.setState({ qLen: v }); },
+      difficulties: ['E/D', 'C', 'B', 'A', 'A*'].map(d => {
+        const on = s.difficulty === d;
+        return { label: d, go: () => this.setState({ difficulty: d }),
+          bg: on ? 'var(--surf)' : 'transparent', fg: on ? T1 : T2,
+          bd: on ? 'var(--bd)' : 'transparent', sh: on ? '0 1px 3px oklch(0.2 0.02 60 / .08)' : 'none' };
+      }),
+      difficultyNote: 'Lemely will pick questions Yuki, Lina and Jonas are predicted to score 60–80% on.',
+      topics: Object.keys(s.topics).map(t => {
+        const on = s.topics[t];
+        return { label: t, go: this.toggleTopic(t), tick: on ? 'inline' : 'none',
+          bg: on ? 'var(--am-soft)' : 'var(--surf)', bd: on ? 'oklch(0.86 0.07 68)' : 'var(--bd)',
+          fg: on ? 'oklch(0.40 0.10 68)' : T2 };
+      }),
+      pools: [
+        { key: 'past', label: 'Past papers · 2018–2024', detail: '472 questions · CAIE official' },
+        { key: 'ai', label: 'AI-generated', detail: 'Stylistically matched to CAIE' },
+        { key: 'mine', label: 'My uploads', detail: '0 questions · upload .docx' }
+      ].map(p => {
+        const on = s.pools[p.key];
+        return { ...p, go: this.togglePool(p.key), mark: on ? '✓' : '',
+          boxBg: on ? 'var(--ink)' : 'transparent', boxBd: on ? 'var(--ink)' : 'var(--bd)',
+          bd: on ? 'oklch(0.84 0.012 75)' : 'var(--bd)' };
+      }),
+      preview: [
+        { n: 'Q1', source: 'past · 0625/41 M22 Q3', src: 'past', grade: 'A', marks: 4, text: 'A 0.50 kg copper block cools from 80 °C to 25 °C. Calculate the energy released.' },
+        { n: 'Q2', source: 'ai · CAIE-styled', src: 'ai', grade: 'B', marks: 2, text: 'State what is meant by the specific latent heat of fusion.' },
+        { n: 'Q3', source: 'past · 0625/42 W23 Q5(b)', src: 'past', grade: 'A', marks: 3, text: 'Explain, in terms of kinetic theory, why sweating cools the body.' },
+        { n: 'Q4', source: 'ai · CAIE-styled', src: 'ai', grade: 'A*', marks: 3, text: 'Two metal blocks of equal mass receive the same energy. Block A rises further in temperature. What does this tell you about the two specific heat capacities?' }
+      ].map(q => ({ ...q,
+        srcBg: q.src === 'past' ? 'oklch(0.97 0.008 78)' : 'var(--am-soft)',
+        srcBd: q.src === 'past' ? 'var(--bd)' : 'oklch(0.88 0.06 68)',
+        srcFg: q.src === 'past' ? T2 : 'oklch(0.42 0.10 68)',
+        gradeBg: q.grade === 'A*' ? 'var(--gr-bg)' : q.grade === 'A' ? 'var(--am-soft)' : 'oklch(0.93 0.01 78)',
+        gradeFg: q.grade === 'A*' ? 'oklch(0.34 0.09 152)' : q.grade === 'A' ? 'oklch(0.42 0.10 68)' : T2 })),
+      predictedAvg: ({ 'E/D': '58%', C: '64%', B: '69%', A: '72%', 'A*': '78%' })[s.difficulty],
+
+      schemeStats: [
+        { k: 'Parsed', v: '196', unit: 'schemes', color: T1 },
+        { k: 'Pending', v: '6', unit: 'PDFs', color: AM },
+        { k: 'Your own', v: '12', unit: 'uploaded', color: T1 },
+        { k: 'Failed', v: '0', unit: '', color: T1 }
+      ],
+      schemes: [
+        ['0625_s20_ms_31.pdf', 'Paper 3 V1', 'May/June 2020', '80', '12', 'parsed'],
+        ['0625_s20_ms_12.pdf', 'Paper 1 V2', 'May/June 2020', '40', '40', 'parsed'],
+        ['0625_w24_ms_42.pdf', 'Paper 4 V2', 'Oct/Nov 2024', '80', '11', 'parsed'],
+        ['0625_w24_ms_62.pdf', 'Paper 6 V2', 'Oct/Nov 2024', '60', '9', 'parsed'],
+        ['0625_m25_ms_22.pdf', 'Paper 2 V2', 'Feb/Mar 2025', '40', '40', 'pending'],
+        ['sabry_mock_thermal.docx', 'Custom', 'Your upload', '45', '8', 'custom'],
+        ['0620_s24_ms_41.pdf', 'Paper 4 V1', 'May/June 2024', '80', '10', 'parsed'],
+        ['0625_s25_ms_31.pdf', 'Paper 3 V1', 'May/June 2025', '—', '—', 'pending']
+      ].map(m => ({ doc: m[0], paper: m[1], session: m[2], marks: m[3], questions: m[4], status: m[5],
+        chipBg: m[5] === 'parsed' ? 'var(--gr-bg)' : m[5] === 'pending' ? 'var(--am-soft)' : 'oklch(0.93 0.01 78)',
+        chipFg: m[5] === 'parsed' ? 'oklch(0.34 0.09 152)' : m[5] === 'pending' ? 'oklch(0.42 0.10 68)' : T2 })),
+
+      goReview: this.go('review'), goGrading: this.go('grading'),
+
+      overviewStats: [
+        { k: 'Graded overnight', v: '28', unit: 'papers', foot: 'in 19 minutes', footColor: T2, color: T1 },
+        { k: 'Need your eyes', v: '12', unit: 'answers', foot: 'below 0.90 confidence', footColor: 'oklch(0.42 0.10 22)', color: RS },
+        { k: 'Group mean', v: '71', unit: '%', foot: '+3.2 since May', footColor: 'oklch(0.40 0.09 152)', color: T1 },
+        { k: 'At risk', v: '3', unit: 'students', foot: 'trajectory falling', footColor: T2, color: T1 }
+      ],
+      atRisk: [
+        { initials: 'ZR', name: 'Ziad Rafik', tag: 'trajectory', tagBg: 'var(--rs-bg)', tagFg: 'oklch(0.40 0.10 22)', delta: '−13 pts', deltaColor: RS,
+          avBg: 'var(--rs-bg)', avFg: 'oklch(0.40 0.10 22)',
+          note: 'Three papers below his own baseline, each losing marks in the final third. Timing, not understanding.', action: 'Open his papers' },
+        { initials: 'SE', name: 'Salma Ezzat', tag: 'attendance', tagBg: 'var(--am-soft)', tagFg: 'oklch(0.42 0.10 68)', delta: '2 missed', deltaColor: 'oklch(0.52 0.11 68)',
+          avBg: 'var(--am-soft)', avFg: 'oklch(0.42 0.10 68)',
+          note: 'Missed Tuesday and last Thursday without verifying. Parents were alerted an hour after each session.', action: 'View attendance' },
+        { initials: 'NA', name: 'Nadine Adel', tag: 'review queue', tagBg: 'oklch(0.93 0.008 78)', tagFg: T2, delta: '4 marks', deltaColor: T2,
+          avBg: 'oklch(0.93 0.01 78)', avFg: T2,
+          note: 'Four extended answers fell below the confidence threshold — handwriting, not content. Two minutes to clear.', action: 'Mark them now' }
+      ],
+      retention: [100,99,98,97,96,94,92,91,96,118,112,96,90,88,124,110,92,86,80,74,66,58]
+        .map(v => ({ h: Math.min(100, v * 0.62) + '%', color: v > 105 ? AM : 'oklch(0.88 0.04 68)' })),
+
+      detected: [
+        { k: 'Subject code', v: '0625' }, { k: 'Paper', v: 'Paper 3' },
+        { k: 'Session', v: 'May/June' }, { k: 'Variant', v: 'Variant 1' },
+        { k: 'Year', v: '2020' }, { k: 'Mark scheme', v: 'v3 · 2020-08' }
+      ],
+      donut: (2 * Math.PI * 42 * (16 / 24)).toFixed(1) + ' ' + (2 * Math.PI * 42).toFixed(1),
+      pipeline: [
+        pipe('Scan ingested', '24 / 24', 'done'),
+        pipe('Handwriting read', '24 / 24', 'done'),
+        pipe('Mark scheme aligned', '16 / 24', 'active'),
+        pipe('Confidence check', '14 / 24', 'idle'),
+        pipe('Grade boundaries', '0 / 24', 'idle')
+      ],
+      batchTabs: [tab('all', 'All', '24'), tab('review', 'Need review', '2'), tab('graded', 'Auto-graded', '14'), tab('processing', 'Processing', '6')],
+      papers,
+
+      current, awards, queue,
+      prev: () => this.setState(st => ({ qi: (st.qi + 2) % 3, award: null })),
+      next: () => this.setState(st => ({ qi: (st.qi + 1) % 3, award: null })),
+
+      classStats: [
+        { k: 'Class average', v: '74', unit: '%', foot: '+5.2 since May', footColor: 'oklch(0.40 0.09 152)', color: T1 },
+        { k: 'Predicted A / A*', v: '11', unit: 'of 24', foot: '46% of the group', footColor: T2, color: T1 },
+        { k: 'At risk', v: '3', unit: 'students', foot: 'below D', footColor: 'oklch(0.42 0.10 22)', color: RS },
+        { k: 'Hours saved', v: '38', unit: 'this month', foot: 'auto-graded', footColor: T2, color: T1 }
+      ],
+      mastery, distribution,
+      bubble: [{ name: 'Jonas A', to: 'A' }, { name: 'Yuki T', to: 'A' }, { name: 'Lina H', to: 'A*' }],
+      students: [
+        stu('Amelia Chen', 'A*', '71/80', '+4', 'Atomic physics'),
+        stu('Priya Shah', 'A', '68/80', '+2', 'Waves'),
+        stu('Yuki Tanaka', 'A', '64/80', '+6', 'Thermal physics'),
+        stu('Jonas Akinyi', 'B', '58/80', '−1', 'Moments'),
+        stu('Lina Hassan', 'B', '56/80', '+3', 'Thermal physics'),
+        stu('Daniel Park', 'C', '49/80', '−5', 'Radioactivity'),
+        stu('Ziad Rafik', 'D', '38/80', '−13', 'Thermal physics')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
