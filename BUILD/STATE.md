@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 1
-last_updated: 2026-07-30T04:32:00Z
+last_updated: 2026-07-30T13:10:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -42,12 +42,20 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        (P1.2: lemely/db/{base,session,seed}.py + migrations/env.py; empty 0001_baseline head;
        Base w/ naming convention; alembic reads Settings.database.url. Live boot verified:
        supabase start + alembic upgrade head applied against local Postgres.)
-- [ ] todo — Full relational schema (additive-only for later phases): users/profiles(role),
+- [x] done — Full relational schema (additive-only for later phases): users/profiles(role),
        schools, school_memberships(teacher↔school), seats, subscriptions+plan_tiers
        (manual activation flag), parent↔child links, classes, class_enrollments, subjects,
        papers(board/subject/session/year/variant/paper#), mark_schemes, uploads, attempts,
        question_results(marks,max,confidence,method-mark breakdown), weakness_records,
        review_queue, announcements, notifications, devices/sessions, xp_events, streaks
+       (P1.3: 22 tables across 8 model modules + enums.py; migration 0002_core_schema.
+       Fixed a blocking bug in the WIP: uuid/datetime/date were TYPE_CHECKING-only so
+       every model failed to configure (MappedAnnotationError) — now runtime-imported.
+       Enum server_defaults cast as ::type so alembic check is drift-free (D1.3). Verified
+       live: downgrade base→upgrade head applies against local Supabase PG; `alembic check`
+       = "No new upgrade operations detected". Added tests/test_db_schema.py (metadata +
+       real-PG integration, skips if PG down). Gates green: 402 passed / 84.92% cov;
+       ruff/mypy/lint-imports clean.)
 - [ ] todo — Supabase Auth (GoTrue): email/password signup+login per role; parent phone-OTP
        behind provider abstraction with a MOCK SMS provider (logs OTP; one switch to real)
 - [ ] todo — FastAPI JWT validation middleware; replace the anonymous get_auth_context stub
@@ -67,11 +75,25 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        develop; PR develop→main; ntfy
 
 ## Next action
-Phase 0 is COMPLETE (PR #3 open, do not merge). Start Phase 1: read MISSION §4 Phase 1,
-branch `feature/phase-1-db-auth-tenancy` from `develop`, begin with the local Supabase
-stack + SQLAlchemy/Alembic foundation. Revisit BUILD/BLOCKERS.md (none currently).
+Phase 1 schema is DONE (task P1.3). Next non-done task: **Supabase Auth (GoTrue)** —
+email/password signup+login per role; parent phone-OTP behind a provider abstraction with
+a MOCK SMS provider (logs OTP; one switch to real). Then JWT middleware, RBAC on every
+route (kill both IDOR endpoints), HistoryStore→Postgres migration, seat model, device
+registry, and the E2E/authz acceptance. Revisit BUILD/BLOCKERS.md (none currently).
+
+HEADS-UP for CI: the new DB integration tests (tests/test_db_schema.py) skip when Postgres
+is unreachable, so CI stays green today. Before the auth E2E task, CI (.github/workflows/
+ci.yml) needs a Postgres `services:` block (or a Supabase step) + `alembic upgrade head`,
+otherwise the real-DB auth/authz tests will silently skip in CI.
 
 ## Session handoff notes
+- 2026-07-30 (P1.3 schema DONE): resumed on a dirty tree that was the WIP schema (8 model
+  modules + migration 0002). It did NOT actually work — models were TYPE_CHECKING-only for
+  uuid/datetime/date, so SQLAlchemy could not resolve Mapped[...] at runtime (nothing had
+  ever loaded them). Fixed the imports, cast enum server_defaults (D1.3) for drift-free
+  autogenerate, added tests/test_db_schema.py, verified live against local Supabase PG.
+  Committed on feature/phase-1-db-auth-tenancy. Supabase stack is UP (docker). 402 passed /
+  84.92% cov. Gemini spend still $0.00. Next: Supabase Auth (GoTrue) + JWT/RBAC.
 - 2026-07-30 (Phase 0 COMPLETE): all 8 tasks + doctor-reachability acceptance done.
   On `develop` (Phase 0 merged, pushed). PR #3 develop→main OPEN — DO NOT MERGE.
   Gates green: 395 passed / 84.56% cov; ruff/mypy/lint-imports clean; web ok.

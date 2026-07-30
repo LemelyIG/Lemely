@@ -1,6 +1,59 @@
 # Decisions log
 (orchestrator records every non-trivial decision here: what, why, alternatives)
 
+## Phase 1
+
+### D1.1 — Auth identity mapping: `public.users.id` == Supabase `auth.users.id`, no cross-schema FK
+- **What:** Our application-owned `public.users` table uses a `UUID` primary key
+  that is set to the Supabase GoTrue user id (`auth.users.id`) at signup time.
+  We do NOT declare a SQL foreign key from `public.users.id` to `auth.users.id`.
+  GoTrue owns the `auth` schema; our Alembic migrations own `public`. Role, active
+  flag, and profile fields live on `public.users`.
+- **Why:** Supabase manages the `auth` schema out-of-band (its own migrations); a
+  cross-schema FK into a table Alembic doesn't control is fragile (reset/upgrade
+  ordering, `supabase db reset` wipes auth) and is the officially discouraged
+  pattern. Mirroring the id gives a stable 1:1 join without coupling migration
+  ownership. Every other table FKs to `public.users.id` (which we own), so
+  referential integrity across the app schema is fully enforced.
+- **Alternatives:** Real FK to `auth.users` (rejected: brittle across resets, and
+  Alembic autogenerate would try to manage a table it must not touch); a separate
+  `profiles` table keyed by auth id (deferred — Phase-4 onboarding fields are
+  additive columns; one `users` table is simpler now).
+
+### D1.2 — Schema conventions (additive-only guarantee for Phases 2-5)
+- **What:** (a) UUID primary keys everywhere via server default `gen_random_uuid()`;
+  (b) all timestamps `TIMESTAMP(timezone=True)` with `created_at`/`updated_at`
+  server-defaulted to `now()`; (c) role/enumerations as Postgres `ENUM` types
+  (extended later with `ALTER TYPE ... ADD VALUE`, which is additive); (d) money as
+  integer minor units + ISO currency code (never float); (e) confidence persisted
+  as BOTH a band enum and a float score, mirroring `core.schemas`; method-mark
+  breakdown persisted as JSONB; (f) sync SQLAlchemy 2.0 `Mapped`/`mapped_column`
+  matching the sync engine in `lemely/db/session.py`.
+- **Why:** Phases 2-5 must need only additive migrations (MISSION §4). UUIDs are
+  merge/import-safe and let us mirror auth ids; timezone-aware timestamps avoid the
+  classic naive-datetime trap; ENUM-add and column-add are additive whereas type
+  changes are not; integer money avoids rounding drift in billing.
+
+### D1.3 — Enum `server_default`s rendered with an explicit `::type` cast
+- **What:** ENUM-typed columns that carry a server default (e.g. `subjects.board`,
+  `seats.status`, `subscriptions.status`, `uploads.status`, `review_queue.status`)
+  set it as `sa.text("'value'::enumname")` in BOTH the ORM model and the migration,
+  rather than a bare `sa.literal("value")`.
+- **Why:** With a bare string literal the model renders the default as `'value'`
+  while Postgres stores it as `'value'::enumname`. `alembic check`/autogenerate then
+  compares them by running `SELECT 'value'::enumname = 'value'::VARCHAR`, which errors
+  (`no operator matches ... enum = varchar`) and, worse, produces a spurious drift
+  diff on every future autogenerate — directly threatening the additive-only guarantee
+  (D1.2). The explicit cast makes model and DB defaults render identically, so
+  `alembic check` reports "No new upgrade operations detected". Verified live against
+  the local Supabase Postgres.
+- **Also fixed here:** the model modules imported `uuid`/`datetime`/`date` only under
+  `TYPE_CHECKING`, but SQLAlchemy 2.0 resolves `Mapped[...]` annotations at runtime, so
+  every model failed to configure (`MappedAnnotationError: Could not resolve ...
+  Mapped[uuid.UUID]`). Those types are now imported at runtime; a scoped
+  `per-file-ignores` entry (`lemely/db/models/** = TC001/TC002/TC003`) stops ruff from
+  moving them back — mirroring the existing exemption for the pydantic web DTOs.
+
 ## Phase 0
 
 ### D0.1 — Single lockfile: keep `uv.lock`, delete `requirements.lock`
