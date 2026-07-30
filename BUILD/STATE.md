@@ -18,7 +18,9 @@ gemini_spend_usd: 0.00
 - [x] done — Decide det parser: wire io/det/ OR keep monolith; delete the loser
        (D0.5: wired io/det/, deleted monolith. 371 passed, 84.13% cov. MCQ/practical
        parse correct; theory escalates via reconciliation ParseError — verified on 4 PDFs)
-- [ ] todo — Persistent file-backed Gemini USD tracker, $8 hard cap, $4/$6 ntfy warnings
+- [x] done — Persistent file-backed Gemini USD tracker, $8 hard cap, $4/$6 ntfy warnings
+       (D0.6: CostLedger at {output_dir}/gemini_spend.json; verified cross-process
+       persistence + once-per-threshold with 2 real OS processes; 388 passed, 84.62%)
 - [ ] todo — HistoryStore: surface corruption, add schema_version
 - [x] done — Single lockfile mechanism; .env.example; fix GEMINI_API_KEY mapping trap
 - [x] done — Remove dead: respx, live marker; leave lib/api.ts for Phase 2

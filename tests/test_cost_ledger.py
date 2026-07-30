@@ -1,0 +1,99 @@
+"""Unit tests for lemely.io.cost_ledger.CostLedger."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+import structlog
+
+from lemely.io.cost_ledger import CostLedger
+
+
+class CostLedgerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.path = self.tmp / "sub" / "gemini_spend.json"
+
+    def test_total_absent_file_is_zero(self) -> None:
+        self.assertEqual(CostLedger(self.path).total(), 0.0)
+
+    def test_add_accumulates(self) -> None:
+        ledger = CostLedger(self.path)
+        ledger.add(1.5, thresholds=[])
+        ledger.add(2.25, thresholds=[])
+        self.assertAlmostEqual(ledger.total(), 3.75)
+
+    def test_persistence_across_instances(self) -> None:
+        """Writing with one instance is readable by a NEW instance on the same
+        file — proves the ledger survives across 'processes'."""
+        writer = CostLedger(self.path)
+        writer.add(5.0, thresholds=[])
+        # A brand-new object (simulating a fresh process) reads the same total.
+        reader = CostLedger(self.path)
+        self.assertAlmostEqual(reader.total(), 5.0)
+        # A further add from the reader also persists cumulatively.
+        reader.add(1.0, thresholds=[])
+        self.assertAlmostEqual(CostLedger(self.path).total(), 6.0)
+
+    def test_threshold_crossed_exactly_once(self) -> None:
+        ledger = CostLedger(self.path)
+        # First add crosses $4 but not $6.
+        total, crossed = ledger.add(4.5, thresholds=[4.0, 6.0])
+        self.assertAlmostEqual(total, 4.5)
+        self.assertEqual(crossed, [4.0])
+        # Second add stays above $4 — $4 must NOT fire again; crosses $6 now.
+        total, crossed = ledger.add(2.0, thresholds=[4.0, 6.0])
+        self.assertAlmostEqual(total, 6.5)
+        self.assertEqual(crossed, [6.0])
+        # Third add crosses nothing new.
+        total, crossed = ledger.add(1.0, thresholds=[4.0, 6.0])
+        self.assertEqual(crossed, [])
+
+    def test_multiple_thresholds_crossed_in_one_add_sorted(self) -> None:
+        ledger = CostLedger(self.path)
+        total, crossed = ledger.add(7.0, thresholds=[6.0, 4.0])
+        self.assertAlmostEqual(total, 7.0)
+        self.assertEqual(crossed, [4.0, 6.0])
+
+    def test_threshold_persists_across_instances(self) -> None:
+        """warnings_sent survives across instances — a threshold crossed in one
+        'process' does not re-fire in the next."""
+        CostLedger(self.path).add(4.5, thresholds=[4.0, 6.0])
+        _, crossed = CostLedger(self.path).add(0.1, thresholds=[4.0, 6.0])
+        self.assertEqual(crossed, [])
+
+    def test_corrupt_file_treated_as_zero_and_logged(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("{ this is not valid json", encoding="utf-8")
+        with structlog.testing.capture_logs() as captured:
+            self.assertEqual(CostLedger(self.path).total(), 0.0)
+        events = [entry.get("event") for entry in captured]
+        self.assertIn(
+            "cost_ledger_corrupt",
+            events,
+            f"expected a corrupt-ledger warning, got: {captured}",
+        )
+
+    def test_write_failure_cleans_up_tempfile(self) -> None:
+        """A failure during the atomic write removes the temp file and re-raises."""
+        from unittest.mock import patch
+
+        ledger = CostLedger(self.path)
+        with patch("os.replace", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            ledger.add(1.0, thresholds=[])
+        # No stray temp files left behind in the ledger directory.
+        leftovers = list(self.path.parent.glob(".gemini_spend_*"))
+        self.assertEqual(leftovers, [])
+
+    def test_add_after_corrupt_starts_from_zero(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("garbage", encoding="utf-8")
+        ledger = CostLedger(self.path)
+        total, _ = ledger.add(2.0, thresholds=[])
+        self.assertAlmostEqual(total, 2.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

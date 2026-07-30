@@ -127,6 +127,7 @@ module = [
   "lemely.runtime.config",
   "lemely.runtime.logging",
   "lemely.runtime.events",
+  "lemely.runtime.budget_notify",
   "lemely.app.gradio_app",
   "lemely.app.live_log",
   "lemely.io.gemini",

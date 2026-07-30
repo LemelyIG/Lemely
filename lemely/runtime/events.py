@@ -32,6 +32,8 @@ class EventType(StrEnum):
     EXTRACTION_PROGRESS = "extraction_progress"
     MARKING_PROGRESS = "marking_progress"
     MARK_SCHEME_PROGRESS = "mark_scheme_progress"
+    BUDGET_WARNING = "budget_warning"
+    BUDGET_EXCEEDED = "budget_exceeded"
     WARNING = "warning"
     ERROR = "error"
     DONE = "done"

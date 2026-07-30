@@ -54,7 +54,9 @@ def render_example_toml() -> str:
     lines.append("")
     lines.append(f"max_retries = {s.gemini.max_retries}")
     lines.append(f"backoff_seconds = {s.gemini.backoff_seconds}")
-    lines.append("# monthly_usd_ceiling = 25.0")
+    lines.append("# Persistent cumulative-USD hard cap (survives process restarts).")
+    lines.append(f"# total_usd_ceiling = {s.gemini.total_usd_ceiling}")
+    lines.append(f"# usd_warning_thresholds = {s.gemini.usd_warning_thresholds}")
     lines.append("# per_run_token_ceiling = 200000")
     lines.append("")
 

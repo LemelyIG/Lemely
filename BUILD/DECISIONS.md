@@ -77,3 +77,23 @@
 - **Alternatives:** Keep the monolith and bolt reconciliation onto it (rejected:
   duplicates work the modular package already does cleanly, and the monolith still
   ignores `DetParserSettings`); keep both (rejected: MISSION requires picking one).
+
+### D0.6 — Gemini cost cap: persistent file-backed USD ledger, $8 hard ceiling
+- **What:** New `lemely/io/cost_ledger.py` (`CostLedger`) persists cumulative USD to
+  `{output_dir}/gemini_spend.json` (atomic write, survives process restarts).
+  Renamed `GeminiSettings.monthly_usd_ceiling` → `total_usd_ceiling` (default now
+  **8.0**, active); added `usd_warning_thresholds=[4.0, 6.0]`. `GeminiClient` checks
+  the ledger total before/after calls and publishes `BUDGET_WARNING`/`BUDGET_EXCEEDED`
+  bus events on threshold crossings (each fires once, tracked in the ledger).
+  `lemely/runtime/notify.py` (`post_ntfy`, stdlib urllib, no-op unless
+  `LEMELY_NTFY_TOPIC` set) + `budget_notify.register_budget_ntfy()` (idempotent)
+  deliver those events to ntfy, registered from the CLI and web entrypoints.
+- **Why:** Audit blocker #5 — `monthly_usd_ceiling` reset every process, so there was
+  no real cross-run cap. Verified fix with two separate OS processes sharing one
+  ledger file: proc2 reads proc1's spend; $4/$6 warnings fire exactly once across
+  the boundary. `lemely.runtime` stays free of domain imports (notify uses only
+  stdlib) so the import-linter contract holds.
+- **Test hermeticity:** `tests/conftest.py` now also neutralises ambient `lemely.toml`
+  discovery (repo-root + ~/.config/lemely), needed because the rename would make a
+  developer's local `monthly_usd_ceiling` key an `extra=forbid` error. Explicit
+  `toml_path`/temp-cwd discovery still works.

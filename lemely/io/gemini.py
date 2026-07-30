@@ -17,6 +17,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from lemely.io.cost_ledger import CostLedger
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
@@ -119,6 +120,7 @@ class GeminiClient:
     def __init__(self, settings: Settings, *, _genai_client: Any = None) -> None:
         self._settings = settings
         self._raw_client: Any = _genai_client
+        self._ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
 
     @property
     def _client(self) -> Any:
@@ -168,11 +170,12 @@ class GeminiClient:
                 raise ExternalServiceError(
                     f"Token ceiling ({g.per_run_token_ceiling}) exceeded; accumulated {total}."
                 )
-        if g.monthly_usd_ceiling is not None:
-            if _process_accumulated_usd >= g.monthly_usd_ceiling:
+        if g.total_usd_ceiling is not None:
+            ledger_total = self._ledger.total()
+            if ledger_total >= g.total_usd_ceiling:
                 raise ExternalServiceError(
-                    f"USD ceiling (${g.monthly_usd_ceiling:.4f}) exceeded; "
-                    f"accumulated ${_process_accumulated_usd:.4f} this process."
+                    f"USD ceiling (${g.total_usd_ceiling:.4f}) exceeded; persistent "
+                    f"cumulative spend is ${ledger_total:.4f} (across all runs)."
                 )
 
     def generate_structured(
@@ -397,6 +400,24 @@ class GeminiClient:
         _process_accumulated_usd += usd
         if task_tag:
             _process_cost_by_task[task_tag] = _process_cost_by_task.get(task_tag, 0.0) + usd
+
+        # Persist cumulative spend to the cross-run ledger; this is the source of
+        # truth for the hard USD ceiling. Emit budget events for the UI/ntfy.
+        g = self._settings.gemini
+        new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
+        for threshold in crossed:
+            bus.publish(
+                EventType.BUDGET_WARNING,
+                threshold=threshold,
+                total_usd=round(new_total, 6),
+                ceiling=g.total_usd_ceiling,
+            )
+        if g.total_usd_ceiling is not None and new_total >= g.total_usd_ceiling:
+            bus.publish(
+                EventType.BUDGET_EXCEEDED,
+                total_usd=round(new_total, 6),
+                ceiling=g.total_usd_ceiling,
+            )
 
         log.info(
             "gemini_call",

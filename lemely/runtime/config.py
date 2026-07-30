@@ -55,7 +55,12 @@ class GeminiSettings(BaseModel):
     pricing: dict[str, list[float]] = Field(default_factory=dict)
     max_retries: int = Field(default=3, ge=0)
     backoff_seconds: float = Field(default=2.0, gt=0)
-    monthly_usd_ceiling: float | None = None
+    # Persistent, file-backed cumulative-USD hard cap (see lemely.io.cost_ledger).
+    # Enforced across process restarts against the ledger, not a per-process global.
+    # Default is ACTIVE at $8 — this is the intended hard ceiling for unattended runs.
+    total_usd_ceiling: float | None = Field(default=8.0, ge=0)
+    # Cumulative-USD thresholds that emit a BUDGET_WARNING event (ntfy) exactly once.
+    usd_warning_thresholds: list[float] = Field(default_factory=lambda: [4.0, 6.0])
     per_run_token_ceiling: int | None = None
 
     def model_for(self, task_tag: str) -> str:

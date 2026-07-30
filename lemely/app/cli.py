@@ -789,6 +789,10 @@ def main(argv: list[str] | None = None) -> int:
     """Top-level entrypoint used by main.py and console-script."""
     import structlog
 
+    from lemely.runtime.budget_notify import register_budget_ntfy
+
+    register_budget_ntfy()
+
     log = structlog.get_logger().bind(component="cli")
     try:
         cli.main(args=argv, standalone_mode=False, prog_name="lemely")

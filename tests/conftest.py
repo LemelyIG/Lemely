@@ -20,10 +20,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+import lemely.runtime.config as config_module
 from lemely.runtime.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -34,3 +36,37 @@ def _disable_dotenv_file() -> Iterator[None]:
         yield
     finally:
         Settings.model_config["env_file"] = original
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_ambient_toml() -> Iterator[None]:
+    """Neutralise *ambient* ``lemely.toml`` discovery for the whole session.
+
+    A developer's local ``lemely.toml`` — at the real repo root (``Path.cwd()``)
+    or in ``~/.config/lemely/`` — would otherwise leak into ``load_settings()``
+    calls that pass no explicit ``toml_path``/``cwd``, flipping defaults-only
+    assertions. This wrapper suppresses discovery of those two ambient files but
+    still discovers a ``lemely.toml`` inside a caller-supplied temporary ``cwd``
+    (as the TOML-discovery test does) and never touches explicit ``toml_path``.
+    """
+    from pathlib import Path as _Path
+
+    original = config_module._discover_toml
+    real_root_toml = (_Path.cwd() / "lemely.toml").resolve()
+
+    def _guarded_discovery(cwd: Path) -> Path | None:
+        found = original(cwd)
+        if found is None:
+            return None
+        resolved = found.resolve()
+        # Suppress the real repo-root toml and any home-config toml (ambient
+        # developer config); allow temp-cwd tomls that tests create explicitly.
+        if resolved == real_root_toml or "lemely" in resolved.parent.parts[-2:]:
+            return None
+        return found
+
+    config_module._discover_toml = _guarded_discovery  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        config_module._discover_toml = original  # type: ignore[assignment]
