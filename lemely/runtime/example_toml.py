@@ -69,8 +69,10 @@ def render_example_toml() -> str:
     lines.append(f"id_match_rate_target = {s.accuracy_eval.id_match_rate_target}")
     lines.append(f"flag_precision_target = {s.accuracy_eval.flag_precision_target}")
     lines.append(f"flag_recall_target = {s.accuracy_eval.flag_recall_target}")
-    lines.append("")
 
+    # No trailing blank line: pre-commit's end-of-file-fixer collapses a double
+    # trailing newline in lemely.toml.example, which would drift from this
+    # generator. Emit exactly one trailing newline to match.
     return "\n".join(lines) + "\n"
 
 

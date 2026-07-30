@@ -20,7 +20,15 @@ class PaperRecord(StrictModel):
     recorded_at: str  # ISO-8601 UTC
 
 
+# Bump when the persisted StudentHistory shape changes in a non-additive way.
+# HistoryStore.load() refuses files whose schema_version exceeds this.
+HISTORY_SCHEMA_VERSION = 1
+
+
 class StudentHistory(StrictModel):
+    # Persisted so a future migration can detect and upgrade older files instead
+    # of silently misreading them. Absent in pre-versioning files → defaults to 1.
+    schema_version: int = HISTORY_SCHEMA_VERSION
     student_id: str
     records: list[PaperRecord] = []  # noqa: RUF012
 

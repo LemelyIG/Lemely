@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from lemely.core.history import PaperRecord, StudentHistory
+import pytest
+
+from lemely.core.history import HISTORY_SCHEMA_VERSION, PaperRecord, StudentHistory
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.io.history_store import HistoryStore
+from lemely.runtime.errors import ParseError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,3 +85,45 @@ class TestHistoryStore:
         # No temp files should remain
         tmp_files = list((tmp_path / "history").glob(".charlie_*"))
         assert tmp_files == []
+
+    def test_written_file_carries_schema_version(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        store.append("alice", _make_record())
+        data = json.loads((tmp_path / "history" / "alice.json").read_text(encoding="utf-8"))
+        assert data["schema_version"] == HISTORY_SCHEMA_VERSION
+
+    def test_corrupt_json_surfaces_not_silently_empty(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        (tmp_path / "history" / "alice.json").write_text("{not valid json", encoding="utf-8")
+        with pytest.raises(ParseError, match="invalid JSON"):
+            store.load("alice")
+
+    def test_schema_mismatch_surfaces(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        # Valid JSON, wrong shape (records must be a list of PaperRecord).
+        (tmp_path / "history" / "alice.json").write_text(
+            json.dumps({"student_id": "alice", "records": "not-a-list"}), encoding="utf-8"
+        )
+        with pytest.raises(ParseError, match="schema mismatch"):
+            store.load("alice")
+
+    def test_future_schema_version_refused(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        (tmp_path / "history" / "alice.json").write_text(
+            json.dumps(
+                {"schema_version": HISTORY_SCHEMA_VERSION + 1, "student_id": "alice", "records": []}
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ParseError, match="unsupported schema_version"):
+            store.load("alice")
+
+    def test_pre_versioning_file_loads_as_v1(self, tmp_path: Path) -> None:
+        # Files written before schema_version existed must still load (default 1).
+        store = HistoryStore(tmp_path / "history")
+        (tmp_path / "history" / "alice.json").write_text(
+            json.dumps({"student_id": "alice", "records": []}), encoding="utf-8"
+        )
+        history = store.load("alice")
+        assert history.schema_version == 1
+        assert history.records == []

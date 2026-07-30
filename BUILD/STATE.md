@@ -21,7 +21,10 @@ gemini_spend_usd: 0.00
 - [x] done — Persistent file-backed Gemini USD tracker, $8 hard cap, $4/$6 ntfy warnings
        (D0.6: CostLedger at {output_dir}/gemini_spend.json; verified cross-process
        persistence + once-per-threshold with 2 real OS processes; 388 passed, 84.62%)
-- [ ] todo — HistoryStore: surface corruption, add schema_version
+- [x] done — HistoryStore: surface corruption, add schema_version
+       (load() now raises ParseError on unreadable/invalid-JSON/schema-mismatch/
+       future-version files; missing file still returns empty. schema_version=1
+       persisted. Also fixed example_toml trailing-newline drift. 393 passed, 84.66%)
 - [x] done — Single lockfile mechanism; .env.example; fix GEMINI_API_KEY mapping trap
 - [x] done — Remove dead: respx, live marker; leave lib/api.ts for Phase 2
 - [ ] todo — Quality gates green; phase report + screenshots N/A; PR develop→main; ntfy
