@@ -1,0 +1,40 @@
+{
+  "_comment": "Grade boundaries stored as percentages. Keys: {subject_code}_{session_code}{year_suffix}_p{paper_number}{variant}. Sessions: m=May/June w=Oct/Nov s=Feb/Mar sp=Specimen.",
+  "_global": {
+    "A": 80.0,
+    "B": 70.0,
+    "C": 60.0,
+    "D": 50.0,
+    "E": 40.0
+  },
+  "_defaults": {
+    "0625": {
+      "A": 82.0,
+      "B": 70.0,
+      "C": 60.0,
+      "D": 50.0,
+      "E": 40.0
+    },
+    "0580": {
+      "A": 80.0,
+      "B": 70.0,
+      "C": 60.0,
+      "D": 50.0,
+      "E": 40.0
+    },
+    "0606": {
+      "A": 80.0,
+      "B": 70.0,
+      "C": 60.0,
+      "D": 50.0,
+      "E": 40.0
+    },
+    "0450": {
+      "A": 80.0,
+      "B": 70.0,
+      "C": 60.0,
+      "D": 50.0,
+      "E": 40.0
+    }
+  }
+}
