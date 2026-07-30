@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
@@ -134,6 +134,11 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         env_file=".env",
         extra="forbid",
+        # gemini_api_key uses a validation_alias (see below). Without this,
+        # model_validate(model_dump()) round-trips (used by test fixtures and
+        # any code that reconstructs Settings from a dump) would reject the
+        # field-name key as an extra input. Allow both field name and aliases.
+        populate_by_name=True,
     )
     gradio: GradioSettings = GradioSettings()
     paths: PathsSettings = PathsSettings()
@@ -142,7 +147,17 @@ class Settings(BaseSettings):
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
-    gemini_api_key: SecretStr | None = None
+    # Accept the app-specific ``LEMELY_GEMINI_API_KEY`` plus the two unprefixed
+    # names the google-genai SDK reads directly (``GEMINI_API_KEY`` /
+    # ``GOOGLE_API_KEY``). Without these aliases only ``LEMELY_GEMINI_API_KEY``
+    # populated ``settings.gemini_api_key``, so a user who exported only
+    # ``GEMINI_API_KEY`` got a working CLI/Gradio but a silently-degraded web
+    # portal (which gates AI features on ``settings.gemini_api_key``). One env
+    # var now works everywhere. Priority follows declaration order.
+    gemini_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LEMELY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
 
     @classmethod
     def settings_customise_sources(

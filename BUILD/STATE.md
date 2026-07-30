@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 0
-last_updated: 2026-07-30T03:25:00Z
+last_updated: 2026-07-30T03:40:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -13,13 +13,13 @@ gemini_spend_usd: 0.00
 
 ## Phase 0 — Foundation repair
 - [x] done — Read LEMELY_AUDIT.md fully; verify repo builds & tests pass locally
-- [ ] doing — Fix ruff format on main-derived develop branch; create develop branch
-- [ ] todo — Add web/ (typecheck, lint, build) + web extra to CI
+- [x] done — Fix ruff format on main-derived develop branch; create develop branch
+- [x] done — Add web/ (typecheck, lint, build) + web extra to CI
 - [ ] todo — Decide det parser: wire io/det/ OR keep monolith; delete the loser
 - [ ] todo — Persistent file-backed Gemini USD tracker, $8 hard cap, $4/$6 ntfy warnings
 - [ ] todo — HistoryStore: surface corruption, add schema_version
-- [ ] todo — Single lockfile mechanism; .env.example; fix GEMINI_API_KEY mapping trap
-- [ ] todo — Remove dead: respx, live marker; leave lib/api.ts for Phase 2
+- [x] done — Single lockfile mechanism; .env.example; fix GEMINI_API_KEY mapping trap
+- [x] done — Remove dead: respx, live marker; leave lib/api.ts for Phase 2
 - [ ] todo — Quality gates green; phase report + screenshots N/A; PR develop→main; ntfy
 
 ## Phase 1 — Database + Auth + Tenancy

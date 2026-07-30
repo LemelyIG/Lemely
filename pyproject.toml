@@ -38,7 +38,6 @@ dev = [
   "mypy>=1.13",
   "pre-commit>=4",
   "import-linter>=2.1",
-  "respx>=0.21",
 ]
 
 [project.scripts]
@@ -158,9 +157,6 @@ disallow_any_explicit = false
 [tool.pytest.ini_options]
 addopts = "-ra -q --strict-markers --cov=lemely --cov-report=term-missing --cov-fail-under=70"
 testpaths = ["tests"]
-markers = [
-  "live: requires GEMINI_API_KEY and makes real API calls (skipped by default)",
-]
 
 [tool.coverage.run]
 source = ["lemely"]

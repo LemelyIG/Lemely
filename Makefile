@@ -6,7 +6,7 @@ install:
 	pip install -e .
 
 dev:
-	pip install -e ".[dev,ui]"
+	pip install -e ".[dev,ui,web]"
 	pre-commit install || true
 
 test:
@@ -29,7 +29,7 @@ pre-commit:
 	pre-commit run --all-files
 
 lock:
-	pip freeze --exclude-editable > requirements.lock
+	uv lock
 
 clean:
 	rm -rf .pytest_cache .ruff_cache .mypy_cache build dist *.egg-info
