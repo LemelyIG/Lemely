@@ -285,10 +285,37 @@ it yourself), and an ntfy notification is sent.
   decisions made, test summary (counts, coverage, accuracy metrics), Playwright
   **screenshots** of every new/changed screen (`reports/phase-N/screens/`),
   command outputs proving gates, known issues. Commit it; it must render on GitHub.
-- ntfy (topic below): phase start, phase complete (with 2-line summary), blocker
-  raised, budget warnings, run complete, and a daily one-line heartbeat.
-  `curl -s -H "Title: Lemely" -d "<message>" ntfy.sh/lemely-ErBPK7TIRGD1sQP5`
-  Use `-H "Priority: high"` for blockers/budget/final-complete.
+- ntfy (topic `lemely-ErBPK7TIRGD1sQP5`): phase start, phase complete (with
+  2-line summary), blocker raised, budget warnings, run complete, and a daily
+  one-line heartbeat. Use the JSON publish endpoint so you get markdown, tags,
+  priority, and a click-through in one request:
+  ```
+  curl -s ntfy.sh -d '{
+    "topic": "lemely-ErBPK7TIRGD1sQP5",
+    "title": "<short title>",
+    "message": "<markdown message, e.g. **Phase 2** complete: ...>",
+    "tags": ["<emoji-shortcode-or-two>"],
+    "priority": <1-5>,
+    "markdown": true,
+    "click": "https://github.com/LemelyIG/Lemely",
+    "actions": [{"action":"view","label":"Open repo","url":"https://github.com/LemelyIG/Lemely"}]
+  }'
+  ```
+  Priority: 3=default (phase start, heartbeat), 4=high (blocker, budget
+  warning), 5=urgent (build complete, halted). Suggested tags: `rocket` (phase
+  start), `white_check_mark` (phase/gate pass), `warning` (blocker),
+  `moneybag` (budget), `tada` (build complete). When a notification concerns a
+  specific artifact (a phase report, a failing test log), attach it instead of
+  just describing it — PUT the file with a `Filename` header to
+  `ntfy.sh/lemely-ErBPK7TIRGD1sQP5` (truncate to under 2MB; tail is usually
+  what matters). The supervisor script (`supervisor.sh`) already applies this
+  same format to its own crash/limit/complete notifications, including
+  deduplication: it suppresses a repeat notification for a failure with the
+  same signature (log tail, timestamps/paths scrubbed) seen again within 30
+  minutes, so you don't need to replicate that dedup logic yourself — just
+  don't spam near-identical blocker notifications in a tight loop; if you're
+  re-raising the same blocker, check `BUILD/BLOCKERS.md` first and skip the
+  notification if you already recorded it recently.
 - Session journal: append a dated entry to `BUILD/JOURNAL.md` at the end of each
   session (3–6 lines: did, learned, next).
 
