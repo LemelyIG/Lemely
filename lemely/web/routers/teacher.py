@@ -33,7 +33,12 @@ from lemely.core.analytics import (
     compare_performance,
 )
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
-from lemely.core.history import PaperRecord, StudentHistory
+from lemely.core.history import (
+    HistoryStoreProtocol,
+    PaperRecord,
+    StudentHistory,
+    now_iso,
+)
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
     AccuracyReport,
@@ -42,7 +47,6 @@ from lemely.core.schemas import (
 )
 from lemely.db.models.enums import Role
 from lemely.io.gemini import GeminiClient
-from lemely.io.history_store import HistoryStore, now_iso
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.teacher_quiz import TeacherQuizBuilder
@@ -279,7 +283,7 @@ def _pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
     ]
 
 
-def _latest_records(history_store: HistoryStore) -> list[PaperRecord]:
+def _latest_records(history_store: HistoryStoreProtocol) -> list[PaperRecord]:
     """Return the most-recent :class:`PaperRecord` per student across all history."""
     latest: list[PaperRecord] = []
     for student_id in history_store.list_students():
@@ -411,7 +415,7 @@ def extract_paper(
 @router.post("/papers/{paper_id}/grade")
 def grade_paper_endpoint(
     paper_id: str,
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
 ) -> StreamingResponse:
     """Grade a paper and stream ``MARKING_PROGRESS`` over SSE.
@@ -741,7 +745,7 @@ def quiz_pools(
 
 @router.get("/quizzes/topics", response_model=QuizTopicsDTO)
 def quiz_topics(
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> QuizTopicsDTO:
     """Return candidate quiz topics ranked by aggregate marks lost across history.
 
@@ -761,7 +765,7 @@ def quiz_topics(
     return QuizTopicsDTO(topics=topics)
 
 
-def _aggregate_history_weaknesses(history_store: HistoryStore) -> WeaknessReport:
+def _aggregate_history_weaknesses(history_store: HistoryStoreProtocol) -> WeaknessReport:
     """Fold every student's history into one aggregate :class:`WeaknessReport`."""
     all_records: list[PaperRecord] = []
     for student_id in history_store.list_students():
@@ -784,7 +788,7 @@ def _preview_question(question: GeneratedQuestion) -> PreviewQuestionDTO:
 
 def _build_quiz(
     settings: Settings,
-    history_store: HistoryStore,
+    history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
     *,
     subject_code: str,
@@ -834,7 +838,7 @@ def _build_quiz(
         ) from exc
 
 
-def _infer_subject_code(history_store: HistoryStore) -> str | None:
+def _infer_subject_code(history_store: HistoryStoreProtocol) -> str | None:
     """Infer a subject code from the most recent recorded paper, if any."""
     records = _latest_records(history_store)
     if not records:
@@ -855,7 +859,7 @@ def _quiz_to_preview(quiz: GeneratedQuiz) -> QuizPreviewDTO:
 @router.post("/quizzes/preview", response_model=QuizPreviewDTO)
 def quiz_preview(
     settings: Annotated[Settings, Depends(get_settings)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     subject_code: str = "",
     count: int = 4,
@@ -876,7 +880,7 @@ def quiz_preview(
 @router.post("/quizzes/generate", response_model=QuizPreviewDTO)
 def quiz_generate(
     settings: Annotated[Settings, Depends(get_settings)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     subject_code: str = "",
     count: int = 5,
@@ -925,7 +929,7 @@ def _student_row(history: StudentHistory) -> StudentRowDTO | None:
 
 @router.get("/teacher/classes", response_model=ClassListDTO)
 def list_classes(
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> ClassListDTO:
     """Return the (single, implicit) class summary derived from all history.
 
@@ -952,7 +956,7 @@ def list_classes(
 @router.get("/classes/{class_id}", response_model=ClassDetailDTO)
 def get_class(
     class_id: str,
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> ClassDetailDTO:
     """Return mastery, grade distribution, and the roster for a class.
 
@@ -1014,7 +1018,7 @@ def get_class(
 
 @router.get("/teacher/overview", response_model=OverviewDTO)
 def teacher_overview(
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> OverviewDTO:
     """Return headline stats plus at-risk students, all from history/analytics.
 

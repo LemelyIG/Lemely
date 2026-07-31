@@ -320,3 +320,26 @@
 - **Alternatives:** async SQLAlchemy (rejected: whole stack is sync, D-session.py); a new
   wire/DTO shape for history (rejected: preserving `PaperRecord` keeps the blast radius to
   the storage layer only).
+
+### D1.9 — Web/product history moves to Postgres; CLI + Gradio keep the JSON store
+- **What:** `get_history_store` (the web dependency) now returns `DbHistoryStore`
+  (D1.8), so every FastAPI route and the web grading service persist/read student
+  history in Postgres. `now_iso()` and a structural `HistoryStoreProtocol`
+  (`load`/`append`/`list_students`) move to `lemely/core/history.py`; routers and the
+  grading service are annotated against the Protocol so both stores satisfy them.
+- **Deviation from the STATE task, recorded honestly:** the task said "delete the JSON
+  store after parity proven." The audit assumed the web routers were its only consumers —
+  they are NOT: `app/cli.py` and `app/gradio_app.py`/`gradio_callbacks.py` also use the
+  JSON `HistoryStore`. The CLI and Gradio are local, single-process, **unauthenticated**
+  tools with no tenancy and no UUID user ids; forcing a Supabase-Postgres round-trip on
+  them is heavy, out of the task's "web routers" scope, and less reversible.
+- **Decision (simplest / cheapest / most reversible per MISSION):** migrate only the
+  web/product surface to the DB now; **retain `lemely/io/history_store.py` for the CLI +
+  Gradio internal tools.** Full deletion of the JSON store is DEFERRED until those tools are
+  either retired or given their own migration — a separate, explicit scope decision, not a
+  silent side effect of the web migration. Parity between the two stores is already proven
+  (D1.8), so a future switch is low-risk.
+- **Consequences:** web tests are unaffected (they override `get_history_store` with an
+  in-tmp JSON store as a hermetic test double at runtime — the DB is never touched in the
+  web suite). `test_history_store.py` stays valid (the JSON store still ships). No web route
+  reads history without an override, so no web test silently starts requiring Postgres.

@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from lemely.core.analytics import predict_grade, summarize_weaknesses
-from lemely.core.history import PaperRecord
+from lemely.core.history import HistoryStoreProtocol, PaperRecord, now_iso
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
     AccuracyReport,
@@ -28,7 +28,6 @@ from lemely.io.answer_extraction import GeminiAnswerExtractor
 from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.io.history_store import HistoryStore, now_iso
 
 
 def extract_answers(
@@ -58,7 +57,7 @@ def grade_paper(
     gemini_client: GeminiClient | None = None,
     mcq_only: bool = False,
     student_id: str | None = None,
-    history_store: HistoryStore | None = None,
+    history_store: HistoryStoreProtocol | None = None,
     boundary_store: GradeBoundaryStore | None = None,
 ) -> AccuracyReport:
     """Grade a paper and optionally record it to a student's history.

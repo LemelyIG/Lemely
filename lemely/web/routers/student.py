@@ -22,17 +22,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-# WeaknessReport and HistoryStore stay as runtime imports (noqa: TC001): FastAPI
-# dependency injection and the response converters resolve their annotations at
-# call time, so they cannot move into a TYPE_CHECKING block.
+# WeaknessReport and HistoryStoreProtocol stay as runtime imports (noqa: TC001):
+# FastAPI dependency injection and the response converters resolve their
+# annotations at call time, so they cannot move into a TYPE_CHECKING block.
 from lemely.core.analytics import aggregate_weaknesses_from_history
-from lemely.core.history import PaperRecord, StudentHistory
+from lemely.core.history import HistoryStoreProtocol, PaperRecord, StudentHistory
 from lemely.core.schemas import WeaknessReport
 from lemely.core.study import StudentProfile, StudyPlan
 from lemely.core.study_plan import build_study_plan
 from lemely.db.models.enums import Role
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.io.history_store import HistoryStore
 from lemely.io.study_plan_ai import StudyPlanNarrator
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
@@ -186,7 +185,7 @@ def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
 @router.get("/student/overview", response_model=OverviewDTO)
 def student_overview(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> OverviewDTO:
     """Return the student Overview: subject rows, global weak threads, momentum.
 
@@ -214,7 +213,7 @@ def student_overview(
 def student_subject(
     code: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> SubjectDTO:
     """Return one subject's papers breakdown, topic map, and paper history.
 
@@ -325,7 +324,7 @@ def _paper_label(record: PaperRecord) -> str:
 def student_result(
     paper_id: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> ResultDTO:
     """Return the flagship per-paper result for ``paper_id`` (a record index).
 
@@ -456,7 +455,7 @@ def _plan_to_dto(plan: StudyPlan) -> StudyPlanDTO:
 @router.get("/student/plan", response_model=StudyPlanDTO)
 def student_plan_get(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> StudyPlanDTO:
     """Return the deterministic weekly study plan (data-backed, no narrative).
 
@@ -481,7 +480,7 @@ def student_plan_get(
 def student_plan_post(
     payload: StudyPlanRequest,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> StudyPlanDTO:
     """Build the authenticated student's study plan, optionally AI-narrated.
@@ -533,7 +532,7 @@ def student_plan_post(
 @router.get("/student/standings", response_model=StandingsDTO)
 def student_standings(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> StandingsDTO:
     """Return the student's standings summary.
 

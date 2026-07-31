@@ -1,5 +1,11 @@
 """JSON-per-student persistence for cross-paper performance history.
 
+Backs the local CLI and Gradio debug tool only. The web/product surface persists
+history in Postgres via ``lemely.db.history_repo.DbHistoryStore`` (decisions
+D1.8/D1.9); ``now_iso`` and the shared ``HistoryStoreProtocol`` now live in
+``lemely.core.history``. Full retirement of this JSON store is deferred until the
+CLI/Gradio tools are migrated or retired.
+
 Single-writer assumption: concurrent CLI + Gradio writes to the same student file
 result in last-writer-wins. The lost record is detectable (missing from
 compare-performance output) and recoverable (re-run correct-paper --record).
@@ -12,7 +18,6 @@ import contextlib
 import json
 import os
 import tempfile
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
@@ -132,8 +137,3 @@ class HistoryStore:
     def list_students(self) -> list[str]:
         """Return all student IDs with recorded history."""
         return [p.stem for p in sorted(self._root.glob("*.json"))]
-
-
-def now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string."""
-    return datetime.now(UTC).isoformat()

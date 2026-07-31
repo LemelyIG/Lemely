@@ -24,14 +24,17 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
+from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
+from lemely.db.session import get_sessionmaker
 from lemely.io.gemini import GeminiClient
-from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from lemely.core.history import HistoryStoreProtocol
 
 
 @lru_cache(maxsize=1)
@@ -41,10 +44,14 @@ def get_settings() -> Settings:
 
 
 @lru_cache(maxsize=1)
-def get_history_store() -> HistoryStore:
-    """Return the process-wide :class:`HistoryStore`, rooted at ``output_dir/history``."""
-    settings = get_settings()
-    return HistoryStore(settings.paths.output_dir / "history")
+def get_history_store() -> HistoryStoreProtocol:
+    """Return the process-wide Postgres-backed student-history store (D1.8/D1.9).
+
+    The web/product surface persists history in the DB; the return type is the
+    structural :class:`HistoryStoreProtocol` so tests can override this with an
+    in-tmp JSON store double without touching Postgres.
+    """
+    return DbHistoryStore(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
