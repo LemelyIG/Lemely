@@ -30,6 +30,7 @@ web = [
   "fastapi>=0.115,<1",
   "uvicorn[standard]>=0.30,<1",
   "python-multipart>=0.0.9,<1",
+  "httpx>=0.27,<1",
 ]
 db = [
   "sqlalchemy>=2.0.36,<2.1",
@@ -69,7 +70,20 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "TCH", "RUF", "ANN", "D", "T20",
 ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "ANN", "D", "S106", "S107"]
+"tests/**" = [
+  "S101",
+  "ANN",
+  "D",
+  "S105",
+  "S106",
+  "S107",
+  "S311",
+  "RUF059",
+  "SLF001",
+  "TC001",
+  "TC002",
+  "TC003",
+]
 "tests/architecture/**" = ["S607", "S603"]
 "lemely/runtime/logging.py" = ["ANN401"]
 # Prompt files contain long strings and non-ASCII characters by design.
@@ -104,10 +118,12 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/web/schemas.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/services/grading.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/meta.py" = ["TC001", "TC002", "TC003"]
+"lemely/web/routers/auth.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/teacher.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/student.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/schemas_teacher.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/schemas_student.py" = ["TC001", "TC002", "TC003"]
+"lemely/web/schemas_auth.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/sse.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/jobs.py" = ["ANN401"]
 "lemely/web/deps.py" = ["ANN401"]
@@ -115,6 +131,11 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 # types they reference (uuid, datetime, date, enums) must be imported at
 # runtime; TC00x would move them into TYPE_CHECKING and break mapper config.
 "lemely/db/models/**" = ["TC001", "TC002", "TC003"]
+# Auth modules: uuid/Role/datetime are referenced in dataclass fields, Protocol
+# signatures, and ORM queries that are resolved/used at runtime; TC00x would move
+# them into TYPE_CHECKING and break those. Mirrors the web/DI exemptions above.
+"lemely/auth/mirror.py" = ["TC001", "TC003"]
+"lemely/auth/tokens.py" = ["TC003"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -163,6 +184,11 @@ module = [
   "lemely.web.schemas",
   "lemely.web.schemas_teacher",
   "lemely.web.schemas_student",
+  "lemely.web.schemas_auth",
+  # httpx `.json()` and pyjwt `decode()` return Any at the trust boundary; these
+  # modules parse those payloads defensively into typed dataclasses/Claims.
+  "lemely.auth.gotrue",
+  "lemely.auth.tokens",
   "lemely.accuracy.harness",
   "lemely.core.study",
   "lemely.core.integrity_schemas",

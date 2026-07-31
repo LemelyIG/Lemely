@@ -170,6 +170,25 @@ class SupabaseSettings(BaseModel):
     service_role_key: SecretStr | None = None
 
 
+class AuthSettings(BaseModel):
+    """Auth lifecycle tuning (phone-OTP challenge store).
+
+    Email/password identity is delegated to Supabase GoTrue; these knobs only
+    govern the in-memory parent phone-OTP challenge lifecycle owned by
+    ``lemely.auth.service.AuthService``. Override via ``lemely.toml`` under the
+    ``[auth]`` section or via ``LEMELY_AUTH__*`` env vars.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Time-to-live for a pending OTP challenge, in seconds.
+    otp_ttl_seconds: int = Field(default=300, ge=1)
+    # Maximum verify attempts before a challenge is locked out.
+    otp_max_attempts: int = Field(default=5, ge=1)
+    # Number of digits in a generated OTP code.
+    otp_length: int = Field(default=6, ge=4, le=10)
+
+
 class IntegritySettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     plagiarism_enabled: bool = True
@@ -199,6 +218,7 @@ class Settings(BaseSettings):
     integrity: IntegritySettings = IntegritySettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
+    auth: AuthSettings = AuthSettings()
     # Accept the app-specific ``LEMELY_GEMINI_API_KEY`` plus the two unprefixed
     # names the google-genai SDK reads directly (``GEMINI_API_KEY`` /
     # ``GOOGLE_API_KEY``). Without these aliases only ``LEMELY_GEMINI_API_KEY``

@@ -31,7 +31,7 @@ jobs:
       - name: Install package + dev extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,ui,web]"
+          pip install -e ".[dev,ui,web,db]"
 
       - name: Ruff (lint)
         run: ruff check .

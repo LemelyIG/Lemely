@@ -3,6 +3,37 @@
 
 ## Phase 1
 
+### D1.5 — Backend is the sole token issuer to clients (HS256 self-signed), revising D1.4
+- **What:** The FastAPI backend mints **every** access token it hands to a client, self-signed
+  HS256 with the shared `SupabaseSettings.jwt_secret`, in the GoTrue claim shape (`sub`,
+  `aud="authenticated"`, `role="authenticated"`, `exp`, `app_metadata.role`, `phone`/`email`).
+  This applies to BOTH email/password login and parent phone-OTP. GoTrue is still the identity +
+  password-hashing + account-lifecycle authority: `AuthService.signup` admin-creates the user in
+  GoTrue and `login` calls the GoTrue password grant to **verify the password** — but GoTrue's own
+  access token is discarded, not forwarded. `decode_token` stays HS256-only (one validation path).
+- **Why (evidence, not assumption):** The live integration test (`test_auth_live.py`) caught that
+  the local Supabase stack's GoTrue signs access tokens with **ES256** (asymmetric, JWKS + `kid`
+  header: `{'alg':'ES256','kid':'b812…','typ':'JWT'}`), NOT the shared HS256 secret that D1.4
+  assumed. This is the current Supabase CLI default (asymmetric JWT signing keys). D1.4's premise
+  — "both token kinds validate identically under the shared HS256 secret" — was therefore false in
+  reality; the hermetic `FakeGoTrueBackend` had signed HS256 and masked the gap.
+- **Fork + tiebreaker:** Two viable fixes: (A) validate real ES256 GoTrue tokens via the JWKS
+  endpoint (canonical, but adds a networked fetch+cache+kid-rotation path to token validation AND
+  still needs HS256 for the self-signed OTP tokens → two validation paths); (B) have the backend
+  re-mint all client tokens as HS256. Because our SPA only ever talks to FastAPI (never GoTrue
+  directly), FastAPI is already both issuer-proxy and validator, so re-minting is transparent.
+  MISSION's undecidable-fork rule (simplest, cheapest, most reversible) selects **B**: one uniform,
+  fully-offline-verifiable token path; no JWKS network dependency in the hot path; version-
+  independent of the Supabase CLI's key management (survives `supabase db reset`).
+- **Phase-2 compatibility:** Supabase Storage/PostgREST still accept HS256 tokens signed with the
+  shared `jwt_secret` (the anon/service keys are themselves such tokens), so direct SPA→Storage
+  uploads in Phase 2 keep working with our minted token (`aud=authenticated`, `role=authenticated`).
+- **Reversible:** to adopt GoTrue's ES256 tokens later, add JWKS/ES256 validation to `decode_token`
+  and stop re-minting in `AuthService`; nothing else changes because the claim shape is identical.
+- **Supersedes:** D1.4's statement that email/password uses GoTrue's token and only OTP is
+  self-signed. Everything else in D1.4 (GoTrue for password/identity, `SmsProvider` seam, in-memory
+  OTP store, mirroring to `public.users`, deps) stands.
+
 ### D1.4 — Auth backend split: GoTrue for email/password, self-signed HS256 for mock parent OTP
 - **What:** A new `lemely/auth/` package owns identity. Email/password signup+login go
   through Supabase **GoTrue** (local stack): admin-create the user (service-role key,
