@@ -69,7 +69,16 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        call _mint_email_token(provider="email"). Hermetic tests that asserted the old
        `gotrue-access-` prefix now decode+validate claims. Verified LIVE vs real GoTrue+PG:
        429 passed / 12 subtests / 0 skip (keys set) / 85.80% cov; static gates clean.)
-- [ ] todo — FastAPI JWT validation middleware; replace the anonymous get_auth_context stub
+- [x] done — FastAPI JWT validation middleware; replace the anonymous get_auth_context stub
+       (P1.5: lemely/web/deps.py get_auth_context is now a real dependency — HTTPBearer +
+       decode_token (HS256, shared jwt_secret) → AuthContext(user_id=sub, role=app_metadata.role,
+       email, phone). Every failure (no header, bad sig, expired, wrong aud, missing/unknown
+       role) → 401 with WWW-Authenticate: Bearer. AuthContext is now a frozen dataclass; the
+       anonymous default is GONE. Existing web tests already override get_auth_context via
+       dependency_overrides so they stayed green. tests/test_auth_dependency.py added (8 tests:
+       valid/all-5-roles/missing-header/garbage/wrong-secret/expired/unknown-role/missing-role).
+       437 passed / 12 subtests / 85.88% cov; static gates clean. NOTE: routes are not yet
+       role-gated — that is P1.6 RBAC.)
 - [ ] todo — RBAC dependency on EVERY route; kill both IDOR endpoints
        (POST /student/plan, POST /student/onboarding); row-level ownership checks
        (student=self; parent=linked children; teacher=their classes; school_admin=their
@@ -86,13 +95,19 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        develop; PR develop→main; ntfy
 
 ## Next action
-P1.4 auth (GoTrue + OTP + D1.5 HS256 minting) is DONE and verified live. Next non-done
-task: **FastAPI JWT validation middleware** — a dependency that reads the `Authorization:
-Bearer` header, calls `lemely.auth.tokens.decode_token`, and produces an auth context
-(user_id, role, phone/email) replacing the anonymous `get_auth_context` stub in
-lemely/web/deps.py. Then RBAC on every route (kill both IDOR endpoints: POST /student/plan,
-POST /student/onboarding), HistoryStore→Postgres migration, seat model, device registry,
-and the E2E/authz acceptance. Revisit BUILD/BLOCKERS.md (none currently).
+P1.4 auth + P1.5 JWT dependency DONE. Next non-done task: **RBAC on EVERY route** —
+a role-gating dependency (e.g. `require_role(*roles)` built on `get_auth_context`) applied
+to every student/teacher/auth route, PLUS row-level ownership checks (student=self;
+parent=linked children; teacher=their classes; school_admin=their school; platform_admin=all)
+and KILL the two IDOR endpoints (POST /student/plan, POST /student/onboarding — they take a
+caller-supplied id; must derive it from AuthContext.user_id instead). Every route needs an
+authz test. The route-by-route sweep is a good candidate for a workflow (MISSION §5). Then
+HistoryStore→Postgres migration, seat model, device registry, E2E/authz acceptance.
+Revisit BUILD/BLOCKERS.md (none currently).
+
+Building context tip: get_auth_context lives in lemely/web/deps.py; AuthContext.role is the
+platform role STRING (Role value). student router already threads auth.user_id into
+history_store.load(); teacher router does NOT yet depend on auth at all (add it in P1.6).
 
 HEADS-UP for CI: the new DB integration tests (tests/test_db_schema.py) skip when Postgres
 is unreachable, so CI stays green today. Before the auth E2E task, CI (.github/workflows/
