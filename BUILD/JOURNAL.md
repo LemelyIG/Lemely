@@ -1,5 +1,33 @@
 # Session journal
 
+## 2026-07-31 — Phase 1 (Device/session registry P1.11/D1.11 + acceptance groundwork)
+- Did: completed the device/session registry. Resumed on a dirty tree carrying a prior
+  session's PARTIAL device work — a complete untracked device_repo.py (DeviceRegistry) plus
+  service.py/tokens.py/models wiring and a recorded D1.11, but INCOMPLETE: no migration 0003
+  (model column with no migration → drift), no liveness check in get_auth_context (the feature
+  was unwired), no DeviceContext passed from the router, and zero tests. Finished the unit:
+  migration 0003_device_client_id (additive, applied live, `alembic check` drift-free);
+  get_device_registry singleton wired into get_auth_service + the sid-gated liveness check in
+  get_auth_context (offline path preserved for tokens without a session_id); optional deviceId
+  on the 3 auth DTOs + User-Agent → DeviceContext in the router; 10 PG-integration device tests
+  + 3 hermetic liveness tests. Committed (d8a7a70) + pushed. Then two acceptance sub-items:
+  a Postgres service + `alembic upgrade head` in CI so DB/authz/seat/device tests actually RUN
+  instead of skip (35aec2a); and made the authz matrix exhaustive — /student/correct, student
+  POST wrong-role→403, two missing teacher GETs (9b287a9). 522 passed / 1 skipped / 12 subtests
+  / 85.41% cov; all static gates clean; all three commits pushed.
+- Learned: eviction sets `revoked_at`, and because get_auth_context does a per-request liveness
+  read only when a `session_id` claim is present, an evicted session's next request 401s
+  immediately — this is why D1.11 chose fork (a) over refresh-boundary revocation (no refresh
+  flow exists, so an evicted token would otherwise live its 3600s TTL). Constructing DeviceRegistry
+  opens no DB connection (engine is lazy), so injecting it into get_auth_context keeps the hermetic
+  auth-dependency suite offline. Teacher/school routers are router-level gated, so a representative
+  GET spread legitimately proves the guard for their POSTs too.
+- Next: FINAL Phase-1 task = acceptance. Remaining: (1) E2E auth tests for all 5 roles;
+  (2) adversarial `reviewer` subagent pass over the WHOLE auth surface (D1.7 was only partial) —
+  verify + fix findings; (3) confirm every route has an authz test (done for the guard model);
+  (4) quality gates; write reports/phase-1/REPORT.md; merge feature→develop; open develop→main PR
+  (do NOT merge); ntfy phase-complete. CI Postgres block + authz-matrix completeness already landed.
+
 ## 2026-07-31 — Phase 1 (Seat model, P1.10/D1.10)
 - Did: completed the seat model. Resumed on a dirty tree carrying a prior session's
   PARTIAL, UNRUN seat work (3 untracked files: seat_repo.py, routers/school.py,

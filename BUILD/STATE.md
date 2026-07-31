@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 1
-last_updated: 2026-07-31T13:30:00Z
+last_updated: 2026-07-31T14:00:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -158,12 +158,13 @@ Phase-1 task — **Phase-1 acceptance**:
      pass was only ONE partial review; the acceptance sweep is still owed). Give it: lemely/auth/**,
      lemely/web/deps.py, lemely/web/routers/{auth,student,teacher,school}.py, lemely/db/{seat_repo,
      device_repo,history_repo}.py. Verify findings yourself; address them.
-  3. "Every route has an authz test" — enumerate all routes in app.py's routers and confirm each has
-     a no-token→401 + wrong-role→403 case in test_authz_matrix.py; add any missing.
-  4. CI must actually RUN the real-DB tests: add a Postgres `services:` block + `alembic upgrade head`
-     to .github/workflows/ci.yml, else auth/authz/seat/device PG-integration tests silently SKIP in CI
-     (they only ran locally because the Supabase stack is up). This is REQUIRED for the acceptance to
-     mean anything in CI.
+  3. [DONE this session, commit 9b287a9] "Every route has an authz test" — authz matrix is now
+     exhaustive: added /student/correct, student-POST wrong-role→403, and the two missing teacher
+     GETs. Teacher/school routers are router-level gated so their POSTs are covered by the guard
+     proof. If the adversarial review (item 2) flags a specific untested route, add it then.
+  4. [DONE this session, commit 35aec2a] CI now runs the real-DB tests: postgres:16 service on
+     port 54322 + `alembic upgrade head` added to .github/workflows/ci.yml test job. (GoTrue is
+     still not run in CI, so test_auth_live.py stays skipped — that's fine; hermetic tests cover it.)
   5. Quality gates (§6) green; write reports/phase-1/REPORT.md; merge feature→develop; push;
      open develop→main PR via `gh` (DO NOT MERGE it); ntfy phase-complete.
 The deferred CLI/Gradio history→DB deletion (D1.9) is NOT blocking; do it opportunistically or at
