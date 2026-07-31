@@ -124,8 +124,15 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        Coexistence with personal Subscription proven. tests/test_seat_repo.py (12 PG-integration:
        quota/ownership/revoke/coexistence/non-uuid) + 6 new /api/school authz-matrix cases.
        509 passed / 1 skipped / 12 subtests / 85.00% cov; ruff/format/mypy/lint-imports clean.)
-- [~] doing — Device/session registry: max 3 concurrent devices; 4th login silently
-       invalidates the oldest session
+- [ ] todo — Device/session registry: max 3 concurrent devices; 4th login silently
+       invalidates the oldest session (Device model already exists from P1.3 — no migration
+       needed; columns: user_id, device_label, user_agent, refresh_token_id, last_seen_at,
+       revoked_at. OPEN FORK for D1.11: request-time enforcement of an invalidated session
+       requires either (a) get_auth_context does a per-request DB lookup on a token `sid`
+       claim — sacrifices the offline-only validation D1.5 established — or (b) revocation
+       takes effect only at a refresh boundary + short access-token TTL, but NO refresh flow
+       exists yet so an evicted token stays valid up to its 3600s TTL. Decide + record D1.11
+       before implementing; the registry/eviction service + PG tests are the same either way.)
 - [ ] todo — Acceptance: E2E auth tests for all 5 roles; adversarial security review
        (reviewer subagent) finds no unauthenticated/cross-tenant access; every route has
        an authz test. Quality gates (§6) green; report reports/phase-1/REPORT.md; merge
