@@ -288,3 +288,35 @@
 - **Alternatives:** Map the resend cooldown to 401 (rejected: 429 is the correct
   semantic and lets clients back off); allow-list roles at the DTO layer (rejected: the
   behavioural 403 keeps one signup DTO and a clear audit log line).
+
+### D1.8 — HistoryStore → Postgres via an interface-preserving repository
+- **What:** `lemely/db/history_repo.py` (`DbHistoryStore`) replaces the JSON
+  `HistoryStore` behind the *same* surface (`load(user_id) -> StudentHistory`,
+  `append(user_id, record)`, `list_students()`), so all downstream analytics that
+  consume `StudentHistory`/`PaperRecord` are untouched. A `PaperRecord` maps to one
+  `Attempt` row (+ its `WeaknessRecord` rows from `weak_areas`); `load` reconstructs
+  `PaperRecord`s from those rows.
+- **Impedance mismatches resolved (recorded honestly):**
+  1. `student_id` (free-form str) → `Attempt.user_id` (UUID FK → `users.id`). The repo
+     requires a real user row (post-P1.4 every authed caller is mirrored into
+     `public.users`, so `auth.user_id` is a valid UUID). Legacy non-UUID JSON keys
+     (e.g. "anonymous") cannot be migrated and are reported/skipped, not forced.
+  2. `ExamMetadata.session_month` ("May/June"…) ↔ `SessionMonth` enum via the inverse
+     of `SESSION_MONTH_LABELS`.
+  3. `recorded_at` ISO **string** ↔ tz-aware `DateTime`: parsed on write, `isoformat()`
+     on read. Canonical UTC strings (`now_iso()`) round-trip exactly.
+  4. `PaperRecord` carries **no** per-question data, so migrated attempts have zero
+     `question_results` (those come from the live marking pipeline, not history).
+- **Ordering (intentional improvement over the JSON store):** `load` returns records
+  in `recorded_at` order (JSON preserved append order); `weak_areas` within a record are
+  sorted by `topic`. Both are deterministic and semantically correct for trend/aggregation
+  code; parity tests normalise on the same keys.
+- **Migration:** `migrate_json_history(json_store, db_store)` walks every JSON student
+  file and re-appends each record through the repo; returns a per-key result so unmigratable
+  legacy keys are surfaced. `outputs/history/` is currently EMPTY (the interim store was only
+  dev/test-written), so there is no production data at risk.
+- **Rollout:** additive first (repo + parity tests, routers untouched, JSON store intact),
+  then swap `get_history_store` → DB repo + relocate `now_iso` + delete `io/history_store.py`.
+- **Alternatives:** async SQLAlchemy (rejected: whole stack is sync, D-session.py); a new
+  wire/DTO shape for history (rejected: preserving `PaperRecord` keeps the blast radius to
+  the storage layer only).
