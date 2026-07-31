@@ -52,6 +52,16 @@ TEACHER_GET_ROUTES = [
     "/api/quizzes/topics",
     "/api/quizzes/pools",
 ]
+# School-admin seat surface. Gated at the router level to school_admin alone; a
+# representative spread proves the guard for the whole router.
+SCHOOL_GET_ROUTES = ["/api/school/seats"]
+SCHOOL_POST_ROUTES = [
+    ("/api/school/seats/invite", {"schoolId": "s1", "email": "new@student.local"}),
+    (
+        "/api/school/seats/00000000-0000-0000-0000-000000000000/revoke",
+        None,
+    ),
+]
 
 
 @pytest.fixture
@@ -132,6 +142,53 @@ def test_teacher_route_accepts_school_admin_and_platform_admin(
         )
         resp = _client(app).get("/api/papers")
         assert resp.status_code == 200, role
+
+
+# ── School-admin seat surface: staff-gated to school_admin alone ──────────────
+
+
+@pytest.mark.parametrize("path", SCHOOL_GET_ROUTES)
+def test_school_get_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).get(path)
+    assert resp.status_code == 401, path
+    assert resp.headers.get("WWW-Authenticate") == "Bearer"
+
+
+@pytest.mark.parametrize(("path", "body"), SCHOOL_POST_ROUTES)
+def test_school_post_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object] | None
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize("role", [Role.student, Role.parent, Role.teacher, Role.platform_admin])
+def test_school_get_rejects_non_school_admin(
+    app_and_store: tuple[object, HistoryStore], role: Role
+) -> None:
+    """Even platform_admin is 403 here — no super-role at the route layer (D1.6)."""
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda role=role: AuthContext(  # type: ignore[attr-defined]
+        user_id="u1", role=role.value
+    )
+    resp = _client(app).get("/api/school/seats")
+    assert resp.status_code == 403, role
+
+
+@pytest.mark.parametrize(("path", "body"), SCHOOL_POST_ROUTES)
+def test_school_post_rejects_student(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object] | None
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="s1", role=Role.student.value
+    )
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 403, path
 
 
 # ── IDOR kill: identity is the token, never the payload ───────────────────────

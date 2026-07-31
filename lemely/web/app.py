@@ -1,8 +1,8 @@
 """FastAPI application factory for the Lemely web backend.
 
-:func:`create_app` wires the portal routers (meta, auth, teacher, student), all
-mounted under ``/api``. Portal workers extend ``routers/teacher.py`` and
-``routers/student.py`` in place — this factory never needs to change when new
+:func:`create_app` wires the portal routers (meta, auth, teacher, student,
+school), all mounted under ``/api``. Portal workers extend ``routers/teacher.py``
+and ``routers/student.py`` in place — this factory never needs to change when new
 endpoints are added.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from lemely.runtime.budget_notify import register_budget_ntfy
-from lemely.web.routers import auth, meta, student, teacher
+from lemely.web.routers import auth, meta, school, student, teacher
 
 
 def create_app() -> FastAPI:
@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(teacher.router)
     app.include_router(student.router)
+    app.include_router(school.router)
     return app
 
 

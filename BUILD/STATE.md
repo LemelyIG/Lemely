@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 1
-last_updated: 2026-07-31T00:00:00Z
+last_updated: 2026-07-31T12:00:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -112,9 +112,19 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
 - [ ] todo — (deferred, D1.9) Migrate CLI + Gradio history to the DB (or retire Gradio), THEN
        delete lemely/io/history_store.py + tests/test_history_store.py. Parity already proven, so
        low-risk. Not blocking Phase 1.
-- [ ] todo — Seat model: school_admin invites/creates N students against seat quota; a
+- [x] done — Seat model: school_admin invites/creates N students against seat quota; a
        student may ALSO hold a personal subscription simultaneously
-- [ ] todo — Device/session registry: max 3 concurrent devices; 4th login silently
+       (P1.10/D1.10: SeatService (lemely/db/seat_repo.py) — on-demand seat allocation w/
+       FOR UPDATE quota lock (TOCTOU-safe); ownership+quota checked before account creation so
+       no orphaned accounts; revoke frees a slot, keeps the account, idempotent. Account creation
+       via StudentAccountCreator seam; real AuthServiceStudentCreator (web/deps.py) wraps
+       AuthService.signup pinned Role.student; invite generates one-time temp password when
+       omitted. /api/school/seats router (list/invite/{id}/revoke) gated school_admin-only at
+       router level (even platform_admin → 403). get_seat_service wired in deps + reset_singletons.
+       Coexistence with personal Subscription proven. tests/test_seat_repo.py (12 PG-integration:
+       quota/ownership/revoke/coexistence/non-uuid) + 6 new /api/school authz-matrix cases.
+       509 passed / 1 skipped / 12 subtests / 85.00% cov; ruff/format/mypy/lint-imports clean.)
+- [~] doing — Device/session registry: max 3 concurrent devices; 4th login silently
        invalidates the oldest session
 - [ ] todo — Acceptance: E2E auth tests for all 5 roles; adversarial security review
        (reviewer subagent) finds no unauthenticated/cross-tenant access; every route has
@@ -122,15 +132,20 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        develop; PR develop→main; ntfy
 
 ## Next action
-HistoryStore→Postgres (web surface) DONE (D1.8/D1.9). Next non-done task: **Seat model** —
-`school_admin` invites/creates N students against a seat quota (seats + subscriptions +
-plan_tiers tables already exist from P1.3); a student may ALSO hold a personal subscription
-simultaneously. Design the invite/seat-claim flow + endpoints + row-level ownership
-(school_admin sees only their school's seats) + authz tests. After that: device registry
-(max 3, 4th evicts oldest) and the Phase-1 acceptance (E2E auth for all 5 roles + the required
-adversarial reviewer pass over the WHOLE auth surface — note the D1.7 pass was only one partial
-review; the acceptance sweep is still owed). The deferred CLI/Gradio history→DB deletion (D1.9)
-is NOT blocking; do it opportunistically or at Gradio retirement.
+Seat model DONE (P1.10/D1.10 — committed). Next non-done task: **Device/session registry** —
+max **3** concurrent devices per account; logging in on a 4th silently invalidates the OLDEST
+session. The `Device` model already exists (lemely/db/models/users.py, from P1.3); check its
+columns (session/device id, last_seen, revoked flag?) and whether a migration is needed for any
+missing field. Plan: a DeviceRegistry service (register-on-login, evict-oldest-when->3), wire it
+into AuthService.login + verify_otp (the two client-token mint points), and cover with PG-integration
+tests (3 devices ok; 4th evicts oldest; re-login on an existing device is not a new slot). Decide
+how the client identifies a device (a device fingerprint/id passed at login vs. server-minted) and
+record it as D1.11.
+After that: Phase-1 acceptance (E2E auth for all 5 roles + the required adversarial reviewer pass
+over the WHOLE auth surface — note the D1.7 pass was only one partial review; the acceptance sweep
+is still owed; also add the Postgres services block + `alembic upgrade head` to CI so the real-DB
+auth/authz/seat/device tests actually RUN in CI instead of skipping). The deferred CLI/Gradio
+history→DB deletion (D1.9) is NOT blocking; do it opportunistically or at Gradio retirement.
 Revisit BUILD/BLOCKERS.md (none currently).
 
 CI HEADS-UP (unchanged): DB/auth integration tests skip when Postgres unreachable, so CI is
@@ -143,6 +158,23 @@ ci.yml) needs a Postgres `services:` block (or a Supabase step) + `alembic upgra
 otherwise the real-DB auth/authz tests will silently skip in CI.
 
 ## Session handoff notes
+- 2026-07-31 (Seat model DONE, P1.10/D1.10): resumed on a dirty tree carrying a prior
+  session's PARTIAL, UNRUN seat work — three untracked files (lemely/db/seat_repo.py,
+  lemely/web/routers/school.py, lemely/web/schemas_school.py). Verified before trusting:
+  the WIP was INCOMPLETE — the router imported `get_seat_service` from deps.py which did
+  NOT exist, the school router was NOT registered in app.py, and there were NO tests.
+  The service/router/DTO code itself was sound and matched the P1.3 models. Completed the
+  unit: added `AuthServiceStudentCreator` + `get_seat_service` (+ reset_singletons) to
+  web/deps.py; registered school.router in app.py; added schemas_school to the mypy
+  disallow-any-explicit override list (same false-positive class as the other DTO modules).
+  Wrote tests/test_seat_repo.py (12 PG-integration tests: quota boundary + no-orphaned-account,
+  ownership on invite/usage/list/revoke, revoke frees+keeps-account+idempotent, unknown-seat
+  404, personal-subscription coexistence, non-UUID rejection) + 6 /api/school authz cases in
+  test_authz_matrix.py. NOTE this FastAPI version registers included routers lazily as
+  `_IncludedRouter`, so `app.routes` inspection shows no seat paths — TestClient requests
+  (401/403) are the real proof. Gates: 509 passed / 1 skipped (live auth, no keys) / 12
+  subtests / 85.00% cov (>84.92% prior); ruff/format/mypy/lint-imports clean. Supabase stack
+  UP. Committing on feature/phase-1-db-auth-tenancy. Next: device/session registry (max 3).
 - 2026-07-31 (HistoryStore→Postgres web migration DONE, same session as D1.7): after the D1.7
   hardening, executed the HistoryStore→Postgres task in two committed increments against LIVE
   Postgres (supabase stack up). Increment A (26b0b0d): lemely/db/history_repo.py DbHistoryStore

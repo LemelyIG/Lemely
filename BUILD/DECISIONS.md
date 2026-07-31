@@ -343,3 +343,38 @@
   in-tmp JSON store as a hermetic test double at runtime — the DB is never touched in the
   web suite). `test_history_store.py` stays valid (the JSON store still ships). No web route
   reads history without an override, so no web test silently starts requiring Postgres.
+
+### D1.10 — Seat model: on-demand allocation, locked quota check, membership-based ownership
+- **What:** `lemely/db/seat_repo.py` (`SeatService`) owns seat allocation. A school buys a
+  fixed `seat_quota`; each occupied slot is a non-revoked `Seat` row. Seats are allocated
+  **on demand** — there is no pre-provisioning step: `invite_student` creates a student
+  account and, in the same locked transaction, inserts an `assigned` seat *iff* the school
+  has headroom. `revoke_seat` flips a seat to `revoked` (freeing quota) without deleting the
+  student's account (idempotent). Introspection: `list_admin_schools` / `seat_usage`. The
+  HTTP surface is `lemely/web/routers/school.py` under `/api/school/seats` (list / invite /
+  {id}/revoke), gated at the router level to `school_admin` alone.
+- **TOCTOU-safe quota:** `invite_student` locks the school row `FOR UPDATE` for the duration,
+  so two concurrent invites serialise — the second sees the first's committed seat and is
+  rejected once the quota is full, instead of both slipping past a stale count. Ownership and
+  quota are checked *before* account creation, so a rejected invite never leaves an orphaned
+  account (proven by `test_invite_beyond_quota_is_rejected_without_creating_account`).
+- **Ownership is membership-based, no super-role (mirrors D1.6):** every mutating call
+  re-verifies the caller holds a `school_admin` `SchoolMembership` for the target school (or
+  the seat's school); anyone else gets a `SeatOwnershipError` → 403, never data or a
+  mutation. Even `platform_admin` is 403 on this surface (dedicated admin surface later).
+- **Account-creation seam:** `StudentAccountCreator` is a Protocol so the pure seat/quota/
+  ownership logic is Postgres-testable without the live GoTrue stack. The real adapter
+  (`AuthServiceStudentCreator`, in `web/deps.py` — the one layer that already imports both
+  `lemely.auth` and `lemely.db`, keeping the import graph acyclic) wraps `AuthService.signup`
+  pinned to `Role.student`; the invite route generates a one-time temporary password when the
+  admin omits one and returns it once (no student email provider in v1, exactly as the mock
+  SMS provider surfaces the parent OTP).
+- **Personal subscription coexists:** a seated student may *also* hold a personal
+  `Subscription` — the schema enforces no exclusivity and the seat service touches neither
+  table (proven by `test_seated_student_may_also_hold_a_personal_subscription`), satisfying
+  the MISSION §4 requirement.
+- **Alternatives:** pre-provision N empty seats at school creation then claim them (rejected:
+  an extra lifecycle state and migration for no gain — an occupied-seat count against the
+  quota is the same invariant with less machinery); advisory application-level locking instead
+  of `FOR UPDATE` (rejected: the row lock is the simplest correct serialisation and needs no
+  external coordinator).

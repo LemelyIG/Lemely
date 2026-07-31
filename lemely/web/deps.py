@@ -26,12 +26,14 @@ from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
+from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 
 if TYPE_CHECKING:
+    import uuid
     from collections.abc import Callable
 
     from lemely.core.history import HistoryStoreProtocol
@@ -83,6 +85,44 @@ def get_auth_service() -> AuthService:
         sms=MockSmsProvider(),
         otp_store=otp_store,
         settings=settings,
+    )
+
+
+class AuthServiceStudentCreator:
+    """Real :class:`~lemely.db.seat_repo.StudentAccountCreator` over :class:`AuthService`.
+
+    A seat invite admin-creates the student through the same GoTrue-backed signup
+    path anonymous students use, pinned to :attr:`Role.student` (elevated roles are
+    never mintable via a seat invite). Returns the mirrored ``public.users`` id so
+    :class:`SeatService` can bind the seat to it.
+    """
+
+    def __init__(self, auth_service: AuthService) -> None:
+        """Wrap an :class:`AuthService` used to create student identities."""
+        self._auth = auth_service
+
+    def create_student(
+        self,
+        email: str,
+        password: str,
+        display_name: str | None = None,
+    ) -> uuid.UUID:
+        """Create a student account and return its ``public.users`` id."""
+        return self._auth.signup(email, password, Role.student, display_name=display_name).user_id
+
+
+@lru_cache(maxsize=1)
+def get_seat_service() -> SeatService:
+    """Return the process-wide :class:`SeatService` singleton.
+
+    Wired with the DB session factory and an :class:`AuthServiceStudentCreator`
+    that provisions invited students through the real GoTrue signup path. Tests
+    override this dependency with a service built on a fake account creator and a
+    throwaway Postgres database.
+    """
+    return SeatService(
+        get_sessionmaker(get_settings()),
+        AuthServiceStudentCreator(get_auth_service()),
     )
 
 
@@ -181,3 +221,4 @@ def reset_singletons() -> None:
     get_history_store.cache_clear()
     get_gemini_client.cache_clear()
     get_auth_service.cache_clear()
+    get_seat_service.cache_clear()
