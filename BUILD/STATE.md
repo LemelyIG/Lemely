@@ -95,8 +95,23 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        row-level teacher→class ownership lands when routes move to the DB class model.
        Parent routes: none exist yet (parent portal is Phase 3). ADVERSARIAL REVIEW still
        pending — run reviewer subagent on this diff at phase acceptance.)
-- [ ] todo — Migrate HistoryStore JSON → Postgres; migration script + parity tests; then
-       delete the JSON store (io/history_store.py) after parity proven
+- [x] done — Migrate HistoryStore JSON → Postgres; migration script + parity tests; the
+       WEB/product surface now reads/writes history in Postgres (D1.8/D1.9).
+       (D1.8: lemely/db/history_repo.py DbHistoryStore preserves the load/append/list_students
+       surface over StudentHistory/PaperRecord (→ Attempt + WeaknessRecord rows); migrate_json_history()
+       walks JSON students, reports unmigratable legacy keys. tests/test_history_repo_parity.py:
+       6 PG-integration parity tests (model_dump parity vs JSON store, ordering, list_students,
+       non-UUID rejection, migration incl. skipped legacy key). D1.9: get_history_store → DB store;
+       HistoryStoreProtocol + now_iso moved to core/history.py; student/teacher routers + web
+       grading service annotate the Protocol. 488 passed / 1 skipped / 12 subtests / 84.92% cov;
+       ruff/format/mypy/lint-imports clean. THREE commits: 26b0b0d (repo+parity), 5cabb58 (web swap).
+       DEVIATION (D1.9): io/history_store.py NOT deleted — it is ALSO used by app/cli.py and
+       app/gradio_* (local, unauthenticated, no-UUID tools). Deleting it would force Postgres on
+       those; out of the task's "web routers" scope. Web migrated now; JSON store retained for
+       CLI/Gradio; full deletion deferred to the explicit follow-up below.)
+- [ ] todo — (deferred, D1.9) Migrate CLI + Gradio history to the DB (or retire Gradio), THEN
+       delete lemely/io/history_store.py + tests/test_history_store.py. Parity already proven, so
+       low-risk. Not blocking Phase 1.
 - [ ] todo — Seat model: school_admin invites/creates N students against seat quota; a
        student may ALSO hold a personal subscription simultaneously
 - [ ] todo — Device/session registry: max 3 concurrent devices; 4th login silently
@@ -107,14 +122,15 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        develop; PR develop→main; ntfy
 
 ## Next action
-P1.4 auth + P1.5 JWT dep + P1.6 RBAC/IDOR-kill DONE. Next non-done task: **Migrate
-HistoryStore JSON → Postgres** — a migration script + parity tests that move the interim
-`lemely/io/history_store.py` JSON store into the DB-backed schema (attempts/question_results/
-weakness_records per P1.3), prove parity, then DELETE the JSON store. NOTE the web routers
-still call history_store.load()/append(); those call sites move to a DB-backed store/repo in
-this task (or a thin adapter) — coordinate so student/teacher routes read the DB. Then seat
-model, device registry (max 3, 4th evicts oldest), and the E2E/authz acceptance (which
-includes the required adversarial reviewer pass over the whole auth surface).
+HistoryStore→Postgres (web surface) DONE (D1.8/D1.9). Next non-done task: **Seat model** —
+`school_admin` invites/creates N students against a seat quota (seats + subscriptions +
+plan_tiers tables already exist from P1.3); a student may ALSO hold a personal subscription
+simultaneously. Design the invite/seat-claim flow + endpoints + row-level ownership
+(school_admin sees only their school's seats) + authz tests. After that: device registry
+(max 3, 4th evicts oldest) and the Phase-1 acceptance (E2E auth for all 5 roles + the required
+adversarial reviewer pass over the WHOLE auth surface — note the D1.7 pass was only one partial
+review; the acceptance sweep is still owed). The deferred CLI/Gradio history→DB deletion (D1.9)
+is NOT blocking; do it opportunistically or at Gradio retirement.
 Revisit BUILD/BLOCKERS.md (none currently).
 
 CI HEADS-UP (unchanged): DB/auth integration tests skip when Postgres unreachable, so CI is
@@ -127,6 +143,19 @@ ci.yml) needs a Postgres `services:` block (or a Supabase step) + `alembic upgra
 otherwise the real-DB auth/authz tests will silently skip in CI.
 
 ## Session handoff notes
+- 2026-07-31 (HistoryStore→Postgres web migration DONE, same session as D1.7): after the D1.7
+  hardening, executed the HistoryStore→Postgres task in two committed increments against LIVE
+  Postgres (supabase stack up). Increment A (26b0b0d): lemely/db/history_repo.py DbHistoryStore
+  (interface-preserving) + migrate_json_history() + 6 PG parity tests — parity proven via
+  model_dump equality vs the JSON store. Increment B (5cabb58): get_history_store → DB store;
+  extracted HistoryStoreProtocol + now_iso into core/history.py; student/teacher routers + web
+  grading service annotate the Protocol. KEY DEVIATION recorded as D1.9: did NOT delete
+  io/history_store.py — it is also used by app/cli.py + app/gradio_* (local, unauthenticated,
+  no-UUID tools); deleting it would force Postgres on them, out of the task's web-routers scope.
+  Web migrated; JSON store retained for CLI/Gradio; deletion deferred to an explicit follow-up
+  todo. Web tests untouched (they override get_history_store with a JSON store double at runtime,
+  so the web suite never hits PG). 488 passed / 1 skipped (live auth, no keys) / 12 subtests /
+  84.92% cov; ruff/format/mypy/lint-imports clean. STATE task marked done. Next: Seat model.
 - 2026-07-31 (D1.7 hardening committed on resume): resumed on a dirty tree carrying a
   prior session's *incomplete, unrun* adversarial-security fixes (otp.py resend cooldown,
   history_store.py _safe_key guard, auth.py signup-role restriction, config/deps wiring).
