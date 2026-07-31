@@ -104,7 +104,10 @@ class Device(TimestampMixin, Base):
     """
 
     __tablename__ = "devices"
-    __table_args__ = (sa.Index("ix_devices_user_id_revoked_at", "user_id", "revoked_at"),)
+    __table_args__ = (
+        sa.Index("ix_devices_user_id_revoked_at", "user_id", "revoked_at"),
+        sa.Index("ix_devices_user_id_client_device_id", "user_id", "client_device_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -116,6 +119,10 @@ class Device(TimestampMixin, Base):
         sa.ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
+    # Stable opaque identifier the client (SPA) mints once and stores locally, so a
+    # re-login on the same device reuses its row instead of consuming a new slot
+    # (D1.11). Nullable: a client that supplies none gets a fresh device per login.
+    client_device_id: Mapped[str | None] = mapped_column(sa.String, nullable=True)
     device_label: Mapped[str | None] = mapped_column(sa.String, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(sa.String, nullable=True)
     refresh_token_id: Mapped[str | None] = mapped_column(sa.String, nullable=True)

@@ -3,6 +3,43 @@
 
 ## Phase 1
 
+### D1.11 — Device/session registry: sid-claim + sid-gated DB liveness check (immediate eviction)
+- **What:** Max **3** concurrent devices per account. Each real login (email/password,
+  parent OTP, and self-service signup) registers a `Device` row and embeds its id in the
+  minted access token as a top-level `session_id` claim. `get_auth_context` decodes the
+  token offline as before, then — **only when a `session_id` claim is present** — performs a
+  single indexed DB read to confirm that device row is not revoked; an evicted/unknown
+  session → **401**. Tokens without a `session_id` (hermetic tests, seat-invite signup with
+  no device context) skip the check entirely, preserving the offline path.
+- **Device identity (the client-vs-server fork):** the client sends an optional stable opaque
+  `deviceId` (the SPA mints one once and keeps it in localStorage) plus its `User-Agent`. If a
+  non-revoked device row matches `(user_id, client_device_id)`, that row is **reused** — a
+  re-login on the same device is NOT a new slot; its `last_seen_at` is refreshed. If no
+  `deviceId` is supplied, every login mints a fresh device (a distinct session).
+- **Eviction:** after registering, if the user holds > 3 non-revoked devices, the **oldest by
+  `last_seen_at`** (tie-break `created_at`) is revoked (`revoked_at = now()`) until 3 remain.
+  Because eviction sets `revoked_at`, the evicted session's next request fails the liveness
+  check → immediate, real invalidation (faithful to "silently invalidates the oldest session").
+- **Enforcement fork resolution — chose (a) request-time DB check, scoped:** the STATE fork
+  weighed (a) a per-request DB lookup vs (b) refresh-boundary-only revocation with a short TTL.
+  Chose (a). D1.5's rejected cost was an **external** JWKS network hop + kid-rotation dependency
+  in the token hot path; a `session_id` liveness lookup is one indexed read against Postgres,
+  already a hard runtime dependency of every data-serving route — so it does NOT reintroduce the
+  dependency class D1.5 avoided, and it delivers immediate invalidation that (b) cannot (no
+  refresh flow exists yet, so under (b) an evicted token would stay valid up to its 3600s TTL).
+  Scoping the check to sid-bearing tokens keeps the hermetic auth-dependency suite offline.
+- **Schema:** additive migration `0003_device_client_id` adds `devices.client_device_id`
+  (nullable String) + index `ix_devices_user_id_client_device_id`. Additive-only per D1.2; the
+  STATE note "no migration needed" assumed the friendly `device_label`/`user_agent` columns
+  sufficed, but a stable client fingerprint needs its own column so "same device" dedupe does
+  not collide with the human label. `refresh_token_id` stays reserved for the future refresh flow.
+- **last_seen_at semantics:** refreshed only at login (register), not on every request — keeping
+  the per-request path a single read, no write. Eviction by login-recency is the correct
+  "concurrent devices" notion; a Phase-5 device-management UI can later add explicit sign-out.
+- **Alternatives:** (b) refresh-boundary revocation (rejected: weak/eventual invalidation, and
+  no refresh flow exists to trigger it); reuse `refresh_token_id`/`device_label` for the client
+  id (rejected: conflates distinct concerns, blocks the future refresh flow / friendly label).
+
 ### D1.6 — RBAC model: least-privilege role gating + token-derived ownership; teacher tenancy deferred
 - **What:** Authorization is enforced by a `require_role(*roles)` dependency factory
   (`lemely/web/deps.py`) layered on `get_auth_context`. It authenticates first (401 on

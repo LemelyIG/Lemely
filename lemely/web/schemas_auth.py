@@ -21,20 +21,27 @@ class ApiModel(BaseModel):
 
 
 class SignupRequestDTO(ApiModel):
-    """Email/password signup payload."""
+    """Email/password signup payload.
+
+    ``deviceId`` is the stable client fingerprint the SPA mints once and stores
+    locally; when supplied the login is registered against the 3-device limit and
+    a re-login on the same device reuses its slot (D1.11).
+    """
 
     email: str
     password: str
     role: Role
     displayName: str | None = None
     phone: str | None = None
+    deviceId: str | None = None
 
 
 class LoginRequestDTO(ApiModel):
-    """Email/password login payload."""
+    """Email/password login payload (``deviceId`` — see :class:`SignupRequestDTO`)."""
 
     email: str
     password: str
+    deviceId: str | None = None
 
 
 class OtpRequestDTO(ApiModel):
@@ -44,10 +51,11 @@ class OtpRequestDTO(ApiModel):
 
 
 class OtpVerifyDTO(ApiModel):
-    """Verify an OTP code for a parent phone number."""
+    """Verify an OTP code for a parent phone number (``deviceId`` — see signup)."""
 
     phone: str
     code: str
+    deviceId: str | None = None
 
 
 class TokenResponseDTO(ApiModel):

@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 1
-last_updated: 2026-07-31T12:00:00Z
+last_updated: 2026-07-31T13:30:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -124,36 +124,50 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        Coexistence with personal Subscription proven. tests/test_seat_repo.py (12 PG-integration:
        quota/ownership/revoke/coexistence/non-uuid) + 6 new /api/school authz-matrix cases.
        509 passed / 1 skipped / 12 subtests / 85.00% cov; ruff/format/mypy/lint-imports clean.)
-- [ ] todo — Device/session registry: max 3 concurrent devices; 4th login silently
-       invalidates the oldest session (Device model already exists from P1.3 — no migration
-       needed; columns: user_id, device_label, user_agent, refresh_token_id, last_seen_at,
-       revoked_at. OPEN FORK for D1.11: request-time enforcement of an invalidated session
-       requires either (a) get_auth_context does a per-request DB lookup on a token `sid`
-       claim — sacrifices the offline-only validation D1.5 established — or (b) revocation
-       takes effect only at a refresh boundary + short access-token TTL, but NO refresh flow
-       exists yet so an evicted token stays valid up to its 3600s TTL. Decide + record D1.11
-       before implementing; the registry/eviction service + PG tests are the same either way.)
+- [x] done — Device/session registry: max 3 concurrent devices; 4th login silently
+       invalidates the oldest session (P1.11, D1.11 — chose fork (a) sid-gated request-time
+       DB liveness check).
+       (lemely/db/device_repo.py DeviceRegistry: register_login locks the user row FOR UPDATE
+       (TOCTOU-safe like SeatService), reuses the row for a matching (user, client_device_id)
+       or mints a fresh device, then evicts the oldest-by-last_seen_at beyond MAX_DEVICES=3 by
+       setting revoked_at. tokens.mint_access_token gained an optional session_id claim;
+       decode_token surfaces it. get_auth_context does a single indexed liveness read ONLY when
+       a session_id claim is present (offline path preserved for hermetic/seat-invite tokens) →
+       401 on evicted/unknown session. AuthService.signup/login/verify_otp take an optional
+       DeviceContext; the /api/auth router builds it from body.deviceId + User-Agent. Additive
+       migration 0003_device_client_id adds devices.client_device_id + index; applied live +
+       `alembic check` drift-free. get_device_registry singleton wired in deps (+ reset_singletons).
+       tests/test_device_repo.py: 10 PG-integration (3-coexist, 4th-evicts-oldest-only, same/distinct
+       client-id dedupe, no-id fresh, liveness unknown/garbage, revoke ownership+idempotent,
+       active_devices ordering, unknown-user, non-uuid). test_auth_dependency.py +3 hermetic
+       (no-sid skips check; live→200; evicted→401). 522 passed / 1 skipped (live auth, no keys) /
+       12 subtests / 85.41% cov (>85.00% prior); ruff/format/mypy/lint-imports clean.)
 - [ ] todo — Acceptance: E2E auth tests for all 5 roles; adversarial security review
        (reviewer subagent) finds no unauthenticated/cross-tenant access; every route has
        an authz test. Quality gates (§6) green; report reports/phase-1/REPORT.md; merge
        develop; PR develop→main; ntfy
 
 ## Next action
-Seat model DONE (P1.10/D1.10 — committed). Next non-done task: **Device/session registry** —
-max **3** concurrent devices per account; logging in on a 4th silently invalidates the OLDEST
-session. The `Device` model already exists (lemely/db/models/users.py, from P1.3); check its
-columns (session/device id, last_seen, revoked flag?) and whether a migration is needed for any
-missing field. Plan: a DeviceRegistry service (register-on-login, evict-oldest-when->3), wire it
-into AuthService.login + verify_otp (the two client-token mint points), and cover with PG-integration
-tests (3 devices ok; 4th evicts oldest; re-login on an existing device is not a new slot). Decide
-how the client identifies a device (a device fingerprint/id passed at login vs. server-minted) and
-record it as D1.11.
-After that: Phase-1 acceptance (E2E auth for all 5 roles + the required adversarial reviewer pass
-over the WHOLE auth surface — note the D1.7 pass was only one partial review; the acceptance sweep
-is still owed; also add the Postgres services block + `alembic upgrade head` to CI so the real-DB
-auth/authz/seat/device tests actually RUN in CI instead of skipping). The deferred CLI/Gradio
-history→DB deletion (D1.9) is NOT blocking; do it opportunistically or at Gradio retirement.
-Revisit BUILD/BLOCKERS.md (none currently).
+Device/session registry DONE (P1.11/D1.11 — ready to commit). Next non-done task: the FINAL
+Phase-1 task — **Phase-1 acceptance**:
+  1. E2E auth tests for all 5 roles (student/parent/teacher/school_admin/platform_admin): a full
+     signup/login (or OTP for parent) → authed request → correct RBAC outcome path. Some of this
+     is covered by test_authz_matrix.py + test_auth_router.py already; audit for the gap (esp. a
+     real end-to-end parent OTP flow and a school_admin seat-invited student logging in) and fill it.
+  2. Adversarial security review of the WHOLE auth surface via the `reviewer` subagent (the D1.7
+     pass was only ONE partial review; the acceptance sweep is still owed). Give it: lemely/auth/**,
+     lemely/web/deps.py, lemely/web/routers/{auth,student,teacher,school}.py, lemely/db/{seat_repo,
+     device_repo,history_repo}.py. Verify findings yourself; address them.
+  3. "Every route has an authz test" — enumerate all routes in app.py's routers and confirm each has
+     a no-token→401 + wrong-role→403 case in test_authz_matrix.py; add any missing.
+  4. CI must actually RUN the real-DB tests: add a Postgres `services:` block + `alembic upgrade head`
+     to .github/workflows/ci.yml, else auth/authz/seat/device PG-integration tests silently SKIP in CI
+     (they only ran locally because the Supabase stack is up). This is REQUIRED for the acceptance to
+     mean anything in CI.
+  5. Quality gates (§6) green; write reports/phase-1/REPORT.md; merge feature→develop; push;
+     open develop→main PR via `gh` (DO NOT MERGE it); ntfy phase-complete.
+The deferred CLI/Gradio history→DB deletion (D1.9) is NOT blocking; do it opportunistically or at
+Gradio retirement. Revisit BUILD/BLOCKERS.md (none currently).
 
 CI HEADS-UP (unchanged): DB/auth integration tests skip when Postgres unreachable, so CI is
 green today; before the acceptance task add a Postgres services block + `alembic upgrade head`
@@ -165,6 +179,21 @@ ci.yml) needs a Postgres `services:` block (or a Supabase step) + `alembic upgra
 otherwise the real-DB auth/authz tests will silently skip in CI.
 
 ## Session handoff notes
+- 2026-07-31 (Device/session registry DONE, P1.11/D1.11): resumed on a dirty tree carrying a
+  prior session's PARTIAL device-registry work — modified auth/service.py (DeviceContext + wiring),
+  auth/tokens.py (session_id claim), db/models/users.py (client_device_id column + index), an
+  untracked db/device_repo.py (complete, well-crafted DeviceRegistry), and D1.11 recorded in
+  DECISIONS. Verified before trusting: the WIP was INCOMPLETE — no migration 0003 (model had the
+  new column but no migration → DB drift), get_auth_context had NO liveness check (the whole point
+  of the feature was unwired), the router passed no DeviceContext, and there were ZERO tests.
+  Completed the unit: wrote migration 0003_device_client_id (additive; applied live; `alembic check`
+  drift-free); added get_device_registry singleton + wired it into get_auth_service AND the
+  get_auth_context liveness check (sid-gated, offline path preserved) + reset_singletons; added
+  optional deviceId to the 3 auth DTOs and User-Agent extraction in the router → DeviceContext;
+  exported DeviceContext; wrote tests/test_device_repo.py (10 PG-integration) + 3 hermetic liveness
+  tests in test_auth_dependency.py. Gates: 522 passed / 1 skipped (live auth, no keys) / 12 subtests
+  / 85.41% cov (>85.00% prior); ruff/format/mypy/lint-imports clean. Supabase stack UP; migrations
+  at 0003 head. Committing on feature/phase-1-db-auth-tenancy. Next: Phase-1 acceptance (final task).
 - 2026-07-31 (Seat model DONE, P1.10/D1.10): resumed on a dirty tree carrying a prior
   session's PARTIAL, UNRUN seat work — three untracked files (lemely/db/seat_repo.py,
   lemely/web/routers/school.py, lemely/web/schemas_school.py). Verified before trusting:

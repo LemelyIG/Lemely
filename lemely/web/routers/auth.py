@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from lemely.auth.otp import OtpRateLimitError
-from lemely.auth.service import AuthResult, AuthService
+from lemely.auth.service import AuthResult, AuthService, DeviceContext
 from lemely.db.models.enums import Role
 from lemely.runtime.errors import AuthError
 from lemely.web.deps import get_auth_service
@@ -49,10 +49,21 @@ def _to_token_dto(result: AuthResult) -> TokenResponseDTO:
     )
 
 
+def _device_context(client_device_id: str | None, user_agent: str | None) -> DeviceContext:
+    """Build the per-login device metadata for the 3-device limit (D1.11).
+
+    A login always carries a context so it registers a device; ``client_device_id``
+    (from the request body) lets a re-login on the same device reuse its slot, and
+    ``user_agent`` is stored for the device-management view.
+    """
+    return DeviceContext(client_device_id=client_device_id, user_agent=user_agent)
+
+
 @router.post("/auth/signup", response_model=TokenResponseDTO)
 def signup(
     body: SignupRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
+    user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponseDTO:
     """Create a self-service **student** account and return a login token.
 
@@ -72,6 +83,7 @@ def signup(
             requested_role,
             display_name=body.displayName,
             phone=body.phone,
+            device=_device_context(body.deviceId, user_agent),
         )
     except AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -82,10 +94,19 @@ def signup(
 def login(
     body: LoginRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
+    user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponseDTO:
-    """Authenticate an email/password user and return an access token."""
+    """Authenticate an email/password user and return an access token.
+
+    Registers the login against the 3-device limit; a 4th concurrent device
+    silently evicts the account's oldest session (D1.11).
+    """
     try:
-        result = service.login(body.email, body.password)
+        result = service.login(
+            body.email,
+            body.password,
+            device=_device_context(body.deviceId, user_agent),
+        )
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     return _to_token_dto(result)
@@ -112,10 +133,19 @@ def request_otp(
 def verify_otp(
     body: OtpVerifyDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
+    user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponseDTO:
-    """Verify an OTP code and return a self-signed parent access token."""
+    """Verify an OTP code and return a self-signed parent access token.
+
+    Registers the login against the 3-device limit, evicting the oldest session
+    beyond three (D1.11).
+    """
     try:
-        result = service.verify_otp(body.phone, body.code)
+        result = service.verify_otp(
+            body.phone,
+            body.code,
+            device=_device_context(body.deviceId, user_agent),
+        )
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     return _to_token_dto(result)

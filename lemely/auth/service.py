@@ -36,7 +36,23 @@ if TYPE_CHECKING:
     from lemely.auth.mirror import UserMirror
     from lemely.auth.otp import OtpStore
     from lemely.auth.sms import SmsProvider
+    from lemely.db.device_repo import DeviceRegistry
     from lemely.runtime.config import Settings
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceContext:
+    """Per-login device metadata used to enforce the 3-device limit (D1.11).
+
+    ``client_device_id`` is the stable client fingerprint; ``user_agent`` and
+    ``label`` are stored for the device-management view. A login carrying no
+    :class:`DeviceContext` (e.g. a seat-invite signup) registers no device and its
+    token carries no ``session_id`` claim, so it is exempt from the liveness check.
+    """
+
+    client_device_id: str | None = None
+    user_agent: str | None = None
+    label: str | None = None
 
 
 class TokenSigner(Protocol):
@@ -50,6 +66,7 @@ class TokenSigner(Protocol):
         app_role: str,
         phone: str | None = None,
         email: str | None = None,
+        session_id: uuid.UUID | None = None,
         ttl_seconds: int = 3600,
         now: datetime | None = None,
     ) -> str:
@@ -79,6 +96,7 @@ class AuthService:
         otp_store: OtpStore,
         settings: Settings,
         token_signer: TokenSigner | None = None,
+        device_registry: DeviceRegistry | None = None,
     ) -> None:
         """Wire the service from injected collaborators.
 
@@ -90,6 +108,9 @@ class AuthService:
             settings: Shared settings (JWT secret, audience, auth knobs).
             token_signer: Self-signed-token minter; defaults to
                 :func:`~lemely.auth.tokens.mint_otp_token`.
+            device_registry: Enforces the 3-device limit (D1.11). When ``None`` (or
+                when a flow is called without a :class:`DeviceContext`) no device is
+                registered and the minted token carries no ``session_id`` claim.
         """
         self._gotrue = gotrue
         self._mirror = mirror
@@ -97,6 +118,26 @@ class AuthService:
         self._otp_store = otp_store
         self._settings = settings
         self._token_signer: TokenSigner = token_signer or mint_otp_token
+        self._device_registry = device_registry
+
+    def _register_device(
+        self, user_id: uuid.UUID, device: DeviceContext | None
+    ) -> uuid.UUID | None:
+        """Register the login's device and return its session id, or ``None``.
+
+        Returns ``None`` (so no ``session_id`` claim is minted, exempting the token
+        from the liveness check) when either the registry or the device context is
+        absent — e.g. hermetic tests and seat-invite signups.
+        """
+        if self._device_registry is None or device is None:
+            return None
+        registration = self._device_registry.register_login(
+            user_id,
+            client_device_id=device.client_device_id,
+            user_agent=device.user_agent,
+            device_label=device.label,
+        )
+        return registration.session_id
 
     def signup(
         self,
@@ -105,13 +146,15 @@ class AuthService:
         role: Role,
         display_name: str | None = None,
         phone: str | None = None,
+        device: DeviceContext | None = None,
     ) -> AuthResult:
         """Create a GoTrue user, mirror it, and return a self-signed token.
 
         The user is admin-created (email pre-confirmed) with ``role`` in
         ``user_metadata`` and mirrored 1:1 into ``public.users``. The caller then
         receives a self-signed HS256 access token minted by the backend (D1.5) —
-        GoTrue's own token is never forwarded.
+        GoTrue's own token is never forwarded. When a :class:`DeviceContext` is
+        supplied the login is registered against the 3-device limit (D1.11).
         """
         created = self._gotrue.admin_create_user(email, password, role.value, phone)
         self._mirror.upsert(
@@ -121,27 +164,35 @@ class AuthService:
             phone=phone,
             display_name=display_name,
         )
+        session_id = self._register_device(created.id, device)
         access_token = self._mint_email_token(
-            user_id=created.id, role=role, email=created.email, phone=phone
+            user_id=created.id, role=role, email=created.email, phone=phone, session_id=session_id
         )
         return AuthResult(access_token=access_token, user_id=created.id, role=role)
 
-    def login(self, email: str, password: str) -> AuthResult:
+    def login(self, email: str, password: str, device: DeviceContext | None = None) -> AuthResult:
         """Verify the credential via GoTrue, re-mirror, and mint a token.
 
         GoTrue's password grant is used only to *verify* the credential; its
         (ES256) access token is discarded and the backend mints its own HS256
         token (D1.5). The mirrored role is read from the existing ``public.users``
         row when present (GoTrue owns the credential, we own the role); it falls
-        back to ``student`` only if the user was never mirrored.
+        back to ``student`` only if the user was never mirrored. When a
+        :class:`DeviceContext` is supplied the login registers a device and may
+        evict the account's oldest session (D1.11).
         """
         token = self._gotrue.password_grant(email, password)
         existing = self._mirror.get_by_id(token.user.id)
         role = existing.role if existing is not None else Role.student
         phone = existing.phone if existing is not None else None
         self._mirror.upsert(token.user.id, email=token.user.email, role=role)
+        session_id = self._register_device(token.user.id, device)
         access_token = self._mint_email_token(
-            user_id=token.user.id, role=role, email=token.user.email, phone=phone
+            user_id=token.user.id,
+            role=role,
+            email=token.user.email,
+            phone=phone,
+            session_id=session_id,
         )
         return AuthResult(access_token=access_token, user_id=token.user.id, role=role)
 
@@ -152,6 +203,7 @@ class AuthService:
         role: Role,
         email: str | None,
         phone: str | None,
+        session_id: uuid.UUID | None = None,
     ) -> str:
         """Mint a self-signed HS256 access token for an email/password user."""
         return mint_access_token(
@@ -161,6 +213,7 @@ class AuthService:
             provider="email",
             phone=phone,
             email=email,
+            session_id=session_id,
         )
 
     def request_otp(self, phone: str) -> None:
@@ -172,12 +225,14 @@ class AuthService:
         code = self._otp_store.issue(phone)
         self._sms.send_code(phone, code)
 
-    def verify_otp(self, phone: str, code: str) -> AuthResult:
+    def verify_otp(self, phone: str, code: str, device: DeviceContext | None = None) -> AuthResult:
         """Verify an OTP and mint a self-signed parent access token.
 
         On success the mirrored parent user is looked up (mirrored ``id`` becomes
         the token ``sub``); if no parent row exists yet a fresh id is minted and
-        the user is mirrored so the token always has a stable subject.
+        the user is mirrored so the token always has a stable subject. When a
+        :class:`DeviceContext` is supplied the login is registered against the
+        3-device limit (D1.11).
 
         Raises:
             AuthError: The OTP is unknown, expired, wrong, or locked out.
@@ -197,12 +252,14 @@ class AuthService:
                 user_id, email=_phone_placeholder_email(phone), role=Role.parent, phone=phone
             )
 
+        session_id = self._register_device(user_id, device)
         token = self._token_signer(
             user_id=user_id,
             settings=self._settings,
             app_role=Role.parent.value,
             phone=phone,
             email=email,
+            session_id=session_id,
         )
         return AuthResult(access_token=token, user_id=user_id, role=Role.parent)
 
@@ -218,4 +275,4 @@ def _phone_placeholder_email(phone: str) -> str:
     return f"phone+{normalised}@parents.lemely.local"
 
 
-__all__ = ["AuthResult", "AuthService", "TokenSigner"]
+__all__ = ["AuthResult", "AuthService", "DeviceContext", "TokenSigner"]

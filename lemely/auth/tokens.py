@@ -40,6 +40,7 @@ class Claims:
     app_role: str | None = None
     phone: str | None = None
     email: str | None = None
+    session_id: str | None = None
 
 
 def mint_access_token(
@@ -50,6 +51,7 @@ def mint_access_token(
     provider: str,
     phone: str | None = None,
     email: str | None = None,
+    session_id: uuid.UUID | None = None,
     ttl_seconds: int = 3600,
     now: datetime | None = None,
 ) -> str:
@@ -68,6 +70,9 @@ def mint_access_token(
             (``"email"`` for password login, ``"phone"`` for parent OTP).
         phone: Optional phone number claim.
         email: Optional email claim.
+        session_id: Optional device/session id (the ``devices`` row id). When
+            present it is carried as a top-level ``session_id`` claim so the auth
+            dependency can enforce the 3-device limit by revoking that row (D1.11).
         ttl_seconds: Token lifetime in seconds.
         now: Injectable clock for deterministic tests (defaults to ``now(UTC)``).
     """
@@ -86,6 +91,8 @@ def mint_access_token(
         payload["phone"] = phone
     if email is not None:
         payload["email"] = email
+    if session_id is not None:
+        payload["session_id"] = str(session_id)
     secret = settings.supabase.jwt_secret.get_secret_value()
     return jwt.encode(payload, secret, algorithm=_ALGORITHM)
 
@@ -97,6 +104,7 @@ def mint_otp_token(
     app_role: str,
     phone: str | None = None,
     email: str | None = None,
+    session_id: uuid.UUID | None = None,
     ttl_seconds: int = 3600,
     now: datetime | None = None,
 ) -> str:
@@ -112,6 +120,7 @@ def mint_otp_token(
         provider="phone",
         phone=phone,
         email=email,
+        session_id=session_id,
         ttl_seconds=ttl_seconds,
         now=now,
     )
@@ -152,6 +161,7 @@ def decode_token(token: str, settings: Settings) -> Claims:
 
     phone = payload.get("phone")
     email = payload.get("email")
+    session_id = payload.get("session_id")
     return Claims(
         sub=sub,
         role=role,
@@ -160,6 +170,7 @@ def decode_token(token: str, settings: Settings) -> Claims:
         app_role=app_role,
         phone=str(phone) if phone is not None else None,
         email=str(email) if email is not None else None,
+        session_id=str(session_id) if session_id is not None else None,
     )
 
 

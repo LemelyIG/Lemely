@@ -24,6 +24,7 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
+from lemely.db.device_repo import DeviceRegistry
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
 from lemely.db.seat_repo import SeatService
@@ -63,12 +64,25 @@ def get_gemini_client() -> GeminiClient:
 
 
 @lru_cache(maxsize=1)
+def get_device_registry() -> DeviceRegistry:
+    """Return the process-wide device/session registry singleton (D1.11).
+
+    Wraps the DB session factory; constructing it opens no connection (the engine
+    is lazy), so injecting it into :func:`get_auth_context` keeps the hermetic
+    auth-dependency suite offline — a DB read only happens for a token that
+    actually carries a ``session_id`` claim.
+    """
+    return DeviceRegistry(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_auth_service() -> AuthService:
     """Return the process-wide :class:`AuthService` singleton.
 
     Wired with the real GoTrue HTTP backend, the DB-backed user mirror, the mock
-    SMS provider, and an OTP store using a wall-clock and the default RNG. Tests
-    override this dependency with a service built on the fake seams.
+    SMS provider, an OTP store using a wall-clock and the default RNG, and the
+    device registry that enforces the 3-device limit (D1.11). Tests override this
+    dependency with a service built on the fake seams.
     """
     settings = get_settings()
     otp_store = OtpStore(
@@ -85,6 +99,7 @@ def get_auth_service() -> AuthService:
         sms=MockSmsProvider(),
         otp_store=otp_store,
         settings=settings,
+        device_registry=get_device_registry(),
     )
 
 
@@ -148,6 +163,7 @@ _ROLE_VALUES: frozenset[str] = frozenset(role.value for role in Role)
 def get_auth_context(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
     settings: Annotated[Settings, Depends(get_settings)],
+    devices: Annotated[DeviceRegistry, Depends(get_device_registry)],
 ) -> AuthContext:
     """Validate the ``Authorization: Bearer`` token and return the caller.
 
@@ -157,8 +173,14 @@ def get_auth_context(
     expired, wrong audience, missing/unknown role — is a 401 so no route ever
     serves an unauthenticated or role-less caller.
 
+    When the token carries a ``session_id`` claim (D1.11), a single indexed DB
+    read confirms that device row is still live; an evicted or unknown session is
+    a 401. Tokens without a ``session_id`` (hermetic tests, seat-invite signups)
+    skip the check entirely, preserving the fully-offline validation path.
+
     Raises:
-        HTTPException: 401 when the token is absent or fails validation.
+        HTTPException: 401 when the token is absent or fails validation, or when
+            its session has been invalidated.
     """
     if credentials is None or not credentials.credentials:
         raise HTTPException(
@@ -178,6 +200,12 @@ def get_auth_context(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Access token is missing a recognised role",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if claims.session_id is not None and not devices.is_session_live(claims.session_id):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This session has been signed out",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return AuthContext(
@@ -220,5 +248,6 @@ def reset_singletons() -> None:
     get_settings.cache_clear()
     get_history_store.cache_clear()
     get_gemini_client.cache_clear()
+    get_device_registry.cache_clear()
     get_auth_service.cache_clear()
     get_seat_service.cache_clear()
