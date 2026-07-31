@@ -40,14 +40,19 @@ STUDENT_GET_ROUTES = [
 STUDENT_POST_ROUTES = [
     ("/api/student/plan", {"weeklyHours": 6.0}),
     ("/api/student/onboarding", {"weeklyHours": 5.0, "sliders": []}),
+    # /student/correct takes no body (the SSE self-mark stream); an empty POST
+    # still hits the per-route student guard, so a wrong/absent role is 401/403.
+    ("/api/student/correct", None),
 ]
 # Teacher routes are gated at the router level, so proving the guard on a
 # representative spread of GETs proves it for the whole router.
 TEACHER_GET_ROUTES = [
     "/api/papers",
+    "/api/papers/0",
     "/api/grading/queue",
     "/api/schemes",
     "/api/teacher/classes",
+    "/api/classes/0",
     "/api/teacher/overview",
     "/api/quizzes/topics",
     "/api/quizzes/pools",
@@ -98,7 +103,7 @@ def test_get_without_token_is_401(app_and_store: tuple[object, HistoryStore], pa
 
 @pytest.mark.parametrize(("path", "body"), STUDENT_POST_ROUTES)
 def test_post_without_token_is_401(
-    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object]
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object] | None
 ) -> None:
     app, _ = app_and_store
     resp = _client(app).post(path, json=body)
@@ -117,6 +122,18 @@ def test_student_route_rejects_non_student(
         user_id="t1", role=Role.teacher.value
     )
     resp = _client(app).get(path)
+    assert resp.status_code == 403, path
+
+
+@pytest.mark.parametrize(("path", "body"), STUDENT_POST_ROUTES)
+def test_student_post_rejects_non_student(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object] | None
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="t1", role=Role.teacher.value
+    )
+    resp = _client(app).post(path, json=body)
     assert resp.status_code == 403, path
 
 
