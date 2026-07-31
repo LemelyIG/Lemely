@@ -3,6 +3,36 @@
 
 ## Phase 1
 
+### D1.6 — RBAC model: least-privilege role gating + token-derived ownership; teacher tenancy deferred
+- **What:** Authorization is enforced by a `require_role(*roles)` dependency factory
+  (`lemely/web/deps.py`) layered on `get_auth_context`. It authenticates first (401 on
+  missing/invalid token) then 403s any caller whose `AuthContext.role` is not in the allowed
+  set. Application: (a) every **student** route depends on `require_role(Role.student)` and
+  keys all data off `auth.user_id` (a student can only ever read/write their own history
+  bucket); (b) the **teacher** router is gated at the router level with
+  `require_role(Role.teacher, Role.school_admin, Role.platform_admin)` so every current and
+  future teacher route inherits the staff guard; (c) `/api/health` and the `/api/auth/*`
+  routes stay public by design.
+- **IDOR kill:** POST /student/plan and POST /student/onboarding previously trusted a
+  caller-supplied `studentId` (any caller could act as any student). Both now require a
+  student token and derive identity from `auth.user_id`; `studentId` was **removed** from
+  `StudyPlanRequest`/`OnboardingRequest`, so under `extra="forbid"` a smuggled id is a 422,
+  not an impersonation. Covered by tests/test_authz_matrix.py.
+- **Least privilege, no super-role:** each portal names exactly the roles allowed; there is
+  no implicit "admin sees all" bypass at the route layer (a platform_admin reaching student
+  data will come via dedicated admin surfaces later, not by hitting /student/*). This keeps
+  the authz matrix explicit and testable.
+- **Teacher per-tenant ownership DEFERRED (honest limitation):** "a teacher sees only their
+  own classes/students" cannot be enforced yet because the teacher routes still read the
+  shared single-bucket interim `HistoryStore` (no class↔teacher / student↔teacher mapping is
+  wired to routes). P1.6 enforces the *role* boundary (students/parents are fully locked out
+  of teacher routes); row-level teacher→class ownership lands when these routes move onto the
+  DB-backed class model (Phase 2/3). Recorded so this is not mistaken for complete tenancy.
+- **Alternatives:** per-route `Depends` on every teacher handler (rejected: 15 signatures to
+  touch, easy to forget one; router-level guard is defense-in-depth and future-proof);
+  keeping `studentId` in the body but ignoring it (rejected: a trusted-looking field that is
+  silently dropped is a footgun — removing it makes the contract honest).
+
 ### D1.5 — Backend is the sole token issuer to clients (HS256 self-signed), revising D1.4
 - **What:** The FastAPI backend mints **every** access token it hands to a client, self-signed
   HS256 with the shared `SupabaseSettings.jwt_secret`, in the GoTrue claim shape (`sub`,

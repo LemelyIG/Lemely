@@ -238,9 +238,10 @@ class StudyPlanDTO(ApiModel):
 class StudyPlanRequest(ApiModel):
     """Request body for ``POST /api/student/plan``."""
 
+    # The student is the authenticated caller (auth.user_id); the request carries
+    # no studentId (removing the former IDOR — see student router POST /student/plan).
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    studentId: str
     weeklyHours: float = 11.0
     narrate: bool = False
 
@@ -289,9 +290,10 @@ class OnboardSliderInput(ApiModel):
 class OnboardingRequest(ApiModel):
     """Request body for ``POST /api/student/onboarding``."""
 
+    # The student is the authenticated caller (auth.user_id); the request carries
+    # no studentId (removing the former IDOR — see student router POST /student/onboarding).
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    studentId: str
     gradeLevel: str = ""
     school: str | None = None
     weeklyHours: float

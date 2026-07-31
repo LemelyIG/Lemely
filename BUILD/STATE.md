@@ -79,10 +79,22 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        valid/all-5-roles/missing-header/garbage/wrong-secret/expired/unknown-role/missing-role).
        437 passed / 12 subtests / 85.88% cov; static gates clean. NOTE: routes are not yet
        role-gated — that is P1.6 RBAC.)
-- [ ] todo — RBAC dependency on EVERY route; kill both IDOR endpoints
+- [x] done — RBAC dependency on EVERY route; kill both IDOR endpoints
        (POST /student/plan, POST /student/onboarding); row-level ownership checks
        (student=self; parent=linked children; teacher=their classes; school_admin=their
        school; platform_admin=all)
+       (P1.6, D1.6: require_role(*roles) factory in deps.py (401 then 403). Student routes →
+       require_role(Role.student), all keyed off auth.user_id (self-ownership inherent).
+       Teacher router → router-level require_role(teacher, school_admin, platform_admin).
+       IDOR killed: studentId removed from StudyPlanRequest/OnboardingRequest; identity is
+       auth.user_id, smuggled id → 422. /health + /auth/* stay public. tests/test_authz_matrix.py
+       (31 tests: no-token→401, wrong-role→403, IDOR-kill, real-token e2e). 468 passed / 12
+       subtests / 86% cov; ruff/mypy/lint-imports clean. HONEST LIMITATION (D1.6): teacher
+       per-tenant ownership (own classes only) is DEFERRED — teacher routes still read the
+       shared interim HistoryStore; role boundary IS enforced (students/parents locked out),
+       row-level teacher→class ownership lands when routes move to the DB class model.
+       Parent routes: none exist yet (parent portal is Phase 3). ADVERSARIAL REVIEW still
+       pending — run reviewer subagent on this diff at phase acceptance.)
 - [ ] todo — Migrate HistoryStore JSON → Postgres; migration script + parity tests; then
        delete the JSON store (io/history_store.py) after parity proven
 - [ ] todo — Seat model: school_admin invites/creates N students against seat quota; a
@@ -95,19 +107,19 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        develop; PR develop→main; ntfy
 
 ## Next action
-P1.4 auth + P1.5 JWT dependency DONE. Next non-done task: **RBAC on EVERY route** —
-a role-gating dependency (e.g. `require_role(*roles)` built on `get_auth_context`) applied
-to every student/teacher/auth route, PLUS row-level ownership checks (student=self;
-parent=linked children; teacher=their classes; school_admin=their school; platform_admin=all)
-and KILL the two IDOR endpoints (POST /student/plan, POST /student/onboarding — they take a
-caller-supplied id; must derive it from AuthContext.user_id instead). Every route needs an
-authz test. The route-by-route sweep is a good candidate for a workflow (MISSION §5). Then
-HistoryStore→Postgres migration, seat model, device registry, E2E/authz acceptance.
+P1.4 auth + P1.5 JWT dep + P1.6 RBAC/IDOR-kill DONE. Next non-done task: **Migrate
+HistoryStore JSON → Postgres** — a migration script + parity tests that move the interim
+`lemely/io/history_store.py` JSON store into the DB-backed schema (attempts/question_results/
+weakness_records per P1.3), prove parity, then DELETE the JSON store. NOTE the web routers
+still call history_store.load()/append(); those call sites move to a DB-backed store/repo in
+this task (or a thin adapter) — coordinate so student/teacher routes read the DB. Then seat
+model, device registry (max 3, 4th evicts oldest), and the E2E/authz acceptance (which
+includes the required adversarial reviewer pass over the whole auth surface).
 Revisit BUILD/BLOCKERS.md (none currently).
 
-Building context tip: get_auth_context lives in lemely/web/deps.py; AuthContext.role is the
-platform role STRING (Role value). student router already threads auth.user_id into
-history_store.load(); teacher router does NOT yet depend on auth at all (add it in P1.6).
+CI HEADS-UP (unchanged): DB/auth integration tests skip when Postgres unreachable, so CI is
+green today; before the acceptance task add a Postgres services block + `alembic upgrade head`
+to .github/workflows/ci.yml so real-DB auth/authz tests actually run in CI.
 
 HEADS-UP for CI: the new DB integration tests (tests/test_db_schema.py) skip when Postgres
 is unreachable, so CI stays green today. Before the auth E2E task, CI (.github/workflows/
@@ -115,6 +127,16 @@ ci.yml) needs a Postgres `services:` block (or a Supabase step) + `alembic upgra
 otherwise the real-DB auth/authz tests will silently skip in CI.
 
 ## Session handoff notes
+- 2026-07-31 (P1.5 + P1.6 DONE, same session): after P1.4, implemented the JWT bearer
+  dependency (P1.5) then RBAC (P1.6). deps.py get_auth_context validates HS256 tokens →
+  AuthContext or 401; require_role(*roles) adds 403 role-gating. Student routes gated to
+  Role.student (self-owned via auth.user_id); teacher router gated at router level to
+  {teacher, school_admin, platform_admin}. Killed both IDORs (removed studentId from the two
+  request DTOs; identity = auth.user_id). Existing web tests override get_auth_context so they
+  stayed green after the DTO changes. New: test_auth_dependency.py (8), test_authz_matrix.py
+  (31). Full suite 468 passed / 12 subtests / 86% cov; all static gates clean. Two focused
+  commits (P1.5, P1.6). Adversarial reviewer pass over the auth surface is deferred to the
+  Phase-1 acceptance task (still enforce it there). Next: HistoryStore→Postgres migration.
 - 2026-07-31 (P1.4 auth DONE): resumed on a dirty tree carrying the full P1.4 auth work
   (lemely/auth/ + router + tests) plus a recorded D1.5 decision. Verified before trusting:
   static gates clean, hermetic auth tests green — BUT the live test (test_auth_live.py) had

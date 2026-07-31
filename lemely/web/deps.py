@@ -13,7 +13,7 @@ import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -29,6 +29,9 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @lru_cache(maxsize=1)
@@ -135,6 +138,33 @@ def get_auth_context(
         email=claims.email,
         phone=claims.phone,
     )
+
+
+def require_role(*allowed: Role) -> Callable[[AuthContext], AuthContext]:
+    """Build a dependency that authenticates then role-gates the caller.
+
+    The returned dependency runs :func:`get_auth_context` first (so an absent or
+    invalid token is a 401), then rejects any authenticated caller whose platform
+    role is not in ``allowed`` with a 403. On success it returns the
+    :class:`AuthContext` unchanged so handlers still read ``auth.user_id`` — the
+    row-level ownership key — from it.
+
+    Least privilege: each portal's routes name exactly the roles allowed to reach
+    them; there is no implicit super-role. Cross-tenant reads are prevented at the
+    data layer by keying on ``auth.user_id`` (a student can only ever load their
+    own bucket), not by trusting any caller-supplied id.
+    """
+    allowed_values = frozenset(role.value for role in allowed)
+
+    def _guard(auth: Annotated[AuthContext, Depends(get_auth_context)]) -> AuthContext:
+        if auth.role not in allowed_values:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your role is not permitted to access this resource",
+            )
+        return auth
+
+    return _guard
 
 
 def reset_singletons() -> None:

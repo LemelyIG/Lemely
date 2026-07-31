@@ -30,16 +30,17 @@ from lemely.core.history import PaperRecord, StudentHistory
 from lemely.core.schemas import WeaknessReport
 from lemely.core.study import StudentProfile, StudyPlan
 from lemely.core.study_plan import build_study_plan
+from lemely.db.models.enums import Role
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.history_store import HistoryStore
 from lemely.io.study_plan_ai import StudyPlanNarrator
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
     AuthContext,
-    get_auth_context,
     get_gemini_client,
     get_history_store,
     get_settings,
+    require_role,
 )
 from lemely.web.schemas_student import (
     IntegrityRowDTO,
@@ -184,7 +185,7 @@ def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
 
 @router.get("/student/overview", response_model=OverviewDTO)
 def student_overview(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStore, Depends(get_history_store)],
 ) -> OverviewDTO:
     """Return the student Overview: subject rows, global weak threads, momentum.
@@ -212,7 +213,7 @@ def student_overview(
 @router.get("/student/subject/{code}", response_model=SubjectDTO)
 def student_subject(
     code: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStore, Depends(get_history_store)],
 ) -> SubjectDTO:
     """Return one subject's papers breakdown, topic map, and paper history.
@@ -323,7 +324,7 @@ def _paper_label(record: PaperRecord) -> str:
 @router.get("/student/result/{paper_id}", response_model=ResultDTO)
 def student_result(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStore, Depends(get_history_store)],
 ) -> ResultDTO:
     """Return the flagship per-paper result for ``paper_id`` (a record index).
@@ -404,7 +405,7 @@ def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
 
 @router.post("/student/correct")
 def student_correct(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
 ) -> StreamingResponse:
     """Stream the self-mark pipeline (extract → grade) as Server-Sent Events.
 
@@ -454,7 +455,7 @@ def _plan_to_dto(plan: StudyPlan) -> StudyPlanDTO:
 
 @router.get("/student/plan", response_model=StudyPlanDTO)
 def student_plan_get(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStore, Depends(get_history_store)],
 ) -> StudyPlanDTO:
     """Return the deterministic weekly study plan (data-backed, no narrative).
@@ -479,24 +480,27 @@ def student_plan_get(
 @router.post("/student/plan", response_model=StudyPlanDTO)
 def student_plan_post(
     payload: StudyPlanRequest,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStore, Depends(get_history_store)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> StudyPlanDTO:
-    """Build a study plan for the requested student, optionally AI-narrated.
+    """Build the authenticated student's study plan, optionally AI-narrated.
 
-    Deterministic schedule is data-backed from history weaknesses. When
-    ``narrate`` is true a :class:`StudyPlanNarrator` (Gemini) enriches it with a
-    narrative. Narration only runs when an API key is configured (mirroring the
-    upload pipeline); in the default no-key state — or if the narrator raises at
-    runtime — the endpoint returns a clean 503 rather than an unhandled 500. The
-    deterministic plan is always available, so a degraded caller can retry
-    without narration.
+    The student is the authenticated caller (``auth.user_id``) — never a
+    caller-supplied id — so a student can only ever generate their own plan
+    (former IDOR removed). Deterministic schedule is data-backed from history
+    weaknesses. When ``narrate`` is true a :class:`StudyPlanNarrator` (Gemini)
+    enriches it with a narrative. Narration only runs when an API key is
+    configured (mirroring the upload pipeline); in the default no-key state — or
+    if the narrator raises at runtime — the endpoint returns a clean 503 rather
+    than an unhandled 500. The deterministic plan is always available, so a
+    degraded caller can retry without narration.
     """
-    history = history_store.load(payload.studentId)
+    history = history_store.load(auth.user_id)
     weaknesses = aggregate_weaknesses_from_history(history)
     subjects = sorted({r.metadata.subject_code for r in history.records})
     profile = StudentProfile(
-        student_id=payload.studentId,
+        student_id=auth.user_id,
         grade_level="",
         subjects=subjects or ["unknown"],
         weekly_study_hours=payload.weeklyHours,
@@ -528,7 +532,7 @@ def student_plan_post(
 
 @router.get("/student/standings", response_model=StandingsDTO)
 def student_standings(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStore, Depends(get_history_store)],
 ) -> StandingsDTO:
     """Return the student's standings summary.
@@ -568,14 +572,19 @@ def student_standings(
 
 
 @router.post("/student/onboarding", response_model=StudentProfileDTO)
-def student_onboarding(payload: OnboardingRequest) -> StudentProfileDTO:
+def student_onboarding(
+    payload: OnboardingRequest,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+) -> StudentProfileDTO:
     """Build and return a :class:`StudentProfile` from onboarding slider inputs.
 
-    Fully data-backed: subjects and per-subject confidence come from the slider
-    readings (a slider with a subject ``code`` contributes a ``pct/100``
-    confidence); ``weeklyStudyHours`` is the reported hours. Nothing is fabricated
-    — sliders without a subject code (e.g. "hours", "pressure") are treated as
-    non-subject signals and excluded from ``subjects``/``confidenceBySubject``.
+    The profile belongs to the authenticated student (``auth.user_id``), never a
+    caller-supplied id (former IDOR removed). Fully data-backed: subjects and
+    per-subject confidence come from the slider readings (a slider with a subject
+    ``code`` contributes a ``pct/100`` confidence); ``weeklyStudyHours`` is the
+    reported hours. Nothing is fabricated — sliders without a subject code (e.g.
+    "hours", "pressure") are treated as non-subject signals and excluded from
+    ``subjects``/``confidenceBySubject``.
     """
     confidence: dict[str, float] = {}
     subjects: list[str] = []
@@ -585,7 +594,7 @@ def student_onboarding(payload: OnboardingRequest) -> StudentProfileDTO:
             confidence[slider.code] = round(slider.pct / 100.0, 4)
 
     profile = StudentProfile(
-        student_id=payload.studentId,
+        student_id=auth.user_id,
         grade_level=payload.gradeLevel,
         subjects=subjects,
         school=payload.school,

@@ -40,6 +40,7 @@ from lemely.core.schemas import (
     ExamMetadata,
     WeaknessReport,
 )
+from lemely.db.models.enums import Role
 from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore, now_iso
 from lemely.io.question_generation import QuestionGenerator
@@ -51,6 +52,7 @@ from lemely.web.deps import (
     get_gemini_client,
     get_history_store,
     get_settings,
+    require_role,
 )
 from lemely.web.jobs import registry
 from lemely.web.schemas import (
@@ -87,7 +89,15 @@ from lemely.web.schemas_teacher import (
     UploadResponseDTO,
 )
 
-router = APIRouter(prefix="/api")
+# Every teacher-portal route is staff-only. Gating at the router level means a
+# 401 (no/invalid token) or 403 (student/parent) is enforced uniformly and any
+# future teacher route inherits the guard by construction. Per-teacher tenancy
+# (a teacher only seeing their own classes) is deferred to when these routes move
+# off the shared interim HistoryStore onto the DB-backed class model (D1.6).
+router = APIRouter(
+    prefix="/api",
+    dependencies=[Depends(require_role(Role.teacher, Role.school_admin, Role.platform_admin))],
+)
 
 # Hard cap on a single uploaded file (scan or mark scheme). Uploads are streamed
 # to disk in chunks and aborted with a 413 once this many bytes are seen, so a
