@@ -262,3 +262,29 @@
   generation, so it costs nothing against the $8 ledger.
 - **Tests:** live-ping reachable→all_passed; unreachable→exit 3 + gemini_reachable
   false (both mock `check_reachable`, no real network in the suite).
+
+### D1.7 — Adversarial auth-surface hardening (signup RBAC, OTP resend cooldown, history-key guard)
+- **What:** Three defensive fixes to the Phase-1 auth surface, found by an
+  adversarial review pass:
+  1. **Self-service signup is student-only.** `POST /api/auth/signup` now 403s any
+     role other than `student` (`_SELF_SERVICE_SIGNUP_ROLES = {student}`). Elevated
+     roles (teacher/school_admin/platform_admin) are minted only by an authenticated
+     admin via the seat/invite flow (later task), never by an anonymous caller.
+  2. **OTP resend cooldown.** `OtpStore.issue` raises `OtpRateLimitError` if a *live*
+     challenge for the same phone was issued < `otp_min_resend_seconds` (default 30)
+     ago; the router maps it to **429**. Without this, a caller could reset the
+     `max_attempts` brute-force counter by re-requesting before lockout.
+  3. **History-store key guard.** `HistoryStore` runs every `student_id` through
+     `_safe_key`, rejecting path separators, `.`/`..` segments, and NUL bytes before
+     it becomes a `{root}/{id}.json` path — closing a traversal vector for the
+     request-supplied ids some callers pass.
+- **Why:** All three are unauthenticated/low-privilege escalation or abuse vectors on
+  routes that are now publicly reachable. Cheapest correct fix at each layer; no schema
+  or API-shape change (signup DTO unchanged — the 403 is behavioural).
+- **Tests:** `test_signup_elevated_role_forbidden` (3 roles → 403) + student→200;
+  `test_resend_within_cooldown_is_rate_limited` / `_allowed_after_cooldown` /
+  `_once_prior_challenge_expired` + router `test_otp_resend_within_cooldown_returns_429`;
+  `test_unsafe_student_id_rejected` (7 hostile keys) + a dotted-id allow test.
+- **Alternatives:** Map the resend cooldown to 401 (rejected: 429 is the correct
+  semantic and lets clients back off); allow-list roles at the DTO layer (rejected: the
+  behavioural 403 keeps one signup DTO and a clear audit log line).

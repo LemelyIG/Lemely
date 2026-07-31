@@ -51,13 +51,28 @@ def test_signup_endpoint(context: tuple[TestClient, AuthService, Settings]) -> N
     client, _, _ = context
     resp = client.post(
         "/api/auth/signup",
-        json={"email": "t@example.com", "password": "pw-123456", "role": "teacher"},
+        json={"email": "s@example.com", "password": "pw-123456", "role": "student"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["role"] == "teacher"
+    assert body["role"] == "student"
     assert body["accessToken"]
     assert body["userId"]
+
+
+@pytest.mark.parametrize("role", ["teacher", "school_admin", "platform_admin"])
+def test_signup_elevated_role_forbidden(
+    context: tuple[TestClient, AuthService, Settings], role: str
+) -> None:
+    # D1.7: self-service signup may only mint a student account. Requesting any
+    # privileged role must be a 403 so signup can never be a privilege-escalation
+    # path (anonymous caller POSTing role="platform_admin" to mint an admin token).
+    client, _, _ = context
+    resp = client.post(
+        "/api/auth/signup",
+        json={"email": f"{role}@example.com", "password": "pw-123456", "role": role},
+    )
+    assert resp.status_code == 403, resp.text
 
 
 def test_signup_duplicate_returns_400(context: tuple[TestClient, AuthService, Settings]) -> None:
@@ -123,3 +138,16 @@ def test_otp_verify_wrong_code_returns_401(
     client.post("/api/auth/otp/request", json={"phone": phone})
     resp = client.post("/api/auth/otp/verify", json={"phone": phone, "code": "999999"})
     assert resp.status_code == 401
+
+
+def test_otp_resend_within_cooldown_returns_429(
+    context: tuple[TestClient, AuthService, Settings],
+) -> None:
+    # The default resend cooldown (>0s) throttles a rapid second request for the
+    # same phone; the two calls here land well inside the window → 429, not 500.
+    client, _, _ = context
+    phone = "+201234522222"
+    first = client.post("/api/auth/otp/request", json={"phone": phone})
+    assert first.status_code == 200, first.text
+    second = client.post("/api/auth/otp/request", json={"phone": phone})
+    assert second.status_code == 429, second.text

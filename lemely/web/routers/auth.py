@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from lemely.auth.otp import OtpRateLimitError
 from lemely.auth.service import AuthResult, AuthService
 from lemely.db.models.enums import Role
 from lemely.runtime.errors import AuthError
@@ -28,6 +29,14 @@ from lemely.web.schemas_auth import (
 )
 
 router = APIRouter(prefix="/api")
+
+# Self-service signup may only create a plain student account. Elevated roles
+# (teacher / school_admin / platform_admin) are privileged and MUST NOT be
+# obtainable by an anonymous caller — otherwise anyone could POST role=
+# "platform_admin" and mint an admin token (D1.7). Those accounts are created by
+# an authenticated admin via the seat/invite flow (later task) and gated behind
+# the manual-activation flag. Parents authenticate via phone-OTP, not signup.
+_SELF_SERVICE_SIGNUP_ROLES = frozenset({Role.student})
 
 
 def _to_token_dto(result: AuthResult) -> TokenResponseDTO:
@@ -45,12 +54,22 @@ def signup(
     body: SignupRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> TokenResponseDTO:
-    """Create an email/password user (any role) and return a login token."""
+    """Create a self-service **student** account and return a login token.
+
+    Only ``student`` may be self-registered; requesting any elevated role is a 403
+    (D1.7) so signup can never be used for privilege escalation.
+    """
+    requested_role = Role(body.role)
+    if requested_role not in _SELF_SERVICE_SIGNUP_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Self-service signup can only create a student account.",
+        )
     try:
         result = service.signup(
             body.email,
             body.password,
-            Role(body.role),
+            requested_role,
             display_name=body.displayName,
             phone=body.phone,
         )
@@ -77,8 +96,15 @@ def request_otp(
     body: OtpRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> OtpRequestResponseDTO:
-    """Issue a parent phone-OTP challenge (the code is delivered via SMS)."""
-    service.request_otp(body.phone)
+    """Issue a parent phone-OTP challenge (the code is delivered via SMS).
+
+    A re-request inside the resend cooldown is a 429 (not a 500): the cooldown
+    stops a caller resetting the brute-force attempt counter by spamming issues.
+    """
+    try:
+        service.request_otp(body.phone)
+    except OtpRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     return OtpRequestResponseDTO()
 
 

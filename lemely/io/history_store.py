@@ -27,6 +27,26 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
+def _safe_key(student_id: str) -> str:
+    """Return ``student_id`` if it is a safe single-segment filename key, else raise.
+
+    The student id becomes a filename (``{root}/{student_id}.json``). Some callers
+    pass a value that originates from an untrusted request (e.g. a teacher-supplied
+    ``student_id`` on paper upload), so a key containing a path separator, a
+    ``.``/``..`` segment, or a NUL byte could escape ``root`` and read/overwrite an
+    arbitrary ``.json`` file. Reject those instead of trusting them.
+    """
+    if (
+        not student_id
+        or student_id in {".", ".."}
+        or "/" in student_id
+        or "\\" in student_id
+        or "\x00" in student_id
+    ):
+        raise ValueError(f"Unsafe history store key: {student_id!r}")
+    return student_id
+
+
 class HistoryStore:
     """Persistent JSON store for student paper records.
 
@@ -40,7 +60,7 @@ class HistoryStore:
         self._root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, student_id: str) -> Path:
-        return self._root / f"{student_id}.json"
+        return self._root / f"{_safe_key(student_id)}.json"
 
     def append(self, student_id: str, record: PaperRecord) -> None:
         """Append a PaperRecord to the student's history.

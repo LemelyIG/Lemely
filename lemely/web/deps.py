@@ -68,6 +68,7 @@ def get_auth_service() -> AuthService:
         ttl_seconds=settings.auth.otp_ttl_seconds,
         max_attempts=settings.auth.otp_max_attempts,
         code_length=settings.auth.otp_length,
+        min_resend_seconds=settings.auth.otp_min_resend_seconds,
     )
     return AuthService(
         gotrue=HttpGoTrueBackend(settings),

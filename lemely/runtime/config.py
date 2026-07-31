@@ -187,6 +187,9 @@ class AuthSettings(BaseModel):
     otp_max_attempts: int = Field(default=5, ge=1)
     # Number of digits in a generated OTP code.
     otp_length: int = Field(default=6, ge=4, le=10)
+    # Minimum seconds between successive OTP issues for the same phone. Stops an
+    # attacker resetting the attempt counter by re-requesting before lockout.
+    otp_min_resend_seconds: int = Field(default=30, ge=0)
 
 
 class IntegritySettings(BaseModel):

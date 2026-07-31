@@ -39,12 +39,17 @@ class OtpResult(Enum):
     locked_out = "locked_out"
 
 
+class OtpRateLimitError(Exception):
+    """Raised when a phone re-requests an OTP before the resend cooldown elapses."""
+
+
 @dataclass(slots=True)
 class OtpChallenge:
     """A pending OTP challenge for a single phone number."""
 
     code: str
     expires_at: datetime
+    issued_at: datetime
     attempts: int = 0
 
 
@@ -59,6 +64,7 @@ class OtpStore:
         ttl_seconds: int = 300,
         max_attempts: int = 5,
         code_length: int = 6,
+        min_resend_seconds: int = 30,
     ) -> None:
         """Initialise the store with an injected clock and RNG.
 
@@ -68,12 +74,15 @@ class OtpStore:
             ttl_seconds: Lifetime of a challenge before it expires.
             max_attempts: Failed-verify attempts allowed before lockout.
             code_length: Number of digits in a generated code.
+            min_resend_seconds: Minimum interval between successive issues for the
+                same phone (a re-request cooldown). ``0`` disables the cooldown.
         """
         self._clock = clock
         self._rng = rng
         self._ttl = timedelta(seconds=ttl_seconds)
         self._max_attempts = max_attempts
         self._code_length = code_length
+        self._min_resend = timedelta(seconds=min_resend_seconds)
         self._challenges: dict[str, OtpChallenge] = {}
 
     def _generate_code(self) -> str:
@@ -84,13 +93,31 @@ class OtpStore:
     def issue(self, phone: str) -> str:
         """Generate, store, and return a new OTP code for ``phone``.
 
-        Any existing challenge for the same phone is replaced (re-request resets
-        the attempt counter and TTL).
+        A fresh challenge replaces any prior one (new code, reset attempts + TTL),
+        but only after the resend cooldown has elapsed since the last live issue.
+
+        Raises:
+            OtpRateLimitError: A live (non-expired) challenge was issued more
+                recently than ``min_resend_seconds`` ago. Without this throttle a
+                caller could reset the attempt counter by re-requesting before
+                lockout, defeating the ``max_attempts`` brute-force cap.
         """
+        now = self._clock()
+        existing = self._challenges.get(phone)
+        if (
+            existing is not None
+            and now < existing.expires_at
+            and now - existing.issued_at < self._min_resend
+        ):
+            raise OtpRateLimitError(
+                f"OTP already sent; retry in "
+                f"{int((self._min_resend - (now - existing.issued_at)).total_seconds())}s."
+            )
         code = self._generate_code()
         self._challenges[phone] = OtpChallenge(
             code=code,
-            expires_at=self._clock() + self._ttl,
+            expires_at=now + self._ttl,
+            issued_at=now,
         )
         return code
 
@@ -117,4 +144,4 @@ class OtpStore:
         return OtpResult.wrong_code
 
 
-__all__ = ["OtpChallenge", "OtpResult", "OtpStore"]
+__all__ = ["OtpChallenge", "OtpRateLimitError", "OtpResult", "OtpStore"]
