@@ -127,6 +127,19 @@ ci.yml) needs a Postgres `services:` block (or a Supabase step) + `alembic upgra
 otherwise the real-DB auth/authz tests will silently skip in CI.
 
 ## Session handoff notes
+- 2026-07-31 (D1.7 hardening committed on resume): resumed on a dirty tree carrying a
+  prior session's *incomplete, unrun* adversarial-security fixes (otp.py resend cooldown,
+  history_store.py _safe_key guard, auth.py signup-role restriction, config/deps wiring).
+  Verified before trusting: the OtpRateLimitError raise had NO caller handling it (would
+  500, not 429) and the source change silently BROKE two existing tests
+  (test_signup_endpoint signed up as teacher; test_reissue_resets reissued same-instant).
+  Completed the unit: router maps OtpRateLimitError→429; added cooldown tests, signup
+  elevated-role 403 tests (3 roles), history unsafe-key rejection tests (7 hostile keys);
+  fixed the 2 broken tests; recorded D1.7 in DECISIONS.md. 482 passed / 1 skipped (live
+  auth, no keys) / 12 subtests / 84.77% cov; ruff/format/mypy/lint-imports clean. Committed
+  (2596ddf) on feature/phase-1-db-auth-tenancy. NOTE the full adversarial reviewer pass over
+  the whole auth surface is STILL due at Phase-1 acceptance (this was one prior partial pass).
+  Next: HistoryStore→Postgres migration (unchanged).
 - 2026-07-31 (P1.5 + P1.6 DONE, same session): after P1.4, implemented the JWT bearer
   dependency (P1.5) then RBAC (P1.6). deps.py get_auth_context validates HS256 tokens →
   AuthContext or 401; require_role(*roles) adds 403 role-gating. Student routes gated to
