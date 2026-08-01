@@ -80,8 +80,8 @@ def save_correction_artifacts(
     If student_id is non-empty, also appends a PaperRecord to the HistoryStore so the
     Past Results and Quiz tabs can reflect this paper.
     """
-    from lemely.core.history import PaperRecord
-    from lemely.io.history_store import HistoryStore, now_iso
+    from lemely.core.history import PaperRecord, now_iso
+    from lemely.io.history_store import HistoryStore
 
     report = AccuracyReport.model_validate(accuracy_report_dict)
     meta = report.correction.metadata

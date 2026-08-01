@@ -1,5 +1,11 @@
 """JSON-per-student persistence for cross-paper performance history.
 
+Backs the local CLI and Gradio debug tool only. The web/product surface persists
+history in Postgres via ``lemely.db.history_repo.DbHistoryStore`` (decisions
+D1.8/D1.9); ``now_iso`` and the shared ``HistoryStoreProtocol`` now live in
+``lemely.core.history``. Full retirement of this JSON store is deferred until the
+CLI/Gradio tools are migrated or retired.
+
 Single-writer assumption: concurrent CLI + Gradio writes to the same student file
 result in last-writer-wins. The lost record is detectable (missing from
 compare-performance output) and recoverable (re-run correct-paper --record).
@@ -12,7 +18,6 @@ import contextlib
 import json
 import os
 import tempfile
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
@@ -25,6 +30,26 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 log = structlog.get_logger(__name__)
+
+
+def _safe_key(student_id: str) -> str:
+    """Return ``student_id`` if it is a safe single-segment filename key, else raise.
+
+    The student id becomes a filename (``{root}/{student_id}.json``). Some callers
+    pass a value that originates from an untrusted request (e.g. a teacher-supplied
+    ``student_id`` on paper upload), so a key containing a path separator, a
+    ``.``/``..`` segment, or a NUL byte could escape ``root`` and read/overwrite an
+    arbitrary ``.json`` file. Reject those instead of trusting them.
+    """
+    if (
+        not student_id
+        or student_id in {".", ".."}
+        or "/" in student_id
+        or "\\" in student_id
+        or "\x00" in student_id
+    ):
+        raise ValueError(f"Unsafe history store key: {student_id!r}")
+    return student_id
 
 
 class HistoryStore:
@@ -40,7 +65,7 @@ class HistoryStore:
         self._root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, student_id: str) -> Path:
-        return self._root / f"{student_id}.json"
+        return self._root / f"{_safe_key(student_id)}.json"
 
     def append(self, student_id: str, record: PaperRecord) -> None:
         """Append a PaperRecord to the student's history.
@@ -112,8 +137,3 @@ class HistoryStore:
     def list_students(self) -> list[str]:
         """Return all student IDs with recorded history."""
         return [p.stem for p in sorted(self._root.glob("*.json"))]
-
-
-def now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string."""
-    return datetime.now(UTC).isoformat()

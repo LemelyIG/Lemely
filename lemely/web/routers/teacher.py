@@ -24,7 +24,7 @@ import threading
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -33,15 +33,20 @@ from lemely.core.analytics import (
     compare_performance,
 )
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
-from lemely.core.history import PaperRecord, StudentHistory
+from lemely.core.history import (
+    HistoryStoreProtocol,
+    PaperRecord,
+    StudentHistory,
+    now_iso,
+)
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
     AccuracyReport,
     ExamMetadata,
     WeaknessReport,
 )
+from lemely.db.models.enums import Role
 from lemely.io.gemini import GeminiClient
-from lemely.io.history_store import HistoryStore, now_iso
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.teacher_quiz import TeacherQuizBuilder
@@ -51,6 +56,7 @@ from lemely.web.deps import (
     get_gemini_client,
     get_history_store,
     get_settings,
+    require_role,
 )
 from lemely.web.jobs import registry
 from lemely.web.schemas import (
@@ -87,7 +93,15 @@ from lemely.web.schemas_teacher import (
     UploadResponseDTO,
 )
 
-router = APIRouter(prefix="/api")
+# Every teacher-portal route is staff-only. Gating at the router level means a
+# 401 (no/invalid token) or 403 (student/parent) is enforced uniformly and any
+# future teacher route inherits the guard by construction. Per-teacher tenancy
+# (a teacher only seeing their own classes) is deferred to when these routes move
+# off the shared interim HistoryStore onto the DB-backed class model (D1.6).
+router = APIRouter(
+    prefix="/api",
+    dependencies=[Depends(require_role(Role.teacher, Role.school_admin, Role.platform_admin))],
+)
 
 # Hard cap on a single uploaded file (scan or mark scheme). Uploads are streamed
 # to disk in chunks and aborted with a 413 once this many bytes are seen, so a
@@ -269,7 +283,7 @@ def _pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
     ]
 
 
-def _latest_records(history_store: HistoryStore) -> list[PaperRecord]:
+def _latest_records(history_store: HistoryStoreProtocol) -> list[PaperRecord]:
     """Return the most-recent :class:`PaperRecord` per student across all history."""
     latest: list[PaperRecord] = []
     for student_id in history_store.list_students():
@@ -302,7 +316,6 @@ async def upload_paper(
     settings: Annotated[Settings, Depends(get_settings)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     scan: Annotated[UploadFile, File()],
-    student_id: Annotated[str, Form()] = "",
     mark_scheme: Annotated[UploadFile | None, File()] = None,
 ) -> UploadResponseDTO:
     """Ingest a scanned paper (+ optional mark scheme) and detect its metadata.
@@ -311,10 +324,18 @@ async def upload_paper(
     job + paper entry. Detected metadata comes from
     :class:`ScanMetadataExtractor` when an API key is configured; when detection
     is unavailable the ``detected`` list is empty (never fabricated).
+
+    Security (D1.12, fixes the acceptance-review H2): the interim paper bucket is
+    keyed on the server-generated ``paper_id`` only. A teacher-supplied student
+    identity is deliberately NOT accepted here — without the class↔student
+    ownership model (still deferred, D1.6) no teacher can be authorized to write a
+    graded record into a specific student's history, so accepting one would be a
+    cross-tenant write. Associating a graded paper with a real student account
+    lands with the DB-backed class model (Phase 2/3), gated on verified ownership.
     """
     job = registry.create("paper_upload", filename=scan.filename)
     paper_id = job.id
-    resolved_student = student_id.strip() or paper_id
+    resolved_student = paper_id
 
     upload_dir = settings.paths.output_dir / "uploads" / paper_id
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -401,7 +422,7 @@ def extract_paper(
 @router.post("/papers/{paper_id}/grade")
 def grade_paper_endpoint(
     paper_id: str,
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
 ) -> StreamingResponse:
     """Grade a paper and stream ``MARKING_PROGRESS`` over SSE.
@@ -623,10 +644,14 @@ def list_schemes(
             failed += 1
             continue
         rows.append(_scheme_row(path, scheme))
+    # Only stats backed by real, computed data are emitted (D1.12 acceptance-review
+    # honesty fix M2): "Parsed"/"Failed" come from the on-disk scan above. The former
+    # "Pending" (PDFs awaiting parse) and "Your own" (per-teacher uploaded) cards were
+    # hardcoded "0" — there is no upload-queue or per-teacher scheme ownership model in
+    # Phase 1, so surfacing them as live counts misrepresented the feature. They return
+    # when the backing data exists (upload queue + teacher↔scheme ownership, Phase 2/3).
     stats = [
         StatCardDTO(key="Parsed", value=str(len(rows)), unit="schemes"),
-        StatCardDTO(key="Pending", value="0", unit="PDFs", valueTone="accent"),
-        StatCardDTO(key="Your own", value="0", unit="uploaded"),
         StatCardDTO(
             key="Failed",
             value=str(failed),
@@ -731,7 +756,7 @@ def quiz_pools(
 
 @router.get("/quizzes/topics", response_model=QuizTopicsDTO)
 def quiz_topics(
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> QuizTopicsDTO:
     """Return candidate quiz topics ranked by aggregate marks lost across history.
 
@@ -751,7 +776,7 @@ def quiz_topics(
     return QuizTopicsDTO(topics=topics)
 
 
-def _aggregate_history_weaknesses(history_store: HistoryStore) -> WeaknessReport:
+def _aggregate_history_weaknesses(history_store: HistoryStoreProtocol) -> WeaknessReport:
     """Fold every student's history into one aggregate :class:`WeaknessReport`."""
     all_records: list[PaperRecord] = []
     for student_id in history_store.list_students():
@@ -774,7 +799,7 @@ def _preview_question(question: GeneratedQuestion) -> PreviewQuestionDTO:
 
 def _build_quiz(
     settings: Settings,
-    history_store: HistoryStore,
+    history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
     *,
     subject_code: str,
@@ -824,7 +849,7 @@ def _build_quiz(
         ) from exc
 
 
-def _infer_subject_code(history_store: HistoryStore) -> str | None:
+def _infer_subject_code(history_store: HistoryStoreProtocol) -> str | None:
     """Infer a subject code from the most recent recorded paper, if any."""
     records = _latest_records(history_store)
     if not records:
@@ -845,7 +870,7 @@ def _quiz_to_preview(quiz: GeneratedQuiz) -> QuizPreviewDTO:
 @router.post("/quizzes/preview", response_model=QuizPreviewDTO)
 def quiz_preview(
     settings: Annotated[Settings, Depends(get_settings)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     subject_code: str = "",
     count: int = 4,
@@ -866,7 +891,7 @@ def quiz_preview(
 @router.post("/quizzes/generate", response_model=QuizPreviewDTO)
 def quiz_generate(
     settings: Annotated[Settings, Depends(get_settings)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     subject_code: str = "",
     count: int = 5,
@@ -915,7 +940,7 @@ def _student_row(history: StudentHistory) -> StudentRowDTO | None:
 
 @router.get("/teacher/classes", response_model=ClassListDTO)
 def list_classes(
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> ClassListDTO:
     """Return the (single, implicit) class summary derived from all history.
 
@@ -942,7 +967,7 @@ def list_classes(
 @router.get("/classes/{class_id}", response_model=ClassDetailDTO)
 def get_class(
     class_id: str,
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> ClassDetailDTO:
     """Return mastery, grade distribution, and the roster for a class.
 
@@ -1004,7 +1029,7 @@ def get_class(
 
 @router.get("/teacher/overview", response_model=OverviewDTO)
 def teacher_overview(
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> OverviewDTO:
     """Return headline stats plus at-risk students, all from history/analytics.
 

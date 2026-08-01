@@ -118,6 +118,27 @@ class TestHistoryStore:
         with pytest.raises(ParseError, match="unsupported schema_version"):
             store.load("alice")
 
+    @pytest.mark.parametrize(
+        "bad_key",
+        ["../secrets", "a/b", "a\\b", "", ".", "..", "with\x00nul"],
+    )
+    def test_unsafe_student_id_rejected(self, tmp_path: Path, bad_key: str) -> None:
+        # A student_id becomes a filename ({root}/{id}.json). Some callers pass a
+        # request-supplied id, so a path separator / dot-segment / NUL byte could
+        # escape the store root. Every access path must reject it, not traverse.
+        store = HistoryStore(tmp_path / "history")
+        with pytest.raises(ValueError, match="Unsafe history store key"):
+            store.load(bad_key)
+        with pytest.raises(ValueError, match="Unsafe history store key"):
+            store.append(bad_key, _make_record())
+
+    def test_safe_student_id_with_dots_and_at_is_allowed(self, tmp_path: Path) -> None:
+        # A single-segment id that merely *contains* dots (e.g. an email-shaped id)
+        # is fine — only path separators and the bare "."/".." segments are unsafe.
+        store = HistoryStore(tmp_path / "history")
+        store.append("a.user@example.com", _make_record("a.user@example.com"))
+        assert (tmp_path / "history" / "a.user@example.com.json").exists()
+
     def test_pre_versioning_file_loads_as_v1(self, tmp_path: Path) -> None:
         # Files written before schema_version existed must still load (default 1).
         store = HistoryStore(tmp_path / "history")

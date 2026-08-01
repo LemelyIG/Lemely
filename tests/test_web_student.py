@@ -338,6 +338,9 @@ def test_plan_post_narrate_uses_mocked_gemini(
 
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
     # Narration only runs when an API key is configured, so present one.
     app.dependency_overrides[get_settings] = lambda: _settings_with_key()
 
@@ -345,7 +348,7 @@ def test_plan_post_narrate_uses_mocked_gemini(
         TestClient(app)
         .post(
             "/api/student/plan",
-            json={"studentId": STUDENT_ID, "weeklyHours": 8.0, "narrate": True},
+            json={"weeklyHours": 8.0, "narrate": True},
         )
         .json()
     )
@@ -364,10 +367,13 @@ def test_plan_post_narrate_without_key_is_503_not_500(
     """
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
     # Default settings carry no API key.
     resp = TestClient(app).post(
         "/api/student/plan",
-        json={"studentId": STUDENT_ID, "weeklyHours": 8.0, "narrate": True},
+        json={"weeklyHours": 8.0, "narrate": True},
     )
     assert resp.status_code == 503
 
@@ -378,9 +384,12 @@ def test_plan_post_without_narrate_returns_plan_without_key(
     """Without narrate the deterministic plan still returns even with no key."""
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
     resp = TestClient(app).post(
         "/api/student/plan",
-        json={"studentId": STUDENT_ID, "weeklyHours": 8.0, "narrate": False},
+        json={"weeklyHours": 8.0, "narrate": False},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -392,11 +401,14 @@ def test_plan_post_without_narrate_skips_gemini(seeded_store: HistoryStore) -> N
     """POST /plan without narrate never touches Gemini."""
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
     body = (
         TestClient(app)
         .post(
             "/api/student/plan",
-            json={"studentId": STUDENT_ID, "weeklyHours": 6.0},
+            json={"weeklyHours": 6.0},
         )
         .json()
     )
@@ -427,12 +439,17 @@ def test_standings_counts_are_data_backed_ranks_empty(client: TestClient) -> Non
 
 
 def test_onboarding_builds_profile_from_sliders() -> None:
-    """Onboarding maps subject sliders into a StudentProfile with confidences."""
-    client = TestClient(create_app())
+    """Onboarding maps subject sliders into a StudentProfile with confidences.
+
+    The profile id is the authenticated student (auth.user_id), never a
+    caller-supplied studentId (former IDOR removed).
+    """
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(user_id="maya", role="student")
+    client = TestClient(app)
     body = client.post(
         "/api/student/onboarding",
         json={
-            "studentId": "maya",
             "gradeLevel": "Year 11",
             "school": "Helwan Science Centre",
             "weeklyHours": 11.0,

@@ -48,5 +48,6 @@ lemely.toml
 .tokensave
 .omc/
 
-# Supervisor runtime logs
+# Supervisor runtime logs + dedup state
 BUILD/logs/
+BUILD/.supervisor_notify_state

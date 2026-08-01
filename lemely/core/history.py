@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Literal, Protocol
 
 from pydantic import Field
 
 from lemely.core.schemas import ExamMetadata, StrictModel, WeakArea
+
+
+def now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string.
+
+    The canonical timestamp format for ``PaperRecord.recorded_at``; lives here
+    (not in a storage module) so every history backend and caller shares it.
+    """
+    return datetime.now(UTC).isoformat()
 
 
 class PaperRecord(StrictModel):
@@ -45,3 +55,19 @@ class PerformanceComparison(StrictModel):
     prior_count: int
     percentage_delta: float | None
     topic_trends: list[TopicTrend]
+
+
+class HistoryStoreProtocol(Protocol):
+    """Structural interface for a student-history backend.
+
+    Both the JSON ``HistoryStore`` (CLI/Gradio) and the Postgres
+    ``DbHistoryStore`` (web/product) satisfy this, so the web routers and the
+    grading service depend on the behaviour, not a concrete storage class
+    (decisions D1.8/D1.9).
+    """
+
+    def load(self, student_id: str) -> StudentHistory: ...
+
+    def append(self, student_id: str, record: PaperRecord) -> None: ...
+
+    def list_students(self) -> list[str]: ...

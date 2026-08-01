@@ -32,6 +32,8 @@ from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import Settings, load_settings
 from lemely.web import create_app
 from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
     get_gemini_client,
     get_history_store,
     get_settings,
@@ -42,6 +44,9 @@ from lemely.web.routers.teacher import _PaperEntry, papers_store
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+# Every teacher route is staff-gated (P1.6); tests inject a teacher caller.
+_TEACHER_AUTH = AuthContext(user_id="teacher-1", role="teacher")
 
 # ---------------------------------------------------------------------------
 # Fixtures.
@@ -82,6 +87,7 @@ def client(
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_history_store] = lambda: history_store
     app.dependency_overrides[get_gemini_client] = lambda: gemini_client
+    app.dependency_overrides[get_auth_context] = lambda: _TEACHER_AUTH
     yield TestClient(app)
     app.dependency_overrides.clear()
     papers_store.clear()
@@ -254,6 +260,7 @@ def test_upload_sets_error_status_on_detection_failure(
     app.dependency_overrides[get_settings] = lambda: key_settings
     app.dependency_overrides[get_history_store] = lambda: history_store
     app.dependency_overrides[get_gemini_client] = lambda: gemini_client
+    app.dependency_overrides[get_auth_context] = lambda: _TEACHER_AUTH
     local = TestClient(app)
 
     resp = local.post(

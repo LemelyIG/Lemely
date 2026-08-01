@@ -49,3 +49,9 @@ class PartialFailureError(LemelyError):
     """Batch completed with one or more per-item errors. exit_code stays 1."""
 
     exit_code = 1
+
+
+class AuthError(LemelyError):
+    """Authentication / authorization failure (bad credentials, OTP, token)."""
+
+    exit_code = 8
