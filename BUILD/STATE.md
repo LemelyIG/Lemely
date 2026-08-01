@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-01T06:30:00Z
+last_updated: 2026-08-01T07:10:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -160,7 +160,65 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        develop). reports/phase-1/REPORT.md committed. Merged develop; PR develop→main opened
        (NOT merged); ntfy sent.)
 
+## Phase 2 — The core loop, real and end-to-end
+Branch from `develop` as `feature/phase-2-core-loop`. Expanded from MISSION §4/§9. Order
+front-loads pytest-verifiable BACKEND work (safest unattended) then frontend then E2E.
+Each task: update STATE before/after, commit small, run §6 gates before merge.
+
+- [ ] doing — P2.1 Real correction pipeline: make `POST /api/student/correct` the real
+       SSE-driven pipeline (currently a stub that emits one WARNING + [DONE]). Keyed off
+       auth.user_id (student token, RBAC already enforced). Flow: accept an uploaded
+       paper (by paper_id from the upload route) → metadata detect → fetch/parse mark
+       scheme (stored corpus; escalate to Gemini per chain) → answer extraction → marking
+       w/ method-mark awareness → per-question + per-paper confidence → grade + boundary
+       prediction → weakness detection → PERSIST (Attempt + QuestionResult rows incl.
+       marks/max/confidence/method-mark JSONB + WeaknessRecord) via the DB repos → return
+       result the dashboard reads. Low-confidence → review_queue row. Gemini MOCKED in all
+       tests. Integration test (real local PG) proving persistence + SSE frames + confidence.
+- [ ] todo — P2.2 Grade-boundary ingestion: scrape historical per-paper-variant thresholds
+       for 0580/0606/0625 (all available sessions) from public mirrors (gceguide/
+       papacambridge/xtremepapers) with provenance; parse into the `papers`/boundary table;
+       prediction = exact per-variant lookup → fallback to per-subject historical average
+       with an "estimated" flag surfaced in the API/UI. Use a small checkpointed workflow
+       for the scrape/parse fan-out; commit parsed data + provenance. Tests for lookup +
+       fallback-flag.
+- [ ] todo — P2.3 Accuracy harness + golden fixtures: obtain real past papers + mark
+       schemes for the 3 subjects; generate synthetic handwritten answer sheets
+       (handwriting fonts, ink variation, scan noise/skew/blur/rotation) with known
+       ground-truth spanning correct / partial (method marks) / wrong. COMMIT fixtures.
+       Gate thresholds: ≥99% MCQ agreement; ≥95% mark-level on structured; 100% of
+       disagreements carry confidence below the review threshold. Calibrate the review
+       threshold from harness data. Live-Gemini validation obeys §8 budget (mock in CI).
+- [ ] todo — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
+       results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
+       verdicts). Enable integrity path; surface in result payload + review_queue.
+- [ ] todo — P2.5 Upload path: plain file upload (25MB cap kept) + PWA camera capture →
+       client-side multi-page PDF assembly → Supabase Storage → backend job. Wire storage
+       bucket + signed access; backend reads the stored object for the pipeline.
+- [ ] todo — P2.6 Frontend API foundation: resurrect web/src/lib/api.ts + @tanstack/
+       react-query (remove dead-code status); auth login/token storage (deviceId minting
+       per D1.11), bearer on every request; typed hooks. Vite proxy verified end-to-end.
+- [ ] todo — P2.7 Student surface on real data (screen-by-screen delete student/data.ts):
+       Overview (overall + per-subject), Subject (per-paper history + predicted boundaries/
+       final grade + estimated flag), PaperResult (marks/method-marks/mistakes/weakness/
+       confidence/integrity flags), CorrectPaper (real SSE upload→correct, kill setTimeout
+       theatre), Onboarding/StudyPlan/Standings as far as Phase-2 scope needs.
+- [ ] todo — P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
+       incrementally): Grading, Review (low-confidence/integrity queue), MarkSchemes,
+       Overview. Fill audit "partial" hollow fields honestly or mark deferred.
+- [ ] todo — P2.9 PWA: manifest + service worker + installable + offline shell; camera
+       capture UX; Lighthouse PWA checks pass. Gradio stays internal debug only.
+- [ ] todo — P2.10 Acceptance: Playwright E2E — seeded student uploads a fixture scan and
+       sees correct marks/grade/weaknesses on the dashboard; accuracy thresholds met;
+       screenshots in reports/phase-2/screens/. §6 gates green; reports/phase-2/REPORT.md;
+       merge feature→develop; push; open develop→main PR via gh (DO NOT MERGE); ntfy.
+
 ## Next action
+Executing **P2.1 real correction pipeline**. First scope the current stub + the marking
+engine + DB repos (student.py student_correct, io/correction_ai + core/correction, db/
+history_repo, db/models/attempts+question_results), then implement + integration-test.
+
+## Superseded — Phase-1 next action (kept for provenance)
 **PHASE 1 COMPLETE** (2026-08-01) — merged to develop, pushed, develop→main PR opened (DO NOT MERGE),
 ntfy sent. **Next: Phase 2** (branch `feature/phase-2-core-loop` from develop). Per MISSION §4 Phase 2:
 wire the SPA to the API (resurrect web/lib/api.ts + react-query, delete student/data.ts + teacher/data.ts
