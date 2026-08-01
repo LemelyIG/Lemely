@@ -7,6 +7,7 @@ mirroring the other ``schemas_*.py`` modules.
 
 from __future__ import annotations
 
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -54,7 +55,7 @@ class InviteStudentRequestDTO(ApiModel):
     provider logs the parent OTP).
     """
 
-    schoolId: str
+    schoolId: uuid.UUID
     email: str
     displayName: str | None = None
     password: str | None = None

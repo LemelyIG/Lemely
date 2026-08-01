@@ -24,7 +24,7 @@ import threading
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -316,7 +316,6 @@ async def upload_paper(
     settings: Annotated[Settings, Depends(get_settings)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     scan: Annotated[UploadFile, File()],
-    student_id: Annotated[str, Form()] = "",
     mark_scheme: Annotated[UploadFile | None, File()] = None,
 ) -> UploadResponseDTO:
     """Ingest a scanned paper (+ optional mark scheme) and detect its metadata.
@@ -325,10 +324,18 @@ async def upload_paper(
     job + paper entry. Detected metadata comes from
     :class:`ScanMetadataExtractor` when an API key is configured; when detection
     is unavailable the ``detected`` list is empty (never fabricated).
+
+    Security (D1.12, fixes the acceptance-review H2): the interim paper bucket is
+    keyed on the server-generated ``paper_id`` only. A teacher-supplied student
+    identity is deliberately NOT accepted here — without the class↔student
+    ownership model (still deferred, D1.6) no teacher can be authorized to write a
+    graded record into a specific student's history, so accepting one would be a
+    cross-tenant write. Associating a graded paper with a real student account
+    lands with the DB-backed class model (Phase 2/3), gated on verified ownership.
     """
     job = registry.create("paper_upload", filename=scan.filename)
     paper_id = job.id
-    resolved_student = student_id.strip() or paper_id
+    resolved_student = paper_id
 
     upload_dir = settings.paths.output_dir / "uploads" / paper_id
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -637,10 +644,14 @@ def list_schemes(
             failed += 1
             continue
         rows.append(_scheme_row(path, scheme))
+    # Only stats backed by real, computed data are emitted (D1.12 acceptance-review
+    # honesty fix M2): "Parsed"/"Failed" come from the on-disk scan above. The former
+    # "Pending" (PDFs awaiting parse) and "Your own" (per-teacher uploaded) cards were
+    # hardcoded "0" — there is no upload-queue or per-teacher scheme ownership model in
+    # Phase 1, so surfacing them as live counts misrepresented the feature. They return
+    # when the backing data exists (upload queue + teacher↔scheme ownership, Phase 2/3).
     stats = [
         StatCardDTO(key="Parsed", value=str(len(rows)), unit="schemes"),
-        StatCardDTO(key="Pending", value="0", unit="PDFs", valueTone="accent"),
-        StatCardDTO(key="Your own", value="0", unit="uploaded"),
         StatCardDTO(
             key="Failed",
             value=str(failed),

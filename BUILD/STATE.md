@@ -1,8 +1,8 @@
 # BUILD STATE — single source of truth
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
-current_phase: 1
-last_updated: 2026-07-31T14:00:00Z
+current_phase: 2
+last_updated: 2026-08-01T06:30:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -142,12 +142,43 @@ Branch from `develop` as `feature/phase-1-db-auth-tenancy`. Expanded from MISSIO
        active_devices ordering, unknown-user, non-uuid). test_auth_dependency.py +3 hermetic
        (no-sid skips check; live→200; evicted→401). 522 passed / 1 skipped (live auth, no keys) /
        12 subtests / 85.41% cov (>85.00% prior); ruff/format/mypy/lint-imports clean.)
-- [ ] todo — Acceptance: E2E auth tests for all 5 roles; adversarial security review
+- [x] done — Acceptance: E2E auth tests for all 5 roles; adversarial security review
        (reviewer subagent) finds no unauthenticated/cross-tenant access; every route has
        an authz test. Quality gates (§6) green; report reports/phase-1/REPORT.md; merge
        develop; PR develop→main; ntfy
+       (PHASE 1 COMPLETE 2026-08-01. tests/test_auth_e2e_roles.py: 5-role RBAC matrix (allowed→200,
+       denied→403, no-super-role invariant) + parent OTP E2E through get_auth_context. Live
+       tests/test_seat_invite_live.py PASSES vs real Supabase+GoTrue (seat-invite→login→app_role=
+       student) — verified this session (both live tests green with keys). Reviewer adversarial
+       sweep: NO Critical/High auth bypass; verified-clean on alg-confusion/session-liveness/
+       signup-escalation/seat-IDOR/token-aud-exp/role-forgery. Fixed 3 findings, recorded D1.12:
+       H2 teacher-upload cross-tenant-write kill (dropped caller student_id → paper_id key),
+       M1 non-UUID schoolId/seat_id → 422 not 500 (typed uuid.UUID + regression tests),
+       M2 removed fabricated "0" scheme stat cards (honesty). Gates: 548 passed / 2 skipped
+       (live-only, pass with keys) / 12 subtests / 85.44% hermetic cov (>84.56% baseline);
+       ruff/format/mypy(111 files)/lint-imports clean; web inherited-green (untouched since
+       develop). reports/phase-1/REPORT.md committed. Merged develop; PR develop→main opened
+       (NOT merged); ntfy sent.)
 
 ## Next action
+**PHASE 1 COMPLETE** (2026-08-01) — merged to develop, pushed, develop→main PR opened (DO NOT MERGE),
+ntfy sent. **Next: Phase 2** (branch `feature/phase-2-core-loop` from develop). Per MISSION §4 Phase 2:
+wire the SPA to the API (resurrect web/lib/api.ts + react-query, delete student/data.ts + teacher/data.ts
+mocks screen-by-screen), real SSE pipeline for CorrectPaper, PWA camera→multi-page-PDF→Supabase Storage
+upload path, full metadata→mark-scheme→extraction→marking→confidence→grade/boundary→weakness pipeline,
+grade-boundary ingestion (0580/0606/0625 per-variant), accuracy harness w/ golden fixtures (≥99% MCQ,
+≥95% mark-level, 100% disagreements below review threshold), student dashboard on real data, plagiarism/
+AI-detection advisory flags, PWA installable (Lighthouse). START by reading LEMELY_AUDIT.md's web section
++ web/lib/api.ts + web/**/data.ts to scope the mock→real migration; use a workflow for the screen-by-screen
+sweep and for boundary scraping/fixture generation (keep each workflow < ~30 agents, checkpoint to disk).
+
+### (carried, non-blocking) Deferred Phase-1 follow-ups
+- (D1.9) Migrate CLI + Gradio history to the DB (or retire Gradio), THEN delete lemely/io/history_store.py
+  + tests/test_history_store.py. Parity already proven; low-risk. Do opportunistically.
+- (D1.6) Teacher per-tenant ownership (own-classes-only) lands with the DB class model in Phase 2/3.
+- GoTrue is not run in CI (live auth/seat tests skip there); hermetic tests cover the logic.
+
+## Superseded — Phase-1 acceptance detail (kept for provenance)
 Device/session registry DONE (P1.11/D1.11 — ready to commit). Next non-done task: the FINAL
 Phase-1 task — **Phase-1 acceptance**:
   1. E2E auth tests for all 5 roles (student/parent/teacher/school_admin/platform_admin): a full

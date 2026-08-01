@@ -17,6 +17,7 @@ DTOs.
 from __future__ import annotations
 
 import secrets
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -125,7 +126,7 @@ def invite_student(
 
 @router.post("/school/seats/{seat_id}/revoke", status_code=204)
 def revoke_seat(
-    seat_id: str,
+    seat_id: uuid.UUID,
     auth: Annotated[AuthContext, Depends(require_role(Role.school_admin))],
     service: Annotated[SeatService, Depends(get_seat_service)],
 ) -> None:

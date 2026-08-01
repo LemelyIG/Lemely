@@ -62,3 +62,21 @@
   pollution. Real PDFs live in `Sources/Physics/MarkingSchemes/` (4 of them).
 - Next: Phase 1 — DB + Auth + Tenancy. Expand STATE.md Phase-1 checklist from
   MISSION §4, stand up local Supabase, SQLAlchemy+Alembic schema, JWT middleware + RBAC.
+
+## 2026-08-01 — Phase 1 COMPLETE (acceptance)
+- Did: finished the final Phase-1 task. Resumed on a dirty tree carrying a prior session's
+  partial acceptance work (5-role E2E test file, live seat-invite test, and a teacher-upload
+  fix referencing an unrecorded "D1.12"). Verified before trusting: the teacher.py change was
+  sound (removes a caller-supplied student_id cross-tenant-write vector) and broke no existing
+  tests, but D1.12 was never recorded and the review it implied was owed. Recorded D1.12; ran a
+  full `reviewer` adversarial sweep of the whole auth surface → NO Critical/High bypass. Fixed
+  its two real findings: M1 (non-UUID schoolId/seat_id → 422 not 500, typed uuid.UUID + 2
+  regression tests) and M2 (removed fabricated "0" scheme stat cards). Wrote reports/phase-1/
+  REPORT.md. Merged to develop, pushed, opened develop→main PR (unmerged), ntfy.
+- Learned: this pytest+cov addopts suppresses the "N passed" summary under -q; use
+  `-o addopts=""` to see it (548 passed / 2 skipped / 12 subtests / 85.44% hermetic cov). The
+  2 skips are live-only tests — they PASS against the local Supabase+GoTrue stack when both
+  SERVICE_ROLE_KEY + ANON_KEY are exported (newer `supabase status` emits JSON; parse it).
+- Next: Phase 2 — core loop end-to-end. Branch feature/phase-2-core-loop from develop; scope
+  the SPA mock→real migration (web/lib/api.ts + **/data.ts) and boundary/fixture pipelines;
+  drive the fan-out with small checkpointed workflows.

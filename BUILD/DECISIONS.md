@@ -3,6 +3,30 @@
 
 ## Phase 1
 
+### D1.12 — Teacher paper upload drops the caller-supplied `student_id` (cross-tenant write kill)
+- **What:** `POST /api/papers/upload` (`lemely/web/routers/teacher.py::upload_paper`) no longer
+  accepts a `student_id` form field. The interim paper bucket is keyed solely on the
+  server-generated `paper_id` (`resolved_student = paper_id`). Found by the Phase-1 acceptance
+  adversarial review as finding **H2**.
+- **Why:** The old code did `resolved_student = student_id.strip() or paper_id`, trusting a
+  caller-supplied identity to decide whose history a graded paper is written into. With the
+  teacher→class↔student ownership model still deferred (D1.6), no teacher can be *authorized* to
+  write into a specific student's bucket, so honoring a supplied id is an unauthenticated
+  cross-tenant write vector (a teacher — or a smuggled value — could target any student key).
+  Removing the field makes the contract honest: the upload lands in its own paper-keyed bucket
+  and nothing is attributed to a real student account until verified ownership exists.
+- **Association deferred, not lost:** binding a graded paper to a real student account lands with
+  the DB-backed class model (Phase 2/3), gated on a verified teacher→student ownership check —
+  the same boundary D1.6 records as deferred. This is the correct place for it; faking it now
+  would re-introduce the IDOR D1.6 closed on the student routes.
+- **Blast radius:** existing `test_web_teacher.py` uploads still send `student_id` in the form
+  body; FastAPI ignores undeclared form fields (no 422) and those tests only assert on
+  `paper_id`/job status/sandbox containment, so they stay green. No DTO/JSON contract changed.
+- **Alternatives:** keep the field but ignore it server-side (rejected: a trusted-looking field
+  silently dropped is a footgun — the same reasoning that removed `studentId` from the student
+  DTOs in D1.6); gate it behind a teacher→student ownership check now (rejected: the class model
+  it needs does not exist until Phase 2/3 — this is deferral, not a shortcut).
+
 ### D1.11 — Device/session registry: sid-claim + sid-gated DB liveness check (immediate eviction)
 - **What:** Max **3** concurrent devices per account. Each real login (email/password,
   parent OTP, and self-service signup) registers a `Device` row and embeds its id in the
