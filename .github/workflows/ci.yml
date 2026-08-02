@@ -58,9 +58,11 @@ jobs:
         run: ruff format --check .
 
       - name: Mypy
+        if: matrix.python-version == "3.13"
         run: mypy lemely
 
       - name: Import-linter
+        if: matrix.python-version == "3.13"
         run: lint-imports
 
       # Apply migrations against the service Postgres — proves the Alembic head
