@@ -45,6 +45,7 @@
 ```python
 # tests/test_accuracy_harness.py
 """Unit tests for the golden-dataset accuracy measurement harness."""
+
 from __future__ import annotations
 
 import json
@@ -54,16 +55,19 @@ from pathlib import Path
 
 
 class LoadGoldenCasesTests(unittest.TestCase):
-
     def _make_case_dir(self, root: Path, name: str = "0625_m20_qp_12") -> Path:
         case_dir = root / name
         case_dir.mkdir()
         ms = {
             "metadata": {
-                "subject": "Physics", "subject_code": "0625",
-                "paper_number": 1, "paper_variant": 2,
-                "session_month": "May/June", "session_year": 2020,
-                "paper_type": "multiple_choice", "maximum_mark": 1,
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "multiple_choice",
+                "maximum_mark": 1,
                 "scheme_format": "mcq",
             },
             "questions": [
@@ -77,6 +81,7 @@ class LoadGoldenCasesTests(unittest.TestCase):
 
     def test_loads_single_case(self):
         from lemely.accuracy.harness import load_golden_cases
+
         with tempfile.TemporaryDirectory() as tmp:
             self._make_case_dir(Path(tmp))
             cases = load_golden_cases(Path(tmp))
@@ -85,6 +90,7 @@ class LoadGoldenCasesTests(unittest.TestCase):
 
     def test_ground_truth_parsed(self):
         from lemely.accuracy.harness import load_golden_cases
+
         with tempfile.TemporaryDirectory() as tmp:
             self._make_case_dir(Path(tmp))
             cases = load_golden_cases(Path(tmp))
@@ -95,6 +101,7 @@ class LoadGoldenCasesTests(unittest.TestCase):
 
     def test_scan_path_none_when_no_pdf(self):
         from lemely.accuracy.harness import load_golden_cases
+
         with tempfile.TemporaryDirectory() as tmp:
             self._make_case_dir(Path(tmp))
             cases = load_golden_cases(Path(tmp))
@@ -102,6 +109,7 @@ class LoadGoldenCasesTests(unittest.TestCase):
 
     def test_scan_path_set_when_pdf_present(self):
         from lemely.accuracy.harness import load_golden_cases
+
         with tempfile.TemporaryDirectory() as tmp:
             case_dir = self._make_case_dir(Path(tmp))
             (case_dir / "scan.pdf").write_bytes(b"%PDF-1.4")
@@ -110,6 +118,7 @@ class LoadGoldenCasesTests(unittest.TestCase):
 
     def test_skips_dir_without_required_files(self):
         from lemely.accuracy.harness import load_golden_cases
+
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "incomplete").mkdir()
             cases = load_golden_cases(Path(tmp))
@@ -117,6 +126,7 @@ class LoadGoldenCasesTests(unittest.TestCase):
 
     def test_notes_field_optional(self):
         from lemely.accuracy.harness import load_golden_cases
+
         with tempfile.TemporaryDirectory() as tmp:
             case_dir = self._make_case_dir(Path(tmp))
             answers = {"1": {"student_answer": "A", "awarded_marks": 1, "notes": "owtte"}}
@@ -152,6 +162,7 @@ Empty file — just the package marker.
 
 ```python
 """Golden-dataset accuracy measurement harness for the Lemely pipeline."""
+
 from __future__ import annotations
 
 import json
@@ -177,8 +188,8 @@ class GoldenCase:
 
     paper_id: str
     mark_scheme: MarkScheme
-    ground_truth: dict[str, GoldenAnswer]   # question_id -> GoldenAnswer
-    scan_path: Path | None = None           # present only when extraction test is possible
+    ground_truth: dict[str, GoldenAnswer]  # question_id -> GoldenAnswer
+    scan_path: Path | None = None  # present only when extraction test is possible
 
 
 def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
@@ -200,17 +211,16 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
 
         mark_scheme = MarkScheme.model_validate_json(ms_path.read_text(encoding="utf-8"))
         raw: dict[str, object] = json.loads(ans_path.read_text(encoding="utf-8"))
-        ground_truth = {
-            qid: GoldenAnswer.model_validate(v)
-            for qid, v in raw.items()
-        }
+        ground_truth = {qid: GoldenAnswer.model_validate(v) for qid, v in raw.items()}
         scan_path = case_dir / "scan.pdf"
-        cases.append(GoldenCase(
-            paper_id=case_dir.name,
-            mark_scheme=mark_scheme,
-            ground_truth=ground_truth,
-            scan_path=scan_path if scan_path.exists() else None,
-        ))
+        cases.append(
+            GoldenCase(
+                paper_id=case_dir.name,
+                mark_scheme=mark_scheme,
+                ground_truth=ground_truth,
+                scan_path=scan_path if scan_path.exists() else None,
+            )
+        )
     return cases
 ```
 
@@ -249,10 +259,11 @@ Append to `tests/test_accuracy_harness.py`:
 
 ```python
 class MetricComputationTests(unittest.TestCase):
-
-    def _qr(self, predicted: int, truth: int, confidence: float,
-             review: bool, is_mcq: bool = False) -> object:
+    def _qr(
+        self, predicted: int, truth: int, confidence: float, review: bool, is_mcq: bool = False
+    ) -> object:
         from lemely.accuracy.harness import QuestionResult
+
         return QuestionResult(
             question_id="q",
             question_type="mcq" if is_mcq else "theory",
@@ -264,20 +275,23 @@ class MetricComputationTests(unittest.TestCase):
 
     def test_all_correct_accuracy_is_1(self):
         from lemely.accuracy.harness import _compute_metrics
+
         results = [self._qr(2, 2, 0.95, False), self._qr(1, 1, 0.92, False)]
         m = _compute_metrics(results)
         self.assertAlmostEqual(m.mark_accuracy, 1.0)
 
     def test_half_correct_accuracy(self):
         from lemely.accuracy.harness import _compute_metrics
+
         results = [self._qr(2, 2, 0.95, False), self._qr(0, 2, 0.72, True)]
         m = _compute_metrics(results)
         self.assertAlmostEqual(m.mark_accuracy, 0.5)
 
     def test_theory_only_excludes_mcq(self):
         from lemely.accuracy.harness import _compute_metrics
+
         results = [
-            self._qr(1, 1, 1.0, False, is_mcq=True),   # MCQ correct
+            self._qr(1, 1, 1.0, False, is_mcq=True),  # MCQ correct
             self._qr(0, 2, 0.72, True, is_mcq=False),  # theory wrong
         ]
         m = _compute_metrics(results)
@@ -285,6 +299,7 @@ class MetricComputationTests(unittest.TestCase):
 
     def test_flag_precision_high(self):
         from lemely.accuracy.harness import _compute_metrics
+
         results = [
             self._qr(2, 2, 0.95, False),  # confident + correct
             self._qr(0, 2, 0.91, False),  # confident + wrong
@@ -294,8 +309,9 @@ class MetricComputationTests(unittest.TestCase):
 
     def test_flag_recall(self):
         from lemely.accuracy.harness import _compute_metrics
+
         results = [
-            self._qr(0, 2, 0.55, True),   # wrong + flagged
+            self._qr(0, 2, 0.55, True),  # wrong + flagged
             self._qr(0, 2, 0.91, False),  # wrong + not flagged
         ]
         m = _compute_metrics(results)
@@ -303,18 +319,20 @@ class MetricComputationTests(unittest.TestCase):
 
     def test_no_wrong_flag_recall_is_one(self):
         from lemely.accuracy.harness import _compute_metrics
+
         results = [self._qr(2, 2, 0.97, False)]
         m = _compute_metrics(results)
         self.assertAlmostEqual(m.flag_recall, 1.0)
 
     def test_calibration_bucket_assignment(self):
         from lemely.accuracy.harness import _build_calibration
+
         results = [
             self._qr(1, 1, 0.95, False),  # 0.90–1.00 bucket, correct
-            self._qr(0, 1, 0.85, True),   # 0.80–0.90 bucket, wrong
+            self._qr(0, 1, 0.85, True),  # 0.80–0.90 bucket, wrong
         ]
         buckets = _build_calibration(results)
-        top = buckets[0]     # 0.90–1.00
+        top = buckets[0]  # 0.90–1.00
         second = buckets[1]  # 0.80–0.90
         self.assertEqual(top.predictions, 1)
         self.assertEqual(top.correct, 1)
@@ -338,12 +356,13 @@ Add after `load_golden_cases`:
 # Per-question result and aggregate metric types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class QuestionResult:
     """Outcome for a single question in an accuracy measurement run."""
 
     question_id: str
-    question_type: str          # "mcq" | "theory"
+    question_type: str  # "mcq" | "theory"
     predicted_marks: int
     truth_marks: int
     confidence_score: float
@@ -364,7 +383,7 @@ class CalibrationBucket:
     """One confidence bucket in the calibration curve."""
 
     label: str
-    lower: float    # inclusive lower bound (0.00 for the bottom bucket)
+    lower: float  # inclusive lower bound (0.00 for the bottom bucket)
     predictions: int = 0
     correct: int = 0
 
@@ -389,7 +408,7 @@ class CalibrationBucket:
 class AccuracyMetrics:
     mark_accuracy: float
     mark_accuracy_theory: float
-    id_match_rate: float | None     # None when no extraction runs were performed
+    id_match_rate: float | None  # None when no extraction runs were performed
     flag_precision_high: float
     flag_recall: float
 
@@ -399,12 +418,13 @@ class AccuracyResult:
     metrics: AccuracyMetrics
     calibration: list[CalibrationBucket]
     question_results: list[QuestionResult]
-    prompt_versions: dict[str, str]     # {"extraction": "5", "correction": "4", "mark_scheme": "3"}
+    prompt_versions: dict[str, str]  # {"extraction": "5", "correction": "4", "mark_scheme": "3"}
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_calibration_buckets() -> list[CalibrationBucket]:
     """Return buckets in descending order of lower bound (highest confidence first)."""
@@ -413,7 +433,7 @@ def _make_calibration_buckets() -> list[CalibrationBucket]:
         CalibrationBucket("0.80–0.90", 0.80),
         CalibrationBucket("0.70–0.80", 0.70),
         CalibrationBucket("0.60–0.70", 0.60),
-        CalibrationBucket("< 0.60",    0.00),
+        CalibrationBucket("< 0.60", 0.00),
     ]
 
 
@@ -435,22 +455,15 @@ def _compute_metrics(results: list[QuestionResult]) -> AccuracyMetrics:
     theory = [r for r in results if r.question_type == "theory"]
 
     mark_accuracy = sum(1 for r in results if r.is_correct) / total
-    mark_accuracy_theory = (
-        sum(1 for r in theory if r.is_correct) / len(theory)
-        if theory else 0.0
-    )
+    mark_accuracy_theory = sum(1 for r in theory if r.is_correct) / len(theory) if theory else 0.0
 
     confident = [r for r in results if r.is_confident]
     flag_precision_high = (
-        sum(1 for r in confident if r.is_correct) / len(confident)
-        if confident else 0.0
+        sum(1 for r in confident if r.is_correct) / len(confident) if confident else 0.0
     )
 
     wrong = [r for r in results if not r.is_correct]
-    flag_recall = (
-        sum(1 for r in wrong if r.needs_teacher_review) / len(wrong)
-        if wrong else 1.0
-    )
+    flag_recall = sum(1 for r in wrong if r.needs_teacher_review) / len(wrong) if wrong else 1.0
 
     return AccuracyMetrics(
         mark_accuracy=mark_accuracy,
@@ -474,10 +487,11 @@ def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]
 # Public measurement runner
 # ---------------------------------------------------------------------------
 
+
 def measure_accuracy(
     cases: list[GoldenCase],
-    gemini_client: object,   # GeminiClient | None
-    settings: object,        # Settings
+    gemini_client: object,  # GeminiClient | None
+    settings: object,  # Settings
 ) -> AccuracyResult:
     """Run correction over all golden cases using ground-truth answers; compute metrics."""
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
@@ -513,14 +527,16 @@ def measure_accuracy(
             if gt is None:
                 continue
             q_type = "mcq" if cq.marker_source == "deterministic" else "theory"
-            all_results.append(QuestionResult(
-                question_id=cq.question_id,
-                question_type=q_type,
-                predicted_marks=cq.awarded_marks,
-                truth_marks=gt.awarded_marks,
-                confidence_score=cq.confidence_score,
-                needs_teacher_review=cq.needs_teacher_review,
-            ))
+            all_results.append(
+                QuestionResult(
+                    question_id=cq.question_id,
+                    question_type=q_type,
+                    predicted_marks=cq.awarded_marks,
+                    truth_marks=gt.awarded_marks,
+                    confidence_score=cq.confidence_score,
+                    needs_teacher_review=cq.needs_teacher_review,
+                )
+            )
 
     return AccuracyResult(
         metrics=_compute_metrics(all_results),
@@ -538,6 +554,7 @@ def measure_accuracy(
 # Reporting + persistence
 # ---------------------------------------------------------------------------
 
+
 def format_report(result: AccuracyResult, targets: object) -> str:
     """Return a printable ASCII report with metric table and calibration curve."""
     m = result.metrics
@@ -549,21 +566,41 @@ def format_report(result: AccuracyResult, targets: object) -> str:
         return f">{v * 100:.0f}%"
 
     rows = [
-        ("Correction", "mark_accuracy",         m.mark_accuracy,
-         targets.mark_accuracy_target,  # type: ignore[attr-defined]
-         "% of questions where awarded_marks == ground truth"),
-        ("Correction", "mark_accuracy (theory)", m.mark_accuracy_theory,
-         targets.mark_accuracy_target,
-         "Same, theory-only (MCQ excluded)"),
-        ("Extraction", "id_match_rate",          m.id_match_rate,
-         targets.id_match_rate_target,
-         "% of leaf questions found in extracted output"),
-        ("Confidence", "flag_precision (HIGH)",  m.flag_precision_high,
-         targets.flag_precision_target,
-         "Of HIGH-confidence decisions, % actually correct"),
-        ("Confidence", "flag_recall",            m.flag_recall,
-         targets.flag_recall_target,
-         "Of wrong marks, % flagged for review"),
+        (
+            "Correction",
+            "mark_accuracy",
+            m.mark_accuracy,
+            targets.mark_accuracy_target,  # type: ignore[attr-defined]
+            "% of questions where awarded_marks == ground truth",
+        ),
+        (
+            "Correction",
+            "mark_accuracy (theory)",
+            m.mark_accuracy_theory,
+            targets.mark_accuracy_target,
+            "Same, theory-only (MCQ excluded)",
+        ),
+        (
+            "Extraction",
+            "id_match_rate",
+            m.id_match_rate,
+            targets.id_match_rate_target,
+            "% of leaf questions found in extracted output",
+        ),
+        (
+            "Confidence",
+            "flag_precision (HIGH)",
+            m.flag_precision_high,
+            targets.flag_precision_target,
+            "Of HIGH-confidence decisions, % actually correct",
+        ),
+        (
+            "Confidence",
+            "flag_recall",
+            m.flag_recall,
+            targets.flag_recall_target,
+            "Of wrong marks, % flagged for review",
+        ),
     ]
 
     sep = "─" * 100
@@ -603,7 +640,8 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
     try:
         sha = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
-            text=True, stderr=subprocess.DEVNULL,
+            text=True,
+            stderr=subprocess.DEVNULL,
         ).strip()
     except Exception:
         sha = "unknown"
@@ -621,8 +659,10 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
         },
         "calibration": [
             {
-                "label": b.label, "lower": b.lower,
-                "predictions": b.predictions, "correct": b.correct,
+                "label": b.label,
+                "lower": b.lower,
+                "predictions": b.predictions,
+                "correct": b.correct,
                 "actual_accuracy": b.actual_accuracy,
                 "calibration_gap": b.calibration_gap,
             }
@@ -631,8 +671,10 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
         "prompt_versions": result.prompt_versions,
         "question_results": [
             {
-                "question_id": r.question_id, "question_type": r.question_type,
-                "predicted_marks": r.predicted_marks, "truth_marks": r.truth_marks,
+                "question_id": r.question_id,
+                "question_type": r.question_type,
+                "predicted_marks": r.predicted_marks,
+                "truth_marks": r.truth_marks,
                 "confidence_score": r.confidence_score,
                 "needs_teacher_review": r.needs_teacher_review,
                 "is_correct": r.is_correct,
@@ -682,6 +724,7 @@ class AccuracyEvalSettingsTests(unittest.TestCase):
     def test_accuracy_eval_settings_defaults(self):
         import os
         from lemely.runtime.config import load_settings
+
         snap = dict(os.environ)
         for k in list(os.environ):
             if k.startswith("LEMELY_"):
@@ -723,7 +766,7 @@ Add `accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()` to `Settings`
 class Settings(BaseSettings):
     ...
     gemini: GeminiSettings = GeminiSettings()
-    accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()   # ← add this
+    accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()  # ← add this
     gemini_api_key: SecretStr | None = None
 ```
 
@@ -760,7 +803,8 @@ Add after the `aggregate_subject_cmd` definition:
 ```python
 @cli.command("measure-accuracy")
 @click.option(
-    "--golden", "golden_dir",
+    "--golden",
+    "golden_dir",
     default="tests/golden",
     type=click.Path(file_okay=False),
     show_default=True,
@@ -813,11 +857,15 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
     if m.mark_accuracy < t.mark_accuracy_target:
         failed.append(f"mark_accuracy {m.mark_accuracy:.3f} < {t.mark_accuracy_target}")
     if m.mark_accuracy_theory < t.mark_accuracy_target:
-        failed.append(f"mark_accuracy_theory {m.mark_accuracy_theory:.3f} < {t.mark_accuracy_target}")
+        failed.append(
+            f"mark_accuracy_theory {m.mark_accuracy_theory:.3f} < {t.mark_accuracy_target}"
+        )
     if m.id_match_rate is not None and m.id_match_rate < t.id_match_rate_target:
         failed.append(f"id_match_rate {m.id_match_rate:.3f} < {t.id_match_rate_target}")
     if m.flag_precision_high < t.flag_precision_target:
-        failed.append(f"flag_precision_high {m.flag_precision_high:.3f} < {t.flag_precision_target}")
+        failed.append(
+            f"flag_precision_high {m.flag_precision_high:.3f} < {t.flag_precision_target}"
+        )
     if m.flag_recall < t.flag_recall_target:
         failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
 
@@ -869,6 +917,7 @@ EOF
 ```python
 # tests/test_validation.py
 """Unit tests for mark scheme structural validation."""
+
 from __future__ import annotations
 
 import unittest
@@ -877,41 +926,53 @@ from lemely.core.loose_schemas import MarkScheme
 
 
 def _ms(questions: list[dict], total_marks: int | None = None) -> MarkScheme:
-    tm = total_marks if total_marks is not None else sum(
-        q.get("marks", 0) for q in questions
+    tm = total_marks if total_marks is not None else sum(q.get("marks", 0) for q in questions)
+    return MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 4,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_extended",
+                "maximum_mark": tm,
+                "scheme_format": "structured",
+            },
+            "questions": questions,
+        }
     )
-    return MarkScheme.model_validate({
-        "metadata": {
-            "subject": "Physics", "subject_code": "0625",
-            "paper_number": 4, "paper_variant": 2,
-            "session_month": "May/June", "session_year": 2020,
-            "paper_type": "theory_extended", "maximum_mark": tm,
-            "scheme_format": "structured",
-        },
-        "questions": questions,
-    })
 
 
 class ValidationTests(unittest.TestCase):
-
     def test_valid_mcq_no_warnings(self):
         from lemely.io.validation import validate_mark_scheme
+
         ms = _ms([{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}])
         self.assertEqual(validate_mark_scheme(ms), [])
 
     def test_theory_with_answer_points_no_warnings(self):
         from lemely.io.validation import validate_mark_scheme
-        ms = _ms([{
-            "id": "1", "marks": 2, "type": "explanation",
-            "answer_points": [
-                {"id": "p1", "point": "gravity acts", "marks": 1},
-                {"id": "p2", "point": "no friction", "marks": 1},
-            ],
-        }])
+
+        ms = _ms(
+            [
+                {
+                    "id": "1",
+                    "marks": 2,
+                    "type": "explanation",
+                    "answer_points": [
+                        {"id": "p1", "point": "gravity acts", "marks": 1},
+                        {"id": "p2", "point": "no friction", "marks": 1},
+                    ],
+                }
+            ]
+        )
         self.assertEqual(validate_mark_scheme(ms), [])
 
     def test_theory_leaf_with_no_mark_points_warns(self):
         from lemely.io.validation import validate_mark_scheme
+
         ms = _ms([{"id": "1", "marks": 2, "type": "explanation"}])
         warnings = validate_mark_scheme(ms)
         self.assertEqual(len(warnings), 1)
@@ -922,10 +983,17 @@ class ValidationTests(unittest.TestCase):
         # Bypass schema validator with model_construct to test the validation logic.
         from lemely.core.loose_schemas import Question, QuestionType
         from lemely.io.validation import ValidationWarning, _check_leaf_question
+
         q = Question.model_construct(
-            id="5", marks=1, type=QuestionType.MCQ, mcq_answer=None,
-            answer_points=[], parts=[], assessment_objectives=[],
-            rejected_answers=[], ignored_answers=[],
+            id="5",
+            marks=1,
+            type=QuestionType.MCQ,
+            mcq_answer=None,
+            answer_points=[],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
         )
         warnings: list[ValidationWarning] = []
         _check_leaf_question(q, warnings)
@@ -934,17 +1002,29 @@ class ValidationTests(unittest.TestCase):
 
     def test_container_question_skipped(self):
         from lemely.io.validation import validate_mark_scheme
-        ms = _ms([{
-            "id": "1", "marks": 0, "type": "explanation",
-            "parts": [{
-                "id": "1(a)", "marks": 2, "type": "explanation",
-                "parent_id": "1",
-                "answer_points": [
-                    {"id": "p1", "point": "gravity", "marks": 1},
-                    {"id": "p2", "point": "speed", "marks": 1},
-                ],
-            }],
-        }], total_marks=2)
+
+        ms = _ms(
+            [
+                {
+                    "id": "1",
+                    "marks": 0,
+                    "type": "explanation",
+                    "parts": [
+                        {
+                            "id": "1(a)",
+                            "marks": 2,
+                            "type": "explanation",
+                            "parent_id": "1",
+                            "answer_points": [
+                                {"id": "p1", "point": "gravity", "marks": 1},
+                                {"id": "p2", "point": "speed", "marks": 1},
+                            ],
+                        }
+                    ],
+                }
+            ],
+            total_marks=2,
+        )
         self.assertEqual(validate_mark_scheme(ms), [])
 ```
 
@@ -959,6 +1039,7 @@ Expected: `ModuleNotFoundError: No module named 'lemely.io.validation'`
 
 ```python
 """Mark scheme structural validation — emits warnings, does not raise."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -993,7 +1074,7 @@ def validate_mark_scheme(scheme: MarkScheme) -> list[ValidationWarning]:
     """Check structural invariants for all leaf questions; return warnings (not errors)."""
     warnings: list[ValidationWarning] = []
     for q in scheme.all_questions_flat():
-        if q.marks <= 0 or q.parts:        # skip containers and zero-mark items
+        if q.marks <= 0 or q.parts:  # skip containers and zero-mark items
             continue
         _check_leaf_question(q, warnings)
     return warnings
@@ -1074,27 +1155,31 @@ Append to `tests/test_answer_extraction.py`:
 
 ```python
 class IDNormalizationTests(unittest.TestCase):
-
     def test_canonical_id_strips_spaces_and_brackets(self):
         from lemely.io.answer_extraction import _canonical_id
+
         self.assertEqual(_canonical_id("1 a i"), _canonical_id("1(a)(i)"))
 
     def test_canonical_id_strips_brackets_only(self):
         from lemely.io.answer_extraction import _canonical_id
+
         self.assertEqual(_canonical_id("1(a)"), _canonical_id("1a"))
 
     def test_canonical_id_case_insensitive(self):
         from lemely.io.answer_extraction import _canonical_id
+
         self.assertEqual(_canonical_id("1(A)"), _canonical_id("1(a)"))
 
     def test_normalize_matches_exact_id(self):
         from lemely.io.answer_extraction import normalize_extracted_answers
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
         manifest_ids = ["1", "1(a)", "1(b)"]
         extracted = ExtractedAnswers(
-            paper_id="test", source_scan="scan.pdf",
+            paper_id="test",
+            source_scan="scan.pdf",
             answers=[
-                ExtractedAnswer(question_id="1",    answer="A", confidence=0.9),
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
                 ExtractedAnswer(question_id="1(a)", answer="B", confidence=0.9),
                 ExtractedAnswer(question_id="1(b)", answer="C", confidence=0.9),
             ],
@@ -1106,9 +1191,11 @@ class IDNormalizationTests(unittest.TestCase):
     def test_normalize_corrects_space_drift(self):
         from lemely.io.answer_extraction import normalize_extracted_answers
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
         manifest_ids = ["1(a)(i)"]
         extracted = ExtractedAnswers(
-            paper_id="test", source_scan="scan.pdf",
+            paper_id="test",
+            source_scan="scan.pdf",
             answers=[ExtractedAnswer(question_id="1 a i", answer="X", confidence=0.7)],
         )
         normalized = normalize_extracted_answers(extracted, manifest_ids)
@@ -1117,9 +1204,11 @@ class IDNormalizationTests(unittest.TestCase):
     def test_normalize_positional_fallback(self):
         from lemely.io.answer_extraction import normalize_extracted_answers
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
         manifest_ids = ["1(a)(i)"]
         extracted = ExtractedAnswers(
-            paper_id="test", source_scan="scan.pdf",
+            paper_id="test",
+            source_scan="scan.pdf",
             answers=[
                 ExtractedAnswer(question_id="completely_unrecognised", answer="Y", confidence=0.6),
             ],
@@ -1174,7 +1263,7 @@ def normalize_extracted_answers(
     claimed: set[str] = set()
 
     new_answers: list[ExtractedAnswer] = []
-    unmatched_positions: list[int] = []   # indices in new_answers that need positional fallback
+    unmatched_positions: list[int] = []  # indices in new_answers that need positional fallback
 
     for ans in extracted.answers:
         canon = _canonical_id(ans.question_id)
@@ -1184,7 +1273,7 @@ def normalize_extracted_answers(
             claimed.add(target)
         else:
             unmatched_positions.append(len(new_answers))
-            new_answers.append(ans)   # placeholder
+            new_answers.append(ans)  # placeholder
 
     unclaimed = [mid for mid in manifest_ids if mid not in claimed]
     for seq, pos in enumerate(unmatched_positions):
@@ -1205,19 +1294,16 @@ def normalize_extracted_answers(
 In `GeminiAnswerExtractor.__call__`, after `answers = raw.answers` and before the `for a in answers:` loop, add:
 
 ```python
-        manifest_ids = [
-            q.id for q in mark_scheme.all_questions_flat()
-            if q.marks > 0 and not q.parts
-        ]
-        normalized_result = normalize_extracted_answers(
-            ExtractedAnswers(
-                paper_id=_build_paper_id(mark_scheme),
-                source_scan=str(scan_path),
-                answers=answers,
-            ),
-            manifest_ids,
-        )
-        answers = normalized_result.answers
+manifest_ids = [q.id for q in mark_scheme.all_questions_flat() if q.marks > 0 and not q.parts]
+normalized_result = normalize_extracted_answers(
+    ExtractedAnswers(
+        paper_id=_build_paper_id(mark_scheme),
+        source_scan=str(scan_path),
+        answers=answers,
+    ),
+    manifest_ids,
+)
+answers = normalized_result.answers
 ```
 
 Add `ExtractedAnswers` to the top-level imports in `answer_extraction.py` if not already imported:
@@ -1493,35 +1579,50 @@ class ECFContextTests(unittest.TestCase):
 
     def _multi_part_scheme(self):
         from lemely.core.loose_schemas import MarkScheme
-        return MarkScheme.model_validate({
-            "metadata": {
-                "subject": "Physics", "subject_code": "0625",
-                "paper_number": 4, "paper_variant": 2,
-                "session_month": "May/June", "session_year": 2020,
-                "paper_type": "theory_extended", "maximum_mark": 4,
-                "scheme_format": "structured",
-            },
-            "questions": [{
-                "id": "1", "marks": 0, "type": "explanation",
-                "parts": [
+
+        return MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 4,
+                    "scheme_format": "structured",
+                },
+                "questions": [
                     {
-                        "id": "1(a)", "marks": 2, "type": "explanation",
-                        "parent_id": "1",
-                        "answer_points": [
-                            {"id": "p1", "point": "method", "marks": 1},
-                            {"id": "p2", "point": "answer", "marks": 1},
+                        "id": "1",
+                        "marks": 0,
+                        "type": "explanation",
+                        "parts": [
+                            {
+                                "id": "1(a)",
+                                "marks": 2,
+                                "type": "explanation",
+                                "parent_id": "1",
+                                "answer_points": [
+                                    {"id": "p1", "point": "method", "marks": 1},
+                                    {"id": "p2", "point": "answer", "marks": 1},
+                                ],
+                            },
+                            {
+                                "id": "1(b)",
+                                "marks": 2,
+                                "type": "explanation",
+                                "parent_id": "1",
+                                "answer_points": [
+                                    {"id": "p3", "point": "uses result of (a)", "marks": 2},
+                                ],
+                            },
                         ],
-                    },
-                    {
-                        "id": "1(b)", "marks": 2, "type": "explanation",
-                        "parent_id": "1",
-                        "answer_points": [
-                            {"id": "p3", "point": "uses result of (a)", "marks": 2},
-                        ],
-                    },
+                    }
                 ],
-            }],
-        })
+            }
+        )
 
     def test_prior_results_injected_for_second_part(self):
         """build_marker_user_prompt for 1(b) must receive prior_results containing 1(a)."""
@@ -1535,16 +1636,21 @@ class ECFContextTests(unittest.TestCase):
 
         scheme = self._multi_part_scheme()
         extracted = ExtractedAnswers(
-            paper_id="test", source_scan="s.pdf",
+            paper_id="test",
+            source_scan="s.pdf",
             answers=[
                 ExtractedAnswer(question_id="1(a)", answer="v=20 m/s", confidence=0.9),
-                ExtractedAnswer(question_id="1(b)", answer="uses 20",  confidence=0.9),
+                ExtractedAnswer(question_id="1(b)", answer="uses 20", confidence=0.9),
             ],
         )
-        ai_body = json.dumps({
-            "awarded_marks": 1, "confidence": 0.9,
-            "matched_point_ids": [], "feedback": "ok",
-        })
+        ai_body = json.dumps(
+            {
+                "awarded_marks": 1,
+                "confidence": 0.9,
+                "matched_point_ids": [],
+                "feedback": "ok",
+            }
+        )
         mock_resp = MagicMock(
             text=ai_body,
             candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
@@ -1568,11 +1674,13 @@ class ECFContextTests(unittest.TestCase):
 
         self.assertEqual(len(captured), 2)
         second_kwargs = captured[1]["kwargs"]
-        second_args   = captured[1]["args"]
+        second_args = captured[1]["args"]
         prior = second_kwargs.get("prior_results") or (
             second_args[3] if len(second_args) > 3 else None
         )
-        self.assertIsNotNone(prior, "prior_results not passed to second build_marker_user_prompt call")
+        self.assertIsNotNone(
+            prior, "prior_results not passed to second build_marker_user_prompt call"
+        )
         self.assertIn("1(a)", prior)
 ```
 
@@ -1608,8 +1716,7 @@ def build_marker_user_prompt(
         )
     if prior_results:
         prior_lines = "\n".join(
-            f"  {qid}: {marks} mark(s) awarded"
-            for qid, marks in prior_results.items()
+            f"  {qid}: {marks} mark(s) awarded" for qid, marks in prior_results.items()
         )
         parts.append(
             f"PRIOR PART RESULTS (same parent question, corrected before this part):\n"
@@ -1628,57 +1735,53 @@ def build_marker_user_prompt(
 In `lemely/io/correction_ai.py`, replace the `mark_question` method body:
 
 ```python
-    def mark_question(
-        self,
-        question: Question,
-        student_answer: str,
-        student_working: str | None = None,
-        prior_results: dict[str, int] | None = None,
-    ) -> AIMarkResponse:
-        g = self._client._settings.gemini
-        user_prompt = build_marker_user_prompt(
-            question, student_answer, student_working, prior_results
-        )
+def mark_question(
+    self,
+    question: Question,
+    student_answer: str,
+    student_working: str | None = None,
+    prior_results: dict[str, int] | None = None,
+) -> AIMarkResponse:
+    g = self._client._settings.gemini
+    user_prompt = build_marker_user_prompt(question, student_answer, student_working, prior_results)
 
+    result = self._client.generate_structured(
+        system_prompt=MARKER_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        response_schema=AIMarkResponse,
+        prompt_version=VERSION,
+        extra_cache_key=f"q={question.id}",
+        task_tag="correction",
+    )
+
+    # Auto-escalate when confidence is low and an escalation model is configured.
+    if (
+        g.escalation_model
+        and g.escalation_model != g.model_for("correction")
+        and result.confidence < g.escalation_confidence_threshold
+    ):
+        bus.publish(
+            EventType.GEMINI_ESCALATE,
+            question_id=question.id,
+            confidence=result.confidence,
+            escalation_model=g.escalation_model,
+        )
+        escalation_prompt = (
+            build_marker_user_prompt(question, student_answer, student_working, prior_results)
+            + "\n\nNOTE: A previous marking attempt returned low confidence. "
+            "Please re-evaluate carefully before responding."
+        )
         result = self._client.generate_structured(
             system_prompt=MARKER_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
+            user_prompt=escalation_prompt,
             response_schema=AIMarkResponse,
             prompt_version=VERSION,
-            extra_cache_key=f"q={question.id}",
+            extra_cache_key=f"q={question.id}:escalated",
             task_tag="correction",
+            model=g.escalation_model,
         )
 
-        # Auto-escalate when confidence is low and an escalation model is configured.
-        if (
-            g.escalation_model
-            and g.escalation_model != g.model_for("correction")
-            and result.confidence < g.escalation_confidence_threshold
-        ):
-            bus.publish(
-                EventType.GEMINI_ESCALATE,
-                question_id=question.id,
-                confidence=result.confidence,
-                escalation_model=g.escalation_model,
-            )
-            escalation_prompt = (
-                build_marker_user_prompt(
-                    question, student_answer, student_working, prior_results
-                )
-                + "\n\nNOTE: A previous marking attempt returned low confidence. "
-                "Please re-evaluate carefully before responding."
-            )
-            result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
-                user_prompt=escalation_prompt,
-                response_schema=AIMarkResponse,
-                prompt_version=VERSION,
-                extra_cache_key=f"q={question.id}:escalated",
-                task_tag="correction",
-                model=g.escalation_model,
-            )
-
-        return result
+    return result
 ```
 
 - [ ] **Step 5: Update `correct_paper` to accumulate and pass sibling prior results**
@@ -1763,29 +1866,39 @@ Append to `tests/test_correction_ai.py`:
 
 ```python
 class ThresholdTests(unittest.TestCase):
-
     def _make_question(self):
         from lemely.core.loose_schemas import Question, QuestionType
+
         return Question.model_construct(
-            id="2", marks=2, type=QuestionType.EXPLANATION,
-            answer_points=[], parts=[], assessment_objectives=[],
-            rejected_answers=[], ignored_answers=[],
+            id="2",
+            marks=2,
+            type=QuestionType.EXPLANATION,
+            answer_points=[],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
         )
 
     def _make_mark(self, confidence: float):
         from lemely.core.schemas import AIMarkResponse
+
         return AIMarkResponse(
-            awarded_marks=1, confidence=confidence,
-            matched_point_ids=[], feedback="test",
+            awarded_marks=1,
+            confidence=confidence,
+            matched_point_ids=[],
+            feedback="test",
         )
 
     def test_review_fires_below_0_80(self):
         from lemely.io.correction_ai import _build_ai_corrected
+
         cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.75))
         self.assertTrue(cq.needs_teacher_review)
 
     def test_review_false_at_0_80(self):
         from lemely.io.correction_ai import _build_ai_corrected
+
         cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.80))
         self.assertFalse(cq.needs_teacher_review)
 ```
@@ -1802,13 +1915,13 @@ Expected: `test_review_fires_below_0_80` FAILS (old threshold 0.7 means 0.75 is 
 In `lemely/io/correction_ai.py`, in `_build_ai_corrected`, change:
 
 ```python
-        needs_teacher_review=mark.confidence < 0.7,
+needs_teacher_review = (mark.confidence < 0.7,)
 ```
 
 to:
 
 ```python
-        needs_teacher_review=mark.confidence < 0.80,
+needs_teacher_review = (mark.confidence < 0.80,)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1890,31 +2003,49 @@ class ThinkingRetryTests(unittest.TestCase):
         from lemely.io.correction_ai import correct_paper
         from lemely.runtime.config import PathsSettings, load_settings
 
-        scheme = MarkScheme.model_validate({
-            "metadata": {
-                "subject": "Physics", "subject_code": "0625",
-                "paper_number": 4, "paper_variant": 2,
-                "session_month": "May/June", "session_year": 2020,
-                "paper_type": "theory_extended", "maximum_mark": 2,
-                "scheme_format": "structured",
-            },
-            "questions": [{
-                "id": "1", "marks": 2, "type": "explanation",
-                "answer_points": [
-                    {"id": "p1", "point": "gravity", "marks": 1},
-                    {"id": "p2", "point": "speed",   "marks": 1},
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 2,
+                    "scheme_format": "structured",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 2,
+                        "type": "explanation",
+                        "answer_points": [
+                            {"id": "p1", "point": "gravity", "marks": 1},
+                            {"id": "p2", "point": "speed", "marks": 1},
+                        ],
+                    }
                 ],
-            }],
-        })
+            }
+        )
         extracted = ExtractedAnswers(
-            paper_id="test", source_scan="s.pdf",
+            paper_id="test",
+            source_scan="s.pdf",
             answers=[ExtractedAnswer(question_id="1", answer="gravity", confidence=0.9)],
         )
 
-        low_body  = json.dumps({"awarded_marks": 1, "confidence": 0.70,
-                                "matched_point_ids": [], "feedback": "borderline"})
-        high_body = json.dumps({"awarded_marks": 1, "confidence": 0.88,
-                                "matched_point_ids": [], "feedback": "clear"})
+        low_body = json.dumps(
+            {
+                "awarded_marks": 1,
+                "confidence": 0.70,
+                "matched_point_ids": [],
+                "feedback": "borderline",
+            }
+        )
+        high_body = json.dumps(
+            {"awarded_marks": 1, "confidence": 0.88, "matched_point_ids": [], "feedback": "clear"}
+        )
 
         def _resp(body: str) -> MagicMock:
             return MagicMock(
@@ -1926,27 +2057,33 @@ class ThinkingRetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with _IsolatedEnv():
                 s = load_settings(toml_path=None, cwd=Path(tmp))
-            s = s.model_copy(update={
-                "paths": PathsSettings(cache_dir=Path(tmp) / ".cache"),
-                "gemini": s.gemini.model_copy(update={
-                    "escalation_model": "gemini-2.5-pro",
-                    "escalation_confidence_threshold": 0.80,
-                    "thinking_budget_for": {"correction_borderline": 2000},
-                }),
-            })
+            s = s.model_copy(
+                update={
+                    "paths": PathsSettings(cache_dir=Path(tmp) / ".cache"),
+                    "gemini": s.gemini.model_copy(
+                        update={
+                            "escalation_model": "gemini-2.5-pro",
+                            "escalation_confidence_threshold": 0.80,
+                            "thinking_budget_for": {"correction_borderline": 2000},
+                        }
+                    ),
+                }
+            )
             mock_genai = MagicMock()
             # Flash low-conf, then Flash+thinking high-conf (no Pro needed)
             mock_genai.models.generate_content.side_effect = [_resp(low_body), _resp(high_body)]
             mock_genai.files.upload.return_value = MagicMock()
             from lemely.io.gemini import GeminiClient
+
             client = GeminiClient(s, _genai_client=mock_genai)
 
         correct_paper(scheme, extracted, gemini_client=client)
 
         calls = mock_genai.models.generate_content.call_args_list
         # Must have exactly 2 calls: Flash normal + Flash thinking (Pro NOT needed)
-        self.assertEqual(len(calls), 2,
-            f"Expected 2 API calls (Flash + thinking), got {len(calls)}")
+        self.assertEqual(
+            len(calls), 2, f"Expected 2 API calls (Flash + thinking), got {len(calls)}"
+        )
         # Second call must reference the thinking task_tag in its request
         second_call_repr = str(calls[1])
         self.assertIn("correction_borderline", second_call_repr)
@@ -1962,75 +2099,71 @@ Expected: FAIL — currently makes either 1 or 3 calls, not 2 with the thinking 
 - [ ] **Step 3: Replace `mark_question` body in `lemely/io/correction_ai.py`**
 
 ```python
-    def mark_question(
-        self,
-        question: Question,
-        student_answer: str,
-        student_working: str | None = None,
-        prior_results: dict[str, int] | None = None,
-    ) -> AIMarkResponse:
-        g = self._client._settings.gemini
-        user_prompt = build_marker_user_prompt(
-            question, student_answer, student_working, prior_results
-        )
+def mark_question(
+    self,
+    question: Question,
+    student_answer: str,
+    student_working: str | None = None,
+    prior_results: dict[str, int] | None = None,
+) -> AIMarkResponse:
+    g = self._client._settings.gemini
+    user_prompt = build_marker_user_prompt(question, student_answer, student_working, prior_results)
 
+    result = self._client.generate_structured(
+        system_prompt=MARKER_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        response_schema=AIMarkResponse,
+        prompt_version=VERSION,
+        extra_cache_key=f"q={question.id}",
+        task_tag="correction",
+    )
+
+    # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
+    borderline_budget = g.thinking_budget_for.get("correction_borderline", 0)
+    if result.confidence < g.escalation_confidence_threshold and borderline_budget > 0:
+        bus.publish(
+            EventType.GEMINI_ESCALATE,
+            question_id=question.id,
+            confidence=result.confidence,
+            escalation_model=f"{g.model_for('correction')} (thinking)",
+        )
         result = self._client.generate_structured(
             system_prompt=MARKER_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
+            user_prompt=(
+                user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
+            ),
             response_schema=AIMarkResponse,
             prompt_version=VERSION,
-            extra_cache_key=f"q={question.id}",
-            task_tag="correction",
+            extra_cache_key=f"q={question.id}:thinking",
+            task_tag="correction_borderline",
         )
 
-        # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
-        borderline_budget = g.thinking_budget_for.get("correction_borderline", 0)
-        if result.confidence < g.escalation_confidence_threshold and borderline_budget > 0:
-            bus.publish(
-                EventType.GEMINI_ESCALATE,
-                question_id=question.id,
-                confidence=result.confidence,
-                escalation_model=f"{g.model_for('correction')} (thinking)",
-            )
-            result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
-                user_prompt=(
-                    user_prompt
-                    + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
-                ),
-                response_schema=AIMarkResponse,
-                prompt_version=VERSION,
-                extra_cache_key=f"q={question.id}:thinking",
-                task_tag="correction_borderline",
-            )
+    # Step 2: Pro escalation if confidence still below threshold.
+    if (
+        g.escalation_model
+        and g.escalation_model != g.model_for("correction")
+        and result.confidence < g.escalation_confidence_threshold
+    ):
+        bus.publish(
+            EventType.GEMINI_ESCALATE,
+            question_id=question.id,
+            confidence=result.confidence,
+            escalation_model=g.escalation_model,
+        )
+        result = self._client.generate_structured(
+            system_prompt=MARKER_SYSTEM_PROMPT,
+            user_prompt=(
+                user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
+                "Please re-evaluate carefully before responding."
+            ),
+            response_schema=AIMarkResponse,
+            prompt_version=VERSION,
+            extra_cache_key=f"q={question.id}:escalated",
+            task_tag="correction",
+            model=g.escalation_model,
+        )
 
-        # Step 2: Pro escalation if confidence still below threshold.
-        if (
-            g.escalation_model
-            and g.escalation_model != g.model_for("correction")
-            and result.confidence < g.escalation_confidence_threshold
-        ):
-            bus.publish(
-                EventType.GEMINI_ESCALATE,
-                question_id=question.id,
-                confidence=result.confidence,
-                escalation_model=g.escalation_model,
-            )
-            result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
-                user_prompt=(
-                    user_prompt
-                    + "\n\nNOTE: A previous marking attempt returned low confidence. "
-                    "Please re-evaluate carefully before responding."
-                ),
-                response_schema=AIMarkResponse,
-                prompt_version=VERSION,
-                extra_cache_key=f"q={question.id}:escalated",
-                task_tag="correction",
-                model=g.escalation_model,
-            )
-
-        return result
+    return result
 ```
 
 - [ ] **Step 4: Update `lemely/runtime/example_toml.py` to document `correction_borderline`**

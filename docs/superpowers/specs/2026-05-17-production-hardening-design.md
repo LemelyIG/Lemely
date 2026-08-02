@@ -116,9 +116,10 @@ Single `Settings` class via `pydantic-settings`. Precedence: **CLI flags → env
 
 ```python
 class GradioSettings(BaseModel):
-    host: str = "127.0.0.1"           # localhost-only by default
+    host: str = "127.0.0.1"  # localhost-only by default
     port: int = 7860
     max_file_size_mb: int = 25
+
 
 class PathsSettings(BaseModel):
     sources_dir: Path = Path("Sources")
@@ -126,9 +127,11 @@ class PathsSettings(BaseModel):
     cache_dir: Path = Path(".lemely-cache")
     # Parsed JSON co-locates next to PDFs (not configurable — H1)
 
+
 class LoggingSettings(BaseModel):
-    level: Literal["DEBUG","INFO","WARNING","ERROR"] = "INFO"
-    format: Literal["auto","json","console"] = "auto"
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    format: Literal["auto", "json", "console"] = "auto"
+
 
 class GeminiSettings(BaseModel):
     model: str = "gemini-2.5-flash"
@@ -137,8 +140,10 @@ class GeminiSettings(BaseModel):
     monthly_usd_ceiling: float | None = None  # None = no ceiling
     per_run_token_ceiling: int | None = None
 
+
 class GradingSettings(BaseModel):
     grade_boundaries: list[GradeBoundary] = DEFAULT_CAIE_BOUNDARIES
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -153,7 +158,7 @@ class Settings(BaseSettings):
     logging: LoggingSettings = LoggingSettings()
     gemini: GeminiSettings = GeminiSettings()
     grading: GradingSettings = GradingSettings()
-    gemini_api_key: SecretStr | None = None   # env/.env only — REQUIRED in prod
+    gemini_api_key: SecretStr | None = None  # env/.env only — REQUIRED in prod
 ```
 
 **TOML discovery order:** `--config <path>` → `./lemely.toml` → `$XDG_CONFIG_HOME/lemely/lemely.toml`. First match wins; no merging.
@@ -190,13 +195,33 @@ Test enforcement: a pytest fixture for every CLI command running with `--json` a
 class LemelyError(Exception):
     exit_code: int = 1
 
-class UsageError(LemelyError):           exit_code = 2  # bad CLI args
-class ConfigError(LemelyError):          exit_code = 3  # bad TOML/env, missing api key
-class InputError(LemelyError):           exit_code = 4  # malformed user-supplied file
-class NotFoundError(LemelyError):        exit_code = 5  # file/mark-scheme/topic missing
-class ParseError(LemelyError):           exit_code = 6  # PDF/JSON parse failure
-class ExternalServiceError(LemelyError): exit_code = 7  # Gemini API failure
-class PartialFailureError(LemelyError):  exit_code = 1  # batch had per-item errors
+
+class UsageError(LemelyError):
+    exit_code = 2  # bad CLI args
+
+
+class ConfigError(LemelyError):
+    exit_code = 3  # bad TOML/env, missing api key
+
+
+class InputError(LemelyError):
+    exit_code = 4  # malformed user-supplied file
+
+
+class NotFoundError(LemelyError):
+    exit_code = 5  # file/mark-scheme/topic missing
+
+
+class ParseError(LemelyError):
+    exit_code = 6  # PDF/JSON parse failure
+
+
+class ExternalServiceError(LemelyError):
+    exit_code = 7  # Gemini API failure
+
+
+class PartialFailureError(LemelyError):
+    exit_code = 1  # batch had per-item errors
 ```
 
 CLI top-level handler maps every `LemelyError` to its declared exit code; `KeyboardInterrupt` → 130; anything else → 1 with stack at DEBUG. Documented in `docs/exit-codes.md` and surfaced under `lemely --help`.
