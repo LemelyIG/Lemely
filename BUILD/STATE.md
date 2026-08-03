@@ -165,7 +165,7 @@ Branch from `develop` as `feature/phase-2-core-loop`. Expanded from MISSION §4/
 front-loads pytest-verifiable BACKEND work (safest unattended) then frontend then E2E.
 Each task: update STATE before/after, commit small, run §6 gates before merge.
 
-- [ ] doing — P2.1 Real correction pipeline: make `POST /api/student/correct` the real
+- [x] done — P2.1 Real correction pipeline: make `POST /api/student/correct` the real
        SSE-driven pipeline (currently a stub that emits one WARNING + [DONE]). Keyed off
        auth.user_id (student token, RBAC already enforced). Flow: accept an uploaded
        paper (by paper_id from the upload route) → metadata detect → fetch/parse mark
@@ -214,9 +214,55 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        merge feature→develop; push; open develop→main PR via gh (DO NOT MERGE); ntfy.
 
 ## Next action
-Executing **P2.1 real correction pipeline**. First scope the current stub + the marking
-engine + DB repos (student.py student_correct, io/correction_ai + core/correction, db/
-history_repo, db/models/attempts+question_results), then implement + integration-test.
+**P2.1 DONE + VERIFIED (2026-08-03).** New: lemely/db/attempt_repo.py (AttemptRepository.
+persist_correction → Attempt+QuestionResult+WeaknessRecord+ReviewQueueItem, 1 txn, review
+threshold 0.90), lemely/db/upload_repo.py (StudentUploadRepository), lemely/web/upload_utils.py
+(shared safe_upload_name/write_upload_capped; teacher.py dedup'd, monkeypatch seam preserved).
+Rewired POST /api/student/correct (JSON {paperId}; pre-stream ownership 404; metadata→resolve
+mark scheme (sibling pdf|corpus)→extract→grade(student_id=None)→persist→SSE marking_progress +
+phase:complete + [DONE]; error/warning frames; publish_done in finally). New POST /api/student/
+uploads. deps: get_attempt_repo/get_student_upload_repo (+reset_singletons). NO migration (all
+columns from P1.3). Tests: test_attempt_repo.py (5 PG-integration), test_student_correct.py (7
+real-PG through TestClient: SSE frames+persisted Attempt/QuestionResult/ReviewQueue+confidence;
+unknown/malformed/foreign 404; teacher 403; upload status/file). Replaced obsolete stub test in
+test_web_student.py with the new contract (422 body-less, 404 ownership) — honest evolution, full
+path covered by real-PG test. GATES (orchestrator-verified): ruff/format/mypy(114)/lint-imports
+clean; 561 passed / 2 skipped (live-only, no keys) / 12 subtests; cov 85.10%.
+CARRIED DEBT: cov 85.44%→85.10% (−0.34pp; above 70% hard gate but §6 gate-2 (no drop vs develop)
+bites at the P2.10 develop merge). Restore before P2.10 by covering: upload_repo.set_status no-op,
+mid-stream metadata-detection-failure branch (key present), resolve_mark_scheme corpus fallback,
+upload_utils 413 branch. Non-blocking for P2.2.
+
+**NOW: P2.2 grade-boundary ingestion.** Scrape per-paper-variant thresholds for 0580/0606/0625
+(all sessions) from public mirrors w/ provenance → parse into the boundary table → prediction =
+exact per-variant lookup, fallback to per-subject historical avg with "estimated" flag surfaced.
+Use a small checkpointed workflow for the scrape/parse fan-out (<~30 agents, checkpoint to disk).
+First scope: lemely/io/grade_boundaries.py (GradeBoundaryStore.resolve — current source of truth),
+the boundary data file/table it reads, and where papers/boundaries live in the schema.
+
+## Superseded — P2.1 scope (kept for provenance)
+Scope COMPLETE (2026-08-03). Design locked:
+- NEW lemely/db/attempt_repo.py: AttemptRepository.persist_correction(user_id, AccuracyReport,
+  upload_id) → Attempt (+confidence_band/predicted_grade/boundary_source/needs_review) +
+  QuestionResult rows (matched_point_ids = method-mark JSONB) + WeaknessRecord rows +
+  ReviewQueueItem rows for low-confidence (<0.90) / flagged questions. One txn. Reuses
+  parse_user_id/month_to_enum (promote to public in history_repo).
+- NEW lemely/web/upload_utils.py: shared safe_upload_name/write_upload_capped (dedupe teacher.py;
+  keep teacher._MAX_UPLOAD_BYTES call-time cap so its monkeypatch test stays green).
+- NEW student uploads repo + POST /api/student/uploads (student-only): stores scan (+optional
+  mark_scheme.pdf sibling) under output_dir/uploads/{uid}/{paperId}; persists Upload row;
+  returns {paperId}=upload.id.
+- REWIRE POST /api/student/correct: JSON {paperId}; owner-check Upload (404 if foreign) BEFORE
+  streaming; run(): metadata detect → resolve_mark_scheme (sibling pdf via ChainedMarkScheme
+  parser, else stored corpus by metadata) → extract_answers → grade_paper(student_id=None) →
+  attempt_repo.persist_correction → Upload=complete → SSE frames + [DONE]. Pipeline seams
+  (ScanMetadataExtractor, extract_answers, resolve_mark_scheme) module-level for monkeypatch.
+- get_attempt_repo + get_student_upload_repo singletons in deps.py (+reset_singletons).
+- NO new migration (all columns exist from P1.3). Gemini MOCKED in tests.
+- Tests: test_attempt_repo.py (PG-integration, throwaway DB) + test_student_correct.py
+  (real-PG through TestClient: SSE frames + persisted Attempt/QuestionResult/ReviewQueue +
+  confidence; ownership/unknown 404) + upload endpoint tests (role 403, 413 cap).
+Delegated code+tests to implementer(opus); orchestrator verifies §6 gates then commits.
 
 ## Superseded — Phase-1 next action (kept for provenance)
 **PHASE 1 COMPLETE** (2026-08-01) — merged to develop, pushed, develop→main PR opened (DO NOT MERGE),

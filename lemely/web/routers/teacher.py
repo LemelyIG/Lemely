@@ -92,6 +92,10 @@ from lemely.web.schemas_teacher import (
     StudentRowDTO,
     UploadResponseDTO,
 )
+from lemely.web.upload_utils import (
+    safe_upload_name,
+    write_upload_capped,
+)
 
 # Every teacher-portal route is staff-only. Gating at the router level means a
 # 401 (no/invalid token) or 403 (student/parent) is enforced uniformly and any
@@ -200,32 +204,22 @@ papers_store: _PaperStore = _PaperStore()
 
 
 def _safe_upload_name(filename: str | None, fallback: str) -> str:
-    """Return a sandbox-safe basename for a client-supplied upload filename.
+    """Thin wrapper over :func:`lemely.web.upload_utils.safe_upload_name`.
 
-    The client filename is *never* trusted as a path: only its basename is kept,
-    any traversal / separator components are dropped, and an empty or dangerous
-    result falls back to a server-chosen name. Callers still join the result to a
-    ``paper_id``-namespaced directory, so the returned value can only ever name a
-    file *inside* that directory.
+    Kept as a module-level name so the shared basename-sanitisation is reachable
+    at the same call site the teacher routes already use.
     """
-    if not filename:
-        return fallback
-    base = Path(filename).name
-    if not base or base in {".", ".."}:
-        return fallback
-    return base
+    return safe_upload_name(filename, fallback)
 
 
 def _write_upload_capped(data: bytes, dest: Path) -> None:
-    """Write ``data`` to ``dest`` in chunks, raising 413 past the size cap."""
-    if len(data) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Upload exceeds {_MAX_UPLOAD_BYTES} byte limit.",
-        )
-    with dest.open("wb") as fh:
-        for start in range(0, len(data), _UPLOAD_CHUNK_BYTES):
-            fh.write(data[start : start + _UPLOAD_CHUNK_BYTES])
+    """Write ``data`` to ``dest``, capped at :data:`_MAX_UPLOAD_BYTES`.
+
+    Delegates to :func:`lemely.web.upload_utils.write_upload_capped`, reading the
+    module-level cap at call time so the existing monkeypatch test (which lowers
+    ``_MAX_UPLOAD_BYTES`` to force a 413) keeps working.
+    """
+    write_upload_capped(data, dest, max_bytes=_MAX_UPLOAD_BYTES)
 
 
 def _session_label(session_month: str, session_year: int | None) -> str:

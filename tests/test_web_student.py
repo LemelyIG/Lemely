@@ -281,15 +281,34 @@ def test_result_negative_index_is_404(client: TestClient) -> None:
 # ── Correct a paper (SSE) ─────────────────────────────────────────────────────
 
 
-def test_correct_streams_and_terminates(client: TestClient) -> None:
-    """POST /correct streams SSE frames and terminates with [DONE]."""
-    with client.stream("POST", "/api/student/correct") as response:
-        assert response.status_code == 200
-        text = "".join(response.iter_text())
+def test_correct_requires_a_body(client: TestClient) -> None:
+    """POST /correct now takes a JSON ``{paperId}`` body; a body-less call is 422."""
+    assert client.post("/api/student/correct").status_code == 422
 
-    frames = [f for f in text.split("\n\n") if f.strip()]
-    assert frames[-1] == "data: [DONE]"
-    assert any('"type": "warning"' in f for f in frames)
+
+def test_correct_unknown_paper_is_404(seeded_store: HistoryStore) -> None:
+    """POST /correct 404s for a paper the caller does not own (checked pre-stream).
+
+    The upload-ownership lookup is stubbed to ``None`` (as it would be for an
+    unknown or foreign paperId), so the endpoint returns a clean 404 before any
+    SSE streaming begins — the full persist path is covered by
+    ``tests/test_student_correct.py`` against a real database.
+    """
+    from lemely.web.deps import get_student_upload_repo
+
+    upload_repo = MagicMock()
+    upload_repo.get_owned_upload.return_value = None
+
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
+    api = TestClient(app)
+    resp = api.post("/api/student/correct", json={"paperId": "missing"})
+    assert resp.status_code == 404
+    app.dependency_overrides.clear()
 
 
 # ── Study plan ────────────────────────────────────────────────────────────────

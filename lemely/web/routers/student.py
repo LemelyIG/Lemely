@@ -17,9 +17,11 @@ converter docstring calls out which fields are data-backed vs structurally empty
 
 from __future__ import annotations
 
+import uuid
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 # WeaknessReport and HistoryStoreProtocol stay as runtime imports (noqa: TC001):
@@ -27,21 +29,30 @@ from fastapi.responses import StreamingResponse
 # annotations at call time, so they cannot move into a TYPE_CHECKING block.
 from lemely.core.analytics import aggregate_weaknesses_from_history
 from lemely.core.history import HistoryStoreProtocol, PaperRecord, StudentHistory
-from lemely.core.schemas import WeaknessReport
+from lemely.core.loose_schemas import MarkScheme
+from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.core.study import StudentProfile, StudyPlan
 from lemely.core.study_plan import build_study_plan
-from lemely.db.models.enums import Role
+from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.models.enums import Role, UploadStatus
+from lemely.db.upload_repo import StudentUploadRepository
+from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
+from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
+from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.study_plan_ai import StudyPlanNarrator
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
     AuthContext,
+    get_attempt_repo,
     get_gemini_client,
     get_history_store,
     get_settings,
+    get_student_upload_repo,
     require_role,
 )
 from lemely.web.schemas_student import (
+    CorrectRequest,
     IntegrityRowDTO,
     MomentumDTO,
     OnboardingRequest,
@@ -53,6 +64,7 @@ from lemely.web.schemas_student import (
     ResultDTO,
     StandingsDTO,
     StudentProfileDTO,
+    StudentUploadResponse,
     StudyPlanDTO,
     StudyPlanRequest,
     SubjectDTO,
@@ -63,6 +75,8 @@ from lemely.web.schemas_student import (
     VizColor,
     WeakThreadDTO,
 )
+from lemely.web.services.grading import extract_answers, grade_paper
+from lemely.web.upload_utils import safe_upload_name, write_upload_capped
 
 router = APIRouter(prefix="/api")
 
@@ -399,32 +413,194 @@ def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
     ]
 
 
+# ── Upload a scan (self-mark ingest) ──────────────────────────────────────────
+
+
+@router.post("/student/uploads", response_model=StudentUploadResponse)
+async def student_upload(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    settings: Annotated[Settings, Depends(get_settings)],
+    upload_repo: Annotated[StudentUploadRepository, Depends(get_student_upload_repo)],
+    scan: Annotated[UploadFile, File()],
+    mark_scheme: Annotated[UploadFile | None, File()] = None,
+) -> StudentUploadResponse:
+    """Persist a student's scanned paper (+ optional mark scheme) and register it.
+
+    The scan is written under ``output_dir/uploads/{user_id}/{paperId}`` — the
+    directory is namespaced by both the authenticated user id and a
+    server-generated ``paperId`` (the :class:`Upload` row's id), and the client
+    filename is sanitised to a basename, so an upload can never escape the
+    sandbox. The returned ``paperId`` is passed back to ``POST
+    /api/student/correct`` to run the self-mark pipeline over this scan.
+    """
+    paper_id = uuid.uuid4()
+    upload_dir = settings.paths.output_dir / "uploads" / auth.user_id / paper_id.hex
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    scan_bytes = await scan.read()
+    scan_path = upload_dir / safe_upload_name(scan.filename, "scan.pdf")
+    write_upload_capped(scan_bytes, scan_path)
+
+    if mark_scheme is not None:
+        # Fixed name so ``resolve_mark_scheme`` can find the sibling scheme file.
+        write_upload_capped(await mark_scheme.read(), upload_dir / "mark_scheme.pdf")
+
+    upload_repo.create_upload(
+        user_id=auth.user_id,
+        storage_path=str(scan_path),
+        original_filename=scan.filename,
+        content_type=scan.content_type,
+        byte_size=len(scan_bytes),
+        upload_id=paper_id,
+    )
+    return StudentUploadResponse(paperId=str(paper_id))
+
+
 # ── Correct a paper (SSE self-mark) ───────────────────────────────────────────
+
+
+def _metadata_matches(scheme_meta: object, detected: ExamMetadata) -> bool:
+    """Return True when a stored scheme's metadata matches the detected paper.
+
+    Compares subject_code / paper_number / paper_variant always, and the session
+    (month + year) only when the scan detected one — a scan without a resolved
+    session should still match a scheme for the same paper.
+    """
+    if getattr(scheme_meta, "subject_code", None) != detected.subject_code:
+        return False
+    if getattr(scheme_meta, "paper_number", None) != detected.paper_number:
+        return False
+    if getattr(scheme_meta, "paper_variant", None) != detected.paper_variant:
+        return False
+    if detected.session_year is not None:
+        return bool(getattr(scheme_meta, "session_year", None) == detected.session_year)
+    return True
+
+
+def resolve_mark_scheme(
+    scan_path: Path,
+    settings: Settings,
+    gemini_client: GeminiClient,
+    *,
+    metadata: ExamMetadata | None = None,
+) -> MarkScheme | None:
+    """Resolve a mark scheme for a scan: sibling PDF first, then scheme corpus.
+
+    Preference order:
+
+    1. A ``mark_scheme.pdf`` sitting next to the scan (uploaded with it) — parsed
+       via the deterministic parser with a Gemini fallback.
+    2. When ``metadata`` was detected, a parsed scheme JSON in
+       ``output_dir/schemes`` whose metadata matches the detected paper.
+
+    Returns ``None`` when neither source yields a scheme (the caller then warns
+    and marks the upload failed rather than inventing marks).
+    """
+    sibling = scan_path.parent / "mark_scheme.pdf"
+    if sibling.exists():
+        from lemely.io.det import DeterministicMarkSchemeParser
+
+        parser = ChainedMarkSchemeParser(
+            DeterministicMarkSchemeParser(cfg=settings.det_parser),
+            GeminiMarkSchemeParser(gemini_client),
+        )
+        return parser(sibling)
+
+    if metadata is None:
+        return None
+
+    import json
+
+    from pydantic import ValidationError
+
+    schemes_dir = settings.paths.output_dir / "schemes"
+    if not schemes_dir.exists():
+        return None
+    for path in sorted(schemes_dir.glob("*.json")):
+        try:
+            scheme = MarkScheme.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        except (ValidationError, json.JSONDecodeError, OSError):
+            continue
+        if _metadata_matches(scheme.metadata, metadata):
+            return scheme
+    return None
 
 
 @router.post("/student/correct")
 def student_correct(
+    payload: CorrectRequest,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    upload_repo: Annotated[StudentUploadRepository, Depends(get_student_upload_repo)],
+    attempt_repo: Annotated[AttemptRepository, Depends(get_attempt_repo)],
+    gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> StreamingResponse:
-    """Stream the self-mark pipeline (extract → grade) as Server-Sent Events.
+    """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
-    Reuses :func:`lemely.web.services.grading.extract_answers` /
-    :func:`~lemely.web.services.grading.grade_paper` over the shared event bus.
-    A concrete run requires an uploaded scan + mark scheme (multipart handling is
-    a foundation concern owned outside this router); until that lands the
-    endpoint publishes a single ``warning`` frame and terminates cleanly with the
-    ``[DONE]`` sentinel so the frontend stream reader always closes.
+    Resolves the caller-owned upload (a 404 for an unknown or foreign paper is
+    raised *before* streaming starts, so the client never has to parse a
+    mid-stream error), then runs extract → grade over the shared event bus and
+    persists the full :class:`AccuracyReport` — one attempt with per-question
+    results, weaknesses, and review-queue rows — via :class:`AttemptRepository`.
+    The stream emits ``marking_progress`` frames and ends with a ``complete``
+    summary frame plus the ``[DONE]`` sentinel; on any failure the upload is
+    marked failed and a ``warning``/``error`` frame is emitted (never a
+    traceback).
     """
     from lemely.runtime.events import EventType, bus
     from lemely.web.sse import bus_event_stream
 
+    owned = upload_repo.get_owned_upload(user_id=auth.user_id, upload_id=payload.paperId)
+    if owned is None:
+        raise HTTPException(status_code=404, detail=f"Unknown paper: {payload.paperId}")
+
     def run() -> None:
         try:
-            bus.publish(
-                EventType.WARNING,
-                message="Upload a scan and mark scheme to start self-marking.",
-                student_id=auth.user_id,
+            scan_path = Path(owned.storage_path)
+
+            metadata: ExamMetadata | None = None
+            if settings.gemini_api_key is not None:
+                try:
+                    metadata = ScanMetadataExtractor(gemini_client)(scan_path)
+                except Exception as exc:
+                    bus.publish(
+                        EventType.WARNING,
+                        paper_id=payload.paperId,
+                        message=f"Could not detect scan metadata: {exc}",
+                    )
+
+            mark_scheme = resolve_mark_scheme(scan_path, settings, gemini_client, metadata=metadata)
+            if mark_scheme is None:
+                bus.publish(
+                    EventType.WARNING,
+                    paper_id=payload.paperId,
+                    message="No mark scheme available for this paper; cannot mark.",
+                )
+                upload_repo.set_status(owned.id, UploadStatus.failed)
+                return
+
+            extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
+            report = grade_paper(
+                mark_scheme, extracted, gemini_client=gemini_client, student_id=None
             )
+            attempt_id = attempt_repo.persist_correction(
+                user_id=auth.user_id, report=report, upload_id=owned.id
+            )
+            upload_repo.set_status(owned.id, UploadStatus.complete)
+            bus.publish(
+                EventType.MARKING_PROGRESS,
+                paper_id=payload.paperId,
+                phase="complete",
+                attempt_id=str(attempt_id),
+                awarded=report.correction.awarded_marks,
+                max_marks=report.correction.maximum_marks,
+                grade=report.grade_prediction.grade,
+                confidence=report.grade_prediction.confidence.value,
+                needs_review=report.correction.needs_teacher_review,
+            )
+        except Exception as exc:
+            bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
+            upload_repo.set_status(owned.id, UploadStatus.failed)
         finally:
             bus.publish_done()
 
