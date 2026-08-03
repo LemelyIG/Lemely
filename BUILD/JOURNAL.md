@@ -80,3 +80,23 @@
 - Next: Phase 2 — core loop end-to-end. Branch feature/phase-2-core-loop from develop; scope
   the SPA mock→real migration (web/lib/api.ts + **/data.ts) and boundary/fixture pipelines;
   drive the fan-out with small checkpointed workflows.
+
+## 2026-08-03 — P2.1 real correction pipeline (Phase 2)
+- Did: Resumed clean tree on feature/phase-2-core-loop (P2.1 marked `doing`). Scoped the stub
+  `/api/student/correct`, the marking pipeline (grading service, correct_paper), and the DB models
+  (Attempt/QuestionResult/WeaknessRecord/ReviewQueueItem — all columns already exist from P1.3).
+  Delegated implementation to implementer(opus) with a full self-contained brief; verified every
+  §6 gate myself (never trusted the claim): ruff/format/mypy(114)/lint-imports clean; 561 passed /
+  2 skipped (live-only) / 12 subtests; new tests 12 passed. Adversarially reviewed the /correct
+  rewrite + the one replaced test (honest evolution, not a weakening). Committed signed f2d4c97.
+- Learned: `grade_paper(student_id=None)` returns the AccuracyReport without persisting — reused it,
+  then persisted the full report (Attempt + per-question QuestionResult + WeaknessRecord +
+  ReviewQueue) via a new AttemptRepository. `matched_point_ids` JSONB is the method-mark breakdown
+  (no separate column). SSE bus is global/single-stream — /correct tests run serially. pre-commit
+  `--all-files` keeps re-flagging 2 newline-less Sources/*.json (pre-existing drift) — stage only
+  the task's files and run pre-commit on the staged set instead.
+- Next: P2.2 grade-boundary ingestion (scrape 0580/0606/0625 per-variant thresholds w/ provenance
+  → parse into boundary table → exact lookup + per-subject-avg fallback with "estimated" flag).
+  Use a checkpointed Workflow for the scrape/parse fan-out (MISSION authorizes it). Start by scoping
+  lemely/io/grade_boundaries.py (GradeBoundaryStore.resolve) + its boundary data source.
+  CARRIED: restore coverage 85.10%→≥85.44% before the P2.10 develop merge (named branches in STATE).
