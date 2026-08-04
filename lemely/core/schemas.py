@@ -128,6 +128,8 @@ class CorrectedQuestion(StrictModel):
     marker_source: Literal["deterministic", "ai", "missing"] = "deterministic"
     feedback: str | None = None
     matched_point_ids: list[str] = Field(default_factory=list)
+    plagiarism_flagged: bool = False
+    ai_detection_flagged: bool = False
 
     @model_validator(mode="after")
     def validate_awarded_marks(self) -> CorrectedQuestion:

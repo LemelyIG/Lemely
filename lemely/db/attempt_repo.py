@@ -120,13 +120,29 @@ class AttemptRepository:
             # populated before we build the review-queue rows that reference them.
             session.flush()
             attempt_id = attempt.id
-            for qr in attempt.question_results:
+            for qr, cq in zip(attempt.question_results, correction.questions, strict=True):
                 if qr.needs_teacher_review or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
                     session.add(
                         ReviewQueueItem(
                             attempt_id=attempt_id,
                             question_result_id=qr.id,
                             reason=ReviewReason.low_confidence,
+                        )
+                    )
+                if cq.plagiarism_flagged:
+                    session.add(
+                        ReviewQueueItem(
+                            attempt_id=attempt_id,
+                            question_result_id=qr.id,
+                            reason=ReviewReason.plagiarism_flag,
+                        )
+                    )
+                if cq.ai_detection_flagged:
+                    session.add(
+                        ReviewQueueItem(
+                            attempt_id=attempt_id,
+                            question_result_id=qr.id,
+                            reason=ReviewReason.ai_detection_flag,
                         )
                     )
         return attempt_id

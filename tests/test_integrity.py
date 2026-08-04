@@ -1,12 +1,21 @@
-"""Tests for Phase 6: PlagiarismChecker and AIContentDetector."""
+"""Tests for Phase 6: PlagiarismChecker and AIContentDetector.
+
+Also covers P2.4's ``apply_integrity_checks`` pipeline wiring — the function
+that runs both checks over a :class:`CorrectionResult` and turns findings into
+advisory ``needs_teacher_review``/``review_reason`` signals without ever
+touching marks.
+"""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 from lemely.core.integrity_schemas import IntegrityFinding
+from lemely.core.loose_schemas import MarkScheme
 from lemely.core.plagiarism import PlagiarismChecker
-from lemely.io.integrity import AIContentDetector
+from lemely.core.schemas import ConfidenceBand, CorrectedQuestion, CorrectionResult, ExamMetadata
+from lemely.io.integrity import AIContentDetector, apply_integrity_checks
+from lemely.runtime.config import IntegritySettings
 
 
 class TestPlagiarismChecker:
@@ -88,3 +97,203 @@ class TestAIContentDetector:
         AIContentDetector(mock_client).detect("q1", "Q", "A", [])
         call_kwargs = mock_client.generate_structured.call_args.kwargs
         assert call_kwargs["task_tag"] == "integrity"
+
+
+def _metadata() -> ExamMetadata:
+    return ExamMetadata(
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=2,
+        session_month="May/June",
+        session_year=2020,
+    )
+
+
+def _mark_scheme() -> MarkScheme:
+    """One theory question with a command word and two answer points."""
+    return MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_extended",
+                "maximum_mark": 2,
+                "scheme_format": "mixed",
+            },
+            "questions": [
+                {
+                    "id": "1",
+                    "marks": 2,
+                    "type": "explanation",
+                    "question_command": "explain why",
+                    "answer_points": [
+                        {"id": "p1", "point": "gravity acts on it", "marks": 1},
+                        {"id": "p2", "point": "no air resistance", "marks": 1},
+                    ],
+                },
+            ],
+        }
+    )
+
+
+def _question(**overrides: object) -> CorrectedQuestion:
+    fields: dict[str, object] = {
+        "question_id": "1",
+        "awarded_marks": 2,
+        "maximum_marks": 2,
+        "confidence": ConfidenceBand.HIGH,
+        "confidence_score": 0.95,
+        "needs_teacher_review": False,
+        "student_answer": "Gravity acts on it and there is no air resistance.",
+        "expected_answer": "Gravity acts on it and there is no air resistance.",
+        "marker_source": "ai",
+    }
+    fields.update(overrides)
+    return CorrectedQuestion.model_validate(fields)
+
+
+class TestApplyIntegrityChecks:
+    def test_plagiarism_flags_near_verbatim_answer(self) -> None:
+        # student_answer == expected_answer -> similarity ratio 1.0, flagged.
+        correction = CorrectionResult(metadata=_metadata(), questions=[_question()])
+        result = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        q = result.questions[0]
+        assert q.plagiarism_flagged is True
+        assert q.ai_detection_flagged is False
+        assert q.needs_teacher_review is True
+        assert q.review_reason is not None
+        assert "plagiarism" in q.review_reason
+        assert q.awarded_marks == 2
+        assert q.maximum_marks == 2
+
+    def test_paraphrased_answer_flags_nothing(self) -> None:
+        question = _question(
+            student_answer=(
+                "The object falls because Earth pulls it down and there is nothing "
+                "slowing its descent in a vacuum."
+            ),
+            expected_answer="Gravity acts on it and there is no air resistance.",
+        )
+        correction = CorrectionResult(metadata=_metadata(), questions=[question])
+        result = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        q = result.questions[0]
+        assert q.plagiarism_flagged is False
+        assert q.ai_detection_flagged is False
+        assert q.needs_teacher_review is False
+        assert q.review_reason is None
+
+    def test_ai_detection_disabled_never_calls_gemini(self) -> None:
+        mock_client = MagicMock()
+        question = _question(
+            student_answer=(
+                "The object falls because Earth pulls it down and there is nothing "
+                "slowing its descent in a vacuum."
+            ),
+            expected_answer="Gravity acts on it and there is no air resistance.",
+        )
+        correction = CorrectionResult(metadata=_metadata(), questions=[question])
+        apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=mock_client,
+            settings=IntegritySettings(ai_detection_enabled=False),
+        )
+        mock_client.generate_structured.assert_not_called()
+
+    def test_ai_detection_enabled_appends_alongside_plagiarism_flag(self) -> None:
+        mock_client = MagicMock()
+        mock_client.generate_structured.return_value = IntegrityFinding(
+            question_id="1",
+            kind="ai_generated",
+            flagged=True,
+            score=0.91,
+            rationale="Unnaturally fluent prose.",
+        )
+        # Identical student/expected answers -> plagiarism also flags.
+        correction = CorrectionResult(metadata=_metadata(), questions=[_question()])
+        result = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=mock_client,
+            settings=IntegritySettings(ai_detection_enabled=True),
+        )
+        q = result.questions[0]
+        assert q.plagiarism_flagged is True
+        assert q.ai_detection_flagged is True
+        assert q.needs_teacher_review is True
+        assert q.review_reason is not None
+        assert "plagiarism" in q.review_reason
+        assert "ai_detection" in q.review_reason
+        assert q.review_reason.count(" | ") == 1
+        mock_client.generate_structured.assert_called_once()
+        call_kwargs = mock_client.generate_structured.call_args.kwargs
+        assert call_kwargs["task_tag"] == "integrity"
+
+    def test_marks_are_unchanged_when_both_flags_fire(self) -> None:
+        mock_client = MagicMock()
+        mock_client.generate_structured.return_value = IntegrityFinding(
+            question_id="1",
+            kind="ai_generated",
+            flagged=True,
+            score=0.88,
+            rationale="Unnaturally fluent prose.",
+        )
+        before = _question()
+        correction = CorrectionResult(metadata=_metadata(), questions=[before])
+        result = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=mock_client,
+            settings=IntegritySettings(ai_detection_enabled=True),
+        )
+        after = result.questions[0]
+        assert after.plagiarism_flagged is True
+        assert after.ai_detection_flagged is True
+        assert after.awarded_marks == before.awarded_marks == 2
+        assert after.maximum_marks == before.maximum_marks == 2
+        assert result.awarded_marks == correction.awarded_marks == 2
+        assert result.maximum_marks == correction.maximum_marks == 2
+
+    def test_preserves_existing_review_reason(self) -> None:
+        question = _question(
+            review_reason="confidence 0.50 below review threshold 0.90",
+            needs_teacher_review=True,
+        )
+        correction = CorrectionResult(metadata=_metadata(), questions=[question])
+        result = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        q = result.questions[0]
+        assert q.review_reason is not None
+        assert "confidence 0.50 below review threshold 0.90" in q.review_reason
+        assert "plagiarism" in q.review_reason
+        assert q.review_reason.startswith("confidence 0.50")
+
+    def test_plagiarism_disabled_skips_check(self) -> None:
+        correction = CorrectionResult(metadata=_metadata(), questions=[_question()])
+        result = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(plagiarism_enabled=False),
+        )
+        q = result.questions[0]
+        assert q.plagiarism_flagged is False
+        assert q.needs_teacher_review is False

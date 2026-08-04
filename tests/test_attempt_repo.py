@@ -35,7 +35,7 @@ from lemely.db.base import Base
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
-from lemely.db.models.enums import BoundarySource, MarkerSource, Role
+from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, Role
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.runtime.config import DatabaseSettings
@@ -230,6 +230,75 @@ def test_review_queue_only_for_flagged_questions(
         flagged = session.get(QuestionResult, item.question_result_id)
         assert flagged is not None
         assert flagged.question_id == "2"
+
+
+def _report_with_integrity_flags() -> AccuracyReport:
+    """One question flagged for BOTH plagiarism and AI-detection.
+
+    ``needs_teacher_review`` is True as ``apply_integrity_checks`` would set it,
+    so the existing low_confidence-or-flagged check in ``persist_correction``
+    still queues a ``low_confidence`` row alongside the two new integrity rows
+    — the three reasons are independent, additive rows, not a replacement.
+    """
+    metadata = ExamMetadata(
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=2,
+        session_month="May/June",
+        session_year=2020,
+    )
+    flagged = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=1.0,
+        needs_teacher_review=True,
+        student_answer="A",
+        expected_answer="A",
+        topic="Waves",
+        review_reason="plagiarism (score 0.95) | ai_detection (score 0.90)",
+        marker_source="deterministic",
+        matched_point_ids=["p1"],
+        plagiarism_flagged=True,
+        ai_detection_flagged=True,
+    )
+    correction = CorrectionResult(metadata=metadata, questions=[flagged])
+    prediction = GradePrediction(
+        awarded_marks=1,
+        maximum_marks=1,
+        percentage=100.0,
+        grade="A",
+        confidence=ConfidenceBand.HIGH,
+        needs_teacher_review=True,
+        boundary_source="subject_default",
+    )
+    return AccuracyReport(
+        correction=correction,
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=prediction,
+    )
+
+
+def test_review_queue_includes_integrity_flag_rows(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    user_id = _seed_user(pg_sessionmaker)
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=user_id, report=_report_with_integrity_flags()
+    )
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(select(ReviewQueueItem)).all()
+        reasons = {item.reason for item in items}
+        assert reasons == {
+            ReviewReason.low_confidence,
+            ReviewReason.plagiarism_flag,
+            ReviewReason.ai_detection_flag,
+        }
+        assert all(item.attempt_id == attempt_id for item in items)
+        question_result_ids = {item.question_result_id for item in items}
+        assert len(question_result_ids) == 1
 
 
 def test_coexists_with_db_history_store(

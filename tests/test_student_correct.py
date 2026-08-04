@@ -219,9 +219,12 @@ def test_upload_then_correct_persists_attempt(
         assert len(results) == 2
 
         items = session.scalars(select(ReviewQueueItem)).all()
-        # The blank q2 is LOW confidence → exactly one review-queue row.
-        assert len(items) == 1
-        assert items[0].reason.value == "low_confidence"
+        # The blank q2 is LOW confidence → one row. q1's deterministic MCQ
+        # answer ("A") is verbatim-identical to the expected answer ("A"), so
+        # the (now-wired) advisory plagiarism checker also flags it → a
+        # second, independent row. Neither touches awarded/maximum marks.
+        assert len(items) == 2
+        assert {item.reason.value for item in items} == {"low_confidence", "plagiarism_flag"}
 
 
 def test_upload_sets_status_and_writes_file(

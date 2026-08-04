@@ -40,6 +40,8 @@ class QuestionResultDTO(ApiModel):
     feedback: str | None = None
     matchedPointIds: list[str] | None = None
     reviewReason: str | None = None
+    plagiarismFlagged: bool = False
+    aiDetectionFlagged: bool = False
 
 
 class WeakAreaDTO(ApiModel):
@@ -77,6 +79,8 @@ def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
         feedback=question.feedback,
         matchedPointIds=list(question.matched_point_ids) or None,
         reviewReason=question.review_reason,
+        plagiarismFlagged=question.plagiarism_flagged,
+        aiDetectionFlagged=question.ai_detection_flagged,
     )
 
 

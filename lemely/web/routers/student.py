@@ -582,7 +582,11 @@ def student_correct(
 
             extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
             report = grade_paper(
-                mark_scheme, extracted, gemini_client=gemini_client, student_id=None
+                mark_scheme,
+                extracted,
+                gemini_client=gemini_client,
+                student_id=None,
+                integrity_settings=settings.integrity,
             )
             attempt_id = attempt_repo.persist_correction(
                 user_id=auth.user_id, report=report, upload_id=owned.id

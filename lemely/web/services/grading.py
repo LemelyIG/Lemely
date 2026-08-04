@@ -28,6 +28,8 @@ from lemely.io.answer_extraction import GeminiAnswerExtractor
 from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
+from lemely.io.integrity import apply_integrity_checks
+from lemely.runtime.config import IntegritySettings
 
 
 def extract_answers(
@@ -59,6 +61,7 @@ def grade_paper(
     student_id: str | None = None,
     history_store: HistoryStoreProtocol | None = None,
     boundary_store: GradeBoundaryStore | None = None,
+    integrity_settings: IntegritySettings | None = None,
 ) -> AccuracyReport:
     """Grade a paper and optionally record it to a student's history.
 
@@ -77,6 +80,8 @@ def grade_paper(
         student_id: When set, the paper is recorded under this id.
         history_store: Store used to persist the record; required for recording.
         boundary_store: Grade-boundary source; a default store is used if omitted.
+        integrity_settings: Plagiarism/AI-detection advisory-flag settings; the
+            defensive defaults (plagiarism on, AI-detection off) apply if omitted.
 
     Returns:
         The assembled accuracy report.
@@ -86,6 +91,12 @@ def grade_paper(
         extracted_answers=extracted_answers,
         gemini_client=gemini_client,
         mcq_only=mcq_only,
+    )
+    correction = apply_integrity_checks(
+        correction,
+        mark_scheme,
+        gemini_client=gemini_client,
+        settings=integrity_settings or IntegritySettings(),
     )
 
     store = boundary_store or GradeBoundaryStore()
