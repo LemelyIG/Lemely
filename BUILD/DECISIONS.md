@@ -946,3 +946,51 @@
   Gates green (see STATE.md Next-action entry for numbers); Postgres-backed tests skip locally
   (Supabase stack still down, same root-owned-dir issue, sudo unavailable in this session too —
   unchanged from the dispatch session, CI unaffected).
+
+### D2.7 — P2.7 result delivery: SSE `complete` frame carries full per-question data; two small additive backend DTO changes precede the frontend wiring
+
+- **What:** Before wiring the student screens, two small additive backend changes:
+  1. `PaperHistoryRowDTO` (`lemely/web/schemas_student.py`) gains an `id: str` field — the
+     forward-position index into `history.records` (same addressing scheme
+     `GET /student/result/{paper_id}` already uses). Populated in `student_subject()`
+     (`lemely/web/routers/student.py`) by enumerating `records` *before* reversing for display
+     order (the current code does `for record in reversed(records)` with no index tracked).
+  2. The `complete`-phase `MARKING_PROGRESS` event published at the end of `student_correct`'s
+     `run()` gains a `questions` key: `[question_to_dto(q).model_dump(by_alias=True) for q in
+     report.correction.questions]`, reusing the existing `question_to_dto` converter from
+     `lemely/web/schemas.py`. Bus event payloads are free-form dicts (no schema), so this is a
+     non-breaking additive key.
+- **Why:** Two gaps surfaced while planning the frontend wiring, both would have made honest
+  wiring impossible without a backend touch: (1) `PaperHistoryRowDTO` had no addressable id, so
+  Subject's paper-history table (real, data-backed rows) had nothing to link to a result page
+  with — a UI dead end, not a frontend bug. (2) `ResultDTO.theory`/`.integrity` are
+  **documented as structurally empty** when served via the index-based
+  `GET /student/result/{paper_id}` route (history records persist totals + weak-areas only, not
+  per-question theory/mark-points/integrity flags — see that endpoint's docstring). The *only*
+  place the full per-question `CorrectionResult` exists is inside `student_correct`'s live SSE
+  closure, and it was being discarded after computing scalar totals for the `complete` frame.
+  Without forwarding it, the flagship "just corrected a paper, see the real marks/method-marks/
+  weaknesses" moment (P2.10's literal E2E acceptance wording) would be unbuildable — the richest
+  screen in the product would only ever be able to show structurally-empty theory data.
+- **Design:** CorrectPaper consumes the `complete` frame's `questions` (+ existing scalars) and
+  assembles a client-side `ResultData`-shaped object, navigating to `/student/result/:paperId`
+  via React Router state (`navigate(path, { state })`) rather than triggering a second fetch.
+  PaperResult prefers `location.state` when present (the "just corrected" case, full theory/
+  integrity) and falls back to `GET /student/result/:paperId` otherwise (browsing an older paper
+  from Subject's history table via its new `id` — still honestly structurally-empty for
+  theory/integrity, unchanged, already-documented behavior, not a regression). This avoids
+  widening `HistoryStoreProtocol`/`DbHistoryStore` to persist and re-serve full per-question
+  detail, which is out of scope for a frontend-wiring phase task.
+- **Alternatives rejected:** (a) Have `GET /student/result/{id}` return full theory data by
+  querying `QuestionResult` rows directly (they exist in Postgres from P2.1) instead of going
+  through the reduced `HistoryStoreProtocol` abstraction — rejected as a larger, riskier change
+  (bypassing the interim history abstraction entirely) for a phase whose task list says
+  "screen-by-screen wiring," not "redesign the result-retrieval data path"; worth revisiting in
+  a later phase once `HistoryStoreProtocol` itself is reconsidered. (b) Re-fetch
+  `GET /student/subject/{code}` after correction completes and infer the new paper's index —
+  rejected: fragile (race with the row actually landing, ordering assumptions) versus the SSE
+  frame already holding the exact data needed.
+- **Blast radius:** `lemely/web/schemas_student.py` (1 field), `lemely/web/routers/student.py`
+  (`student_subject`'s history-row loop + `student_correct`'s `complete` publish call) — both
+  additive, no field removed/renamed. Existing tests asserting on `PaperHistoryRowDTO`/the SSE
+  `complete` frame shape need their expected-shape assertions extended, not rewritten.

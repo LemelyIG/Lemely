@@ -550,11 +550,85 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        was needed since `web/node_modules` wasn't present this session — package-lock.json
        diff (npm-metadata-only, no dependency change) was reverted by the implementer, left
        untouched. Committing on feature/phase-2-core-loop.
-- [ ] todo — P2.7 Student surface on real data (screen-by-screen delete student/data.ts):
+- [ ] doing — P2.7 Student surface on real data (screen-by-screen delete student/data.ts):
        Overview (overall + per-subject), Subject (per-paper history + predicted boundaries/
        final grade + estimated flag), PaperResult (marks/method-marks/mistakes/weakness/
        confidence/integrity flags), CorrectPaper (real SSE upload→correct, kill setTimeout
        theatre), Onboarding/StudyPlan/Standings as far as Phase-2 scope needs.
+       PLAN (recorded before dispatch so a killed session can resume; **D2.7** covers the two
+       backend prerequisite changes). Executed SEQUENTIALLY (not a parallel workflow fan-out —
+       every screen touches shared files: `index.tsx` route registration/crumbs/nav, and
+       `data.ts`; concurrent agents editing those would conflict). Each sub-step: dispatch to
+       `implementer`, orchestrator-verify gates, commit, tick off here.
+       1. [ ] todo — Backend prereqs (D2.7): `PaperHistoryRowDTO.id` (index) + SSE `complete`
+          frame `questions` key. Extend existing student-router tests for both new fields.
+          Small, mechanical, backend-only — no frontend touch.
+       2. [ ] todo — Frontend API foundation for this task: NEW `web/src/lib/studentTypes.ts`
+          (TS interfaces mirroring `lemely/web/schemas_student.py` DTOs 1:1 camelCase:
+          OverviewDTO, SubjectDTO incl. PaperHistoryRow.id, ResultDTO incl. TheoryQuestion/
+          IntegrityRow, StudyPlanDTO, StandingsDTO, StudentProfileDTO, StudentUploadResponse);
+          NEW `web/src/lib/hooks/useStudentApi.ts`: react-query `useQuery` hooks —
+          `useOverview()`, `useSubject(code)`, `useResult(paperId)` — GET wrappers over
+          `request()` from `lib/api.ts`; `useStudyPlan()` (GET) + a plan-post mutation;
+          `useStandings()`; an onboarding-post mutation. Upload + correct are NOT react-query
+          (multipart POST + SSE stream) — expose as plain async functions
+          (`uploadScan(formData)`, and a `runCorrection(paperId)` async generator wrapping
+          `streamActivity`) for CorrectPaper to call directly. No screen/data.ts/route changes
+          in this step — foundation only, mirrors the P2.6 pattern.
+       3. [ ] todo — Overview screen + Subject routing skeleton: wire `Overview.tsx` to
+          `useOverview()` (studentName/forecast/subjects/weakGlobal/momentum are real).
+          Remove the `nextUp`/`agenda`/`igCalculator` cards and the hardcoded "Papers marked"/
+          "Hours saved" stat cards + hardcoded greeting body text — none are backed by
+          `OverviewDTO` and MISSION's honesty precedent (D1.6 finding M2: remove fabricated
+          content, don't invent an empty state for it) applies. Subject row click navigates to
+          `/student/subject/${s.code}` (was hardcoded `/student/subject`). Update
+          `studentRoute` in `index.tsx`: `subject` → `subject/:code`; generalize the static
+          `crumbs` lookup (currently an exact-pathname map, breaks on dynamic segments) to fall
+          back to a computed crumb for `/student/subject/:code` and (step 5) `/student/result/
+          :paperId`. Leave the sidebar's static "Physics 0625" nav item as a reasonable
+          placeholder (no live subject list at sidebar-render time without an extra fetch —
+          out of scope) OR drop it if the implementer judges that cleaner; record the call made.
+       4. [ ] todo — Subject screen: wire `Subject.tsx` to `useSubject(code)` via `useParams`.
+          Paper-history rows link to `/student/result/${row.id}` using the new `id` field
+          from step 1. 404 (no history for subject) → simple empty state, not a crash.
+       5. [ ] todo — CorrectPaper + PaperResult (coupled by D2.7's state-passing design — do
+          together, one dispatch): CorrectPaper gets a real file input (scan required, optional
+          mark-scheme file) → `uploadScan()` (multipart POST /student/uploads) →
+          `runCorrection(paperId)` consuming `streamActivity` frames to drive the existing
+          progress-step UI for real (marking_progress/warning/error frames — kill the
+          `setTimeout` theatre and `progressSteps`/`detected`/`scanMeta`/`readChips`/`reassure`
+          mock reliance where now-superseded by real frame data; `reassure` copy (explainer
+          text, not data) may stay). On the `complete` frame, assemble a `ResultData`-shaped
+          object from the frame's scalars + new `questions` key and `navigate(`/student/result/
+          ${paperId}`, { state: assembled })`. PaperResult reads `useParams().paperId`; prefers
+          `location.state` when present (full theory/integrity); else calls `useResult
+          (paperId)` (history-sourced, structurally-empty theory/integrity — existing, honest,
+          documented behavior, not a regression). Route registration: `result` →
+          `result/:paperId`.
+       6. [ ] todo — StudyPlan + Standings + Onboarding (bundle — phase wording says "as far as
+          Phase-2 scope needs", partial wiring is sanctioned): StudyPlan wired to
+          `useStudyPlan()`/post-mutation (`planRows`/`days`/`planCards` grid mock replaced by
+          the real `sessions` list — implementer's call on layout, doesn't need to preserve the
+          exact 7-day-grid visual if `StudyPlanDTO.sessions` doesn't map onto it 1:1, just needs
+          to render real data honestly). Standings: wire `subjectRanks`/`paperCount`/
+          `streakDays` (real); REMOVE the friends/school/global leaderboard tables entirely —
+          `StandingsDTO` has no `boards` field (leaderboards are Phase 5/XP, no backend exists
+          yet) — do not leave mock names on screen. Onboarding: wire the subject-confidence
+          sliders to `OnboardingRequest.sliders` (`OnboardSliderInput{label,code,pct}`) +
+          `gradeLevel`/`school`/`weeklyHours` on submit; the `onboardChips` multi-select reasons
+          have no backing field on `OnboardingRequest` — drop them (don't submit fabricated
+          data); document what's deferred vs P2.4-onward's full onboarding wizard.
+       7. [ ] todo — `data.ts` cleanup pass: delete every export now fully superseded by a live
+          fetch; KEEP `navGroups`, `crumbs` (or its replacement), `studentMeta`, and every
+          Landing/Directions export (`landingHero`, `pillars`, `pillarsIntro`, `pricing`,
+          `landingProofIntro`, `proof`, `directionsIntro`) — those two screens are marketing
+          pages outside P2.7's scope, not touched. Run `tsc --noUnusedLocals`-equivalent (the
+          existing `npm run typecheck`) to catch anything still importing a deleted export.
+       8. [ ] todo — Gates (§6.3: typecheck/oxlint/build clean) + orchestrator-verify (re-run
+          gates myself, don't trust subagent claims) + commit + STATE.md update per step above
+          (already folded into steps 1-7, this line is the final full-suite confirmation) +
+          `reports/phase-2/` note if anything is a documented deviation worth carrying to
+          P2.10's DELIVERY.md section.
 - [ ] todo — P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
        incrementally): Grading, Review (low-confidence/integrity queue), MarkSchemes,
        Overview. Fill audit "partial" hollow fields honestly or mark deferred.
