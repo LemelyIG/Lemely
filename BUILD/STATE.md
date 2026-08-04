@@ -432,7 +432,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        references today, confirmed). Frontend wiring is P2.6/P2.7 (SPA still all mock), out
        of scope here — DTO fields are the P2.4 finish line per the phase checklist wording
        ("surface in result payload + review_queue"). Dispatching to `implementer` (Sonnet).
-- [x] doing — P2.5 Upload path: plain file upload (25MB cap kept) + Supabase Storage +
+- [x] done — P2.5 Upload path: plain file upload (25MB cap kept) + Supabase Storage +
        backend job. Scope narrowed to backend Storage wiring this session — camera-capture
        UI + client-side PDF assembly deferred to P2.7 (screen-by-screen wiring, CorrectPaper
        owns this flow); see **D2.6** in DECISIONS.md for full rationale. PLAN (recorded before
@@ -557,18 +557,43 @@ creating it; gates were run as individual commands this session instead. Not blo
 but worth creating opportunistically (cheap, ~10 lines) before it causes repeated
 individual-command overhead in future sessions.
 
-**P2.5 dispatched (2026-08-04)** — see the PLAN recorded in the Phase-2 checklist entry
-above (backend Supabase Storage wiring; scope narrowed per D2.6). Dispatched to
-`implementer` (Sonnet); orchestrator verifies §6 gates before commit. Branch stays
-`feature/phase-2-core-loop`; no new branch needed.
-Separate environment note (not blocking, needs a session with shell/root access): local
-Supabase stack is down and won't start — `supabase/.temp/start-secrets/supabase_db_Lemely/`
-contains root-owned directories from a prior crashed container that this session's
-non-privileged shell cannot remove (`rm -rf` fails EACCES even recursively, since deleting
-requires write access to those root-owned dirs, not just their parent). Fix: as a user with
-root/docker-group cleanup rights, `sudo rm -rf supabase/.temp/start-secrets/` then
-`supabase start`. Until then, Postgres-backed integration tests keep skipping locally (CI is
-unaffected — it provisions its own Postgres service).
+**P2.5 DONE + VERIFIED (2026-08-04).** Resumed on a dirty tree carrying a prior session's
+PARTIAL P2.5 implementer output — steps 1-3 of the recorded PLAN (`StorageSettings`,
+`lemely/io/storage.py` with `StorageBackend`/`HttpStorageBackend`, `tests/storage_fakes.py`
+with `FakeStorageBackend`, `get_storage_backend` singleton in `web/deps.py`,
+`check_upload_cap` extracted in `upload_utils.py`) matched the PLAN exactly and were sound;
+steps 4-6 (router wiring, tests) were NOT started. Completed the unit: wired
+`student_upload` to `storage_backend.upload` (object key
+`uploads/{user_id}/{paperId}/{filename}`, `storage_path` repurposed to hold that key) and
+`student_correct`'s `run()` closure to `storage_backend.download` into a
+`tempfile.TemporaryDirectory`. Two deliberate deviations from the literal PLAN text, both
+recorded in **D2.6**'s completion note: (1) also download an optional sibling
+`mark_scheme.pdf` object (the PLAN only mentioned the scan; skipping the sibling would have
+silently regressed the existing student-supplied-mark-scheme feature) — added
+`StorageObjectNotFoundError` (shared by `HttpStorageBackend` on HTTP 404 and
+`FakeStorageBackend`, moved out of test-local scope into `lemely/io/storage.py`) to
+distinguish "no sibling" from a real Storage failure; (2) `tests/test_storage_live.py` is a
+live-skip integration test only (mirroring `test_auth_live.py`'s skip condition), not a
+`httpx.MockTransport` hermetic test — confirmed `HttpGoTrueBackend` itself has zero hermetic
+tests, only live-skip coverage, so matched the actual precedent instead of the PLAN's
+unverified assumption. Also fixed `tests/test_student_correct.py`'s `client` fixture to share
+one `FakeStorageBackend()` instance across the override lambda (a fresh instance per call
+would silently break the upload→correct flow across requests — caught before running);
+rewrote `test_upload_sets_status_and_writes_file` against the fake store instead of a local
+disk path; added `test_upload_over_size_cap_is_413` for the new `check_upload_cap` call site.
+GATES (orchestrator-verified): `ruff check`/`ruff format --check`/`mypy lemely`/`lint-imports`
+all clean; full pytest run exit 0, 0 failed/errored, 49 skipped (all Postgres/Supabase-live,
+env-gated, same as every session this stack has been down), coverage gate (70%) passed at
+81.45%. Committing on `feature/phase-2-core-loop`.
+Separate environment note (not blocking, needs a session with shell/root access, UNCHANGED
+this session — sudo unavailable in this sandbox too): local Supabase stack is down and won't
+start — `supabase/.temp/start-secrets/supabase_db_Lemely/` contains root-owned directories
+from a prior crashed container that a non-privileged shell cannot remove (`rm -rf` fails
+EACCES even recursively, since deleting requires write access to those root-owned dirs, not
+just their parent). Fix: as a user with root/docker-group cleanup rights, `sudo rm -rf
+supabase/.temp/start-secrets/` then `supabase start`. Until then, Postgres-backed integration
+tests keep skipping locally (CI is unaffected — it provisions its own Postgres service).
+Next: P2.6 Frontend API foundation (resurrect `web/src/lib/api.ts` + react-query).
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:

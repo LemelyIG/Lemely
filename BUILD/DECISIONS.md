@@ -911,3 +911,38 @@
   config.py` (new `StorageSettings`), tests for all of the above. No DB migration (the
   `storage_path` column already exists from P1.3 and is repurposed, not renamed, to avoid an
   unnecessary migration for a semantic-only change).
+- **Completion note (same session, resumed on the WIP described above):** the PLAN as recorded
+  had `StorageSettings`/`HttpStorageBackend`/`FakeStorageBackend`/`get_storage_backend`
+  already implemented and dirty on disk (steps 1–3) — verified correct before trusting (matches
+  the recorded design exactly, gates were not yet run). Completed steps 4–6: wired
+  `student_upload` to `storage_backend.upload` (object key
+  `uploads/{user_id}/{paperId}/{filename}`, `storage_path` now stores that key) and
+  `student_correct`'s `run()` closure to `storage_backend.download` into a
+  `tempfile.TemporaryDirectory` (not the PLAN's literal `NamedTemporaryFile` — deviation
+  explained below). **Deviation from the literal PLAN text:** the PLAN only described
+  downloading the scan; it didn't address the optional sibling `mark_scheme.pdf` that
+  `student_upload` has always accepted and `resolve_mark_scheme` looks for next to the scan on
+  disk. Downloading only the scan would have silently regressed that existing, tested feature
+  (a student-supplied mark scheme would stop being found, always falling back to corpus lookup
+  or `None`) — not acceptable for a "no behavior change beyond storage location" migration. Added
+  `StorageObjectNotFoundError` (moved from being test-local in `tests/storage_fakes.py` into
+  `lemely/io/storage.py` so production code and the fake raise the identical type;
+  `HttpStorageBackend.download` now raises it on HTTP 404, `ExternalServiceError` on other
+  non-2xx) so `run()` can distinguish "no sibling scheme" (expected, silently skipped) from a
+  genuine Storage failure, and download the sibling into the same temp directory under the
+  original `mark_scheme.pdf` name so `resolve_mark_scheme`'s sibling-file check keeps working
+  unchanged. Also added `tests/test_storage_live.py` (live-skip, mirrors `test_auth_live.py`'s
+  skip condition) rather than a `httpx.MockTransport` hermetic test for `HttpStorageBackend` —
+  the PLAN's step 6 asked to match "whatever pattern test_gotrue.py/similar already uses," but
+  no such file/pattern exists: `HttpGoTrueBackend` itself has zero hermetic unit tests, only
+  live-skip integration coverage (confirmed via grep). Matched that actual precedent instead of
+  the PLAN's untested assumption. Updated `tests/test_student_correct.py`: `client` fixture now
+  overrides `get_storage_backend` with one shared `FakeStorageBackend()` instance (a fresh
+  instance per lambda call would have broken the upload→correct flow across requests);
+  `test_upload_sets_status_and_writes_file` now asserts against the fake store instead of a
+  local disk path; added `test_upload_over_size_cap_is_413` for the new `check_upload_cap` call
+  site (the equivalent gap already existed pre-P2.5 for `write_upload_capped`, tracked as
+  non-blocking debt in STATE.md — this closes it for the new call site only, not retroactively).
+  Gates green (see STATE.md Next-action entry for numbers); Postgres-backed tests skip locally
+  (Supabase stack still down, same root-owned-dir issue, sudo unavailable in this session too —
+  unchanged from the dispatch session, CI unaffected).

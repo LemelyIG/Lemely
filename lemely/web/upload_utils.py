@@ -40,6 +40,20 @@ def safe_upload_name(filename: str | None, fallback: str) -> str:
     return base
 
 
+def check_upload_cap(data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES) -> None:
+    """Raise 413 when ``data`` exceeds ``max_bytes``.
+
+    The same cap-check :func:`write_upload_capped` applies before writing to
+    disk, extracted so callers that ship bytes elsewhere (e.g. Supabase
+    Storage) can enforce the cap without a local write.
+    """
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Upload exceeds {max_bytes} byte limit.",
+        )
+
+
 def write_upload_capped(
     data: bytes,
     dest: Path,
@@ -47,11 +61,7 @@ def write_upload_capped(
     max_bytes: int = MAX_UPLOAD_BYTES,
 ) -> None:
     """Write ``data`` to ``dest`` in chunks, raising 413 past ``max_bytes``."""
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Upload exceeds {max_bytes} byte limit.",
-        )
+    check_upload_cap(data, max_bytes=max_bytes)
     with dest.open("wb") as fh:
         for start in range(0, len(data), UPLOAD_CHUNK_BYTES):
             fh.write(data[start : start + UPLOAD_CHUNK_BYTES])
@@ -60,6 +70,7 @@ def write_upload_capped(
 __all__ = [
     "MAX_UPLOAD_BYTES",
     "UPLOAD_CHUNK_BYTES",
+    "check_upload_cap",
     "safe_upload_name",
     "write_upload_capped",
 ]

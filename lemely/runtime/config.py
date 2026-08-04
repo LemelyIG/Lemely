@@ -207,6 +207,19 @@ class IntegritySettings(BaseModel):
     ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
 
+class StorageSettings(BaseModel):
+    """Supabase Storage settings for the student self-mark upload path (P2.5).
+
+    Overrides via ``lemely.toml`` under the ``[storage]`` section or
+    ``LEMELY_STORAGE__*`` env vars. The bucket/keys used to authenticate against
+    Storage are the same ``supabase.url``/``service_role_key`` as GoTrue.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    bucket: str = "uploads"
+    signed_url_ttl_seconds: int = Field(default=3600, ge=1)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -226,6 +239,7 @@ class Settings(BaseSettings):
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
+    storage: StorageSettings = StorageSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()

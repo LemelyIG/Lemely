@@ -214,3 +214,37 @@
   focused on P2.4→P2.5 momentum.
 - Next: P2.5 — upload path (plain file upload + PWA camera capture → client-side multi-page
   PDF assembly → Supabase Storage → backend job); wire storage bucket + signed access.
+
+## 2026-08-04 (resumed session — P2.5 verify+finish+commit)
+- Resumed on a dirty tree carrying the prior session's PARTIAL, uncommitted P2.5 implementer
+  output: `lemely/io/storage.py` + `tests/storage_fakes.py` (untracked) and edits to
+  `runtime/config.py`/`web/deps.py`/`web/upload_utils.py`. Verified before trusting: read the
+  diffs against the recorded PLAN — steps 1-3 (StorageSettings, StorageBackend/
+  HttpStorageBackend, FakeStorageBackend, get_storage_backend singleton, check_upload_cap
+  extraction) matched exactly and were sound; steps 4-6 (student.py router wiring, tests) had
+  NOT been started — `student_upload`/`student_correct` still used local-disk paths, storage.py
+  had no callers.
+- Completed the unit: wired `student_upload` + `student_correct`'s `run()` closure to the
+  `StorageBackend` (object key `uploads/{user_id}/{paperId}/{filename}`; `run()` downloads into
+  a `tempfile.TemporaryDirectory`). Found and fixed a design gap in the recorded PLAN itself
+  before writing code: the PLAN only described downloading the scan, but `student_upload` has
+  always accepted an optional sibling mark-scheme upload that `resolve_mark_scheme` finds via a
+  same-directory disk check — downloading only the scan would have silently dropped that
+  feature. Added `StorageObjectNotFoundError` (shared between `HttpStorageBackend`'s 404 path
+  and `FakeStorageBackend`, moved out of test-only scope) so `run()` can download the sibling
+  when present and skip cleanly when not. Recorded both this and the "no hermetic
+  HttpStorageBackend test — mirrors HttpGoTrueBackend's live-skip-only precedent, verified via
+  grep before assuming a pattern existed" deviation in D2.6's completion note.
+- Also caught a test-fixture bug before running anything: the first draft of the
+  `get_storage_backend` override used `lambda: FakeStorageBackend()`, which would have handed
+  every request a FRESH empty fake instead of the shared one the `upload_repo`/`attempt_repo`
+  overrides use — silently breaking the upload→correct flow (upload writes to instance A,
+  correct reads from instance B). Fixed to close over one shared instance, same pattern as the
+  existing overrides.
+- Ran full gates fresh: ruff/format/mypy(clean, 0 errors)/lint-imports all clean; pytest exit 0,
+  0 FAILED/ERROR, 49 skipped (Postgres/Supabase-live only — stack still down, confirmed sudo is
+  also unavailable in this sandbox so the root-owned `.temp/start-secrets/` cleanup from prior
+  sessions' notes still can't be done here either), coverage gate (70%) passed at 81.45%.
+  Committing on `feature/phase-2-core-loop`.
+- Next: P2.6 — Frontend API foundation (resurrect `web/src/lib/api.ts` + `@tanstack/react-query`,
+  typed hooks, deviceId-minting auth per D1.11, verify the Vite proxy end-to-end).

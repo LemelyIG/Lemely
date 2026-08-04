@@ -17,6 +17,7 @@ converter docstring calls out which fields are data-backed vs structurally empty
 
 from __future__ import annotations
 
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Annotated
@@ -40,6 +41,7 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
 from lemely.io.scan_metadata import ScanMetadataExtractor
+from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.study_plan_ai import StudyPlanNarrator
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
@@ -48,6 +50,7 @@ from lemely.web.deps import (
     get_gemini_client,
     get_history_store,
     get_settings,
+    get_storage_backend,
     get_student_upload_repo,
     require_role,
 )
@@ -76,7 +79,7 @@ from lemely.web.schemas_student import (
     WeakThreadDTO,
 )
 from lemely.web.services.grading import extract_answers, grade_paper
-from lemely.web.upload_utils import safe_upload_name, write_upload_capped
+from lemely.web.upload_utils import check_upload_cap, safe_upload_name
 
 router = APIRouter(prefix="/api")
 
@@ -422,33 +425,41 @@ async def student_upload(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     settings: Annotated[Settings, Depends(get_settings)],
     upload_repo: Annotated[StudentUploadRepository, Depends(get_student_upload_repo)],
+    storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
     scan: Annotated[UploadFile, File()],
     mark_scheme: Annotated[UploadFile | None, File()] = None,
 ) -> StudentUploadResponse:
     """Persist a student's scanned paper (+ optional mark scheme) and register it.
 
-    The scan is written under ``output_dir/uploads/{user_id}/{paperId}`` — the
-    directory is namespaced by both the authenticated user id and a
-    server-generated ``paperId`` (the :class:`Upload` row's id), and the client
-    filename is sanitised to a basename, so an upload can never escape the
-    sandbox. The returned ``paperId`` is passed back to ``POST
+    The scan is uploaded to Supabase Storage under
+    ``uploads/{user_id}/{paperId}/{filename}`` — the object key is namespaced by
+    both the authenticated user id and a server-generated ``paperId`` (the
+    :class:`Upload` row's id), and the client filename is sanitised to a
+    basename. The returned ``paperId`` is passed back to ``POST
     /api/student/correct`` to run the self-mark pipeline over this scan.
     """
     paper_id = uuid.uuid4()
-    upload_dir = settings.paths.output_dir / "uploads" / auth.user_id / paper_id.hex
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    object_prefix = f"uploads/{auth.user_id}/{paper_id.hex}"
 
     scan_bytes = await scan.read()
-    scan_path = upload_dir / safe_upload_name(scan.filename, "scan.pdf")
-    write_upload_capped(scan_bytes, scan_path)
+    check_upload_cap(scan_bytes)
+    object_path = f"{object_prefix}/{safe_upload_name(scan.filename, 'scan.pdf')}"
+    storage_backend.upload(settings.storage.bucket, object_path, scan_bytes, scan.content_type)
 
     if mark_scheme is not None:
-        # Fixed name so ``resolve_mark_scheme`` can find the sibling scheme file.
-        write_upload_capped(await mark_scheme.read(), upload_dir / "mark_scheme.pdf")
+        # Fixed name so ``resolve_mark_scheme`` can find the sibling scheme object.
+        scheme_bytes = await mark_scheme.read()
+        check_upload_cap(scheme_bytes)
+        storage_backend.upload(
+            settings.storage.bucket,
+            f"{object_prefix}/mark_scheme.pdf",
+            scheme_bytes,
+            mark_scheme.content_type,
+        )
 
     upload_repo.create_upload(
         user_id=auth.user_id,
-        storage_path=str(scan_path),
+        storage_path=object_path,
         original_filename=scan.filename,
         content_type=scan.content_type,
         byte_size=len(scan_bytes),
@@ -535,6 +546,7 @@ def student_correct(
     attempt_repo: Annotated[AttemptRepository, Depends(get_attempt_repo)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     settings: Annotated[Settings, Depends(get_settings)],
+    storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
@@ -557,52 +569,70 @@ def student_correct(
 
     def run() -> None:
         try:
-            scan_path = Path(owned.storage_path)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_path = Path(tmp_dir)
+                scan_bytes = storage_backend.download(settings.storage.bucket, owned.storage_path)
+                scan_path = tmp_path / Path(owned.storage_path).name
+                scan_path.write_bytes(scan_bytes)
 
-            metadata: ExamMetadata | None = None
-            if settings.gemini_api_key is not None:
+                # A sibling mark_scheme.pdf, if the student uploaded one, lives
+                # next to the scan under the same object-key prefix.
+                scheme_object_path = f"{Path(owned.storage_path).parent.as_posix()}/mark_scheme.pdf"
                 try:
-                    metadata = ScanMetadataExtractor(gemini_client)(scan_path)
-                except Exception as exc:
+                    scheme_bytes = storage_backend.download(
+                        settings.storage.bucket, scheme_object_path
+                    )
+                except StorageObjectNotFoundError:
+                    pass
+                else:
+                    (tmp_path / "mark_scheme.pdf").write_bytes(scheme_bytes)
+
+                metadata: ExamMetadata | None = None
+                if settings.gemini_api_key is not None:
+                    try:
+                        metadata = ScanMetadataExtractor(gemini_client)(scan_path)
+                    except Exception as exc:
+                        bus.publish(
+                            EventType.WARNING,
+                            paper_id=payload.paperId,
+                            message=f"Could not detect scan metadata: {exc}",
+                        )
+
+                mark_scheme = resolve_mark_scheme(
+                    scan_path, settings, gemini_client, metadata=metadata
+                )
+                if mark_scheme is None:
                     bus.publish(
                         EventType.WARNING,
                         paper_id=payload.paperId,
-                        message=f"Could not detect scan metadata: {exc}",
+                        message="No mark scheme available for this paper; cannot mark.",
                     )
+                    upload_repo.set_status(owned.id, UploadStatus.failed)
+                    return
 
-            mark_scheme = resolve_mark_scheme(scan_path, settings, gemini_client, metadata=metadata)
-            if mark_scheme is None:
-                bus.publish(
-                    EventType.WARNING,
-                    paper_id=payload.paperId,
-                    message="No mark scheme available for this paper; cannot mark.",
+                extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
+                report = grade_paper(
+                    mark_scheme,
+                    extracted,
+                    gemini_client=gemini_client,
+                    student_id=None,
+                    integrity_settings=settings.integrity,
                 )
-                upload_repo.set_status(owned.id, UploadStatus.failed)
-                return
-
-            extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
-            report = grade_paper(
-                mark_scheme,
-                extracted,
-                gemini_client=gemini_client,
-                student_id=None,
-                integrity_settings=settings.integrity,
-            )
-            attempt_id = attempt_repo.persist_correction(
-                user_id=auth.user_id, report=report, upload_id=owned.id
-            )
-            upload_repo.set_status(owned.id, UploadStatus.complete)
-            bus.publish(
-                EventType.MARKING_PROGRESS,
-                paper_id=payload.paperId,
-                phase="complete",
-                attempt_id=str(attempt_id),
-                awarded=report.correction.awarded_marks,
-                max_marks=report.correction.maximum_marks,
-                grade=report.grade_prediction.grade,
-                confidence=report.grade_prediction.confidence.value,
-                needs_review=report.correction.needs_teacher_review,
-            )
+                attempt_id = attempt_repo.persist_correction(
+                    user_id=auth.user_id, report=report, upload_id=owned.id
+                )
+                upload_repo.set_status(owned.id, UploadStatus.complete)
+                bus.publish(
+                    EventType.MARKING_PROGRESS,
+                    paper_id=payload.paperId,
+                    phase="complete",
+                    attempt_id=str(attempt_id),
+                    awarded=report.correction.awarded_marks,
+                    max_marks=report.correction.maximum_marks,
+                    grade=report.grade_prediction.grade,
+                    confidence=report.grade_prediction.confidence.value,
+                    needs_review=report.correction.needs_teacher_review,
+                )
         except Exception as exc:
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
             upload_repo.set_status(owned.id, UploadStatus.failed)

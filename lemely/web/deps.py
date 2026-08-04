@@ -32,6 +32,7 @@ from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
+from lemely.io.storage import HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 
@@ -84,6 +85,16 @@ def get_student_upload_repo() -> StudentUploadRepository:
     override this with a repo bound to a throwaway Postgres database.
     """
     return StudentUploadRepository(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_storage_backend() -> StorageBackend:
+    """Return the process-wide :class:`StorageBackend` singleton (P2.5).
+
+    Wired with the real HTTP client against Supabase Storage. Tests override
+    this with an in-memory ``FakeStorageBackend`` double (``tests/storage_fakes.py``).
+    """
+    return HttpStorageBackend(get_settings())
 
 
 @lru_cache(maxsize=1)
@@ -273,6 +284,7 @@ def reset_singletons() -> None:
     get_gemini_client.cache_clear()
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()
+    get_storage_backend.cache_clear()
     get_device_registry.cache_clear()
     get_auth_service.cache_clear()
     get_seat_service.cache_clear()

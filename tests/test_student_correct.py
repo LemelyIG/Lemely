@@ -11,11 +11,12 @@ role 403s.
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
@@ -40,9 +41,12 @@ from lemely.web.deps import (
     get_auth_context,
     get_gemini_client,
     get_settings,
+    get_storage_backend,
     get_student_upload_repo,
 )
 from lemely.web.routers import student
+from lemely.web.upload_utils import check_upload_cap
+from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -161,6 +165,7 @@ def client(
     student_id = _seed_user(pg_sessionmaker, Role.student)
     upload_repo = StudentUploadRepository(pg_sessionmaker)
     attempt_repo = AttemptRepository(pg_sessionmaker)
+    storage_backend = FakeStorageBackend()
 
     # Deterministic, offline marking: fixed MCQ scheme + canned extraction.
     monkeypatch.setattr(student, "resolve_mark_scheme", lambda *a, **k: _mcq_scheme())
@@ -171,6 +176,7 @@ def client(
     app.dependency_overrides[get_gemini_client] = lambda: MagicMock(spec=GeminiClient)
     app.dependency_overrides[get_attempt_repo] = lambda: attempt_repo
     app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=student_id, role="student"
     )
@@ -242,9 +248,28 @@ def test_upload_sets_status_and_writes_file(
     owned = upload_repo.get_owned_upload(user_id=student_id, upload_id=paper_id)
     assert owned is not None
     assert owned.original_filename == "mine.pdf"
-    from pathlib import Path
+    assert owned.storage_path == f"uploads/{student_id}/{owned.id.hex}/mine.pdf"
 
-    assert Path(owned.storage_path).exists()
+    storage_backend = cast("FastAPI", api.app).dependency_overrides[get_storage_backend]()
+    assert storage_backend.download(settings.storage.bucket, owned.storage_path) == (
+        b"%PDF-1.4 fake"
+    )
+
+
+def test_upload_over_size_cap_is_413(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scan larger than the cap is rejected with 413, never reaching Storage."""
+    monkeypatch.setattr(
+        student, "check_upload_cap", lambda data, **_: check_upload_cap(data, max_bytes=8)
+    )
+    api, _, _ = client
+    resp = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"way too many bytes here", "application/pdf")},
+    )
+    assert resp.status_code == 413
 
 
 def test_correct_marks_upload_complete(

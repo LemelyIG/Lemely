@@ -1,8 +1,10 @@
 """Student upload persistence for the self-mark flow (P2.1).
 
-A student's scan (+ optional mark scheme) is written to disk by the router; this
-repository owns the :class:`~lemely.db.models.attempts.Upload` row that records
-its storage location, ownership, and processing status. Ownership is always
+A student's scan (+ optional mark scheme) is uploaded to Supabase Storage by the
+router (P2.5); this repository owns the :class:`~lemely.db.models.attempts.Upload`
+row that records its storage object key, ownership, and processing status.
+``storage_path`` holds the Storage object key, not a local filesystem path.
+Ownership is always
 keyed on the authenticated ``user_id`` — :meth:`get_owned_upload` returns
 ``None`` for an upload owned by anyone else, so the ``/correct`` endpoint can 404
 a foreign paper before streaming.
