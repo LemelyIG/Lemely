@@ -550,7 +550,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        was needed since `web/node_modules` wasn't present this session — package-lock.json
        diff (npm-metadata-only, no dependency change) was reverted by the implementer, left
        untouched. Committing on feature/phase-2-core-loop.
-- [ ] doing — P2.7 Student surface on real data (screen-by-screen delete student/data.ts):
+- [x] done — P2.7 Student surface on real data (screen-by-screen delete student/data.ts):
        Overview (overall + per-subject), Subject (per-paper history + predicted boundaries/
        final grade + estimated flag), PaperResult (marks/method-marks/mistakes/weakness/
        confidence/integrity flags), CorrectPaper (real SSE upload→correct, kill setTimeout
@@ -768,11 +768,23 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           calls needed) rather than dispatching another implementer round. Orchestrator-
           verified: `npm run typecheck`/`npm run lint`/`npm run build` all clean, same
           pre-existing warning set. Committing on feature/phase-2-core-loop.)
-       8. [ ] todo — Gates (§6.3: typecheck/oxlint/build clean) + orchestrator-verify (re-run
+       8. [x] done — Gates (§6.3: typecheck/oxlint/build clean) + orchestrator-verify (re-run
           gates myself, don't trust subagent claims) + commit + STATE.md update per step above
           (already folded into steps 1-7, this line is the final full-suite confirmation) +
           `reports/phase-2/` note if anything is a documented deviation worth carrying to
           P2.10's DELIVERY.md section.
+          (Final full-suite confirmation run after steps 5b/6/7 landed: web `typecheck`/`lint`/
+          `build` all clean (same pre-existing warning set throughout). Backend, for
+          completeness even though nothing under `lemely/` changed this session: `ruff check`/
+          `ruff format --check`/`mypy lemely` (116 files)/`lint-imports` all clean; `pytest`
+          exit 0, 0 failed/errored, 51 skipped (all Postgres/Supabase-live, env-gated — same
+          pattern every session this stack has been down), coverage 81.47% (>70% floor). No
+          `reports/phase-2/` note created — every deviation from steps 5b/6/7 (sidebar nav-item
+          removal, Standings leaderboard removal + honest empty `rank`, Onboarding's single-step
+          scope cut, the two typed-field additions beyond the literal briefs) is already
+          recorded inline in this checklist in enough detail to carry into P2.10's DELIVERY.md;
+          a separate early stub would only duplicate it. **P2.7 (Student surface on real data)
+          is now COMPLETE.**)
 - [ ] todo — P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
        incrementally): Grading, Review (low-confidence/integrity queue), MarkSchemes,
        Overview. Fill audit "partial" hollow fields honestly or mark deferred.
@@ -893,7 +905,18 @@ routing independently confirmed reaching FastAPI's real auth handlers (otp/reque
 malformed login 422, well-formed login 401 on the already-documented down Supabase dependency).
 Confirmed again this session: local Supabase stack still down, same root-owned-dir issue, sudo
 still unavailable in this sandbox — unchanged environment note, not re-litigated further.
-Next: P2.7 Student surface on real data (screen-by-screen, delete student/data.ts).
+
+**P2.7 DONE + VERIFIED (2026-08-05).** See checklist entries above (steps 1-8) for full detail.
+Every student screen now reads real data: Overview/Subject (steps 3-4), CorrectPaper (real
+upload + SSE-driven progress, step 5b), PaperResult (flat per-question list from either the
+live SSE-assembled state or the GET history path, step 5b), StudyPlan/Standings/Onboarding
+(step 6). `student/data.ts` cut from 773 to 193 lines (step 7) — only chrome (navGroups/crumbs/
+studentName/studentMeta), `mcq` (Landing), `railTicks` (BoundaryRail), `reassure`
+(CorrectPaper), and the Landing/Directions marketing exports remain. Full gate re-run (step 8):
+web typecheck/lint/build clean; backend ruff/format/mypy/lint-imports clean; pytest exit 0,
+0 failed, 51 skipped (Postgres/Supabase-live, unchanged environment limitation), 81.47% cov.
+Next: P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
+incrementally).
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:
