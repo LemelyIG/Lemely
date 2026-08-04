@@ -1,0 +1,42 @@
+{
+  "1": {
+    "student_answer": "A",
+    "awarded_marks": 1,
+    "notes": "scheme answer is A"
+  },
+  "2": {
+    "student_answer": "B",
+    "awarded_marks": 1,
+    "notes": "scheme answer is B"
+  },
+  "3": {
+    "student_answer": "C",
+    "awarded_marks": 0,
+    "notes": "scheme answer is A"
+  },
+  "4": {
+    "student_answer": "D",
+    "awarded_marks": 1,
+    "notes": "scheme answer is D"
+  },
+  "5": {
+    "student_answer": "A",
+    "awarded_marks": 0,
+    "notes": "scheme answer is C"
+  },
+  "6": {
+    "student_answer": "D",
+    "awarded_marks": 1,
+    "notes": "scheme answer is D"
+  },
+  "7": {
+    "student_answer": "A",
+    "awarded_marks": 1,
+    "notes": "scheme answer is A"
+  },
+  "8": {
+    "student_answer": "B",
+    "awarded_marks": 0,
+    "notes": "scheme answer is A"
+  }
+}

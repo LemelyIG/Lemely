@@ -1,0 +1,13 @@
+All fonts in this directory are licensed under the SIL Open Font License,
+Version 1.1 (https://scripts.sil.org/OFL), which permits bundling,
+redistribution, and use in this software. Sourced from the Google Fonts
+repository (https://github.com/google/fonts).
+
+Caveat-Regular.ttf       — Copyright 2014 The Caveat Project Authors
+                            (https://github.com/googlefonts/caveat)
+IndieFlower-Regular.ttf  — Copyright 2010 The Indie Flower Authors
+                            (kimberlygeswein.com)
+PatrickHand-Regular.ttf  — Copyright (c) 2010-2012 Patrick Wagesreiter
+                            (mail@patrickwagesreiter.at)
+
+Full OFL 1.1 license text: https://openfontlicense.org

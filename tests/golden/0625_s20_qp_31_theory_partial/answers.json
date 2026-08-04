@@ -1,0 +1,37 @@
+{
+  "1a_i": {
+    "student_answer": "3.8 / 20 = 1.9 cm",
+    "awarded_marks": 1,
+    "notes": "M hit (3.8/20 shown); A missed (final value should be 0.19 cm, stated 1.9 cm)"
+  },
+  "1b": {
+    "student_answer": "density = mass / volume = 148 / 16.6 = 89 g/cm3",
+    "awarded_marks": 2,
+    "notes": "both M hit; A missed (final value should be 8.9, stated 89 \u2014 decimal-place slip)"
+  },
+  "4a": {
+    "student_answer": "speed = distance / time = 200 / 6.4 = 30 m/s",
+    "awarded_marks": 2,
+    "notes": "both M hit (formula + correct substitution); A missed (should round to 31, stated 30)"
+  },
+  "5b": {
+    "student_answer": "clockwise moments = anticlockwise moments. 200 = (2.0 x 10) + (F x 60). F = 200 / 60 = 3.33 N",
+    "awarded_marks": 2,
+    "notes": "M1+M2 hit (principle + equation); M3 missed (forgot to subtract 20 before dividing by 60) and A missed (should be 3.0 N, stated 3.33 N)"
+  },
+  "11b": {
+    "student_answer": "Vs/Vp = Ns/Np, so Vs = (240 / 64) x 960 = 3600 V",
+    "awarded_marks": 1,
+    "notes": "M1 hit (correct relation stated); M2 missed (ratio inverted in substitution) and A missed"
+  },
+  "12b": {
+    "student_answer": "137 - 56 = 81",
+    "awarded_marks": 1,
+    "notes": "single-point question has no partial-credit structure; reused the correct answer"
+  },
+  "12c": {
+    "student_answer": "idea of three half-lives, so 36 / 8 = 9 mg",
+    "awarded_marks": 2,
+    "notes": "both M hit (half-life reasoning + substitution shown); A missed (36/8 = 4.5, stated 9 \u2014 divided by the wrong factor)"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "1a_i": {
+    "student_answer": "The average thickness is read directly off a micrometer scale, about 5 cm.",
+    "awarded_marks": 0,
+    "notes": "no calculation shown; wrong order of magnitude"
+  },
+  "1b": {
+    "student_answer": "Density is measured with a hydrometer. The reading was 2.5.",
+    "awarded_marks": 0,
+    "notes": "no mass/volume formula or substitution; unrelated final value"
+  },
+  "4a": {
+    "student_answer": "The object was moving quickly because it had a lot of energy.",
+    "awarded_marks": 0,
+    "notes": "no distance/time formula or numbers"
+  },
+  "5b": {
+    "student_answer": "The see-saw balances because both sides weigh the same amount, so F = 2.0 N.",
+    "awarded_marks": 0,
+    "notes": "no moments equation; unrelated final value"
+  },
+  "11b": {
+    "student_answer": "Transformers increase voltage using magnets. The output is around 100 V.",
+    "awarded_marks": 0,
+    "notes": "no Vs/Vp=Ns/Np relation or substitution"
+  },
+  "12b": {
+    "student_answer": "The number stays the same because mass is conserved, so it is 137.",
+    "awarded_marks": 0,
+    "notes": "does not match the single mark point (81)"
+  },
+  "12c": {
+    "student_answer": "Radioactive decay happens randomly. After a while there is very little left, about 1 mg.",
+    "awarded_marks": 0,
+    "notes": "no half-life reasoning with numbers; unrelated final value"
+  }
+}

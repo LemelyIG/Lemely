@@ -209,13 +209,56 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        lint-imports clean; full suite green, cov-fail-under=70 met (81.28% with DB tests
        skipped, consistent with prior skip-pattern sessions). 20/20 test_grade_boundaries.py
        pass standalone.)
-- [ ] todo — P2.3 Accuracy harness + golden fixtures: obtain real past papers + mark
+- [~] doing — P2.3 Accuracy harness + golden fixtures: obtain real past papers + mark
        schemes for the 3 subjects; generate synthetic handwritten answer sheets
        (handwriting fonts, ink variation, scan noise/skew/blur/rotation) with known
        ground-truth spanning correct / partial (method marks) / wrong. COMMIT fixtures.
        Gate thresholds: ≥99% MCQ agreement; ≥95% mark-level on structured; 100% of
        disagreements carry confidence below the review threshold. Calibrate the review
        threshold from harness data. Live-Gemini validation obeys §8 budget (mock in CI).
+       SUB-PLAN (this session, recorded so a killed session can resume mid-task):
+       1. [x] Vendored 3 OFL handwriting fonts (Caveat/IndieFlower/PatrickHand) at
+          lemely/data/fonts/handwriting/ + LICENSE-OFL.txt attribution.
+       2. [x] lemely/accuracy/synth.py: render (question_id,text) pairs onto a
+          handwriting-font page image + scan-noise augmentation (rotation/blur/noise)
+          → multi-page scan.pdf via Pillow. Deterministic per-seed (pinned PDF
+          metadata). 7 hermetic tests green. Added numpy>=2,<3 as a direct dependency.
+       3. [x] Extended lemely/accuracy/harness.py: measure_accuracy() previously
+          BYPASSED extraction entirely (fed ground-truth text straight into
+          correct_paper; id_match_rate was always None) — confirmed gap vs the design
+          doc. Fixed: cases with scan_path now call the real extract_answers() seam
+          (lemely.web.services.grading) → id_match_rate computed for real + EXTRACTED
+          (not ground-truth) answers feed correct_paper for true end-to-end
+          mark_accuracy. Cases without scan_path keep the old correction-only bypass.
+          19 hermetic tests green (15 pre-existing + 4 new, Gemini/extraction mocked).
+       4. [x] Authored 4 real golden fixtures under tests/golden/ for 0625 (Physics)
+          from the 2 real mark schemes already on disk (0625_s20_ms_31.json theory +
+          0625_m20_ms_12.json MCQ): theory_correct/partial/wrong (7 questions each,
+          1a_i/1b/4a/5b/11b/12b/12c — picked because their answer_points are
+          self-contained formula+number M/A mark points, no diagram dependency I
+          couldn't verify) + mcq (8 questions, 5 matching the real scheme answer / 3
+          deliberately not, for genuine MCQ-agreement signal). scan.pdf rendered via
+          synth.py (verified visually — realistic). All 4 mark_scheme.json subsets
+          validated against the real MarkScheme pydantic model. Full suite green:
+          0 failures, 45 skips (Postgres/live-auth, as usual), 81.89% cov; ruff/
+          format/mypy(115)/lint-imports clean. COMMITTED this checkpoint before any
+          live-Gemini spend.
+       5. [ ] Run a small live-Gemini measure-accuracy batch against these 4 fixtures
+          (lemely doctor confirms gemini_reachable=true, spend still $0.00) to get REAL
+          confidence calibration data (mocked confidence scores in hermetic tests are
+          meaningless for calibration).
+       6. [ ] Calibrate gemini.escalation_confidence_threshold (currently 0.80,
+          config.py) from the calibration buckets; record as D2.2. NOTE: a SEPARATE
+          hardcoded REVIEW_CONFIDENCE_THRESHOLD=0.90 already exists in
+          lemely/db/attempt_repo.py (paper-level review-queue routing, P2.1) — these
+          serve different purposes (per-question escalation trigger vs. final
+          review-queue gate) and may legitimately stay distinct; decide + document,
+          don't silently leave the discrepancy unexplained.
+       7. [ ] 0580/0606 real past papers + mark schemes are NOT yet sourced (only
+          0625 Physics has real assets on disk, from Phase 0). Scope decision pending:
+          either source them this session (same direct-script approach as D2.1) or
+          defer to a follow-up and document honestly in DECISIONS.md — do NOT claim
+          P2.3 fully done covering "the 3 subjects" if only Physics has fixtures.
 - [ ] todo — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
        results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
        verdicts). Enable integrity path; surface in result payload + review_queue.
