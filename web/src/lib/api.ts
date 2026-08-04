@@ -23,11 +23,14 @@ export class ApiError extends Error {
 
 /** Build the base headers for a request: JSON content-type + bearer token
  * (when a session is persisted), ahead of any caller-supplied headers so a
- * caller can still override either if it ever needs to. */
-function authHeaders(): HeadersInit {
+ * caller can still override either if it ever needs to. Skips the JSON
+ * content-type for a `FormData` body — the browser must set its own
+ * multipart boundary, so a caller uploading a file (e.g. `uploadScan` in
+ * `lib/hooks/useStudentApi.ts`) can pass a `FormData` body straight through. */
+function authHeaders(isFormData = false): HeadersInit {
   const token = getSession()?.accessToken
   return {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   }
 }
@@ -39,7 +42,7 @@ export async function request<T>(
 ): Promise<T> {
   try {
     const res = await fetch(`${BASE}${path}`, {
-      headers: { ...authHeaders(), ...init?.headers },
+      headers: { ...authHeaders(init?.body instanceof FormData), ...init?.headers },
       ...init,
     })
     if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`)
