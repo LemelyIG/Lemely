@@ -1,54 +1,104 @@
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Check } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import {
-  detected,
-  progressSteps,
-  reassure,
-  readChips,
-  scanMeta,
-} from "../data"
+import { runCorrection, uploadScan } from "@/lib/hooks/useStudentApi"
+import type { QuestionResult, Result, StudentCorrectFrame } from "@/lib/studentTypes"
+import { reassure } from "../data"
 
 /*
- * Correct a paper (isCorrect). The primary run button advances a marking
- * pipeline: each step completes on a timer, and when the pipeline finishes it
- * navigates to the Paper 1 result (mirrors the mock's runPipeline). Local
- * useState drives the progress panel; timers are cleaned up on unmount.
+ * Correct a paper (isCorrect). Real upload + SSE flow: pick a scan (required)
+ * and an optional mark scheme, upload both via `uploadScan`, then drive the
+ * progress panel off `runCorrection`'s live frames. On the terminal
+ * `phase: "complete"` frame, assembles a `Result & { questions }` object from
+ * the frame's fields and navigates to the result screen with it as
+ * `location.state` — `PaperResult` renders straight from that, no second GET.
  */
+
+/** Human label for one SSE frame, appended to the running log as it arrives. */
+function describeFrame(frame: StudentCorrectFrame): string {
+  switch (frame.type) {
+    case "mark_scheme_progress":
+      return frame.message ?? "Resolving the mark scheme"
+    case "extraction_progress":
+      return frame.message ?? "Reading your answers"
+    case "marking_progress":
+      if (frame.phase === "complete") {
+        return `Marked - ${frame.awarded ?? "?"}/${frame.max_marks ?? "?"}`
+      }
+      return frame.question_id ? `Marked question ${frame.question_id}` : "Marking"
+    case "gemini_call_start":
+      return "Calling the marking model"
+    case "gemini_call_end":
+      return "Model call finished"
+    case "gemini_cache_hit":
+      return "Reused a cached model call"
+    case "gemini_retry":
+      return "Retrying the model call"
+    case "gemini_escalate":
+      return "Escalating to a stronger model"
+    case "budget_warning":
+      return frame.message ?? "Approaching the marking budget"
+    case "budget_exceeded":
+      return frame.message ?? "Marking budget exceeded"
+    default:
+      return frame.message ?? frame.type
+  }
+}
+
 export function CorrectPaper() {
   const navigate = useNavigate()
+  const [scanFile, setScanFile] = useState<File | null>(null)
+  const [schemeFile, setSchemeFile] = useState<File | null>(null)
   const [running, setRunning] = useState(false)
-  // done = number of completed steps; -1 sentinel means "never run" (all shown done).
-  const [done, setDone] = useState(-1)
-  const timers = useRef<number[]>([])
+  const [log, setLog] = useState<string[]>([])
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(
-    () => () => {
-      timers.current.forEach(clearTimeout)
-    },
-    [],
-  )
-
-  const runPipeline = () => {
-    if (running) return
+  const runPipeline = async () => {
+    if (!scanFile || running) return
     setRunning(true)
-    setDone(0)
-    progressSteps.forEach((_, i) => {
-      const t = window.setTimeout(() => setDone(i + 1), 400 + (i + 1) * 620)
-      timers.current.push(t)
-    })
-    const finish = window.setTimeout(
-      () => navigate("/student/result?tab=p1"),
-      400 + (progressSteps.length + 1) * 620,
-    )
-    timers.current.push(finish)
+    setError(null)
+    setLog([])
+    try {
+      const { paperId } = await uploadScan(scanFile, schemeFile ?? undefined)
+      for await (const frame of runCorrection(paperId)) {
+        if (frame.type === "warning" || frame.type === "error") {
+          setError(frame.message ?? "Something went wrong while marking this paper.")
+          return
+        }
+        setLog((prev) => [...prev, describeFrame(frame)])
+        if (frame.type === "marking_progress" && frame.phase === "complete") {
+          const assembled: Result & { questions: QuestionResult[] } = {
+            code: frame.code ?? "",
+            paper: frame.paper ?? "",
+            session: frame.session ?? "",
+            markerLabel: "",
+            headline: "",
+            summary: "",
+            awarded: frame.awarded ?? 0,
+            max: frame.max_marks ?? 0,
+            pct: frame.pct ?? 0,
+            grade: frame.grade ?? "",
+            boundaryYear: frame.boundary_year ?? "",
+            railLeft: frame.rail_left ?? 0,
+            railFoot: frame.rail_foot ?? "",
+            railNote: "",
+            theory: [],
+            integrity: [],
+            provenance: "",
+            questions: frame.questions ?? [],
+          }
+          navigate(`/student/result/${paperId}`, { state: assembled })
+          return
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
   }
-
-  // When idle before any run, every step reads as complete (the mock shows the
-  // "Marked in 41 seconds" resting state).
-  const completed = done === -1 ? progressSteps.length : done
 
   return (
     <div className="lm-screen flex flex-col gap-[22px]">
@@ -63,78 +113,53 @@ export function CorrectPaper() {
           </div>
         </div>
         <div className="flex-1" />
-        <Button variant="accent" size="lg" onClick={runPipeline} disabled={running}>
+        <Button
+          variant="accent"
+          size="lg"
+          onClick={runPipeline}
+          disabled={running || !scanFile}
+        >
           {running ? "Marking..." : "Mark this paper"}
         </Button>
       </div>
 
       <div className="lm-cols grid grid-cols-[1.5fr_1fr] gap-5 items-start max-[1180px]:grid-cols-1">
         <div className="flex flex-col gap-5">
-          <div className="bg-surface border border-dashed border-border rounded-lg p-[22px] flex gap-5 items-center">
-            <div
-              className="w-24 h-[126px] flex-none border border-border rounded-lg flex items-end justify-center p-2"
-              style={{
-                background:
-                  "repeating-linear-gradient(135deg, oklch(0.955 0.008 40) 0 7px, oklch(0.975 0.006 40) 7px 14px)",
-              }}
-            >
-              <span className="font-mono text-[9px] text-t3 text-center">
-                {scanMeta.thumbLabel}
-              </span>
+          <Card className="p-[22px] flex flex-col gap-5">
+            <div>
+              <label
+                htmlFor="scan-file"
+                className="text-[13px] font-medium block mb-1.5"
+              >
+                Scanned paper
+              </label>
+              <input
+                id="scan-file"
+                type="file"
+                accept="application/pdf,image/*"
+                disabled={running}
+                onChange={(e) => setScanFile(e.target.files?.[0] ?? null)}
+                className="text-[12.5px] text-t2 file:mr-3 file:border file:border-border file:bg-surface-2 file:rounded-lg file:px-3 file:py-1.5 file:text-[12.5px] file:cursor-pointer file:font-sans"
+              />
             </div>
-            <div className="flex-1">
-              <div className="font-mono text-[12px] text-t2">
-                {scanMeta.filename}
-              </div>
-              <div className="text-[13px] mt-2 leading-[1.5] text-t2 text-pretty">
-                {scanMeta.detail}
-              </div>
-              <div className="flex flex-wrap gap-x-[26px] gap-y-2.5 mt-4">
-                {detected.map((d) => (
-                  <div key={d.k}>
-                    <div className="text-[10.5px] tracking-[0.08em] uppercase text-t3">
-                      {d.k}
-                    </div>
-                    <div className="font-mono text-[13.5px] mt-[3px] text-t1">
-                      {d.v}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <Card className="overflow-hidden">
-            <div className="px-5 pt-4 pb-3 flex items-baseline gap-2.5">
-              <div className="text-[15px] font-semibold">
-                What we read from the paper
-              </div>
-              <div className="text-[12px] text-t2">
-                Change anything before marking - you always have the last word
-              </div>
-            </div>
-            <div className="px-5 pt-1.5 pb-5">
-              <div className="grid grid-cols-10 gap-[7px]">
-                {readChips.map((c) => (
-                  <div
-                    key={c.id}
-                    className="border border-border bg-surface-2 rounded-lg px-1 py-1.5 text-center cursor-text transition-colors hover:border-accent"
-                  >
-                    <div className="text-[9.5px] text-t3">{c.id}</div>
-                    <div className="text-[14px] font-medium leading-[1.4]">
-                      {c.ans}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center gap-2.5 mt-4 px-[14px] py-3 rounded-[10px] bg-[oklch(0.96_0.02_150)] text-[12.5px] text-[oklch(0.34_0.07_150)]">
-                <span className="w-4 h-4 flex-none rounded-full border-[1.5px] border-ok flex items-center justify-center">
-                  <Check size={9} weight="bold" />
-                </span>
-                <span>
-                  All forty answers came through clearly. Nothing needs a second
-                  look.
-                </span>
+            <div>
+              <label
+                htmlFor="scheme-file"
+                className="text-[13px] font-medium block mb-1.5"
+              >
+                Mark scheme (optional)
+              </label>
+              <input
+                id="scheme-file"
+                type="file"
+                accept="application/pdf,image/*"
+                disabled={running}
+                onChange={(e) => setSchemeFile(e.target.files?.[0] ?? null)}
+                className="text-[12.5px] text-t2 file:mr-3 file:border file:border-border file:bg-surface-2 file:rounded-lg file:px-3 file:py-1.5 file:text-[12.5px] file:cursor-pointer file:font-sans"
+              />
+              <div className="text-[11.5px] text-t3 mt-1.5">
+                Leave this blank and Lemely fetches the official scheme once it
+                identifies the exam.
               </div>
             </div>
           </Card>
@@ -144,42 +169,35 @@ export function CorrectPaper() {
           <Card className="p-5">
             <div className="flex items-center gap-[9px] mb-4">
               <span
-                className={`w-[7px] h-[7px] rounded-full animate-[lm-pulse_1.6s_infinite] ${running ? "bg-accent" : "bg-ok"}`}
+                className={`w-[7px] h-[7px] rounded-full animate-[lm-pulse_1.6s_infinite] ${running ? "bg-accent" : error ? "bg-warn" : "bg-ok"}`}
               />
               <div className="text-[15px] font-semibold">
-                {running ? "Marking now" : "Marked in 41 seconds"}
+                {running ? "Marking now" : error ? "Marking stopped" : "Ready when you are"}
               </div>
             </div>
-            <div className="flex flex-col min-h-[214px]">
-              {progressSteps.map((p, i) => {
-                const isDone = i < completed
-                const active = running && i === completed
-                return (
+            {error ? (
+              <div className="text-[12.5px] text-accent leading-[1.5] mb-3 text-pretty">
+                {error}
+              </div>
+            ) : null}
+            <div className="flex flex-col min-h-[214px] max-h-[400px] overflow-auto lm-scroll">
+              {log.length === 0 ? (
+                <div className="text-[12.5px] text-t3 py-[11px]">
+                  Nothing yet - pick a scan and mark it to see progress here.
+                </div>
+              ) : (
+                log.map((line, i) => (
                   <div
-                    key={p.title}
+                    key={i}
                     className="grid grid-cols-[20px_1fr] gap-3 items-start py-[11px] border-t border-border"
-                    style={{ opacity: isDone ? 1 : active ? 0.85 : 0.42 }}
                   >
-                    <span
-                      className={`w-[18px] h-[18px] rounded-full border-[1.5px] flex items-center justify-center mt-px ${isDone ? "border-ok text-ok" : "border-t3 text-t3"}`}
-                    >
-                      {isDone ? (
-                        <Check size={9} weight="bold" />
-                      ) : (
-                        <span className="text-[9px]">·</span>
-                      )}
+                    <span className="w-[18px] h-[18px] rounded-full border-[1.5px] border-ok text-ok flex items-center justify-center mt-px">
+                      <Check size={9} weight="bold" />
                     </span>
-                    <span>
-                      <span className="block text-[13px] leading-[1.35]">
-                        {p.title}
-                      </span>
-                      <span className="block text-[12px] text-t2 leading-[1.4] mt-[3px]">
-                        {isDone ? p.detail : active ? "working..." : "waiting"}
-                      </span>
-                    </span>
+                    <span className="text-[13px] leading-[1.35]">{line}</span>
                   </div>
-                )
-              })}
+                ))
+              )}
             </div>
           </Card>
 

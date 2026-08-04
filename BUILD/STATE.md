@@ -638,7 +638,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
               against `core/correction.py::_exam_metadata` before trusting, confirmed correct.
               `student_result`'s existing tests pass unmodified, proving the refactor preserved
               behavior. Orchestrator-verified: ruff/format/mypy/lint-imports/pytest all clean.)
-          5b. [ ] doing — Frontend: CorrectPaper gets a real file input (scan required, optional
+          5b. [x] done — Frontend: CorrectPaper gets a real file input (scan required, optional
               mark-scheme file) → `uploadScan()` → `runCorrection(paperId)` consuming
               `streamActivity` frames to drive the progress UI for real (kill the `setTimeout`
               theatre and `progressSteps`/`detected`/`scanMeta`/`readChips` mock reliance;
@@ -650,6 +650,54 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
               `paperTabs` mock imports; reads `useParams().paperId`, prefers `location.state`
               when present, else `useResult(paperId)` (GET, history-indexed). Route
               registration: `result` → `result/:paperId`; wire `resolveCrumb`'s marked slot.
+              (commit pending. Implementer built: `CorrectPaper.tsx` real dual file-input (scan
+              required, mark-scheme optional) → `uploadScan()` → `for await` over
+              `runCorrection()`; a `describeFrame()` mapper turns every observed SSE frame type
+              (`mark_scheme_progress`/`extraction_progress`/`marking_progress` per-question/
+              `gemini_*`/`budget_*`) into a running human-readable log line rather than a fixed
+              step checklist (real pipelines emit a variable number of frames); `warning`/`error`
+              frames set an error state and do NOT navigate, button re-enables so the student can
+              retry. `PaperResult.tsx` fully rewritten: dropped the P1/P3 tab-switcher, MCQ grid,
+              worksheet-upsell and hardcoded "needs a human" cards (fabricated content, same D1.6
+              M2 precedent); `isLiveResult()` type-guards `location.state`, renders a flat
+              `QuestionList` (id/marks/markerSource/confidence/topic/feedback/reviewReason/
+              plagiarism+AI flags) when live, else GET-path `useResult()` + an explicit "detail
+              only available right after correcting" note (integrity sidebar still populated on
+              GET via the pre-existing `_integrity_summary`); `ResultHeader` now conditionally
+              hides empty markerLabel/headline/summary/railNote instead of rendering blanks.
+              Two typed-field additions beyond the literal brief, both verified correct against
+              `lemely/web/routers/student.py` before accepting: `StudentCorrectFrame` gained
+              typed `code/paper/session/boundary_year/rail_left/rail_foot/pct` (previously only
+              covered by its `[key: string]: unknown` catch-all — needed to assemble the live
+              `Result` object without unsafe casts; field names/types cross-checked against the
+              `bus.publish(...)` kwargs in `student_correct`'s `run()`, exact match) and
+              `types.ts`'s base `QuestionResult` gained `topic?: string` (closes a real gap: the
+              backend DTO has carried `topic` since step 5a/commit 9803c7b but no TS type
+              surfaced it). `data.ts`: removed the exports this task made fully dead
+              (`readChips`/`scanMeta`/`detected`+`DetectedField`/`progressSteps`+`ProgressStep`/
+              `resultP1`/`resultP3`+`ResultData`+`IntegrityRow`/`dropped`+`DroppedItem`/
+              `theory`+`TheoryQuestion`+`MarkPoint`/`theoryWeak`+`TheoryWeakRow`/`paperTabs`+
+              `PaperTab`) — each grepped for other importers first; kept `mcq`/`McqCell` (still
+              used by `Landing.tsx`'s hero mock, out of this task's scope) and everything used by
+              other screens untouched. Orchestrator caught and fixed one regression the
+              implementer flagged but left unresolved: the sidebar's static "Paper result" nav
+              item (`navGroups`, `/student/result` with no `:paperId`) 404'd against the new
+              parameterized route with no natural non-parameterized target — removed the nav item
+              (same remove-don't-fake precedent) rather than leave a dead primary-nav link.
+              Left `Directions.tsx`'s `<Link to="/student/result">` alone — that screen is an
+              explicitly out-of-scope static design gallery (already full of hardcoded example
+              data by design, confirmed by reading it), not a functional flow. Also left the
+              `crumbs["/student/result"]` stale map entry (matches the existing precedent already
+              set for `/student/subject` in step 3 — `resolveCrumb`'s regex fallback handles the
+              live case; full `crumbs` cleanup is step 7's job). Orchestrator-verified indepen­
+              dently (not just trusted): re-ran `npm run typecheck`/`npm run lint`/`npm run build`
+              myself after my own edit — clean, zero new lint warnings (same pre-existing
+              `only-export-components` set), build succeeds. No backend files touched (confirmed
+              via `git diff --stat`). No frontend test runner exists yet in this repo (confirmed:
+              no `test` script in package.json, no `*.test.*`/`*.spec.*` files) — same
+              typecheck/lint/build-only verification pattern as every P2.6/P2.7 step to date; no
+              Playwright suite exists yet either (that's P2.10's job). Committing on
+              feature/phase-2-core-loop.)
        6. [ ] todo — StudyPlan + Standings + Onboarding (bundle — phase wording says "as far as
           Phase-2 scope needs", partial wiring is sanctioned): StudyPlan wired to
           `useStudyPlan()`/post-mutation (`planRows`/`days`/`planCards` grid mock replaced by

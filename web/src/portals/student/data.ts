@@ -43,12 +43,6 @@ export const mcq: McqCell[] = studentAnswers.map((ans, i) => {
   }
 })
 
-/** "What we read from the paper" chips on Correct-a-paper (all 40, neutral). */
-export const readChips = studentAnswers.map((ans, i) => ({
-  id: i + 1,
-  ans,
-}))
-
 /* ── Sidebar nav groups ─────────────────────────────────────────────────── */
 
 export interface NavItem {
@@ -69,7 +63,6 @@ export const navGroups: NavGroup[] = [
     items: [
       { to: "/student", label: "Overview", end: true },
       { to: "/student/subject/0625", label: "Physics", tag: "0625" },
-      { to: "/student/result", label: "Paper result" },
       { to: "/student/plan", label: "Study plan" },
       { to: "/student/board", label: "Standings" },
     ],
@@ -272,80 +265,6 @@ export const subjectHeader = {
 
 /* ── Paper Result (flagship) ────────────────────────────────────────────── */
 
-export interface IntegrityRow {
-  mark: "check" | "dash" | "bang"
-  color: VizColor
-  label: string
-  detail: string
-}
-
-export interface ResultData {
-  code: string
-  paper: string
-  session: string
-  markerLabel: string
-  headline: string
-  summary: string
-  awarded: number
-  max: number
-  pct: number
-  grade: Grade
-  boundaryYear: string
-  railLeft: number
-  railFoot: string
-  railNote: string
-  integrity: IntegrityRow[]
-  provenance: string
-}
-
-export const resultP1: ResultData = {
-  code: "0625",
-  paper: "Paper 1 - Variant 2",
-  session: "May/June 2020",
-  markerLabel: "deterministic",
-  headline: "Thirty-eight out of forty.",
-  summary: "Every mark on this paper was awarded by exact match against the official 0625/12 mark scheme - no model judgement involved. Two single-mark questions were dropped.",
-  awarded: 38,
-  max: 40,
-  pct: 95,
-  grade: "A",
-  boundaryYear: "2020",
-  railLeft: 95,
-  railFoot: "A boundary sat at 32/40",
-  railNote: "Fifteen marks of headroom above the A boundary. Even a bad day keeps you inside the band.",
-  integrity: [
-    { mark: "check", color: "ok", label: "Mark scheme matched", detail: "0625_s20_ms_12.json - fetched automatically" },
-    { mark: "check", color: "ok", label: "No verbatim copying", detail: "Answers checked against the scheme text" },
-    { mark: "dash", color: "t2", label: "AI-writing check skipped", detail: "Not applicable to multiple choice" },
-    { mark: "check", color: "ok", label: "Extraction verified", detail: "40 / 40 answers above 0.90 confidence" },
-  ],
-  provenance: "scan: 0625_m20_qp_12_solved.pdf\nreport: outputs/0625/MayJune_2020/\n0625_MayJune_2020_p12__2026-07-27-140214",
-}
-
-export const resultP3: ResultData = {
-  code: "0625",
-  paper: "Paper 3 - Variant 1",
-  session: "May/June 2020",
-  markerLabel: "hybrid - 14 AI-marked",
-  headline: "Sixty-one out of eighty.",
-  summary: "Recall and substitution marks are solid. Marks were lost in the final step of multi-stage calculations - the method was right in every case.",
-  awarded: 61,
-  max: 80,
-  pct: 76,
-  grade: "B",
-  boundaryYear: "2020",
-  railLeft: 76,
-  railFoot: "A boundary sat at 62/80",
-  railNote: "Five marks short of an A - roughly the two dropped in 5(b) and one of the half-life marks.",
-  integrity: [
-    { mark: "check", color: "ok", label: "Mark scheme matched", detail: "0625_s20_ms_31.json - 12 questions, 80 marks" },
-    { mark: "check", color: "ok", label: "No verbatim copying", detail: "0% overlap with scheme wording" },
-    { mark: "check", color: "ok", label: "No AI-generated prose detected", detail: "Checked on all extended responses" },
-    { mark: "bang", color: "warn", label: "One question escalated", detail: "12(c) at 0.61 confidence - queued for review" },
-  ],
-  provenance: "scan: 0625_s20_qp_31_maya.pdf\nreport: outputs/0625/MayJune_2020/\n0625_MayJune_2020_p31__2026-07-27-141930",
-}
-
 export interface RailTick {
   g: string
   left: number
@@ -360,129 +279,7 @@ export const railTicks: RailTick[] = [
   { g: "A", left: 80 },
 ]
 
-/* Paper 1 dropped-marks detail. */
-export interface DroppedItem {
-  id: string
-  you: string
-  right: string
-  region: string
-  note: string
-}
-
-export const dropped: DroppedItem[] = [
-  { id: "2", you: "A", right: "B", region: "page 2, q2", note: "A distance-time graph read as speed-time. The same slip appears in your November paper - the gradient of a distance-time line is the speed, not the acceleration." },
-  { id: "34", you: "C", right: "D", region: "page 17, q34", note: "Half-life counting. You stopped one half-life early; the sample decays through three, not two, over 36 days." },
-]
-
-/* Paper 3 theory questions with marking points. */
-export interface MarkPoint {
-  mark: "check" | "dot"
-  id: string
-  text: string
-  got: boolean
-}
-
-export interface TheoryQuestion {
-  id: string
-  topic: string
-  marker: string
-  conf: string
-  confColor: VizColor
-  marks: string
-  markOk: boolean
-  cardWeak: boolean
-  points: MarkPoint[]
-  feedback: string
-  feedbackTone: "ok" | "accent" | "warn"
-}
-
-const mp = (mark: "check" | "dot", id: string, text: string, got: boolean): MarkPoint => ({ mark, id, text, got })
-
-export const theory: TheoryQuestion[] = [
-  {
-    id: "4(a)", topic: "Motion - speed from distance and time", marker: "AI-marked", conf: "0.94", confColor: "ok", marks: "3/3", markOk: true, cardWeak: false,
-    points: [mp("check", "p1", "(s =) d / t in any form", true), mp("check", "p2", "(s =) 200 / 6.4", true), mp("check", "p3", "(s =) 31 (m / s)", true)],
-    feedback: "Clean three-step method. Formula stated, substitution shown, answer to two significant figures with the unit - exactly what the C1 C1 A1 structure rewards.",
-    feedbackTone: "ok",
-  },
-  {
-    id: "5(b)", topic: "Moments - principle of equilibrium", marker: "AI-marked", conf: "0.78", confColor: "warn", marks: "2/4", markOk: false, cardWeak: false,
-    points: [mp("check", "p1", "(sum of) clockwise moments = (sum of) anticlockwise moments", true), mp("check", "p2", "200 = (2.0 x 10) + (F x 60)", true), mp("dot", "p3", "F = (200 - 20) / 60 OR 180 / 60", false), mp("dot", "p4", "(F =) 3.0 (N)", false)],
-    feedback: "You set the equation up correctly and then rearranged it wrong - you divided 200 by 60 instead of subtracting the 20 N.cm first. The physics is right; the algebra cost you two marks.",
-    feedbackTone: "accent",
-  },
-  {
-    id: "11(b)", topic: "Transformers - turns ratio", marker: "AI-marked", conf: "0.91", confColor: "ok", marks: "3/3", markOk: true, cardWeak: false,
-    points: [mp("check", "p1", "Vs / Vp = Ns / Np in any form", true), mp("check", "p2", "(Vs =) (64 x 240) / 960", true), mp("check", "p3", "16 (V)", true)],
-    feedback: "Ratio written the right way round on the first attempt - that is the step most candidates lose here.",
-    feedbackTone: "ok",
-  },
-  {
-    id: "12(c)", topic: "Radioactivity - half-life", marker: "AI-marked", conf: "0.61", confColor: "warn", marks: "1/3", markOk: false, cardWeak: true,
-    points: [mp("check", "p1", "idea of three half-lives", true), mp("dot", "p2", "36 / 8", false), mp("dot", "p3", "4.5 (mg)", false)],
-    feedback: "Your working stops after identifying three half-lives, and the handwriting on the final line could not be read with confidence. Sent to Mr Sabry rather than guessed.",
-    feedbackTone: "warn",
-  },
-]
-
-export interface TheoryWeakRow {
-  topic: string
-  marks: string
-  width: number
-  color: VizColor
-}
-
-export const theoryWeak: TheoryWeakRow[] = [
-  { topic: "Moments & equilibrium", marks: "2 lost", width: 50, color: "accent" },
-  { topic: "Radioactivity", marks: "2 lost", width: 67, color: "accent" },
-  { topic: "Thermal physics", marks: "6 lost", width: 55, color: "accent" },
-  { topic: "Electricity & transformers", marks: "1 lost", width: 12, color: "ok" },
-]
-
-export interface PaperTab {
-  id: "p1" | "p3"
-  label: string
-}
-
-export const paperTabs: PaperTab[] = [
-  { id: "p1", label: "0625/12 - Paper 1" },
-  { id: "p3", label: "0625/31 - Theory" },
-]
-
 /* ── Correct a paper ────────────────────────────────────────────────────── */
-
-export interface DetectedField {
-  k: string
-  v: string
-}
-
-export const detected: DetectedField[] = [
-  { k: "Subject", v: "Physics" },
-  { k: "Code", v: "0625" },
-  { k: "Session", v: "May/June 2020" },
-  { k: "Paper", v: "Paper 1" },
-  { k: "Variant", v: "2" },
-]
-
-export const scanMeta = {
-  filename: "0625_m20_qp_12_solved.pdf",
-  detail: "20 pages - uploaded at 14:02 - we recognised this exam from the front page",
-  thumbLabel: "scanned page 1",
-}
-
-/** Pipeline steps for the Correct-a-paper progress panel. */
-export interface ProgressStep {
-  title: string
-  detail: string
-}
-
-export const progressSteps: ProgressStep[] = [
-  { title: "Read the front page", detail: "Physics 0625, Paper 1 Variant 2, May/June 2020" },
-  { title: "Found the official mark scheme", detail: "The Cambridge scheme for this exact variant" },
-  { title: "Read every answer", detail: "All forty came through clearly" },
-  { title: "Checked for copying", detail: "Nothing lifted from the mark scheme" },
-  { title: "Marked the paper", detail: "38 out of 40 - grade A" },
-]
 
 export const reassure: { t: string }[] = [
   { t: "Multiple choice is matched letter for letter against the official Cambridge scheme. No judgement, no model - the same answer key a marker would use." },

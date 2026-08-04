@@ -107,8 +107,8 @@ function resolveCrumb(pathname: string): string {
   const subjectMatch = pathname.match(/^\/student\/subject\/([^/]+)$/)
   if (subjectMatch) return `Home / ${subjectMatch[1]}`
 
-  // /student/result/:paperId crumb lands with the result-route work (P2.7
-  // step 5) once its final path shape is settled — add a case here then.
+  const resultMatch = pathname.match(/^\/student\/result\/([^/]+)$/)
+  if (resultMatch) return `Home / Result ${resultMatch[1]}`
 
   return "Home"
 }
@@ -162,7 +162,7 @@ export const studentRoute: RouteObject = {
   children: [
     { index: true, element: <Overview /> },
     { path: "subject/:code", element: <Subject /> },
-    { path: "result", element: <PaperResult /> },
+    { path: "result/:paperId", element: <PaperResult /> },
     { path: "correct", element: <CorrectPaper /> },
     { path: "plan", element: <StudyPlan /> },
     { path: "board", element: <Standings /> },

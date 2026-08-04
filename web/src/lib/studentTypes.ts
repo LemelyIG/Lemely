@@ -341,6 +341,16 @@ export interface StudentCorrectFrame {
   confidence?: number
   needs_review?: boolean
   questions?: QuestionResult[]
+  // result-header fields, mirrors `_result_header_fields()` (student.py) — the
+  // same fields `ResultDTO` carries on the `GET /student/result/{id}` path,
+  // renamed snake_case for the SSE wire (added P2.7 step 5a, commit 9803c7b).
+  code?: string
+  paper?: string
+  session?: string
+  boundary_year?: string
+  rail_left?: number
+  rail_foot?: string
+  pct?: number
   // marking_progress, per-question (correction_ai.py)
   question_id?: string
   marker_source?: MarkerSource
