@@ -744,3 +744,79 @@
   introduced by this change, and does not affect the accuracy-harness work (no DB dependency).
   Flagged here so a future session with shell/root access cleans it up rather than
   re-diagnosing it.
+
+### D2.4 — Deterministic calculated-answer verification (P2.3 step 8, the marking-quality fix)
+
+- **What:** `lemely/io/correction_ai.py` gained a deterministic backstop that runs after
+  every AI marking call, independent of stated confidence (D2.3 proved confidence cannot
+  substitute for this). For every point the AI claims was matched, if the mark scheme
+  attaches a `calculated_answer.value` to that point (a specific numerical result is
+  required, any M/A/B/C code), the point — and its marks — are rejected unless that value
+  is actually present in the student's text. `needs_teacher_review` gets a third
+  independent trigger (`value_mismatch`) alongside D2.2's existing two (low confidence,
+  out-of-range award).
+- **Resumed on a dirty tree:** this session inherited an untracked, uncommitted WIP diff to
+  `lemely/io/correction_ai.py` implementing the first version of this idea. Verified before
+  trusting (MISSION §5): static gates had one lint issue (fixed); no tests existed for the
+  new logic at all — added 20 unit tests before treating any of this as done.
+- **Design iterated three times against the real golden corpus, not just unit tests — each
+  iteration caught by a live `measure-accuracy` re-run, not by inspection:**
+  1. First cut: extract every number (decimals + naive `a/b` fractions) from
+     `student_answer + " " + student_working` concatenated, check for a match. Net effect on
+     the 10-fixture corpus: **zero** — it fixed 2 of the known D2.2/D2.3 disagreements
+     (0625 `1b`, `12c`) but broke 2 previously-*correct* answers (0606 `q1`, both variants),
+     because the student wrote `b = 3/8` and the naive extractor never evaluates fractions.
+     `mark_accuracy` was unchanged at 80.9% — fixes and regressions cancelled exactly.
+  2. Added fraction evaluation, but the regex still matched *any* `a/b` substring anywhere in
+     the combined text, including intermediate division shown as working. Re-running
+     surfaced a worse bug: `148 / 16.6 = 89` (mark scheme expects `8.9`, student's decimal-slip
+     wrong-answer is `89`) — the fix evaluated `148/16.6 ≈ 8.9` itself and "corrected" the
+     student's arithmetic, validating a wrong answer as if the fraction were the stated value.
+     Same for `36 / 8 = 9` (expects `4.5`). This is worse than doing nothing: it launders
+     exactly the failure class D2.3 was written to catch. Full re-run reverted to the
+     pre-fix baseline exactly (0 diffs vs the original bug) because the false-accept on
+     `1b`/`12c` cancelled the true-reject that was working before.
+  3. Final design: (a) fraction *evaluation* is applied ONLY to `student_answer` — never to
+     `student_working` — because working legitimately contains a division whose correct
+     result differs from what the student actually wrote as their final answer; evaluating it
+     ourselves re-does their arithmetic instead of checking their claim. (b) fraction operands
+     must be plain integers not adjacent to a decimal point (blocks `148/16.6`) and not
+     immediately followed by `= <number>` (blocks `36/8 = 9`, a division-with-shown-result).
+     (c) plain-decimal *matching* (no evaluation, pure string search) is safe and IS applied to
+     both `student_answer` and `student_working` combined, because extraction commonly splits
+     a question's final requested value into `answer` while an intermediate quantity that
+     still carries its own mark-scheme point (e.g. a B-mark checkpoint like `AC = 28.89` inside
+     a shaded-area question) lands in `working` — restricting the first (broken) iteration's
+     "answer-only, fall back to working only if answer is empty" idea to decimals-only fixed a
+     third regression (0606 `4b`) that the answer-only restriction had introduced.
+- **Final verification (live, real Gemini, cached from the D2.3 run — near-zero incremental
+  cost since only the deterministic post-processing changed, not the marking prompt):** full
+  10-fixture re-run, n=68. `mark_accuracy` 80.9%→**83.8%**, `mark_accuracy_theory`
+  78.3%→**81.7%**, `flag_precision_HIGH` 82.5%→**85.5%**, `flag_recall` 23.1%→**27.3%**.
+  Diffed every one of the 68 question results against the D2.3 baseline: **exactly 2 changed,
+  both fixes (0625 `1b` and `12c`, wrong→correct), zero regressions.** Gemini spend delta
+  ~$0.006 (cumulative $0.058 of the $8.00 ceiling) — a few live calls during interactive
+  debugging of the intermediate broken iterations, not from the harness re-runs themselves
+  (those were cache hits).
+- **Honest limitation, not fixed by this change:** 0625 `5b` (the third original D2.2/D2.3
+  disagreement) is still wrong and still unflagged. Root cause differs from the other two:
+  Gemini's marker credits point `p3` (a *method* point — "F = (200-20)/60 OR 180/60", the
+  student instead wrote `F = 200/60`, omitting the −20 step) despite the shown method being
+  wrong; `p3` carries no `calculated_answer`, so this backstop has nothing to check. Verifying
+  *method* correctness (did the student's working match the mark scheme's required algebraic
+  form, not just produce a number) is a materially harder problem — comparing free-form
+  algebra against a mark-scheme pattern, not a numeric-tolerance check — and is explicitly out
+  of scope for this deterministic pass. Recorded here rather than silently left for a future
+  session to rediscover from scratch.
+- **P2.3's §4 accuracy gate (`>95%` mark-level, `100%` of disagreements below the review
+  threshold) is still NOT met** — 83.8% and partial flag coverage are real improvement, not a
+  pass. Whether to pursue the harder method-verification problem, accept a documented
+  deviation on this gate, or find another lever is the next P2.3 judgment call, not resolved
+  by this entry.
+- **Blast radius:** `lemely/io/correction_ai.py` (new functions + `_build_ai_corrected` wiring)
+  and `tests/test_correction_ai.py` (+20 tests: 3 baseline-behavior classes reused, 6 new
+  calculated-answer-verification cases including the 3 regression guards that pin the
+  iteration-2/3 bugs described above so they cannot silently reappear). No schema, API, or
+  migration change — `matched_point_ids`/`awarded_marks`/`needs_teacher_review`/`review_reason`
+  are all pre-existing `CorrectedQuestion` fields. Full suite green (0 failures, cov 81.95%,
+  ruff/format/mypy/lint-imports clean).

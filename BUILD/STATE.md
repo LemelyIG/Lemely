@@ -2,8 +2,8 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-04T12:15:00Z
-gemini_spend_usd: 0.0502
+last_updated: 2026-08-04T13:41:10Z
+gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
@@ -372,21 +372,28 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           Gemini spend +$0.0150 (cumulative $0.0502 / $8.00 ceiling). P2.3's accuracy gate is
           now measurable-and-failing (not measurement-limited) — the next step is the
           marking-quality fix, not more fixtures or threshold tuning.
-       8. [ ] todo — Marking-quality fix: the AI marker awards the accuracy (A) mark on
-          partial-credit theory questions without verifying the final numeric/algebraic
-          value is correct (confirmed at n=68 across 3 papers/2 subjects in D2.3; all 13
-          theory disagreements are this same failure class, extending D2.2's 3/3 Physics-only
-          finding). This is what's actually failing the §4 gate — see D2.3's threshold sweep
-          for why no confidence-threshold change can substitute for this. Approach to
-          evaluate: a deterministic re-check of the final computed value against the mark
-          scheme's stated answer/tolerance (already-parsed `answer_points[].point`/
-          `tolerance`/`calculated_answer` fields exist in the schema) before awarding an A
-          mark, OR a cheap second-pass "verify only the final value" Gemini call gated behind
-          the existing escalation budget. Re-run `measure-accuracy` after the fix (same 10
-          fixtures, near-zero incremental cost — mostly cache hits except whatever the fix
-          changes) and re-check the §4 thresholds. This is the last thing blocking P2.3
-          acceptance; once it lands, re-run the full threshold sweep once more (numbers will
-          shift) before declaring P2.3 done.
+       8. [x] done — Marking-quality fix: deterministic calculated-answer verification.
+          Full detail + 3-iteration design history (two broken versions caught by live
+          re-runs, not inspection) in **D2.4** (DECISIONS.md). Resumed on a dirty,
+          untracked, uncommitted WIP diff with zero tests; added 20 unit tests before
+          trusting any of it (MISSION §5). Final: `mark_accuracy` 80.9%→**83.8%**,
+          `mark_accuracy_theory` 78.3%→**81.7%**, `flag_precision_HIGH` 82.5%→**85.5%**,
+          `flag_recall` 23.1%→**27.3%**; diffed all 68 question results vs the D2.3
+          baseline — exactly 2 changed, both fixes (0625 `1b`, `12c`), **zero regressions**.
+          Gemini spend +$0.006 (cumulative $0.058/$8.00). Full suite green (0 failures,
+          cov 81.95%); ruff/format/mypy/lint-imports clean.
+          **§4 accuracy gate still NOT met** (83.8% < 95% target) — honest, not silently
+          patched over. Remaining known gap: 0625 `5b` — Gemini credits a *method* point
+          with no `calculated_answer` attached despite the shown working being wrong
+          (omitted a subtraction step); this backstop only verifies stated numeric values,
+          not free-form algebraic method correctness, which is a materially harder problem
+          (see D2.4's "honest limitation" section). Threshold tuning is separately exhausted
+          (D2.3). Two undone options remain, both explicitly still on the table: (a) a cheap
+          second-pass "verify only the final value/method" Gemini call gated behind the
+          existing escalation budget (MISSION-suggested alternative, not yet tried), or
+          (b) accept the current state as a documented Phase-2 gate deviation and proceed to
+          P2.4+. Next session: make that call explicitly (don't silently drift past it) —
+          see "Next action" below.
 - [ ] todo — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
        results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
        verdicts). Enable integrity path; surface in result payload + review_queue.
@@ -433,19 +440,26 @@ upload_utils 413 branch. Non-blocking for P2.2.
 
 **P2.2 DONE + VERIFIED (2026-08-04).** See checklist entry above for full detail.
 
-**P2.3 IN PROGRESS, sub-steps 1-7 done (2026-08-04).** Step 7 (source 0580/0606 fixtures +
-mandatory D2.2 revisit) done — see checklist entry above and **D2.3** in DECISIONS.md for full
-detail. Headline: the accuracy gate is now measurable-and-failing at real statistical power
-(n=68, 3 papers, 2 subjects), not measurement-limited as it was at D2.2's n=29. Threshold
-tuning is exhausted as an approach (sweep table in D2.3: nothing below 0.99 gets close to the
-§4 100% target, and 0.99 is the already-rejected flag-everything degenerate case).
-`REVIEW_CONFIDENCE_THRESHOLD` stays at 0.90. **Next session: pick up step 8** — the
-marking-quality fix (AI marker must verify the final numeric/algebraic value before awarding
-an A mark on partial-credit questions; see step 8 for the two approaches to evaluate). This is
-the last thing blocking P2.3 acceptance. Do NOT re-run the live batch blindly before the fix
-lands — `tests/golden/results/2026-08-04-2473205.json` (gitignored) is this step's result and
-regenerating without code changes is a pure cache hit, effectively free; only spend fresh
-budget to validate the step-8 fix once it's implemented.
+**P2.3 IN PROGRESS, sub-steps 1-8 done (2026-08-04).** Step 8 (deterministic marking-quality
+fix) done — see checklist entry above and **D2.4** in DECISIONS.md for full detail, including
+the 3-iteration design history (two broken versions caught by live harness re-runs). Result:
+`mark_accuracy` 80.9%→83.8%, exactly 2 fixes / 0 regressions vs the D2.3 baseline across all
+68 questions. `REVIEW_CONFIDENCE_THRESHOLD` stays at 0.90 (unchanged from D2.2/D2.3).
+**§4 accuracy gate is STILL NOT MET (83.8% < 95%)** — this is a real, verified improvement,
+not a passing result. **Next session: make the P2.3-closing judgment call, don't silently
+drift past it:**
+  (a) Try the second-pass Gemini "verify final value/method" call (MISSION-suggested
+      alternative, not yet attempted — could also catch 0625 `5b`'s method-error case, which
+      the deterministic fix structurally cannot: `5b`'s wrong point carries no
+      `calculated_answer`, see D2.4's "honest limitation"), OR
+  (b) Record a decision (D2.5) accepting the current state as a documented Phase-2 gate
+      deviation — threshold tuning is exhausted (D2.3), the straightforward deterministic fix
+      is exhausted (D2.4 closed everything it structurally can), and the remaining gap is a
+      free-form algebraic-method-verification problem, a materially different and larger
+      scope than "Phase 2 core loop" — then proceed to P2.4.
+Either is fine per MISSION §1 ("pick simplest/cheapest/reversible, record it, continue") — just
+decide explicitly. `tests/golden/results/2026-08-04-9a7f4c8.json` (gitignored) is this step's
+final result; regenerating without further code changes is a pure cache hit, effectively free.
 Separate environment note (not blocking, needs a session with shell/root access): local
 Supabase stack is down and won't start — `supabase/.temp/start-secrets/supabase_db_Lemely/`
 contains root-owned directories from a prior crashed container that this session's

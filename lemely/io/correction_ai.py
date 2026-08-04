@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Mapping
 
 import structlog
 
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
-from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
+from lemely.core.loose_schemas import CalculatedAnswer, MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AIMarkResponse,
@@ -164,14 +166,145 @@ def _build_mcq_corrected(question: Question, answer: str | None) -> CorrectedQue
     )
 
 
+def _extract_decimals(text: str) -> list[float]:
+    """Pull every plain-decimal numeric literal out of free-form text.
+
+    Pure string matching — never evaluates an expression — so it is safe to
+    apply to scratch working: a target value that appears verbatim (e.g. an
+    intermediate B-mark checkpoint like "AC = 28.89") is found without risk of
+    "correcting" the student's arithmetic.
+    """
+    out: list[float] = []
+    for raw in re.findall(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", text):
+        try:
+            out.append(float(raw))
+        except ValueError:
+            continue
+    return out
+
+
+def _extract_fraction_values(text: str) -> list[float]:
+    """Evaluate simple integer ``a/b`` fractions found in the text.
+
+    Mark schemes routinely mark fractions "oe" with a decimal
+    ``calculated_answer.value`` — e.g. a student writing "3/8" must match a
+    scheme value of 0.375.
+
+    Deliberately NOT applied to scratch working (see ``_verify_calculated_answers``):
+    working text routinely contains a division whose *correct* result differs
+    from the student's actual stated answer (e.g. "148 / 16.6 = 89", a
+    decimal-place slip) — evaluating it ourselves would silently redo the
+    student's arithmetic instead of checking what they wrote.
+    """
+    out: list[float] = []
+    # Integer/integer only (neither operand may be adjacent to a decimal
+    # point) and not immediately followed by "= <number>" (that shape is a
+    # division-with-shown-result, not a fraction presented as the answer).
+    fraction_re = r"(?<![\d.])([-+]?\d+)(?![\d.])\s*/\s*(?<![\d.])(\d+)(?![\d.])(?!\s*=\s*[-+]?\d)"
+    for num, denom in re.findall(fraction_re, text):
+        try:
+            d = float(denom)
+            if d != 0:
+                out.append(float(num) / d)
+        except ValueError:
+            continue
+    return out
+
+
+def _sig_round(value: float, sig_figs: int) -> float:
+    if value == 0:
+        return 0.0
+    return round(value, -math.floor(math.log10(abs(value))) + (sig_figs - 1))
+
+
+def _calculated_value_present(calc: CalculatedAnswer, candidates: list[float]) -> bool:
+    """True if any candidate number matches ``calc.value``.
+
+    Matches within the mark scheme's stated precision (dp/sig_figs), or else a
+    default 1% relative tolerance.
+    """
+    if calc.value is None or not candidates:
+        return False
+    for c in candidates:
+        if calc.dp is not None and round(c, calc.dp) == round(calc.value, calc.dp):
+            return True
+        if calc.sig_figs is not None and _sig_round(c, calc.sig_figs) == _sig_round(
+            calc.value, calc.sig_figs
+        ):
+            return True
+        if abs(c - calc.value) <= max(abs(calc.value) * 0.01, 1e-6):
+            return True
+    return False
+
+
+def _verify_calculated_answers(
+    question: Question,
+    student_answer: str,
+    student_working: str | None,
+    matched_point_ids: list[str],
+    starting_awarded: int,
+) -> tuple[int, list[str], list[str]]:
+    """Deterministic backstop for the AI marker (D2.3).
+
+    The marker was found to award accuracy-type marks on partial-credit theory
+    questions without verifying the final numeric value actually appears in the
+    student's answer (confirmed at n=68 across 3 papers/2 subjects — same
+    failure mode every time: method steps correct, final value wrong, marker
+    credits it anyway).
+
+    For every point the AI claims was matched, if the mark scheme attaches a
+    ``calculated_answer.value`` to that point (i.e. it is gated on a specific
+    numerical result, regardless of M/A/B/C code), reject the point — and its
+    marks — unless that value is actually present somewhere in the student's
+    answer or working text. Points without a ``calculated_answer`` (method
+    steps, prose, levels-based criteria) are untouched.
+
+    Literal decimals are matched across both ``student_answer`` and
+    ``student_working`` — extraction commonly splits a question's final
+    requested value into ``answer`` while an intermediate value that still
+    carries its own mark-scheme point (e.g. a B-mark checkpoint like
+    "AC = 28.89") lands in ``working``; both must be checked. Fractions
+    ("3/8") are only evaluated from ``student_answer`` — see
+    ``_extract_fraction_values`` for why working is excluded from that part.
+
+    Returns (adjusted_awarded_marks, adjusted_matched_point_ids, rejection_reasons).
+    """
+    points_by_id = {p.id: p for p in question.answer_points}
+    candidates = _extract_fraction_values(student_answer)
+    candidates += _extract_decimals(student_answer)
+    if student_working:
+        candidates += _extract_decimals(student_working)
+
+    awarded = starting_awarded
+    matched: list[str] = []
+    rejections: list[str] = []
+    for point_id in matched_point_ids:
+        point = points_by_id.get(point_id)
+        if (
+            point is not None
+            and point.calculated_answer is not None
+            and point.calculated_answer.value is not None
+            and not _calculated_value_present(point.calculated_answer, candidates)
+        ):
+            awarded = max(0, awarded - point.marks)
+            rejections.append(
+                f"{point_id}: expected value {point.calculated_answer.value!r} not found "
+                "in student answer/working"
+            )
+            continue
+        matched.append(point_id)
+    return awarded, matched, rejections
+
+
 def _build_ai_corrected(
     question: Question,
     student_answer: str,
     mark: AIMarkResponse,
+    student_working: str | None = None,
 ) -> CorrectedQuestion:
     """Convert AIMarkResponse + question metadata into a CorrectedQuestion.
 
-    Two independent reasons flag a question for human review (D2.2):
+    Three independent reasons flag a question for human review (D2.2, D2.3 for #3):
 
     1. ``confidence < REVIEW_CONFIDENCE_THRESHOLD`` — the marker itself is unsure.
     2. The marker returned a mark outside ``[0, question.marks]``. The value is
@@ -180,35 +313,50 @@ def _build_ai_corrected(
        result must not reach a student unreviewed. This is a structural
        inconsistency signal, independent of the stated confidence, which is where
        the confidence number alone is known to be unreliable.
+    3. The marker credited a mark point with a specific ``calculated_answer``
+       whose value cannot be found in the student's answer/working — see
+       ``_verify_calculated_answers``. This directly targets the D2.3 finding
+       that stated confidence does not separate correct from wrong on this
+       failure mode, so it must not depend on confidence at all.
     """
-    awarded = max(0, min(mark.awarded_marks, question.marks))
-    out_of_range = mark.awarded_marks != awarded
+    clamped = max(0, min(mark.awarded_marks, question.marks))
+    out_of_range = mark.awarded_marks != clamped
+
+    awarded, matched_point_ids, rejections = _verify_calculated_answers(
+        question, student_answer, student_working, list(mark.matched_point_ids), clamped
+    )
+    value_mismatch = bool(rejections)
     low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD
-    review_reason: str | None = None
+
+    reasons: list[str] = []
     if out_of_range:
-        review_reason = (
+        reasons.append(
             f"marker returned {mark.awarded_marks} marks for a "
-            f"{question.marks}-mark question (clamped to {awarded})"
+            f"{question.marks}-mark question (clamped to {clamped})"
         )
-    elif low_confidence:
-        review_reason = (
+    if value_mismatch:
+        reasons.append("unverified accuracy mark(s): " + "; ".join(rejections))
+    if not reasons and low_confidence:
+        reasons.append(
             f"confidence {mark.confidence:.2f} below review threshold "
             f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
         )
+    review_reason = " | ".join(reasons) if reasons else None
+
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=awarded,
         maximum_marks=question.marks,
         confidence=confidence_band_for_score(mark.confidence),
         confidence_score=mark.confidence,
-        needs_teacher_review=low_confidence or out_of_range,
+        needs_teacher_review=low_confidence or out_of_range or value_mismatch,
         review_reason=review_reason,
         student_answer=student_answer or None,
         expected_answer=None,
         topic=question.topic_hint,
         marker_source="ai",
         feedback=mark.feedback,
-        matched_point_ids=list(mark.matched_point_ids),
+        matched_point_ids=matched_point_ids,
     )
 
 
@@ -325,7 +473,7 @@ def correct_paper(
                 message=f"AI marking failed for q={q.id}: {exc!s}",
             )
             continue
-        cq = _build_ai_corrected(q, student_answer or "", mark)
+        cq = _build_ai_corrected(q, student_answer or "", mark, student_working)
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks
         bus.publish(
