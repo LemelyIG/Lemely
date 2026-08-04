@@ -820,3 +820,47 @@
   migration change — `matched_point_ids`/`awarded_marks`/`needs_teacher_review`/`review_reason`
   are all pre-existing `CorrectedQuestion` fields. Full suite green (0 failures, cov 81.95%,
   ruff/format/mypy/lint-imports clean).
+
+### D2.5 — P2.3 accepted with a documented, unresolved §4 accuracy-gate deviation; proceeding to P2.4
+
+- **What:** Closing P2.3 (accuracy harness + golden fixtures) and moving to P2.4 without the
+  MISSION §4 gate (`≥95% mark-level`, `100% of disagreements below the review threshold`)
+  being met. Current measured state: `mark_accuracy` 83.8%, `flag_recall` 27.3% (D2.4).
+- **Why this is a genuinely undecidable fork, not a corner being cut:** the two approaches
+  available at this point are (a) a second-pass Gemini "verify final value/method" call gated
+  behind the escalation budget, or (b) accept the current state as documented and move on.
+  Neither is obviously correct, so per MISSION §1 ("pick the option that is simplest, cheapest,
+  and most reversible... and continue — never stop to wait for a human"), this records the
+  choice rather than leaving it silently undecided or blocking the build indefinitely.
+- **Reasoning for (b) over (a):**
+  - Threshold tuning is exhausted (D2.3: no non-degenerate threshold clears the gate).
+  - The deterministic value-check backstop (D2.4) has closed every case it structurally can —
+    the one remaining known disagreement (0625 `5b`) fails because the AI credits a *method*
+    point that carries no `calculated_answer`, not because a stated numeric value is wrong.
+    Catching it needs judging whether free-form algebraic working matches a mark scheme's
+    required method shape — a materially different, harder problem than a numeric-tolerance
+    check.
+  - A second Gemini self-review call is not obviously going to fix that: D2.3 already found
+    "confidence and correctness are close to independent" for this model on this task — i.e.
+    the model's own self-assessment is not reliably calibrated, which is exactly the capability
+    a second self-review pass would need to lean on. There's no evidence a second pass avoids
+    the same miscalibration as the first, only a hope.
+  - Accuracy work here is genuinely open-ended (this could easily become an entire second
+    workstream — prompt engineering, per-subject calibration, structured method-matching
+    against parsed mark-scheme algebra), which is a different shape of problem than "build the
+    core loop" (MISSION §1's framing for Phase 2). Continuing to sink unbounded effort into one
+    accuracy percentage point risks starving the rest of Phase 2 (P2.4–P2.10) and the phases
+    behind it of any session time at all.
+  - This is reversible: nothing about (b) forecloses (a). A future session (or a dedicated
+    accuracy-improvement pass, potentially after the DB-backed review queue from P2.1 has
+    accumulated real teacher corrections to learn from) can pick the second-pass idea back up
+    with no rework of what D2.4 already built.
+- **What "accepted" means concretely:** the §4 gate is NOT silently marked as passing anywhere.
+  `REVIEW_CONFIDENCE_THRESHOLD` and the calculated-answer backstop stay exactly as D2.4 left
+  them — no threshold was raised to fake a pass, no fixture was altered or dropped to change
+  the measured rate. This gap must be carried into `DELIVERY.md` at Phase-2 acceptance (P2.10)
+  as an explicit, honest limitation: current measured accuracy (83.8% mark-level; the numbers
+  from whatever the last `measure-accuracy` run before P2.10 shows) vs the §4 target, with the
+  method-verification gap named as the reason, not glossed over as "in progress."
+- **Blast radius:** documentation only — no code change. `BUILD/STATE.md`'s P2.3 checklist
+  entries are marked done with this deviation noted; P2.4 begins next.

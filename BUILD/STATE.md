@@ -209,13 +209,19 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        lint-imports clean; full suite green, cov-fail-under=70 met (81.28% with DB tests
        skipped, consistent with prior skip-pattern sessions). 20/20 test_grade_boundaries.py
        pass standalone.)
-- [~] doing — P2.3 Accuracy harness + golden fixtures: obtain real past papers + mark
-       schemes for the 3 subjects; generate synthetic handwritten answer sheets
-       (handwriting fonts, ink variation, scan noise/skew/blur/rotation) with known
-       ground-truth spanning correct / partial (method marks) / wrong. COMMIT fixtures.
-       Gate thresholds: ≥99% MCQ agreement; ≥95% mark-level on structured; 100% of
-       disagreements carry confidence below the review threshold. Calibrate the review
+- [x] done (with a documented gate deviation, see D2.5) — P2.3 Accuracy harness + golden
+       fixtures: obtain real past papers + mark schemes for the 3 subjects; generate synthetic
+       handwritten answer sheets (handwriting fonts, ink variation, scan noise/skew/blur/
+       rotation) with known ground-truth spanning correct / partial (method marks) / wrong.
+       COMMIT fixtures. Gate thresholds: ≥99% MCQ agreement; ≥95% mark-level on structured;
+       100% of disagreements carry confidence below the review threshold. Calibrate the review
        threshold from harness data. Live-Gemini validation obeys §8 budget (mock in CI).
+       CLOSED 2026-08-04 per **D2.5**: measured state is mark_accuracy 83.8% / flag_recall
+       27.3%, below the §4 target. Threshold tuning (D2.3) and the deterministic
+       calculated-answer fix (D2.4) are both exhausted as approaches; the remaining gap
+       (0625 `5b`-style method-credit errors) needs free-form algebraic method verification,
+       out of scope for this pass. NOT silently marked passing — carry into DELIVERY.md at
+       P2.10 as an explicit honest limitation.
        SUB-PLAN (this session, recorded so a killed session can resume mid-task):
        1. [x] Vendored 3 OFL handwriting fonts (Caveat/IndieFlower/PatrickHand) at
           lemely/data/fonts/handwriting/ + LICENSE-OFL.txt attribution.
@@ -440,26 +446,23 @@ upload_utils 413 branch. Non-blocking for P2.2.
 
 **P2.2 DONE + VERIFIED (2026-08-04).** See checklist entry above for full detail.
 
-**P2.3 IN PROGRESS, sub-steps 1-8 done (2026-08-04).** Step 8 (deterministic marking-quality
-fix) done — see checklist entry above and **D2.4** in DECISIONS.md for full detail, including
-the 3-iteration design history (two broken versions caught by live harness re-runs). Result:
-`mark_accuracy` 80.9%→83.8%, exactly 2 fixes / 0 regressions vs the D2.3 baseline across all
-68 questions. `REVIEW_CONFIDENCE_THRESHOLD` stays at 0.90 (unchanged from D2.2/D2.3).
-**§4 accuracy gate is STILL NOT MET (83.8% < 95%)** — this is a real, verified improvement,
-not a passing result. **Next session: make the P2.3-closing judgment call, don't silently
-drift past it:**
-  (a) Try the second-pass Gemini "verify final value/method" call (MISSION-suggested
-      alternative, not yet attempted — could also catch 0625 `5b`'s method-error case, which
-      the deterministic fix structurally cannot: `5b`'s wrong point carries no
-      `calculated_answer`, see D2.4's "honest limitation"), OR
-  (b) Record a decision (D2.5) accepting the current state as a documented Phase-2 gate
-      deviation — threshold tuning is exhausted (D2.3), the straightforward deterministic fix
-      is exhausted (D2.4 closed everything it structurally can), and the remaining gap is a
-      free-form algebraic-method-verification problem, a materially different and larger
-      scope than "Phase 2 core loop" — then proceed to P2.4.
-Either is fine per MISSION §1 ("pick simplest/cheapest/reversible, record it, continue") — just
-decide explicitly. `tests/golden/results/2026-08-04-9a7f4c8.json` (gitignored) is this step's
-final result; regenerating without further code changes is a pure cache hit, effectively free.
+**P2.3 CLOSED 2026-08-04 (with a documented gate deviation).** Step 8 (deterministic
+marking-quality fix) done — see checklist entry above and **D2.4** in DECISIONS.md for full
+detail, including the 3-iteration design history (two broken versions caught by live harness
+re-runs, not inspection). Result: `mark_accuracy` 80.9%→83.8%, exactly 2 fixes / 0 regressions
+vs the D2.3 baseline across all 68 questions. `REVIEW_CONFIDENCE_THRESHOLD` stays at 0.90
+(unchanged from D2.2/D2.3). **§4 accuracy gate is NOT met (83.8% < 95%)** — closed anyway per
+**D2.5**: threshold tuning (D2.3) and the deterministic fix (D2.4) are both exhausted as
+approaches; the remaining gap needs free-form algebraic method verification (0625 `5b`-class
+errors), out of scope for this pass. NOT silently marked passing — this must be carried into
+`DELIVERY.md` at P2.10 as an explicit, honest limitation with the measured numbers at that
+time. `tests/golden/results/2026-08-04-9a7f4c8.json` (gitignored) is the final result of this
+work; regenerating without further code changes is a pure cache hit, effectively free.
+
+**Next: P2.4** (see Phase-2 checklist above) — plagiarism (answer≈mark-scheme) + AI-detection
+advisory flags wired into results as teacher-review signals only (never auto-penalize; UI copy
+= signals not verdicts). Enable the integrity path; surface in the result payload +
+review_queue. Branch stays `feature/phase-2-core-loop`; no new branch needed.
 Separate environment note (not blocking, needs a session with shell/root access): local
 Supabase stack is down and won't start — `supabase/.temp/start-secrets/supabase_db_Lemely/`
 contains root-owned directories from a prior crashed container that this session's
