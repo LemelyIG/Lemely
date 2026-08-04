@@ -615,20 +615,35 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           in the DTO, structure unchanged. 404 gets a neutral empty state distinct from a
           generic error. Row nav target intentionally 404s until step 5 registers the route.
           Orchestrator-verified: typecheck/lint/build clean.)
-       5. [ ] todo — CorrectPaper + PaperResult (coupled by D2.7's state-passing design — do
-          together, one dispatch): CorrectPaper gets a real file input (scan required, optional
-          mark-scheme file) → `uploadScan()` (multipart POST /student/uploads) →
-          `runCorrection(paperId)` consuming `streamActivity` frames to drive the existing
-          progress-step UI for real (marking_progress/warning/error frames — kill the
-          `setTimeout` theatre and `progressSteps`/`detected`/`scanMeta`/`readChips`/`reassure`
-          mock reliance where now-superseded by real frame data; `reassure` copy (explainer
-          text, not data) may stay). On the `complete` frame, assemble a `ResultData`-shaped
-          object from the frame's scalars + new `questions` key and `navigate(`/student/result/
-          ${paperId}`, { state: assembled })`. PaperResult reads `useParams().paperId`; prefers
-          `location.state` when present (full theory/integrity); else calls `useResult
-          (paperId)` (history-sourced, structurally-empty theory/integrity — existing, honest,
-          documented behavior, not a regression). Route registration: `result` →
-          `result/:paperId`.
+       5. CorrectPaper + PaperResult (coupled by D2.7's state-passing design). Split into two
+          sub-dispatches after a planning gap surfaced (D2.7 addendum): the complete frame
+          needs header fields (code/paper/session/boundaryYear/railLeft/railFoot/pct) that
+          weren't in scope after step 1, and `QuestionResultDTO` should carry `topic` (free —
+          already on `CorrectedQuestion`, just unsurfaced). Also DECIDED (D2.7 addendum): drop
+          the mock's P1/P3 tab-switcher + `TheoryQuestion`/`MarkPoint` points-breakdown UI
+          entirely (needs mark-scheme point-text resolution — real new-converter scope, not
+          screen wiring) — PaperResult renders ONE result with a flat per-question list
+          (id/awarded/max/markerSource/confidence/topic/feedback/reviewReason/flags), and an
+          explicit "detail only available right after correcting" note when browsing history
+          (no `questions` — GET path, `theory` stays structurally empty as already documented).
+          5a. [ ] todo — Backend: shared `_result_header_fields()` helper (code/paper/session/
+              boundaryYear/railLeft/railFoot from `ExamMetadata` + boundary store, same logic
+              `student_result` already has, refactored not duplicated); `student_correct`'s
+              complete frame calls it with `mark_scheme.metadata` (reliable even when detected
+              `metadata` is None) + adds `pct`. `QuestionResultDTO.topic` + `question_to_dto`
+              populate it. Extend existing tests for the new frame/DTO fields.
+          5b. [ ] todo — Frontend: CorrectPaper gets a real file input (scan required, optional
+              mark-scheme file) → `uploadScan()` → `runCorrection(paperId)` consuming
+              `streamActivity` frames to drive the progress UI for real (kill the `setTimeout`
+              theatre and `progressSteps`/`detected`/`scanMeta`/`readChips` mock reliance;
+              `reassure` explainer copy may stay). On the complete frame, assemble a
+              `Result & { questions: QuestionResult[] }`-shaped object from the frame's fields
+              and `navigate(`/student/result/${paperId}`, { state: assembled })` (paperId here
+              is the Upload id / `payload.paperId`, not a history index). PaperResult drops the
+              tab-switcher and all `resultP1`/`resultP3`/`mcq`/`dropped`/`theory`/`theoryWeak`/
+              `paperTabs` mock imports; reads `useParams().paperId`, prefers `location.state`
+              when present, else `useResult(paperId)` (GET, history-indexed). Route
+              registration: `result` → `result/:paperId`; wire `resolveCrumb`'s marked slot.
        6. [ ] todo — StudyPlan + Standings + Onboarding (bundle — phase wording says "as far as
           Phase-2 scope needs", partial wiring is sanctioned): StudyPlan wired to
           `useStudyPlan()`/post-mutation (`planRows`/`days`/`planCards` grid mock replaced by

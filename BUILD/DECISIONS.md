@@ -994,3 +994,49 @@
   (`student_subject`'s history-row loop + `student_correct`'s `complete` publish call) — both
   additive, no field removed/renamed. Existing tests asserting on `PaperHistoryRowDTO`/the SSE
   `complete` frame shape need their expected-shape assertions extended, not rewritten.
+
+**Addendum (P2.7 step 5 planning) — header fields on the complete frame, and a deliberate
+per-question rendering simplification:**
+
+- **Gap found while planning CorrectPaper/PaperResult:** the `complete` frame (as landed in
+  step 1) carries only `awarded`/`max_marks`/`grade`/`confidence`/`needs_review`/`questions` —
+  no exam metadata (subject/paper/session) and no grade-boundary rail data (`railLeft`/
+  `railFoot`/`boundaryYear`), both of which `ResultDTO`'s header needs and both of which
+  `GET /student/result/{id}` computes from a `PaperRecord.metadata` that doesn't exist yet at
+  SSE-completion time (the record is written *by* `attempt_repo.persist_correction`, from
+  inputs the router already has in scope — nothing new to fetch).
+- **Decision:** extract a small shared helper, `_result_header_fields(metadata: ExamMetadata,
+  awarded: int, maximum: int) -> dict`, computing code/paper/session/boundaryYear/railLeft/
+  railFoot exactly as `student_result` already does (same boundary-store call, same format
+  strings) — refactor `student_result` to call it too, so the two paths are provably
+  consistent rather than duplicated. `student_correct`'s `run()` calls it with
+  `mark_scheme.metadata` (the resolved scheme's own metadata — reliable whenever a scheme was
+  successfully resolved, unlike the separately-detected `metadata` variable which can be
+  `None` when a student supplies their own scheme and Gemini extraction is skipped/unavailable)
+  and adds the resulting fields as new top-level SSE kwargs, plus `pct=round(report
+  .grade_prediction.percentage)`. `markerLabel`/`summary`/`railNote` are deliberately left
+  unpopulated ("") on BOTH paths, matching the existing GET-path convention — this keeps
+  fresh-correction and history-browsing visually consistent (no path looks "more narrated"
+  than the other) rather than inventing generated copy for one path only.
+- **`QuestionResultDTO` gains `topic: str | None`:** `CorrectedQuestion` (core schema) already
+  carries `topic`, it just was never surfaced on the DTO. Free, additive, zero new logic —
+  add it and populate it in `question_to_dto`.
+- **Deliberate scope cut — NOT building `TheoryQuestionDTO`-shaped fresh data:** the mock's
+  `TheoryQuestion` shape needs a per-point `text`/`got` breakdown (`MarkPointDTO[]`), which
+  requires resolving `matched_point_ids` against the full `MarkScheme`'s `answer_points` per
+  question — a real, non-trivial new converter, not a screen-wiring task. Building it now would
+  expand this phase task ("wire screens to already-designed DTOs") into "design and implement a
+  new per-question-detail data path." Decision: PaperResult's per-question section renders the
+  flatter `QuestionResult` list (id/awarded/max/markerSource/confidence/feedback/topic/
+  matchedPointIds-as-a-count-not-a-breakdown/reviewReason/flags) directly — a simpler list/row
+  layout, not the mock's split MCQ-grid-vs-theory-points-cards UI (which also assumed two
+  separate fixed papers via a tab switcher; a real result is one paper, so the tab switcher and
+  its `resultP1`/`resultP3`/`mcq`/`dropped`/`theory`/`theoryWeak`/`paperTabs` mock data are
+  dropped entirely, not adapted). This is honest given the real data available, and the richer
+  per-point UI can be built in a later phase once/if a converter for it is scoped. History-
+  browsed results (no `questions` available, GET-only) render the header with an explicit "per-
+  question detail is only available right after a paper is corrected" note instead of an empty
+  section that looks broken.
+- **Blast radius (addendum):** `lemely/web/schemas.py` (1 field), `lemely/web/routers/
+  student.py` (new shared helper + both call sites), tests extended for the new frame/DTO
+  fields.
