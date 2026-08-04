@@ -744,12 +744,30 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           trusting the implementer's claim that `rank` isn't fabricated — confirmed true. No
           frontend test runner exists yet (same established pattern). Committing on
           feature/phase-2-core-loop.)
-       7. [ ] todo — `data.ts` cleanup pass: delete every export now fully superseded by a live
+       7. [x] done — `data.ts` cleanup pass: delete every export now fully superseded by a live
           fetch; KEEP `navGroups`, `crumbs` (or its replacement), `studentMeta`, and every
           Landing/Directions export (`landingHero`, `pillars`, `pillarsIntro`, `pricing`,
           `landingProofIntro`, `proof`, `directionsIntro`) — those two screens are marketing
           pages outside P2.7's scope, not touched. Run `tsc --noUnusedLocals`-equivalent (the
           existing `npm run typecheck`) to catch anything still importing a deleted export.
+          (Steps 1-6 each deleted their own screen's dead exports as they landed; this pass
+          found one leftover block never cleaned up — Overview's/Subject's original mock data
+          (`SubjectRow`/`subjects`, `overviewForecast`, `NextUpItem`/`nextUp`,
+          `AgendaItem`/`agenda`, `momentum`, `WeakThread`/`weakGlobal`, `igCalculator`,
+          `PaperBar`/`PaperBreakdown`/`papersBreakdown`, `PaperHistoryRow`/`paperHistory`,
+          `TopicTile`/`topicMap`, `subjectHeader`) plus the orphaned `firstName` — all confirmed
+          zero real importers via `grep -rn` across the whole `web/src` tree first (every
+          apparent hit was `studentTypes.ts`'s identically-named DTO type or a destructured
+          local variable of the same name, not a reference to these mock exports); the now-
+          unused `Grade`/`Tone` type import at the top of the file was removed too (caught by
+          `noUnusedLocals: true` in `tsconfig.app.json` — confirmed via `npm run typecheck`
+          rather than assumed). `data.ts` went from 773 lines to 193: `mcq` (Landing),
+          `navGroups`/`crumbs`/`studentName`/`studentMeta` (chrome), `railTicks`
+          (`BoundaryRail`), `reassure` (`CorrectPaper`), and every Landing/Directions export
+          survive untouched. Did this pass directly (mechanical grep-verify-delete, no judgment
+          calls needed) rather than dispatching another implementer round. Orchestrator-
+          verified: `npm run typecheck`/`npm run lint`/`npm run build` all clean, same
+          pre-existing warning set. Committing on feature/phase-2-core-loop.)
        8. [ ] todo — Gates (§6.3: typecheck/oxlint/build clean) + orchestrator-verify (re-run
           gates myself, don't trust subagent claims) + commit + STATE.md update per step above
           (already folded into steps 1-7, this line is the final full-suite confirmation) +
