@@ -10,6 +10,7 @@ role 403s.
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
@@ -231,6 +232,46 @@ def test_upload_then_correct_persists_attempt(
         # second, independent row. Neither touches awarded/maximum marks.
         assert len(items) == 2
         assert {item.reason.value for item in items} == {"low_confidence", "plagiarism_flag"}
+
+
+def test_correct_complete_frame_includes_full_questions(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    """The `complete` frame's `questions` key mirrors report.correction.questions.
+
+    D2.7 (2): the SSE closure discards the full per-question CorrectionResult
+    after computing scalar totals unless it is forwarded explicitly — this is
+    the regression test for that forwarding.
+    """
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    complete_frame = next(
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data:") and '"phase": "complete"' in frame
+    )
+    questions = complete_frame["questions"]
+    assert {q["questionId"] for q in questions} == {"1", "2"}
+    assert len(questions) == len(_mcq_scheme().questions)
+
+    by_id = {q["questionId"]: q for q in questions}
+    # q1: MCQ answer 'A' matches the extracted 'A' exactly.
+    assert by_id["1"]["awardedMarks"] == 1
+    assert by_id["1"]["maxMarks"] == 1
+    assert "plagiarismFlagged" in by_id["1"]
+    assert "matchedPointIds" in by_id["1"]
+    assert "confidence" in by_id["1"]
+    # q2: extracted answer is blank, so no marks are awarded.
+    assert by_id["2"]["awardedMarks"] == 0
+    assert "reviewReason" in by_id["2"]
 
 
 def test_upload_sets_status_and_writes_file(

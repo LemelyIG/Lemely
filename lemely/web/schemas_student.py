@@ -103,8 +103,15 @@ class PaperBreakdownDTO(ApiModel):
 
 
 class PaperHistoryRowDTO(ApiModel):
-    """A row in the subject's paper history table (mirrors ``PaperHistoryRow``)."""
+    """A row in the subject's paper history table (mirrors ``PaperHistoryRow``).
 
+    ``id`` is the forward-position index into the student's full (unfiltered)
+    :class:`~lemely.core.history.StudentHistory.records` — the same addressing
+    scheme ``GET /api/student/result/{paper_id}`` uses — so a row can be passed
+    straight through as ``paper_id`` to look up its full result.
+    """
+
+    id: str
     paper: str
     note: str
     marks: str

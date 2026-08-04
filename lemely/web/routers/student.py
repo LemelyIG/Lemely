@@ -54,6 +54,7 @@ from lemely.web.deps import (
     get_student_upload_repo,
     require_role,
 )
+from lemely.web.schemas import question_to_dto
 from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
@@ -125,9 +126,16 @@ def _weak_threads(weaknesses: WeaknessReport, *, limit: int | None = None) -> li
     return threads
 
 
-def _subject_records(history: StudentHistory, code: str) -> list[PaperRecord]:
-    """Return this student's records for one subject code, oldest-first."""
-    return [r for r in history.records if r.metadata.subject_code == code]
+def _subject_records(history: StudentHistory, code: str) -> list[tuple[int, PaperRecord]]:
+    """Return ``(original_index, record)`` pairs for one subject, oldest-first.
+
+    ``original_index`` is the record's position in the FULL, unfiltered
+    ``history.records`` list — the same addressing scheme
+    ``GET /student/result/{paper_id}`` uses — not a position in this
+    subject-filtered subset. Callers that only need the records (not the
+    index) can drop the first element of each pair.
+    """
+    return [(i, r) for i, r in enumerate(history.records) if r.metadata.subject_code == code]
 
 
 def _momentum(records: list[PaperRecord]) -> MomentumDTO:
@@ -239,9 +247,10 @@ def student_subject(
     paper-history table. 404 when the student has no papers for ``code``.
     """
     history = history_store.load(auth.user_id)
-    records = _subject_records(history, code)
-    if not records:
+    indexed_records = _subject_records(history, code)
+    if not indexed_records:
         raise HTTPException(status_code=404, detail=f"No history for subject {code}")
+    records = [record for _, record in indexed_records]
 
     boundary_store = GradeBoundaryStore()
     awarded = sum(r.awarded_marks for r in records)
@@ -292,6 +301,7 @@ def student_subject(
 
     paper_history = [
         PaperHistoryRowDTO(
+            id=str(index),
             paper=_paper_label(record),
             note="",
             marks=f"{record.awarded_marks}/{record.maximum_marks}",
@@ -300,7 +310,7 @@ def student_subject(
             gradeColor=_bar_color(record.percentage),
             tab=f"p{record.metadata.paper_number}",
         )
-        for record in reversed(records)
+        for index, record in reversed(indexed_records)
     ]
 
     header = SubjectHeaderDTO(
@@ -632,6 +642,10 @@ def student_correct(
                     grade=report.grade_prediction.grade,
                     confidence=report.grade_prediction.confidence.value,
                     needs_review=report.correction.needs_teacher_review,
+                    questions=[
+                        question_to_dto(q).model_dump(by_alias=True)
+                        for q in report.correction.questions
+                    ],
                 )
         except Exception as exc:
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))

@@ -231,10 +231,123 @@ def test_subject_breakdown_and_history(client: TestClient) -> None:
     assert body["paperHistory"][0]["marks"] == "38/40"
     assert body["paperHistory"][0]["grade"] == "A"
 
+    # `id` addresses the row's position in the FULL history (record 1 = the
+    # 2nd-appended 38/40 paper; record 0 = the 1st-appended 33/40 paper), and
+    # round-trips through GET /student/result/{id} to the same paper.
+    assert body["paperHistory"][0]["id"] == "1"
+    assert body["paperHistory"][1]["id"] == "0"
+    result_0 = client.get(f"/api/student/result/{body['paperHistory'][0]['id']}").json()
+    assert result_0["awarded"] == 38
+    assert result_0["max"] == 40
+    result_1 = client.get(f"/api/student/result/{body['paperHistory'][1]['id']}").json()
+    assert result_1["awarded"] == 33
+    assert result_1["max"] == 40
+
 
 def test_subject_unknown_code_is_404(client: TestClient) -> None:
     """A subject with no recorded papers returns 404."""
     assert client.get("/api/student/subject/9999").status_code == 404
+
+
+@pytest.fixture
+def interleaved_store(tmp_path: Path) -> HistoryStore:
+    """History with two subjects' papers INTERLEAVED in append order.
+
+    Full-history indices: 0=0625, 1=0620, 2=0625, 3=0620. A per-subject-filtered
+    index (e.g. enumerating only the subject's own records) would mislabel the
+    newest 0625 paper (full index 2) as index "1" — this fixture is built so
+    that bug would produce a *different, wrong* id and a broken round-trip to
+    ``GET /student/result/{id}``, rather than accidentally matching by luck.
+    """
+    store = HistoryStore(tmp_path / "history")
+    store.append(  # full index 0: 0625, oldest
+        STUDENT_ID,
+        _record(
+            subject_code="0625",
+            paper_number=1,
+            awarded=10,
+            maximum=20,
+            percentage=50.0,
+            grade="C",
+            recorded_at="2020-01-01T10:00:00+00:00",
+        ),
+    )
+    store.append(  # full index 1: 0620, oldest
+        STUDENT_ID,
+        _record(
+            subject_code="0620",
+            paper_number=1,
+            awarded=15,
+            maximum=20,
+            percentage=75.0,
+            grade="B",
+            recorded_at="2020-02-01T10:00:00+00:00",
+        ),
+    )
+    store.append(  # full index 2: 0625, newest — the row a naive bug mislabels
+        STUDENT_ID,
+        _record(
+            subject_code="0625",
+            paper_number=2,
+            awarded=18,
+            maximum=20,
+            percentage=90.0,
+            grade="A",
+            recorded_at="2020-03-01T10:00:00+00:00",
+        ),
+    )
+    store.append(  # full index 3: 0620, newest
+        STUDENT_ID,
+        _record(
+            subject_code="0620",
+            paper_number=2,
+            awarded=19,
+            maximum=20,
+            percentage=95.0,
+            grade="A",
+            recorded_at="2020-04-01T10:00:00+00:00",
+        ),
+    )
+    return store
+
+
+@pytest.fixture
+def interleaved_client(interleaved_store: HistoryStore) -> TestClient:
+    """A TestClient whose store + auth resolve to the interleaved-history student."""
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: interleaved_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
+    return TestClient(app)
+
+
+def test_subject_history_id_addresses_full_history_not_filtered_subset(
+    interleaved_client: TestClient,
+) -> None:
+    """`paperHistory[i].id` is the FULL-history index, even with interleaved subjects.
+
+    This is the D2.7 regression: a per-subject-filtered index would give the
+    newest 0625 paper (full index 2) the wrong id "1" (its position within the
+    2-item 0625-only subset) and round-trip to the wrong (0620) paper.
+    """
+    body = interleaved_client.get("/api/student/subject/0625").json()
+    rows = body["paperHistory"]
+    assert len(rows) == 2
+
+    # Newest-first: full index 2 (18/20) then full index 0 (10/20).
+    assert rows[0]["id"] == "2"
+    assert rows[0]["marks"] == "18/20"
+    assert rows[1]["id"] == "0"
+    assert rows[1]["marks"] == "10/20"
+
+    # Round-trip: each id must resolve, via the FULL-history-indexed result
+    # endpoint, back to a 0625 paper with matching marks — not the 0620 paper
+    # that a naive filtered-subset index would collide with.
+    for row in rows:
+        result = interleaved_client.get(f"/api/student/result/{row['id']}").json()
+        assert result["code"] == "0625"
+        assert f"{result['awarded']}/{result['max']}" == row["marks"]
 
 
 # ── Paper result (flagship) ───────────────────────────────────────────────────
