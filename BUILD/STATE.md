@@ -400,9 +400,38 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           (b) accept the current state as a documented Phase-2 gate deviation and proceed to
           P2.4+. Next session: make that call explicitly (don't silently drift past it) —
           see "Next action" below.
-- [ ] todo — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
+- [x] doing — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
        results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
        verdicts). Enable integrity path; surface in result payload + review_queue.
+       PLAN (recorded before dispatch so a killed session can resume): PlagiarismChecker
+       (core/plagiarism.py) + AIContentDetector (io/integrity.py) + IntegritySettings
+       (runtime/config.py) + ReviewReason.plagiarism_flag/ai_detection_flag (db enums) ALL
+       already existed but were completely unwired (only reachable via `check-integrity` CLI
+       command + hermetic tests) — confirmed via tokensave search, zero callers in the web/db
+       layers. Design: (1) add `plagiarism_flagged`/`ai_detection_flagged: bool = False` to
+       `CorrectedQuestion` (core/schemas.py) — flat bools, not embedded IntegrityFinding, to
+       dodge a schemas.py↔integrity_schemas.py circular import; (2) new
+       `apply_integrity_checks(correction, mark_scheme, *, gemini_client, settings) ->
+       CorrectionResult` in lemely/io/integrity.py: plagiarism via existing
+       student_answer/expected_answer already on CorrectedQuestion (no mark-scheme lookup
+       needed), ai_detection (opt-in, default OFF per IntegritySettings.ai_detection_enabled)
+       via MarkScheme.get_question_by_id + AnswerPoint.point text as mark_scheme_points
+       (no verbatim question-stem field exists in the mark-scheme model — question_command
+       is the closest proxy, documented as best-effort); flagged findings append into
+       review_reason (existing " | ".join pattern from D2.2) + needs_teacher_review=True,
+       NEVER touch awarded_marks/maximum_marks; rebuild via `CorrectionResult(metadata=...,
+       questions=...)` (not model_copy) so calculate_totals re-validates; (3) wire into
+       `grade_paper` (web/services/grading.py) with a new optional `integrity_settings`
+       param, called from web/routers/student.py's `run()` closure with `settings.integrity`;
+       (4) db/attempt_repo.py: zip `correction.questions` with `attempt.question_results`
+       (same order) to add extra ReviewQueueItem rows (reason=plagiarism_flag /
+       ai_detection_flag) alongside the existing low_confidence check — no migration needed,
+       enum values already exist from P1.3; (5) web/schemas.py QuestionResultDTO gets
+       `plagiarismFlagged`/`aiDetectionFlagged` bools surfaced in the result payload. Teacher
+       review-queue UI consumption is P2.8 (not touched — teacher.py has zero ReviewReason
+       references today, confirmed). Frontend wiring is P2.6/P2.7 (SPA still all mock), out
+       of scope here — DTO fields are the P2.4 finish line per the phase checklist wording
+       ("surface in result payload + review_queue"). Dispatching to `implementer` (Sonnet).
 - [ ] todo — P2.5 Upload path: plain file upload (25MB cap kept) + PWA camera capture →
        client-side multi-page PDF assembly → Supabase Storage → backend job. Wire storage
        bucket + signed access; backend reads the stored object for the pipeline.
