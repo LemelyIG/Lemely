@@ -54,3 +54,4 @@ BUILD/.supervisor_notify_state
 BUILD/.supervisor_reportmark
 BUILD/.supervisor_run
 BUILD/.supervisor_start
+BUILD/.supervisor_phase

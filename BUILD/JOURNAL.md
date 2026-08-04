@@ -100,3 +100,27 @@
   Use a checkpointed Workflow for the scrape/parse fan-out (MISSION authorizes it). Start by scoping
   lemely/io/grade_boundaries.py (GradeBoundaryStore.resolve) + its boundary data source.
   CARRIED: restore coverage 85.10%→≥85.44% before the P2.10 develop merge (named branches in STATE).
+
+## 2026-08-04 — P2.2 grade-boundary ingestion (Phase 2)
+- Did: Resumed on a dirty tree carrying a prior session's COMPLETE but uncommitted P2.2 work
+  (scripts/ingest_grade_boundaries.py, populated lemely/data/grade_boundaries.json +
+  grade_boundaries_provenance.json, D2.1 already drafted in DECISIONS.md, test + student.py copy
+  changes, a uv.lock drift fix). Verified before trusting: reran the script's math independently
+  (347 exact keys == provenance keys, per-subject `_defaults` genuinely distinct, sample entries
+  match provenance URLs), ran all §6 static gates fresh (ruff/format/mypy incl. scripts//
+  lint-imports all clean) and the full pytest suite (green, cov-fail-under=70 met at 81.28% —
+  lower than the 85%+ baseline only because Postgres/Supabase were down this session so all
+  DB-integration tests skip, same known pattern as prior sessions) plus test_grade_boundaries.py
+  standalone (20/20 pass). Everything checked out — committed as-is rather than redoing the work.
+  Added BUILD/.supervisor_phase to .gitignore (new marker file type, same family as the ones
+  already ignored).
+- Learned: gceguide.com (one of the 3 mirrors MISSION §4 named) is now a squatted gambling-slot
+  site — do not fetch it again. cambridgeinternational.org publishes the same grade-threshold PDFs
+  directly with a predictable per-session index; better provenance than any mirror. The `db` extra
+  in pyproject.toml (alembic/sqlalchemy/psycopg/pyjwt) was declared but had never actually been
+  resolved into uv.lock — fixed as a drive-by.
+- Next: P2.3 accuracy harness + golden fixtures (real past papers/mark schemes for the 3 subjects,
+  synthetic handwritten answer sheets with known ground truth, ≥99% MCQ / ≥95% mark-level gates).
+  Kicked off `supabase start` in the background at session end (stack was fully torn down —
+  no containers existed, first-run image pulls) to restore DB-integration test coverage for the
+  next session; check it came up before relying on Postgres-backed tests.

@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-01T07:10:00Z
+last_updated: 2026-08-04T00:00:00Z
 gemini_spend_usd: 0.00
 
 ## Rules for maintaining this file
@@ -175,13 +175,40 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        marks/max/confidence/method-mark JSONB + WeaknessRecord) via the DB repos → return
        result the dashboard reads. Low-confidence → review_queue row. Gemini MOCKED in all
        tests. Integration test (real local PG) proving persistence + SSE frames + confidence.
-- [ ] todo — P2.2 Grade-boundary ingestion: scrape historical per-paper-variant thresholds
+- [x] done — P2.2 Grade-boundary ingestion: scrape historical per-paper-variant thresholds
        for 0580/0606/0625 (all available sessions) from public mirrors (gceguide/
        papacambridge/xtremepapers) with provenance; parse into the `papers`/boundary table;
        prediction = exact per-variant lookup → fallback to per-subject historical average
        with an "estimated" flag surfaced in the API/UI. Use a small checkpointed workflow
        for the scrape/parse fan-out; commit parsed data + provenance. Tests for lookup +
        fallback-flag.
+       (D2.1: kept `GradeBoundaryStore`/`resolve()` file-backed, not a DB table — CLI/Gradio
+       have no DB session (D1.9). Deviation: sourced from cambridgeinternational.org directly
+       (official primary source) instead of the 3 named mirrors — gceguide.com is now a
+       squatted gambling-slot site (flagged so no future session trusts it); papacambridge/
+       xtremepapers were viable but a re-host is worse provenance than the primary CAIE PDFs.
+       Deviation: no workflow fan-out — once the page/PDF structure was known the task was
+       deterministic parsing, not judgment work, so a direct script
+       (`scripts/ingest_grade_boundaries.py`, pdfplumber) was simpler/cheaper/rerunnable.
+       Script fetched all 13 published sessions (Mar/Jun/Nov 2022–2025 + Mar 2026 not-yet-
+       published) × 3 subjects = 347 real per-component exact entries into
+       lemely/data/grade_boundaries.json (was: 0 exact, hand-guessed identical 80/70/60/50/40
+       defaults for all 3 subjects) + lemely/data/grade_boundaries_provenance.json (source URL
+       per key). `_defaults` now genuinely computed per-subject averages from the scraped data
+       (verified distinct per subject). "Estimated" flag: `boundary_source` Literal already
+       encoded exact/subject_default/global_default — reworded the two non-exact
+       `_integrity_summary` copy strings in lemely/web/routers/student.py to read as an
+       estimate disclosure (no new field needed). Tests: 4 new cases in
+       tests/test_grade_boundaries.py (defaults are distinct+real not identical guesses,
+       monotonically ordered, a known scraped session resolves exact, an unscraped year falls
+       back) + a provenance-completeness test (every exact key has a source_url starting
+       https://cambridgeinternational.org). Also fixed a pre-existing uv.lock drift (the `db`
+       extra's alembic/sqlalchemy/psycopg/pyjwt were declared in pyproject but never resolved
+       into the lock). Gates (orchestrator-verified, Postgres unreachable this session so
+       DB-integration tests skip as usual): ruff/format/mypy(114 lemely + 1 scripts)/
+       lint-imports clean; full suite green, cov-fail-under=70 met (81.28% with DB tests
+       skipped, consistent with prior skip-pattern sessions). 20/20 test_grade_boundaries.py
+       pass standalone.)
 - [ ] todo — P2.3 Accuracy harness + golden fixtures: obtain real past papers + mark
        schemes for the 3 subjects; generate synthetic handwritten answer sheets
        (handwriting fonts, ink variation, scan noise/skew/blur/rotation) with known
@@ -233,12 +260,18 @@ bites at the P2.10 develop merge). Restore before P2.10 by covering: upload_repo
 mid-stream metadata-detection-failure branch (key present), resolve_mark_scheme corpus fallback,
 upload_utils 413 branch. Non-blocking for P2.2.
 
-**NOW: P2.2 grade-boundary ingestion.** Scrape per-paper-variant thresholds for 0580/0606/0625
-(all sessions) from public mirrors w/ provenance → parse into the boundary table → prediction =
-exact per-variant lookup, fallback to per-subject historical avg with "estimated" flag surfaced.
-Use a small checkpointed workflow for the scrape/parse fan-out (<~30 agents, checkpoint to disk).
-First scope: lemely/io/grade_boundaries.py (GradeBoundaryStore.resolve — current source of truth),
-the boundary data file/table it reads, and where papers/boundaries live in the schema.
+**P2.2 DONE + VERIFIED (2026-08-04).** See checklist entry above for full detail.
+
+**NOW: P2.3 accuracy harness + golden fixtures.** Obtain real past papers + mark schemes for
+0580/0606/0625; generate synthetic handwritten answer sheets (handwriting fonts, ink variation,
+scan noise/skew/blur/rotation) with known ground truth spanning correct/partial(method-mark)/
+wrong. COMMIT fixtures. Gate thresholds: ≥99% MCQ agreement; ≥95% mark-level on structured;
+100% of disagreements carry confidence below the review threshold — calibrate the review
+threshold from harness data. Live-Gemini validation obeys §8 budget (mock in CI). First scope:
+existing accuracy-harness code (audit dossier says this already exists for something — locate
+it), Sources/Physics/MarkingSchemes/ (4 real PDFs already on disk per Phase-0 notes), and
+lemely/data/grade_boundaries_provenance.json for which sessions now have real boundary data
+(fixtures should target sessions P2.2 actually ingested so predicted-grade checks are meaningful).
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:

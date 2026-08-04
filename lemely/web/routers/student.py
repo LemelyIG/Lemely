@@ -400,8 +400,9 @@ def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
     _, source = GradeBoundaryStore().resolve(record.metadata)
     detail = {
         "exact": "Official CAIE boundary matched for this exact variant.",
-        "subject_default": "Subject-default boundary used (no exact-variant data).",
-        "global_default": "Global-default boundary used (no subject data).",
+        "subject_default": "Estimated from this subject's historical average boundary "
+        "(no exact-variant data for this session).",
+        "global_default": "Estimated from a global average boundary (no subject data).",
     }[source]
     return [
         IntegrityRowDTO(

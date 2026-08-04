@@ -439,3 +439,64 @@
   quota is the same invariant with less machinery); advisory application-level locking instead
   of `FOR UPDATE` (rejected: the row lock is the simplest correct serialisation and needs no
   external coordinator).
+
+### D2.1 — Grade-boundary data stays JSON-file-based, not a new DB table
+- **What:** P2.2 (real per-paper-variant CAIE grade-threshold ingestion) populates
+  `lemely/data/grade_boundaries.json` with scraped official data and replaces the
+  hardcoded `_defaults` guesses with **real per-subject historical averages** computed
+  from the scraped exact entries. `GradeBoundaryStore` (`lemely/io/grade_boundaries.py`)
+  and its `resolve()` fallback chain (exact → subject_default → global_default) are
+  **unchanged** — only the data backing it changes from guessed to real+provenanced.
+- **Why not a DB table:** the `papers` table (P1.3) could host boundaries, but
+  `GradeBoundaryStore` is used by three surfaces — the web API, the CLI, and Gradio
+  (`app/cli.py`, `app/gradio_app.py`) — and only the web surface has a DB session (CLI/
+  Gradio are the same local/unauthenticated tools D1.9 kept off Postgres). Moving
+  boundaries into the DB would mean either giving CLI/Gradio a DB dependency they don't
+  otherwise need, or forking the resolver into DB-backed (web) and file-backed (CLI/
+  Gradio) implementations that must be kept in sync — both more machinery for no
+  behavioural gain over the existing file-backed resolver, which is already
+  injectable/testable (`GradeBoundaryStore(data_path)`) and consistent with how the
+  mark-scheme corpus is stored (files, not DB rows).
+- **Provenance:** each scraped exact entry's source document URL is recorded in a
+  sibling `lemely/data/grade_boundaries_provenance.json` keyed by the same boundary key,
+  so the JSON data file itself stays a clean grade→percentage map (matching the existing
+  reader) while still giving full traceability to the official CAIE document each number
+  came from.
+- **"Estimated" flag:** `boundary_source` already encodes this — `"exact"` vs
+  `"subject_default"`/`"global_default"` — and the student-facing integrity copy in
+  `lemely/web/routers/student.py::_integrity_summary` already reads as an estimate
+  disclosure for the non-exact cases. No new field was needed; the existing Literal is
+  the "estimated" flag the MISSION §4 P2.2 acceptance asks for.
+- **Source: official cambridgeinternational.org, NOT the three mirrors MISSION §4 named
+  — recorded deviation.** Before scraping, checked all three: `gceguide.com` now
+  resolves to an unrelated Indonesian gambling-slot site (the domain has been squatted
+  since the mission was written — confirmed via `curl`, page title/meta is
+  "AGUNG11 - Situs Slot..."), so it is unusable and was NOT fetched again beyond that one
+  identifying request. `papacambridge.com` and `xtremepape.rs` both resolved to their
+  expected past-papers content and were viable, but Cambridge International's own site
+  (`cambridgeinternational.org/.../grade-threshold-tables`) publishes the same official
+  per-subject grade-threshold PDFs directly, with a predictable per-session index page —
+  strictly better provenance (primary source, not a re-host) for the same data, so that
+  was used instead of the fan mirrors. Flagging the squatted domain here so no future
+  session wastes a request on it or, worse, trusts its content.
+- **No workflow/subagent fan-out — direct script instead, recorded deviation from the
+  MISSION §5 "use a workflow for boundary-document scraping/parsing" guidance.** That
+  guidance was written before reconnaissance; once the actual page/PDF structure was
+  known (one small index page per session, one PDF per subject, a clean fixed-width
+  table per PDF), the task is fully deterministic pattern-matching, not judgment work —
+  spinning up agents to read PDF text and transcribe numbers would be slower, costlier,
+  and less accurate than a parser regex. Wrote `scripts/ingest_grade_boundaries.py`
+  instead: discovers the published session list, finds each subject's PDF per session,
+  downloads, and parses the per-component threshold table with `pdfplumber`. Simpler,
+  cheaper, and fully reversible/rerunnable — the reversible-fork tiebreaker in MISSION §1.
+- **Scope of "all available sessions":** Cambridge's own grade-threshold-tables index
+  currently lists exactly 13 published sessions: March/June/November 2022 through 2025,
+  plus March 2026 (results not yet published for these 3 subjects as of ingestion, so it
+  contributed 0 entries). That is the full available history on the authoritative source
+  — not an arbitrary cutoff. The script fetched all 13 for all 3 subjects (39 candidate
+  documents; 36 existed and parsed, 3 were not-yet-published), yielding 347 real
+  per-component exact entries, from which `_defaults` (per-subject historical averages)
+  are now genuinely computed rather than guessed. Extending coverage later is additive:
+  re-running the script picks up newly published sessions automatically (it derives the
+  session list from the live index each run) and merges into the same JSON + provenance
+  files without touching existing keys.
