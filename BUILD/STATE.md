@@ -608,9 +608,13 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           /student/subject/0625 rather than dropping it. resolveCrumb() added with a marked
           slot for step 5's result route. Orchestrator-verified: re-ran typecheck/lint/build,
           clean.)
-       4. [ ] todo — Subject screen: wire `Subject.tsx` to `useSubject(code)` via `useParams`.
+       4. [x] done — Subject screen: wire `Subject.tsx` to `useSubject(code)` via `useParams`.
           Paper-history rows link to `/student/result/${row.id}` using the new `id` field
           from step 1. 404 (no history for subject) → simple empty state, not a crash.
+          (commit ceee575. Mechanical DTO swap — every section here was already data-backed
+          in the DTO, structure unchanged. 404 gets a neutral empty state distinct from a
+          generic error. Row nav target intentionally 404s until step 5 registers the route.
+          Orchestrator-verified: typecheck/lint/build clean.)
        5. [ ] todo — CorrectPaper + PaperResult (coupled by D2.7's state-passing design — do
           together, one dispatch): CorrectPaper gets a real file input (scan required, optional
           mark-scheme file) → `uploadScan()` (multipart POST /student/uploads) →
