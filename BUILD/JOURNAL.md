@@ -1,5 +1,25 @@
 # Session journal
 
+## 2026-08-05 — Phase 2, P2.7 steps 5b-8 (student surface complete)
+- Did: resumed on a clean tree at P2.7 step 5b. Dispatched three `implementer` rounds
+  (CorrectPaper+PaperResult real upload/SSE wiring; StudyPlan+Standings+Onboarding wiring;
+  did the final data.ts cleanup pass myself, mechanical grep-verify-delete). Orchestrator-
+  verified every round independently — read every diff, re-ran typecheck/lint/build myself
+  (never trusted subagent claims), and for Standings specifically read the backend
+  `student_standings` handler myself to confirm `rank` is honestly `""` (no cross-student
+  cohort) rather than fabricated, per MISSION's leaderboard/grade-privacy rules.
+- Learned: caught and fixed one regression the first implementer round flagged but didn't
+  resolve — the sidebar's "Paper result" nav link 404'd once `result` became `result/:paperId`;
+  removed it (no non-parameterized target exists) rather than leave it broken, matching the
+  established remove-don't-fake precedent (D1.6 M2). `student/data.ts` had accumulated dead
+  Overview/Subject mock exports across steps 3-4 that nobody cleaned up until step 7 — worth
+  double-checking "done" steps' cleanup claims against actual grep results, not just their
+  self-report.
+- Next: P2.8 — teacher surface wiring (Grading, Review queue, MarkSchemes, Overview; delete
+  teacher/data.ts incrementally). Full gate suite is green (web + backend, 81.47% cov, 0
+  failed/51 skipped-as-usual) and pushed as of commit 2f9a513. Exiting cleanly here per MISSION
+  §5 context-hygiene guidance — this is a clean task-boundary checkpoint, not mid-task.
+
 ## 2026-08-04 — Phase 2, P2.3 step 6 (D2.2 review-confidence threshold, resolved)
 - Did: resumed on a clean tree (no wip commit needed). Prior session had escalated step 6 via
   `next_run_model: opus`, but this run launched on Sonnet, so rather than decide an Opus-reserved
