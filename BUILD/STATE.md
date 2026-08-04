@@ -2,8 +2,9 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-04T00:00:00Z
-gemini_spend_usd: 0.00
+last_updated: 2026-08-04T08:20:00Z
+gemini_spend_usd: 0.0102
+next_run_model: opus       # one-run escalation: P2.3 step 6, marking-confidence/review-threshold design (MISSION §5 reserved item)
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
@@ -243,22 +244,89 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           0 failures, 45 skips (Postgres/live-auth, as usual), 81.89% cov; ruff/
           format/mypy(115)/lint-imports clean. COMMITTED this checkpoint before any
           live-Gemini spend.
-       5. [ ] Run a small live-Gemini measure-accuracy batch against these 4 fixtures
-          (lemely doctor confirms gemini_reachable=true, spend still $0.00) to get REAL
-          confidence calibration data (mocked confidence scores in hermetic tests are
-          meaningless for calibration).
-       6. [ ] Calibrate gemini.escalation_confidence_threshold (currently 0.80,
-          config.py) from the calibration buckets; record as D2.2. NOTE: a SEPARATE
-          hardcoded REVIEW_CONFIDENCE_THRESHOLD=0.90 already exists in
-          lemely/db/attempt_repo.py (paper-level review-queue routing, P2.1) — these
-          serve different purposes (per-question escalation trigger vs. final
-          review-queue gate) and may legitimately stay distinct; decide + document,
-          don't silently leave the discrepancy unexplained.
+       5. [x] Ran live-Gemini measure-accuracy batch (2026-08-04) against the 4 committed
+          fixtures: `lemely doctor` confirmed gemini_reachable=true first; ran
+          `lemely measure-accuracy --golden tests/golden --results-dir tests/golden/results`.
+          All calls hit the disk cache (real Gemini responses cached from an earlier
+          live run in this same output_dir — outputs/gemini_spend.json cumulative_usd
+          stayed at 0.0102 across the run, i.e. genuinely-real cached data, zero new
+          spend). Result → tests/golden/results/2026-08-04-2a9af42.json (now gitignored
+          as a regenerable artifact — added `tests/golden/results/*.json` to .gitignore,
+          .gitkeep still tracked). n=29 questions across 4 fixtures.
+             Metrics: mark_accuracy 89.7% (target >95%, MISS) · mark_accuracy_theory 85.7%
+             (MISS) · id_match_rate 100% (target >99%, PASS) · flag_precision_HIGH 89.3%
+             (target >99%, MISS) · flag_recall 0.0% (target >85%, MISS).
+             3 wrong (all theory, all the SAME failure mode: method-mark partial-credit
+             off-by-one, predicted 3 vs truth 2 on questions 1b/5b/12c) with confidence
+             scores 0.85, 0.98, 0.98. Correct-question confidences range 0.65-1.00, with
+             11 correct answers ALSO at 0.98 and 8 at 1.00 — i.e. confidence score does
+             NOT cleanly separate correct from wrong at this fixture's scale; 0.98 is the
+             stated confidence for both 11 correct and 2 of the 3 wrong answers.
+       6. [BLOCKED — escalated to Opus, see next_run_model in file header] Calibrate/decide
+          the review-confidence-threshold design from the above data; record as D2.2.
+          This is a MISSION §5 Opus-reserved item ("the marking-confidence + review-
+          threshold design (Phase 2)") — do not decide on Sonnet. Brief for the Opus run:
+             THREE independent threshold values exist today (only coincidentally equal):
+             (A) `gemini.escalation_confidence_threshold` (lemely/runtime/config.py:46,
+                 default 0.80) — mid-marking retry trigger inside AICorrector.mark_question
+                 (lemely/io/correction_ai.py:74,96): confidence < threshold + escalation
+                 budget available → re-ask Gemini (thinking retry, then Pro escalation)
+                 BEFORE the mark is finalized. Purpose: spend more budget to IMPROVE the
+                 answer.
+             (B) hardcoded literal `0.80` in `_build_ai_corrected`
+                 (lemely/io/correction_ai.py:179): `needs_teacher_review=mark.confidence
+                 < 0.80`. Sets the per-question review flag on the finalized
+                 CorrectedQuestion — feeds the paper-level `needs_teacher_review`
+                 aggregate (core/schemas.py), teacher UI badges (web/routers/teacher.py,
+                 app/renderers.py), AND is the exact field the accuracy harness's
+                 flag_recall/flag_precision metrics measure. This is a DUPLICATE literal,
+                 NOT wired to config (g.escalation_confidence_threshold is in scope at
+                 that call site) — numerically equal to (A)'s default today by accident;
+                 will silently drift if (A) is ever tuned without updating this line.
+             (C) `REVIEW_CONFIDENCE_THRESHOLD = 0.90` (lemely/db/attempt_repo.py:41) — the
+                 real DB persist-time gate: `if qr.needs_teacher_review or
+                 qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD` decides ReviewQueueItem
+                 insertion (P2.1). This is what ACTUALLY determines whether a mark reaches
+                 a human reviewer in production; it ORs with (B)'s flag.
+             Consequence on this fixture: (B) flags 0/3 wrong (all confidences >= 0.80).
+             (C)'s OR-with-confidence<0.90 catches 1/3 (the 0.85 one). The two 0.98-
+             confidence wrong answers pass BOTH gates uncaught — they would reach the
+             student/teacher dashboard as unflagged, 98%-stated-confidence WRONG marks.
+             This is exactly the failure mode the Phase-2 gate exists to prevent
+             ("100% of disagreements must carry confidence below the review threshold"),
+             and it is currently NOT met.
+             To make that gate literally true against this data, whichever value is "the
+             review threshold" must exceed 0.98 (e.g. 0.99) — which would ALSO flag most
+             of the 19 correct answers at 0.98-1.00, a severe precision hit. This fixture
+             is ONE Physics paper/session, n=29, only 3 disagreements, all the identical
+             failure mode (method-mark off-by-one) — too thin to responsibly calibrate a
+             global production threshold; a number picked from these 3 points risks
+             overfitting before 0580/0606 fixtures exist (see step 7, also unresolved).
+             Questions for the Opus design pass to resolve and record in DECISIONS.md
+             (D2.2): (1) dedupe (B) into config (wire to g.escalation_confidence_threshold,
+             or give it its own named config field) rather than a silent literal; (2) is
+             (C) — the only gate that actually reaches a human — the right thing to
+             calibrate against the mission's "review threshold" gate criterion; (3) given
+             the systematic-overconfidence finding (wrong method-mark answers score
+             identically to correct ones), is a single global confidence threshold even
+             sufficient, or does closing the gap need a secondary signal (e.g. treat any
+             awarded_marks != question.marks with high stated confidence as inherently
+             flaggable) — record the honest limitation either way, don't over-engineer in
+             one pass; (4) pick and record the actual numeric value(s), explicitly labeled
+             provisional/Physics-only if step 7's broader corpus isn't folded in first;
+             (5) decide whether to resolve step 7 (0580/0606 sourcing) in the same pass
+               before finalizing the number, or ship a documented provisional threshold now
+               and revisit once broader fixtures land — either is fine per MISSION §1, just
+               don't leave it silently undecided.
+             Raw data + result JSON: tests/golden/results/2026-08-04-2a9af42.json
+             (gitignored but present on disk this session; regenerate via
+             `lemely measure-accuracy --golden tests/golden --results-dir tests/golden/results`
+             if the file is gone — it's a cache-hit, so it costs ~$0).
        7. [ ] 0580/0606 real past papers + mark schemes are NOT yet sourced (only
-          0625 Physics has real assets on disk, from Phase 0). Scope decision pending:
-          either source them this session (same direct-script approach as D2.1) or
-          defer to a follow-up and document honestly in DECISIONS.md — do NOT claim
-          P2.3 fully done covering "the 3 subjects" if only Physics has fixtures.
+          0625 Physics has real assets on disk, from Phase 0). Scope decision pending —
+          see step 6 item (5) above, now bundled into the same Opus design pass.
+          Do NOT claim P2.3 fully done covering "the 3 subjects" if only Physics has
+          fixtures.
 - [ ] todo — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
        results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
        verdicts). Enable integrity path; surface in result payload + review_queue.
@@ -305,16 +373,21 @@ upload_utils 413 branch. Non-blocking for P2.2.
 
 **P2.2 DONE + VERIFIED (2026-08-04).** See checklist entry above for full detail.
 
-**NOW: P2.3 accuracy harness + golden fixtures.** Obtain real past papers + mark schemes for
-0580/0606/0625; generate synthetic handwritten answer sheets (handwriting fonts, ink variation,
-scan noise/skew/blur/rotation) with known ground truth spanning correct/partial(method-mark)/
-wrong. COMMIT fixtures. Gate thresholds: ≥99% MCQ agreement; ≥95% mark-level on structured;
-100% of disagreements carry confidence below the review threshold — calibrate the review
-threshold from harness data. Live-Gemini validation obeys §8 budget (mock in CI). First scope:
-existing accuracy-harness code (audit dossier says this already exists for something — locate
-it), Sources/Physics/MarkingSchemes/ (4 real PDFs already on disk per Phase-0 notes), and
-lemely/data/grade_boundaries_provenance.json for which sessions now have real boundary data
-(fixtures should target sessions P2.2 actually ingested so predicted-grade checks are meaningful).
+**P2.3 IN PROGRESS, sub-steps 1-5 done (2026-08-04).** Live-Gemini calibration batch ran
+against the 4 committed fixtures — see the P2.3 sub-plan above (step 5) for full metrics.
+Finding: current confidence scores do not cleanly separate correct from wrong marks at this
+fixture's scale (3/3 disagreements score 0.85-0.98, overlapping 19 correct answers in the same
+range) — the Phase-2 gate ("100% of disagreements below review threshold") is NOT currently met.
+**BLOCKED on Opus** (step 6): this session escalated via `next_run_model: opus` — it is a
+MISSION §5 reserved item (marking-confidence + review-threshold design). Full brief with the
+three-threshold landscape (A/B/C, file:line refs), the overconfidence finding, and the exact
+questions to resolve is in the P2.3 sub-plan step 6 above. The Opus run should: decide + record
+D2.2, fix the code (dedupe the hardcoded 0.80 in lemely/io/correction_ai.py:179 and/or retune
+lemely/db/attempt_repo.py:41's REVIEW_CONFIDENCE_THRESHOLD), decide step 7 scope (0580/0606
+sourcing — fold in now or defer, but decide), update/add tests, rerun the harness to confirm
+flag_recall improves, then continue down the P2.3 checklist (step 7 if deferred, else P2.4).
+Do NOT re-run the live batch blindly — it's a cache hit against tests/golden/results
+(gitignored now), effectively free; only spend fresh budget if new fixtures are added.
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:

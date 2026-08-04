@@ -1,5 +1,25 @@
 # Session journal
 
+## 2026-08-04 — Phase 2, P2.3 sub-step 5 (live calibration batch) + Opus escalation for step 6
+- Did: resumed on a clean tree (no wip commit needed). Verified environment (`lemely doctor`
+  all green, gemini_reachable=true) then ran the live-Gemini `measure-accuracy` batch against
+  the 4 committed golden fixtures (P2.3 sub-plan step 5). All calls hit the disk cache from an
+  earlier live run — genuinely-real Gemini data, zero incremental spend (cumulative_usd stayed
+  0.0102). Gitignored the timestamped results dir output (regenerable artifact).
+- Learned: current confidence scores do NOT separate correct from wrong marks at this fixture's
+  scale — the 3 disagreements (all the same method-mark off-by-one failure mode) score
+  0.85/0.98/0.98, directly overlapping 19 correct answers scored 0.98-1.00. Traced THREE
+  independent, only-coincidentally-equal threshold values in the codebase (escalation trigger in
+  config.py, a hardcoded-duplicate 0.80 literal in correction_ai.py that actually drives the
+  harness's flag metrics, and the real DB review-queue gate in attempt_repo.py at 0.90) — none of
+  which currently satisfies the Phase-2 gate ("100% of disagreements below review threshold").
+  This is squarely the MISSION §5 Opus-reserved "marking-confidence + review-threshold design"
+  item, so did not decide it on Sonnet.
+- Next: escalated via `next_run_model: opus` in STATE.md with a full brief (three-threshold
+  landscape with file:line refs, the overconfidence finding, and the exact questions to resolve
+  + record as D2.2) written into the P2.3 sub-plan. Opus run should decide+fix+retest, then
+  continue to step 7 (0580/0606 sourcing, bundled into the same decision) and P2.4+.
+
 ## 2026-07-31 — Phase 1 (Device/session registry P1.11/D1.11 + acceptance groundwork)
 - Did: completed the device/session registry. Resumed on a dirty tree carrying a prior
   session's PARTIAL device work — a complete untracked device_repo.py (DeviceRegistry) plus
