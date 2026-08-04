@@ -344,19 +344,41 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
              (gitignored but present on disk this session; regenerate via
              `lemely measure-accuracy --golden tests/golden --results-dir tests/golden/results`
              if the file is gone — it's a cache-hit, so it costs ~$0).
-       7. [ ] todo — 0580/0606 real past papers + mark schemes are NOT yet sourced (only
-          0625 Physics has real assets on disk, from Phase 0). D2.2 decided the sequencing:
-          ship the 0.90 threshold now (done, step 6), source 0580/0606 next — required for
-          statistical power (flag_precision_HIGH is arithmetically capped at 95.8% with only
-          24 auto-graded questions, below the §4 ≥99% target regardless of threshold value).
-          Do NOT claim P2.3 fully done covering "the 3 subjects" if only Physics has
-          fixtures. Separately, D2.2 flagged the REAL remaining accuracy blocker as a
-          marking-quality defect, not a thresholds one: mark_accuracy_theory 85.7% (<95%)
-          because the AI marker awards A-marks without verifying the final numeric value on
-          genuine partial-credit questions (3/3 disagreements: M-marks correct, final value
-          wrong e.g. 89 vs 8.9). Consider whether that marking fix belongs in this step or a
-          follow-up before closing P2.3 — do not let broader fixtures alone be mistaken for
-          fixing the gate.
+       7. [~] doing — Dispatched two parallel `data-engineer` subagents (2026-08-04, still
+          running as of this STATE write — if you're resuming a dead session, check for
+          on-disk output before re-dispatching: `Sources/Mathematics/`,
+          `Sources/AdditionalMathematics/`, `tests/golden/0580_*`, `tests/golden/0606_*`.
+          If those exist but this line still says "doing", the prior orchestrator session
+          died after dispatch but before verifying/committing — verify the agents' output
+          yourself per the checklist below rather than re-dispatching.): one sourcing+
+          building real 0580 (Math) golden fixtures, one sourcing+building real 0606
+          (Additional Math) golden fixtures. Both told: use papacambridge.com or
+          xtremepape.rs (gceguide.com is squatted, D2.1 — do not use), NOT
+          cambridgeinternational.org (no public past papers there, only grade-threshold
+          tables already scraped for D2.1); parse via the existing `lemely
+          parse-mark-schemes` CLI (det parser, D0.5, no Gemini cost) with a single
+          `--use-gemini` fallback allowed if needed (check outputs/gemini_spend.json
+          before/after, report delta); build 3 fixtures each (theory_correct/partial/wrong,
+          6-8 self-contained questions) mirroring the exact 0625 schema/pattern; validate
+          each mark_scheme.json against `lemely.core.loose_schemas.MarkScheme`; render
+          scan.pdf via `lemely.accuracy.synth.write_golden_case` (IndieFlower font for 0580,
+          PatrickHand for 0606). Both explicitly told neither subject has an MCQ paper
+          component (skip searching for one) and NOT to touch git/run gates — orchestrator
+          verifies and commits. ORCHESTRATOR MUST re-verify before trusting: confirm real
+          PDFs on disk with real source URLs reported (not fabricated), confirm mark_scheme
+          JSON actually validates (don't just take the agent's word), run full §6-relevant
+          gates (ruff/mypy/lint-imports/pytest) after landing, check Gemini spend delta is
+          sane, then commit + update this line to done with the real numbers.
+          Why this step matters (D2.2 rationale): required for statistical power —
+          flag_precision_HIGH is arithmetically capped at 95.8% with only 24 auto-graded
+          questions, below the §4 ≥99% target regardless of threshold value. Do NOT claim
+          P2.3 fully done covering "the 3 subjects" until both land. Separately, D2.2
+          flagged the REAL remaining accuracy blocker as a marking-quality defect, not a
+          thresholds one: mark_accuracy_theory 85.7% (<95%) because the AI marker awards
+          A-marks without verifying the final numeric value on genuine partial-credit
+          questions (3/3 disagreements: M-marks correct, final value wrong e.g. 89 vs 8.9).
+          Consider whether that marking fix belongs in this step or a follow-up before
+          closing P2.3 — do not let broader fixtures alone be mistaken for fixing the gate.
 - [ ] todo — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
        results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
        verdicts). Enable integrity path; surface in result payload + review_queue.
