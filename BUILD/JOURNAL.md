@@ -248,3 +248,29 @@
   Committing on `feature/phase-2-core-loop`.
 - Next: P2.6 — Frontend API foundation (resurrect `web/src/lib/api.ts` + `@tanstack/react-query`,
   typed hooks, deviceId-minting auth per D1.11, verify the Vite proxy end-to-end).
+
+## 2026-08-04 (P2.6 — frontend API foundation)
+- Resumed on a clean tree (P2.5 was the last commit, already merged/pushed). No wip commit
+  needed. Read STATE/DECISIONS/MISSION, confirmed next non-done task was P2.6.
+- Scoped and recorded a PLAN in STATE.md before dispatch (committed separately, 8c872fb):
+  session storage + deviceId minting (D1.11), bearer-header wiring in api.ts, an AuthContext
+  wrapping the 4 auth endpoints as react-query mutations, a RequireAuth route guard, and one
+  minimal Login screen — foundation only, no existing screens touched (student/data.ts and
+  teacher/data.ts stay mock until P2.7/P2.8 by design).
+- Dispatched to `implementer` (Sonnet); verified independently rather than trusting its report:
+  re-ran typecheck/lint/build myself (all clean), and separately started uvicorn + vite and
+  curled through the Vite proxy myself — confirmed otp/request 200, malformed login 422,
+  well-formed login 401 on the (already-documented, still-down) Supabase dependency. Matched
+  the subagent's claims exactly. Also confirmed the `AuthProvider` addition to main.tsx (not
+  spelled out in the plan's literal text) was a correct, necessary deviation, not scope creep.
+- Local Supabase stack is still down this session — same root-owned `.temp/start-secrets/`
+  issue, sudo still unavailable in this sandbox. Unchanged, not re-investigated further (already
+  documented, needs a session with root access).
+- Committed (9ea2662) and pushed to feature/phase-2-core-loop. ntfy sent (6/10 P2 tasks done).
+- Checkpointing here per MISSION §5 context hygiene — clean phase-task boundary, and P2.7 (the
+  next task) is a large multi-screen migration MISSION explicitly calls for a workflow on;
+  better started fresh than mid-context.
+- Next: P2.7 — Student surface on real data, screen-by-screen (Overview, Subject, PaperResult,
+  CorrectPaper, Onboarding/StudyPlan/Standings), deleting student/data.ts incrementally. Mission
+  explicitly suggests a workflow for this fan-out; keep each workflow under ~30 agents and
+  checkpoint to disk after each run.
