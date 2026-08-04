@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-04T13:41:10Z
+last_updated: 2026-08-04T14:05:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -475,9 +475,47 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        asserting a local file was written to disk (check what those tests currently assert on
        disk paths and adapt); confirm the 25MB cap 413 test still passes against the new
        `check_upload_cap` helper. Dispatching to `implementer` (Sonnet).
-- [ ] todo — P2.6 Frontend API foundation: resurrect web/src/lib/api.ts + @tanstack/
+- [ ] doing — P2.6 Frontend API foundation: resurrect web/src/lib/api.ts + @tanstack/
        react-query (remove dead-code status); auth login/token storage (deviceId minting
        per D1.11), bearer on every request; typed hooks. Vite proxy verified end-to-end.
+       PLAN (recorded before dispatch so a killed session can resume): (1) NEW
+       `web/src/lib/auth/storage.ts`: `getDeviceId()` (crypto.randomUUID(), minted once,
+       persisted in localStorage key `lemely.deviceId`, per D1.11's client_device_id
+       semantics); `Session` type `{accessToken, refreshToken, userId, role}`;
+       `getSession()/setSession()/clearSession()` over localStorage key `lemely.session`
+       (JSON). (2) NEW `web/src/lib/authTypes.ts`: TS interfaces mirroring
+       `lemely/web/schemas_auth.py` field-for-field camelCase (SignupRequest, LoginRequest,
+       OtpRequestBody, OtpVerifyBody, TokenResponse, OtpRequestResponse; Role union of the
+       5 role strings). (3) `web/src/lib/api.ts`: `request()`/`streamActivity()` merge an
+       `Authorization: Bearer <token>` header from `getSession()?.accessToken` (when
+       present) ahead of caller-supplied headers; keep the existing generic `fallback`
+       param on `request()` (still useful once P2.7/8 wire screens) but the new auth calls
+       below never pass one — auth failures must surface, not silently succeed. (4) NEW
+       `web/src/lib/queryClient.ts`: `new QueryClient()` (retry:1, refetchOnWindowFocus:
+       false). Wire `QueryClientProvider` in `main.tsx` around the router. (5) NEW
+       `web/src/lib/auth/AuthContext.tsx`: React context + provider exposing
+       `{session, login(email,pw), signup(...), requestOtp(phone), verifyOtp(phone,code),
+       logout()}`; each network call is a react-query `useMutation` wrapping
+       `request<TokenResponse>('/auth/...', {method:'POST', body: JSON.stringify({...,
+       deviceId: getDeviceId()})})`, on success `setSession(...)`; hydrates initial state
+       from `getSession()` on mount; `logout()` calls `clearSession()`. (6) NEW minimal
+       `web/src/portals/auth/Login.tsx` (email/password form using `useAuth().login`; on
+       success navigate to `/student` or `/teacher` by resolved role) + `/login` route in
+       `App.tsx` + a `RequireAuth` wrapper gating `teacherRoute`/`studentRoute` children on
+       `session` presence + role match (student session→student portal only;
+       teacher/school_admin/platform_admin→teacher portal; redirect unauthenticated to
+       `/login`, redirect already-authenticated away from `/login`). Parent has no portal
+       yet (Phase 3) — `verifyOtp` is wired in AuthContext but has no screen this task,
+       consistent with P2.6 being foundation not full screen wiring (P2.7/8 own screens).
+       No backend changes — DTOs already match `lemely/web/schemas_auth.py` exactly.
+       Verification: `npm run typecheck && npm run lint && npm run build` clean (§6.3);
+       manual Vite-proxy check by running `uvicorn` + `npm run dev` and confirming a
+       request against `/api/...` through the proxy reaches FastAPI (local Supabase stack
+       is down this session — same documented root-owned-dir issue, sudo unavailable in
+       this sandbox too, confirmed again this session — so a full DB-backed login
+       round-trip cannot be live-verified; proxy routing + payload shape is what gets
+       verified, not a DB round trip; this is a carried environment limitation, not new
+       scope creep). Dispatching to `implementer` (Sonnet).
 - [ ] todo — P2.7 Student surface on real data (screen-by-screen delete student/data.ts):
        Overview (overall + per-subject), Subject (per-paper history + predicted boundaries/
        final grade + estimated flag), PaperResult (marks/method-marks/mistakes/weakness/
