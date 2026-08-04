@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-04T14:05:00Z
+last_updated: 2026-08-04T14:50:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -475,7 +475,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        asserting a local file was written to disk (check what those tests currently assert on
        disk paths and adapt); confirm the 25MB cap 413 test still passes against the new
        `check_upload_cap` helper. Dispatching to `implementer` (Sonnet).
-- [ ] doing — P2.6 Frontend API foundation: resurrect web/src/lib/api.ts + @tanstack/
+- [x] done — P2.6 Frontend API foundation: resurrect web/src/lib/api.ts + @tanstack/
        react-query (remove dead-code status); auth login/token storage (deviceId minting
        per D1.11), bearer on every request; typed hooks. Vite proxy verified end-to-end.
        PLAN (recorded before dispatch so a killed session can resume): (1) NEW
@@ -516,6 +516,40 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        round-trip cannot be live-verified; proxy routing + payload shape is what gets
        verified, not a DB round trip; this is a carried environment limitation, not new
        scope creep). Dispatching to `implementer` (Sonnet).
+       DONE + VERIFIED (2026-08-04). Implementer built exactly the plan: NEW
+       `web/src/lib/auth/storage.ts` (deviceId mint+persist, Session get/set/clear over
+       localStorage), `web/src/lib/authTypes.ts` (DTOs mirroring schemas_auth.py),
+       `web/src/lib/queryClient.ts`, `web/src/lib/auth/AuthContext.tsx` (login/signup/
+       requestOtp/verifyOtp react-query mutations, hydrated from storage, logout),
+       `web/src/lib/auth/RequireAuth.tsx` (route guard + portalPathForRole: student→
+       /student, everything else incl. parent/school_admin/platform_admin→/teacher as
+       the closest existing surface pre-Phase-3), `web/src/portals/auth/Login.tsx`
+       (minimal functional form, not final UI — P2.7/8's job). Edited `web/src/lib/
+       api.ts` (request()/streamActivity() now merge Authorization: Bearer <token> via
+       a shared authHeaders() helper; existing `fallback` param untouched), `web/src/
+       main.tsx` (QueryClientProvider + AuthProvider — the AuthProvider addition was a
+       correct, necessary deviation from the plan's literal text since useAuth() calls
+       in App.tsx/Login.tsx cannot resolve without it; verified this is right, not a
+       scope creep), `web/src/App.tsx` (/ and /login now resolve against session;
+       teacherRoute/studentRoute wrapped in RequireAuth). Did not touch student/data.ts,
+       teacher/data.ts, or any screen files — confirmed via git diff --stat (only the 6
+       new + 3 edited files listed above). Orchestrator verified independently, not just
+       trusted: re-ran `npm run typecheck` (clean) / `npm run lint` (oxlint exit 0, only
+       pre-existing `only-export-components` fast-refresh warnings, same pattern already
+       present on teacher/student index.tsx before this change) / `npm run build`
+       (clean, dist/ produced, gitignored) myself; also independently started uvicorn +
+       vite and curled through the Vite proxy myself (not trusting the subagent's
+       report): `POST /api/auth/otp/request` → 200 (round-trips fully, no DB dependency);
+       `POST /api/auth/login` missing password → 422 (DTO validation live); `POST
+       /api/auth/login` well-formed → 401 "Supabase anon key is not configured" (proxy +
+       routing + payload shape confirmed reaching the real auth handler; fails only on
+       the already-documented down Supabase/GoTrue dependency, not a proxy/DTO issue).
+       Killed both dev servers after, confirmed no leftover processes. `ruff check .`
+       also re-run (no Python touched, sanity-only) — clean. No backend changes. No new
+       dependencies added (`@tanstack/react-query` was already listed); `npm install`
+       was needed since `web/node_modules` wasn't present this session — package-lock.json
+       diff (npm-metadata-only, no dependency change) was reverted by the implementer, left
+       untouched. Committing on feature/phase-2-core-loop.
 - [ ] todo — P2.7 Student surface on real data (screen-by-screen delete student/data.ts):
        Overview (overall + per-subject), Subject (per-paper history + predicted boundaries/
        final grade + estimated flag), PaperResult (marks/method-marks/mistakes/weakness/
@@ -631,7 +665,17 @@ EACCES even recursively, since deleting requires write access to those root-owne
 just their parent). Fix: as a user with root/docker-group cleanup rights, `sudo rm -rf
 supabase/.temp/start-secrets/` then `supabase start`. Until then, Postgres-backed integration
 tests keep skipping locally (CI is unaffected — it provisions its own Postgres service).
-Next: P2.6 Frontend API foundation (resurrect `web/src/lib/api.ts` + react-query).
+
+**P2.6 DONE + VERIFIED (2026-08-04).** See checklist entry above for full detail. Frontend
+auth/session/query-client foundation built (storage.ts, authTypes.ts, AuthContext, RequireAuth,
+queryClient, a minimal Login screen, api.ts bearer-header wiring, App.tsx/main.tsx routing).
+No screen wired to real data yet — student/data.ts and teacher/data.ts are untouched by design
+(P2.7/P2.8). typecheck/lint/build all clean (orchestrator-reran, not just trusted); Vite-proxy
+routing independently confirmed reaching FastAPI's real auth handlers (otp/request 200,
+malformed login 422, well-formed login 401 on the already-documented down Supabase dependency).
+Confirmed again this session: local Supabase stack still down, same root-owned-dir issue, sudo
+still unavailable in this sandbox — unchanged environment note, not re-litigated further.
+Next: P2.7 Student surface on real data (screen-by-screen, delete student/data.ts).
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:

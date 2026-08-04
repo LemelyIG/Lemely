@@ -1,4 +1,5 @@
 import type { ActivityEvent } from "./types"
+import { getSession } from "./auth/storage"
 
 /*
  * Typed API client. Frontend-first this run: request() hits the FastAPI backend
@@ -20,6 +21,17 @@ export class ApiError extends Error {
   }
 }
 
+/** Build the base headers for a request: JSON content-type + bearer token
+ * (when a session is persisted), ahead of any caller-supplied headers so a
+ * caller can still override either if it ever needs to. */
+function authHeaders(): HeadersInit {
+  const token = getSession()?.accessToken
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
+}
+
 export async function request<T>(
   path: string,
   init?: RequestInit,
@@ -27,7 +39,7 @@ export async function request<T>(
 ): Promise<T> {
   try {
     const res = await fetch(`${BASE}${path}`, {
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      headers: { ...authHeaders(), ...init?.headers },
       ...init,
     })
     if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`)
@@ -48,7 +60,7 @@ export async function* streamActivity(
 ): AsyncGenerator<ActivityEvent> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { ...authHeaders(), ...init?.headers },
     ...init,
   })
   if (!res.body) return
