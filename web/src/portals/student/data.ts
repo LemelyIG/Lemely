@@ -68,7 +68,7 @@ export const navGroups: NavGroup[] = [
     label: "Student",
     items: [
       { to: "/student", label: "Overview", end: true },
-      { to: "/student/subject", label: "Physics", tag: "0625" },
+      { to: "/student/subject/0625", label: "Physics", tag: "0625" },
       { to: "/student/result", label: "Paper result" },
       { to: "/student/plan", label: "Study plan" },
       { to: "/student/board", label: "Standings" },
