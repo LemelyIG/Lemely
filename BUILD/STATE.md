@@ -560,10 +560,15 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        every screen touches shared files: `index.tsx` route registration/crumbs/nav, and
        `data.ts`; concurrent agents editing those would conflict). Each sub-step: dispatch to
        `implementer`, orchestrator-verify gates, commit, tick off here.
-       1. [ ] todo — Backend prereqs (D2.7): `PaperHistoryRowDTO.id` (index) + SSE `complete`
+       1. [x] done — Backend prereqs (D2.7): `PaperHistoryRowDTO.id` (index) + SSE `complete`
           frame `questions` key. Extend existing student-router tests for both new fields.
           Small, mechanical, backend-only — no frontend touch.
-       2. [ ] todo — Frontend API foundation for this task: NEW `web/src/lib/studentTypes.ts`
+          (commit 48d125c. Also fixed a filtered-vs-full-index bug in `_subject_records`
+          caught before shipping — now returns `(original_index, record)` pairs; regression
+          test with an interleaved-subject fixture. Orchestrator-verified independently:
+          re-ran ruff/format/mypy/lint-imports/pytest myself, matched implementer's claims —
+          555 passed / 50 skipped Postgres-live, 0 failed.)
+       2. [x] done — Frontend API foundation for this task: NEW `web/src/lib/studentTypes.ts`
           (TS interfaces mirroring `lemely/web/schemas_student.py` DTOs 1:1 camelCase:
           OverviewDTO, SubjectDTO incl. PaperHistoryRow.id, ResultDTO incl. TheoryQuestion/
           IntegrityRow, StudyPlanDTO, StandingsDTO, StudentProfileDTO, StudentUploadResponse);
@@ -575,7 +580,16 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           (`uploadScan(formData)`, and a `runCorrection(paperId)` async generator wrapping
           `streamActivity`) for CorrectPaper to call directly. No screen/data.ts/route changes
           in this step — foundation only, mirrors the P2.6 pattern.
-       3. [ ] todo — Overview screen + Subject routing skeleton: wire `Overview.tsx` to
+          (commit 89531ad. Naming: Python DTO class minus `DTO` suffix, e.g. OverviewDTO ->
+          Overview. IMPORTANT finding for later steps: SSE frame payloads from
+          student_correct are snake_case at the top level (paper_id/attempt_id/max_marks/
+          needs_review), NOT camelCase -- EventBus.publish forwards raw kwargs, bypassing the
+          ApiModel alias layer; only the nested `questions` array is camelCase.
+          StudentCorrectFrame in studentTypes.ts documents every frame shape observed across
+          the full run() call graph. api.ts::authHeaders gained an isFormData flag so
+          request() skips the JSON content-type for multipart uploads. Orchestrator-verified:
+          re-ran typecheck/lint/build myself, clean, matches implementer's report.)
+       3. [x] done — Overview screen + Subject routing skeleton: wire `Overview.tsx` to
           `useOverview()` (studentName/forecast/subjects/weakGlobal/momentum are real).
           Remove the `nextUp`/`agenda`/`igCalculator` cards and the hardcoded "Papers marked"/
           "Hours saved" stat cards + hardcoded greeting body text — none are backed by
@@ -588,6 +602,12 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           :paperId`. Leave the sidebar's static "Physics 0625" nav item as a reasonable
           placeholder (no live subject list at sidebar-render time without an extra fetch —
           out of scope) OR drop it if the implementer judges that cleaner; record the call made.
+          (commit ce573f4. Removed nextUp/agenda/igCalculator + hardcoded stat cards/greeting
+          body per D1.6 M2 precedent; greeting falls back to "there" since studentName is a raw
+          user id, not a display name (no name store yet). Fixed the static Physics nav link to
+          /student/subject/0625 rather than dropping it. resolveCrumb() added with a marked
+          slot for step 5's result route. Orchestrator-verified: re-ran typecheck/lint/build,
+          clean.)
        4. [ ] todo — Subject screen: wire `Subject.tsx` to `useSubject(code)` via `useParams`.
           Paper-history rows link to `/student/result/${row.id}` using the new `id` field
           from step 1. 404 (no history for subject) → simple empty state, not a crash.
