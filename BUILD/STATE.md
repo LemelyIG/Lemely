@@ -432,9 +432,49 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        references today, confirmed). Frontend wiring is P2.6/P2.7 (SPA still all mock), out
        of scope here — DTO fields are the P2.4 finish line per the phase checklist wording
        ("surface in result payload + review_queue"). Dispatching to `implementer` (Sonnet).
-- [ ] todo — P2.5 Upload path: plain file upload (25MB cap kept) + PWA camera capture →
-       client-side multi-page PDF assembly → Supabase Storage → backend job. Wire storage
-       bucket + signed access; backend reads the stored object for the pipeline.
+- [x] doing — P2.5 Upload path: plain file upload (25MB cap kept) + Supabase Storage +
+       backend job. Scope narrowed to backend Storage wiring this session — camera-capture
+       UI + client-side PDF assembly deferred to P2.7 (screen-by-screen wiring, CorrectPaper
+       owns this flow); see **D2.6** in DECISIONS.md for full rationale. PLAN (recorded before
+       dispatch so a killed session can resume): (1) `StorageSettings` (runtime/config.py):
+       `bucket: str = "uploads"`, `signed_url_ttl_seconds: int = 3600`; add `Settings.storage`.
+       (2) NEW `lemely/io/storage.py` mirroring `lemely/auth/gotrue.py`'s exact pattern:
+       `StorageBackend` Protocol (`upload(bucket, object_path, data, content_type) -> None`,
+       `download(bucket, object_path) -> bytes`, `create_signed_url(bucket, object_path,
+       expires_in) -> str`); `HttpStorageBackend(settings: Settings)` — sync httpx against
+       `{settings.supabase.url}/storage/v1/object/{bucket}/{path}` (POST upload, GET download)
+       and `/storage/v1/object/sign/{bucket}/{path}` (POST, body `{"expiresIn": ...}`) using
+       the service-role key (same `_service_key()` pattern as gotrue.py), raising
+       `ExternalServiceError` on non-2xx like gotrue.py does; `FakeStorageBackend` (in-memory
+       dict) for hermetic tests, same role as the existing `FakeGoTrueBackend` test double —
+       check `tests/test_auth_service.py` or wherever that fake lives for the exact shape to
+       match. (3) `get_storage_backend` singleton in `web/deps.py` (+ `reset_singletons`),
+       returning `HttpStorageBackend(settings)`; tests override via
+       `app.dependency_overrides[get_storage_backend] = lambda: FakeStorageBackend()`
+       (same pattern as `get_gemini_client`/`get_attempt_repo` in test_student_correct.py).
+       (4) `student_upload` (web/routers/student.py:420-457): replace `write_upload_capped`
+       disk write with a `check_upload_cap(data, max_bytes=...)` size check (new tiny helper
+       in upload_utils.py, extracted from `write_upload_capped`'s cap logic — keep
+       `write_upload_capped` itself unchanged, teacher.py still uses it, OUT of scope per
+       D2.6) + `storage_backend.upload(settings.storage.bucket, f"uploads/{user_id}/
+       {paper_id.hex}/{filename}", data, content_type)`; `Upload.storage_path` now stores the
+       Storage object key (same column, repurposed semantics, no migration). (5) `run()`
+       closure (student.py, the `/student/correct` SSE pipeline, currently `scan_path =
+       Path(owned.storage_path)` around line 560): download the object bytes via
+       `storage_backend.download(...)` into a `tempfile.NamedTemporaryFile` (cleaned up in a
+       `finally`), pass that local Path into the unchanged `extract_answers`/
+       `resolve_mark_scheme` pipeline — keeps every downstream function filesystem-Path-based,
+       minimal diff. (6) Tests: hermetic `lemely/io/storage.py` unit tests against
+       `HttpStorageBackend` using a mocked httpx transport (`httpx.MockTransport`, matching
+       whatever pattern `test_gotrue.py`/similar already uses for `HttpGoTrueBackend` — check
+       first) covering upload/download/sign success + non-2xx error paths; a live-skip
+       integration test (skip when `supabase.service_role_key` unset, matching
+       `test_auth_live.py`'s skip condition) that round-trips a real object through the local
+       stack IF reachable (it currently is not — will skip, that's fine per D2.6); updated
+       `test_student_correct.py`/upload endpoint tests using `FakeStorageBackend` instead of
+       asserting a local file was written to disk (check what those tests currently assert on
+       disk paths and adapt); confirm the 25MB cap 413 test still passes against the new
+       `check_upload_cap` helper. Dispatching to `implementer` (Sonnet).
 - [ ] todo — P2.6 Frontend API foundation: resurrect web/src/lib/api.ts + @tanstack/
        react-query (remove dead-code status); auth login/token storage (deviceId minting
        per D1.11), bearer on every request; typed hooks. Vite proxy verified end-to-end.
@@ -517,10 +557,10 @@ creating it; gates were run as individual commands this session instead. Not blo
 but worth creating opportunistically (cheap, ~10 lines) before it causes repeated
 individual-command overhead in future sessions.
 
-**Next: P2.5** (see Phase-2 checklist above) — Upload path: plain file upload (25MB cap
-kept) + PWA camera capture → client-side multi-page PDF assembly → Supabase Storage →
-backend job; wire storage bucket + signed access; backend reads the stored object for the
-pipeline. Branch stays `feature/phase-2-core-loop`; no new branch needed.
+**P2.5 dispatched (2026-08-04)** — see the PLAN recorded in the Phase-2 checklist entry
+above (backend Supabase Storage wiring; scope narrowed per D2.6). Dispatched to
+`implementer` (Sonnet); orchestrator verifies §6 gates before commit. Branch stays
+`feature/phase-2-core-loop`; no new branch needed.
 Separate environment note (not blocking, needs a session with shell/root access): local
 Supabase stack is down and won't start — `supabase/.temp/start-secrets/supabase_db_Lemely/`
 contains root-owned directories from a prior crashed container that this session's

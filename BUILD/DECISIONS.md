@@ -864,3 +864,50 @@
   method-verification gap named as the reason, not glossed over as "in progress."
 - **Blast radius:** documentation only — no code change. `BUILD/STATE.md`'s P2.3 checklist
   entries are marked done with this deviation noted; P2.4 begins next.
+
+### D2.6 — P2.5 scoped to backend Supabase Storage wiring only; camera-capture UI + client-side PDF assembly deferred to P2.7/P2.9
+
+- **What:** MISSION §4's P2.5 line item reads "Upload path: plain file upload (25MB cap kept)
+  + PWA camera capture → client-side multi-page PDF assembly → Supabase Storage → backend
+  job," which reads as one task spanning both the frontend camera/PDF-assembly UI and the
+  backend Storage wiring. This session scopes P2.5 to the backend half only: migrate the
+  existing (working, tested) local-disk student upload path to real Supabase Storage
+  (bucket, signed access, backend pipeline reads the stored object), keep the 25MB cap.
+  The camera-capture UI component and client-side multi-page PDF assembly library land
+  with the screen-by-screen frontend wiring already scoped to P2.7 (whose checklist entry
+  explicitly lists "CorrectPaper (real SSE upload→correct, kill setTimeout theatre)" as the
+  screen that owns this upload flow), with PWA installability/manifest/service-worker polish
+  around it staying in P2.9 as already scoped.
+- **Why this is a genuinely undecidable fork, not a corner being cut:** building camera-capture
+  UI now would require either (a) wiring it against `web/lib/api.ts`, which does not exist yet
+  as a real client (P2.6, not done) — meaning the component would ship against a mock and need
+  rework once P2.6 lands, or (b) building the API client scaffolding early, out of order,
+  duplicating what P2.6 is explicitly scoped to do properly (react-query, typed hooks, auth
+  bearer wiring). Both are worse than doing backend Storage now (independently testable, no
+  frontend dependency) and the camera UI once P2.6's real client exists to wire it against.
+- **Reasoning:** P2.5's backend half is self-contained and matches the existing P2.1/P2.4
+  pattern (repo/router/DTO changes with hermetic + live-skip tests) with no cross-phase
+  ordering problem. Splitting also keeps each unit small and independently verifiable, per
+  MISSION §5's "small, committed, checkpointed units."
+- **What "backend-only" means concretely:** `StudentUploadRepository`/`student_upload`
+  endpoint/`run()` correction closure move from local-disk paths to a `StorageBackend`
+  Protocol (Storage object key stored in `Upload.storage_path`, same column, new semantics);
+  teacher.py's own upload usage (mark-scheme uploads in the grading console) is explicitly
+  OUT of scope for P2.5 — it stays on local disk since MISSION's P2.5 wording only mentions
+  the student self-mark path, and touching it would widen blast radius for no phase-checklist
+  benefit. This exclusion is deliberate, not an oversight, and can be revisited if a later
+  phase needs teacher uploads on Storage too.
+- **Testing reality carried forward, not new:** the local Supabase stack is still down this
+  session (root-owned dirs from a prior crashed container, needs sudo — see the recurring
+  environment note in STATE.md), and CI's Postgres-only service (`.github/workflows/ci.yml`)
+  does not run the Storage API either — this mirrors the EXISTING GoTrue precedent
+  (`HttpGoTrueBackend` is only exercised by a live-skip test; hermetic tests use a
+  `Protocol`-conforming fake). The new `HttpStorageBackend` follows the identical pattern:
+  real HTTP client tested live-only (skips everywhere until Storage is reachable), business
+  logic tested via a `FakeStorageBackend` double. Not a new gap — the same one Phase 1 already
+  accepted for auth, applied consistently to storage.
+- **Blast radius:** `lemely/io/storage.py` (new), `lemely/web/deps.py` (new singleton +
+  reset), `lemely/web/routers/student.py` (upload + correct endpoints), `lemely/runtime/
+  config.py` (new `StorageSettings`), tests for all of the above. No DB migration (the
+  `storage_path` column already exists from P1.3 and is repurposed, not renamed, to avoid an
+  unnecessary migration for a semantic-only change).
