@@ -197,3 +197,20 @@
   awarding an A mark on partial-credit theory questions; two approaches sketched in STATE.md).
   This is the last blocker on P2.3's accuracy gate. Re-run measure-accuracy after the fix and
   redo the threshold sweep once more before declaring P2.3 done.
+
+## 2026-08-04 (resumed session — P2.4 verify+commit)
+- Resumed on a dirty tree carrying the prior session's un-committed P2.4 implementer output
+  (plagiarism/AI-detection advisory-flag wiring). Verified before trusting: read the full diff
+  against the recorded PLAN in STATE.md (matched exactly), confirmed `IntegritySettings`/
+  `settings.integrity` actually exist via tokensave search, reviewed the new tests for
+  substance (not just coverage padding — they assert on flag values, review_reason content,
+  marks untouched, independent multi-reason review-queue rows, opt-in Gemini non-call).
+  Ran all gates fresh: ruff/format/mypy/lint-imports clean, pytest exit 0 (0 FAILED/ERROR,
+  82.04% cov locally — DB-integration tests still skip per the known Supabase-down issue, CI
+  unaffected), pre-commit --all-files clean. Committed d31a5ba.
+- Noted a gap: `scripts/check.sh` (mandated by MISSION Phase-0 + referenced throughout §8b as
+  THE gate command) does not exist on disk despite Phase 0 being marked done. Logged in
+  STATE.md as non-blocking opportunistic cleanup, not chased down this session to stay
+  focused on P2.4→P2.5 momentum.
+- Next: P2.5 — upload path (plain file upload + PWA camera capture → client-side multi-page
+  PDF assembly → Supabase Storage → backend job); wire storage bucket + signed access.

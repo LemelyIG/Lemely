@@ -400,7 +400,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           (b) accept the current state as a documented Phase-2 gate deviation and proceed to
           P2.4+. Next session: make that call explicitly (don't silently drift past it) —
           see "Next action" below.
-- [x] doing — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
+- [x] done — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
        results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
        verdicts). Enable integrity path; surface in result payload + review_queue.
        PLAN (recorded before dispatch so a killed session can resume): PlagiarismChecker
@@ -488,10 +488,39 @@ errors), out of scope for this pass. NOT silently marked passing — this must b
 time. `tests/golden/results/2026-08-04-9a7f4c8.json` (gitignored) is the final result of this
 work; regenerating without further code changes is a pure cache hit, effectively free.
 
-**Next: P2.4** (see Phase-2 checklist above) — plagiarism (answer≈mark-scheme) + AI-detection
-advisory flags wired into results as teacher-review signals only (never auto-penalize; UI copy
-= signals not verdicts). Enable the integrity path; surface in the result payload +
-review_queue. Branch stays `feature/phase-2-core-loop`; no new branch needed.
+**P2.4 DONE + VERIFIED (2026-08-04, commit d31a5ba).** Resumed on a dirty tree carrying the
+prior session's un-committed P2.4 implementer output (matched the recorded PLAN exactly —
+verified before trusting, not just assumed). New: `apply_integrity_checks` (lemely/io/
+integrity.py) wired into `grade_paper` (web/services/grading.py) via a new optional
+`integrity_settings` param, called from student.py's `run()` with `settings.integrity`.
+`CorrectedQuestion` gained `plagiarism_flagged`/`ai_detection_flagged: bool = False`;
+flagged questions get `review_reason` appended + `needs_teacher_review=True`, marks
+untouched, result rebuilt via `CorrectionResult(...)` (not model_copy) so
+`calculate_totals` reruns. `attempt_repo.persist_correction` now zips `question_results`
+with `correction.questions` to add independent `ReviewQueueItem` rows per flag reason
+(plagiarism_flag / ai_detection_flag), additive alongside the existing low_confidence
+check — a question can get multiple rows. `web/schemas.py` DTO surfaces
+`plagiarismFlagged`/`aiDetectionFlagged`. AI-detection stays opt-in
+(`IntegritySettings.ai_detection_enabled` default False) — zero extra Gemini calls unless
+explicitly enabled. GATES (orchestrator-verified, all from a clean run): ruff/format/mypy
+(115 files)/lint-imports clean; pytest exit 0, 0 FAILED/ERROR, cov 82.04% (local — DB-
+integration tests still skip, see environment note below, not a regression); pre-commit
+--all-files clean. Tests added: 6 in test_integrity.py (apply_integrity_checks unit,
+incl. AI-detection-disabled never calls Gemini), 1 PG-integration in test_attempt_repo.py
+(3 independent review-queue rows for one doubly-flagged question), test_student_correct.py
+updated for the now-real plagiarism flag on the fixture's verbatim MCQ answer, 2 in
+test_web_app.py (DTO round-trip). Frontend/teacher-queue consumption is P2.6/P2.8 by design
+(out of scope here, DTO fields are the P2.4 finish line per phase-checklist wording).
+NOTE: `scripts/check.sh` (mandated by MISSION §Phase-0 and referenced by MISSION §8b as
+"the single quality-gate command") does NOT exist on disk — Phase 0 was marked done without
+creating it; gates were run as individual commands this session instead. Not blocking P2.4,
+but worth creating opportunistically (cheap, ~10 lines) before it causes repeated
+individual-command overhead in future sessions.
+
+**Next: P2.5** (see Phase-2 checklist above) — Upload path: plain file upload (25MB cap
+kept) + PWA camera capture → client-side multi-page PDF assembly → Supabase Storage →
+backend job; wire storage bucket + signed access; backend reads the stored object for the
+pipeline. Branch stays `feature/phase-2-core-loop`; no new branch needed.
 Separate environment note (not blocking, needs a session with shell/root access): local
 Supabase stack is down and won't start — `supabase/.temp/start-secrets/supabase_db_Lemely/`
 contains root-owned directories from a prior crashed container that this session's
