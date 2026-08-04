@@ -25,6 +25,28 @@ def confidence_band_for_score(score: float) -> ConfidenceBand:
     return ConfidenceBand.LOW
 
 
+# The ONE review threshold (D2.2). A marked question is auto-graded only when its
+# marker confidence is at or above this value; below it the question is flagged
+# (``CorrectedQuestion.needs_teacher_review``) and routed to the human review
+# queue on persist (``lemely.db.attempt_repo``) and in the teacher console.
+#
+# Deliberately a module constant, not a ``lemely.toml`` field: it is a calibrated
+# accuracy-gate invariant that must be identical in the marking layer (io), the
+# persistence layer (db) and the web layer, none of which share a Settings
+# injection path — and a per-machine TOML override would silently invalidate the
+# accuracy-harness numbers that justify it. Promoting it to config later is
+# additive. Distinct from ``GeminiSettings.escalation_confidence_threshold``
+# (0.80), which decides whether to spend more budget re-marking BEFORE a mark is
+# final; this one decides whether a FINAL mark may reach a student unreviewed.
+#
+# Value: 0.90, coinciding with the ``ConfidenceBand.HIGH`` cut-off above, so the
+# invariant reads "only HIGH-confidence marks are auto-graded". Provisional —
+# calibrated on 0625 Physics only (n=29, 2026-08-04 batch); see BUILD/DECISIONS.md
+# D2.2 for the step-function evidence and the mandatory revisit once 0580/0606
+# golden fixtures exist.
+REVIEW_CONFIDENCE_THRESHOLD = 0.90
+
+
 class ExamMetadata(StrictModel):
     subject_code: str = Field(..., pattern=r"^\d{4}$")
     paper_number: int = Field(..., ge=1, le=9)

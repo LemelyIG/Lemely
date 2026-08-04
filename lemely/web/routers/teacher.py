@@ -41,6 +41,7 @@ from lemely.core.history import (
 )
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
+    REVIEW_CONFIDENCE_THRESHOLD,
     AccuracyReport,
     ExamMetadata,
     WeaknessReport,
@@ -114,9 +115,9 @@ _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 # Confidence at/above which a marked question is treated as auto-graded; below it
-# the question is surfaced in the teacher review queue. Mirrors the domain
-# threshold used across the pipeline (``confidence_band_for_score`` HIGH cut-off).
-_REVIEW_CONFIDENCE = 0.90
+# the question is surfaced in the teacher review queue. Aliases the single domain
+# definition in ``lemely.core.schemas`` (D2.2) — never re-literalise this value.
+_REVIEW_CONFIDENCE = REVIEW_CONFIDENCE_THRESHOLD
 
 _GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
 _AT_RISK_GRADES = {"D", "E", "U"}

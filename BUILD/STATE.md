@@ -2,9 +2,8 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-04T08:20:00Z
+last_updated: 2026-08-04T11:40:00Z
 gemini_spend_usd: 0.0102
-next_run_model: opus       # one-run escalation: P2.3 step 6, marking-confidence/review-threshold design (MISSION §5 reserved item)
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
@@ -262,10 +261,33 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
              11 correct answers ALSO at 0.98 and 8 at 1.00 — i.e. confidence score does
              NOT cleanly separate correct from wrong at this fixture's scale; 0.98 is the
              stated confidence for both 11 correct and 2 of the 3 wrong answers.
-       6. [BLOCKED — escalated to Opus, see next_run_model in file header] Calibrate/decide
-          the review-confidence-threshold design from the above data; record as D2.2.
-          This is a MISSION §5 Opus-reserved item ("the marking-confidence + review-
-          threshold design (Phase 2)") — do not decide on Sonnet. Brief for the Opus run:
+       6. [x] done — Delegated the design decision to the `architect` subagent (Opus-tier),
+          since this orchestrator run is on Sonnet not Opus — satisfies the MISSION §5
+          reservation without requiring a supervisor relaunch. D2.2 recorded in
+          DECISIONS.md. Decision: single shared constant `REVIEW_CONFIDENCE_THRESHOLD =
+          0.90` in `lemely/core/schemas.py` (not wired to config — an accuracy-gate
+          invariant, not an operator knob); dedupe of (B) AND a 4th undiscovered duplicate
+          (`teacher.py:119 _REVIEW_CONFIDENCE`) into this constant; (C) confirmed as the
+          correct gate to calibrate against; proposed `awarded_marks != question.marks`
+          secondary signal evaluated and REJECTED on the data (anti-correlated with itself
+          across the 3 failure cases); added instead a zero-false-positive structural
+          signal (out-of-range award flags independent of confidence, fires 0x on current
+          corpus) + `review_reason` (was always None). Recomputed metrics on stored results
+          (no new Gemini spend): flag_recall 0.0%→33.3%, flag_precision_HIGH 89.3%→91.7%.
+          Value is explicitly PROVISIONAL (Physics-only, n=29); mandatory revisit trigger
+          recorded for first 0580/0606 harness run. Orchestrator verified (did not just
+          trust the subagent): ruff/ruff-format/mypy(115)/lint-imports clean; full pytest
+          green (0 failures, 45 skips — Postgres/live-auth, consistent pattern), 81.92% cov
+          (>70% floor; in line with the 81.28–81.89% range this skip-pattern has shown all
+          P2.2/P2.3, not a regression). One test intentionally rewritten (documented, not
+          weakened): `test_review_false_at_0_80` encoded the dead literal and cannot
+          survive the fix; replaced with threshold-relative tests + an explicit regression
+          guard. Phase-2 accuracy gate (§4) still does NOT pass — flagged honestly in D2.2,
+          NOT fixed by this task (root cause is a marking-quality defect: A-marks awarded
+          despite wrong final numeric value on genuine partial-credit questions — a future
+          accuracy task, not a threshold task). Also flagged: `flag_recall_target` in config
+          is 0.85 vs MISSION's stated 100%, a pre-existing config/mission mismatch, left
+          unchanged. Superseded sub-brief kept below for provenance:
              THREE independent threshold values exist today (only coincidentally equal):
              (A) `gemini.escalation_confidence_threshold` (lemely/runtime/config.py:46,
                  default 0.80) — mid-marking retry trigger inside AICorrector.mark_question
@@ -322,11 +344,19 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
              (gitignored but present on disk this session; regenerate via
              `lemely measure-accuracy --golden tests/golden --results-dir tests/golden/results`
              if the file is gone — it's a cache-hit, so it costs ~$0).
-       7. [ ] 0580/0606 real past papers + mark schemes are NOT yet sourced (only
-          0625 Physics has real assets on disk, from Phase 0). Scope decision pending —
-          see step 6 item (5) above, now bundled into the same Opus design pass.
+       7. [ ] todo — 0580/0606 real past papers + mark schemes are NOT yet sourced (only
+          0625 Physics has real assets on disk, from Phase 0). D2.2 decided the sequencing:
+          ship the 0.90 threshold now (done, step 6), source 0580/0606 next — required for
+          statistical power (flag_precision_HIGH is arithmetically capped at 95.8% with only
+          24 auto-graded questions, below the §4 ≥99% target regardless of threshold value).
           Do NOT claim P2.3 fully done covering "the 3 subjects" if only Physics has
-          fixtures.
+          fixtures. Separately, D2.2 flagged the REAL remaining accuracy blocker as a
+          marking-quality defect, not a thresholds one: mark_accuracy_theory 85.7% (<95%)
+          because the AI marker awards A-marks without verifying the final numeric value on
+          genuine partial-credit questions (3/3 disagreements: M-marks correct, final value
+          wrong e.g. 89 vs 8.9). Consider whether that marking fix belongs in this step or a
+          follow-up before closing P2.3 — do not let broader fixtures alone be mistaken for
+          fixing the gate.
 - [ ] todo — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
        results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
        verdicts). Enable integrity path; surface in result payload + review_queue.
@@ -373,21 +403,15 @@ upload_utils 413 branch. Non-blocking for P2.2.
 
 **P2.2 DONE + VERIFIED (2026-08-04).** See checklist entry above for full detail.
 
-**P2.3 IN PROGRESS, sub-steps 1-5 done (2026-08-04).** Live-Gemini calibration batch ran
-against the 4 committed fixtures — see the P2.3 sub-plan above (step 5) for full metrics.
-Finding: current confidence scores do not cleanly separate correct from wrong marks at this
-fixture's scale (3/3 disagreements score 0.85-0.98, overlapping 19 correct answers in the same
-range) — the Phase-2 gate ("100% of disagreements below review threshold") is NOT currently met.
-**BLOCKED on Opus** (step 6): this session escalated via `next_run_model: opus` — it is a
-MISSION §5 reserved item (marking-confidence + review-threshold design). Full brief with the
-three-threshold landscape (A/B/C, file:line refs), the overconfidence finding, and the exact
-questions to resolve is in the P2.3 sub-plan step 6 above. The Opus run should: decide + record
-D2.2, fix the code (dedupe the hardcoded 0.80 in lemely/io/correction_ai.py:179 and/or retune
-lemely/db/attempt_repo.py:41's REVIEW_CONFIDENCE_THRESHOLD), decide step 7 scope (0580/0606
-sourcing — fold in now or defer, but decide), update/add tests, rerun the harness to confirm
-flag_recall improves, then continue down the P2.3 checklist (step 7 if deferred, else P2.4).
-Do NOT re-run the live batch blindly — it's a cache hit against tests/golden/results
-(gitignored now), effectively free; only spend fresh budget if new fixtures are added.
+**P2.3 IN PROGRESS, sub-steps 1-6 done (2026-08-04).** Step 6 (review-confidence threshold
+design, D2.2) done via `architect` subagent delegation — see checklist entry above for full
+detail (decision, numbers, code changed, gates verified). Remaining: step 7 (source 0580/0606
+fixtures — required for statistical power per D2.2, not optional) and the marking-quality fix
+D2.2 surfaced (A-marks awarded without verifying final numeric value on partial-credit
+questions — the actual reason mark_accuracy_theory is at 85.7% vs the 95% gate). Next session:
+pick up step 7. Do NOT re-run the live batch blindly — the existing result file is a cache hit
+against tests/golden/results (gitignored), effectively free; only spend fresh budget once new
+fixtures exist.
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:

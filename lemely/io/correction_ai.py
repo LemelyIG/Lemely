@@ -9,6 +9,7 @@ import structlog
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
+    REVIEW_CONFIDENCE_THRESHOLD,
     AIMarkResponse,
     ConfidenceBand,
     CorrectedQuestion,
@@ -168,15 +169,40 @@ def _build_ai_corrected(
     student_answer: str,
     mark: AIMarkResponse,
 ) -> CorrectedQuestion:
-    """Convert AIMarkResponse + question metadata into a CorrectedQuestion."""
+    """Convert AIMarkResponse + question metadata into a CorrectedQuestion.
+
+    Two independent reasons flag a question for human review (D2.2):
+
+    1. ``confidence < REVIEW_CONFIDENCE_THRESHOLD`` — the marker itself is unsure.
+    2. The marker returned a mark outside ``[0, question.marks]``. The value is
+       clamped into range either way, but a marker that asks for 4 marks on a
+       3-mark question has misread the mark scheme, so the (silently corrected)
+       result must not reach a student unreviewed. This is a structural
+       inconsistency signal, independent of the stated confidence, which is where
+       the confidence number alone is known to be unreliable.
+    """
     awarded = max(0, min(mark.awarded_marks, question.marks))
+    out_of_range = mark.awarded_marks != awarded
+    low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD
+    review_reason: str | None = None
+    if out_of_range:
+        review_reason = (
+            f"marker returned {mark.awarded_marks} marks for a "
+            f"{question.marks}-mark question (clamped to {awarded})"
+        )
+    elif low_confidence:
+        review_reason = (
+            f"confidence {mark.confidence:.2f} below review threshold "
+            f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+        )
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=awarded,
         maximum_marks=question.marks,
         confidence=confidence_band_for_score(mark.confidence),
         confidence_score=mark.confidence,
-        needs_teacher_review=mark.confidence < 0.80,
+        needs_teacher_review=low_confidence or out_of_range,
+        review_reason=review_reason,
         student_answer=student_answer or None,
         expected_answer=None,
         topic=question.topic_hint,

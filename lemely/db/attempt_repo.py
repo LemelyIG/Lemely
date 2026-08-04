@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
 from lemely.db.history_repo import month_to_enum, parse_user_id
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason
@@ -34,11 +35,12 @@ if TYPE_CHECKING:
 
     from lemely.core.schemas import AccuracyReport, CorrectedQuestion
 
-# Confidence at/above which a marked question is treated as auto-graded; below it
-# the question is routed to the teacher review queue. Interim value — P2.3
-# calibrates it from harness data. Matches ``confidence_band_for_score``'s HIGH
-# cut-off and the teacher console's ``_REVIEW_CONFIDENCE``.
-REVIEW_CONFIDENCE_THRESHOLD = 0.90
+# The review threshold now has exactly one definition, in
+# :mod:`lemely.core.schemas` (D2.2) — the marking layer, this repository and the
+# teacher console all read that constant, so the persist-time review gate can no
+# longer drift from the flag the marker set or from what the accuracy harness
+# measures. Re-exported here because this module's name for it is part of its
+# public surface.
 
 
 class AttemptRepository:

@@ -500,3 +500,162 @@
   re-running the script picks up newly published sessions automatically (it derives the
   session list from the live index each run) and merges into the same JSON + provenance
   files without touching existing keys.
+
+### D2.2 — One review threshold at 0.90 (provisional, Physics-only); confidence alone provably cannot satisfy the §4 flag gate
+- **What:** The three coincidentally-equal confidence thresholds are collapsed to **two
+  semantically distinct knobs**:
+  1. `GeminiSettings.escalation_confidence_threshold` (`lemely/runtime/config.py:46`,
+     unchanged at **0.80**) stays a *budget* knob only: `AICorrector.mark_question`
+     (`lemely/io/correction_ai.py:75,97`) spends a thinking retry then a Pro call to try to
+     **improve** a mark before it is final. Raising it costs Gemini dollars.
+  2. **`REVIEW_CONFIDENCE_THRESHOLD = 0.90`, defined once** in `lemely/core/schemas.py`
+     (immediately below `confidence_band_for_score`), is the *human-review* gate: a final
+     mark may reach a student unreviewed only if confidence ≥ this. Raising it costs teacher
+     time. It is now read by all three sites that previously carried their own literal:
+     `lemely/io/correction_ai.py::_build_ai_corrected` (was a hardcoded `0.80` — the
+     duplicate), `lemely/db/attempt_repo.py` (was its own `REVIEW_CONFIDENCE_THRESHOLD =
+     0.90`, now a re-export so the module's public name is preserved), and
+     `lemely/web/routers/teacher.py:119` (`_REVIEW_CONFIDENCE`, now an alias — a **fourth**
+     copy the STATE note had not counted).
+- **Why one constant and NOT a `lemely.toml` field (deviation from the STATE task's
+  "e.g. `review_flag_confidence_threshold`" suggestion):** the value must be byte-identical
+  in the marking layer (`io`), the persistence layer (`db`) and the web layer, and those three
+  do not share a `Settings` injection path — `AttemptRepository` takes only a `sessionmaker`,
+  and giving it a settings dependency to carry one float is more machinery than the problem.
+  Worse, a per-machine TOML override of an *accuracy-gate* invariant would silently invalidate
+  the harness numbers that justify it (the same class of footgun D0.3 closed for `.env`).
+  Promoting the constant to config later is additive and touches one import. Its value
+  coincides with the `ConfidenceBand.HIGH` cut-off, so the invariant states in one sentence:
+  **only HIGH-confidence marks are auto-graded.**
+- **Should (A) and (B) be allowed to diverge? Yes, and they now do — the coupling was the
+  bug.** They answer different questions ("is it worth more money to re-ask?" vs "is it safe
+  to show a student?"), and the correct ordering is escalate-low ≤ review-high: escalating at
+  <0.90 would have fired on 5 of the 21 theory questions in the calibration batch and burned
+  budget on questions the model was already right about, while flagging at <0.80 fired on
+  exactly 1 of 21. Wiring (B) to (A) would have permanently welded a cost knob to a safety
+  knob; a second config field would have kept the drift risk with extra surface. One shared
+  domain constant kills the drift outright.
+- **(B)'s old 0.80 was strictly dead in production, and that made the harness lie —
+  the most important thing this decision fixes.** Because (C) was 0.90 and the persist gate
+  is `needs_teacher_review OR confidence < (C)` (`lemely/db/attempt_repo.py:122`), a 0.80
+  flag could never add a review item that 0.90 did not already add. Its only independent
+  effects were the teacher UI badge and — critically — the accuracy harness, whose
+  `flag_recall`/`flag_precision_HIGH` read `cq.needs_teacher_review`
+  (`lemely/accuracy/harness.py:187,288`). So the 2026-08-04 batch reported **flag_recall
+  0.0%** while the code that actually routes work to a human would have caught 1 of the 3
+  disagreements. The harness was measuring a gate that does not exist. Post-change the harness
+  measures exactly the production gate: same batch → **flag_recall 33.3%** (1/3),
+  **flag_precision_HIGH 91.7%** (22/24, up from 89.3%). Answering the STATE question directly:
+  **yes — MISSION §4's "review threshold" criterion is evaluated against this one constant
+  from now on, and it is the same number (B) and (C) both use, so the distinction that made
+  the question necessary no longer exists.**
+- **Why 0.90 and not higher — the step function (this is the evidence, and it is robust to
+  n=29):** the 21 theory confidences in `tests/golden/results/2026-08-04-2a9af42.json` take
+  only six distinct values — 0.65 ×1, 0.85 ×4, 0.90 ×1, 0.95 ×1, 0.96 ×1, **0.98 ×13** — with
+  the 3 disagreements at 0.98, 0.85, 0.98. Sweeping the threshold over that distribution:
+
+  | threshold | theory questions flagged | disagreements caught |
+  |---|---|---|
+  | 0.80 (old (B)) | 1 / 21 | 0 / 3 |
+  | **0.90 (chosen)** | **5 / 21** | **1 / 3** |
+  | 0.91 – 0.98 | 6 → 8 / 21 | 1 / 3 |
+  | 0.99 | 21 / 21 | 3 / 3 |
+
+  Every value in (0.90, 0.98] buys **zero** additional recall for strictly more teacher work,
+  and `flag_precision_HIGH` actively *degrades* across that range (0.9167 at 0.90 → 0.9130 at
+  0.91 → 0.9091 at 0.96 → 0.9048 at 0.97) because raising the bar removes correct answers from
+  the auto-graded set while both 0.98 errors stay in it. Strictly dominated on both metrics, so
+  "tune it up a bit" is not an option that exists here. The only value
+  that satisfies MISSION's literal "100% of disagreements carry confidence below the review
+  threshold" is >0.98, which flags **every AI-marked question** and reduces the product to
+  "auto-marks MCQs only". That is a degenerate pass, not a pass. 0.90 is the Pareto-optimal
+  point on the frontier and is independently anchored (HIGH band, and the value (C) already
+  shipped with in P2.1). The finding driving this is *where the probability mass sits* — 62%
+  of theory marks report the identical 0.98 — not a fine boundary estimated from 3 points, so
+  a bigger corpus can move the optimum but is unlikely to invert the ordering.
+- **Answering "is a single global threshold sufficient?" — No, provably not, and the honest
+  reason is that the fix does not live in the flagging layer.** Decomposing
+  `mark_accuracy_theory` 85.7% by *ground-truth* mark shape: **15/15 (100%)** on
+  all-or-nothing answers (7 full-credit + 7 zero-credit + one 1-mark question) but **3/6
+  (50%)** on genuinely partial-credit answers. All 3 errors are the identical failure:
+  the method (M) marks were correctly identified and the **accuracy (A) mark was awarded even
+  though the final numeric value was wrong** (1b: 89 vs 8.9; 5b: 3.33 vs 3.0 N, also missing
+  M3; 12c: 9 vs 4.5 mg). The model is not mis-reporting its confidence about a thing it
+  half-knows — it is confidently failing to re-check arithmetic. Method-mark partial credit is
+  exactly the capability MISSION §1 sells, and it is at 50%.
+- **The proposed secondary signal (`awarded_marks != question.marks` + high confidence) was
+  evaluated and REJECTED on the data — recorded so it is not re-proposed blind.** Neither
+  direction of a mark-value rule separates these cases:
+  - "flag when `0 < awarded < max`" (predicted partial credit): flags 4/21 theory, catches
+    **1/3** — identical recall to the 0.90 threshold already achieved, for 4 extra flags.
+  - "flag when `awarded == max` on a multi-mark question": flags 8/21, catches 2/3 — but 6 of
+    those 8 flags are correct full-credit answers, i.e. it mostly penalises good students.
+  - the union (≡ "flag any non-zero award") flags 14/21 for 3/3: flag-everything again.
+  The reason it cannot work: 2 of the 3 errors awarded **full** marks and 1 awarded **partial**,
+  so the observable award value is anti-correlated with itself across the failure set. Adding
+  an unvalidated heuristic here would trade a measurable miss for an unmeasurable one.
+- **What WAS added instead — a zero-false-positive structural signal.**
+  `_build_ai_corrected` now flags on `mark.awarded_marks != clamp(mark.awarded_marks)`
+  **independently of confidence**: a marker asking for 4 marks on a 3-mark question has
+  misread the mark scheme, and the pre-existing `max(0, min(...))` clamp was silently
+  repairing that and shipping it as a confident mark. It fires zero times on the current
+  corpus (no over-award occurred), so it adds no review load, and it can only fire when the
+  model is objectively wrong. `_build_ai_corrected` also now sets a human-readable
+  `review_reason` (previously `None` for every AI-flagged question, so the teacher queue and
+  `question_results.review_reason` showed a flag with no stated cause).
+- **Numbers are PROVISIONAL — Physics-only, n=29 (8 MCQ + 21 theory), 3 disagreements, one
+  paper (0625 s20 qp31 + m20 qp12), one session, all disagreements the same failure mode.**
+  Recorded in the constant's docstring too, so nobody reads 0.90 as calibrated across boards
+  or subjects.
+- **Step-7 sequencing decision (0580/0606 fixtures): ship the threshold now, source the
+  fixtures next, revisit the number once — do NOT block on broader evidence.** Three reasons:
+  (a) the step-function above shows broader fixtures cannot change the *direction* of this
+  call unless the confidence distribution itself changes shape across subjects; (b) the change
+  is one constant plus one import per call site — the cheapest, most reversible option MISSION
+  §1 asks for; (c) the actual blocker is `mark_accuracy_theory` 85.7% vs the ≥95% gate, which
+  is a marking-quality defect that more fixtures will *measure*, not fix. Sourcing 0580/0606
+  remains a required step, for **statistical power**: with only 24 auto-graded questions, a
+  single wrong mark caps `flag_precision_HIGH` at 95.8%, so the §4 ≥99% target is
+  **arithmetically unreachable at this corpus size regardless of the threshold** — the gate is
+  currently unmeasurable, not merely unmet. Mandatory revisit trigger: the first harness run
+  that includes 0580 or 0606 fixtures re-runs the threshold sweep above and amends this entry.
+- **Flagged risks / follow-ups (accuracy constraint, MISSION §4):**
+  1. **Phase-2 gate is still failing and this decision does not fix it:** `mark_accuracy`
+     89.7% (<95%), `mark_accuracy_theory` 85.7% (<95%), `flag_recall` 33.3% (<85%),
+     `flag_precision_HIGH` 91.7% (<99%). Only `id_match_rate` (100%) passes. The remaining
+     work is a **marking** task, not a thresholds task: the marker must verify the final
+     numeric value before awarding an A mark (a deterministic re-computation, or a cheap
+     second-pass "recheck the final value only" call). That is the correct next accuracy task
+     and is where the 50%-on-partial-credit number gets moved.
+  2. `AccuracyEvalSettings.flag_recall_target` (`lemely/runtime/config.py`) is **0.85**, but
+     MISSION §4 says *100%* of disagreements must fall below the review threshold. The config
+     is the weaker of the two; the MISSION text is what gates the phase. Left unchanged
+     (out of scope), flagged so the discrepancy is not read as a passing gate later.
+  3. Calibration is measurably overconfident, not just noisy: the 0.90–1.00 bucket's actual
+     accuracy is 87.5% (gap −0.075) and 0.80–0.90's is 75% (gap −0.10). Any future work that
+     wants a *finer* threshold must first make the marker emit a spread of confidences at all
+     — 62% of theory marks currently report the same 0.98.
+- **Test changes (documented per MISSION §5, not weakened):** `tests/test_correction_ai.py`
+  `ThresholdTests` previously asserted `test_review_false_at_0_80` — it encoded the old
+  literal, so it necessarily fails under the new threshold. Replaced with tests written
+  against the shared constant (`test_review_fires_just_below_threshold`,
+  `test_review_false_at_threshold`), plus `test_old_0_80_threshold_now_flags` as an explicit
+  regression guard for the behaviour change, and two clamp tests
+  (`test_out_of_range_award_flags_despite_full_confidence`,
+  `test_in_range_award_at_full_confidence_is_auto_graded`). No assertion was loosened; the
+  boundary is pinned as inclusive-at-threshold (0.90 auto-grades, 0.899 flags).
+- **Blast radius:** no schema change, no migration, no API/DTO shape change. Behavioural:
+  marks with confidence in [0.80, 0.90) now carry `needs_teacher_review=True` (previously
+  `False`) — this is a *widening* of the flag that the DB gate was already applying, so the
+  review queue's contents are unchanged; what changes is that the per-question flag, the
+  paper-level aggregate, the teacher badge and the harness metric finally agree with it.
+- **Alternatives considered:** (i) wire (B) to `escalation_confidence_threshold` (rejected:
+  welds a cost knob to a safety knob; also *lowers* the effective review bar to 0.80 in the
+  UI/harness while the DB uses 0.90 — the drift stays); (ii) a new
+  `review_flag_confidence_threshold` TOML field (rejected: three layers with no shared
+  Settings path, and an operator-tunable accuracy-gate invariant is a footgun — see above);
+  (iii) raise the threshold to 0.99 to make the §4 gate literally pass (rejected: flags 100%
+  of AI-marked questions — a gate satisfied by deleting the feature is a faked pass, which
+  MISSION §5 forbids); (iv) leave 0.90 and add the `awarded != max` heuristic (rejected on
+  the data, quantified above); (v) block the decision on 0580/0606 fixtures (rejected: the
+  step function makes the call insensitive to them, and this is the reversible option).

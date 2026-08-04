@@ -1,5 +1,28 @@
 # Session journal
 
+## 2026-08-04 — Phase 2, P2.3 step 6 (D2.2 review-confidence threshold, resolved)
+- Did: resumed on a clean tree (no wip commit needed). Prior session had escalated step 6 via
+  `next_run_model: opus`, but this run launched on Sonnet, so rather than decide an Opus-reserved
+  item myself, delegated the full design brief to the `architect` subagent (Opus-tier by MISSION
+  §5's own model-discipline table for subagents) — a valid alternative path to the literal
+  supervisor-relaunch mechanism. Verified its work rather than trusting the report: read the full
+  D2.2 DECISIONS.md entry, then ran ruff/ruff-format/mypy/lint-imports/pytest myself. All clean;
+  full suite green (0 failures, 45 skips — Postgres/live-auth pattern, unchanged), 81.92% cov.
+- Learned: architect's decision was well-grounded — single shared `REVIEW_CONFIDENCE_THRESHOLD =
+  0.90` constant (not config, deliberately — cross-layer invariant, not an operator knob) dedupes
+  THREE call sites (found a 4th duplicate in teacher.py nobody had tracked). Rejected the
+  `awarded_marks != question.marks` secondary-signal idea on the actual data (proved
+  anti-correlated with itself across the 3 failure cases — 2 errors awarded full marks, 1 awarded
+  partial). Added a genuinely zero-false-positive signal instead (out-of-range award, fires 0x on
+  current corpus). Confirmed the Phase-2 accuracy gate still does NOT pass — this task fixed the
+  threshold plumbing/honesty, not the underlying accuracy: mark_accuracy_theory 85.7% is really a
+  marking defect (A-marks awarded without checking the final numeric value), which is a future
+  accuracy task, not a thresholds task.
+- Next: P2.3 step 7 — source real 0580/0606 past papers + mark schemes (required per D2.2 for
+  statistical power, not optional/deferred). After that, consider whether the A-mark
+  final-value-verification fix belongs inside P2.3's closure or as an explicit follow-up before
+  moving to P2.4 (plagiarism/AI-detection flags).
+
 ## 2026-08-04 — Phase 2, P2.3 sub-step 5 (live calibration batch) + Opus escalation for step 6
 - Did: resumed on a clean tree (no wip commit needed). Verified environment (`lemely doctor`
   all green, gemini_reachable=true) then ran the live-Gemini `measure-accuracy` batch against

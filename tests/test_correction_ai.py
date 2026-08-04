@@ -281,26 +281,64 @@ class ThresholdTests(unittest.TestCase):
             ignored_answers=[],
         )
 
-    def _make_mark(self, confidence: float):
+    def _make_mark(self, confidence: float, awarded_marks: int = 1):
         from lemely.core.schemas import AIMarkResponse
 
         return AIMarkResponse(
-            awarded_marks=1,
+            awarded_marks=awarded_marks,
             confidence=confidence,
             matched_point_ids=[],
             feedback="test",
         )
 
-    def test_review_fires_below_0_80(self):
+    # The review threshold is 0.90 as of D2.2 (was a hardcoded 0.80 that only
+    # coincidentally matched ``escalation_confidence_threshold``). These tests
+    # assert against the single shared constant so they cannot re-fossilise a
+    # literal, and they pin the boundary as inclusive-at-threshold.
+    def test_review_fires_just_below_threshold(self):
+        from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
         from lemely.io.correction_ai import _build_ai_corrected
 
-        cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.75))
+        mark = self._make_mark(REVIEW_CONFIDENCE_THRESHOLD - 0.05)
+        cq = _build_ai_corrected(self._make_question(), "answer", mark)
         self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("below review threshold", cq.review_reason or "")
 
-    def test_review_false_at_0_80(self):
+    def test_review_false_at_threshold(self):
+        from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        mark = self._make_mark(REVIEW_CONFIDENCE_THRESHOLD)
+        cq = _build_ai_corrected(self._make_question(), "answer", mark)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_old_0_80_threshold_now_flags(self):
+        """Regression guard for D2.2: 0.80 used to auto-grade, now it flags."""
         from lemely.io.correction_ai import _build_ai_corrected
 
         cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.80))
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_out_of_range_award_flags_despite_full_confidence(self):
+        """A marker asking for more marks than exist is clamped AND flagged."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        # Question is worth 2 marks; the marker asks for 4 at confidence 1.0.
+        cq = _build_ai_corrected(
+            self._make_question(), "answer", self._make_mark(1.0, awarded_marks=4)
+        )
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("clamped", cq.review_reason or "")
+
+    def test_in_range_award_at_full_confidence_is_auto_graded(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(), "answer", self._make_mark(1.0, awarded_marks=2)
+        )
+        self.assertEqual(cq.awarded_marks, 2)
         self.assertFalse(cq.needs_teacher_review)
 
 
