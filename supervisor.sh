@@ -143,8 +143,8 @@ for m in re.finditer(r"(?:reset[s]?|try again|available again)\s*(?:in)?[:\s]+"
     if h or mi:
         cands.append(int(h or 0)*3600 + int(mi or 0)*60)
 
-# "resets at 3pm" / "resets at 15:30" / "Resets at 3:00 PM"
-for m in re.finditer(r"reset[s]?\s*(?:at)?[:\s]+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?",
+# "resets at 3pm" / "resets at 15:30" / "Resets at 3:00 PM" / "resets 4:10pm"
+for m in re.finditer(r"reset[s]?\s*(?:at)?\s*[:]?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?",
                      text, re.I):
     hour = int(m.group(1)); minute = int(m.group(2) or 0); ap = (m.group(3) or "").lower()
     if ap == "pm" and hour != 12: hour += 12
@@ -275,7 +275,8 @@ $(progress_line)" "white_check_mark" "high" "$ACTIONS_REPO"
   touch "$REPORTMARK"
 
   # --- outcome ----------------------------------------------------------
-  if tail -n 80 "$LOG" | grep -qiE "usage limit|rate limit|limit reached|overloaded|429"; then
+  # MODIFIED: Added "session limit" to the grep check below
+  if tail -n 80 "$LOG" | grep -qiE "session limit|usage limit|rate limit|limit reached|overloaded|429"; then
     wait_secs="$(parse_reset_seconds "$LOG")"
     if [ -n "$wait_secs" ]; then
       wait_secs=$((wait_secs + LIMIT_RESUME_MARGIN))
