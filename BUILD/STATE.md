@@ -698,7 +698,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
               typecheck/lint/build-only verification pattern as every P2.6/P2.7 step to date; no
               Playwright suite exists yet either (that's P2.10's job). Committing on
               feature/phase-2-core-loop.)
-       6. [ ] todo — StudyPlan + Standings + Onboarding (bundle — phase wording says "as far as
+       6. [ ] doing — StudyPlan + Standings + Onboarding (bundle — phase wording says "as far as
           Phase-2 scope needs", partial wiring is sanctioned): StudyPlan wired to
           `useStudyPlan()`/post-mutation (`planRows`/`days`/`planCards` grid mock replaced by
           the real `sessions` list — implementer's call on layout, doesn't need to preserve the
