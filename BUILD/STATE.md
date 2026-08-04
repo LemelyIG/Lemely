@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-04T14:50:00Z
+last_updated: 2026-08-05T00:00:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -638,7 +638,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
               against `core/correction.py::_exam_metadata` before trusting, confirmed correct.
               `student_result`'s existing tests pass unmodified, proving the refactor preserved
               behavior. Orchestrator-verified: ruff/format/mypy/lint-imports/pytest all clean.)
-          5b. [ ] todo — Frontend: CorrectPaper gets a real file input (scan required, optional
+          5b. [ ] doing — Frontend: CorrectPaper gets a real file input (scan required, optional
               mark-scheme file) → `uploadScan()` → `runCorrection(paperId)` consuming
               `streamActivity` frames to drive the progress UI for real (kill the `setTimeout`
               theatre and `progressSteps`/`detected`/`scanMeta`/`readChips` mock reliance;
