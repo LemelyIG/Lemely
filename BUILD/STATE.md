@@ -785,9 +785,117 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           recorded inline in this checklist in enough detail to carry into P2.10's DELIVERY.md;
           a separate early stub would only duplicate it. **P2.7 (Student surface on real data)
           is now COMPLETE.**)
-- [ ] todo — P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
+- [~] doing — P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
        incrementally): Grading, Review (low-confidence/integrity queue), MarkSchemes,
        Overview. Fill audit "partial" hollow fields honestly or mark deferred.
+       PLAN (recorded before dispatch so a killed session can resume; orchestrator read
+       lemely/web/routers/teacher.py + schemas_teacher.py + schemas.py + all 4 target
+       screens + data.ts in full before writing this). Scope is exactly the 4 screens named
+       in the checklist — Classes.tsx and Quizzes.tsx are OUT (Phase 3/4 per MISSION §4,
+       even though their backend endpoints already exist as a bonus — not touched).
+       Executed SEQUENTIALLY like P2.7 (shared data.ts/index.tsx). Each sub-step: dispatch
+       to `implementer`, orchestrator-verify gates, commit, tick off here.
+       KEY FINDING: teacher.py is still 100% on the interim in-process `_PaperStore` +
+       `HistoryStoreProtocol` (D1.6 — teacher DB/tenancy migration deferred), NOT student's
+       DB-backed P2.1 pipeline. This is a SEPARATE teacher-initiated upload→extract→grade
+       flow (`POST /api/papers/upload` → `/extract` SSE → `/grade` SSE → `GET /api/papers`
+       list + `GET /api/papers/{id}` detail). Wiring it is still real (real endpoints, real
+       data), just against the older interim store — consistent with existing teacher-router
+       scope, not a regression to fix here.
+       HONEST CUTS decided up front (mirrors D1.6/P2.7's "remove fabricated content, don't
+       invent" precedent):
+       - Overview: `OverviewDTO.retention` is documented backend-side as ALWAYS EMPTY (no
+         lesson-retention data source) — the entire "Lesson retention" chart card AND the
+         "hours saved" ink box are 100% fabricated narrative in the mock (specific numbers,
+         "MOMENTS & EQUILIBRIUM" lesson title, "38h saved"). DROP both cards entirely, not
+         an empty state. `atRisk` cards keep only backend-real fields (name/grade/delta/
+         weakTopic) — drop `tag`/`note`/`action`/`avatarTone`/`initials` narrative (no DTO
+         fields); drop the "Message parents" button (no backend). The greeting paragraph's
+         specific counts ("Twenty-eight papers... twelve answers... three students...") are
+         fabricated copy — replace with a generic non-numeric greeting or derive the numbers
+         that DO exist from `stats`/`atRisk.length` if a natural sentence can be built
+         honestly, otherwise drop the sentence (implementer's call, document which).
+       - MarkSchemes: `SchemeListDTO.stats` only ever returns "Parsed"/"Failed" (backend
+         already dropped "Pending"/"Your own" per D1.12 M2 — confirmed reading the router's
+         own comment). Drop those two stat cards from the screen too (currently hardcoded in
+         data.ts, would look real but isn't). "Parse 6 pending" button has no backing concept
+         (no upload-queue model) — drop it. "Upload your own" wires to `POST /api/schemes`
+         (scheme_pdf file input) — real, parses deterministically, 422 surfaces parse
+         failures. Header "Sources / · 214 documents" is fabricated — replace with a real
+         count derived from `schemes.length`.
+       - Grading: real single-paper upload→extract→grade pipeline, but the mock's UI implies
+         a *batch* with one shared "detected" sidebar / pipeline for the whole batch. Design
+         decision: sidebar "Detected" + "Pipeline" reflect the *currently-selected* paper
+         (defaults to the most recently uploaded), not a batch aggregate — record this as the
+         resolution, it's the only honest mapping onto per-paper endpoints. Selecting a
+         `PaperCard` (click) sets it as current (local state), re-fetching
+         `GET /api/papers/{id}` for its pipeline/questions — no new route needed. Upload UI:
+         same dual file-input pattern as P2.7's CorrectPaper (scan required, optional mark
+         scheme) → `POST /api/papers/upload`, then auto-chain `POST /api/papers/{id}/extract`
+         SSE → `POST /api/papers/{id}/grade` SSE to drive the pipeline for real (kill the
+         `pipeline`/`detected`/`autoGrade` mock imports). `autoGrade` donut: derive
+         `confirmed`=graded-tab count, `needReview`=review-tab count from the real
+         `GET /api/papers` tabs, `progress`=confirmed/total; drop the fabricated
+         "~2 min remaining" ETA text (no backend source) — replace with a live
+         processing-count line or omit. Papers grid wired to `GET /api/papers`
+         (`PaperSummaryDTO`: id/name/kind/status/awardedMarks/maxMarks/confidence/
+         needsReview — real); drop the fake "12 pg"/page-thumbnail-lines decorative panel
+         content that implies real page data (`pageCount` is documented structurally-empty
+         unless the pipeline recorded it, which it never does today) — either omit the count
+         or keep the lines as pure decorative chrome with no implied data (implementer's
+         call, document which). "Use custom mark scheme" folds into the same upload dual-
+         input, not a separate step.
+       - Review: `GET /api/grading/queue` returns `QueueRowDTO` rows — one per flagged
+         QUESTION (paperId/name/questionId/topic/confidence/awardedMarks/maxMarks), real.
+         Clicking a row fetches `GET /api/papers/{paperId}` and locates the matching question
+         in `.questions` by `questionId` for the detail panel. CRITICAL SCOPE CUT: the mock's
+         center panel (handwriting transcript with flagged lines, per-mark-point
+         ok/no/dependent breakdown with confidence-per-point, and an award-override button
+         row + "Confirm & next") needs data that does NOT EXIST on `QuestionResultDTO` — no
+         `prompt`/`working`/point-breakdown fields, only questionId/awarded/max/markerSource/
+         confidence/feedback/matchedPointIds(as an id list, not a breakdown)/reviewReason/
+         topic/plagiarismFlagged/aiDetectionFlagged. Building that breakdown would need a new
+         mark-scheme-point-resolution converter (same class of cut P2.7 made for PaperResult,
+         D2.7 addendum) AND the override-submission endpoint doesn't exist — MISSION §4 Phase
+         3 explicitly assigns "review queue... override-and-annotate flow (overrides feed
+         back as recorded corrections)" to Phase 3, not Phase 2. DECISION: Review's detail
+         panel renders a simpler card — student name, question id, topic, confidence bar,
+         awarded/max, `feedback` text if present, and the REAL `reviewReason` (replaces the
+         mock's fabricated `why` narrative with actual backend-computed reasoning — a
+         genuine improvement, not just a cut), plagiarism/AI-detection flag badges if set.
+         DROP: working-transcript, marking-points breakdown, award buttons, "Confirm & next"
+         action, "Approve all (N)" (no bulk-approve endpoint). Keep prev/next through queue
+         rows (pure client nav, real). Drop the `reviewProgress` footer ("156/168 · 93% AT
+         CONFIDENCE") — no clean same-unit backend source (queue is question-count, overview
+         stats are paper-count; mixing units would misrepresent) — document as deferred to
+         Phase 3 alongside the override flow.
+       Sub-steps:
+       1. [ ] todo — Frontend API foundation: NEW `web/src/lib/teacherTypes.ts` (TS
+          interfaces mirroring `lemely/web/schemas_teacher.py` DTOs 1:1 camelCase — already
+          camelCase per `ApiModel`, so field names match exactly) + NEW
+          `web/src/lib/hooks/useTeacherApi.ts` (react-query `useQuery`: `useTeacherOverview()`,
+          `usePapers()` (GET /api/papers), `usePaperDetail(id)` (GET /api/papers/{id}, only
+          enabled when id present, 409-tolerant), `useGradingQueue()`, `useSchemes()`; plain
+          async fns for upload+SSE: `uploadPaper(formData)` → UploadResponseDTO,
+          `extractPaper(paperId)`/`gradePaper(paperId)` async generators wrapping
+          `streamActivity` (reuse from `lib/api.ts`, same pattern as student's
+          `runCorrection`); `uploadScheme(formData)` mutation). No screen/data.ts changes.
+       2. [ ] todo — Overview + MarkSchemes screens (the two straightforward DTO swaps, no
+          SSE/upload flow). Apply the honest cuts above. Update `data.ts` (remove
+          `overviewStats`/`atRisk`/`retention` and `schemeStats`/`schemes` exports + their
+          types once both screens no longer import them — grep first).
+       3. [ ] todo — Grading screen: upload dual-file-input → upload→extract→grade chained
+          SSE, papers grid + selectable-paper sidebar per the design above. Update `data.ts`
+          (remove `detected`/`pipeline`/`autoGrade`/`batchTabs`/`allPapers`/`filterPapers`/
+          `PaperKind`/`Paper`/`BatchTab`/`BatchTabId` once Grading no longer imports them).
+       4. [ ] todo — Review screen: queue list + simplified per-question detail card per the
+          design above. Update `data.ts` (remove `flagged`/`queue`/`reviewProgress`/
+          `MarkingPoint`/`WorkingLine`/`FlaggedItem`/`QueueRow`/`PointState`).
+       5. [ ] todo — `data.ts` final cleanup pass (mechanical grep-verify-delete, orchestrator
+          does directly like P2.7 step 7) + full gate re-run (typecheck/lint/build; backend
+          ruff/format/mypy/lint-imports/pytest since nothing under lemely/ should have
+          changed) + commit + STATE.md update + `reports/phase-2/` note if any deviation
+          needs to carry into P2.10's DELIVERY.md beyond what's already recorded here.
 - [ ] todo — P2.9 PWA: manifest + service worker + installable + offline shell; camera
        capture UX; Lighthouse PWA checks pass. Gradio stays internal debug only.
 - [ ] todo — P2.10 Acceptance: Playwright E2E — seeded student uploads a fixture scan and
