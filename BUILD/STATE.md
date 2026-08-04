@@ -626,12 +626,18 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           (id/awarded/max/markerSource/confidence/topic/feedback/reviewReason/flags), and an
           explicit "detail only available right after correcting" note when browsing history
           (no `questions` — GET path, `theory` stays structurally empty as already documented).
-          5a. [ ] todo — Backend: shared `_result_header_fields()` helper (code/paper/session/
+          5a. [x] done — Backend: shared `_result_header_fields()` helper (code/paper/session/
               boundaryYear/railLeft/railFoot from `ExamMetadata` + boundary store, same logic
               `student_result` already has, refactored not duplicated); `student_correct`'s
               complete frame calls it with `mark_scheme.metadata` (reliable even when detected
               `metadata` is None) + adds `pct`. `QuestionResultDTO.topic` + `question_to_dto`
               populate it. Extend existing tests for the new frame/DTO fields.
+              (commit 9803c7b. Implementer caught + fixed a typing bug in my brief: used
+              `report.correction.metadata` (a real `ExamMetadata`) instead of
+              `mark_scheme.metadata` (a distinct `MarkSchemeMetadata` type) — verified myself
+              against `core/correction.py::_exam_metadata` before trusting, confirmed correct.
+              `student_result`'s existing tests pass unmodified, proving the refactor preserved
+              behavior. Orchestrator-verified: ruff/format/mypy/lint-imports/pytest all clean.)
           5b. [ ] todo — Frontend: CorrectPaper gets a real file input (scan required, optional
               mark-scheme file) → `uploadScan()` → `runCorrection(paperId)` consuming
               `streamActivity` frames to drive the progress UI for real (kill the `setTimeout`
