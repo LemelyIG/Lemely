@@ -274,6 +274,43 @@ def test_correct_complete_frame_includes_full_questions(
     assert "reviewReason" in by_id["2"]
 
 
+def test_correct_complete_frame_includes_result_header_fields(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    """The `complete` frame carries the same header fields GET /result computes.
+
+    P2.7 step 5: `_result_header_fields` is shared by both paths, so the SSE
+    completion frame should carry code/paper/session/boundaryYear/railLeft/
+    railFoot/pct computed from the resolved scheme's own metadata
+    (0625 paper 1 variant 2, May/June 2020) and the awarded/maximum marks
+    (1/2 from the canned extraction: q1 correct, q2 blank).
+    """
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    complete_frame = next(
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data:") and '"phase": "complete"' in frame
+    )
+
+    assert complete_frame["code"] == "0625"
+    assert complete_frame["paper"] == "Paper 1 - Variant 2"
+    assert complete_frame["session"] == "May/June 2020"
+    assert complete_frame["boundary_year"] == "2020"
+    # awarded=1, maximum=2 (q1 correct, q2 blank) -> 50%.
+    assert complete_frame["rail_left"] == 50
+    assert complete_frame["pct"] == 50
+    assert complete_frame["rail_foot"].startswith("A boundary sat at")
+
+
 def test_upload_sets_status_and_writes_file(
     client: tuple[TestClient, str, StudentUploadRepository],
     settings: Settings,

@@ -20,7 +20,7 @@ from __future__ import annotations
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypedDict
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -344,6 +344,55 @@ def _paper_label(record: PaperRecord) -> str:
     return f"{m.subject_code}/{m.paper_number}{m.paper_variant}{year}"
 
 
+class _ResultHeaderFields(TypedDict):
+    """Return shape of :func:`_result_header_fields`.
+
+    CamelCase, matching :class:`~lemely.web.schemas_student.ResultDTO`'s field
+    names directly. A plain ``dict[str, str | int]`` would force every
+    read-site to re-narrow the value type, so a TypedDict is used instead.
+    """
+
+    code: str
+    paper: str
+    session: str
+    boundaryYear: str
+    railLeft: int
+    railFoot: str
+
+
+def _result_header_fields(
+    metadata: ExamMetadata, awarded: int, maximum: int
+) -> _ResultHeaderFields:
+    """Compute the code/paper/session/boundaryYear/railLeft/railFoot header fields.
+
+    Shared by GET /student/result/{id} and the POST /student/correct SSE
+    complete frame — same boundary-store call, same format strings, so the two
+    paths are provably consistent rather than duplicated logic that could
+    silently drift.
+
+    Returns camelCase keys matching :class:`ResultDTO`'s field names directly —
+    ``student_result`` spreads them straight into the DTO constructor.
+    ``student_correct``'s SSE call site renames ``boundaryYear``/``railLeft``/
+    ``railFoot`` to snake_case explicitly when spreading these into
+    ``bus.publish(...)`` kwargs, since raw SSE frames use snake_case top-level
+    keys (``EventBus.publish`` forwards kwargs as-is, bypassing the DTO alias
+    layer that ``ResultDTO`` relies on).
+    """
+    boundaries, _ = GradeBoundaryStore().resolve(metadata)
+    a_pct = boundaries.get("A")
+    a_marks = round((a_pct / 100.0) * maximum) if a_pct is not None else None
+    rail_foot = f"A boundary sat at {a_marks}/{maximum}" if a_marks is not None else ""
+    year = metadata.session_year
+    return {
+        "code": metadata.subject_code,
+        "paper": f"Paper {metadata.paper_number} - Variant {metadata.paper_variant}",
+        "session": metadata.session_month + (f" {year}" if year else ""),
+        "boundaryYear": str(year) if year else "",
+        "railLeft": round((awarded / maximum) * 100) if maximum else 0,
+        "railFoot": rail_foot,
+    }
+
+
 # ── Paper result (flagship) ───────────────────────────────────────────────────
 
 
@@ -375,16 +424,12 @@ def student_result(
         raise HTTPException(status_code=404, detail=f"No paper {paper_id}")
     record = history.records[index]
 
-    boundaries, _ = GradeBoundaryStore().resolve(record.metadata)
-    a_pct = boundaries.get("A")
     max_marks = record.maximum_marks
-    a_marks = round((a_pct / 100.0) * max_marks) if a_pct is not None else None
-    rail_foot = f"A boundary sat at {a_marks}/{max_marks}" if a_marks is not None else ""
-    year = record.metadata.session_year
+    header = _result_header_fields(record.metadata, record.awarded_marks, max_marks)
     return ResultDTO(
-        code=record.metadata.subject_code,
-        paper=f"Paper {record.metadata.paper_number} - Variant {record.metadata.paper_variant}",
-        session=record.metadata.session_month + (f" {year}" if year else ""),
+        code=header["code"],
+        paper=header["paper"],
+        session=header["session"],
         markerLabel="",
         headline=f"{record.awarded_marks} out of {record.maximum_marks}.",
         summary="",
@@ -392,9 +437,9 @@ def student_result(
         max=max_marks,
         pct=round(record.percentage),
         grade=record.grade,
-        boundaryYear=str(year) if year else "",
-        railLeft=round(record.percentage),
-        railFoot=rail_foot,
+        boundaryYear=header["boundaryYear"],
+        railLeft=header["railLeft"],
+        railFoot=header["railFoot"],
         railNote="",
         theory=[],
         integrity=_integrity_summary(record),
@@ -632,6 +677,20 @@ def student_correct(
                     user_id=auth.user_id, report=report, upload_id=owned.id
                 )
                 upload_repo.set_status(owned.id, UploadStatus.complete)
+                # ``report.correction.metadata`` (an ``ExamMetadata``, derived from
+                # ``mark_scheme.metadata`` by ``core.correction._exam_metadata``) —
+                # not the separately-detected ``metadata`` variable above, which
+                # can be None. It's reliably present whenever a scheme was
+                # successfully resolved, whether via detected-metadata corpus
+                # lookup or a student-supplied sibling PDF, and — unlike
+                # ``mark_scheme.metadata`` itself, which is a distinct
+                # ``loose_schemas.MarkSchemeMetadata`` — it is already the
+                # ``ExamMetadata`` type ``_result_header_fields`` expects.
+                header = _result_header_fields(
+                    report.correction.metadata,
+                    report.correction.awarded_marks,
+                    report.correction.maximum_marks,
+                )
                 bus.publish(
                     EventType.MARKING_PROGRESS,
                     paper_id=payload.paperId,
@@ -646,6 +705,16 @@ def student_correct(
                         question_to_dto(q).model_dump(by_alias=True)
                         for q in report.correction.questions
                     ],
+                    # SSE frames are raw kwargs forwarded snake_case (bypassing the
+                    # camelCase DTO alias layer), so the two camelCase-named header
+                    # keys are renamed explicitly here.
+                    code=header["code"],
+                    paper=header["paper"],
+                    session=header["session"],
+                    boundary_year=header["boundaryYear"],
+                    rail_left=header["railLeft"],
+                    rail_foot=header["railFoot"],
+                    pct=round(report.grade_prediction.percentage),
                 )
         except Exception as exc:
             bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))

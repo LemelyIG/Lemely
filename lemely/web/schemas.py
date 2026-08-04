@@ -42,6 +42,7 @@ class QuestionResultDTO(ApiModel):
     reviewReason: str | None = None
     plagiarismFlagged: bool = False
     aiDetectionFlagged: bool = False
+    topic: str | None = None
 
 
 class WeakAreaDTO(ApiModel):
@@ -81,6 +82,7 @@ def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
         reviewReason=question.review_reason,
         plagiarismFlagged=question.plagiarism_flagged,
         aiDetectionFlagged=question.ai_detection_flagged,
+        topic=question.topic,
     )
 
 

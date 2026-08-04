@@ -162,3 +162,36 @@ def test_question_to_dto_surfaces_integrity_flags() -> None:
     dumped = dto.model_dump()
     assert dumped["plagiarismFlagged"] is True
     assert dumped["aiDetectionFlagged"] is True
+
+
+def test_question_to_dto_surfaces_topic() -> None:
+    """`CorrectedQuestion.topic` round-trips onto `QuestionResultDTO.topic` (P2.7 step 5)."""
+    question = CorrectedQuestion(
+        question_id="3",
+        awarded_marks=1,
+        maximum_marks=2,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.9,
+        needs_teacher_review=False,
+        marker_source="deterministic",
+        topic="Forces and motion",
+    )
+
+    dto = question_to_dto(question)
+
+    assert dto.topic == "Forces and motion"
+    assert dto.model_dump()["topic"] == "Forces and motion"
+
+    # A question with no detected topic surfaces as None, not a fabricated string.
+    untopic = question_to_dto(
+        CorrectedQuestion(
+            question_id="4",
+            awarded_marks=0,
+            maximum_marks=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=0.1,
+            needs_teacher_review=True,
+            marker_source="missing",
+        )
+    )
+    assert untopic.topic is None
