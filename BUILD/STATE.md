@@ -698,7 +698,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
               typecheck/lint/build-only verification pattern as every P2.6/P2.7 step to date; no
               Playwright suite exists yet either (that's P2.10's job). Committing on
               feature/phase-2-core-loop.)
-       6. [ ] doing — StudyPlan + Standings + Onboarding (bundle — phase wording says "as far as
+       6. [x] done — StudyPlan + Standings + Onboarding (bundle — phase wording says "as far as
           Phase-2 scope needs", partial wiring is sanctioned): StudyPlan wired to
           `useStudyPlan()`/post-mutation (`planRows`/`days`/`planCards` grid mock replaced by
           the real `sessions` list — implementer's call on layout, doesn't need to preserve the
@@ -711,6 +711,39 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           `gradeLevel`/`school`/`weeklyHours` on submit; the `onboardChips` multi-select reasons
           have no backing field on `OnboardingRequest` — drop them (don't submit fabricated
           data); document what's deferred vs P2.4-onward's full onboarding wizard.
+          (commit pending. Implementer built: `StudyPlan.tsx` on `useStudyPlan()` +
+          `usePostStudyPlan()` — 7-day grid replaced by a flat session list (subjectCode/topic+
+          focus/hours); "Adjust hours" opens an inline form posting `{weeklyHours, narrate:
+          true}`, `plan = postPlan.data ?? data` so a successful adjust reflects immediately; the
+          returned `narrative` renders in a "Why this week" card only when non-null. `data.ts`
+          lost `days`/`planRows`/`planCards`/`planHeader` + their interfaces/helper. `Standings.tsx`
+          on `useStandings()` — friends/school/global leaderboard (mock names incl. "Maya Rahman")
+          removed entirely, no `boards` field exists; 28-cell streak heatmap (unbacked — DTO only
+          has a scalar `streakDays`) replaced with a stat card, `paperCount` added as a second
+          stat card; subject-standings list kept, now also showing the real `papers` count.
+          Orchestrator spot-checked the backend (`lemely/web/routers/student.py::student_standings`,
+          not touched this task) to confirm `rank` is honestly `""` (single-student store, no
+          cross-student cohort to rank against — documented in the endpoint's docstring) rather
+          than a fabricated leaderboard position, consistent with MISSION's "leaderboards show
+          XP, never grades" / no-fabrication rules. `data.ts` lost `boards`/`BoardRow`/
+          `LeaderboardScope`/`scopes`/`streakCells`/`StreakCell`/`boardHeader`/the superseded
+          `SubjectRank`/`subjectRanks` (screen now uses `studentTypes.ts`'s version, which has
+          the `papers` field data.ts's lacked). `Onboarding.tsx` — fixed slider set for the 3
+          in-scope CAIE subjects (0580/0606/0625 per MISSION §1), each a real interactive
+          `<input type="range">` bound to local `OnboardSliderInput[]` state; added gradeLevel/
+          weeklyHours/school text+number inputs; submits via `usePostOnboarding()` then navigates
+          to `/student`. Dropped: the `onboardChips` multi-select (no backing field — would have
+          been fabricated data), the 5-segment progress bar + "Step 3 of 5" copy (no real wizard
+          exists behind it — documented in the file header as an intentional Phase-2 scope cut,
+          not a bug), and the dead "Skip - placement test" link. `data.ts` lost `onboardChips`/
+          `OnboardChip`/`sliders`/`OnboardSlider`/`onboardSteps`/`onboardHeader`. Landing/
+          Directions untouched (confirmed via `git diff --stat`, only the 4 target files
+          changed). Orchestrator-verified independently: re-ran `npm run typecheck`/
+          `npm run lint`/`npm run build` myself — clean, same pre-existing warning set, build
+          succeeds. Also independently read `student_standings` (see above) rather than just
+          trusting the implementer's claim that `rank` isn't fabricated — confirmed true. No
+          frontend test runner exists yet (same established pattern). Committing on
+          feature/phase-2-core-loop.)
        7. [ ] todo — `data.ts` cleanup pass: delete every export now fully superseded by a live
           fetch; KEEP `navGroups`, `crumbs` (or its replacement), `studentMeta`, and every
           Landing/Directions export (`landingHero`, `pillars`, `pillarsIntro`, `pricing`,

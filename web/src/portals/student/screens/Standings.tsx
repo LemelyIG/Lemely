@@ -1,131 +1,87 @@
-import { useState } from "react"
 import { Card } from "@/components/ui/card"
-import {
-  boardHeader,
-  boards,
-  scopes,
-  streakCells,
-  subjectRanks,
-  type LeaderboardScope,
-} from "../data"
+import { useStandings } from "@/lib/hooks/useStudentApi"
 import { vizText } from "../components/colors"
 
 /*
- * Standings (isBoard). A scope-switching leaderboard (friends / school /
- * global) with the current student highlighted, a 28-cell streak heatmap, and
- * a per-subject ranking list.
+ * Standings (isBoard). Wired to `GET /student/standings` via useStandings().
+ * The mock's friends/school/global leaderboard is removed entirely —
+ * `StandingsDTO` has no `boards` field and no backend exists for it yet
+ * (Phase 5/XP). The 28-cell streak heatmap is also unbacked (`streakDays` is
+ * a scalar, no per-day array) — replaced with an honest stat card. Subject
+ * standings stays, backed by the real `subjectRanks` field.
  */
 export function Standings() {
-  const [scope, setScope] = useState<LeaderboardScope>("friends")
-  const board = boards[scope]
+  const { data, isPending, isError, error } = useStandings()
+
+  if (isPending) {
+    return (
+      <div className="lm-screen flex flex-col gap-[22px]">
+        <div className="text-[13.5px] text-t2">Loading standings…</div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="lm-screen flex flex-col gap-[22px]">
+        <div className="text-[13.5px] text-accent">
+          Couldn't load your standings: {error.message}
+        </div>
+      </div>
+    )
+  }
+
+  const { subjectRanks, paperCount, streakDays } = data
 
   return (
     <div className="lm-screen flex flex-col gap-[22px]">
-      <div className="flex items-end gap-5 flex-wrap">
-        <div>
-          <div className="font-serif text-[36px] leading-[1.1]">
-            {boardHeader.title}
+      <div className="font-serif text-[36px] leading-[1.1]">Standings</div>
+
+      <div className="lm-cols grid grid-cols-2 gap-5 max-[1180px]:grid-cols-1">
+        <Card className="p-5 text-center">
+          <div className="text-[11px] tracking-[0.09em] uppercase text-t3">
+            Streak
           </div>
-          <div className="text-[14px] text-t2 mt-[7px]">{boardHeader.intro}</div>
-        </div>
-        <div className="flex-1" />
-        <div className="flex gap-1.5 bg-surface-2 p-1 rounded-[11px]">
-          {scopes.map((sc) => {
-            const active = sc.id === scope
-            return (
-              <button
-                key={sc.id}
-                onClick={() => setScope(sc.id)}
-                className={`border-0 cursor-pointer font-sans text-[12.5px] px-[15px] py-2 rounded-lg ${
-                  active
-                    ? "bg-surface text-t1 font-medium"
-                    : "bg-transparent text-t2"
-                }`}
-              >
-                {sc.label}
-              </button>
-            )
-          })}
-        </div>
+          <div className="font-serif text-[44px] leading-[1.1]">
+            {streakDays}
+            <span className="text-[18px]"> days</span>
+          </div>
+        </Card>
+        <Card className="p-5 text-center">
+          <div className="text-[11px] tracking-[0.09em] uppercase text-t3">
+            Papers corrected
+          </div>
+          <div className="font-serif text-[44px] leading-[1.1]">
+            {paperCount}
+          </div>
+        </Card>
       </div>
 
-      <div className="lm-cols grid grid-cols-[1.4fr_1fr] gap-5 items-start max-[1180px]:grid-cols-1">
-        <Card className="overflow-hidden">
-          {board.map((b) => {
-            const me = b.name === "Maya Rahman"
-            return (
-              <div
-                key={b.rank + b.name}
-                className={`grid grid-cols-[40px_34px_1fr_120px_88px] gap-[14px] items-center px-5 py-[13px] border-b border-border ${me ? "bg-accent-subtle" : "bg-transparent"}`}
-              >
-                <span
-                  className={`font-mono text-[13px] ${me ? "text-accent" : "text-t2"}`}
-                >
-                  {b.rank}
+      <Card className="p-5">
+        <div className="text-[15px] font-semibold mb-[14px]">
+          Subject standings
+        </div>
+        {subjectRanks.length === 0 ? (
+          <div className="text-[13px] text-t2">No subjects ranked yet.</div>
+        ) : (
+          <div className="flex flex-col gap-[11px]">
+            {subjectRanks.map((s) => (
+              <div key={s.code} className="flex items-center gap-3">
+                <span className="font-mono text-[11.5px] text-t2 w-[38px]">
+                  {s.code}
                 </span>
-                <span
-                  className={`w-[30px] h-[30px] rounded-full flex items-center justify-center text-[11.5px] font-semibold ${me ? "bg-accent text-accent-on" : "bg-surface-2 text-t2"}`}
-                >
-                  {b.initials}
+                <span className="text-[12.5px] flex-1">{s.name}</span>
+                <span className="text-[11.5px] text-t2">
+                  {s.papers} papers
                 </span>
-                <span className={`text-[13.5px] ${me ? "font-semibold" : ""}`}>
-                  {b.name}
-                </span>
-                <span className="text-[11.5px] text-t2">{b.detail}</span>
-                <span className="font-mono text-[13.5px] text-right">
-                  {b.pts}
+                <span className={`font-mono text-[12.5px] ${vizText(s.color)}`}>
+                  {s.rank}
                 </span>
               </div>
-            )
-          })}
-        </Card>
-
-        <div className="flex flex-col gap-5">
-          <Card className="p-5">
-            <div className="text-[15px] font-semibold mb-1">
-              {boardHeader.streakTitle}
-            </div>
-            <div className="text-[12.5px] text-t2 mb-4">
-              {boardHeader.streakSub}
-            </div>
-            <div className="grid grid-cols-[repeat(14,1fr)] gap-[5px]">
-              {streakCells.map((c, i) => (
-                <div
-                  key={i}
-                  className="aspect-square rounded-[4px]"
-                  style={{
-                    background:
-                      c.kind === "empty"
-                        ? "oklch(0.92 0.008 40)"
-                        : c.kind === "rest"
-                          ? "oklch(0.90 0.02 40)"
-                          : `oklch(${c.intensity.toFixed(3)} 0.09 35)`,
-                  }}
-                />
-              ))}
-            </div>
-          </Card>
-
-          <Card className="p-5">
-            <div className="text-[15px] font-semibold mb-[14px]">
-              Subject standings
-            </div>
-            <div className="flex flex-col gap-[11px]">
-              {subjectRanks.map((s) => (
-                <div key={s.code} className="flex items-center gap-3">
-                  <span className="font-mono text-[11.5px] text-t2 w-[38px]">
-                    {s.code}
-                  </span>
-                  <span className="text-[12.5px] flex-1">{s.name}</span>
-                  <span className={`font-mono text-[12.5px] ${vizText(s.color)}`}>
-                    {s.rank}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-      </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   )
 }
