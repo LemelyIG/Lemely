@@ -2,8 +2,8 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-04T11:40:00Z
-gemini_spend_usd: 0.0102
+last_updated: 2026-08-04T12:15:00Z
+gemini_spend_usd: 0.0502
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
@@ -344,41 +344,49 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
              (gitignored but present on disk this session; regenerate via
              `lemely measure-accuracy --golden tests/golden --results-dir tests/golden/results`
              if the file is gone — it's a cache-hit, so it costs ~$0).
-       7. [~] doing — Dispatched two parallel `data-engineer` subagents (2026-08-04, still
-          running as of this STATE write — if you're resuming a dead session, check for
-          on-disk output before re-dispatching: `Sources/Mathematics/`,
-          `Sources/AdditionalMathematics/`, `tests/golden/0580_*`, `tests/golden/0606_*`.
-          If those exist but this line still says "doing", the prior orchestrator session
-          died after dispatch but before verifying/committing — verify the agents' output
-          yourself per the checklist below rather than re-dispatching.): one sourcing+
-          building real 0580 (Math) golden fixtures, one sourcing+building real 0606
-          (Additional Math) golden fixtures. Both told: use papacambridge.com or
-          xtremepape.rs (gceguide.com is squatted, D2.1 — do not use), NOT
-          cambridgeinternational.org (no public past papers there, only grade-threshold
-          tables already scraped for D2.1); parse via the existing `lemely
-          parse-mark-schemes` CLI (det parser, D0.5, no Gemini cost) with a single
-          `--use-gemini` fallback allowed if needed (check outputs/gemini_spend.json
-          before/after, report delta); build 3 fixtures each (theory_correct/partial/wrong,
-          6-8 self-contained questions) mirroring the exact 0625 schema/pattern; validate
-          each mark_scheme.json against `lemely.core.loose_schemas.MarkScheme`; render
-          scan.pdf via `lemely.accuracy.synth.write_golden_case` (IndieFlower font for 0580,
-          PatrickHand for 0606). Both explicitly told neither subject has an MCQ paper
-          component (skip searching for one) and NOT to touch git/run gates — orchestrator
-          verifies and commits. ORCHESTRATOR MUST re-verify before trusting: confirm real
-          PDFs on disk with real source URLs reported (not fabricated), confirm mark_scheme
-          JSON actually validates (don't just take the agent's word), run full §6-relevant
-          gates (ruff/mypy/lint-imports/pytest) after landing, check Gemini spend delta is
-          sane, then commit + update this line to done with the real numbers.
-          Why this step matters (D2.2 rationale): required for statistical power —
-          flag_precision_HIGH is arithmetically capped at 95.8% with only 24 auto-graded
-          questions, below the §4 ≥99% target regardless of threshold value. Do NOT claim
-          P2.3 fully done covering "the 3 subjects" until both land. Separately, D2.2
-          flagged the REAL remaining accuracy blocker as a marking-quality defect, not a
-          thresholds one: mark_accuracy_theory 85.7% (<95%) because the AI marker awards
-          A-marks without verifying the final numeric value on genuine partial-credit
-          questions (3/3 disagreements: M-marks correct, final value wrong e.g. 89 vs 8.9).
-          Consider whether that marking fix belongs in this step or a follow-up before
-          closing P2.3 — do not let broader fixtures alone be mistaken for fixing the gate.
+       7. [x] done — Verified and committed the two `data-engineer` outputs from the prior
+          (crashed) session: real 0580 Mathematics (s23 qp22) + 0606 Additional Mathematics
+          (s23 qp12) mark schemes/papers under `Sources/` (gitignored) and 6 new golden
+          fixtures `tests/golden/{0580_s23_qp_22,0606_s23_qp_12}_theory_{correct,partial,
+          wrong}` mirroring the 0625 pattern. Verification done before trusting (MISSION §5):
+          confirmed real Cambridge headers in all 4 sourced PDFs via pdfplumber (not
+          fabricated); validated all 6 mark_scheme.json against MarkScheme; spot-checked
+          answer points against fixture answers; confirmed wrong/partial variants carry
+          genuinely altered answers. Fixed a latent bug the dispatch surfaced: `0580` had no
+          `SubjectProfile` in `lemely/io/det/profiles.py`, so it fell through to
+          `_DEFAULT_PROFILE` (paper 1 → MCQ, wrong for 0580 which has no MCQ component) —
+          added `_MATHEMATICS_PROFILE` (1/3 Core, 2/4 Extended) and fixed a comment that
+          incorrectly asserted 0580 paper 1 is MCQ. Gates: ruff/format/mypy(115)/
+          lint-imports clean; pytest 100% pass (usual Postgres/live-auth skips — local
+          Supabase stack could not be started this session, stale root-owned files under
+          `supabase/.temp/start-secrets/` from a prior crashed container, not removable
+          without root; flagged for a session with shell access to clean up, does not affect
+          this step). Ran the mandatory D2.2 revisit (full `measure-accuracy` across all 10
+          fixtures, n=68); recorded as **D2.3** in DECISIONS.md — full threshold-sweep table
+          there. Result: metrics got WORSE with more data (mark_accuracy 89.7%→80.9%,
+          theory 85.7%→78.3%, flag_precision_HIGH 91.7%→82.5%, flag_recall 33.3%→23.1%);
+          13 theory disagreements now (was 3) across 3 papers/2 subjects; 0.90 threshold
+          only catches 3/13 (23%); no non-degenerate threshold (<0.99) gets close to the §4
+          100% target. `REVIEW_CONFIDENCE_THRESHOLD` kept at 0.90 (D2.3: raising it further
+          is not supported by the data, confirms D2.2 more strongly than it changes it).
+          Gemini spend +$0.0150 (cumulative $0.0502 / $8.00 ceiling). P2.3's accuracy gate is
+          now measurable-and-failing (not measurement-limited) — the next step is the
+          marking-quality fix, not more fixtures or threshold tuning.
+       8. [ ] todo — Marking-quality fix: the AI marker awards the accuracy (A) mark on
+          partial-credit theory questions without verifying the final numeric/algebraic
+          value is correct (confirmed at n=68 across 3 papers/2 subjects in D2.3; all 13
+          theory disagreements are this same failure class, extending D2.2's 3/3 Physics-only
+          finding). This is what's actually failing the §4 gate — see D2.3's threshold sweep
+          for why no confidence-threshold change can substitute for this. Approach to
+          evaluate: a deterministic re-check of the final computed value against the mark
+          scheme's stated answer/tolerance (already-parsed `answer_points[].point`/
+          `tolerance`/`calculated_answer` fields exist in the schema) before awarding an A
+          mark, OR a cheap second-pass "verify only the final value" Gemini call gated behind
+          the existing escalation budget. Re-run `measure-accuracy` after the fix (same 10
+          fixtures, near-zero incremental cost — mostly cache hits except whatever the fix
+          changes) and re-check the §4 thresholds. This is the last thing blocking P2.3
+          acceptance; once it lands, re-run the full threshold sweep once more (numbers will
+          shift) before declaring P2.3 done.
 - [ ] todo — P2.4 Plagiarism (answer≈mark-scheme) + AI-detection advisory flags wired into
        results as teacher-review signals ONLY (never auto-penalize; UI copy = signals not
        verdicts). Enable integrity path; surface in result payload + review_queue.
@@ -425,15 +433,27 @@ upload_utils 413 branch. Non-blocking for P2.2.
 
 **P2.2 DONE + VERIFIED (2026-08-04).** See checklist entry above for full detail.
 
-**P2.3 IN PROGRESS, sub-steps 1-6 done (2026-08-04).** Step 6 (review-confidence threshold
-design, D2.2) done via `architect` subagent delegation — see checklist entry above for full
-detail (decision, numbers, code changed, gates verified). Remaining: step 7 (source 0580/0606
-fixtures — required for statistical power per D2.2, not optional) and the marking-quality fix
-D2.2 surfaced (A-marks awarded without verifying final numeric value on partial-credit
-questions — the actual reason mark_accuracy_theory is at 85.7% vs the 95% gate). Next session:
-pick up step 7. Do NOT re-run the live batch blindly — the existing result file is a cache hit
-against tests/golden/results (gitignored), effectively free; only spend fresh budget once new
-fixtures exist.
+**P2.3 IN PROGRESS, sub-steps 1-7 done (2026-08-04).** Step 7 (source 0580/0606 fixtures +
+mandatory D2.2 revisit) done — see checklist entry above and **D2.3** in DECISIONS.md for full
+detail. Headline: the accuracy gate is now measurable-and-failing at real statistical power
+(n=68, 3 papers, 2 subjects), not measurement-limited as it was at D2.2's n=29. Threshold
+tuning is exhausted as an approach (sweep table in D2.3: nothing below 0.99 gets close to the
+§4 100% target, and 0.99 is the already-rejected flag-everything degenerate case).
+`REVIEW_CONFIDENCE_THRESHOLD` stays at 0.90. **Next session: pick up step 8** — the
+marking-quality fix (AI marker must verify the final numeric/algebraic value before awarding
+an A mark on partial-credit questions; see step 8 for the two approaches to evaluate). This is
+the last thing blocking P2.3 acceptance. Do NOT re-run the live batch blindly before the fix
+lands — `tests/golden/results/2026-08-04-2473205.json` (gitignored) is this step's result and
+regenerating without code changes is a pure cache hit, effectively free; only spend fresh
+budget to validate the step-8 fix once it's implemented.
+Separate environment note (not blocking, needs a session with shell/root access): local
+Supabase stack is down and won't start — `supabase/.temp/start-secrets/supabase_db_Lemely/`
+contains root-owned directories from a prior crashed container that this session's
+non-privileged shell cannot remove (`rm -rf` fails EACCES even recursively, since deleting
+requires write access to those root-owned dirs, not just their parent). Fix: as a user with
+root/docker-group cleanup rights, `sudo rm -rf supabase/.temp/start-secrets/` then
+`supabase start`. Until then, Postgres-backed integration tests keep skipping locally (CI is
+unaffected — it provisions its own Postgres service).
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:

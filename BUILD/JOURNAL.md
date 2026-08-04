@@ -167,3 +167,33 @@
   Kicked off `supabase start` in the background at session end (stack was fully torn down —
   no containers existed, first-run image pulls) to restore DB-integration test coverage for the
   next session; check it came up before relying on Postgres-backed tests.
+
+## 2026-08-04 (resumed session — P2.3 step 7 verify+commit, D2.3, marking-fix identified)
+- Resumed on a dirty tree carrying the prior session's un-committed step-7 output (dispatched
+  two data-engineer subagents for 0580/0606 fixtures, then died before verify/commit). Verified
+  before trusting: read page 1 of all 4 sourced PDFs via pdfplumber — genuine Cambridge 0580/22
+  and 0606/12 (May/June 2023) headers, not fabricated; validated all 6 mark_scheme.json against
+  MarkScheme; spot-checked answer points against fixture content. Found and fixed a real latent
+  bug the dispatch surfaced: 0580 had no SubjectProfile registered in lemely/io/det/profiles.py,
+  so it silently fell through to _DEFAULT_PROFILE (paper 1 → MCQ) — wrong, 0580 has no MCQ
+  component at all. Added the correct profile + fixed a comment that had asserted otherwise.
+- Ran the mandatory D2.2 revisit: full measure-accuracy across all 10 golden fixtures (n=68,
+  up from n=29). Recorded as D2.3. Metrics got WORSE with more data (mark_accuracy 89.7%→80.9%,
+  theory 85.7%→78.3%), confirming D2.2's diagnosis far more strongly than the thin Physics-only
+  sample could: no non-degenerate confidence threshold (below the already-rejected 0.99
+  flag-everything case) gets close to the §4 100%-disagreements-flagged target. Kept
+  REVIEW_CONFIDENCE_THRESHOLD at 0.90 — the data doesn't support moving it. Gemini spend +$0.015
+  (cumulative $0.0502/$8.00).
+- Learned: local Supabase stack cannot be restarted this session — `supabase/.temp/
+  start-secrets/supabase_db_Lemely/` has root-owned directories from a prior crashed container
+  that a non-privileged shell cannot rm -rf (recursion needs write access to the root-owned dirs
+  themselves, not just their parent). Needs a session with sudo/docker-group cleanup rights.
+  DB-integration tests keep skipping locally until then; not a regression, CI is unaffected.
+- Also: accidentally echoed the live GEMINI_API_KEY into a debug command's output this session —
+  flagged to the user immediately and recommended rotating it. Lesson for future sessions: never
+  `env | grep` or `cat` a file known to contain a live secret; check presence via a boolean
+  (`bool(settings.gemini.api_key)`) instead.
+- Next: P2.3 step 8 — the marking-quality fix (verify the final numeric/algebraic value before
+  awarding an A mark on partial-credit theory questions; two approaches sketched in STATE.md).
+  This is the last blocker on P2.3's accuracy gate. Re-run measure-accuracy after the fix and
+  redo the threshold sweep once more before declaring P2.3 done.

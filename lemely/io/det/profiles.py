@@ -57,6 +57,29 @@ _PHYSICS_PROFILE = SubjectProfile(
     },
 )
 
+_MATHEMATICS_PROFILE = SubjectProfile(
+    code="0580",
+    name="Mathematics",
+    paper_type_by_number={
+        # 0580 has no MCQ component: 1/3 are non-calculator/calculator Core,
+        # 2/4 are non-calculator/calculator Extended.
+        1: PaperType.THEORY_CORE,
+        2: PaperType.THEORY_EXTENDED,
+        3: PaperType.THEORY_CORE,
+        4: PaperType.THEORY_EXTENDED,
+    },
+)
+
+_ADDITIONAL_MATHEMATICS_PROFILE = SubjectProfile(
+    code="0606",
+    name="Additional Mathematics",
+    paper_type_by_number={
+        # 0606 has no MCQ component either — both papers are structured/written.
+        1: PaperType.THEORY_EXTENDED,
+        2: PaperType.THEORY_EXTENDED,
+    },
+)
+
 _DEFAULT_PROFILE = SubjectProfile(
     code="0000",
     name="",
@@ -68,6 +91,8 @@ _DEFAULT_PROFILE = SubjectProfile(
 
 _REGISTRY: dict[str, SubjectProfile] = {
     "0625": _PHYSICS_PROFILE,
+    "0580": _MATHEMATICS_PROFILE,
+    "0606": _ADDITIONAL_MATHEMATICS_PROFILE,
 }
 
 

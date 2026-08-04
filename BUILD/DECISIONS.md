@@ -659,3 +659,88 @@
   MISSION §5 forbids); (iv) leave 0.90 and add the `awarded != max` heuristic (rejected on
   the data, quantified above); (v) block the decision on 0580/0606 fixtures (rejected: the
   step function makes the call insensitive to them, and this is the reversible option).
+
+### D2.3 — 0580/0606 fixtures landed; mandatory D2.2 revisit confirms the gate is a marking-quality problem, not a threshold problem — 0.90 kept unchanged
+- **What:** P2.3 step 7 completed. Verified and committed the two `data-engineer` outputs
+  dispatched in the prior (crashed) session: real Cambridge IGCSE Mathematics 0580/22
+  (May/June 2023) and Additional Mathematics 0606/12 (May/June 2023) mark schemes + question
+  papers under `Sources/{Mathematics,AdditionalMathematics}/` (gitignored, consistent with
+  `Sources/` policy), and 6 new committed golden fixtures mirroring the 0625 pattern exactly:
+  `tests/golden/0580_s23_qp_22_theory_{correct,partial,wrong}` (7 questions each) and
+  `tests/golden/0606_s23_qp_12_theory_{correct,partial,wrong}` (6 questions each). Also fixed
+  a real latent bug the dispatch surfaced: `lemely/io/det/profiles.py` registered a 0606
+  profile but never a 0580 one, so `get_profile("0580")` fell through to `_DEFAULT_PROFILE`,
+  which maps paper 1 → MCQ — wrong for 0580 (no MCQ component at all; papers 1/3 are
+  non-calculator/calculator Core, 2/4 are non-calculator/calculator Extended). Added
+  `_MATHEMATICS_PROFILE` with the correct 1/2/3/4 → Core/Extended/Core/Extended mapping and
+  corrected a comment on the 0606 profile that had incorrectly asserted "0580 paper 1 is MCQ".
+- **Verification performed (not just trusting the subagents' prior claims, per MISSION §5):**
+  read page 1 of all 4 sourced PDFs via `pdfplumber` — genuine Cambridge headers/watermarks
+  confirm `MATHEMATICS 0580/22 Paper 2 (Extended) May/June 2023` and `ADDITIONAL MATHEMATICS
+  0606/12 Paper 1 May/June 2023`, not fabricated; validated all 6 `mark_scheme.json` files
+  against `lemely.core.loose_schemas.MarkScheme` (all pass); spot-checked answer points against
+  the real mark scheme text (e.g. 0580 Q1 answer point "−13" matches "−5 − 8 = −13" in the
+  `correct` fixture; Q12a point "53" matches the fixture's derivation) and confirmed the
+  `wrong`/`partial` variants carry genuinely altered student answers and reduced
+  `awarded_marks`, not copies. Ran full §6-relevant gates: ruff/ruff-format/mypy(115
+  files)/lint-imports clean; pytest 100% pass (0 failures; the usual Postgres/live-auth skips —
+  local Supabase stack could not be started this session, see Blast radius below, this is an
+  environment gap not a regression). Gemini spend delta: **+$0.0150** (cumulative
+  $0.0502 of the $8.00 ceiling) for the live `measure-accuracy` run below — sane and
+  nowhere near budget pressure.
+- **Mandatory revisit executed (D2.2's own trigger: "the first harness run that includes 0580
+  or 0606 fixtures re-runs the threshold sweep and amends this entry").** Ran
+  `lemely measure-accuracy` across all 10 committed fixtures (0625 MCQ + 3×0625 theory +
+  3×0580 theory + 3×0606 theory), n=68 questions (60 theory, 8 MCQ) — saved to
+  `tests/golden/results/2026-08-04-2473205.json` (gitignored, regenerable, cache-hits are free
+  per the usual pattern).
+  - **Metrics got materially worse, not better, with more data — this is signal, not noise:**
+    `mark_accuracy` 89.7%→**80.9%**, `mark_accuracy_theory` 85.7%→**78.3%**, `id_match_rate`
+    unchanged at 100%, `flag_precision_HIGH` 91.7%→**82.5%**, `flag_recall` 33.3%→**23.1%**.
+    Theory disagreements went from 3 (one paper) to **13** (three papers, two subjects): a
+    21.7% theory error rate on the broader corpus vs 14.3% on Physics alone.
+  - **Threshold sweep at n=68 (vs D2.2's n=29) — the honest re-run of D2.2's own table:**
+
+    | threshold | theory questions flagged (of 60) | disagreements caught (of 13) |
+    |---|---|---|
+    | 0.80 | 5 | 1 |
+    | 0.85 | 5 | 1 |
+    | **0.90 (current)** | **11** | **3 (23%)** |
+    | 0.95 | 16 | 7 (54%) |
+    | 0.96–0.98 | 30–35 | 9 (69%) |
+    | 0.99 | 59 | 13 (100%) |
+
+    At n=29 (D2.2), 0.90 already looked weak (1/3 caught) but was read as a thin-sample
+    artifact possibly fixable by more data. At n=68 it is now unambiguous: **no threshold
+    below 0.99 gets anywhere close to the MISSION §4 "100% of disagreements below threshold"
+    requirement**, and 0.99 remains the same degenerate "flag 98% of theory questions" case
+    D2.2 already rejected as a faked pass (MISSION §5). The broader corpus did not change the
+    *direction* of D2.2's call (predicted correctly: no non-degenerate threshold clears the
+    gate) but it does sharpen the diagnosis: this is not a calibration problem that more data
+    fixes, it is a **structural ceiling** — confidence and correctness are close to
+    independent on this task as currently implemented.
+  - **Calibration confirms systemic, worsening overconfidence:** the 0.90–1.00 confidence
+    bucket (49 of 68 predictions) is only 79.6% actually correct (gap **−0.154**, vs D2.2's
+    thinner −0.075 reading); 0.80–0.90 is 66.7% correct (gap −0.183). The model states high
+    confidence at roughly the same rate whether it is right or wrong.
+- **Decision: `REVIEW_CONFIDENCE_THRESHOLD` stays at 0.90, unchanged.** The sweep above proves
+  raising it further only trades teacher-review load for marginal recall while the honest
+  ceiling (0.99 = flag-everything) is still off the table for the reasons D2.2 already gave.
+  Moving it would be re-litigating an already-answered question with data that confirms the
+  original answer more strongly, not new evidence against it.
+- **P2.3's accuracy gate remains unmet, now with statistically adequate evidence (n=68, 3
+  papers, 2 subjects) instead of D2.2's provisional n=29/1-subject caveat — the "sourcing
+  0580/0606 gets us to a measurable gate" reasoning is now resolved: the gate is measurable
+  and it fails.** The path to closing it is unchanged from D2.2's diagnosis and is now the
+  clear next P2.3 step: a marking-quality fix that verifies the final numeric/algebraic value
+  before awarding the accuracy (A) mark on partial-credit questions, not further threshold or
+  fixture work. Recorded as the explicit next action in `BUILD/STATE.md` (P2.3 step 8).
+- **Blast radius:** fixtures + one profile registry entry + one comment fix; no schema,
+  migration, or API change. `REVIEW_CONFIDENCE_THRESHOLD` numerically unchanged, so no
+  behavioural change to what reaches the review queue. Local Supabase stack was down this
+  session (stale root-owned files under `supabase/.temp/start-secrets/` from a prior crashed
+  container, not removable without root — outside this session's write access) so
+  Postgres-backed integration tests skipped as usual; this is an environment gap, not
+  introduced by this change, and does not affect the accuracy-harness work (no DB dependency).
+  Flagged here so a future session with shell/root access cleans it up rather than
+  re-diagnosing it.
