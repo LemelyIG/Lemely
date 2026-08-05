@@ -542,3 +542,36 @@
   review-queue override-and-annotate, teacher quiz builder, parent portal with mock
   phone-OTP) plus the carried backlog items (D1.6 teacher per-tenant ownership, D1.9
   CLI/Gradio history migration) before starting task breakdown.
+
+## 2026-08-06 — P3.1, P3.1b, P3.2 (Phase 3, tasks 1–2 of 11)
+
+- Did: **P3.1** — the real class model (D3.1). `lemely/db/class_repo.py` (`ClassService`,
+  modelled on `SeatService`), migration `0004_class_model`, `lemely/web/routers/classes.py`.
+  This finally closes the tenancy hole D1.6 has carried since Phase 1: `GET
+  /api/teacher/classes` used to treat *every* student with history as one cohort keyed
+  `"all"`. Teacher → own classes; school_admin → their school's; platform_admin → none.
+  Out-of-scope access is 403 not 404, so the endpoint isn't an existence oracle.
+- Did: **P3.2** — the at-risk engine (D3.3). `lemely/core/at_risk.py`, pure, injected clock,
+  three OR'd rules each carrying reason + evidence. Replaced a heuristic that matched none
+  of MISSION's three rules.
+- Learned (the useful one): **the visual-regression gate was vacuous and had been since
+  P2.5.6.** `audit.mjs`, both Playwright specs and `check_ui_gates.py` all wrote into the
+  *committed* phase baselines, so every `check.sh` run overwrote the reference it compares
+  against — "no unintended visual regression" could never fail. It surfaced only because
+  P3.1 is backend-only and still dirtied 53 PNGs. Fixed in **P3.1b** behind
+  `LEMELY_REPORT_DIR` → gitignored `reports/.scratch`; re-baselining is now explicit and
+  names its phase. Worth remembering as a class of bug: a check that mutates its own
+  oracle always passes.
+- Learned: `classes.school_id` was `NOT NULL`, making an independent teacher's class
+  unrepresentable even though MISSION §1 requires independent teachers. Relaxed it — a
+  deliberate, recorded exception to D1.2's additive-only rule (no row invalidated, no
+  backfill, reversible).
+- Honest limitation carried forward: at-risk rule 2 (predicted ≥2 grades below target) is
+  implemented and unit-tested but **cannot fire in production** — no target-grade column
+  until P4's onboarding questionnaire. The engine reports it as *not evaluable*, never as
+  a pass. Must appear in DELIVERY.md.
+- Also: the two subagents both stalled waiting on background runs rather than reporting;
+  verified and finished both myself. Worth briefing future agents to run gates in the
+  foreground.
+- Next: **P3.3** teacher analytics (per-class/per-student, ranked weakness topics for the
+  T-04 heatmap, grade distribution, trend series). Branch pushed at 82d60dd.
