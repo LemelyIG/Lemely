@@ -60,9 +60,12 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
       no TODO/TBD/placeholder markers found (grep clean)
 - [x] Read docs/LEMELY_UI_SPEC.md in full (71 screens / 13 components / 5 principles) —
       no conflict with Phase-2, scope fixed to tokens+C-1..C-13+6-screen retrofit (D2.10)
-- [ ] doing — P2.5.1: Build the token source (Tailwind v4 theme + CSS vars) from DESIGN.md
-      frontmatter (colors/typography/rounded/spacing) — dual portal scoping via [data-portal]
-- [ ] P2.5.2: Build C-1..C-13 cross-cutting components with every state + catalogue doc
+- [x] P2.5.1: Token source built (web/src/index.css) — DESIGN.md hex palette replacing the
+      pre-DESIGN.md OKLCH port, same var names (no screen breakage), + type scale, spacing,
+      radii, motion tokens, 380/1440 breakpoints, confidence/mark-state/grade-band semantic
+      scales. Verified: tsc clean, build clean, oxlint clean. Committed 98c6068 on
+      feature/phase-2.5-design-system.
+- [ ] doing — P2.5.2: Build C-1..C-13 cross-cutting components with every state + catalogue doc
 - [ ] P2.5.3: Retro-fit the 6 shipped Phase-2 screens (home, upload/scanner, marking
       progress, results, question detail) onto tokens + components
 - [ ] P2.5.4: Impeccable audit → normalize → polish pass on those screens
