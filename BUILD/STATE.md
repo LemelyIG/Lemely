@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2.5
-last_updated: 2026-08-05T17:40:00Z
+last_updated: 2026-08-05T19:05:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -68,10 +68,24 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
 - [x] P2.5.2: C-1..C-13 built (web/src/components/ui/, 13 files) via 2 parallel
       worktree-isolated designer agents, merged + verified together (tsc/build/oxlint
       clean). docs/COMPONENT_CATALOGUE.md documents every component. Committed 8882834.
-- [ ] doing — P2.5.3: Retro-fit the 6 shipped Phase-2 screens (home, upload/scanner, marking
-      progress, results, question detail) onto tokens + components. Also: delete
-      viz.tsx::Bar + BoundaryRail.tsx (superseded, see catalogue "known follow-ups")
-- [ ] P2.5.4: Impeccable audit → normalize → polish pass on those screens
+- [x] P2.5.3: Retro-fit done — Overview.tsx (home), CorrectPaper.tsx (upload/scanner/
+      marking-progress, S-14 now uses ProcessingState C-10 with 3 real SSE-backed stages),
+      PaperResult.tsx (results/question-detail, QuestionRow C-6 + ConfidenceIndicatorSummary
+      + BoundaryBar C-3) onto tokens + C-1..C-13. Deleted viz.tsx::Bar + BoundaryRail.tsx;
+      Directions.tsx (out-of-scope screen) got a minimal import-swap-only fix to BoundaryBar
+      so the build stays green. Also fixed a pre-existing bug found during retrofit:
+      PaperResult rendered plagiarism/AI-detection flags to the student — removed
+      (QUALITY-BAR.md: integrity flags are teacher-only, never shown to students). tsc/
+      build/oxlint clean, grep for oklch()/stray literals in the 4 touched screens clean.
+      Verified independently (diffs read, commands re-run) before commit, per MISSION
+      delegation protocol. Content gaps found, not fixed (backend/DTO work, out of this
+      phase): no real per-grade boundary thresholds on ResultDTO (BoundaryBar now honestly
+      shows "not available" instead of the old fake fixed-percent gradient); S-14 has no
+      SSE signal for "identifying the paper" / "analysing weak topics" stages or a running
+      question count; S-15's comparison-to-previous-attempts / top-3-mistakes / weak-topic-
+      chips have no backing data; CorrectPaper.tsx is still a single-step form, not the
+      full S-10..S-13 wizard. Committed on feature/phase-2.5-design-system.
+- [ ] doing — P2.5.4: Impeccable audit → normalize → polish pass on those screens
 - [ ] P2.5.5: Playwright screenshot harness (screen × state × breakpoint, ID convention
       from LEMELY_UI_SPEC.md screen IDs)
 - [ ] P2.5.6: Puppeteer audit runner (axe-core, Lighthouse, console errors, full-page

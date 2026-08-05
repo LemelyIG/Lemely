@@ -1,10 +1,21 @@
-import { useLocation, useParams } from "react-router-dom"
+import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { Check, Minus, Warning } from "@phosphor-icons/react"
 import { Card } from "@/components/ui/card"
+import { Chip } from "@/components/ui/chip"
+import { Eyebrow } from "@/components/ui/primitives"
+import { PaperIdentity } from "@/components/ui/paper-identity"
+import { MarkDisplay } from "@/components/ui/mark-display"
+import { GradeBadge } from "@/components/ui/grade-badge"
+import { BoundaryBar, type GradeBoundary } from "@/components/ui/boundary-bar"
+import {
+  ConfidenceIndicatorSummary,
+  type ConfidenceTier,
+} from "@/components/ui/confidence-indicator"
+import { QuestionRow, type MarkState } from "@/components/ui/question-row"
+import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { ApiError } from "@/lib/api"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
-import { BoundaryRail } from "../components/BoundaryRail"
 
 /*
  * Paper Result (isResult) - the flagship screen. Renders one result, from
@@ -16,7 +27,7 @@ import { BoundaryRail } from "../components/BoundaryRail"
  *     live state (browsing from `Subject`'s paper-history table) - no
  *     per-question detail is stored for history records, so an honest note
  *     replaces the list instead of an empty or fabricated one.
- * The shared header (marks/percentage/grade, boundary rail, integrity +
+ * The shared header (marks/percentage/grade, boundary bar, integrity +
  * provenance sidebar) renders from whichever source is active.
  */
 
@@ -24,6 +35,59 @@ type LiveResult = Result & { questions: QuestionResult[] }
 
 function isLiveResult(state: unknown): state is LiveResult {
   return !!state && typeof state === "object" && "questions" in state
+}
+
+/**
+ * `ResultDTO` only ships a precomputed rail position (`railLeft`/`railFoot`),
+ * not real per-grade mark thresholds — the old `BoundaryRail` faked a bar out
+ * of fixed, paper-independent tick percentages (U=6%, E=24%, ... regardless
+ * of the actual paper). `BoundaryBar` (C-3) refuses to do that: given no
+ * `boundaries`, it shows an honest "not available" message instead. This
+ * stays empty until `ResultDTO` exposes real `{grade, minMark}` boundaries —
+ * a genuine backend/DTO gap, flagged in the P2.5.3 report, not something to
+ * fabricate here.
+ */
+const NO_BOUNDARIES: GradeBoundary[] = []
+
+const NO_QUESTION_DETAIL = {
+  heading: "No per-question detail for this paper",
+  body: "Per-question detail is only available right after correcting a paper.",
+}
+
+/** correct = full marks, wrong = zero, partial = anything between. */
+function markState(q: QuestionResult): MarkState {
+  if (q.maxMarks <= 0) return q.awardedMarks > 0 ? "correct" : "wrong"
+  if (q.awardedMarks >= q.maxMarks) return "correct"
+  if (q.awardedMarks <= 0) return "wrong"
+  return "partial"
+}
+
+/**
+ * `reviewReason` is the backend's explicit "a human needs to look at this"
+ * signal, so it always wins. Below that, `confidence` (0-1) is bucketed
+ * against the product's stated 0.70 escalation floor (see `data.ts`'s
+ * `proof` stat "confidence floor before a human is asked") with an
+ * additional, softer 0.85 band for "uncertain but not review-worthy" — that
+ * second threshold isn't backend-supplied, it's a frontend judgement call
+ * made for this retrofit (see the P2.5.3 report).
+ */
+function confidenceTier(q: QuestionResult): ConfidenceTier {
+  if (q.reviewReason) return "needs-review"
+  if (typeof q.confidence === "number" && q.confidence < 0.85) return "uncertain"
+  return "confident"
+}
+
+function confidenceSummary(questions: QuestionResult[]) {
+  return questions.reduce(
+    (acc, q) => {
+      const tier = confidenceTier(q)
+      if (tier === "confident") acc.confident += 1
+      else if (tier === "uncertain") acc.uncertain += 1
+      else acc.needsReview += 1
+      return acc
+    },
+    { confident: 0, uncertain: 0, needsReview: 0 },
+  )
 }
 
 function IntegrityMark({ row }: { row: IntegrityRow }) {
@@ -48,17 +112,9 @@ function ResultHeader({ res }: { res: Result }) {
     <Card className="rounded-xl overflow-hidden">
       <div className="lm-cols grid grid-cols-[1fr_300px] max-[1180px]:grid-cols-1">
         <div className="px-7 py-[26px]">
-          <div className="flex items-center gap-[9px] font-mono text-[11.5px] text-t2 flex-wrap">
-            <span>{res.code}</span>
-            <span className="text-border">/</span>
-            <span>{res.paper}</span>
-            <span className="text-border">/</span>
-            <span>{res.session}</span>
-            {res.markerLabel ? (
-              <span className="border border-border rounded-[20px] px-2 py-0.5 text-[10px] tracking-[0.06em]">
-                {res.markerLabel}
-              </span>
-            ) : null}
+          <div className="flex items-center gap-[9px] flex-wrap">
+            <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />
+            {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
           </div>
           {res.headline ? (
             <div className="font-serif text-[34px] leading-[1.12] mt-2.5">
@@ -66,53 +122,27 @@ function ResultHeader({ res }: { res: Result }) {
             </div>
           ) : null}
           {res.summary ? (
-            <div className="text-[14px] text-t2 mt-[9px] max-w-[56ch] text-pretty">
+            <div className="text-body-md text-t2 mt-[9px] max-w-[56ch] text-pretty">
               {res.summary}
             </div>
           ) : null}
 
-          <div className="flex gap-[26px] mt-6 flex-wrap">
-            <div>
-              <div className="text-[11px] tracking-[0.09em] uppercase text-t3">
-                Marks
-              </div>
-              <div className="font-serif text-[38px] leading-[1.1]">
-                {res.awarded}
-                <span className="text-[20px] text-t2">/{res.max}</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] tracking-[0.09em] uppercase text-t3">
-                Percentage
-              </div>
-              <div className="font-serif text-[38px] leading-[1.1]">
-                {res.pct}
-                <span className="text-[20px] text-t2">%</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] tracking-[0.09em] uppercase text-t3">
-                Predicted grade
-              </div>
-              <div className="font-serif text-[38px] leading-[1.1] text-accent">
-                {res.grade}
-              </div>
-            </div>
+          <div className="flex items-end gap-6 mt-6 flex-wrap">
+            <MarkDisplay awarded={res.awarded} available={res.max} size="hero" />
+            <GradeBadge grade={res.grade} size="hero" basis="predicted" />
           </div>
 
           <div className="mt-[30px] border-t border-border pt-[22px]">
-            <div className="flex items-baseline gap-2.5">
-              <div className="text-[11px] tracking-[0.09em] uppercase text-t3">
-                Against the {res.boundaryYear} boundaries
-              </div>
+            <div className="flex items-baseline gap-2.5 mb-3 flex-wrap">
+              <Eyebrow>Against the {res.boundaryYear} boundaries</Eyebrow>
               <div className="flex-1" />
-              <div className="font-mono text-[11.5px] text-t2">
-                {res.railFoot}
-              </div>
+              {res.railFoot ? (
+                <div className="font-mono text-xs text-t2">{res.railFoot}</div>
+              ) : null}
             </div>
-            <BoundaryRail pct={res.railLeft} />
+            <BoundaryBar score={res.awarded} maxScore={res.max} boundaries={NO_BOUNDARIES} />
             {res.railNote ? (
-              <div className="text-[13px] text-t2 leading-[1.5] text-pretty">
+              <div className="text-body-md text-t2 leading-[1.5] mt-2 text-pretty">
                 {res.railNote}
               </div>
             ) : null}
@@ -120,11 +150,11 @@ function ResultHeader({ res }: { res: Result }) {
         </div>
 
         <div className="border-l border-border bg-surface-2 px-[22px] py-6 flex flex-col gap-4">
-          <div className="text-[12.5px] font-semibold">
+          <div className="text-sm font-semibold">
             Integrity &amp; provenance
           </div>
           {res.integrity.length === 0 ? (
-            <div className="text-[11.5px] text-t2 leading-[1.4]">
+            <div className="text-xs text-t2 leading-[1.4]">
               No integrity checks recorded for this paper.
             </div>
           ) : (
@@ -132,8 +162,8 @@ function ResultHeader({ res }: { res: Result }) {
               <div key={i.label} className="flex gap-2.5 items-start">
                 <IntegrityMark row={i} />
                 <div>
-                  <div className="text-[12.5px] leading-[1.3]">{i.label}</div>
-                  <div className="text-[11.5px] text-t2 mt-0.5 leading-[1.35]">
+                  <div className="text-xs leading-[1.3]">{i.label}</div>
+                  <div className="text-xs text-t2 mt-0.5 leading-[1.35]">
                     {i.detail}
                   </div>
                 </div>
@@ -151,84 +181,76 @@ function ResultHeader({ res }: { res: Result }) {
   )
 }
 
-function QuestionCard({ q }: { q: QuestionResult }) {
-  return (
-    <div className="bg-surface border border-border rounded-lg px-5 py-[18px]">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="font-mono text-[13px] font-medium">{q.questionId}</div>
-        {q.topic ? <div className="text-[12.5px] text-t2">{q.topic}</div> : null}
-        <div className="flex-1" />
-        <div className="text-[10.5px] tracking-[0.06em] uppercase text-t2 border border-border rounded-[20px] px-[9px] py-0.5">
-          {q.markerSource}
-        </div>
-        {q.confidence != null ? (
-          <div className="font-mono text-[11.5px] text-t2">
-            conf {q.confidence.toFixed(2)}
-          </div>
-        ) : null}
-        <div className="font-serif text-[23px] leading-none">
-          {q.awardedMarks}
-          <span className="text-[14px] text-t2">/{q.maxMarks}</span>
-        </div>
-      </div>
-      {q.feedback ? (
-        <div className="mt-[14px] px-[14px] py-3 rounded-[10px] text-[12.5px] leading-[1.5] text-pretty bg-surface-2 text-t2">
-          {q.feedback}
-        </div>
-      ) : null}
-      {q.reviewReason ? (
-        <div className="mt-[10px] text-[12px] text-warn leading-[1.4]">
-          Needs review: {q.reviewReason}
-        </div>
-      ) : null}
-      {q.plagiarismFlagged || q.aiDetectionFlagged ? (
-        <div className="mt-[10px] flex gap-[9px]">
-          {q.plagiarismFlagged ? (
-            <span className="text-[11px] border border-border rounded-[20px] px-[9px] py-0.5 text-accent">
-              Plagiarism flagged
-            </span>
-          ) : null}
-          {q.aiDetectionFlagged ? (
-            <span className="text-[11px] border border-border rounded-[20px] px-[9px] py-0.5 text-accent">
-              AI-detection flagged
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
+/**
+ * S-16's full question list (C-6 `QuestionRow` per row), expandable in place
+ * for the marker-source/feedback/review-reason detail S-17 calls for — the
+ * app has no separate question-detail route, so the expand affordance is
+ * where that content actually lives.
+ *
+ * Deliberately drops the old per-question "Plagiarism flagged" / "AI-detection
+ * flagged" pills that used to render here: QUALITY-BAR.md is explicit that
+ * integrity flags are teacher-only and must never read as an accusation on a
+ * student-facing screen. `plagiarismFlagged`/`aiDetectionFlagged` stay on the
+ * DTO (no data-flow change) but are no longer rendered to the student. Noted
+ * in the P2.5.3 report as a deliberate deviation.
+ */
 function QuestionList({ questions }: { questions: QuestionResult[] }) {
   if (questions.length === 0) {
-    return (
-      <Card className="p-5">
-        <div className="text-[13px] text-t2 leading-[1.5]">
-          No per-question detail was returned for this paper.
-        </div>
-      </Card>
-    )
+    return <EmptyState {...NO_QUESTION_DETAIL} />
   }
   return (
-    <div className="flex flex-col gap-3">
+    <Card className="px-3">
       {questions.map((q) => (
-        <QuestionCard key={q.questionId} q={q} />
+        <QuestionRow
+          key={q.questionId}
+          number={q.questionId}
+          awarded={q.awardedMarks}
+          available={q.maxMarks}
+          state={markState(q)}
+          confidence={confidenceTier(q)}
+          topic={q.topic}
+        >
+          <div className="flex flex-col gap-2.5">
+            <Chip tone="neutral" className="w-fit">
+              {q.markerSource}
+            </Chip>
+            {q.feedback ? (
+              <div className="rounded-[10px] bg-surface-2 px-[14px] py-3 text-body-md text-t2 text-pretty">
+                {q.feedback}
+              </div>
+            ) : null}
+            {q.reviewReason ? (
+              <div className="text-body-md text-warn leading-[1.4]">
+                Needs review: {q.reviewReason}
+              </div>
+            ) : null}
+          </div>
+        </QuestionRow>
       ))}
-    </div>
+    </Card>
   )
 }
 
 export function PaperResult() {
   const { paperId } = useParams<{ paperId: string }>()
   const location = useLocation()
+  const navigate = useNavigate()
   const live = isLiveResult(location.state) ? location.state : null
 
-  const { data, isPending, isError, error } = useResult(live ? "" : (paperId ?? ""))
+  const { data, isPending, isError, error, refetch } = useResult(live ? "" : (paperId ?? ""))
 
   if (live) {
+    const summary = confidenceSummary(live.questions)
     return (
       <div className="lm-screen flex flex-col gap-[22px]">
         <ResultHeader res={live} />
+        {live.questions.length > 0 ? (
+          <ConfidenceIndicatorSummary
+            confident={summary.confident}
+            uncertain={summary.uncertain}
+            needsReview={summary.needsReview}
+          />
+        ) : null}
         <QuestionList questions={live.questions} />
       </div>
     )
@@ -237,7 +259,7 @@ export function PaperResult() {
   if (isPending) {
     return (
       <div className="lm-screen flex flex-col gap-6">
-        <div className="text-[13.5px] text-t2">Loading result…</div>
+        <div className="text-sm text-t2">Loading result…</div>
       </div>
     )
   }
@@ -246,17 +268,22 @@ export function PaperResult() {
     if (error instanceof ApiError && error.status === 404) {
       return (
         <div className="lm-screen flex flex-col gap-6">
-          <div className="text-[13.5px] text-t2">
-            No paper recorded at {paperId}.
-          </div>
+          <EmptyState
+            heading="No paper recorded at this address"
+            body={`We don't have a result at ${paperId}.`}
+            action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
+            secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
+          />
         </div>
       )
     }
     return (
       <div className="lm-screen flex flex-col gap-6">
-        <div className="text-[13.5px] text-accent">
-          Couldn't load this result: {error.message}
-        </div>
+        <ErrorState
+          heading="Couldn't load this result"
+          body={error.message}
+          action={{ label: "Try again", onClick: () => refetch() }}
+        />
       </div>
     )
   }
@@ -264,11 +291,7 @@ export function PaperResult() {
   return (
     <div className="lm-screen flex flex-col gap-[22px]">
       <ResultHeader res={data} />
-      <Card className="p-5">
-        <div className="text-[13px] text-t2 leading-[1.5]">
-          Per-question detail is only available right after correcting a paper.
-        </div>
-      </Card>
+      <EmptyState {...NO_QUESTION_DETAIL} />
     </div>
   )
 }

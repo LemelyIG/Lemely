@@ -1,7 +1,16 @@
 import { Link } from "react-router-dom"
 import { Card } from "@/components/ui/card"
-import { directionsIntro } from "../data"
-import { BoundaryRail } from "../components/BoundaryRail"
+import { BoundaryBar } from "@/components/ui/boundary-bar"
+import { directionsIntro, railTicks } from "../data"
+
+/*
+ * Direction B's boundary example uses `BoundaryBar` (C-3) over the old
+ * `BoundaryRail` (deleted — hardcoded literal-color gradient, superseded per
+ * docs/COMPONENT_CATALOGUE.md). `railTicks`' fixed grade/percentage pairs are
+ * illustrative only here (this screen is a static design gallery, not live
+ * data) so they're reused as-is for `boundaries`, scored out of 100.
+ */
+const directionsBoundaries = railTicks.map((t) => ({ grade: t.g, minMark: t.left }))
 
 /*
  * Directions (isDirections). A design gallery showing the three result-header
@@ -92,7 +101,7 @@ export function Directions() {
               2020 boundaries - 95%
             </div>
           </div>
-          <BoundaryRail pct={95} />
+          <BoundaryBar score={95} maxScore={100} boundaries={directionsBoundaries} />
           <div className="text-[13px] text-t2 mt-2.5 text-pretty">
             Fifteen marks of headroom above A. Even a bad day keeps you in the
             band.
@@ -114,7 +123,7 @@ export function Directions() {
               0625/12 - 38/40 - 95%
             </div>
             <div className="flex-1" />
-            <button className="border border-[oklch(0.42_0.02_35)] bg-transparent text-inherit font-sans text-[12.5px] px-[15px] py-[9px] rounded-lg cursor-pointer">
+            <button className="border border-bg/15 bg-transparent text-inherit font-sans text-[12.5px] px-[15px] py-[9px] rounded-lg cursor-pointer">
               Show the marking detail
             </button>
           </div>
