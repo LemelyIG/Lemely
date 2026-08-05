@@ -9,14 +9,16 @@
       "Grep(*)",
       "WebSearch",
       "WebFetch(*)",
-      "Task(*)"
+      "Task(*)",
+      "Skill(*)"
     ],
     "deny": [
       "Read(.env)",
       "Read(**/.env)",
       "Bash(git push --force*)",
       "Bash(rm -rf /*)",
-      "Bash(sudo *)"
+      "Bash(sudo *)",
+      "Bash(*impeccable live*)"
     ],
     "additionalDirectories": []
   }

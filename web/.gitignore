@@ -21,6 +21,12 @@ dist-ssr
 /blob-report/
 /playwright/.cache/
 
+# Downloaded browser binaries (Playwright/Puppeteer install --with-deps)
+/chrome/
+/chrome-headless-shell/
+/chromium/
+/firefox/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -1,242 +1,198 @@
-# Design
+---
+name: Academic Warmth
+colors:
+  surface: '#fff8f6'
+  surface-dim: '#e8d6d2'
+  surface-bright: '#fff8f6'
+  surface-container-lowest: '#ffffff'
+  surface-container-low: '#fff0ed'
+  surface-container: '#fceae6'
+  surface-container-high: '#f6e4e0'
+  surface-container-highest: '#f1dfdb'
+  on-surface: '#231917'
+  on-surface-variant: '#55423f'
+  inverse-surface: '#392e2c'
+  inverse-on-surface: '#ffede9'
+  outline: '#88726e'
+  outline-variant: '#dbc1bb'
+  surface-tint: '#994534'
+  primary: '#964232'
+  on-primary: '#ffffff'
+  primary-container: '#b55a48'
+  on-primary-container: '#fffbff'
+  inverse-primary: '#ffb4a5'
+  secondary: '#80534a'
+  on-secondary: '#ffffff'
+  secondary-container: '#ffc4b8'
+  on-secondary-container: '#7b4e45'
+  tertiary: '#006857'
+  on-tertiary: '#ffffff'
+  tertiary-container: '#00846f'
+  on-tertiary-container: '#f4fffa'
+  error: '#ba1a1a'
+  on-error: '#ffffff'
+  error-container: '#ffdad6'
+  on-error-container: '#93000a'
+  primary-fixed: '#ffdad3'
+  primary-fixed-dim: '#ffb4a5'
+  on-primary-fixed: '#3f0400'
+  on-primary-fixed-variant: '#7b2e1f'
+  secondary-fixed: '#ffdad3'
+  secondary-fixed-dim: '#f3b9ad'
+  on-secondary-fixed: '#32120c'
+  on-secondary-fixed-variant: '#653c33'
+  tertiary-fixed: '#8cf6db'
+  tertiary-fixed-dim: '#6fd9bf'
+  on-tertiary-fixed: '#00201a'
+  on-tertiary-fixed-variant: '#005143'
+  background: '#fff8f6'
+  on-background: '#231917'
+  surface-variant: '#f1dfdb'
+typography:
+  display-hero:
+    fontFamily: Instrument Serif
+    fontSize: 62px
+    fontWeight: '400'
+    lineHeight: '1.04'
+    letterSpacing: -0.01em
+  display-lg:
+    fontFamily: Instrument Serif
+    fontSize: 40px
+    fontWeight: '400'
+    lineHeight: '1.1'
+  display-md:
+    fontFamily: Instrument Serif
+    fontSize: 30px
+    fontWeight: '400'
+    lineHeight: '1.1'
+  body-lg:
+    fontFamily: Work Sans
+    fontSize: 15px
+    fontWeight: '400'
+    lineHeight: '1.55'
+  body-md:
+    fontFamily: Work Sans
+    fontSize: 14px
+    fontWeight: '400'
+    lineHeight: '1.55'
+  label-sm:
+    fontFamily: Work Sans
+    fontSize: 11px
+    fontWeight: '600'
+    lineHeight: '1'
+    letterSpacing: 0.1em
+  metadata:
+    fontFamily: JetBrains Mono
+    fontSize: 11px
+    fontWeight: '500'
+    lineHeight: '1'
+    letterSpacing: 0.05em
+  button-text:
+    fontFamily: Work Sans
+    fontSize: 13px
+    fontWeight: '500'
+    lineHeight: '1'
+rounded:
+  sm: 0.25rem
+  DEFAULT: 0.5rem
+  md: 0.75rem
+  lg: 1rem
+  xl: 1.5rem
+  full: 9999px
+spacing:
+  container-padding-desktop: 34px
+  container-padding-mobile: 22px
+  gutter-grid: 24px
+  gap-component: 16px
+  gap-tight: 8px
+  section-margin: 64px
+---
 
-## Theme
+## Brand & Style
 
-Light mode. Warm off-white base, muted terracotta/coral as the single accent. Feels like
-a well-lit study desk, not a clinical dashboard or a startup SaaS product.
+The design system evokes the "Modern Scholar" persona—a bridge between traditional academic rigor and high-efficiency technical precision. The UI should feel like a "warm study desk," moving away from the sterile, blue-tinted aesthetics of corporate SaaS and toward an environment of focus, sunlight, and paper.
 
-Scene: a teacher correcting papers on a Sunday afternoon, or a student checking their
-mock exam results on a laptop. Ambient: daylight or good artificial light.
+The style is **Corporate Modern with a Tactile twist**. It relies on high-quality typography and a restrained palette to establish authority, while using "physical" interaction metaphors—such as 1px vertical button translations—to provide sensory feedback. The dual-portal architecture maintains a shared DNA while shifting the ambient "temperature" based on the user's role: terracotta for students (energetic, grounded) and teal/earthy brown for teachers (authoritative, archival).
 
-Color strategy: **Restrained** — tinted neutrals carry the base; one saturated accent
-(terracotta coral) handles all interactive elements. The accent appears on ≤10% of any
-given surface.
+Key Principles:
+- **Editorial Hierarchy:** Typography does the heavy lifting for layout.
+- **Intentional Density:** Information-rich dashboards remain legible through strict typographic scales.
+- **Functional Serenity:** Generous whitespace and off-white bases reduce cognitive load during complex tasks like exam marking.
 
 ## Colors
 
-All values in OKLCH. Never use raw `#000` or `#fff`.
+The system utilizes a **semantic token architecture** that adapts based on the `[data-portal]` attribute. While the logic remains consistent, the color values shift to define the user's environment.
 
-| Role | OKLCH | Usage |
-|---|---|---|
-| `accent` | `oklch(0.62 0.13 35)` | Primary buttons, active tabs, focus rings, links |
-| `accent-hover` | `oklch(0.57 0.13 35)` | Button hover / active state |
-| `accent-subtle` | `oklch(0.94 0.04 35)` | Chip backgrounds, soft highlights |
-| `bg` | `oklch(0.97 0.007 40)` | Page background |
-| `surface` | `oklch(0.995 0.003 40)` | Card / panel backgrounds |
-| `border` | `oklch(0.87 0.006 40)` | Dividers, input borders |
-| `text-primary` | `oklch(0.20 0.02 35)` | Body text, headings |
-| `text-secondary` | `oklch(0.48 0.018 35)` | Labels, captions, metadata |
-| `text-placeholder` | `oklch(0.65 0.01 35)` | Input placeholders, empty states |
-| `success` | `oklch(0.52 0.12 150)` | Pass states, "✓ Parsed" badges |
-| `warning` | `oklch(0.62 0.11 70)` | Needs attention, low confidence |
-| `error` | `oklch(0.52 0.14 20)` | Validation errors (NOT for low grades) |
+### Portal Scoping
+- **Student Portal:** Uses a terracotta accent (`primary: #b85c4a`) with a warm neutral base.
+- **Teacher Portal:** Uses a teal accent (`tertiary: #008b75`) paired with a deeper archival brown (`secondary: #9c6b61`) for high-contrast actions.
 
-### Gradio theme implementation
-
-```python
-import gradio as gr
-
-theme = gr.themes.Soft(
-    primary_hue=gr.themes.colors.orange,
-    neutral_hue=gr.themes.colors.stone,
-    font=gr.themes.GoogleFont("Inter"),
-).set(
-    # Backgrounds
-    body_background_fill="oklch(0.97 0.007 40)",
-    background_fill_primary="oklch(0.995 0.003 40)",
-    background_fill_secondary="oklch(0.96 0.006 40)",
-    # Borders
-    border_color_primary="oklch(0.87 0.006 40)",
-    # Text
-    body_text_color="oklch(0.20 0.02 35)",
-    body_text_color_subdued="oklch(0.48 0.018 35)",
-    # Buttons — primary
-    button_primary_background_fill="oklch(0.62 0.13 35)",
-    button_primary_background_fill_hover="oklch(0.57 0.13 35)",
-    button_primary_text_color="oklch(0.99 0.003 40)",
-    button_primary_border_color="oklch(0.62 0.13 35)",
-    # Buttons — secondary
-    button_secondary_background_fill="oklch(0.99 0.003 40)",
-    button_secondary_background_fill_hover="oklch(0.94 0.04 35)",
-    button_secondary_border_color="oklch(0.87 0.006 40)",
-    button_secondary_text_color="oklch(0.20 0.02 35)",
-    # Inputs
-    input_background_fill="oklch(0.99 0.003 40)",
-    input_border_color="oklch(0.87 0.006 40)",
-    input_border_color_focus="oklch(0.62 0.13 35)",
-    # Links
-    link_text_color="oklch(0.55 0.13 35)",
-    link_text_color_hover="oklch(0.48 0.13 35)",
-    link_text_color_active="oklch(0.48 0.13 35)",
-    # Block labels
-    block_label_text_color="oklch(0.48 0.018 35)",
-    block_label_background_fill="oklch(0.96 0.006 40)",
-)
-```
-
-### Custom CSS (pass to `gr.Blocks(css=...)`)
-
-```css
-/* Header */
-.lemely-header {
-    padding: 1.5rem 0 1rem;
-    border-bottom: 1px solid oklch(0.87 0.006 40);
-    margin-bottom: 1rem;
-}
-.lemely-header h1 {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: oklch(0.20 0.02 35);
-    margin: 0 0 0.25rem;
-    letter-spacing: -0.02em;
-}
-.lemely-header p {
-    font-size: 0.875rem;
-    color: oklch(0.48 0.018 35);
-    margin: 0;
-}
-
-/* Status badges */
-.badge-parsed {
-    display: inline-block;
-    background: oklch(0.90 0.07 150);
-    color: oklch(0.32 0.10 150);
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.15em 0.5em;
-    border-radius: 4px;
-}
-.badge-unparsed {
-    display: inline-block;
-    background: oklch(0.93 0.04 70);
-    color: oklch(0.40 0.10 70);
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.15em 0.5em;
-    border-radius: 4px;
-}
-
-/* Marker source badges in question breakdown */
-.marker-deterministic { color: oklch(0.42 0.11 230); font-weight: 600; }
-.marker-ai { color: oklch(0.55 0.13 35); font-weight: 600; }
-.marker-missing { color: oklch(0.55 0.10 20); font-weight: 600; }
-
-/* Encourage positive framing on grade display */
-.grade-display {
-    font-size: 2rem;
-    font-weight: 700;
-    color: oklch(0.62 0.13 35);
-    line-height: 1;
-}
-
-/* Token counter — subtle, right-aligned */
-.token-counter {
-    font-size: 0.75rem;
-    color: oklch(0.65 0.01 35);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-}
-
-/* Reduce visual weight of code/log blocks */
-.gradio-container .gr-code {
-    background: oklch(0.96 0.006 40) !important;
-    border: 1px solid oklch(0.87 0.006 40) !important;
-    font-size: 0.8125rem !important;
-}
-
-/* Tab active indicator uses accent */
-.tab-nav button.selected {
-    border-bottom-color: oklch(0.62 0.13 35) !important;
-    color: oklch(0.62 0.13 35) !important;
-    font-weight: 600 !important;
-}
-```
+### Semantic Roles
+- **Surface & Background:** Layers are built using `surface` (pure containers) and `surface-container` (wells/sidebars) over the `background` base.
+- **Ink:** A deep neutral-brown (`#362f2e`) is used for primary teacher CTAs and high-emphasis elements, providing a softer, more integrated dark than pure black.
+- **Status:** Status colors (OK, Warn, Err) are implemented in pairs (text + subtle background tint) to ensure accessible contrast without overwhelming the "desk" aesthetic.
 
 ## Typography
 
-Font: **Inter** (via Google Fonts, Gradio's `gr.themes.GoogleFont("Inter")`)
+Typography is the core of the design system's identity, mixing three distinct font families to create a scholarly rhythm.
 
-| Level | Size | Weight | Usage |
-|---|---|---|---|
-| App title | 1.5rem | 700 | `.lemely-header h1` |
-| Tab heading | 1rem | 600 | Inside tab content |
-| Section label | 0.875rem | 600 | Component labels |
-| Body | 0.9375rem | 400 | Descriptions, paragraph text |
-| Caption/meta | 0.8125rem | 400 | Token counters, timestamps, captions |
-| Code/log | 0.8125rem | 400 | Event logs, JSON dumps |
+- **Instrument Serif (Display):** Used for headlines and high-impact metrics. It should always be set with low line-height to maintain a "journal" look.
+- **Work Sans (Interface):** The workhorse for all body text, buttons, and navigation. It provides a clean, neutral balance to the serif headings.
+- **JetBrains Mono (Data):** Reserved for metadata, exam codes, and technical logs. It conveys precision and transparency in the AI's marking process.
 
-Line lengths: cap markdown/body at 70ch. Dataframes and code blocks can be wider.
+**Sizing Precision:**
+Button text utilizes high-precision fractional sizing to optimize information density. Labels and Eyebrows should use `0.1em` tracking to differentiate themselves from body copy.
 
-## Components and Patterns
+## Layout & Spacing
 
-### Primary actions
-Use `variant="primary"` only for the first action the user should take in a workflow.
-Subsequent actions in the same flow are `variant="secondary"`. Never more than one
-primary button visible at the same time in a given workflow section.
+The layout follows a **Fixed Grid** philosophy for primary content containers, centered within a fluid viewport.
 
-Workflow sequence for "Correct a Paper": Extract (primary) → Grade (secondary until
-answers are loaded, then becomes the natural next step — leave as secondary, let
-the user see the extracted answers first).
+- **Grid Model:** A 12-column system is used for dashboards, typically with 24px gutters. Sidebars are fixed at 240px–280px.
+- **Density:** Components use a tight 4px/8px rhythm. Cards use 20px internal padding to balance density with breathing room.
+- **Responsiveness:**
+  - **Desktop (1180px+):** Full multi-column dashboard.
+  - **Tablet (820px - 1180px):** Sidebar remains visible; grid columns collapse to single or double stacks.
+  - **Mobile (<820px):** Sidebar is hidden behind a drawer; horizontal padding reduces to 16px.
 
-### Data display priority
-1. Key metric in text/markdown (grade, total marks, percentage)
-2. Table for structured data (per-question breakdown, history records)
-3. Accordion for raw JSON — never default-expanded
+## Elevation & Depth
 
-### Empty states
-Every tab that can be empty should have an explicit, encouraging empty state:
-- Library with no parsed schemes: "No mark schemes parsed yet. Upload PDFs to Sources/ and click Parse."
-- Past Results with no history: "No papers recorded yet. Use 'correct-paper --record' or the Correct a Paper tab with Save."
-- Quiz with no weaknesses: "Grade a paper first to identify weak areas, then come back here for targeted practice."
+The design system adopts a **"Flat-Plus"** philosophy. Depth is primarily conveyed through tonal layering and borders rather than complex shadows.
 
-### Event logs (Live Activity)
-Keep the `gr.Code` event log component in tabs that do AI work (Tab 2, Tab 3).
-For non-AI tabs (Library parse, Past Results, Quiz), use a simpler `gr.Textbox` status.
-Label: "Activity" not "Event log".
+- **Tonal Layers:** `surface` containers sit on top of `background`. Sidebars use `surface-container` to create a slight "well" effect.
+- **Borders:** 1px solid borders in the `border` color provide the primary containment strategy. Card boundaries are clear and structural.
+- **Subtle Glassmorphism:** Sticky headers use a 10px backdrop blur with 80% opacity to maintain context while scrolling.
+- **Tactile Interaction:** Buttons do not use shadows on hover; instead, they shift background color and use a `1px` vertical translation (`active:translate-y-px`) to simulate physical depression.
 
-### Error handling
-Never show raw exception tracebacks. Catch and show:
-- For network/AI errors: "Couldn't reach Gemini. Check your API key and connection."
-- For parse errors: "This file couldn't be parsed. Try with Gemini parsing enabled."
-- For empty inputs: Surface as disabled buttons (don't let the user click into failure).
+## Shapes
 
-## Layout
+The shape language is "Soft-Square"—rounded enough to be approachable but sharp enough to feel academic.
 
-### Tab structure
-```
-Lemely [header]
-├── Library         — browse + parse mark schemes
-├── Correct a Paper — main workflow (scan → extract → grade → save)
-├── Subject Result  — aggregate papers into final grade
-├── Past Results    — student history browser
-├── Quiz            — weakness-driven practice questions
-└── Settings        — read-only config display
-```
+- **Primary Cards:** Use a `1rem` (16px) radius for a modern, high-end feel.
+- **Buttons & Inputs:** Use a consistent `0.5rem` (8px) radius.
+- **Status Chips & Meters:** Use `rounded-full` (pill shape) to distinguish them as non-interactive indicators or distinct status markers.
+- **Avatars/Dots:** Perfect circles are used for personhood and "Live" status indicators.
 
-### Two-column layout (Tabs 2 & 3)
-- Main column: `scale=3` — primary workflow
-- Activity column: `scale=2` — live log + token counter
+## Components
 
-Single-column for all other tabs (Library, Past Results, Quiz, Settings) — they don't
-need a live activity sidebar.
+### Buttons
+- **Primary:** High-contrast (`tertiary` for Teachers, `primary` for Students). Solid fill, no border.
+- **Secondary:** Surface fill with a 1px border.
+- **Ghost:** No fill or border; used for secondary actions like "Cancel" or "Edit transcript."
+- **Interaction:** All buttons translate 1px down on click.
 
-### Spacing rhythm
-- Between major sections within a tab: 1.5rem gap (use `gr.HTML("<div style='height:1.5rem'></div>")` if needed or rely on Gradio's default row gaps)
-- Don't add wrappers around everything — let Gradio's natural layout breathe
+### Cards
+- Standard containers with `1rem` radius and `1px` border.
+- Headers inside cards should use `metadata` styling for context (e.g., "PAGE 4") and `display-md` for the title.
 
-## Content / Copy
+### Status Chips
+- Pill-shaped with tight internal padding (`3px 9px`).
+- Always paired: a subtle background tint and a high-contrast text label of the same hue (Success, Warning, Error).
 
-Principles from PRODUCT.md applied to labels:
-- Buttons: imperative verbs ("Extract answers", "Grade", "Load history", "Generate quiz")
-- Labels: lower-case, specific ("mark scheme", "scanned paper", "student ID", "weekly hours")
-- Empty states: action-oriented, never "no data found"
-- Avoid: "Please", "N/A", "undefined", raw error class names
+### Meters (Progress Bars)
+- Height: `6px` (`h-1.5`).
+- Container uses `surface-container` (muted track); fill uses `primary` or status colors.
+- Fully rounded ends.
 
-Grade display framing: show grade + percentage + a brief forward-looking nudge
-("A — 87%. Strong overall. Review mechanics for full marks next time.")
-Never just a bare letter grade without context.
-
-Marking source legend (always include when showing per-question results):
-```
-🔢 deterministic  🤖 AI-assisted  ❓ not marked
-```
+### Input Fields
+- Surface-colored fill with a 1px border that shifts to `primary` on focus.
+- 13px text size to match button labels.

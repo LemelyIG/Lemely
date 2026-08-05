@@ -1,7 +1,7 @@
 # BUILD STATE — single source of truth
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
-current_phase: 3
+current_phase: 2.5
 last_updated: 2026-08-05T13:05:00Z
 gemini_spend_usd: 0.0580
 
