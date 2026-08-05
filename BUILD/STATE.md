@@ -1008,8 +1008,68 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           inline in this checklist in enough detail to carry into P2.10's DELIVERY.md; a
           separate early stub would only duplicate it. **P2.8 (Teacher surface wiring) is
           now COMPLETE.**)
-- [ ] todo — P2.9 PWA: manifest + service worker + installable + offline shell; camera
+- [~] doing — P2.9 PWA: manifest + service worker + installable + offline shell; camera
        capture UX; Lighthouse PWA checks pass. Gradio stays internal debug only.
+       PLAN (recorded before dispatch so a killed session can resume; orchestrator confirmed
+       before writing this: zero PWA config exists today — no `vite-plugin-pwa`, no
+       `manifest.json`/`.webmanifest`, no service worker, only `public/favicon.svg` (the real
+       brand mark, dominant colour `#863bff`); `web/src/index.css` has the real design-token
+       colours to source theme/background colour from — no fabricated branding). Environment
+       constraint confirmed this session: no Chromium/Chrome binary is present and
+       `npx puppeteer browsers install chrome` timed out after 90s (network-slow or
+       egress-limited for large binary downloads) — a live Lighthouse CLI run is NOT possible
+       in this sandbox. Do not silently claim "Lighthouse PWA checks pass" — verify the
+       underlying installability criteria manually (valid manifest fields, registered SW with
+       a fetch handler, offline navigation fallback, real icons) and record this as a carried
+       environment limitation, same class as the Supabase-stack-down note.
+       Two sequential sub-steps (each: dispatch to `implementer`, orchestrator-verify, commit):
+       1. [ ] todo — PWA foundation: add `vite-plugin-pwa` (devDependency); configure in
+          `vite.config.ts` with `registerType: 'autoUpdate'`, a real `manifest` block (name
+          "Lemely", short_name, description from MISSION §1's value prop, `start_url: "/"`,
+          `display: "standalone"`, `theme_color`/`background_color` computed via a real
+          oklch->hex conversion from `index.css`'s `--ink`/`--bg` tokens — document the exact
+          converted hex + method used, do not eyeball), and `workbox` config: precache built
+          assets via `globPatterns`, `navigateFallback: '/index.html'` with
+          `navigateFallbackDenylist: [/^\/api/]` so the offline app-shell fallback never
+          intercepts real API calls, and NO runtime caching of `/api/*` (student/teacher data
+          is live — caching it would surface stale marks/grades, and POST/SSE requests aren't
+          cacheable anyway). Generate real PNG icons (192x192, 512x512, and a maskable 512x512
+          with safe-zone padding) from the existing `public/favicon.svg` — use a real
+          rasterizer (`sharp` bundles its own SVG rasterization, or `@vite-pwa/assets-generator`
+          which wraps it) so the icons are genuinely derived from the real logo, not a
+          placeholder square. Confirm `npm install` succeeds (network egress needed — same as
+          every prior `npm install` this build). Verify: `npm run build` produces a
+          `dist/manifest.webmanifest` + a generated service-worker file; manually validate the
+          manifest JSON (required fields present, icon paths resolve, sizes correct);
+          `npm run typecheck`/`npm run lint` clean. Document the Lighthouse-unavailable
+          limitation from above instead of claiming a checkmark that wasn't actually run.
+       2. [ ] todo — Camera capture UX: a `getUserMedia`-based multi-shot capture component
+          (new, e.g. `web/src/components/CameraCapture.tsx`) — live camera preview, "Capture
+          page" button per shot (supports multiple pages), a review strip of captured shots
+          with per-shot delete, "Add another page" vs "Done". On completion, assemble the
+          captured images into a single multi-page PDF client-side (use `pdf-lib`, a pure-JS
+          no-native-deps library that works in-browser — add as a real dependency, do not
+          hand-roll PDF byte assembly) and hand the resulting `File`/`Blob` to the EXACT SAME
+          `scanFile` state `web/src/portals/student/screens/CorrectPaper.tsx` already uses for
+          its file-input path (`uploadScan()` already accepts any PDF/image File — no backend
+          change needed). Wire this as an alternative to the existing file `<input>` on
+          `CorrectPaper.tsx` (e.g. a tab/toggle "Upload a file" vs "Scan with camera"), not a
+          replacement — the file-input path stays for desktop/no-camera use. Scope: student
+          `CorrectPaper.tsx` only (the MISSION-flagship "photograph an attempted paper" flow);
+          teacher `Grading.tsx`'s upload (already file-input, P2.8 step 3) is OUT of scope for
+          this pass — document that as a deliberate scope cut, not an oversight, since teacher
+          batch uploads are more realistically scanner-sourced PDFs than phone photos and
+          MISSION's flagship photograph flow is the student loop. Honesty guardrail: if the
+          camera/`getUserMedia` permission is denied or no camera exists, show a real error
+          state, not a silent failure. CANNOT be live-tested end-to-end in this headless
+          sandbox (no camera device, no browser) — verify via `npm run typecheck`/
+          `npm run lint`/`npm run build` clean plus a careful code read of the capture/assembly
+          logic; document this as a carried verification limitation for a session with a real
+          device/browser to confirm, same as Lighthouse above.
+       3. [ ] todo — Full gate re-run (web + backend, since PWA is frontend-only) + STATE.md
+          update + `reports/phase-2/` note documenting the two environment limitations above
+          (Lighthouse-unrunnable, camera-untestable) so they carry into P2.10's DELIVERY.md
+          honestly, not silently.
 - [ ] todo — P2.10 Acceptance: Playwright E2E — seeded student uploads a fixture scan and
        sees correct marks/grade/weaknesses on the dashboard; accuracy thresholds met;
        screenshots in reports/phase-2/screens/. §6 gates green; reports/phase-2/REPORT.md;
