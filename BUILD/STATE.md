@@ -870,20 +870,40 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
          stats are paper-count; mixing units would misrepresent) — document as deferred to
          Phase 3 alongside the override flow.
        Sub-steps:
-       1. [ ] todo — Frontend API foundation: NEW `web/src/lib/teacherTypes.ts` (TS
-          interfaces mirroring `lemely/web/schemas_teacher.py` DTOs 1:1 camelCase — already
-          camelCase per `ApiModel`, so field names match exactly) + NEW
-          `web/src/lib/hooks/useTeacherApi.ts` (react-query `useQuery`: `useTeacherOverview()`,
-          `usePapers()` (GET /api/papers), `usePaperDetail(id)` (GET /api/papers/{id}, only
-          enabled when id present, 409-tolerant), `useGradingQueue()`, `useSchemes()`; plain
-          async fns for upload+SSE: `uploadPaper(formData)` → UploadResponseDTO,
-          `extractPaper(paperId)`/`gradePaper(paperId)` async generators wrapping
-          `streamActivity` (reuse from `lib/api.ts`, same pattern as student's
-          `runCorrection`); `uploadScheme(formData)` mutation). No screen/data.ts changes.
-       2. [ ] todo — Overview + MarkSchemes screens (the two straightforward DTO swaps, no
-          SSE/upload flow). Apply the honest cuts above. Update `data.ts` (remove
-          `overviewStats`/`atRisk`/`retention` and `schemeStats`/`schemes` exports + their
-          types once both screens no longer import them — grep first).
+       1. [x] done — Frontend API foundation: NEW `web/src/lib/teacherTypes.ts` (TS
+          interfaces mirroring `lemely/web/schemas_teacher.py` DTOs 1:1 camelCase) + NEW
+          `web/src/lib/hooks/useTeacherApi.ts` (useTeacherOverview/usePapers/
+          usePaperDetail(id)/useGradingQueue/useSchemes queries; uploadPaper/extractPaper/
+          gradePaper/useUploadScheme for the upload+SSE flow). No screen/data.ts changes.
+          (commit 0def573. `usePaperDetail` documents the 409-not-404 behavior of
+          `GET /papers/{id}` before grading. `TeacherPipelineFrame` documents both dual-shape
+          quirks found by tracing the real call graph: `marking_progress` differs between the
+          live `correct_paper` loop (question_id/marker_source/confidence/awarded/max_marks,
+          no paper_id) and the cached-report replay branch in `grade_paper_endpoint`
+          (paper_id/question_id/marker_source/confidence, no awarded/max_marks); `warning`
+          differs between the endpoints' own fallback branches (paper_id+message) and the
+          mark-scheme-validation warning inside `correct_paper` (message only). Neither
+          `/extract` nor `/grade` publishes a terminal "complete" frame — stream just ends at
+          `[DONE]` — unlike student's `/correct`. Orchestrator-verified independently: re-ran
+          typecheck/lint/build myself (clean, same pre-existing warning set); confirmed via
+          `git status`/`git diff --stat` only the 2 new files were touched.)
+       2. [x] done — Overview + MarkSchemes screens wired. Overview: dropped the "Lesson
+          retention" card + "hours saved" ink box entirely (`retention` is hardcoded `[]`
+          server-side, zero backend source); "Needs you" cards render only the 4 real
+          `AtRiskStudent` fields (name/grade/delta/weakTopic), initials derived client-side;
+          dropped "Message parents"/per-student action buttons (no backend action); greeting
+          paragraph now interpolates real `stats`/`atRisk.length` numbers instead of hardcoded
+          counts. MarkSchemes: stats grid renders whatever `SchemeListDTO.stats` returns (2
+          cards today, "Parsed"/"Failed" — grid no longer assumes 4); header count now
+          `schemes.length` not a fabricated "214 documents"; "Parse 6 pending" dropped (no
+          upload-queue concept); "Upload your own" wired to a real hidden file input →
+          `useUploadScheme()`, invalidates the schemes query on success, inline error on a
+          422 parse failure. `data.ts`: removed `overviewStats`/`AtRiskStudent`/`atRisk`/
+          `RetentionBar`/`retention`/`schemeStats`/`SchemeStatus`/`SchemeRow`/`schemes`
+          (591→482 lines), each grepped for other importers first. Orchestrator-verified
+          independently: re-ran typecheck/lint/build myself (clean, same pre-existing warning
+          set); reviewed both screen diffs directly, confirmed only the 3 intended files
+          changed (`git diff --stat`). Committing on feature/phase-2-core-loop.
        3. [ ] todo — Grading screen: upload dual-file-input → upload→extract→grade chained
           SSE, papers grid + selectable-paper sidebar per the design above. Update `data.ts`
           (remove `detected`/`pipeline`/`autoGrade`/`batchTabs`/`allPapers`/`filterPapers`/

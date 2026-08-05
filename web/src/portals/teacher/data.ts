@@ -56,75 +56,6 @@ export interface StatCard {
   footTone?: "t2" | "ok" | "err"
 }
 
-/* ── Overview ────────────────────────────────────────────────────────────── */
-
-export const overviewStats: StatCard[] = [
-  { k: "Graded overnight", v: "28", unit: "papers", foot: "in 19 minutes", valueTone: "t1", footTone: "t2" },
-  { k: "Need your eyes", v: "12", unit: "answers", foot: "below 0.90 confidence", valueTone: "err", footTone: "err" },
-  { k: "Group mean", v: "71", unit: "%", foot: "+3.2 since May", valueTone: "t1", footTone: "ok" },
-  { k: "At risk", v: "3", unit: "students", foot: "trajectory falling", valueTone: "t1", footTone: "t2" },
-]
-
-export interface AtRiskStudent {
-  initials: string
-  name: string
-  tag: string
-  tagTone: "err" | "warn" | "neutral"
-  delta: string
-  deltaTone: "err" | "warn" | "t2"
-  avatarTone: "err" | "warn" | "neutral"
-  note: string
-  action: string
-}
-
-export const atRisk: AtRiskStudent[] = [
-  {
-    initials: "ZR",
-    name: "Ziad Rafik",
-    tag: "trajectory",
-    tagTone: "err",
-    delta: "-13 pts",
-    deltaTone: "err",
-    avatarTone: "err",
-    note: "Three papers below his own baseline, each losing marks in the final third. Timing, not understanding.",
-    action: "Open his papers",
-  },
-  {
-    initials: "SE",
-    name: "Salma Ezzat",
-    tag: "attendance",
-    tagTone: "warn",
-    delta: "2 missed",
-    deltaTone: "warn",
-    avatarTone: "warn",
-    note: "Missed Tuesday and last Thursday without verifying. Parents were alerted an hour after each session.",
-    action: "View attendance",
-  },
-  {
-    initials: "NA",
-    name: "Nadine Adel",
-    tag: "review queue",
-    tagTone: "neutral",
-    delta: "4 marks",
-    deltaTone: "t2",
-    avatarTone: "neutral",
-    note: "Four extended answers fell below the confidence threshold - handwriting, not content. Two minutes to clear.",
-    action: "Mark them now",
-  },
-]
-
-/** Lesson-retention bars. `spike` colours the two replay peaks amber. */
-export interface RetentionBar {
-  /** 0-100 clamped height percentage. */
-  h: number
-  spike: boolean
-}
-
-export const retention: RetentionBar[] = [
-  100, 99, 98, 97, 96, 94, 92, 91, 96, 118, 112, 96, 90, 88, 124, 110, 92, 86,
-  80, 74, 66, 58,
-].map((v) => ({ h: Math.min(100, v * 0.62), spike: v > 105 }))
-
 /* ── Grading batch ───────────────────────────────────────────────────────── */
 
 export interface DetectedField {
@@ -482,46 +413,6 @@ export const students: StudentRow[] = [
   student("Daniel Park", "C", "49/80", "-5", "Radioactivity"),
   student("Ziad Rafik", "D", "38/80", "-13", "Thermal physics"),
 ]
-
-/* ── Mark schemes ────────────────────────────────────────────────────────── */
-
-export const schemeStats: StatCard[] = [
-  { k: "Parsed", v: "196", unit: "schemes", valueTone: "t1" },
-  { k: "Pending", v: "6", unit: "PDFs", valueTone: "accent" },
-  { k: "Your own", v: "12", unit: "uploaded", valueTone: "t1" },
-  { k: "Failed", v: "0", unit: "", valueTone: "t1" },
-]
-
-export type SchemeStatus = "parsed" | "pending" | "custom"
-
-export interface SchemeRow {
-  doc: string
-  paper: string
-  session: string
-  marks: string
-  questions: string
-  status: SchemeStatus
-}
-
-export const schemes: SchemeRow[] = (
-  [
-    ["0625_s20_ms_31.pdf", "Paper 3 V1", "May/June 2020", "80", "12", "parsed"],
-    ["0625_s20_ms_12.pdf", "Paper 1 V2", "May/June 2020", "40", "40", "parsed"],
-    ["0625_w24_ms_42.pdf", "Paper 4 V2", "Oct/Nov 2024", "80", "11", "parsed"],
-    ["0625_w24_ms_62.pdf", "Paper 6 V2", "Oct/Nov 2024", "60", "9", "parsed"],
-    ["0625_m25_ms_22.pdf", "Paper 2 V2", "Feb/Mar 2025", "40", "40", "pending"],
-    ["sabry_mock_thermal.docx", "Custom", "Your upload", "45", "8", "custom"],
-    ["0620_s24_ms_41.pdf", "Paper 4 V1", "May/June 2024", "80", "10", "parsed"],
-    ["0625_s25_ms_31.pdf", "Paper 3 V1", "May/June 2025", "-", "-", "pending"],
-  ] as const
-).map(([doc, paper, session, marks, questions, status]) => ({
-  doc,
-  paper,
-  session,
-  marks,
-  questions,
-  status: status as SchemeStatus,
-}))
 
 /* ── AI quizzes ──────────────────────────────────────────────────────────── */
 
