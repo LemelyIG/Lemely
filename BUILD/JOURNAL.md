@@ -294,3 +294,29 @@
   CorrectPaper, Onboarding/StudyPlan/Standings), deleting student/data.ts incrementally. Mission
   explicitly suggests a workflow for this fan-out; keep each workflow under ~30 agents and
   checkpoint to disk after each run.
+
+## 2026-08-05 — PHASE 2 COMPLETE
+- Did: resumed on a dirty tree carrying a prior (session-limit-killed) session's uncommitted
+  P2.10 WIP (playwright.config.ts, correct-paper.spec.ts, 2 screenshots) — verified rather than
+  trusted: ran the E2E suite myself (genuinely passes against the live stack), independently
+  confirmed via a direct Postgres query that each run persists a real Attempt+8 QuestionResults+
+  5 ReviewQueueItems matching the UI. Re-ran every §6 gate myself (web typecheck/lint/build;
+  backend ruff/format/mypy/lint-imports; full pytest with live Supabase keys — 609 passed, 0
+  failed, 86.38% cov). Wrote reports/phase-2/REPORT.md covering all of P2.1-P2.10 with the two
+  honest carried limitations (accuracy gate 83.8%<95%, D2.5; PWA Lighthouse/camera untestable,
+  P2.9) stated plainly. Merged feature/phase-2-core-loop → develop (--no-ff), pushed. Updated
+  the existing rolling develop→main PR #3 (title/body extended for Phase 2, not a duplicate)
+  — NOT merged. ntfy phase-complete sent. Pruned STATE.md's Phase 0/1/2 detail to summary lines
+  per MISSION §8b (rationale preserved in DECISIONS.md + the phase reports) and stubbed a
+  Phase 3 checklist from MISSION §4.
+- Learned: this sandbox's `pytest -q` (this repo's exact config) never prints the trailing
+  "N passed in Xs" summary line even with --collect-only — cause not chased down (not blocking),
+  worked around by counting the dot/`s` progress characters directly. Also: 3 of 4 live-skip
+  tests skip in a full-suite run despite exported keys but pass individually in isolation — an
+  env-var-visibility ordering quirk somewhere in the suite, pre-existing, non-blocking, not
+  investigated further this session.
+- Next: Phase 3 — Teacher + Parent surfaces. Branch `feature/phase-3-teacher-parent` from
+  develop. Start by expanding the MISSION §4 Phase 3 paragraph into a step-by-step checklist
+  (same pattern as Phase 1→2) before dispatching implementation. Carried backlog: D1.9 CLI/
+  Gradio history migration, D1.6 teacher per-tenant ownership (this phase's class model is
+  where it lands).
