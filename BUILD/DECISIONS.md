@@ -3,6 +3,43 @@
 
 ## Phase 2.5
 
+### D2.12 — P2.5.5 kickoff: E2E harness had a silent PATH blocker; fixed in-repo, and its first real run caught two P2.5.3/4 regressions
+- **What:** `web/playwright.config.ts` resolves local-stack keys via
+  `execSync("supabase status -o json")`, which depends on the invoking shell's PATH
+  containing the Supabase CLI. In this sandbox the CLI lives at `~/.local/bin/supabase`,
+  but neither non-interactive nor login `bash` invocations put it on PATH — `~/.bashrc`
+  never adds it, and `~/.bash_profile` (which takes precedence over `~/.profile` for
+  login shells, and only sources `~/.bashrc`) means `~/.profile`'s `~/.local/bin` PATH
+  line is dead code for this account. This is a host/account quirk, not a repo bug, so
+  fixed it inside `playwright.config.ts` (`env: { PATH: "$HOME/.local/bin:$PATH" }` on
+  that one `execSync` call) rather than editing dotfiles outside the repo (MISSION §5:
+  never touch anything outside the project directory).
+- **Consequence:** the P2.10 E2E suite had therefore not actually executed at any point
+  since Phase 2.5 began — P2.5.1-4 all verified via tsc/build/oxlint only, never
+  Playwright. Once unblocked, `correct-paper.spec.ts` immediately failed and a browser
+  console error surfaced on every question row:
+  1. The spec's marks/grade/question-id assertions depended on Phase-2-era DOM structure
+     (a "Marks" label div + sibling value div; bare `div.font-mono.font-medium` question
+     cells) that P2.5.3/4's retrofit onto `MarkDisplay`/`GradeBadge`/`QuestionRow`
+     replaced. Not a product bug — rewrote the assertions against the new components'
+     `aria-label`s/accessible names, which is also more robust going forward.
+  2. `QuestionRow` (C-6) nested the `ConfidenceIndicator` (C-4) chip's own tap-to-expand
+     `<button>` inside the row's own toggle `<button>` — invalid HTML, logged as a React
+     console error on every row. This is a real defect in the component library shipped
+     by P2.5.2/retrofitted-onto by P2.5.3, exactly the class of thing QUALITY-BAR.md's
+     "zero console errors" gate and the P2.5.6 axe pass exist to catch, and neither the
+     Impeccable audit (static, no runtime rendering) nor tsc/oxlint (not an HTML-validity
+     checker) could have caught it. Fixed by splitting the row into two sibling
+     interactive regions instead of nesting them (`web/src/components/ui/question-row.tsx`).
+- **Why fixed now, not deferred:** MISSION §5: "If you find a defect in [prior, completed]
+  work, fix it as a scoped task inside the current phase — do not reopen a completed
+  phase." P2.5.3/4 aren't a completed *phase* (still Phase 2.5, still open), and this is
+  squarely a P2.5.5 blocker — the screenshot harness can't produce clean, warning-free
+  captures of a screen that logs a console error on render. Fixed, not just documented.
+- **Verified:** tsc/build/oxlint clean; `pre-commit run --files <the 3 changed files>`
+  clean; full existing suite (`_smoke` + `correct-paper`) green, zero console errors.
+  Committed (2148e41) ahead of the P2.5.5 screenshot-harness work proper.
+
 ### D2.11 — Installed Impeccable v4.0.4 has no `normalize` command; P2.5.4 runs audit → polish instead
 - **What:** MISSION §10 and STATE.md's P2.5.4 line specify `/impeccable audit` →
   `/impeccable normalize` → `/impeccable polish` for the retrofit pass. The installed
