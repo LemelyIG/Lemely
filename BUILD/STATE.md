@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2.5
-last_updated: 2026-08-05T21:20:00Z
+last_updated: 2026-08-05T21:35:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -181,10 +181,33 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
       a tool that can measure them. Zero serious/critical violations is a phase-level
       acceptance criterion (MISSION §4); P2.5.8 must resolve these before the phase
       report, not silently drop them.
-- [ ] doing — P2.5.7: Extend scripts/check.sh with the UI gates (axe/Lighthouse/impeccable detect)
-- [ ] P2.5.8: Full BUILD/QUALITY-BAR.md pass; grep proves no stray hex/spacing values;
+- [x] P2.5.7: `scripts/check.sh` created (it did not exist — a Phase-0 gap carried since
+      2026-08-04, see JOURNAL.md) plus `scripts/check_ui_gates.py`. check.sh runs backend
+      (ruff check/format, mypy, lint-imports, pytest) + web (typecheck, oxlint, build,
+      `npx impeccable detect src/`) gates unconditionally, then Playwright E2E + `npm run
+      audit` (P2.5.6's Puppeteer runner) + `check_ui_gates.py` (enforces QUALITY-BAR.md's
+      zero-serious/critical-axe + Lighthouse-a11y≥95 thresholds by parsing the audit's
+      `_summary.json` files) only when the local Supabase stack is reachable — SKIPs
+      (not FAILs) those three otherwise, mirroring pytest's existing DB-test skip
+      pattern. Suppresses passing output, prints only failures + a PASS/FAIL/SKIP line
+      per tool + one final summary line, per MISSION §8b.
+      Building it surfaced a real, independent bug (D2.13): plain `ruff check .` /
+      `ruff format --check .` — the exact commands `.github/workflows/ci.yml` runs — pick
+      up 329 errors from vendored `.claude/skills/ui-ux-pro-max/scripts/` content that was
+      never excluded from `pyproject.toml`'s ruff config (only pre-commit's `--all-files`
+      scope had been fixed for this, per D2.11, back in P2.5.4 — the plain-CLI-command gap
+      was never connected to it). This branch's CI `ruff check .` step has very likely been
+      red since d83aa67 added the skill pack, unrelated to anything built in this phase so
+      far. Fixed: added `.claude` to `extend-exclude` — a `pyproject.toml` change, so it
+      fixes CI too without touching `ci.yml`. Full `./scripts/check.sh` run afterward:
+      everything PASS except `ui-thresholds`, which correctly FAILs on exactly the 3
+      pre-existing axe findings P2.5.6 recorded above — confirms the gate enforces what it
+      claims to, and correctly blocks merge until P2.5.8 fixes them.
+- [ ] doing — P2.5.8: Full BUILD/QUALITY-BAR.md pass; grep proves no stray hex/spacing values;
       must resolve the P2.5.6 axe baseline findings (login landmarks, shared-shell
-      color-contrast, overview progressbar labels) — zero serious/critical is the gate
+      color-contrast, overview progressbar labels) — `./scripts/check.sh`'s `ui-thresholds`
+      step (P2.5.7) currently and correctly FAILs on these; it must go green as part of
+      this task, not be worked around
 - [ ] P2.5.9: Phase report + contact sheet + PR develop→main + ntfy
 
 Decisions: D2.10 (scope). Reference: reports/phase-2.5/ for screenshots + contact sheet.

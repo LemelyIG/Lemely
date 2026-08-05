@@ -1262,3 +1262,34 @@ alone is sufficient.
 81.47% with DB tests skipped — genuine new coverage from tests that can now actually run,
 not a regression), 0 failed. `ruff`/`ruff format`/`mypy`/`lint-imports`/`pre-commit
 --all-files` all clean.
+
+### D2.13 — `ruff check .`/`ruff format --check .` were silently scanning vendored `.claude/skills/` content; excluded
+
+Building `scripts/check.sh` for P2.5.7 (the Phase-0-mandated "one gate command" that,
+per JOURNAL.md 2026-08-04, had never actually been created — a gap carried since Phase 0)
+surfaced that plain `ruff check .` from repo root — exactly what `.github/workflows/ci.yml`
+runs — reports **329 errors**, 328 of them inside `.claude/skills/ui-ux-pro-max/scripts/`
+(a vendored third-party Python search-engine script bundled with the design skill pack,
+added whole in d83aa67 "design stack + phase 2.5 build kit"). `pyproject.toml`'s
+`[tool.ruff] extend-exclude` had no entry for `.claude`, unlike D2.11's already-documented
+fix for `pre-commit run --all-files` doing the same thing to the same directory — the two
+gaps were never connected because nobody had run plain `ruff check .` against this branch
+since the skill pack landed. **This means CI's `ruff check .` step has very likely been red
+on this branch since d83aa67**, independent of anything this session touched; not confirmed
+against the actual GitHub Actions run (this sandbox has no path to that), but reproduced
+locally with the exact command CI uses.
+
+**Fix:** added `".claude"` to `extend-exclude` alongside the existing
+`lemely/db/migrations/versions` entry — same reasoning, vendored/generated content we don't
+own and don't want linted, not a project source directory. This is a `pyproject.toml`
+config change, so it fixes CI's `ruff check .` step too without touching `ci.yml`.
+One real, unrelated finding surviving in `scripts/check_ui_gates.py` itself (a D205
+docstring-formatting issue, ruff's own fix) was also cleaned up in the same pass — not
+excluded, actually fixed.
+
+**Why this matters / how to apply:** any future session that adds a new top-level vendored
+or generated directory (another skill pack, a generated SDK, etc.) should add it to this
+same `extend-exclude` list immediately, and should not assume "CI is green" from STATE.md
+history without accounting for what's changed on disk since the last time the exact gate
+command was actually run — `git log --oneline` showing recent unrelated commits is not
+evidence a given check still passes.

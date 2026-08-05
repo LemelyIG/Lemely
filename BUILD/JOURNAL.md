@@ -448,3 +448,32 @@
 - Next: P2.5.7 — extend scripts/check.sh with the UI gates (axe/Lighthouse/impeccable
   detect). Then P2.5.8 (full QUALITY-BAR.md pass — must resolve this session's axe
   findings), P2.5.9 (report + PR + ntfy).
+
+## 2026-08-05 — Phase 2.5: P2.5.7 scripts/check.sh (the gate command that never existed)
+- Did: `scripts/check.sh` did not exist on disk at all — noted as a non-blocking gap back
+  on 2026-08-04, never chased down since. Built it from scratch per MISSION §8b/§11:
+  backend gates (ruff check/format, mypy, lint-imports, pytest) and web gates (typecheck,
+  oxlint, build, `npx impeccable detect src/`) always run; Playwright E2E, `npm run audit`
+  (P2.5.6), and a new `scripts/check_ui_gates.py` (parses the audit's `_summary.json`
+  files, enforces QUALITY-BAR.md's zero-serious/critical-axe + Lighthouse-a11y≥95
+  thresholds) run only when the local Supabase stack answers `supabase status`, SKIPping
+  (not failing) otherwise. Output format matches the §8b mandate: suppress passing
+  output, print failures + one PASS/FAIL/SKIP line per tool + a final summary.
+- Learned (D2.13): building it surfaced a real, pre-existing, unrelated bug — plain
+  `ruff check .` (the exact command `.github/workflows/ci.yml` runs) reports 329 errors,
+  328 of them inside vendored `.claude/skills/ui-ux-pro-max/scripts/` content that was
+  never excluded from `pyproject.toml`'s ruff config. D2.11 (2026-08-05, P2.5.4) had
+  already fixed this exact problem for `pre-commit run --all-files` but nobody connected
+  it to plain `ruff check .`/CI, because nobody had run that exact command against this
+  branch since the skill pack landed in d83aa67. CI's `ruff check .` step has very likely
+  been red on this branch since then. Fixed by adding `.claude` to `extend-exclude` — a
+  config change, so it fixes CI without touching `ci.yml`. General lesson: "STATE.md says
+  CI was green" is a historical fact about a specific past commit, not a standing
+  guarantee — verify the actual gate command against the actual current tree before
+  trusting it, especially after any commit that adds a new top-level directory.
+- Verified: full `./scripts/check.sh` run — everything PASS except `ui-thresholds`, which
+  correctly FAILs on exactly the 3 axe findings P2.5.6 recorded (not a new problem, the
+  gate working as designed). Committed.
+- Next: P2.5.8 — full QUALITY-BAR.md pass. Must turn `ui-thresholds` green (login
+  landmarks, shared-shell color-contrast, overview progressbar labels) plus the grep-based
+  stray hex/spacing sweep. Then P2.5.9 (phase report + contact sheet + PR + ntfy).
