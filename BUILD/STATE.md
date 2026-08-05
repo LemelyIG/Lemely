@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-05T04:15:00Z
+last_updated: 2026-08-05T05:30:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -1008,7 +1008,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           inline in this checklist in enough detail to carry into P2.10's DELIVERY.md; a
           separate early stub would only duplicate it. **P2.8 (Teacher surface wiring) is
           now COMPLETE.**)
-- [~] doing — P2.9 PWA: manifest + service worker + installable + offline shell; camera
+- [x] done — P2.9 PWA: manifest + service worker + installable + offline shell; camera
        capture UX; Lighthouse PWA checks pass. Gradio stays internal debug only.
        PLAN (recorded before dispatch so a killed session can resume; orchestrator confirmed
        before writing this: zero PWA config exists today — no `vite-plugin-pwa`, no
@@ -1071,7 +1071,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           run; installability verified by inspection only (manifest/icons/SW/fetch-handler/
           offline-navigation all present and correct), documented as a carried limitation, not
           silently claimed as a passing check. Committing on feature/phase-2-core-loop.
-       2. [ ] todo — Camera capture UX: a `getUserMedia`-based multi-shot capture component
+       2. [x] done — Camera capture UX: a `getUserMedia`-based multi-shot capture component
           (new, e.g. `web/src/components/CameraCapture.tsx`) — live camera preview, "Capture
           page" button per shot (supports multiple pages), a review strip of captured shots
           with per-shot delete, "Add another page" vs "Done". On completion, assemble the
@@ -1094,10 +1094,56 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           `npm run lint`/`npm run build` clean plus a careful code read of the capture/assembly
           logic; document this as a carried verification limitation for a session with a real
           device/browser to confirm, same as Lighthouse above.
-       3. [ ] todo — Full gate re-run (web + backend, since PWA is frontend-only) + STATE.md
+          DONE + VERIFIED (2026-08-05). New `web/src/components/CameraCapture.tsx` (no existing
+          cross-portal shared-component convention found — `web/src/components/ui/` is
+          shadcn-primitives-only, everything else is portal-scoped — so this is the first
+          module there, reusing `Button`/`Card`/`cn`). Two-phase design: `"live"` (camera
+          preview + "Capture page" + live thumbnail strip with per-page delete) ->
+          `"reviewing"` (camera stream stopped, "Add another page" / "Done" ->
+          `pdf-lib` assembly via `PDFDocument.create()`/`embedJpg()`/`addPage()`/`drawImage()`,
+          returns a `File`). `getUserMedia` failures mapped to specific messages
+          (NotAllowedError/NotFoundError/NotReadableError/SecurityError/insecure-context) with
+          a retry button, not a silent failure. Stream-acquire effect is keyed on
+          `[phase, retryToken]`; its cleanup (fires on phase change AND unmount) always stops
+          every `MediaStreamTrack` — verified by reading the effect myself: a `cancelled` flag
+          guards the async `.then()` so a stream resolving after teardown gets stopped
+          immediately rather than leaking, closing the "camera stays on after navigating away"
+          failure mode. Object URLs revoked on delete + bulk on unmount. `CorrectPaper.tsx`
+          gained a `scanSource: "file" | "camera"` tab toggle above the existing scan card;
+          switching tabs resets `scanFile` (prevents submitting a stale file from the other
+          source) and remounts `CameraCapture` via a bumped `cameraSessionKey` when entering
+          camera mode; `onComplete` calls the exact same `setScanFile` the file `<input>` uses,
+          so `runPipeline`/`uploadScan`/SSE marking downstream is byte-identical, no backend
+          touch. Teacher `Grading.tsx` deliberately NOT touched (scope cut per the plan).
+          Orchestrator-verified independently (not just trusted): read the full
+          `CameraCapture.tsx` + `CorrectPaper.tsx` diff myself, confirmed the `Button`
+          `ghost`/`md` variants used actually exist in `ui/button.tsx`, traced the tab-switch
+          state resets by hand. Re-ran `npm run typecheck`/`npm run lint`/`npm run build`
+          myself — clean, identical pre-existing warning set (one advisory-only note: the main
+          JS chunk grew 475KB->910KB since `pdf-lib` isn't code-split behind a dynamic import;
+          not a gate failure, MISSION has no bundle-size gate, flagged as a non-blocking
+          follow-up — code-split `CameraCapture` via `React.lazy` if bundle size becomes a
+          real concern later). `git diff --stat` confirmed only `package.json`/
+          `package-lock.json` (pdf-lib added) + `CorrectPaper.tsx` + the new
+          `CameraCapture.tsx` changed; backend untouched (`ruff check`/`lint-imports` re-run
+          clean). CANNOT be live-tested in this sandbox (no camera device, no real browser) —
+          verification is build/type/lint-clean + a careful manual trace of the capture/
+          cleanup/assembly logic, NOT a live capture; explicitly flagged for a real-device
+          session to confirm before P2.10's Playwright pass treats this flow as proven.
+          Committing on feature/phase-2-core-loop.
+       3. [x] done — Full gate re-run (web + backend, since PWA is frontend-only) + STATE.md
           update + `reports/phase-2/` note documenting the two environment limitations above
           (Lighthouse-unrunnable, camera-untestable) so they carry into P2.10's DELIVERY.md
           honestly, not silently.
+          Full gate re-run (this session, after both sub-steps): web typecheck/lint/build
+          clean; backend `ruff check`/`ruff format --check`/`lint-imports` clean; `pytest`
+          exit 0, 0 failed/errored, ~50 skipped (Postgres/Supabase-live, unchanged environment
+          limitation), 81.47% cov (>70% floor, unchanged from the P2.7/P2.8 baseline — nothing
+          under `lemely/` changed this phase). `reports/phase-2/pwa-limitations.md` written,
+          documenting both environment limitations (no Chromium for a live Lighthouse run; no
+          camera/browser for a live capture test) with exactly what WAS verified by inspection
+          for each, so P2.10's DELIVERY.md can cite it directly instead of re-deriving. **P2.9
+          (PWA) is now COMPLETE**, with the two limitations above carried forward explicitly.
 - [ ] todo — P2.10 Acceptance: Playwright E2E — seeded student uploads a fixture scan and
        sees correct marks/grade/weaknesses on the dashboard; accuracy thresholds met;
        screenshots in reports/phase-2/screens/. §6 gates green; reports/phase-2/REPORT.md;
@@ -1240,6 +1286,22 @@ clean; backend ruff/format/mypy/lint-imports clean; pytest exit 0, 0 failed, ~50
 `supabase/.temp/` dirs, sudo unavailable), 81.47% cov (>70% floor).
 Next: P2.9 PWA (manifest + service worker + installable + offline shell; camera capture UX;
 Lighthouse PWA checks).
+
+**P2.9 DONE + VERIFIED (2026-08-05).** See checklist entries above (steps 1-3) for full
+detail. Step 1: `vite-plugin-pwa` foundation — real manifest (theme/background colors
+verified via an independently re-derived oklch->sRGB conversion), Workbox service worker
+precaching the app shell with `/api/*` excluded from both navigation fallback and runtime
+caching, 3 real PNG icons rasterized from the actual brand mark. Step 2: `CameraCapture.tsx`
+(getUserMedia multi-shot capture -> `pdf-lib` multi-page PDF assembly) wired into student
+`CorrectPaper.tsx` as an alternative to the file input, feeding the exact same `scanFile`
+state so the rest of the upload/SSE-marking pipeline is untouched; teacher `Grading.tsx`
+deliberately left file-input-only (scope cut, not oversight). Two environment limitations
+carried forward, not silently passed: no Chromium available for a live Lighthouse run, no
+camera/browser available for a live capture test — both documented in detail, including
+exactly what WAS verified by inspection, in `reports/phase-2/pwa-limitations.md`. Full gate
+re-run: web typecheck/lint/build clean; backend ruff/format/lint-imports clean; pytest exit
+0, 0 failed, ~50 skipped (unchanged environment limitation), 81.47% cov.
+Next: P2.10 Acceptance (Playwright E2E, accuracy thresholds, phase report, merge to develop).
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:

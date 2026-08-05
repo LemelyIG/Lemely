@@ -3,9 +3,13 @@ import { useNavigate } from "react-router-dom"
 import { Check } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { CameraCapture } from "@/components/CameraCapture"
 import { runCorrection, uploadScan } from "@/lib/hooks/useStudentApi"
 import type { QuestionResult, Result, StudentCorrectFrame } from "@/lib/studentTypes"
 import { reassure } from "../data"
+
+/** Which source the student is using to produce `scanFile`. */
+type ScanSource = "file" | "camera"
 
 /*
  * Correct a paper (isCorrect). Real upload + SSE flow: pick a scan (required)
@@ -54,6 +58,15 @@ export function CorrectPaper() {
   const [running, setRunning] = useState(false)
   const [log, setLog] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [scanSource, setScanSource] = useState<ScanSource>("file")
+  const [cameraSessionKey, setCameraSessionKey] = useState(0)
+
+  const chooseScanSource = (source: ScanSource) => {
+    if (source === scanSource) return
+    setScanSource(source)
+    setScanFile(null)
+    if (source === "camera") setCameraSessionKey((k) => k + 1)
+  }
 
   const runPipeline = async () => {
     if (!scanFile || running) return
@@ -127,20 +140,75 @@ export function CorrectPaper() {
         <div className="flex flex-col gap-5">
           <Card className="p-[22px] flex flex-col gap-5">
             <div>
-              <label
-                htmlFor="scan-file"
-                className="text-[13px] font-medium block mb-1.5"
-              >
+              <div className="text-[13px] font-medium block mb-1.5">
                 Scanned paper
-              </label>
-              <input
-                id="scan-file"
-                type="file"
-                accept="application/pdf,image/*"
-                disabled={running}
-                onChange={(e) => setScanFile(e.target.files?.[0] ?? null)}
-                className="text-[12.5px] text-t2 file:mr-3 file:border file:border-border file:bg-surface-2 file:rounded-lg file:px-3 file:py-1.5 file:text-[12.5px] file:cursor-pointer file:font-sans"
-              />
+              </div>
+              <div className="inline-flex rounded-[10px] border border-border p-0.5 bg-surface-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => chooseScanSource("file")}
+                  disabled={running}
+                  className={`text-[12.5px] font-medium rounded-[8px] px-3 py-1.5 cursor-pointer transition-colors disabled:cursor-not-allowed ${
+                    scanSource === "file"
+                      ? "bg-surface text-t1 shadow-sm"
+                      : "text-t2 hover:text-t1"
+                  }`}
+                >
+                  Upload a file
+                </button>
+                <button
+                  type="button"
+                  onClick={() => chooseScanSource("camera")}
+                  disabled={running}
+                  className={`text-[12.5px] font-medium rounded-[8px] px-3 py-1.5 cursor-pointer transition-colors disabled:cursor-not-allowed ${
+                    scanSource === "camera"
+                      ? "bg-surface text-t1 shadow-sm"
+                      : "text-t2 hover:text-t1"
+                  }`}
+                >
+                  Scan with camera
+                </button>
+              </div>
+
+              {scanSource === "file" ? (
+                <input
+                  id="scan-file"
+                  type="file"
+                  accept="application/pdf,image/*"
+                  disabled={running}
+                  onChange={(e) => setScanFile(e.target.files?.[0] ?? null)}
+                  className="text-[12.5px] text-t2 file:mr-3 file:border file:border-border file:bg-surface-2 file:rounded-lg file:px-3 file:py-1.5 file:text-[12.5px] file:cursor-pointer file:font-sans"
+                />
+              ) : running ? (
+                <div className="text-[12.5px] text-t3">
+                  {scanFile
+                    ? `Scanned paper ready (${scanFile.name}).`
+                    : "Marking in progress."}
+                </div>
+              ) : scanFile ? (
+                <div className="flex items-center gap-3">
+                  <div className="text-[12.5px] text-t2">
+                    Scan ready - {scanFile.name}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setScanFile(null)
+                      setCameraSessionKey((k) => k + 1)
+                    }}
+                  >
+                    Rescan
+                  </Button>
+                </div>
+              ) : (
+                <CameraCapture
+                  key={cameraSessionKey}
+                  onComplete={(file) => setScanFile(file)}
+                  onCancel={() => chooseScanSource("file")}
+                  className="p-0 border-0 bg-transparent"
+                />
+              )}
             </div>
             <div>
               <label
