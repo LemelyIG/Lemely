@@ -1,130 +1,142 @@
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Avatar } from "../components/Avatar"
-import {
-  flagged,
-  queue,
-  reviewProgress,
-  type MarkingPoint,
-  type PointState,
-} from "../data"
+import { ApiError } from "@/lib/api"
+import { useGradingQueue, usePaperDetail } from "@/lib/hooks/useTeacherApi"
+import type { QueueRow } from "@/lib/teacherTypes"
 
-const POINT_STYLE: Record<
-  PointState,
-  { row: string; mark: string; glyph: string; award: string }
-> = {
-  ok: {
-    row: "bg-ok-bg border-[oklch(0.86_0.05_152)]",
-    mark: "bg-ok",
-    glyph: "✓",
-    award: "text-[oklch(0.36_0.09_152)]",
-  },
-  no: {
-    row: "bg-err-bg border-[oklch(0.86_0.05_22)]",
-    mark: "bg-err",
-    glyph: "✕",
-    award: "text-[oklch(0.40_0.10_22)]",
-  },
-  dep: {
-    row: "bg-[oklch(0.965_0.008_78)] border-border",
-    mark: "bg-[oklch(0.78_0.01_60)]",
-    glyph: "-",
-    award: "text-t2",
-  },
+/*
+ * Review. Wired to `GET /grading/queue` (`useGradingQueue()`) for the
+ * right-hand queue list — one row per flagged QUESTION, not per paper — and
+ * `GET /papers/{paperId}` (`usePaperDetail()`) for the selected row's full
+ * paper, from which the matching `QuestionResult` is picked out by
+ * `questionId`. See BUILD/STATE.md's P2.8 step 4 plan for the full design.
+ *
+ * Cuts / judgment calls made vs. the mock (`flagged`/`queue`/`reviewProgress`
+ * in the old `data.ts`):
+ *  - The handwriting-transcript panel and the per-mark-point ok/no/dependent
+ *    breakdown (`PointRow`/`POINT_STYLE`/`MarkingPoint`) are dropped
+ *    entirely — no OCR transcript or per-mark-point field exists on
+ *    `QuestionResult`.
+ *  - The award-option buttons + "Confirm & next" button are dropped — there
+ *    is no override-submission endpoint yet (Phase 3 per MISSION §4).
+ *  - The "Filter" button is dropped — `GradingQueueDTO` has no filter
+ *    concept.
+ *  - "Approve all (N)" is dropped — no bulk-approve endpoint exists.
+ *  - The bottom "Auto-graded 156/168" progress bar is dropped — the queue
+ *    count is per-question while the overview stats are per-paper, so there
+ *    is no clean same-unit backend source to render it honestly.
+ *  - The mock's fabricated "why Lemely flagged this" narrative is replaced
+ *    by the question's real `reviewReason` field — a genuine data upgrade,
+ *    not just a cut.
+ *  - The "Live" pill next to the title had no real backing signal (no
+ *    push/poll freshness concept on the queue) — dropped rather than kept
+ *    as decoration.
+ *  - The header's hardcoded "12 answers · 0625/31 · May/June 2020" is
+ *    replaced by a real `{rows.length} flagged answer(s)` count.
+ *  - Plagiarism/AI-detection badges (same pattern as
+ *    `student/screens/PaperResult.tsx`) render when the matched question's
+ *    `plagiarismFlagged`/`aiDetectionFlagged` are true.
+ *  - Prev/next navigation through queue rows is kept — pure client-side
+ *    array navigation over `useGradingQueue()`'s real rows, no backend
+ *    change needed.
+ */
+
+function confidencePercent(confidence: number | null): number | null {
+  return confidence == null ? null : Math.round(confidence * 100)
 }
 
-function PointRow({ p }: { p: MarkingPoint }) {
-  const st = POINT_STYLE[p.state]
-  return (
-    <div
-      className={cn(
-        "grid grid-cols-[26px_44px_1fr_50px] gap-3 items-start border rounded-[11px] px-[14px] py-[13px]",
-        st.row,
-      )}
-    >
-      <span
-        className={cn(
-          "w-5 h-5 rounded-[5px] text-accent-on flex items-center justify-center text-[11px]",
-          st.mark,
-        )}
-      >
-        {st.glyph}
-      </span>
-      <span className="font-mono text-[12px] text-t2">{p.code}</span>
-      <span>
-        <span className="block text-[13px] leading-[1.4]">{p.text}</span>
-        {p.note ? (
-          <span className="block font-serif italic text-[13.5px] text-t2 mt-1">
-            {p.note}
-          </span>
-        ) : null}
-      </span>
-      <span className="text-right">
-        <span className="block font-mono text-[11.5px] text-t2">{p.conf}</span>
-        <span className={cn("block font-mono text-[13px] mt-1", st.award)}>
-          {p.award}
-        </span>
-      </span>
-    </div>
-  )
+function initialsOf(name: string): string {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
 }
 
 export function Review() {
-  const [qi, setQi] = useState(0)
-  const [award, setAward] = useState<number | null>(null)
+  const [selectedIndex, setSelectedIndex] = useState(0)
 
-  const current = flagged[qi % flagged.length]
+  const queueQuery = useGradingQueue()
+  const rows = queueQuery.data?.rows ?? []
+  const index = rows.length > 0 ? selectedIndex % rows.length : 0
+  const selectedRow: QueueRow | undefined = rows[index]
+
+  const paperDetailQuery = usePaperDetail(selectedRow?.paperId)
 
   const prev = () => {
-    setQi((v) => (v + flagged.length - 1) % flagged.length)
-    setAward(null)
+    if (rows.length === 0) return
+    setSelectedIndex((v) => (v + rows.length - 1) % rows.length)
   }
   const next = () => {
-    setQi((v) => (v + 1) % flagged.length)
-    setAward(null)
+    if (rows.length === 0) return
+    setSelectedIndex((v) => (v + 1) % rows.length)
   }
 
-  const [got, outOf] = current.marks.split("/")
-  const awardOpts = [
-    `${got}/${outOf}`,
-    `${Number(got) + 1}/${outOf}`,
-    `${outOf}/${outOf}`,
-    "Skip",
-  ]
+  if (queueQuery.isPending) {
+    return (
+      <div className="lm-screen flex flex-col gap-5">
+        <div className="text-[13.5px] text-t2">Loading review queue…</div>
+      </div>
+    )
+  }
+
+  if (queueQuery.isError) {
+    return (
+      <div className="lm-screen flex flex-col gap-5">
+        <div className="text-[13.5px] text-accent">
+          Couldn't load the review queue: {queueQuery.error.message}
+        </div>
+      </div>
+    )
+  }
+
+  if (rows.length === 0 || !selectedRow) {
+    return (
+      <div className="lm-screen flex flex-col gap-5">
+        <div className="pb-[18px] border-b border-border">
+          <div className="font-serif text-[34px] leading-[1.1]">Review AI grading</div>
+        </div>
+        <div className="text-[13.5px] text-t2">Nothing flagged right now.</div>
+      </div>
+    )
+  }
+
+  const isNotGraded =
+    paperDetailQuery.isError &&
+    paperDetailQuery.error instanceof ApiError &&
+    paperDetailQuery.error.status === 409
+
+  const matchedQuestion = paperDetailQuery.data?.questions.find(
+    (q) => q.questionId === selectedRow.questionId,
+  )
+
+  const confPct = confidencePercent(selectedRow.confidence)
 
   return (
     <div className="lm-screen flex flex-col gap-5">
       <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-2.5">
         <div>
-          <div className="flex items-center gap-2.5">
-            <div className="font-serif text-[34px] leading-[1.1]">
-              Review AI grading
-            </div>
-            <div className="bg-accent-subtle text-[oklch(0.44_0.10_68)] text-[11.5px] px-[11px] py-[3px] rounded-full">
-              Live
-            </div>
-          </div>
+          <div className="font-serif text-[34px] leading-[1.1]">Review AI grading</div>
           <div className="font-mono text-[11.5px] text-t2 mt-[7px]">
-            12 answers · 0625/31 · May/June 2020
+            {rows.length} flagged answer{rows.length === 1 ? "" : "s"}
           </div>
         </div>
-        <div className="flex-1" />
-        <Button variant="secondary">Filter</Button>
-        <Button variant="ink">Approve all (12)</Button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.05fr_262px] gap-5 items-start">
-        {/* Answer panel */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_262px] gap-5 items-start">
+        {/* Detail panel */}
         <div className="bg-surface border border-border rounded-[14px] p-[18px]">
           <div className="flex items-center gap-3">
-            <div className="w-[34px] h-[34px] rounded-[9px] bg-accent-subtle text-[oklch(0.44_0.10_68)] flex items-center justify-center text-[12px] font-semibold">
-              {current.initials}
-            </div>
+            <Avatar
+              initials={initialsOf(selectedRow.name)}
+              tone="accent"
+              className="w-[34px] h-[34px] text-[12px]"
+            />
             <div className="flex-1">
-              <div className="text-[14px] font-medium">{current.name}</div>
+              <div className="text-[14px] font-medium">{selectedRow.name}</div>
               <div className="font-mono text-[11px] text-t2 mt-0.5">
-                0625/31 · {current.q}
+                {selectedRow.questionId}
+                {selectedRow.topic ? ` · ${selectedRow.topic}` : ""}
               </div>
             </div>
             <button
@@ -143,146 +155,103 @@ export function Review() {
             </button>
           </div>
 
-          <div className="border border-border rounded-[11px] p-[18px] mt-4 bg-[oklch(0.985_0.008_80)]">
-            <div className="flex justify-between font-mono text-[9.5px] tracking-[0.08em] text-t3">
-              <span>CAMBRIDGE IGCSE PHYSICS · 0625/31</span>
-              <span>{current.page}</span>
-            </div>
-            <div className="text-[13.5px] leading-[1.55] mt-[14px] text-pretty">
-              <span className="font-semibold">{current.qLabel}</span>{" "}
-              {current.prompt}
-            </div>
-            <div className="font-serif italic text-[19px] leading-[1.9] text-[oklch(0.42_0.09_255)] mt-[18px]">
-              {current.working.map((w, i) => (
-                <div key={i}>
-                  <span
-                    className={cn(
-                      "px-[3px] rounded-[3px]",
-                      w.flagged ? "bg-[oklch(0.92_0.055_22)]" : "bg-transparent",
-                    )}
-                  >
-                    {w.t}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="border-t border-dashed border-border mt-[18px] pt-3 flex justify-between font-mono text-[11px] text-t3">
-              <span>scanned · 09:14</span>
-              <span className="text-err">✕ {current.marks}</span>
-            </div>
-          </div>
-
-          <div className="flex gap-[9px] mt-4 justify-center">
-            <Button variant="secondary" size="sm" className="text-[12.5px] px-4 py-[9px]">
-              Re-scan
-            </Button>
-            <Button variant="secondary" size="sm" className="text-[12.5px] px-4 py-[9px]">
-              Edit transcript
-            </Button>
-          </div>
-        </div>
-
-        {/* Marking points + award */}
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-[14px] pb-[14px] border-b border-border">
-            <div className="font-mono text-[11px] tracking-[0.08em] uppercase text-t3 leading-[1.5]">
-              {current.q} · mark scheme
-              <br />
-              alignment
-            </div>
-            <div className="flex-1" />
-            <div className="text-[11.5px] text-t2 leading-[1.3] text-right">
-              AI
-              <br />
-              confidence
-            </div>
-            <div className="font-mono text-[14px] text-err">{current.conf}</div>
-            <div className="w-20 h-1.5 rounded-[3px] bg-[oklch(0.92_0.012_78)]">
-              <div
-                className="h-full rounded-[3px] bg-err"
-                style={{ width: `${current.confW}%` }}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-baseline gap-3">
-            <div className="font-serif text-[24px]">Marking points</div>
-            <div className="flex-1" />
-            <div className="font-mono text-[11.5px] text-t2">{current.total}</div>
-          </div>
-
-          <div className="flex flex-col gap-[9px]">
-            {current.points.map((p, i) => (
-              <PointRow key={i} p={p} />
-            ))}
-          </div>
-
-          <div className="border border-border rounded-[12px] px-[18px] py-4 bg-surface">
-            <div className="flex items-center gap-2.5">
-              <span className="w-[22px] h-[22px] rounded-md bg-accent-subtle flex items-center justify-center">
-                <span className="w-2 h-2 bg-accent rotate-45" />
-              </span>
-              <div>
-                <div className="text-[13.5px] font-medium">
-                  Why Lemely flagged this
-                </div>
-                <div className="font-mono text-[10.5px] text-t3 mt-0.5">
-                  CONFIDENCE BELOW 0.90
-                </div>
+          <div className="border border-border rounded-[11px] p-[18px] mt-4 bg-[oklch(0.985_0.008_80)] flex flex-col gap-4">
+            <div className="flex items-center gap-[14px] flex-wrap">
+              <div className="text-[11.5px] text-t2 leading-[1.3]">AI confidence</div>
+              {confPct != null ? (
+                <>
+                  <div className="font-mono text-[14px] text-err">{confPct}%</div>
+                  <div className="w-20 h-1.5 rounded-[3px] bg-[oklch(0.92_0.012_78)]">
+                    <div
+                      className="h-full rounded-[3px] bg-err"
+                      style={{ width: `${confPct}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="font-mono text-[12px] text-t3">unavailable</div>
+              )}
+              <div className="flex-1" />
+              <div className="font-serif text-[24px]">
+                {selectedRow.awardedMarks}
+                <span className="text-[14px] text-t2">/{selectedRow.maxMarks}</span>
               </div>
             </div>
-            <div className="text-[13px] leading-[1.55] text-t2 mt-3 text-pretty">
-              {current.why}
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2.5 flex-wrap pt-1.5">
-            <div className="text-[13px] text-t2">Award:</div>
-            {awardOpts.map((label, i) => {
-              const on = award === null ? i === 0 : award === i
-              return (
-                <button
-                  key={label}
-                  onClick={() => setAward(i)}
-                  className={cn(
-                    "border font-mono text-[13px] px-4 py-[9px] rounded-[9px] cursor-pointer",
-                    on
-                      ? "border-ink bg-ink text-accent-on"
-                      : "border-border bg-surface text-t1",
-                  )}
-                >
-                  {label}
-                </button>
-              )
-            })}
-            <div className="flex-1" />
-            <Button variant="ink" size="lg" onClick={next}>
-              ✓ Confirm &amp; next
-            </Button>
+            {paperDetailQuery.isPending ? (
+              <div className="text-[13px] text-t2">Loading paper detail…</div>
+            ) : isNotGraded ? (
+              <div className="text-[13px] text-t2">This paper hasn't been graded yet.</div>
+            ) : paperDetailQuery.isError ? (
+              <div className="text-[13px] text-accent">
+                Couldn't load paper detail: {paperDetailQuery.error.message}
+              </div>
+            ) : !matchedQuestion ? (
+              <div className="text-[13px] text-t2">
+                Couldn't find this question in the paper's results.
+              </div>
+            ) : (
+              <>
+                {matchedQuestion.feedback ? (
+                  <div className="text-[13.5px] leading-[1.55] text-pretty">
+                    {matchedQuestion.feedback}
+                  </div>
+                ) : null}
+
+                {matchedQuestion.reviewReason ? (
+                  <div className="border border-border rounded-[12px] px-[18px] py-4 bg-surface">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-[22px] h-[22px] rounded-md bg-accent-subtle flex items-center justify-center">
+                        <span className="w-2 h-2 bg-accent rotate-45" />
+                      </span>
+                      <div className="text-[13.5px] font-medium">
+                        Why Lemely flagged this
+                      </div>
+                    </div>
+                    <div className="text-[13px] leading-[1.55] text-t2 mt-3 text-pretty">
+                      {matchedQuestion.reviewReason}
+                    </div>
+                  </div>
+                ) : null}
+
+                {matchedQuestion.plagiarismFlagged || matchedQuestion.aiDetectionFlagged ? (
+                  <div className="flex gap-[9px]">
+                    {matchedQuestion.plagiarismFlagged ? (
+                      <span className="text-[11px] border border-border rounded-[20px] px-[9px] py-0.5 text-accent">
+                        Plagiarism flagged
+                      </span>
+                    ) : null}
+                    {matchedQuestion.aiDetectionFlagged ? (
+                      <span className="text-[11px] border border-border rounded-[20px] px-[9px] py-0.5 text-accent">
+                        AI-detection flagged
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
 
         {/* Queue */}
         <div className="bg-surface border border-border rounded-[14px] overflow-hidden">
           <div className="px-4 pt-[15px] pb-3 font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3">
-            Review queue · 12
+            Review queue · {rows.length}
           </div>
-          {queue.map((q) => {
-            const on = current.name === q.name
+          {rows.map((row, i) => {
+            const on = i === index
+            const pct = confidencePercent(row.confidence)
             return (
               <button
-                key={q.name}
-                onClick={() => {
-                  setQi(q.target)
-                  setAward(null)
-                }}
+                key={`${row.paperId}-${row.questionId}`}
+                onClick={() => setSelectedIndex(i)}
                 className={cn(
                   "grid grid-cols-[28px_1fr_auto] gap-2.5 items-center w-full text-left border-0 border-t border-border cursor-pointer px-4 py-3",
                   on ? "bg-surface" : "bg-transparent hover:bg-[oklch(0.975_0.01_78)]",
                 )}
               >
                 <Avatar
-                  initials={q.initials}
+                  initials={initialsOf(row.name)}
                   tone={on ? "accent" : "neutral"}
                   className="w-[26px] h-[26px] text-[10.5px]"
                 />
@@ -293,43 +262,29 @@ export function Review() {
                       on ? "font-semibold" : "font-normal",
                     )}
                   >
-                    {q.name}
+                    {row.name}
                   </span>
                   <span className="block font-mono text-[10.5px] text-t3 mt-0.5">
-                    {q.meta}
+                    {row.questionId}
+                    {row.topic ? ` · ${row.topic}` : ""}
                   </span>
                 </span>
                 <span className="text-right">
                   <span
                     className={cn(
                       "block font-mono text-[11.5px]",
-                      parseInt(q.conf) < 70 ? "text-err" : "text-t2",
+                      pct != null && pct < 70 ? "text-err" : "text-t2",
                     )}
                   >
-                    {q.conf}
+                    {pct != null ? `${pct}%` : "—"}
                   </span>
                   <span className="block font-mono text-[10.5px] text-t3 mt-0.5">
-                    {q.marks}
+                    {row.awardedMarks}/{row.maxMarks}
                   </span>
                 </span>
               </button>
             )
           })}
-          <div className="border-t border-border p-4">
-            <div className="flex justify-between text-[12px] text-t2">
-              <span>Auto-graded</span>
-              <span className="font-mono">{reviewProgress.autoGraded}</span>
-            </div>
-            <div className="h-1.5 rounded-[3px] bg-[oklch(0.92_0.012_78)] mt-[9px]">
-              <div
-                className="h-full rounded-[3px] bg-ok"
-                style={{ width: `${reviewProgress.percent}%` }}
-              />
-            </div>
-            <div className="font-mono text-[10.5px] text-t3 mt-2">
-              {reviewProgress.note}
-            </div>
-          </div>
         </div>
       </div>
     </div>

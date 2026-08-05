@@ -923,7 +923,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           `git diff --stat` confirmed only the 2 target files changed. Backend gates re-run for
           completeness (nothing under `lemely/` touched): ruff/ruff-format/lint-imports clean.
           Committing on feature/phase-2-core-loop.)
-       4. [~] doing — Review screen: queue list + simplified per-question detail card per the
+       4. [x] done — Review screen: queue list + simplified per-question detail card per the
           design above. Update `data.ts` (remove `flagged`/`queue`/`reviewProgress`/
           `MarkingPoint`/`WorkingLine`/`FlaggedItem`/`QueueRow`/`PointState`).
           PLAN (recorded before dispatch so a killed session can resume): rewrite
@@ -954,6 +954,26 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           `MarkingPoint`/`WorkingLine`/`FlaggedItem`/`QueueRow`/`PointState` (data.ts:59-192) —
           grep for other importers first (none expected; Review.tsx is their only consumer).
           Dispatching to `implementer` (Sonnet).
+          DONE + VERIFIED (2026-08-05). Implementer built exactly the plan: `Review.tsx`
+          rewritten on `useGradingQueue()` (right-hand list, one row per flagged question) +
+          `usePaperDetail(selectedRow.paperId)` (detail panel, question matched by
+          `questionId`); detail panel shows student name/avatar, question id + topic, a
+          confidence bar/pct (sourced from the queue row so it's available even before paper
+          detail loads), awarded/max, `feedback`, the real `reviewReason` (replaces the
+          mock's fabricated "why" narrative), and plagiarism/AI-detection badges. Dropped:
+          transcript panel, marking-point breakdown, award buttons + "Confirm & next",
+          "Filter", "Approve all (N)", the progress-bar footer. Kept prev/next as pure
+          client-side wraparound nav over real rows. "Live" pill dropped (judgment call,
+          documented in the file header: no push/poll freshness concept exists to back it).
+          Empty queue -> "Nothing flagged right now." `data.ts` lost the whole Review
+          section (135 lines: `PointState`/`MarkingPoint`/`WorkingLine`/`FlaggedItem`/
+          `flagged`/`QueueRow`/`queue`/`reviewProgress`) — grepped first, Review.tsx was the
+          only consumer. Orchestrator-verified independently (not just trusted): re-read the
+          full new `Review.tsx` diff myself; re-ran `npm run typecheck`/`npm run lint`/
+          `npm run build` myself — clean, identical pre-existing `only-export-components`
+          warning set, build succeeds; `git diff --stat` confirmed only the 2 target files
+          changed. Backend gates re-run for completeness (nothing under `lemely/` touched):
+          ruff/ruff-format/lint-imports clean. Committing on feature/phase-2-core-loop.
        5. [ ] todo — `data.ts` final cleanup pass (mechanical grep-verify-delete, orchestrator
           does directly like P2.7 step 7) + full gate re-run (typecheck/lint/build; backend
           ruff/format/mypy/lint-imports/pytest since nothing under lemely/ should have
