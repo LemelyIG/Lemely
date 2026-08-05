@@ -1,6 +1,64 @@
 # Decisions log
 (orchestrator records every non-trivial decision here: what, why, alternatives)
 
+## Phase 2.5
+
+### D2.10 — UI spec read in full; Phase 2.5 scope fixed to tokens + C-1..C-13 + retrofit of the 6 shipped Phase-2 screens only
+- **What:** `docs/LEMELY_UI_SPEC.md` defines **71 screens** across 6 portals (Global,
+  Student S-01..S-31, Teacher T-01..T-12, Parent P-01..P-04, School Admin K-01..K-04,
+  Platform Admin X-01..X-03) and **13 cross-cutting components** (C-1 grade badge, C-2
+  mark display, C-3 boundary bar, C-4 confidence indicator, C-5 weakness chip, C-6
+  question row, C-7 paper identity line, C-8 trend sparkline, C-9 XP/streak, C-10
+  processing state, C-11 empty/error/offline family, C-12 role switcher, C-13 navigation
+  shells). Phase 2.5 per MISSION §4 builds the token system and all 13 components with
+  every state, then retrofits only the screens Phase 2 already shipped (student home,
+  upload flow, scanner, marking progress, results, question detail — S-06/S-10..S-17
+  roughly). Building or wiring the remaining ~60 screens (teacher, parent, admin, quiz,
+  flashcards, study plan, leaderboards, etc.) is explicitly Phase 3/4/5 scope per the
+  roadmap, not Phase 2.5, even though the component library and tokens they need are
+  being built now.
+- **Why:** the spec is a product/UI spec, not a build-order spec — reading it in full
+  (per §4 Phase 2.5's "read docs/LEMELY_UI_SPEC.md first" instruction) surfaced its full
+  71-screen scope, which if taken as this phase's literal to-do list would blow the phase
+  wide open. MISSION §4 is explicit that Phase 2.5 is tokens+components+retrofit only;
+  the other screens are sequenced into Phases 3-5 where their own acceptance criteria
+  (at-risk flags, XP economics, study plan generation, etc.) already live. Confirmed by
+  MISSION.md §4 phase roadmap, not overridden by anything in the spec.
+- **Five non-negotiable product principles reconfirmed** (spec §1.4, verbatim-near):
+  (1) the system says when it isn't sure — every mark carries confidence, low-confidence
+  flagged to student + routed to teacher review, never shown confidently when it isn't;
+  (2) flags are signals not verdicts — plagiarism/AI-detection are teacher-only advisory,
+  students never see them, never auto-penalized; (3) grades private, effort public —
+  leaderboards are XP-only, marks visible only to the student + their parents + their
+  teachers; (4) teacher has final authority — any mark is overridable with a note, shown
+  to the student as an attributed correction; (5) never invent precision — predicted
+  boundaries from real data are plain, boundaries from insufficient data are visibly
+  labelled "estimated" every time. These gate every component this phase builds,
+  especially C-3 (boundary bar) and C-4 (confidence indicator).
+- **Deferred spec ambiguities, not blocking this phase, to be resolved when their owning
+  phase starts** (do not re-derive — reference this entry): study-plan session-selection
+  algorithm (S-24, Phase 4), placement-test question-selection/weighting (S-04, Phase 4),
+  XP earning rules + level curve + streak-freeze economics (C-9/S-31, Phase 5), at-risk
+  flag AND/OR combination + trend window + recalc cadence (T-01/T-06, Phase 3 — note
+  MISSION §4 already specifies OR across the three conditions, so the open question is
+  only the trend-window and recalc-cadence detail), confidence-threshold-to-tier mapping
+  and mark-scheme-copying detection method (C-4/T-07/T-08, Phase 3), role-switcher (C-12)
+  placement/trigger UI, teacher-override visual encoding on S-17 (Phase 3), offline
+  cache-invalidation policy for G-15 (Phase 2.5/3 boundary — build C-11's offline state
+  visually now, defer the caching policy itself).
+- **No conflict found** between the spec and what Phase 2 already shipped structurally
+  (screen purposes match the shipped files' evident intent by name); the gap is entirely
+  "spec asks for more states/fidelity than a Phase-2-speed build would have had time for"
+  (e.g. S-14 marking-progress wants honest per-stage/per-question detail, not a spinner;
+  S-11 scanner wants edge-detection + real-time guidance copy) — these become the audit
+  findings the retrofit step (Impeccable audit → normalize → polish) is expected to
+  surface and fix, not a pre-emptive rewrite here.
+- **Alternatives considered:** treat the full 71-screen inventory as this phase's target
+  (rejected — directly contradicts MISSION §4's explicit phase boundaries and would
+  multiply this phase's size ~10x); skip reading the full spec and work from the MISSION
+  §4 paragraph alone (rejected — MISSION §4 itself mandates reading the spec first, and
+  the components list here is more complete/precise than the paragraph summary).
+
 ## Phase 1
 
 ### D1.12 — Teacher paper upload drops the caller-supplied `student_id` (cross-tenant write kill)

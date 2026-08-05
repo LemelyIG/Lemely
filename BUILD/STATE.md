@@ -53,26 +53,28 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
   P2.9) — verified by inspection/manual trace only; see `reports/phase-2/pwa-limitations.md`.
   Needs a real-device/browser pass before claiming a hard pass.
 
-## Phase 2.5 — Design system + frontend quality foundation — NEXT
-- [ ] Verify environment: `node -v` ≥ 24 (impeccable detect), `python3 -V`,
-      `ls .claude/skills/` shows impeccable, ui-ux-pro-max, design-taste-frontend
-- [ ] Confirm DESIGN.md + PRODUCT.md exist and have no unfilled placeholders
-      (blocker + high-priority ntfy if not)
-- [ ] Read docs/LEMELY_UI_SPEC.md in full; record any conflict with existing
-      Phase-2 implementation in DECISIONS.md
-- [ ] Build the token source (Tailwind v4 theme + CSS vars) from DESIGN.md
-- [ ] Build cross-cutting components with all states + component catalogue
-- [ ] Playwright screenshot harness (screen × state × breakpoint, ID convention)
-- [ ] Puppeteer audit runner (axe-core, Lighthouse, console errors, captures)
-- [ ] Contact-sheet generator; commit baselines
-- [ ] Extend scripts/check.sh with the UI gates
-- [ ] Retro-fit Phase-2 screens onto tokens + components
-- [ ] Impeccable audit → normalize → polish pass on Phase-2 screens
-- [ ] Full quality-bar pass; grep proves no stray design values
-- [ ] Phase report + contact sheet + PR develop→main + ntfy
+## Phase 2.5 — Design system + frontend quality foundation — RUNNING
+- [x] Verify environment: node v26.6.0 (≥24 ok), python3 3.13.5,
+      .claude/skills/ has accuracy-check, design-taste-frontend, impeccable, ui-ux-pro-max
+- [x] Confirm DESIGN.md + PRODUCT.md + docs/LEMELY_UI_SPEC.md + BUILD/QUALITY-BAR.md exist,
+      no TODO/TBD/placeholder markers found (grep clean)
+- [x] Read docs/LEMELY_UI_SPEC.md in full (71 screens / 13 components / 5 principles) —
+      no conflict with Phase-2, scope fixed to tokens+C-1..C-13+6-screen retrofit (D2.10)
+- [ ] doing — P2.5.1: Build the token source (Tailwind v4 theme + CSS vars) from DESIGN.md
+      frontmatter (colors/typography/rounded/spacing) — dual portal scoping via [data-portal]
+- [ ] P2.5.2: Build C-1..C-13 cross-cutting components with every state + catalogue doc
+- [ ] P2.5.3: Retro-fit the 6 shipped Phase-2 screens (home, upload/scanner, marking
+      progress, results, question detail) onto tokens + components
+- [ ] P2.5.4: Impeccable audit → normalize → polish pass on those screens
+- [ ] P2.5.5: Playwright screenshot harness (screen × state × breakpoint, ID convention
+      from LEMELY_UI_SPEC.md screen IDs)
+- [ ] P2.5.6: Puppeteer audit runner (axe-core, Lighthouse, console errors, full-page
+      captures) + contact-sheet generator; commit baselines
+- [ ] P2.5.7: Extend scripts/check.sh with the UI gates (axe/Lighthouse/impeccable detect)
+- [ ] P2.5.8: Full BUILD/QUALITY-BAR.md pass; grep proves no stray hex/spacing values
+- [ ] P2.5.9: Phase report + contact sheet + PR develop→main + ntfy
 
-Start-of-phase task: expand this into a step-by-step checklist (mirroring how Phase 1→2 were
-expanded from the MISSION §4 one-paragraph summary) before dispatching implementation work.
+Decisions: D2.10 (scope). Reference: reports/phase-2.5/ for screenshots + contact sheet.
 
 ## Phase 3 — Teacher + Parent surfaces
 Not yet started. Branch from `develop` as `feature/phase-3-teacher-parent`. Per MISSION §4:
