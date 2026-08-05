@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2.5
-last_updated: 2026-08-05T19:05:00Z
+last_updated: 2026-08-05T21:10:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -85,8 +85,34 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
       question count; S-15's comparison-to-previous-attempts / top-3-mistakes / weak-topic-
       chips have no backing data; CorrectPaper.tsx is still a single-step form, not the
       full S-10..S-13 wizard. Committed on feature/phase-2.5-design-system.
-- [ ] doing — P2.5.4: Impeccable audit → normalize → polish pass on those screens
-- [ ] P2.5.5: Playwright screenshot harness (screen × state × breakpoint, ID convention
+- [x] P2.5.4: Impeccable audit → polish pass (D2.11: installed skill has no `normalize`
+      command, audit's Theming dimension + polish's drift triage cover it) on Overview.tsx,
+      CorrectPaper.tsx, PaperResult.tsx via `designer` agent; Directions.tsx audited only
+      (0 diff, out of retrofit scope, confirmed no regression from P2.5.3's import swap).
+      Fixes: missing h1/live-region/label/aria-pressed a11y gaps (9 branches across the 3
+      screens), exact-token swaps (gap/p-[22px]→*-container-mobile, rounded-[8px]→rounded),
+      nearest-canonical-step swaps (text-[36px]/[34px]→text-display-lg/-md,
+      rounded-[10px]→rounded-md — DESIGN.md scale doesn't have exact steps at 34/36/10),
+      and Overview's subjects table (fixed grid-cols summing 336px+ that overflowed <380px)
+      rebuilt mobile-first (flex stack + md:grid, no duplicate a11y announcement since the
+      hidden GradeBadge copy uses display:none). `npx impeccable detect` on all 4: zero
+      findings before and after (ruleset has no signal on hex-free Tailwind-utility TSX).
+      Orchestrator-verified independently: tsc/build/oxlint re-run clean, diffs read
+      line-by-line, portal shell checked for no duplicate h1, token values checked against
+      index.css. Pre-commit run scoped to changed files only — `--all-files` was tried first
+      and found to reformat unrelated vendored `.claude/skills/` files (last touched in
+      d83aa67, never previously through pre-commit); reverted that scope creep, see D2.11
+      addendum note in commit body instead of a new decision entry.
+      Flagged, not fixed (component-library/backend, out of this task's 4-file scope):
+      Overview's momentum chart duplicates C-8 TrendSparkline but ResultDTO/OverviewDTO
+      ships precomputed SVG paths not raw numbers; CorrectPaper's pulse-dot animation
+      duration (1.6s) isn't a motion token; confidence-indicator.tsx's compact chip has a
+      sub-44px touch target; state-views.tsx's Empty/Error/OfflineState heading is a `div`
+      not a real heading tag (screens compensated locally with sr-only h1s); student portal
+      shell uses raw oklch() nav literals and has no C-13 BottomNav mounted on mobile.
+      These are real gaps for a future component-library/DTO pass, not P2.5.4 scope.
+      Uncommitted at write time — committing this + STATE.md + JOURNAL.md together next.
+- [ ] doing — P2.5.5: Playwright screenshot harness (screen × state × breakpoint, ID convention
       from LEMELY_UI_SPEC.md screen IDs)
 - [ ] P2.5.6: Puppeteer audit runner (axe-core, Lighthouse, console errors, full-page
       captures) + contact-sheet generator; commit baselines

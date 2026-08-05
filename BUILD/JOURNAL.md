@@ -363,3 +363,28 @@
 - Next: P2.5.4 — Impeccable audit → normalize → polish pass on the same 4 touched screens
   (per MISSION §10 command sequence). Then P2.5.5/6 screenshot+audit harness, P2.5.7
   check.sh gates, P2.5.8 quality-bar pass, P2.5.9 report+PR+ntfy.
+
+## 2026-08-05 — Phase 2.5: P2.5.4 Impeccable audit + polish
+- Did: resumed on a clean tree at P2.5.4. Found the installed Impeccable skill (v4.0.4)
+  has no `normalize` command — recorded D2.11 (audit's Theming dimension + polish's drift
+  triage cover the same ground) rather than stalling. Dispatched one `designer` agent to
+  run audit→polish on Overview.tsx, CorrectPaper.tsx, PaperResult.tsx (Directions.tsx
+  audited only, confirmed 0 regressions from its P2.5.3 import-only fix). Fixed: 9 missing
+  h1/live-region/label/aria-pressed a11y gaps, exact and nearest-canonical token swaps,
+  and Overview's subjects table (fixed-width grid columns overflowing below 380px)
+  rebuilt mobile-first. Orchestrator-verified independently: read every diff, re-ran
+  tsc/build/oxlint myself, checked token values against index.css, checked the portal
+  shell for h1 duplication. Committed.
+- Learned: `pre-commit run --all-files` is unsafe in this repo — its formatting hooks
+  (ruff-format, trailing-whitespace, end-of-file-fixer) reformat vendored third-party
+  content under `.claude/skills/` that's tracked in git but was never meant to be linted
+  (last touched in d83aa67, the original "design stack" commit, never since). Reverted
+  that scope creep and ran `pre-commit run --files <changed files>` instead — scope
+  pre-commit to the actual diff, not --all-files, in this repo from now on.
+- Next: P2.5.5 — Playwright screenshot harness (screen × state × breakpoint, ID
+  convention from LEMELY_UI_SPEC.md). Then P2.5.6 Puppeteer audit runner + contact sheet,
+  P2.5.7 check.sh UI gates, P2.5.8 full quality-bar grep pass (note: grep already shows
+  real pre-existing arbitrary-spacing drift across all 4 screens beyond hex/exact-token
+  matches — e.g. Directions.tsx's `text-[34px]`/`gap-[26px]`-style values that don't map
+  to index.css's spacing scale or Tailwind's 4px default scale; P2.5.8 owns resolving
+  this, not deferred silently), P2.5.9 report+PR+ntfy.
