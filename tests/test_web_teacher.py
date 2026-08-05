@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from lemely.core.history import PaperRecord
+from lemely.core.history import PaperRecord, now_iso
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -171,7 +171,15 @@ def _seed_history_record(
     percentage: float,
     grade: str,
     topic: str = "Thermal physics",
+    recorded_at: str | None = None,
 ) -> None:
+    """Append one PaperRecord. ``recorded_at`` defaults to *now* (not stale).
+
+    A fixed past date used to be the default here, but the D3.3 at-risk engine
+    treats >=14-days-since-last-paper as its own inactivity rule — a hardcoded
+    old date would silently make every seeded student inactive under real
+    wall-clock time. Callers testing that rule pass ``recorded_at`` explicitly.
+    """
     store.append(
         student_id,
         PaperRecord(
@@ -190,7 +198,7 @@ def _seed_history_record(
                     question_ids=["3a"],
                 )
             ],
-            recorded_at="2020-06-01T00:00:00+00:00",
+            recorded_at=recorded_at if recorded_at is not None else now_iso(),
         ),
     )
 
@@ -646,8 +654,10 @@ def test_overview_empty(client: TestClient) -> None:
 
 
 def test_overview_flags_at_risk(client: TestClient, history_store: HistoryStore) -> None:
-    """A low-grade student appears in at-risk; a strong one does not."""
-    _seed_history_record(history_store, "ziad", percentage=38.0, grade="D")
+    """A student on a declining trend (D3.3 rule 1) appears in at-risk; a stable one does not."""
+    _seed_history_record(history_store, "ziad", percentage=72.0, grade="B")
+    _seed_history_record(history_store, "ziad", percentage=65.0, grade="C")
+    _seed_history_record(history_store, "ziad", percentage=58.0, grade="D")
     _seed_history_record(history_store, "amelia", percentage=90.0, grade="A")
 
     body = client.get("/api/teacher/overview").json()
@@ -655,6 +665,36 @@ def test_overview_flags_at_risk(client: TestClient, history_store: HistoryStore)
     assert "ziad" in at_risk_names
     assert "amelia" not in at_risk_names
     stats = {s["key"]: s["value"] for s in body["stats"]}
-    assert stats["Papers graded"] == "2"
-    assert stats["Group mean"] == "64"  # round((38 + 90) / 2)
+    assert stats["Papers graded"] == "4"
+    assert stats["Group mean"] == "74"  # round((58 + 90) / 2), latest paper per student
     assert body["retention"] == []
+
+
+def test_overview_at_risk_carries_reason_and_evidence(
+    client: TestClient, history_store: HistoryStore
+) -> None:
+    """The at-risk DTO surfaces the D3.3 reason label and structured evidence, not a bare badge."""
+    _seed_history_record(history_store, "ziad", percentage=72.0, grade="B")
+    _seed_history_record(history_store, "ziad", percentage=65.0, grade="C")
+    _seed_history_record(history_store, "ziad", percentage=58.0, grade="D")
+
+    body = client.get("/api/teacher/overview").json()
+    ziad = next(s for s in body["atRisk"] if s["name"] == "ziad")
+    assert len(ziad["flags"]) == 1
+    flag = ziad["flags"][0]
+    assert flag["reason"] == "declining_trend"
+    assert flag["summary"]  # human-readable, not an unexplained badge (spec 1.4)
+    assert flag["evidence"]["percentages"] == [72.0, 65.0, 58.0]
+
+
+def test_overview_flags_inactive_student(client: TestClient, history_store: HistoryStore) -> None:
+    """A student inactive >=14 days (D3.3 rule 3) is flagged even with a strong last grade."""
+    from datetime import UTC, datetime, timedelta
+
+    stale = (datetime.now(UTC) - timedelta(days=20)).isoformat()
+    _seed_history_record(history_store, "priya", percentage=95.0, grade="A*", recorded_at=stale)
+
+    body = client.get("/api/teacher/overview").json()
+    priya = next(s for s in body["atRisk"] if s["name"] == "priya")
+    assert priya["flags"][0]["reason"] == "inactive"
+    assert priya["flags"][0]["evidence"]["daysInactive"] >= 20

@@ -3,6 +3,65 @@
 
 ## Phase 3
 
+### D3.3 — At-risk flagging: the three MISSION rules, their open parameters resolved, and the one rule that cannot fire until Phase 4
+- **What:** `lemely/core/at_risk.py` — a pure rules module (bottom layer, no I/O, no DB,
+  no clock of its own) that takes a `StudentHistory` plus an injected `now` and an
+  optional target grade, and returns every flag that fires, each carrying its **reason
+  and its evidence**. MISSION §4 fixes the three rules and that they combine with OR;
+  D2.10 recorded the trend-window and recalc-cadence detail as the open questions. They
+  are resolved here.
+- **Rule 1 — declining trend. Window N = 3, with a 5-percentage-point floor.** Two
+  papers is a single delta, not a trend; three is the smallest window in which "declining"
+  is a shape rather than one bad day. The rule fires when the last 3 papers are strictly
+  decreasing **and** the total drop across the window is ≥ 5pp. The floor exists because
+  strict monotonicity alone would flag 71.2% → 71.1% → 71.0% — technically declining,
+  meaningless to a teacher, and exactly the kind of false alarm that trains people to
+  ignore the flag. Evidence carried: the three percentages, so the UI can show
+  "72% → 65% → 58%" rather than an unexplained badge (spec §1.4: flags are signals, not
+  verdicts — a teacher must be able to judge the signal themselves).
+- **Rule 2 — predicted ≥2 grades below target. Implemented and fully tested, but it
+  cannot fire in Phase 3, and that is recorded as an honest limitation rather than
+  hidden.** There is no target grade anywhere in the schema: MISSION §4 puts target
+  grades in the Phase-4 onboarding questionnaire. So the rule takes the target as a
+  **parameter**, which the unit tests supply directly (the logic is therefore genuinely
+  proven), while production has nothing to pass yet. Deliberately **not** adding a
+  `users.target_grade` column now — that is P4's data-collection scope and MISSION §8b
+  forbids speculative work outside the current phase. The assessment distinguishes
+  "rule evaluated and did not fire" from "rule not evaluable (no target recorded)" so a
+  missing target never masquerades as a passing check. Distance is measured on the
+  ladder `A* A B C D E U`, so "2 boundaries below" is 2 positions, e.g. target A → C.
+- **Rule 3 — inactivity.** ≥ 14 days since the most recent `recorded_at`, per MISSION.
+  A student with no papers at all is **not** flagged inactive — that is a student who has
+  not started, not one who has stopped, and conflating them would flag every new
+  enrolment on day 15. Evidence carried: the day count and the last-active date.
+- **Recalc cadence: computed on read, no background job.** There is no scheduler in the
+  stack and adding one for this is disproportionate; the inputs are a short history list
+  and a clock, so the computation is cheap and always current by construction (a nightly
+  job would instead serve stale flags all day). Reversible: if the teacher dashboard ever
+  needs to rank thousands of students at once, this becomes a cached column fed by the
+  same pure function. Cheapest and most reversible per MISSION §1.
+- **`GRADE_ORDER` moves into `lemely/core/`** and the web layer aliases it, rather than
+  keeping the existing private copy in `lemely/web/routers/teacher.py:119`. Same
+  anti-drift discipline D2.2 applied to `REVIEW_CONFIDENCE_THRESHOLD`: a grade ladder
+  duplicated across layers is a silent-divergence bug waiting to happen.
+- **Supersedes** the crude heuristic in `teacher.py::_at_risk` (latest grade in
+  {D,E,U} OR any negative delta), which matched none of the three specified rules,
+  carried no reason label, and would flag a straight-A student after one 1pp dip.
+- **Two things were both called "At risk"; they now mean one thing.** Rewiring the
+  overview onto the engine left `/api/classes/{id}`'s "At risk" stat card still counting
+  `grade in {D,E,U}` — so the same label showed a different number on two screens, with
+  no way for a teacher to reconcile them. The class-detail card now runs the same engine.
+  The per-row `gradeAtRisk` **badge** deliberately stays the grade test: "this grade is
+  low right now" is a genuinely different signal from "this student is on a declining
+  trajectory", it is differently named on the wire, and collapsing the two would lose
+  information. Pinned by two tests (a steady, active D is *not* at risk but *does* carry
+  the badge; an inactive A-grade student *is* at risk and does *not*).
+- **Honest consequence of the narrowing:** a consistently-failing but active and stable
+  student no longer appears in the at-risk list. That is what MISSION §4's three rules
+  say, and their low grade is still visible via the badge, the grade distribution, and
+  the class average — but it is a real behavioural change from Phase 2, not a silent
+  equivalence, so it belongs in the phase report.
+
 ### D3.2 — The visual-baseline gate was self-defeating: routine gate runs overwrote the baselines they compare against
 - **What:** `web/scripts/audit.mjs` (`REPORTS_DIR`), `web/e2e/screenshots.spec.ts` and
   `web/e2e/correct-paper.spec.ts` (`SCREENS_DIR`) all hardcoded a committed phase

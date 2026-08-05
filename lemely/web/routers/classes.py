@@ -25,11 +25,13 @@ authenticated student's own id, never a caller-supplied one (D1.6).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.core.analytics import aggregate_weaknesses_from_history
+from lemely.core.at_risk import assess_at_risk
 from lemely.core.history import HistoryStoreProtocol, StudentHistory
 from lemely.db.class_repo import (
     ClassError,
@@ -44,7 +46,6 @@ from lemely.db.class_repo import (
 from lemely.db.models.enums import Role
 from lemely.web.deps import AuthContext, get_class_service, get_history_store, require_role
 from lemely.web.routers.teacher import (
-    _AT_RISK_GRADES,
     _GRADE_ORDER,
     _mean,
     _student_row,
@@ -166,7 +167,16 @@ def _class_row_to_detail(
     distribution = [DistributionBarDTO(grade=g, count=grade_counts.get(g, 0)) for g in _GRADE_ORDER]
 
     average = _mean([r.percentage for r in latest])
-    at_risk = sum(1 for r in latest if r.grade in _AT_RISK_GRADES)
+    # "At risk" must mean the same thing here as it does on the teacher
+    # overview: the D3.3 rules engine (declining trend / predicted below target
+    # / inactive), NOT the shallower "latest grade is D/E/U" test. Two cards
+    # both labelled "At risk" showing different numbers is a contradiction a
+    # teacher would have no way to resolve. The per-row ``gradeAtRisk`` badge
+    # (via ``_student_row``) is deliberately still the grade test — it is a
+    # differently-named, differently-meaning signal.
+    at_risk = sum(
+        1 for _, history in histories if assess_at_risk(history, now=datetime.now(UTC)).flags
+    )
     stats = [
         StatCardDTO(
             key="Class average",

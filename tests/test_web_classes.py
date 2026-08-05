@@ -14,6 +14,7 @@ matters most after P3.1) that class analytics are computed over the class's
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -129,8 +130,20 @@ def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None =
 
 
 def _seed_history(
-    store: HistoryStore, student_id: uuid.UUID, *, percentage: float, grade: str
+    store: HistoryStore,
+    student_id: uuid.UUID,
+    *,
+    percentage: float,
+    grade: str,
+    days_ago: int = 0,
 ) -> None:
+    """Append one paper to a student's history.
+
+    ``days_ago`` matters: since P3.2 the class-detail "At risk" card runs the
+    D3.3 rules engine, whose inactivity rule fires at >= 14 days. Seeding
+    defaults to *now* so a fixture student is "active" unless a test explicitly
+    makes them stale.
+    """
     metadata = ExamMetadata(
         subject_code="0625",
         paper_number=3,
@@ -138,6 +151,7 @@ def _seed_history(
         session_month="May/June",
         session_year=2020,
     )
+    recorded_at = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
     store.append(
         str(student_id),
         PaperRecord(
@@ -156,7 +170,7 @@ def _seed_history(
                     question_ids=["3a"],
                 )
             ],
-            recorded_at="2020-06-01T00:00:00+00:00",
+            recorded_at=recorded_at,
         ),
     )
 
@@ -447,6 +461,70 @@ def test_enroll_into_independent_class_is_409(
     )
     resp = client.post(f"/api/classes/{cls.class_id}/enroll", json={"studentId": str(student)})
     assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# "At risk" means the D3.3 rules engine here, exactly as it does on the
+# teacher overview — not the shallower "latest grade is D/E/U" test (P3.2).
+# ---------------------------------------------------------------------------
+
+
+def _at_risk_card(body: dict[str, object]) -> str:
+    stats = body["stats"]
+    assert isinstance(stats, list)
+    return next(s["value"] for s in stats if s["key"] == "At risk")
+
+
+def test_at_risk_card_ignores_a_low_but_stable_active_grade(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """A steady D who is still submitting is NOT "at risk" under the D3.3 rules.
+
+    The pre-P3.2 card counted any D/E/U. That is a different question ("is this
+    grade low?") from the one the flag engine answers ("is this student on a
+    declining trajectory / inactive / far below target?"), and the per-row
+    ``gradeAtRisk`` badge still answers the former.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Steady")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+    # Flat, recent, and low: no decline, no inactivity.
+    _seed_history(history_store, student, percentage=45.0, grade="D", days_ago=2)
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    body = client.get(f"/api/classes/{cls.class_id}").json()
+    assert _at_risk_card(body) == "0"
+    # ...but the low grade still shows on the student's own row badge.
+    assert body["students"][0]["gradeAtRisk"] is True
+
+
+def test_at_risk_card_counts_an_inactive_student(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """A strong grade does not exempt a student who stopped submitting."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Vanished")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+    _seed_history(history_store, student, percentage=88.0, grade="A", days_ago=30)
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    body = client.get(f"/api/classes/{cls.class_id}").json()
+    assert _at_risk_card(body) == "1"
+    assert body["students"][0]["gradeAtRisk"] is False
 
 
 # ---------------------------------------------------------------------------

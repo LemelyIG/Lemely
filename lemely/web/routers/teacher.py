@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -31,6 +32,14 @@ from pydantic import ValidationError
 from lemely.core.analytics import (
     aggregate_weaknesses_from_history,
     compare_performance,
+)
+from lemely.core.at_risk import (
+    GRADE_ORDER,
+    AtRiskFlag,
+    BelowTargetEvidence,
+    DecliningTrendEvidence,
+    InactivityEvidence,
+    assess_at_risk,
 )
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
 from lemely.core.history import (
@@ -65,6 +74,7 @@ from lemely.web.schemas import (
     weak_area_to_dto,
 )
 from lemely.web.schemas_teacher import (
+    AtRiskFlagDTO,
     AtRiskStudentDTO,
     BatchTabDTO,
     DetectedFieldDTO,
@@ -115,7 +125,16 @@ _UPLOAD_CHUNK_BYTES = 1024 * 1024
 # definition in ``lemely.core.schemas`` (D2.2) — never re-literalise this value.
 _REVIEW_CONFIDENCE = REVIEW_CONFIDENCE_THRESHOLD
 
-_GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
+# The grade ladder, best to worst. Aliases the single domain definition in
+# ``lemely.core.at_risk`` (D3.3) — never re-literalise this value.
+_GRADE_ORDER = GRADE_ORDER
+
+# Grades that make the roster's ``gradeAtRisk`` badge / the overview's "At risk"
+# stat card light up. This is a *different, shallower* signal than the D3.3
+# at-risk *flag* engine below (``assess_at_risk``/``_at_risk``): it just means
+# "this grade is low right now", not "this student is on a declining
+# trajectory" — the two must not be conflated. Kept as its own literal set
+# because it has no analogue in ``lemely.core.at_risk``.
 _AT_RISK_GRADES = {"D", "E", "U"}
 
 
@@ -956,8 +975,8 @@ def teacher_overview(
     """Return headline stats plus at-risk students, all from history/analytics.
 
     ``retention`` (lesson-retention minutes) has no backend source and is always
-    empty. At-risk students are those whose grade is D/E/U or whose latest paper
-    fell versus their prior same-paper attempt.
+    empty. At-risk students are those flagged by the D3.3 rules engine
+    (declining trend / predicted below target / inactive) — see ``_at_risk``.
     """
     student_ids = history_store.list_students()
     histories = [history_store.load(sid) for sid in student_ids]
@@ -965,7 +984,7 @@ def teacher_overview(
 
     average = _mean([r.percentage for r in latest])
     needs_review = _count_review_papers()
-    at_risk_students = _at_risk(histories)
+    at_risk_students = _at_risk(histories, now=datetime.now(UTC))
 
     stats = [
         StatCardDTO(
@@ -1005,23 +1024,61 @@ def _count_review_papers() -> int:
     )
 
 
-def _at_risk(histories: list[StudentHistory]) -> list[AtRiskStudentDTO]:
-    """Identify at-risk students (low grade or falling trajectory) from history."""
+def _at_risk(histories: list[StudentHistory], *, now: datetime) -> list[AtRiskStudentDTO]:
+    """Identify at-risk students via the D3.3 rules engine.
+
+    Runs ``lemely.core.at_risk.assess_at_risk`` (declining trend / predicted
+    below target / inactive, combined with OR) over each student's history. No
+    ``target_grade`` is passed — the schema has no target-grade column yet
+    (Phase 4 onboarding, D3.3) — so rule 2 is always "not evaluable" in
+    production; that is an honest, recorded limitation, not a bug. Supersedes
+    the old "grade in {D,E,U} or any negative delta" heuristic, which matched
+    none of the three specified rules and carried no reason label.
+    """
     at_risk: list[AtRiskStudentDTO] = []
     for history in histories:
         if not history.records:
             continue
+        assessment = assess_at_risk(history, now=now)
+        if not assessment.flags:
+            continue
         latest = history.records[-1]
-        delta = _student_delta(history)
-        falling = delta is not None and delta < 0
-        if latest.grade in _AT_RISK_GRADES or falling:
-            weakest = min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
-            at_risk.append(
-                AtRiskStudentDTO(
-                    name=history.student_id,
-                    grade=latest.grade,
-                    delta=delta,
-                    weakTopic=weakest.topic if weakest is not None else None,
-                )
+        weakest = min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
+        at_risk.append(
+            AtRiskStudentDTO(
+                name=history.student_id,
+                grade=latest.grade,
+                delta=_student_delta(history),
+                weakTopic=weakest.topic if weakest is not None else None,
+                flags=[_at_risk_flag_dto(flag) for flag in assessment.flags],
             )
+        )
     return at_risk
+
+
+def _at_risk_flag_dto(flag: AtRiskFlag) -> AtRiskFlagDTO:
+    """Convert a core ``AtRiskFlag`` to its wire DTO.
+
+    Core evidence models are snake_case (D2.2-style domain naming); this
+    module's DTOs are camelCase throughout (mirrors the frontend TS types), so
+    the evidence dict keys are translated explicitly rather than passed through
+    ``model_dump()`` verbatim.
+    """
+    evidence = flag.evidence
+    payload: dict[str, float | int | str | list[float]]
+    if isinstance(evidence, DecliningTrendEvidence):
+        payload = {"percentages": evidence.percentages}
+    elif isinstance(evidence, BelowTargetEvidence):
+        payload = {
+            "targetGrade": evidence.target_grade,
+            "predictedGrade": evidence.predicted_grade,
+            "positionsBelow": evidence.positions_below,
+        }
+    elif isinstance(evidence, InactivityEvidence):
+        payload = {
+            "daysInactive": evidence.days_inactive,
+            "lastActiveAt": evidence.last_active_at,
+        }
+    else:
+        raise TypeError(f"Unhandled AtRiskFlag evidence type: {type(evidence)!r}")
+    return AtRiskFlagDTO(reason=flag.reason.value, summary=flag.summary, evidence=payload)

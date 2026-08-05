@@ -105,9 +105,16 @@ Starting facts (established 2026-08-06, do not re-derive):
       that gate vacuous. Now behind `LEMELY_REPORT_DIR`, defaulting to gitignored
       `reports/.scratch`; re-baselining is explicit and names its phase. Verified: 12/12
       gates green with a clean tree afterwards.
-- [ ] todo — **P3.2** At-risk flagging engine. Pure rules module (declining trend across last N
-      papers OR predicted grade ≥2 boundaries below target OR ≥14 days inactive), each flag
-      carrying its reason + evidence. Backend + unit tests on seeded scenarios.
+- [x] done — **P3.2** At-risk flagging engine (D3.3). `lemely/core/at_risk.py` — pure, no I/O,
+      injected clock; three rules OR'd (declining trend N=3 with a 5pp floor / predicted ≥2
+      grades below target / ≥14 days inactive), each flag carrying reason + evidence.
+      `GRADE_ORDER` now defined once in core and aliased by the web layer. Replaced the old
+      "grade in {D,E,U} or any negative delta" heuristic on `/api/teacher/overview` and made
+      `/api/classes/{id}`'s "At risk" card mean the same thing (they had diverged).
+      **Honest limitation:** rule 2 is fully implemented and unit-tested but cannot fire in
+      production — no target-grade column exists until P4's onboarding questionnaire; the
+      engine reports it as *not evaluable*, never as a pass. 711 tests (707 passed / 4
+      live-only skips), at_risk.py at 100% cov, total 86.11%. All 12 gates green.
 - [ ] todo — **P3.3** Teacher analytics. Per-class and per-student analytics, aggregate/ranked
       weakness topics (T-04 heatmap data), grade distribution, trend series. Backend.
 - [ ] todo — **P3.4** Review queue override-and-annotate (T-08). Accept / adjust marks with

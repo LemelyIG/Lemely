@@ -327,18 +327,39 @@ class ClassDetailDTO(ApiModel):
     joinCode: str | None = None
 
 
+class AtRiskFlagDTO(ApiModel):
+    """One fired D3.3 at-risk rule, mirroring ``lemely.core.at_risk.AtRiskFlag``.
+
+    ``reason`` is the machine-readable rule id (``declining_trend`` /
+    ``below_target`` / ``inactive``); ``summary`` is the human-readable
+    sentence the UI can render directly rather than an unexplained badge
+    (spec §1.4); ``evidence`` is that rule's structured numbers
+    (``percentages``, or ``targetGrade``/``predictedGrade``/``positionsBelow``,
+    or ``daysInactive``/``lastActiveAt``) as a plain dict — deliberately not a
+    typed union on the wire, since no frontend consumes this yet (P3.7/P3.8).
+    """
+
+    reason: str
+    summary: str
+    evidence: dict[str, float | int | str | list[float]]
+
+
 class AtRiskStudentDTO(ApiModel):
     """An at-risk student on the overview.
 
     Data-backed: ``name`` (student id), ``grade``, ``delta`` (falling trajectory
     signal), ``weakTopic``. The mock's ``tag``/``note``/``action`` narratives have
-    no backend source and are omitted.
+    no backend source and are omitted. ``flags`` (added D3.3/P3.2) is the real
+    reason-labelled output of ``lemely.core.at_risk.assess_at_risk`` — every
+    student in this list has at least one flag; additive field, defaults to
+    empty so older callers still deserialise.
     """
 
     name: str
     grade: str
     delta: float | None = None
     weakTopic: str | None = None
+    flags: list[AtRiskFlagDTO] = Field(default_factory=list)
 
 
 class OverviewDTO(ApiModel):

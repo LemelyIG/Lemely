@@ -209,6 +209,7 @@ module = [
   "lemely.core.integrity_schemas",
   "lemely.core.history",
   "lemely.core.generation",
+  "lemely.core.at_risk",
 ]
 disallow_any_explicit = false
 
