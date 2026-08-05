@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils"
  * Tactile :active feedback + WCAG-AA foregrounds are baked in.
  */
 const button = cva(
-  "inline-flex items-center justify-center gap-2 font-sans whitespace-nowrap rounded-[10px] cursor-pointer transition-colors disabled:opacity-50 disabled:pointer-events-none active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+  // DESIGN.md "Buttons & Inputs: Use a consistent 0.5rem (8px) radius" —
+  // `rounded` (--radius: 0.5rem) is the exact token, not rounded-[10px].
+  "inline-flex items-center justify-center gap-2 font-sans whitespace-nowrap rounded cursor-pointer transition-colors disabled:opacity-50 disabled:pointer-events-none active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
   {
     variants: {
       variant: {
@@ -21,10 +23,18 @@ const button = cva(
           "border border-border bg-surface text-t1 hover:bg-surface-2",
         ghost: "border-0 bg-transparent text-t2 hover:bg-surface-2",
       },
+      // Sizes use the .btn-text(-sm/-lg) type-scale utilities (index.css,
+      // deliberately NOT named text-*, see the comment above that class)
+      // instead of bare text-[…] + font-medium — those classes already
+      // bundle the DESIGN.md button-text family/weight/line-height,
+      // font-medium was redundant. px/py use Tailwind's exact-multiple
+      // spacing utilities (px-3.5 = 14px, py-2 = 8px, py-3 = 12px) or the
+      // new named --spacing-*px / existing --spacing-container-mobile
+      // tokens where no exact multiple exists.
       size: {
-        sm: "text-[12.5px] font-medium px-[14px] py-[8px]",
-        md: "text-[13px] font-medium px-[18px] py-[11px]",
-        lg: "text-[13.5px] font-medium px-[22px] py-[12px]",
+        sm: "btn-text-sm px-3.5 py-2",
+        md: "btn-text px-18px py-11px",
+        lg: "btn-text-lg px-container-mobile py-3",
       },
     },
     defaultVariants: { variant: "secondary", size: "md" },

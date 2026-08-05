@@ -55,12 +55,21 @@
  *                       contrast) so it works as a true hover-darken with no
  *                       invented shade.
  *   --t1 / --t2 / --t3     = on-surface / on-surface-variant / a color-mix of
- *                       outline + on-surface-variant (80/20). Plain `outline`
- *                       alone is 4.28:1 on background — just under the 4.5:1
- *                       AA floor for the small (11px) metadata text this
- *                       feeds — so t3 is nudged via color-mix() of two
- *                       DESIGN.md-literal tokens (still zero invented hex)
- *                       to ≈4.9:1.
+ *                       outline + on-surface-variant. Plain `outline` alone
+ *                       is 4.28:1 on background — under the 4.5:1 AA floor
+ *                       for the small (11px) metadata/caption text this
+ *                       feeds. P2.5.8: the original 80/20 mix (#7e6865)
+ *                       measured 4.45:1 by axe against `--surface-2`
+ *                       (#fceae6, the darkest surface t3 actually sits on —
+ *                       subject-card captions/nav labels), just under AA.
+ *                       DESIGN.md has no separate "muted tertiary" hex to
+ *                       adopt verbatim, so the mix ratio was renudged to
+ *                       65/35 (#76615e, still zero invented hex — same two
+ *                       DESIGN.md-literal tokens) — 4.95:1 against
+ *                       surface-2, 5.48:1 against bg, 5.75:1 against
+ *                       surface, comfortable margin over 4.5:1 everywhere
+ *                       it's actually composited, and still visibly the
+ *                       most muted of t1/t2/t3 (t2 alone is 8.07:1+).
  *   --ok / --ok-bg (student) = tertiary / tertiary-fixed (teal reads as
  *                       "success" — DESIGN.md's frontmatter has no separate
  *                       success role, and Material's tertiary conventionally
@@ -191,6 +200,14 @@
   --fs-button-text: 13px;
   --lh-button-text: 1;
   --fw-button-text: 500;
+  /* P2.5.8: button.tsx's sm/lg size variants used bare text-[12.5px]/
+     text-[13.5px] — DESIGN.md's own prose ("Button text utilizes
+     high-precision fractional sizing to optimize information density")
+     sanctions the fractional sizing itself, it just wasn't promoted to
+     tokens. Same family/weight/line-height as --fs-button-text, only size
+     differs — see .btn-text-sm/-lg below. */
+  --fs-button-text-sm: 12.5px;
+  --fs-button-text-lg: 13.5px;
 
   /* ---- Motion — pulled out of the .lm-screen rule below into reusable
      tokens. Only one duration (0.32s) existed before; short/long are new,
@@ -292,6 +309,89 @@
      scale that ~8 existing files already depend on. */
   --breakpoint-xs: 380px;
   --breakpoint-desktop: 1440px;
+  /* DESIGN.md `Layout & Spacing > Responsiveness` names 1180px as the real
+     desktop/tablet split ("Desktop (1180px+): Full multi-column dashboard.
+     Tablet (820px-1180px): ... grid columns collapse to single or double
+     stacks") — P2.5.3/4's screens encoded this as a repeated arbitrary
+     `max-[1180px]:` variant (3x, identically, across Overview/CorrectPaper/
+     PaperResult). Promoted here since it's a real, recurring, DESIGN.md-
+     literal breakpoint, not a one-off. Tailwind auto-derives `max-tablet:`
+     from this the same way it does for the built-in scale. */
+  --breakpoint-tablet: 1180px;
+
+  /* Font sizes below the built-in `text-xs` (12px) rung — DESIGN.md's type
+     scale already has two rungs at exactly these two raw px values
+     (`label-sm`/`metadata` = 11px, both used elsewhere bundled with
+     family/weight/tracking via the composite classes below) but no bare,
+     size-only utility existed for components that only need the number.
+     P2.5.8: promotes the two recurring bare sizes actually found in the
+     audited component library + screens (chip.tsx + Overview's momentum
+     labels both use 11px; primitives.tsx's Eyebrow + PaperResult's
+     provenance line both use 10.5px) instead of leaving them as
+     text-[11px]/text-[10.5px]. */
+  --text-2xs: 11px;
+  --text-3xs: 10.5px;
+
+  /* DESIGN.md's display-lg/display-md typography both specify line-height
+     1.1 (already tokenized as --lh-display-lg/--lh-display-md above, but
+     only reachable via the composite .text-display-* classes). primitives.
+     tsx's shared `Display` heading wrapper used a bare leading-[1.1] —
+     promoted to a real Tailwind leading-* rung since it's the canonical
+     display line-height, not a one-off. */
+  --leading-display: 1.1;
+
+  /* STATE.md's P2.5.4 entry flagged CorrectPaper's pulse-dot
+     `animate-[lm-pulse_1.6s_infinite]` as "isn't a motion token" — it's
+     deliberately NOT part of the --motion-duration-short/medium/long family
+     above (those are one-shot transition durations; this is an ambient,
+     infinitely-looping status pulse, a different category). Named and
+     promoted here instead of folding it into the transition scale. */
+  --animate-lm-pulse: lm-pulse 1.6s infinite;
+
+  /* Spacing scale extras, part 2 (P2.5.8) — the P2.5.1 block above covers
+     DESIGN.md's named `spacing:` values; these are additional rungs found
+     during the QUALITY-BAR grep sweep of the component library (button.tsx,
+     card.tsx, chip.tsx, nav-shells.tsx, xp-streak.tsx) and the 4 retrofitted
+     screens (Overview/CorrectPaper/PaperResult/Login) that recur at least
+     twice each (so genuinely scale rungs, not incidental one-offs) and
+     don't already fall on Tailwind's classic 0.5-step scale (which covers
+     2/4/6/8/10/12/14px for free via e.g. `px-3.5`, used directly where it
+     applied — see the components themselves). Named by raw value, not a
+     invented semantic label, since there's no single shared "role" tying
+     e.g. a chip's horizontal padding to a card's vertical padding beyond
+     "designers picked this exact number" — the honest name is the number.
+     Usage is documented per-token below. */
+  --spacing-3px: 3px; /* chip.tsx vertical padding — DESIGN.md "Status Chips: ...tight internal padding (3px 9px)" verbatim */
+  --spacing-5px: 5px; /* Overview subject-name/detail + weak-thread micro-stacks (x2), CorrectPaper's "How this gets marked" heading margin */
+  --spacing-7px: 7px; /* xp-streak.tsx compact-pill gap+padding, CorrectPaper's pulse-dot size (w/h) + its two bullet/heading vertical offsets */
+  --spacing-9px: 9px; /* chip.tsx + nav-shells.tsx horizontal padding (also DESIGN.md's chip spec), CorrectPaper + PaperResult gap/margin */
+  --spacing-11px: 11px; /* button.tsx md vertical padding, xp-streak.tsx compact-pill horizontal padding */
+  --spacing-13px: 13px; /* Overview weak-threads list gap, CorrectPaper reassurance-list gap */
+  --spacing-18px: 18px; /* button.tsx md horizontal padding, Overview's subjects-card header/row vertical padding (x3) */
+  --spacing-26px: 26px; /* Overview's screen-level vertical stack gap (x4), PaperResult's result-header vertical padding */
+  --spacing-30px: 30px; /* PaperResult's boundary-section top margin */
+}
+
+/* Fixed-track grid layouts — Tailwind's grid-cols-* utility has no
+   theme-driven "named template" mechanism (unlike spacing/text/breakpoints,
+   which generate real utilities from @theme keys); a `@utility` is the only
+   non-bracket way to give a literal grid-template-columns list a name while
+   still keeping it responsive-variant-capable (`md:`, etc.). Each of these
+   is a one-off, screen-specific column layout (not a reusable pattern) but
+   QUALITY-BAR's own guidance is that a value "clearly load-bearing for a
+   specific named layout like a fixed grid" should be named, not left as a
+   raw bracket literal — this is that naming, not a new abstraction. */
+@utility grid-subjects-row {
+  /* Overview.tsx desktop subject row: code | name+detail | meter | trend | grade */
+  grid-template-columns: 64px 1fr 132px 86px 54px;
+}
+@utility grid-correct-cols {
+  /* CorrectPaper.tsx: upload panel (wider) | status/reassurance sidebar */
+  grid-template-columns: 1.5fr 1fr;
+}
+@utility grid-result-cols {
+  /* PaperResult.tsx: result header main content | integrity/provenance sidebar */
+  grid-template-columns: 1fr 300px;
 }
 
 /* ── Student portal (terracotta) — also the default scope ──────────────── */
@@ -317,7 +417,7 @@
 
   --t1: var(--md-on-surface);
   --t2: var(--md-on-surface-variant);
-  --t3: color-mix(in srgb, var(--md-outline) 80%, var(--md-on-surface-variant) 20%);
+  --t3: color-mix(in srgb, var(--md-outline) 65%, var(--md-on-surface-variant) 35%);
 
   --ok: var(--md-tertiary);
   --ok-bg: var(--md-tertiary-fixed);
@@ -349,7 +449,7 @@
 
   --t1: var(--md-on-surface);
   --t2: var(--md-on-surface-variant);
-  --t3: color-mix(in srgb, var(--md-outline) 80%, var(--md-on-surface-variant) 20%);
+  --t3: color-mix(in srgb, var(--md-outline) 65%, var(--md-on-surface-variant) 35%);
 
   --ok: var(--md-on-tertiary-fixed-variant);
   --ok-bg: var(--md-tertiary-fixed-dim);
@@ -427,9 +527,31 @@ body {
   line-height: var(--lh-metadata);
   letter-spacing: var(--ls-metadata);
 }
-.text-button-text {
+/* Named `.btn-text*` rather than `.text-button-text*` deliberately: a
+ * `text-`-prefixed custom utility with a suffix tailwind-merge doesn't
+ * recognize as a font-size keyword falls into its default "text color"
+ * classGroup fallback — combined via `cn()`/twMerge with an actual
+ * text-color utility (e.g. `text-accent-on`) in the same class string, the
+ * later one silently wins and the color utility gets dropped. Verified
+ * empirically (`twMerge('text-accent-on text-button-text-lg')` →
+ * `'text-button-text-lg'`, no color at all) after it caused a real
+ * color-contrast axe regression on Login's submit button during this task.
+ * `.btn-text*` doesn't collide with anything in twMerge's default groups. */
+.btn-text {
   font-family: var(--font-sans);
   font-size: var(--fs-button-text);
+  font-weight: var(--fw-button-text);
+  line-height: var(--lh-button-text);
+}
+.btn-text-sm {
+  font-family: var(--font-sans);
+  font-size: var(--fs-button-text-sm);
+  font-weight: var(--fw-button-text);
+  line-height: var(--lh-button-text);
+}
+.btn-text-lg {
+  font-family: var(--font-sans);
+  font-size: var(--fs-button-text-lg);
   font-weight: var(--fw-button-text);
   line-height: var(--lh-button-text);
 }

@@ -94,7 +94,10 @@ function IntegrityMark({ row }: { row: IntegrityRow }) {
   const Icon = row.mark === "check" ? Check : row.mark === "bang" ? Warning : Minus
   return (
     <div
-      className={`w-4 h-4 flex-none mt-px rounded-full border-[1.5px] flex items-center justify-center ${
+      // DESIGN.md "Borders: 1px solid borders in the `border` color provide
+      // the primary containment strategy" — snapped to the canonical 1px
+      // (border) instead of the undocumented border-[1.5px].
+      className={`w-4 h-4 flex-none mt-px rounded-full border flex items-center justify-center ${
         row.color === "ok"
           ? "border-ok text-ok"
           : row.color === "warn"
@@ -110,9 +113,9 @@ function IntegrityMark({ row }: { row: IntegrityRow }) {
 function ResultHeader({ res }: { res: Result }) {
   return (
     <Card className="rounded-xl overflow-hidden">
-      <div className="lm-cols grid grid-cols-[1fr_300px] max-[1180px]:grid-cols-1">
-        <div className="px-7 py-[26px]">
-          <div className="flex items-center gap-[9px] flex-wrap">
+      <div className="lm-cols grid grid-result-cols max-tablet:grid-cols-1">
+        <div className="px-7 py-26px">
+          <div className="flex items-center gap-9px flex-wrap">
             <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />
             {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
           </div>
@@ -125,8 +128,11 @@ function ResultHeader({ res }: { res: Result }) {
               Paper result — {res.code} {res.paper}
             </h1>
           )}
+          {/* max-w-[56ch] kept: a reading-measure width (character-count
+           * based, not a pixel spacing value) — same reasoning as
+           * CorrectPaper's max-w ch value. */}
           {res.summary ? (
-            <div className="text-body-md text-t2 mt-[9px] max-w-[56ch] text-pretty">
+            <div className="text-body-md text-t2 mt-9px max-w-[56ch] text-pretty">
               {res.summary}
             </div>
           ) : null}
@@ -136,7 +142,7 @@ function ResultHeader({ res }: { res: Result }) {
             <GradeBadge grade={res.grade} size="hero" basis="predicted" />
           </div>
 
-          <div className="mt-[30px] border-t border-border pt-container-mobile">
+          <div className="mt-30px border-t border-border pt-container-mobile">
             <div className="flex items-baseline gap-2.5 mb-3 flex-wrap">
               <Eyebrow>Against the {res.boundaryYear} boundaries</Eyebrow>
               <div className="flex-1" />
@@ -146,7 +152,7 @@ function ResultHeader({ res }: { res: Result }) {
             </div>
             <BoundaryBar score={res.awarded} maxScore={res.max} boundaries={NO_BOUNDARIES} />
             {res.railNote ? (
-              <div className="text-body-md text-t2 leading-[1.5] mt-2 text-pretty">
+              <div className="text-body-md text-t2 leading-normal mt-2 text-pretty">
                 {res.railNote}
               </div>
             ) : null}
@@ -158,7 +164,7 @@ function ResultHeader({ res }: { res: Result }) {
             Integrity &amp; provenance
           </div>
           {res.integrity.length === 0 ? (
-            <div className="text-xs text-t2 leading-[1.4]">
+            <div className="text-xs text-t2 leading-snug">
               No integrity checks recorded for this paper.
             </div>
           ) : (
@@ -166,8 +172,8 @@ function ResultHeader({ res }: { res: Result }) {
               <div key={i.label} className="flex gap-2.5 items-start">
                 <IntegrityMark row={i} />
                 <div>
-                  <div className="text-xs leading-[1.3]">{i.label}</div>
-                  <div className="text-xs text-t2 mt-0.5 leading-[1.35]">
+                  <div className="text-xs leading-tight">{i.label}</div>
+                  <div className="text-xs text-t2 mt-0.5 leading-snug">
                     {i.detail}
                   </div>
                 </div>
@@ -175,7 +181,7 @@ function ResultHeader({ res }: { res: Result }) {
             ))
           )}
           {res.provenance ? (
-            <div className="mt-auto font-mono text-[10.5px] text-t3 leading-[1.6] break-all border-t border-border pt-3 whitespace-pre-line">
+            <div className="mt-auto font-mono text-3xs text-t3 leading-relaxed break-all border-t border-border pt-3 whitespace-pre-line">
               {res.provenance}
             </div>
           ) : null}
@@ -224,7 +230,7 @@ function QuestionList({ questions }: { questions: QuestionResult[] }) {
               </div>
             ) : null}
             {q.reviewReason ? (
-              <div className="text-body-md text-warn leading-[1.4]">
+              <div className="text-body-md text-warn leading-snug">
                 Needs review: {q.reviewReason}
               </div>
             ) : null}

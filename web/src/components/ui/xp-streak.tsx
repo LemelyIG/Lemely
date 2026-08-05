@@ -128,7 +128,7 @@ export function XPStreak({
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-[7px] rounded-md border border-border bg-surface px-[11px] py-[7px]",
+        "inline-flex items-center gap-7px rounded-md border border-border bg-surface px-11px py-7px",
         className,
       )}
       {...props}

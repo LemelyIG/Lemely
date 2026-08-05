@@ -194,7 +194,10 @@ export function CorrectPaper() {
           <h1 className="text-display-lg text-t1">
             Correct a paper
           </h1>
-          <div className="text-sm text-t2 mt-[7px] max-w-[60ch] text-pretty">
+          {/* max-w-[60ch] kept: a reading-measure width (character-count
+           * based, not a pixel spacing value) — genuinely out of scope for
+           * the 4px pixel scale, same reasoning as line-height ratios. */}
+          <div className="text-sm text-t2 mt-7px max-w-[60ch] text-pretty">
             Scan or drop the paper. Lemely reads page one, identifies the exam,
             fetches the official mark scheme, and marks it.
           </div>
@@ -210,7 +213,7 @@ export function CorrectPaper() {
         </Button>
       </div>
 
-      <div className="lm-cols grid grid-cols-[1.5fr_1fr] gap-5 items-start max-[1180px]:grid-cols-1">
+      <div className="lm-cols grid grid-correct-cols gap-5 items-start max-tablet:grid-cols-1">
         <div className="flex flex-col gap-5">
           <Card className="p-container-mobile flex flex-col gap-5">
             <div>
@@ -316,10 +319,10 @@ export function CorrectPaper() {
 
         <div className="flex flex-col gap-5">
           <Card className="p-5">
-            <div role="status" className="flex items-center gap-[9px] mb-4">
+            <div role="status" className="flex items-center gap-9px mb-4">
               <span
                 aria-hidden="true"
-                className={`w-[7px] h-[7px] rounded-full animate-[lm-pulse_1.6s_infinite] ${running ? "bg-accent" : error ? "bg-warn" : "bg-ok"}`}
+                className={`w-7px h-7px rounded-full animate-lm-pulse ${running ? "bg-accent" : error ? "bg-warn" : "bg-ok"}`}
               />
               <div className="text-body-lg font-semibold">
                 {running ? "Marking now" : error ? "Marking stopped" : "Ready when you are"}
@@ -329,17 +332,17 @@ export function CorrectPaper() {
           </Card>
 
           <Card className="p-5">
-            <div className="text-body-lg font-semibold mb-[5px]">
+            <div className="text-body-lg font-semibold mb-5px">
               How this gets marked
             </div>
-            <div className="text-sm text-t2 mb-[15px]">
+            <div className="text-sm text-t2 mb-gap-component">
               Worth knowing before you trust the number
             </div>
-            <div className="flex flex-col gap-[13px]">
+            <div className="flex flex-col gap-13px">
               {reassure.map((r, i) => (
-                <div key={i} className="flex gap-[11px] items-start">
-                  <span className="w-[5px] h-[5px] rounded-full bg-accent mt-[7px] flex-none" />
-                  <span className="text-sm leading-[1.5] text-t2 text-pretty">
+                <div key={i} className="flex gap-11px items-start">
+                  <span className="w-5px h-5px rounded-full bg-accent mt-7px flex-none" />
+                  <span className="text-sm leading-normal text-t2 text-pretty">
                     {r.t}
                   </span>
                 </div>

@@ -13,7 +13,7 @@
     "orientationAngle": 0,
     "orientationType": "portrait-primary"
   },
-  "timestamp": "2026-08-05T18:15:41.926Z",
+  "timestamp": "2026-08-05T19:23:29.169Z",
   "url": "http://127.0.0.1:4173/student",
   "toolOptions": {
     "reporter": "v1"
@@ -1076,9 +1076,9 @@
             }
           ],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1142,9 +1142,9 @@
             }
           ],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1191,9 +1191,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1227,9 +1227,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1281,9 +1281,9 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1317,9 +1317,9 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1353,9 +1353,9 @@
             }
           ],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1389,9 +1389,9 @@
             }
           ],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1479,9 +1479,63 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<svg viewBox=\"0 0 300 88\" class=\"w-full h-[88px] overflow-visible\" aria-hidden=\"true\">",
+          "html": "<svg viewBox=\"0 0 300 88\" class=\"w-full h-22 overflow-visible\" aria-hidden=\"true\">",
           "target": [
-            ".h-\\[88px\\]"
+            ".h-22"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aria-progressbar-name",
+      "impact": null,
+      "tags": [
+        "cat.aria",
+        "wcag2a",
+        "wcag111",
+        "EN-301-549",
+        "EN-9.1.1.1",
+        "RGAAv4",
+        "RGAA-11.1.1"
+      ],
+      "description": "Ensure every ARIA progressbar node has an accessible name",
+      "help": "ARIA progressbar nodes must have an accessible name",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/aria-progressbar-name?application=axeAPI",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "aria-label",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "aria-label attribute exists and is not empty"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "target": [
+            "div[aria-label=\"0625 mastery: 62%\"]"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "aria-label",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "aria-label attribute exists and is not empty"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "target": [
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1533,9 +1587,9 @@
             }
           ],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1569,9 +1623,9 @@
             }
           ],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1605,9 +1659,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1641,9 +1695,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1691,9 +1745,9 @@
             }
           ],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1755,9 +1809,9 @@
             }
           ],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1837,9 +1891,9 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1901,9 +1955,9 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -1955,9 +2009,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -1991,9 +2045,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -2042,7 +2096,7 @@
           "impact": null,
           "html": "<div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"] > .h-full.bg-warn.rounded-full"
+            "div[aria-label=\"0625 mastery: 62%\"] > .h-full.bg-warn.rounded-full"
           ]
         },
         {
@@ -2074,7 +2128,7 @@
           "impact": null,
           "html": "<div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"] > .h-full.bg-warn.rounded-full"
+            "div[aria-label=\"unknown accuracy: 62%\"] > .h-full.bg-warn.rounded-full"
           ]
         }
       ]
@@ -2131,7 +2185,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button class=\"flex flex-col gap-2 md:grid md:grid-cols-[64px_1fr_132px_86px_54px] md:items-center md:gap-[14px] w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-[14px] transition-colors hover:bg-surface-2\">",
+          "html": "<button class=\"flex flex-col gap-2 md:grid md:grid-subjects-row md:items-center md:gap-3.5 w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-3.5 transition-colors hover:bg-surface-2\">",
           "target": [
             ".md\\:grid"
           ]
@@ -2165,7 +2219,7 @@
               "data": null,
               "relatedNodes": [
                 {
-                  "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, f5585d03-4537-400d-9db6-feccbef81d32.</h1>",
+                  "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 2ab6fb52-d7e3-42d9-8212-dfd7c36a2e97.</h1>",
                   "target": [
                     "h1"
                   ]
@@ -2201,7 +2255,7 @@
     },
     {
       "id": "color-contrast",
-      "impact": "serious",
+      "impact": null,
       "tags": [
         "cat.color",
         "wcag2aa",
@@ -2241,6 +2295,31 @@
           "html": "<div class=\"font-serif text-[25px] tracking-[0.01em]\">Lemely</div>",
           "target": [
             ".font-serif"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.9pt (10.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Student</div>",
+          "target": [
+            ".gap-0\\.5.flex-col.flex:nth-child(1) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].uppercase"
           ]
         },
         {
@@ -2298,6 +2377,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.5pt (10px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-[10px] text-t3\">0625</span>",
+          "target": [
+            "a[href=\"/student/subject/0625\"] > .text-\\[10px\\].font-mono.text-t3"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#463a37",
                 "bgColor": "#fceae6",
                 "contrastRatio": 9.39,
@@ -2348,6 +2452,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.9pt (10.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Marking</div>",
+          "target": [
+            ".gap-0\\.5.flex-col.flex:nth-child(2) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].uppercase"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#463a37",
                 "bgColor": "#fceae6",
                 "contrastRatio": 9.39,
@@ -2366,6 +2495,31 @@
           "html": "<span class=\"flex-1\">Correct a paper</span>",
           "target": [
             "a[href$=\"correct\"] > .flex-1"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.9pt (10.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Elsewhere</div>",
+          "target": [
+            ".gap-0\\.5.flex-col.flex:nth-child(3) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].uppercase"
           ]
         },
         {
@@ -2448,6 +2602,56 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.5pt (10px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-[10px] text-t3\">A/B/C</span>",
+          "target": [
+            "a[href$=\"directions\"] > .text-\\[10px\\].font-mono.text-t3"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "8.6pt (11.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<a class=\"text-[11.5px] text-t3 px-0.5 hover:text-ink\" href=\"/teacher\" data-discover=\"true\">Open the teacher portal -&gt;</a>",
+          "target": [
+            ".px-0\\.5"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#964232",
                 "bgColor": "#ffdad3",
                 "contrastRatio": 5.19,
@@ -2490,7 +2694,7 @@
           "impact": null,
           "html": "<div class=\"text-[13px] font-medium\">Maya Rahman</div>",
           "target": [
-            ".leading-\\[1\\.25\\] > .text-\\[13px\\].font-medium"
+            ".text-\\[13px\\]"
           ]
         },
         {
@@ -2515,7 +2719,7 @@
           "impact": null,
           "html": "<div class=\"text-[11px] text-t2\">Year 11 - Helwan Science Centre</div>",
           "target": [
-            ".text-\\[11px\\].text-t2"
+            ".text-\\[11px\\]"
           ]
         },
         {
@@ -2548,16 +2752,16 @@
             {
               "id": "color-contrast",
               "data": {
-                "fgColor": "#7e6865",
+                "fgColor": "#76615e",
                 "bgColor": "#ffffff",
-                "contrastRatio": 5.17,
+                "contrastRatio": 5.76,
                 "fontSize": "9.4pt (12.5px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "4.5:1"
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Element has sufficient color contrast of 5.17"
+              "message": "Element has sufficient color contrast of 5.76"
             }
           ],
           "all": [],
@@ -2663,7 +2867,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, f5585d03-4537-400d-9db6-feccbef81d32.</h1>",
+          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 2ab6fb52-d7e3-42d9-8212-dfd7c36a2e97.</h1>",
           "target": [
             "h1"
           ]
@@ -2815,7 +3019,7 @@
           "impact": null,
           "html": "<span class=\"text-xs text-t2\">1 papers corrected</span>",
           "target": [
-            ".gap-\\[3px\\] > .text-xs.text-t2"
+            ".gap-1 > .text-xs.text-t2"
           ]
         },
         {
@@ -2840,7 +3044,7 @@
           "impact": null,
           "html": "<span class=\"text-xs text-t2 font-mono\">62% - 1 papers</span>",
           "target": [
-            ".gap-\\[5px\\].flex-col.flex > .text-xs.text-t2.font-mono"
+            ".gap-5px.flex-col.flex > .text-xs.text-t2.font-mono"
           ]
         },
         {
@@ -2898,16 +3102,16 @@
             {
               "id": "color-contrast",
               "data": {
-                "fgColor": "#7e6865",
+                "fgColor": "#76615e",
                 "bgColor": "#ffffff",
-                "contrastRatio": 5.17,
+                "contrastRatio": 5.76,
                 "fontSize": "8.3pt (11px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "4.5:1"
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Element has sufficient color contrast of 5.17"
+              "message": "Element has sufficient color contrast of 5.76"
             }
           ],
           "all": [],
@@ -2940,7 +3144,7 @@
           "impact": null,
           "html": "<div class=\"text-body-lg font-semibold\">Momentum</div>",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(1) > .text-body-lg.font-semibold"
+            ".py-18px.rounded-lg.px-5:nth-child(1) > .text-body-lg.font-semibold"
           ]
         },
         {
@@ -2965,7 +3169,7 @@
           "impact": null,
           "html": "<div class=\"text-xs text-t2 mb-4\">Percentage per corrected paper, all subjects</div>",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(1) > .mb-4.text-xs.text-t2"
+            ".py-18px.rounded-lg.px-5:nth-child(1) > .mb-4.text-xs.text-t2"
           ]
         },
         {
@@ -2990,7 +3194,7 @@
           "impact": null,
           "html": "<div class=\"text-body-lg font-semibold\">Weakest threads</div>",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(2) > .text-body-lg.font-semibold"
+            ".py-18px.rounded-lg.px-5:nth-child(2) > .text-body-lg.font-semibold"
           ]
         },
         {
@@ -3015,7 +3219,7 @@
           "impact": null,
           "html": "<div class=\"text-xs text-t2 mb-4\">Accuracy by topic, all subjects</div>",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(2) > .mb-4.text-xs.text-t2"
+            ".py-18px.rounded-lg.px-5:nth-child(2) > .mb-4.text-xs.text-t2"
           ]
         },
         {
@@ -3133,7 +3337,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, f5585d03-4537-400d-9db6-feccbef81d32.</h1>",
+          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 2ab6fb52-d7e3-42d9-8212-dfd7c36a2e97.</h1>",
           "target": [
             "h1"
           ]
@@ -3173,7 +3377,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, f5585d03-4537-400d-9db6-feccbef81d32.</h1>",
+          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 2ab6fb52-d7e3-42d9-8212-dfd7c36a2e97.</h1>",
           "target": [
             "h1"
           ]
@@ -3822,7 +4026,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button class=\"flex flex-col gap-2 md:grid md:grid-cols-[64px_1fr_132px_86px_54px] md:items-center md:gap-[14px] w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-[14px] transition-colors hover:bg-surface-2\">",
+          "html": "<button class=\"flex flex-col gap-2 md:grid md:grid-subjects-row md:items-center md:gap-3.5 w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-3.5 transition-colors hover:bg-surface-2\">",
           "target": [
             ".md\\:grid"
           ]
@@ -3840,9 +4044,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -3876,9 +4080,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         }
       ]
@@ -3902,7 +4106,7 @@
               "data": null,
               "relatedNodes": [
                 {
-                  "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, f5585d03-4537-400d-9db6-feccbef81d32.</h1>",
+                  "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 2ab6fb52-d7e3-42d9-8212-dfd7c36a2e97.</h1>",
                   "target": [
                     "h1"
                   ]
@@ -4831,7 +5035,7 @@
           "impact": null,
           "html": "<div class=\"text-[13px] font-medium\">Maya Rahman</div>",
           "target": [
-            ".leading-\\[1\\.25\\] > .text-\\[13px\\].font-medium"
+            ".text-\\[13px\\]"
           ]
         },
         {
@@ -4851,7 +5055,7 @@
           "impact": null,
           "html": "<div class=\"text-[11px] text-t2\">Year 11 - Helwan Science Centre</div>",
           "target": [
-            ".text-\\[11px\\].text-t2"
+            ".text-\\[11px\\]"
           ]
         },
         {
@@ -5129,7 +5333,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"lm-screen flex flex-col gap-[26px]\">",
+          "html": "<div class=\"lm-screen flex flex-col gap-26px\">",
           "target": [
             ".lm-screen"
           ]
@@ -5149,7 +5353,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, f5585d03-4537-400d-9db6-feccbef81d32.</h1>",
+          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 2ab6fb52-d7e3-42d9-8212-dfd7c36a2e97.</h1>",
           "target": [
             "h1"
           ]
@@ -5169,9 +5373,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"bg-surface border border-border rounded-[14px] overflow-hidden\">",
+          "html": "<div class=\"bg-surface border border-border rounded-lg overflow-hidden\">",
           "target": [
-            ".rounded-\\[14px\\].overflow-hidden.bg-surface"
+            ".rounded-lg.overflow-hidden.bg-surface"
           ]
         },
         {
@@ -5189,7 +5393,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"flex items-baseline gap-3 px-5 pt-[18px] pb-[14px]\"><div class=\"text-body-lg font-semibold\">Subjects this session</div><div class=\"flex-1\"></div><div class=\"text-xs text-t2\">Forecast <span class=\"font-mono text-t1\">B</span></div></div>",
+          "html": "<div class=\"flex items-baseline gap-3 px-5 pt-18px pb-3.5\"><div class=\"text-body-lg font-semibold\">Subjects this session</div><div class=\"flex-1\"></div><div class=\"text-xs text-t2\">Forecast <span class=\"font-mono text-t1\">B</span></div></div>",
           "target": [
             ".items-baseline"
           ]
@@ -5289,7 +5493,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button class=\"flex flex-col gap-2 md:grid md:grid-cols-[64px_1fr_132px_86px_54px] md:items-center md:gap-[14px] w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-[14px] transition-colors hover:bg-surface-2\">",
+          "html": "<button class=\"flex flex-col gap-2 md:grid md:grid-subjects-row md:items-center md:gap-3.5 w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-3.5 transition-colors hover:bg-surface-2\">",
           "target": [
             ".md\\:grid"
           ]
@@ -5349,9 +5553,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<span class=\"flex flex-col gap-[3px] flex-1 min-w-0 md:flex-none\"><span class=\"text-sm font-medium\">0625</span><span class=\"text-xs text-t2\">1 papers corrected</span></span>",
+          "html": "<span class=\"flex flex-col gap-1 flex-1 min-w-0 md:flex-none\"><span class=\"text-sm font-medium\">0625</span><span class=\"text-xs text-t2\">1 papers corrected</span></span>",
           "target": [
-            ".gap-\\[3px\\]"
+            ".gap-1"
           ]
         },
         {
@@ -5391,7 +5595,7 @@
           "impact": null,
           "html": "<span class=\"text-xs text-t2\">1 papers corrected</span>",
           "target": [
-            ".gap-\\[3px\\] > .text-xs.text-t2"
+            ".gap-1 > .text-xs.text-t2"
           ]
         },
         {
@@ -5409,9 +5613,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<span class=\"flex flex-col gap-[5px]\">",
+          "html": "<span class=\"flex flex-col gap-5px\">",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex"
+            ".md\\:grid > .gap-5px.flex-col.flex"
           ]
         },
         {
@@ -5429,9 +5633,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"0625 mastery: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"0625 mastery: 62%\"]"
           ]
         },
         {
@@ -5451,7 +5655,7 @@
           "impact": null,
           "html": "<div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div>",
           "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"] > .h-full.bg-warn.rounded-full"
+            "div[aria-label=\"0625 mastery: 62%\"] > .h-full.bg-warn.rounded-full"
           ]
         },
         {
@@ -5471,7 +5675,7 @@
           "impact": null,
           "html": "<span class=\"text-xs text-t2 font-mono\">62% - 1 papers</span>",
           "target": [
-            ".gap-\\[5px\\].flex-col.flex > .text-xs.text-t2.font-mono"
+            ".gap-5px.flex-col.flex > .text-xs.text-t2.font-mono"
           ]
         },
         {
@@ -5569,7 +5773,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"lm-cols grid grid-cols-2 gap-5 max-[1180px]:grid-cols-1\">",
+          "html": "<div class=\"lm-cols grid grid-cols-2 gap-5 max-tablet:grid-cols-1\">",
           "target": [
             ".lm-cols"
           ]
@@ -5589,9 +5793,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"bg-surface border border-border rounded-[14px] px-5 py-[18px]\">",
+          "html": "<div class=\"bg-surface border border-border rounded-lg px-5 py-18px\">",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(1)"
+            ".py-18px.rounded-lg.px-5:nth-child(1)"
           ]
         },
         {
@@ -5611,7 +5815,7 @@
           "impact": null,
           "html": "<div class=\"text-body-lg font-semibold\">Momentum</div>",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(1) > .text-body-lg.font-semibold"
+            ".py-18px.rounded-lg.px-5:nth-child(1) > .text-body-lg.font-semibold"
           ]
         },
         {
@@ -5631,7 +5835,7 @@
           "impact": null,
           "html": "<div class=\"text-xs text-t2 mb-4\">Percentage per corrected paper, all subjects</div>",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(1) > .mb-4.text-xs.text-t2"
+            ".py-18px.rounded-lg.px-5:nth-child(1) > .mb-4.text-xs.text-t2"
           ]
         },
         {
@@ -5649,9 +5853,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"flex justify-between text-[11px] text-t3 font-mono mt-1.5\"></div>",
+          "html": "<div class=\"flex justify-between text-2xs text-t3 font-mono mt-1.5\"></div>",
           "target": [
-            ".mt-1\\.5"
+            ".text-2xs"
           ]
         },
         {
@@ -5669,9 +5873,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"bg-surface border border-border rounded-[14px] px-5 py-[18px]\">",
+          "html": "<div class=\"bg-surface border border-border rounded-lg px-5 py-18px\">",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(2)"
+            ".py-18px.rounded-lg.px-5:nth-child(2)"
           ]
         },
         {
@@ -5691,7 +5895,7 @@
           "impact": null,
           "html": "<div class=\"text-body-lg font-semibold\">Weakest threads</div>",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(2) > .text-body-lg.font-semibold"
+            ".py-18px.rounded-lg.px-5:nth-child(2) > .text-body-lg.font-semibold"
           ]
         },
         {
@@ -5711,7 +5915,7 @@
           "impact": null,
           "html": "<div class=\"text-xs text-t2 mb-4\">Accuracy by topic, all subjects</div>",
           "target": [
-            ".py-\\[18px\\].rounded-\\[14px\\].px-5:nth-child(2) > .mb-4.text-xs.text-t2"
+            ".py-18px.rounded-lg.px-5:nth-child(2) > .mb-4.text-xs.text-t2"
           ]
         },
         {
@@ -5729,9 +5933,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"flex flex-col gap-[13px]\">",
+          "html": "<div class=\"flex flex-col gap-13px\">",
           "target": [
-            ".gap-\\[13px\\]"
+            ".gap-13px"
           ]
         },
         {
@@ -5749,9 +5953,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"flex flex-col gap-[5px]\">",
+          "html": "<div class=\"flex flex-col gap-5px\">",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex"
+            ".gap-13px > .gap-5px.flex-col.flex"
           ]
         },
         {
@@ -5829,9 +6033,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
+          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"unknown accuracy: 62%\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
+            "div[aria-label=\"unknown accuracy: 62%\"]"
           ]
         },
         {
@@ -5851,7 +6055,7 @@
           "impact": null,
           "html": "<div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div>",
           "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"] > .h-full.bg-warn.rounded-full"
+            "div[aria-label=\"unknown accuracy: 62%\"] > .h-full.bg-warn.rounded-full"
           ]
         }
       ]
@@ -5899,319 +6103,5 @@
     }
   ],
   "incomplete": [],
-  "violations": [
-    {
-      "id": "aria-progressbar-name",
-      "impact": "serious",
-      "tags": [
-        "cat.aria",
-        "wcag2a",
-        "wcag111",
-        "EN-301-549",
-        "EN-9.1.1.1",
-        "RGAAv4",
-        "RGAA-11.1.1"
-      ],
-      "description": "Ensure every ARIA progressbar node has an accessible name",
-      "help": "ARIA progressbar nodes must have an accessible name",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/aria-progressbar-name?application=axeAPI",
-      "nodes": [
-        {
-          "any": [
-            {
-              "id": "aria-label",
-              "data": null,
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "aria-label attribute does not exist or is empty"
-            },
-            {
-              "id": "aria-labelledby",
-              "data": null,
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty"
-            },
-            {
-              "id": "non-empty-title",
-              "data": {
-                "messageKey": "noAttr"
-              },
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "Element has no title attribute"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
-          "target": [
-            ".md\\:grid > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
-          ],
-          "failureSummary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
-        },
-        {
-          "any": [
-            {
-              "id": "aria-label",
-              "data": null,
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "aria-label attribute does not exist or is empty"
-            },
-            {
-              "id": "aria-labelledby",
-              "data": null,
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty"
-            },
-            {
-              "id": "non-empty-title",
-              "data": {
-                "messageKey": "noAttr"
-              },
-              "relatedNodes": [],
-              "impact": "serious",
-              "message": "Element has no title attribute"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"h-1.5 rounded-full bg-surface-2 overflow-hidden\" role=\"progressbar\" aria-valuenow=\"62\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"h-full rounded-full bg-warn\" style=\"width: 62%;\"></div></div>",
-          "target": [
-            ".gap-\\[13px\\] > .gap-\\[5px\\].flex-col.flex > div[role=\"progressbar\"][aria-valuemin=\"0\"][aria-valuemax=\"100\"]"
-          ],
-          "failureSummary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
-        }
-      ]
-    },
-    {
-      "id": "color-contrast",
-      "impact": "serious",
-      "tags": [
-        "cat.color",
-        "wcag2aa",
-        "wcag143",
-        "TTv5",
-        "TT13.c",
-        "EN-301-549",
-        "EN-9.1.4.3",
-        "ACT",
-        "RGAAv4",
-        "RGAA-3.2.1"
-      ],
-      "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
-      "help": "Elements must meet minimum color contrast ratio thresholds",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=axeAPI",
-      "nodes": [
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.9pt (10.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Student</div>",
-          "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(1) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].uppercase"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.5pt (10px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-[10px] text-t3\">0625</span>",
-          "target": [
-            "a[href=\"/student/subject/0625\"] > .text-\\[10px\\].font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.9pt (10.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Marking</div>",
-          "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(2) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].uppercase"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.9pt (10.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Elsewhere</div>",
-          "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(3) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].uppercase"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.5pt (10px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-[10px] text-t3\">A/B/C</span>",
-          "target": [
-            "a[href$=\"directions\"] > .text-\\[10px\\].font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "8.6pt (11.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 8.6pt (11.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<a class=\"text-[11.5px] text-t3 px-0.5 hover:text-ink\" href=\"/teacher\" data-discover=\"true\">Open the teacher portal -&gt;</a>",
-          "target": [
-            ".px-0\\.5"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 8.6pt (11.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        }
-      ]
-    }
-  ]
+  "violations": []
 }

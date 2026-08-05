@@ -13,7 +13,7 @@
     "orientationAngle": 0,
     "orientationType": "portrait-primary"
   },
-  "timestamp": "2026-08-05T18:15:11.959Z",
+  "timestamp": "2026-08-05T19:22:59.227Z",
   "url": "http://127.0.0.1:4173/login",
   "toolOptions": {
     "reporter": "v1"
@@ -546,18 +546,6 @@
       "nodes": []
     },
     {
-      "id": "empty-heading",
-      "impact": null,
-      "tags": [
-        "cat.name-role-value",
-        "best-practice"
-      ],
-      "description": "Ensure headings have discernible text",
-      "help": "Headings should not be empty",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/empty-heading?application=axeAPI",
-      "nodes": []
-    },
-    {
       "id": "empty-table-header",
       "impact": null,
       "tags": [
@@ -639,18 +627,6 @@
       "description": "Ensure <iframe> and <frame> elements have an accessible name",
       "help": "Frames must have an accessible name",
       "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/frame-title?application=axeAPI",
-      "nodes": []
-    },
-    {
-      "id": "heading-order",
-      "impact": null,
-      "tags": [
-        "cat.semantics",
-        "best-practice"
-      ],
-      "description": "Ensure the order of headings is semantically correct",
-      "help": "Heading levels should only increase by one",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/heading-order?application=axeAPI",
       "nodes": []
     },
     {
@@ -777,18 +753,6 @@
       "nodes": []
     },
     {
-      "id": "landmark-main-is-top-level",
-      "impact": null,
-      "tags": [
-        "cat.semantics",
-        "best-practice"
-      ],
-      "description": "Ensure the main landmark is at top level",
-      "help": "Main landmark should not be contained in another landmark",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-main-is-top-level?application=axeAPI",
-      "nodes": []
-    },
-    {
       "id": "landmark-no-duplicate-banner",
       "impact": null,
       "tags": [
@@ -810,30 +774,6 @@
       "description": "Ensure the document has at most one contentinfo landmark",
       "help": "Document should not have more than one contentinfo landmark",
       "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-no-duplicate-contentinfo?application=axeAPI",
-      "nodes": []
-    },
-    {
-      "id": "landmark-no-duplicate-main",
-      "impact": null,
-      "tags": [
-        "cat.semantics",
-        "best-practice"
-      ],
-      "description": "Ensure the document has at most one main landmark",
-      "help": "Document should not have more than one main landmark",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-no-duplicate-main?application=axeAPI",
-      "nodes": []
-    },
-    {
-      "id": "landmark-unique",
-      "impact": null,
-      "tags": [
-        "cat.semantics",
-        "best-practice"
-      ],
-      "description": "Ensure landmarks are unique",
-      "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-unique?application=axeAPI",
       "nodes": []
     },
     {
@@ -1335,7 +1275,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\">",
           "target": [
             "input[autocomplete=\"email\"]"
           ]
@@ -1353,7 +1293,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\">",
           "target": [
             "input[autocomplete=\"current-password\"]"
           ]
@@ -1394,7 +1334,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button type=\"submit\" class=\"rounded-[10px] bg-ink px-4 py-2.5 text-[13.5px] font-medium text-accent-on disabled:opacity-50\">Sign in</button>",
+          "html": "<button class=\"inline-flex items-ce...\" type=\"submit\">",
           "target": [
             "button"
           ]
@@ -1428,7 +1368,7 @@
                 "fgColor": "#231917",
                 "bgColor": "#ffffff",
                 "contrastRatio": 17.17,
-                "fontSize": "18.0pt (24px)",
+                "fontSize": "22.5pt (30px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "3:1"
               },
@@ -1440,9 +1380,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"font-serif text-[24px]\">Lemely</div>",
+          "html": "<h1 class=\"text-display-md\">Lemely</h1>",
           "target": [
-            ".font-serif"
+            "h1"
           ]
         },
         {
@@ -1453,7 +1393,7 @@
                 "fgColor": "#231917",
                 "bgColor": "#ffffff",
                 "contrastRatio": 17.17,
-                "fontSize": "9.8pt (13px)",
+                "fontSize": "10.5pt (14px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "4.5:1"
               },
@@ -1465,7 +1405,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<label class=\"flex flex-col gap-1.5 text-[13px]\">Email<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\"></label>",
+          "html": "<label class=\"flex flex-col gap-1.5 text-sm\">Email<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\"></label>",
           "target": [
             "label:nth-child(2)"
           ]
@@ -1490,7 +1430,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\">",
           "target": [
             "input[autocomplete=\"email\"]"
           ]
@@ -1503,7 +1443,7 @@
                 "fgColor": "#231917",
                 "bgColor": "#ffffff",
                 "contrastRatio": 17.17,
-                "fontSize": "9.8pt (13px)",
+                "fontSize": "10.5pt (14px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "4.5:1"
               },
@@ -1515,7 +1455,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<label class=\"flex flex-col gap-1.5 text-[13px]\">Password<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\"></label>",
+          "html": "<label class=\"flex flex-col gap-1.5 text-sm\">Password<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\"></label>",
           "target": [
             "label:nth-child(3)"
           ]
@@ -1540,7 +1480,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\">",
           "target": [
             "input[autocomplete=\"current-password\"]"
           ]
@@ -1565,7 +1505,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button type=\"submit\" class=\"rounded-[10px] bg-ink px-4 py-2.5 text-[13.5px] font-medium text-accent-on disabled:opacity-50\">Sign in</button>",
+          "html": "<button class=\"inline-flex items-ce...\" type=\"submit\">",
           "target": [
             "button"
           ]
@@ -1612,6 +1552,37 @@
       ]
     },
     {
+      "id": "empty-heading",
+      "impact": null,
+      "tags": [
+        "cat.name-role-value",
+        "best-practice"
+      ],
+      "description": "Ensure headings have discernible text",
+      "help": "Headings should not be empty",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/empty-heading?application=axeAPI",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "has-visible-text",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "minor",
+              "message": "Element has text that is visible to screen readers"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<h1 class=\"text-display-md\">Lemely</h1>",
+          "target": [
+            "h1"
+          ]
+        }
+      ]
+    },
+    {
       "id": "form-field-multiple-labels",
       "impact": null,
       "tags": [
@@ -1638,7 +1609,7 @@
               "data": null,
               "relatedNodes": [
                 {
-                  "html": "<label class=\"flex flex-col gap-1.5 text-[13px]\">Email<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\"></label>",
+                  "html": "<label class=\"flex flex-col gap-1.5 text-sm\">Email<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\"></label>",
                   "target": [
                     "label:nth-child(2)"
                   ]
@@ -1649,7 +1620,7 @@
             }
           ],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\">",
           "target": [
             "input[autocomplete=\"email\"]"
           ]
@@ -1663,7 +1634,7 @@
               "data": null,
               "relatedNodes": [
                 {
-                  "html": "<label class=\"flex flex-col gap-1.5 text-[13px]\">Password<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\"></label>",
+                  "html": "<label class=\"flex flex-col gap-1.5 text-sm\">Password<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\"></label>",
                   "target": [
                     "label:nth-child(3)"
                   ]
@@ -1674,9 +1645,49 @@
             }
           ],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\">",
           "target": [
             "input[autocomplete=\"current-password\"]"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "heading-order",
+      "impact": null,
+      "tags": [
+        "cat.semantics",
+        "best-practice"
+      ],
+      "description": "Ensure the order of headings is semantically correct",
+      "help": "Heading levels should only increase by one",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/heading-order?application=axeAPI",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "heading-order",
+              "data": {
+                "headingOrder": [
+                  {
+                    "ancestry": [
+                      "html > body > div > main > form > h1:nth-child(1)"
+                    ],
+                    "level": 1
+                  }
+                ]
+              },
+              "relatedNodes": [],
+              "impact": "moderate",
+              "message": "Heading order valid"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<h1 class=\"text-display-md\">Lemely</h1>",
+          "target": [
+            "h1"
           ]
         }
       ]
@@ -1783,7 +1794,7 @@
             }
           ],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\">",
           "target": [
             "input[autocomplete=\"email\"]"
           ]
@@ -1801,7 +1812,7 @@
             }
           ],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\">",
           "target": [
             "input[autocomplete=\"current-password\"]"
           ]
@@ -1838,7 +1849,7 @@
               },
               "relatedNodes": [
                 {
-                  "html": "<label class=\"flex flex-col gap-1.5 text-[13px]\">Email<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\"></label>",
+                  "html": "<label class=\"flex flex-col gap-1.5 text-sm\">Email<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\"></label>",
                   "target": [
                     "label:nth-child(2)"
                   ]
@@ -1859,7 +1870,7 @@
             }
           ],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\">",
           "target": [
             "input[autocomplete=\"email\"]"
           ]
@@ -1873,7 +1884,7 @@
               },
               "relatedNodes": [
                 {
-                  "html": "<label class=\"flex flex-col gap-1.5 text-[13px]\">Password<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\"></label>",
+                  "html": "<label class=\"flex flex-col gap-1.5 text-sm\">Password<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\"></label>",
                   "target": [
                     "label:nth-child(3)"
                   ]
@@ -1894,9 +1905,145 @@
             }
           ],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\">",
+          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\">",
           "target": [
             "input[autocomplete=\"current-password\"]"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "landmark-main-is-top-level",
+      "impact": null,
+      "tags": [
+        "cat.semantics",
+        "best-practice"
+      ],
+      "description": "Ensure the main landmark is at top level",
+      "help": "Main landmark should not be contained in another landmark",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-main-is-top-level?application=axeAPI",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "landmark-is-top-level",
+              "data": {
+                "role": "main"
+              },
+              "relatedNodes": [],
+              "impact": "moderate",
+              "message": "The main landmark is at the top level."
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<main class=\"flex min-h-screen items-center justify-center bg-surface px-4\">",
+          "target": [
+            "main"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "landmark-no-duplicate-main",
+      "impact": null,
+      "tags": [
+        "cat.semantics",
+        "best-practice"
+      ],
+      "description": "Ensure the document has at most one main landmark",
+      "help": "Document should not have more than one main landmark",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-no-duplicate-main?application=axeAPI",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "page-no-duplicate-main",
+              "data": null,
+              "relatedNodes": [],
+              "impact": "moderate",
+              "message": "Document does not have more than one main landmark"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<main class=\"flex min-h-screen items-center justify-center bg-surface px-4\">",
+          "target": [
+            "main"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "landmark-one-main",
+      "impact": null,
+      "tags": [
+        "cat.semantics",
+        "best-practice"
+      ],
+      "description": "Ensure the document has a main landmark",
+      "help": "Document should have one main landmark",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-one-main?application=axeAPI",
+      "nodes": [
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "page-has-main",
+              "data": null,
+              "relatedNodes": [
+                {
+                  "html": "<main class=\"flex min-h-screen items-center justify-center bg-surface px-4\">",
+                  "target": [
+                    "main"
+                  ]
+                }
+              ],
+              "impact": "moderate",
+              "message": "Document has at least one main landmark"
+            }
+          ],
+          "none": [],
+          "impact": null,
+          "html": "<html lang=\"en\">",
+          "target": [
+            "html"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "landmark-unique",
+      "impact": null,
+      "tags": [
+        "cat.semantics",
+        "best-practice"
+      ],
+      "description": "Ensure landmarks are unique",
+      "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-unique?application=axeAPI",
+      "nodes": [
+        {
+          "any": [
+            {
+              "id": "landmark-is-unique",
+              "data": {
+                "role": "main",
+                "accessibleText": null
+              },
+              "relatedNodes": [],
+              "impact": "moderate",
+              "message": "Landmarks must have a unique role or role/label/title (i.e. accessible name) combination"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<main class=\"flex min-h-screen items-center justify-center bg-surface px-4\">",
+          "target": [
+            "main"
           ]
         }
       ]
@@ -2000,7 +2147,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button type=\"submit\" class=\"rounded-[10px] bg-ink px-4 py-2.5 text-[13.5px] font-medium text-accent-on disabled:opacity-50\">Sign in</button>",
+          "html": "<button class=\"inline-flex items-ce...\" type=\"submit\">",
           "target": [
             "button"
           ]
@@ -2008,8 +2155,46 @@
       ]
     },
     {
+      "id": "page-has-heading-one",
+      "impact": null,
+      "tags": [
+        "cat.semantics",
+        "best-practice"
+      ],
+      "description": "Ensure that the page, or at least one of its frames contains a level-one heading",
+      "help": "Page should contain a level-one heading",
+      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/page-has-heading-one?application=axeAPI",
+      "nodes": [
+        {
+          "any": [],
+          "all": [
+            {
+              "id": "page-has-heading-one",
+              "data": null,
+              "relatedNodes": [
+                {
+                  "html": "<h1 class=\"text-display-md\">Lemely</h1>",
+                  "target": [
+                    "h1"
+                  ]
+                }
+              ],
+              "impact": "moderate",
+              "message": "Page has at least one level-one heading"
+            }
+          ],
+          "none": [],
+          "impact": null,
+          "html": "<html lang=\"en\">",
+          "target": [
+            "html"
+          ]
+        }
+      ]
+    },
+    {
       "id": "region",
-      "impact": "moderate",
+      "impact": null,
       "tags": [
         "cat.keyboard",
         "best-practice",
@@ -2055,9 +2240,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"flex min-h-screen items-center justify-center bg-surface px-4\">",
+          "html": "<main class=\"flex min-h-screen items-center justify-center bg-surface px-4\">",
           "target": [
-            ".min-h-screen"
+            "main"
           ]
         },
         {
@@ -2075,7 +2260,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<form class=\"flex w-full max-w-[360px] flex-col gap-4 rounded-[12px] border border-border bg-white p-8\">",
+          "html": "<form class=\"flex w-full max-w-90 flex-col gap-4 rounded-md border border-border bg-surface p-8\">",
           "target": [
             "form"
           ]
@@ -2095,7 +2280,47 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\">",
+          "html": "<h1 class=\"text-display-md\">Lemely</h1>",
+          "target": [
+            "h1"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "region",
+              "data": {
+                "isIframe": false
+              },
+              "relatedNodes": [],
+              "impact": "moderate",
+              "message": "All page content is contained by landmarks"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<label class=\"flex flex-col gap-1.5 text-sm\">Email<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\"></label>",
+          "target": [
+            "label:nth-child(2)"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "region",
+              "data": {
+                "isIframe": false
+              },
+              "relatedNodes": [],
+              "impact": "moderate",
+              "message": "All page content is contained by landmarks"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<input required=\"\" autocomplete=\"email\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"email\" value=\"\">",
           "target": [
             "input[autocomplete=\"email\"]"
           ]
@@ -2115,7 +2340,27 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\">",
+          "html": "<label class=\"flex flex-col gap-1.5 text-sm\">Password<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\"></label>",
+          "target": [
+            "label:nth-child(3)"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "region",
+              "data": {
+                "isIframe": false
+              },
+              "relatedNodes": [],
+              "impact": "moderate",
+              "message": "All page content is contained by landmarks"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<input required=\"\" autocomplete=\"current-password\" class=\"rounded border border-border px-3 py-2 text-sm\" type=\"password\" value=\"\">",
           "target": [
             "input[autocomplete=\"current-password\"]"
           ]
@@ -2135,7 +2380,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<button type=\"submit\" class=\"rounded-[10px] bg-ink px-4 py-2.5 text-[13.5px] font-medium text-accent-on disabled:opacity-50\">Sign in</button>",
+          "html": "<button class=\"inline-flex items-ce...\" type=\"submit\">",
           "target": [
             "button"
           ]
@@ -2144,148 +2389,5 @@
     }
   ],
   "incomplete": [],
-  "violations": [
-    {
-      "id": "landmark-one-main",
-      "impact": "moderate",
-      "tags": [
-        "cat.semantics",
-        "best-practice"
-      ],
-      "description": "Ensure the document has a main landmark",
-      "help": "Document should have one main landmark",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/landmark-one-main?application=axeAPI",
-      "nodes": [
-        {
-          "any": [],
-          "all": [
-            {
-              "id": "page-has-main",
-              "data": null,
-              "relatedNodes": [],
-              "impact": "moderate",
-              "message": "Document does not have a main landmark"
-            }
-          ],
-          "none": [],
-          "impact": "moderate",
-          "html": "<html lang=\"en\">",
-          "target": [
-            "html"
-          ],
-          "failureSummary": "Fix all of the following:\n  Document does not have a main landmark"
-        }
-      ]
-    },
-    {
-      "id": "page-has-heading-one",
-      "impact": "moderate",
-      "tags": [
-        "cat.semantics",
-        "best-practice"
-      ],
-      "description": "Ensure that the page, or at least one of its frames contains a level-one heading",
-      "help": "Page should contain a level-one heading",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/page-has-heading-one?application=axeAPI",
-      "nodes": [
-        {
-          "any": [],
-          "all": [
-            {
-              "id": "page-has-heading-one",
-              "data": null,
-              "relatedNodes": [],
-              "impact": "moderate",
-              "message": "Page must have a level-one heading"
-            }
-          ],
-          "none": [],
-          "impact": "moderate",
-          "html": "<html lang=\"en\">",
-          "target": [
-            "html"
-          ],
-          "failureSummary": "Fix all of the following:\n  Page must have a level-one heading"
-        }
-      ]
-    },
-    {
-      "id": "region",
-      "impact": "moderate",
-      "tags": [
-        "cat.keyboard",
-        "best-practice",
-        "RGAAv4",
-        "RGAA-9.2.1"
-      ],
-      "description": "Ensure all page content is contained by landmarks",
-      "help": "All page content should be contained by landmarks",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/region?application=axeAPI",
-      "nodes": [
-        {
-          "any": [
-            {
-              "id": "region",
-              "data": {
-                "isIframe": false
-              },
-              "relatedNodes": [],
-              "impact": "moderate",
-              "message": "Some page content is not contained by landmarks"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "moderate",
-          "html": "<div class=\"font-serif text-[24px]\">Lemely</div>",
-          "target": [
-            ".font-serif"
-          ],
-          "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
-        },
-        {
-          "any": [
-            {
-              "id": "region",
-              "data": {
-                "isIframe": false
-              },
-              "relatedNodes": [],
-              "impact": "moderate",
-              "message": "Some page content is not contained by landmarks"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "moderate",
-          "html": "<label class=\"flex flex-col gap-1.5 text-[13px]\">Email<input required=\"\" autocomplete=\"email\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"email\" value=\"\"></label>",
-          "target": [
-            "label:nth-child(2)"
-          ],
-          "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
-        },
-        {
-          "any": [
-            {
-              "id": "region",
-              "data": {
-                "isIframe": false
-              },
-              "relatedNodes": [],
-              "impact": "moderate",
-              "message": "Some page content is not contained by landmarks"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "moderate",
-          "html": "<label class=\"flex flex-col gap-1.5 text-[13px]\">Password<input required=\"\" autocomplete=\"current-password\" class=\"rounded-[8px] border border-border px-3 py-2 text-[14px]\" type=\"password\" value=\"\"></label>",
-          "target": [
-            "label:nth-child(3)"
-          ],
-          "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
-        }
-      ]
-    }
-  ]
+  "violations": []
 }

@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2.5
-last_updated: 2026-08-05T21:35:00Z
+last_updated: 2026-08-05T22:05:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -203,12 +203,48 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
       everything PASS except `ui-thresholds`, which correctly FAILs on exactly the 3
       pre-existing axe findings P2.5.6 recorded above — confirms the gate enforces what it
       claims to, and correctly blocks merge until P2.5.8 fixes them.
-- [ ] doing — P2.5.8: Full BUILD/QUALITY-BAR.md pass; grep proves no stray hex/spacing values;
-      must resolve the P2.5.6 axe baseline findings (login landmarks, shared-shell
-      color-contrast, overview progressbar labels) — `./scripts/check.sh`'s `ui-thresholds`
-      step (P2.5.7) currently and correctly FAILs on these; it must go green as part of
-      this task, not be worked around
-- [ ] P2.5.9: Phase report + contact sheet + PR develop→main + ntfy
+- [x] P2.5.8: Full QUALITY-BAR.md pass, dispatched to a `designer` agent, orchestrator-
+      verified independently before commit (re-ran every check myself, read every diff).
+      Accessibility: `--t3` re-mixed 80/20→65/35 (outline/on-surface-variant, still zero
+      invented hex, both portal blocks in index.css) — was 4.45:1 against `--surface-2`
+      (its real worst-case background), now 4.95-5.75:1 across bg/surface/surface-2;
+      `Meter` (primitives.tsx) now takes a required `label` prop, both Overview.tsx call
+      sites pass real content ("Physics mastery: 62%" etc — was the `aria-progressbar-name`
+      violation); Login.tsx wrapped in `<main>` with a real `<h1>` (was 3 moderate
+      landmark/heading violations) and, while touching that file, also swapped its raw
+      `<button>` for the real `<Button>` component and `bg-white`→`bg-surface` (component-
+      reuse/stray-color fixes surfaced incidentally, not asked for but genuinely in scope).
+      Verified: `npm run audit` re-run independently → axe 0/0/0/0 on all 4 routes (was 3
+      moderate + up to 2 serious per route), Lighthouse accessibility 100/100/100/100 (was
+      90-95); `python3 scripts/check_ui_gates.py` → clean, exit 0.
+      Grep sweep (QUALITY-BAR "no arbitrary Tailwind values, grep proves it"): resolved via
+      exact-token swaps (rounded-[10px]→rounded, rounded-[14px]→rounded-lg — both DESIGN.md-
+      literal), free Tailwind v4 built-ins (py-[14px]→py-3.5, tracking-[0.1em]→
+      tracking-widest, etc.), and ~13 new named tokens in index.css for values with no
+      existing rung (--spacing-{3,5,7,9,11,13,18,26,30}px, --text-2xs/-3xs, --leading-display,
+      --breakpoint-tablet [DESIGN.md's own 1180px tablet/desktop split], --animate-lm-pulse,
+      3 `@utility` grid-template blocks for fixed-column layouts) — every new token's diff
+      comment cites its DESIGN.md/recurrence justification. Deliberately kept arbitrary and
+      documented inline: `max-w-[56ch]`/`max-w-[60ch]` (reading-measure `ch` widths, not
+      pixel spacing — same reasoning applied to line-height ratios). Re-grep confirms only
+      those 2 documented exceptions remain live in code across the swept files (component
+      library `ui/` + the 4 retrofitted screens + Login.tsx — other screens stay out of
+      scope per D2.10).
+      A real bug was found and fixed mid-task, not just avoided: naming the new button
+      type-scale classes `.text-button-text*` collided with tailwind-merge's default
+      "text color" classGroup fallback for unrecognized `text-*` suffixes — `cn()`
+      combining it with an actual text-color utility silently dropped the color (verified:
+      `twMerge('text-accent-on text-button-text-lg')` → `'text-button-text-lg'`, no color
+      survives). This surfaced as a genuinely new serious color-contrast violation on
+      Login's submit button during the agent's own `npm run audit` re-run — caught before
+      being reported as done, renamed to `.btn-text*` (doesn't collide), documented inline
+      in index.css so it isn't reintroduced by a future session naming a class `text-*`.
+      tsc/build/oxlint/`npx impeccable detect src/`/pre-commit all clean (verified myself).
+      Playwright screenshot corpus (`npm run test:e2e`) re-run afterward to refresh the 30
+      phase-2.5 baselines against the new tokens (8/8 tests green, no regression) — the
+      G-04 set was already refreshed by the `npm run audit` re-run. Two incidentally-
+      regenerated Phase-2 baseline PNGs reverted (same known side-effect as P2.5.5).
+- [ ] doing — P2.5.9: Phase report + contact sheet + PR develop→main + ntfy
 
 Decisions: D2.10 (scope). Reference: reports/phase-2.5/ for screenshots + contact sheet.
 

@@ -13,8 +13,8 @@
     "orientationAngle": 0,
     "orientationType": "portrait-primary"
   },
-  "timestamp": "2026-08-05T18:15:31.306Z",
-  "url": "http://127.0.0.1:4173/student/result/60709aab-d1c7-46b4-9958-fd80903408ba",
+  "timestamp": "2026-08-05T19:23:18.744Z",
+  "url": "http://127.0.0.1:4173/student/result/6432e4ca-8b6c-45fc-8789-5704891f66fa",
   "toolOptions": {
     "reporter": "v1"
   },
@@ -6965,7 +6965,7 @@
     },
     {
       "id": "color-contrast",
-      "impact": "serious",
+      "impact": null,
       "tags": [
         "cat.color",
         "wcag2aa",
@@ -7005,6 +7005,31 @@
           "html": "<div class=\"font-serif text-[25px] tracking-[0.01em]\">Lemely</div>",
           "target": [
             ".text-\\[25px\\]"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.9pt (10.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Student</div>",
+          "target": [
+            ".gap-0\\.5.flex-col.flex:nth-child(1) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].pb-\\[7px\\]"
           ]
         },
         {
@@ -7062,6 +7087,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.5pt (10px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-[10px] text-t3\">0625</span>",
+          "target": [
+            "a[href=\"/student/subject/0625\"] > .text-\\[10px\\].font-mono.text-t3"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#463a37",
                 "bgColor": "#fceae6",
                 "contrastRatio": 9.39,
@@ -7112,6 +7162,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.9pt (10.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Marking</div>",
+          "target": [
+            ".gap-0\\.5.flex-col.flex:nth-child(2) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].pb-\\[7px\\]"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#463a37",
                 "bgColor": "#fceae6",
                 "contrastRatio": 9.39,
@@ -7130,6 +7205,31 @@
           "html": "<span class=\"flex-1\">Correct a paper</span>",
           "target": [
             "a[href$=\"correct\"] > .flex-1"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.9pt (10.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Elsewhere</div>",
+          "target": [
+            ".gap-0\\.5.flex-col.flex:nth-child(3) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].pb-\\[7px\\]"
           ]
         },
         {
@@ -7212,6 +7312,56 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "7.5pt (10px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-[10px] text-t3\">A/B/C</span>",
+          "target": [
+            "a[href$=\"directions\"] > .text-\\[10px\\].font-mono.text-t3"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#76615e",
+                "bgColor": "#fceae6",
+                "contrastRatio": 4.95,
+                "fontSize": "8.6pt (11.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.95"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<a class=\"text-[11.5px] text-t3 px-0.5 hover:text-ink\" href=\"/teacher\" data-discover=\"true\">Open the teacher portal -&gt;</a>",
+          "target": [
+            ".px-0\\.5"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#964232",
                 "bgColor": "#ffdad3",
                 "contrastRatio": 5.19,
@@ -7254,7 +7404,7 @@
           "impact": null,
           "html": "<div class=\"text-[13px] font-medium\">Maya Rahman</div>",
           "target": [
-            ".leading-\\[1\\.25\\] > .text-\\[13px\\].font-medium"
+            ".text-\\[13px\\]"
           ]
         },
         {
@@ -7302,7 +7452,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"font-mono text-[11.5px] text-t2\">Home / Result 60709aab-d1c7-46b4-9958-fd80903408ba</div>",
+          "html": "<div class=\"font-mono text-[11.5px] text-t2\">Home / Result 6432e4ca-8b6c-45fc-8789-5704891f66fa</div>",
           "target": [
             ".text-\\[11\\.5px\\].text-t2.font-mono"
           ]
@@ -7312,16 +7462,16 @@
             {
               "id": "color-contrast",
               "data": {
-                "fgColor": "#7e6865",
+                "fgColor": "#76615e",
                 "bgColor": "#ffffff",
-                "contrastRatio": 5.17,
+                "contrastRatio": 5.76,
                 "fontSize": "9.4pt (12.5px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "4.5:1"
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Element has sufficient color contrast of 5.17"
+              "message": "Element has sufficient color contrast of 5.76"
             }
           ],
           "all": [],
@@ -7437,6 +7587,106 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "8.3pt (11px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"text-t3\" aria-hidden=\"true\">·</span>",
+          "target": [
+            ".text-t3[aria-hidden=\"true\"]:nth-child(2)"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "8.3pt (11px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"text-t3\">May/June 2020</span>",
+          "target": [
+            ".flex-wrap.gap-1\\.5.text-metadata > .text-t3:nth-child(3)"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "8.3pt (11px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"text-t3\" aria-hidden=\"true\">·</span>",
+          "target": [
+            ".text-t3[aria-hidden=\"true\"]:nth-child(4)"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "8.3pt (11px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"text-t3\">Paper 1 - Variant 2</span>",
+          "target": [
+            ".text-t3:nth-child(5)"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#352b29",
                 "bgColor": "#fffefe",
                 "contrastRatio": 13.64,
@@ -7462,16 +7712,16 @@
             {
               "id": "color-contrast",
               "data": {
-                "fgColor": "#887470",
+                "fgColor": "#816d6a",
                 "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
+                "contrastRatio": 4.81,
                 "fontSize": "22.5pt (30px)",
                 "fontWeight": "normal",
                 "expectedContrastRatio": "3:1"
               },
               "relatedNodes": [],
               "impact": "serious",
-              "message": "Element has sufficient color contrast of 4.36"
+              "message": "Element has sufficient color contrast of 4.81"
             }
           ],
           "all": [],
@@ -7562,6 +7812,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "7.9pt (10.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"font-mono text-3xs tracking-widest uppercase text-t3\">Against the 2020 boundaries</div>",
+          "target": [
+            ".mb-3.flex-wrap.items-baseline > .text-3xs.tracking-widest.uppercase"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#63514e",
                 "bgColor": "#fffefe",
                 "contrastRatio": 7.4,
@@ -7580,6 +7855,56 @@
           "html": "<div class=\"font-mono text-xs text-t2\">A boundary sat at 5/8</div>",
           "target": [
             ".text-xs.text-t2.font-mono"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "7.9pt (10.5px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<div class=\"font-mono text-3xs tracking-widest uppercase text-t3\">Grade boundaries</div>",
+          "target": [
+            ".justify-between > .text-3xs.tracking-widest.uppercase"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "10.5pt (14px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<p class=\"text-body-md text-t3 m-0\">Boundary data isn't available for this paper yet.</p>",
+          "target": [
+            ".text-body-md"
           ]
         },
         {
@@ -7627,9 +7952,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"text-xs text-t2 leading-[1.4]\">No integrity checks recorded for this paper.</div>",
+          "html": "<div class=\"text-xs text-t2 leading-snug\">No integrity checks recorded for this paper.</div>",
           "target": [
-            ".leading-\\[1\\.4\\]"
+            ".leading-snug"
           ]
         },
         {
@@ -7712,6 +8037,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "9.0pt (12px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
+          "target": [
+            ".last\\:border-b-0.border-b.border-border:nth-child(1) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#9c141d",
                 "bgColor": "#ffdcd9",
                 "contrastRatio": 6.51,
@@ -7780,6 +8130,31 @@
           "html": "<span class=\"font-mono text-sm font-medium text-t1\">1/1</span>",
           "target": [
             ".last\\:border-b-0.border-b.border-border:nth-child(2) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-sm.text-t1.font-medium"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "9.0pt (12px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
+          "target": [
+            ".last\\:border-b-0.border-b.border-border:nth-child(2) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
           ]
         },
         {
@@ -7862,6 +8237,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "9.0pt (12px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-xs text-t3\">0%</span>",
+          "target": [
+            ".last\\:border-b-0.border-b.border-border:nth-child(3) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"0 out of 1 marks, 0 percent\"] > .text-xs.font-mono.text-t3"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#63514e",
                 "bgColor": "#fffefe",
                 "contrastRatio": 7.4,
@@ -7905,6 +8305,31 @@
           "html": "<span class=\"font-mono text-sm font-medium text-t1\">1/1</span>",
           "target": [
             ".last\\:border-b-0.border-b.border-border:nth-child(4) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-sm.text-t1.font-medium"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "9.0pt (12px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
+          "target": [
+            ".last\\:border-b-0.border-b.border-border:nth-child(4) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
           ]
         },
         {
@@ -7987,6 +8412,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "9.0pt (12px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-xs text-t3\">0%</span>",
+          "target": [
+            ".last\\:border-b-0.border-b.border-border:nth-child(5) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"0 out of 1 marks, 0 percent\"] > .text-xs.font-mono.text-t3"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#63514e",
                 "bgColor": "#fffefe",
                 "contrastRatio": 7.4,
@@ -8030,6 +8480,31 @@
           "html": "<span class=\"font-mono text-sm font-medium text-t1\">1/1</span>",
           "target": [
             ".last\\:border-b-0.border-b.border-border:nth-child(6) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-sm.text-t1.font-medium"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "9.0pt (12px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
+          "target": [
+            ".last\\:border-b-0.border-b.border-border:nth-child(6) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
           ]
         },
         {
@@ -8112,6 +8587,31 @@
             {
               "id": "color-contrast",
               "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "9.0pt (12px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
+          "target": [
+            ".last\\:border-b-0.border-b.border-border:nth-child(7) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
                 "fgColor": "#9c141d",
                 "bgColor": "#ffdcd9",
                 "contrastRatio": 6.51,
@@ -8180,6 +8680,31 @@
           "html": "<span class=\"font-mono text-sm font-medium text-t1\">0/1</span>",
           "target": [
             ".last\\:border-b-0.border-b.border-border:nth-child(8) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"0 out of 1 marks, 0 percent\"] > .text-sm.text-t1.font-medium"
+          ]
+        },
+        {
+          "any": [
+            {
+              "id": "color-contrast",
+              "data": {
+                "fgColor": "#816d6a",
+                "bgColor": "#fffefe",
+                "contrastRatio": 4.81,
+                "fontSize": "9.0pt (12px)",
+                "fontWeight": "normal",
+                "expectedContrastRatio": "4.5:1"
+              },
+              "relatedNodes": [],
+              "impact": "serious",
+              "message": "Element has sufficient color contrast of 4.81"
+            }
+          ],
+          "all": [],
+          "none": [],
+          "impact": null,
+          "html": "<span class=\"font-mono text-xs text-t3\">0%</span>",
+          "target": [
+            ".last\\:border-b-0.border-b.border-border:nth-child(8) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"0 out of 1 marks, 0 percent\"] > .text-xs.font-mono.text-t3"
           ]
         }
       ]
@@ -9521,7 +10046,7 @@
           "impact": null,
           "html": "<div class=\"flex items-center gap-[9px] px-2\"><div class=\"w-[11px] h-[11px] rounded-full bg-accent\"></div><div class=\"font-serif text-[25px] tracking-[0.01em]\">Lemely</div></div>",
           "target": [
-            ".gap-\\[9px\\].px-2.items-center"
+            ".gap-\\[9px\\]"
           ]
         },
         {
@@ -9621,7 +10146,7 @@
           "impact": null,
           "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Student</div>",
           "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(1) > .tracking-\\[0\\.12em\\].pb-\\[7px\\].text-\\[10\\.5px\\]"
+            ".gap-0\\.5.flex-col.flex:nth-child(1) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].pb-\\[7px\\]"
           ]
         },
         {
@@ -9921,7 +10446,7 @@
           "impact": null,
           "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Marking</div>",
           "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(2) > .tracking-\\[0\\.12em\\].pb-\\[7px\\].text-\\[10\\.5px\\]"
+            ".gap-0\\.5.flex-col.flex:nth-child(2) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].pb-\\[7px\\]"
           ]
         },
         {
@@ -10021,7 +10546,7 @@
           "impact": null,
           "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Elsewhere</div>",
           "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(3) > .tracking-\\[0\\.12em\\].pb-\\[7px\\].text-\\[10\\.5px\\]"
+            ".gap-0\\.5.flex-col.flex:nth-child(3) > .text-\\[10\\.5px\\].tracking-\\[0\\.12em\\].pb-\\[7px\\]"
           ]
         },
         {
@@ -10341,7 +10866,7 @@
           "impact": null,
           "html": "<div class=\"text-[13px] font-medium\">Maya Rahman</div>",
           "target": [
-            ".leading-\\[1\\.25\\] > .text-\\[13px\\].font-medium"
+            ".text-\\[13px\\]"
           ]
         },
         {
@@ -10419,7 +10944,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"font-mono text-[11.5px] text-t2\">Home / Result 60709aab-d1c7-46b4-9958-fd80903408ba</div>",
+          "html": "<div class=\"font-mono text-[11.5px] text-t2\">Home / Result 6432e4ca-8b6c-45fc-8789-5704891f66fa</div>",
           "target": [
             ".text-\\[11\\.5px\\].text-t2.font-mono"
           ]
@@ -10679,7 +11204,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"lm-cols grid grid-cols-[1fr_300px] max-[1180px]:grid-cols-1\">",
+          "html": "<div class=\"lm-cols grid grid-result-cols max-tablet:grid-cols-1\">",
           "target": [
             ".lm-cols"
           ]
@@ -10699,7 +11224,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"px-7 py-[26px]\">",
+          "html": "<div class=\"px-7 py-26px\">",
           "target": [
             ".px-7"
           ]
@@ -10719,9 +11244,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"flex items-center gap-[9px] flex-wrap\">",
+          "html": "<div class=\"flex items-center gap-9px flex-wrap\">",
           "target": [
-            ".gap-\\[9px\\].flex-wrap.items-center"
+            ".gap-9px"
           ]
         },
         {
@@ -10999,9 +11524,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"mt-[30px] border-t border-border pt-container-mobile\">",
+          "html": "<div class=\"mt-30px border-t border-border pt-container-mobile\">",
           "target": [
-            ".mt-\\[30px\\]"
+            ".mt-30px"
           ]
         },
         {
@@ -11019,7 +11544,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"flex items-baseline gap-2.5 mb-3 flex-wrap\"><div class=\"font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3\">Against the 2020 boundaries</div><div class=\"flex-1\"></div><div class=\"font-mono text-xs text-t2\">A boundary sat at 5/8</div></div>",
+          "html": "<div class=\"flex items-baseline gap-2.5 mb-3 flex-wrap\"><div class=\"font-mono text-3xs tracking-widest uppercase text-t3\">Against the 2020 boundaries</div><div class=\"flex-1\"></div><div class=\"font-mono text-xs text-t2\">A boundary sat at 5/8</div></div>",
           "target": [
             ".mb-3.flex-wrap.items-baseline"
           ]
@@ -11039,9 +11564,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3\">Against the 2020 boundaries</div>",
+          "html": "<div class=\"font-mono text-3xs tracking-widest uppercase text-t3\">Against the 2020 boundaries</div>",
           "target": [
-            ".mb-3.flex-wrap.items-baseline > .tracking-\\[0\\.1em\\].text-\\[10\\.5px\\].uppercase"
+            ".mb-3.flex-wrap.items-baseline > .text-3xs.tracking-widest.uppercase"
           ]
         },
         {
@@ -11119,7 +11644,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"flex items-center justify-between gap-3 mb-3 flex-wrap\"><div class=\"font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3\">Grade boundaries</div></div>",
+          "html": "<div class=\"flex items-center justify-between gap-3 mb-3 flex-wrap\"><div class=\"font-mono text-3xs tracking-widest uppercase text-t3\">Grade boundaries</div></div>",
           "target": [
             ".justify-between"
           ]
@@ -11139,9 +11664,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3\">Grade boundaries</div>",
+          "html": "<div class=\"font-mono text-3xs tracking-widest uppercase text-t3\">Grade boundaries</div>",
           "target": [
-            ".justify-between > .tracking-\\[0\\.1em\\].text-\\[10\\.5px\\].uppercase"
+            ".justify-between > .text-3xs.tracking-widest.uppercase"
           ]
         },
         {
@@ -11179,7 +11704,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"border-l border-border bg-surface-2 px-container-mobile py-6 flex flex-col gap-4\"><div class=\"text-sm font-semibold\">Integrity &amp; provenance</div><div class=\"text-xs text-t2 leading-[1.4]\">No integrity checks recorded for this paper.</div></div>",
+          "html": "<div class=\"border-l border-border bg-surface-2 px-container-mobile py-6 flex flex-col gap-4\"><div class=\"text-sm font-semibold\">Integrity &amp; provenance</div><div class=\"text-xs text-t2 leading-snug\">No integrity checks recorded for this paper.</div></div>",
           "target": [
             ".border-l"
           ]
@@ -11219,9 +11744,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"text-xs text-t2 leading-[1.4]\">No integrity checks recorded for this paper.</div>",
+          "html": "<div class=\"text-xs text-t2 leading-snug\">No integrity checks recorded for this paper.</div>",
           "target": [
-            ".leading-\\[1\\.4\\]"
+            ".leading-snug"
           ]
         },
         {
@@ -11319,9 +11844,9 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
+          "html": "<div class=\"bg-surface border border-border rounded-lg px-3\">",
           "target": [
-            ".rounded-\\[14px\\]"
+            ".px-3.rounded-lg.bg-surface"
           ]
         },
         {
@@ -13432,764 +13957,7 @@
           "failureSummary": "Fix all of the following:\n  aria-label attribute is not well supported on a div with no valid role attribute."
         }
       ]
-    },
-    {
-      "id": "color-contrast",
-      "impact": "serious",
-      "tags": [
-        "cat.color",
-        "wcag2aa",
-        "wcag143",
-        "TTv5",
-        "TT13.c",
-        "EN-301-549",
-        "EN-9.1.4.3",
-        "ACT",
-        "RGAAv4",
-        "RGAA-3.2.1"
-      ],
-      "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
-      "help": "Elements must meet minimum color contrast ratio thresholds",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=axeAPI",
-      "nodes": [
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "8.3pt (11px)",
-                "fontWeight": "normal",
-                "messageKey": "shortTextContent",
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-xl overflow-hidden\">",
-                  "target": [
-                    ".overflow-hidden"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element content is too short to determine if it is actual text content"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"text-t3\" aria-hidden=\"true\">·</span>",
-          "target": [
-            ".text-t3[aria-hidden=\"true\"]:nth-child(2)"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element content is too short to determine if it is actual text content"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "8.3pt (11px)",
-                "fontWeight": "normal",
-                "messageKey": "shortTextContent",
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-xl overflow-hidden\">",
-                  "target": [
-                    ".overflow-hidden"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element content is too short to determine if it is actual text content"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"text-t3\" aria-hidden=\"true\">·</span>",
-          "target": [
-            ".text-t3[aria-hidden=\"true\"]:nth-child(4)"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element content is too short to determine if it is actual text content"
-        }
-      ]
     }
   ],
-  "violations": [
-    {
-      "id": "color-contrast",
-      "impact": "serious",
-      "tags": [
-        "cat.color",
-        "wcag2aa",
-        "wcag143",
-        "TTv5",
-        "TT13.c",
-        "EN-301-549",
-        "EN-9.1.4.3",
-        "ACT",
-        "RGAAv4",
-        "RGAA-3.2.1"
-      ],
-      "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
-      "help": "Elements must meet minimum color contrast ratio thresholds",
-      "helpUrl": "https://dequeuniversity.com/rules/axe/4.12/color-contrast?application=axeAPI",
-      "nodes": [
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.9pt (10.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Student</div>",
-          "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(1) > .tracking-\\[0\\.12em\\].pb-\\[7px\\].text-\\[10\\.5px\\]"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.5pt (10px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-[10px] text-t3\">0625</span>",
-          "target": [
-            "a[href=\"/student/subject/0625\"] > .text-\\[10px\\].font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.9pt (10.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Marking</div>",
-          "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(2) > .tracking-\\[0\\.12em\\].pb-\\[7px\\].text-\\[10\\.5px\\]"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.9pt (10.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium\">Elsewhere</div>",
-          "target": [
-            ".gap-0\\.5.flex-col.flex:nth-child(3) > .tracking-\\[0\\.12em\\].pb-\\[7px\\].text-\\[10\\.5px\\]"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "7.5pt (10px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-[10px] text-t3\">A/B/C</span>",
-          "target": [
-            "a[href$=\"directions\"] > .text-\\[10px\\].font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#7e6865",
-                "bgColor": "#fceae6",
-                "contrastRatio": 4.45,
-                "fontSize": "8.6pt (11.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<aside class=\"hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen\">",
-                  "target": [
-                    "aside"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 8.6pt (11.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<a class=\"text-[11.5px] text-t3 px-0.5 hover:text-ink\" href=\"/teacher\" data-discover=\"true\">Open the teacher portal -&gt;</a>",
-          "target": [
-            ".px-0\\.5"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #7e6865, background color: #fceae6, font size: 8.6pt (11.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "8.3pt (11px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-xl overflow-hidden\">",
-                  "target": [
-                    ".overflow-hidden"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"text-t3\">May/June 2020</span>",
-          "target": [
-            ".flex-wrap.gap-1\\.5.text-metadata > .text-t3:nth-child(3)"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "8.3pt (11px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-xl overflow-hidden\">",
-                  "target": [
-                    ".overflow-hidden"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"text-t3\">Paper 1 - Variant 2</span>",
-          "target": [
-            ".text-t3:nth-child(5)"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 8.3pt (11px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "7.9pt (10.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-xl overflow-hidden\">",
-                  "target": [
-                    ".overflow-hidden"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3\">Against the 2020 boundaries</div>",
-          "target": [
-            ".mb-3.flex-wrap.items-baseline > .tracking-\\[0\\.1em\\].text-\\[10\\.5px\\].uppercase"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "7.9pt (10.5px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-xl overflow-hidden\">",
-                  "target": [
-                    ".overflow-hidden"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<div class=\"font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3\">Grade boundaries</div>",
-          "target": [
-            ".justify-between > .tracking-\\[0\\.1em\\].text-\\[10\\.5px\\].uppercase"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 7.9pt (10.5px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "10.5pt (14px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-xl overflow-hidden\">",
-                  "target": [
-                    ".overflow-hidden"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<p class=\"text-body-md text-t3 m-0\">Boundary data isn't available for this paper yet.</p>",
-          "target": [
-            ".text-body-md"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "9.0pt (12px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
-                  "target": [
-                    ".rounded-\\[14px\\]"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
-          "target": [
-            ".last\\:border-b-0.border-b.border-border:nth-child(1) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "9.0pt (12px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
-                  "target": [
-                    ".rounded-\\[14px\\]"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
-          "target": [
-            ".last\\:border-b-0.border-b.border-border:nth-child(2) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "9.0pt (12px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
-                  "target": [
-                    ".rounded-\\[14px\\]"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-xs text-t3\">0%</span>",
-          "target": [
-            ".last\\:border-b-0.border-b.border-border:nth-child(3) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"0 out of 1 marks, 0 percent\"] > .text-xs.font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "9.0pt (12px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
-                  "target": [
-                    ".rounded-\\[14px\\]"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
-          "target": [
-            ".last\\:border-b-0.border-b.border-border:nth-child(4) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "9.0pt (12px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
-                  "target": [
-                    ".rounded-\\[14px\\]"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-xs text-t3\">0%</span>",
-          "target": [
-            ".last\\:border-b-0.border-b.border-border:nth-child(5) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"0 out of 1 marks, 0 percent\"] > .text-xs.font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "9.0pt (12px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
-                  "target": [
-                    ".rounded-\\[14px\\]"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
-          "target": [
-            ".last\\:border-b-0.border-b.border-border:nth-child(6) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "9.0pt (12px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
-                  "target": [
-                    ".rounded-\\[14px\\]"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-xs text-t3\">100%</span>",
-          "target": [
-            ".last\\:border-b-0.border-b.border-border:nth-child(7) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"1 out of 1 marks, 100 percent\"] > .text-xs.font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-        },
-        {
-          "any": [
-            {
-              "id": "color-contrast",
-              "data": {
-                "fgColor": "#887470",
-                "bgColor": "#fffefe",
-                "contrastRatio": 4.36,
-                "fontSize": "9.0pt (12px)",
-                "fontWeight": "normal",
-                "messageKey": null,
-                "expectedContrastRatio": "4.5:1"
-              },
-              "relatedNodes": [
-                {
-                  "html": "<div class=\"bg-surface border border-border rounded-[14px] px-3\">",
-                  "target": [
-                    ".rounded-\\[14px\\]"
-                  ]
-                }
-              ],
-              "impact": "serious",
-              "message": "Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-            }
-          ],
-          "all": [],
-          "none": [],
-          "impact": "serious",
-          "html": "<span class=\"font-mono text-xs text-t3\">0%</span>",
-          "target": [
-            ".last\\:border-b-0.border-b.border-border:nth-child(8) > .py-3.-mx-2.px-2 > .min-w-0.text-left.hover\\:bg-surface-2 > .items-baseline.gap-1\\.5[aria-label=\"0 out of 1 marks, 0 percent\"] > .text-xs.font-mono.text-t3"
-          ],
-          "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #887470, background color: #fffefe, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
-        }
-      ]
-    }
-  ]
+  "violations": []
 }

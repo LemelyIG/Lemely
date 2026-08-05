@@ -477,3 +477,38 @@
 - Next: P2.5.8 — full QUALITY-BAR.md pass. Must turn `ui-thresholds` green (login
   landmarks, shared-shell color-contrast, overview progressbar labels) plus the grep-based
   stray hex/spacing sweep. Then P2.5.9 (phase report + contact sheet + PR + ntfy).
+
+## 2026-08-05 — Phase 2.5: P2.5.8 full QUALITY-BAR.md pass
+- Did: dispatched one `designer` agent with a precise brief (exact files/lines for the 3
+  axe violations, the full grep-sweep file list, explicit per-category guidance for
+  spacing vs. typography vs. line-height/ch-unit values, and a 5-step self-verification
+  checklist including re-running `npm run audit` and `scripts/check_ui_gates.py`).
+  Orchestrator-verified independently before trusting (MISSION delegation protocol): read
+  every source diff, re-ran tsc/build/oxlint/`npx impeccable detect`/pre-commit myself,
+  re-ran `npm run audit` myself (fresh axe 0/0/0/0 on all 4 routes, Lighthouse a11y
+  100/100/100/100, confirmed independently of the agent's own numbers), re-ran the grep
+  sweep myself (only the 2 documented `ch`-unit exceptions remain), and visually spot-
+  checked several regenerated screenshots. Also ran `npm run test:e2e` afterward (not
+  requested by the brief) to refresh the 30 Playwright-owned phase-2.5 baselines against
+  the new tokens, since the color/radius/spacing changes made the existing ones stale
+  evidence for the phase report — 8/8 green, no regression. Reverted 2 incidentally-
+  regenerated Phase-2 baseline PNGs (same known side effect as P2.5.5). Committed.
+- Learned (D2.14): the agent's own fix — re-mixing `--t3`, adding `Meter`'s `label` prop,
+  `<main>`/`<h1>` on Login — introduced a real, separate, self-caught bug along the way:
+  naming new composite classes `.text-button-text-sm/-lg` silently broke `tailwind-merge`,
+  which buckets any unrecognized `text-*`-prefixed class into its default text-color
+  conflict group and evicts the real color utility with no error anywhere in the
+  toolchain (build/lint/types all pass). Only the agent's own `npm run audit` re-run
+  catching a *new* serious color-contrast violation on Login's button surfaced it before
+  it shipped. Renamed to `.btn-text*`. General lesson recorded in DECISIONS.md: never
+  name a custom composite utility class starting with a string tailwind-merge treats as a
+  real Tailwind group prefix (`text-`, `bg-`, `p-`, `gap-`, ...) unless it IS that exact
+  utility — verify empirically with `twMerge()` when in doubt, not by eye.
+- Phase 2.5's content work is now done: tokens (P2.5.1), component library (P2.5.2),
+  screen retrofit (P2.5.3), Impeccable polish (P2.5.4), Playwright screenshot corpus
+  (P2.5.5), Puppeteer audit runner (P2.5.6), the gate command (P2.5.7), and now a clean
+  QUALITY-BAR pass (P2.5.8) with zero serious/critical axe violations and Lighthouse a11y
+  100 across all 4 in-scope routes.
+- Next: P2.5.9 — phase report (`reports/phase-2.5/REPORT.md`) + contact sheet (already
+  regenerating correctly via both `npm run audit` and `npm run test:e2e`) + `develop`
+  merge + `gh pr create` (develop→main) + ntfy. This is the last task in Phase 2.5.

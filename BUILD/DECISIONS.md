@@ -1293,3 +1293,39 @@ same `extend-exclude` list immediately, and should not assume "CI is green" from
 history without accounting for what's changed on disk since the last time the exact gate
 command was actually run — `git log --oneline` showing recent unrelated commits is not
 evidence a given check still passes.
+
+### D2.14 — Custom Tailwind utility classes named `text-*` silently break `tailwind-merge`
+
+Discovered during P2.5.8's QUALITY-BAR grep sweep (a `designer` agent's own verification
+pass caught it before reporting done — recorded here so no future session repeats it).
+Promoting `button.tsx`'s bare `text-[12.5px] font-medium` / `text-[13.5px] font-medium`
+size variants to reusable composite classes, the first attempt named them
+`.text-button-text-sm` / `.text-button-text-lg` (bundling font-size + weight +
+line-height + family, the same pattern already used for `.text-display-md` etc.
+elsewhere in `index.css`). This silently broke color: `cn()` (this project's
+`clsx` + `tailwind-merge` wrapper) merges `text-accent-on text-button-text-lg` down to
+just `text-button-text-lg` — **no color class survives** — because tailwind-merge
+recognizes the `text-` prefix and buckets *any* unrecognized suffix into its default
+"text color" conflict group, so the later `text-*`-prefixed class always wins and evicts
+the real color utility, even though the two classes have nothing to do with each other
+semantically. Confirmed empirically: `twMerge('text-accent-on text-button-text-lg')` →
+`'text-button-text-lg'`.
+
+This is invisible in isolation (the button still renders, just with browser-default black
+text merged away silently — no build error, no lint error, no TypeScript error) and only
+surfaced because `npm run audit`'s axe pass caught a genuinely new serious color-contrast
+violation on Login's submit button (white-on-dark became near-black-on-dark, 1.3:1) during
+the same session that introduced it — if that re-verification step hadn't run, this would
+have shipped as a silent, undetected accessibility regression.
+
+**Fix:** renamed to `.btn-text` / `.btn-text-sm` / `.btn-text-lg` — anything NOT prefixed
+with a tailwind-merge-recognized group prefix (`text-`, `bg-`, `border-`, `p-`, `m-`, `w-`,
+`h-`, `gap-`, `rounded-`, ...) is safe from this class of collision.
+
+**How to apply:** any future custom composite utility class in `index.css` must NOT start
+with a string tailwind-merge treats as a real Tailwind prefix unless it IS that exact
+utility (e.g. a real color/spacing value) — a font-size-bundling class must not be named
+`text-anything`, a spacing-bundling class must not be named `p-anything`/`gap-anything`,
+etc. When in doubt, verify empirically before shipping:
+`node -e "console.log(require('tailwind-merge').twMerge('<class A> <candidate class>'))"`
+from `web/` and confirm both classes survive in the output.
