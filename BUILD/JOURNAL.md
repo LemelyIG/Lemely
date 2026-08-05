@@ -411,3 +411,40 @@
   reading the last-known status.
 - Next: P2.5.6 — Puppeteer audit runner (axe-core, Lighthouse, console errors, full-page
   captures) + contact-sheet generator; commit baselines.
+
+## 2026-08-05 — Phase 2.5: P2.5.6 Puppeteer audit runner
+- Did: resumed on a dirty tree — a prior session had left `web/scripts/audit.mjs` plus
+  package.json/vite.config.ts changes on disk, uncommitted, with output for only 2 of 4
+  routes (died mid-run). Verified rather than trusted (MISSION delegation protocol): ran
+  it myself, and it failed on route 3 with a real script bug — `waitForText(page, "out
+  of")` checks `document.body.innerText`, but the "N out of M marks" string only exists
+  in MarkDisplay's `aria-label` (visible text is "5/8"), which `innerText` never sees; it
+  had only worked on routes 1-2 by coincidence of what text was actually visible there.
+  Fixed to wait on `[aria-label*="out of"]` directly (matches Playwright's `getByLabel`
+  used for the same assertion in screenshots.spec.ts). Re-ran clean end-to-end against
+  the live Supabase stack: all 4 in-scope routes (G-04 login, S-10 correct-entry, S-15/
+  S-17 result, S-06 overview) audited with axe + Lighthouse, screenshots captured for
+  G-04 (the one route with no existing Playwright capture, 9 PNGs), contact sheet
+  regenerated (39 thumbnails, 5 screen dirs). tsc/build/oxlint
+  clean, pre-commit scoped to the 3 changed source files clean, 0 console errors across
+  the whole run. Committed.
+- Learned: Lighthouse 13.4.1 (the pinned version) has no PWA category at all — Google
+  removed it upstream around v11/v12, confirmed by reading the installed package source,
+  not assumed. Audited performance/accessibility/best-practices/seo instead and recorded
+  the gap in the script's own header rather than silently dropping the requirement. Also:
+  a subagent's on-disk work with no STATE.md task entry and no TaskList record cannot be
+  assumed complete OR assumed abandoned — the only way to know is to run it.
+- Real findings, deliberately not fixed here (P2.5.8's job, not P2.5.6's): Lighthouse
+  accessibility 95-100 across all 4 routes (gate met). Axe: login has 3 moderate
+  landmark/heading violations (bare pre-auth shell, no `<main>`/h1); the 3 authenticated
+  routes each carry 1-2 **serious** violations from shared-shell components — the
+  `text-t3` muted-label color (#7e6865) measures 4.45:1, just under the 4.5:1 AA
+  threshold, on every subject-card caption/nav label; student-overview's mastery
+  progress bars (`role="progressbar"`) have no accessible name. All pre-existing gaps in
+  shared components (not new regressions), now measured for the first time because this
+  is the first working run of a tool that can measure them. Zero serious/critical axe
+  violations is a phase-level acceptance criterion (MISSION §4) — flagged in STATE.md as
+  a P2.5.8 blocker, not silently dropped.
+- Next: P2.5.7 — extend scripts/check.sh with the UI gates (axe/Lighthouse/impeccable
+  detect). Then P2.5.8 (full QUALITY-BAR.md pass — must resolve this session's axe
+  findings), P2.5.9 (report + PR + ntfy).

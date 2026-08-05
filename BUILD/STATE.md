@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2.5
-last_updated: 2026-08-05T21:10:00Z
+last_updated: 2026-08-05T21:20:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -143,10 +143,48 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
       pre-commit scoped to the changed spec file clean. Two incidentally-regenerated
       Phase-2 baseline PNGs (side effect of re-running correct-paper.spec.ts) reverted,
       not committed — out of this task's scope.
-- [ ] doing — P2.5.6: Puppeteer audit runner (axe-core, Lighthouse, console errors, full-page
-      captures) + contact-sheet generator; commit baselines
-- [ ] P2.5.7: Extend scripts/check.sh with the UI gates (axe/Lighthouse/impeccable detect)
-- [ ] P2.5.8: Full BUILD/QUALITY-BAR.md pass; grep proves no stray hex/spacing values
+- [x] P2.5.6: Puppeteer audit runner (`web/scripts/audit.mjs`, `npm run audit`) built on a
+      prior session's in-progress, uncommitted work (found on disk: script + package.json/
+      vite.config.ts changes + partial output for 2/4 routes). Verified rather than trusted
+      per MISSION delegation protocol — ran it myself, it failed on the 3rd route with a
+      real script bug: `waitForText(page, "out of")` checks `document.body.innerText`, but
+      MarkDisplay (C-2) renders "5/8" as visible text and puts "5 out of 8 marks, ..." only
+      in an `aria-label`, which `innerText` never surfaces — worked by luck on routes 1-2
+      because their wait text was genuinely visible. Fixed: wait on
+      `page.waitForSelector('[aria-label*="out of"]')` instead (mirrors Playwright's
+      `getByLabel` used for the same assertion in `web/e2e/screenshots.spec.ts`). Re-ran
+      clean end-to-end: builds the frontend, boots the real backend + `vite preview`,
+      signs up + logs in through the real UI, uploads the golden fixture to reach a real
+      corrected-paper state, audits all 4 in-scope routes (G-04 login, S-10 correct-entry,
+      S-15/S-17 result, S-06 overview) with axe + Lighthouse, captures G-04's screenshots
+      (only route with no existing Playwright capture — 9 PNGs, default/error/loading ×
+      380/768/1440), and regenerates `reports/phase-2.5/contact-sheet.html` from the full
+      corpus (39 thumbnails across 5 screen dirs). tsc/build/oxlint clean, pre-commit
+      scoped to the 3 changed source files clean, console-errors.json empty (0 real errors
+      across the whole run). Lighthouse has no PWA category at all in the pinned v13.4.1
+      (confirmed by reading its source — Google removed it upstream around v11/v12);
+      audited performance/accessibility/best-practices/seo instead, noted in the script's
+      own header comment rather than silently dropping the requirement.
+      Baselines captured, real findings — NOT fixed here, P2.5.8's job (full
+      QUALITY-BAR.md pass is a separate, later task in this same phase):
+      Lighthouse accessibility 95-100 across all 4 routes (meets the ≥95 gate). Axe:
+      login 3 moderate (landmark-one-main, page-has-heading-one, region — the bare
+      pre-auth shell has no `<main>`/h1 landmark structure); student-correct/-result/
+      -overview each have 1-2 **serious** color-contrast violations, all the same root
+      cause — the shared portal shell's `text-t3` muted-label color (#7e6865) measures
+      4.45:1 against its background, just under the 4.5:1 AA threshold, on subject-card
+      captions and nav labels that appear on every authenticated route; student-overview
+      additionally has 2 serious `aria-progressbar-name` violations (unlabeled
+      `role="progressbar"` elements, 0/100 style subject-mastery bars). None of these are
+      new regressions from this task — pre-existing gaps in shared components carried
+      from P2.5.3/2.5.4, now measured for the first time because this is the first run of
+      a tool that can measure them. Zero serious/critical violations is a phase-level
+      acceptance criterion (MISSION §4); P2.5.8 must resolve these before the phase
+      report, not silently drop them.
+- [ ] doing — P2.5.7: Extend scripts/check.sh with the UI gates (axe/Lighthouse/impeccable detect)
+- [ ] P2.5.8: Full BUILD/QUALITY-BAR.md pass; grep proves no stray hex/spacing values;
+      must resolve the P2.5.6 axe baseline findings (login landmarks, shared-shell
+      color-contrast, overview progressbar labels) — zero serious/critical is the gate
 - [ ] P2.5.9: Phase report + contact sheet + PR develop→main + ntfy
 
 Decisions: D2.10 (scope). Reference: reports/phase-2.5/ for screenshots + contact sheet.
