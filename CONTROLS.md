@@ -35,3 +35,44 @@ lost — check `BUILD/logs/sync.log` and resolve it by hand.
 `PAUSE`, then open a second tmux window and run `claude` interactively in the
 same repo. All state is on disk, so you can talk to it normally, make changes,
 commit — then `RESUME`.
+
+## What each notification opens
+
+Tapping the notification body opens the most useful page for that event; the
+buttons underneath are the actions worth taking from a phone. ntfy allows three
+buttons per message, so each set is the three that matter for that moment.
+
+| Notification | Tapping it opens | Buttons |
+|---|---|---|
+| Supervisor started | STATE.md checklist | Status · Sync · Commits |
+| Heartbeat (every 10m) | Latest commit | Latest commit · Sync · Pause |
+| Possibly stalled | repo | Skip task · Pause · Status |
+| Run checkpointed | Latest commit | Latest commit · Sync · Pause |
+| Phase complete | Pull requests | Review PRs · Phase report · Sync |
+| New screenshots | reports/ tree | All screenshots · Commits · Status |
+| New blocker | BLOCKERS.md | Blockers · Skip task · Pause |
+| Run crashed | repo | Skip task · Pause · Open repo |
+| Usage limit — waiting | Commit history | Sync · Pause · Commits |
+| Limit reset — resuming | STATE.md checklist | Status · Pause |
+| Long limit window — stopping | Commit history | Commits · PRs · Checklist |
+| Paused | Pull requests | Resume · PRs · Branches |
+| Build complete | DELIVERY.md | DELIVERY.md · PRs · Reports |
+| Build halted | BLOCKERS.md | Blockers · Checklist · Resume |
+| Watchdog (machine died) | Commit history | Commits · Checklist · Status |
+| Daily digest | Commit history | Commits · Reports · Sync |
+
+And for the keyword replies:
+
+| Keyword reply | Tapping it opens | Buttons |
+|---|---|---|
+| `SYNC` result | Branches | Branches · Pull requests |
+| `STATUS` | STATE.md checklist | Sync · Pause · Commits |
+| `PAUSE` queued | Pull requests | Resume · Status · PRs |
+| `STOP` | Latest commit | Resume · Sync · Commits |
+| `RESUME` | STATE.md checklist | Status · Pause · Checklist |
+| `SKIP` filed | INBOX.md | Inbox · Blockers · Status |
+| `DIGEST` queued | reports/ tree | Journal · Reports · Status |
+| Directive filed | INBOX.md | Inbox · Status · Pause |
+
+All GitHub links point at the `develop` branch, which is where merged work
+lands; `main` only moves when you merge a phase PR yourself.

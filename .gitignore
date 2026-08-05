@@ -62,3 +62,6 @@ BUILD/.supervisor_blockmark
 BUILD/.supervisor_claude_pid
 BUILD/.supervisor_digest
 BUILD/.supervisor_shotmark
+# Runtime pause/stop flags — supervisor-owned, must never be committed
+BUILD/PAUSE
+BUILD/STOP
