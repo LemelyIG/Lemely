@@ -53,7 +53,28 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
   P2.9) — verified by inspection/manual trace only; see `reports/phase-2/pwa-limitations.md`.
   Needs a real-device/browser pass before claiming a hard pass.
 
-## Phase 3 — Teacher + Parent surfaces — NEXT
+## Phase 2.5 — Design system + frontend quality foundation — NEXT
+- [ ] Verify environment: `node -v` ≥ 24 (impeccable detect), `python3 -V`,
+      `ls .claude/skills/` shows impeccable, ui-ux-pro-max, design-taste-frontend
+- [ ] Confirm DESIGN.md + PRODUCT.md exist and have no unfilled placeholders
+      (blocker + high-priority ntfy if not)
+- [ ] Read docs/LEMELY_UI_SPEC.md in full; record any conflict with existing
+      Phase-2 implementation in DECISIONS.md
+- [ ] Build the token source (Tailwind v4 theme + CSS vars) from DESIGN.md
+- [ ] Build cross-cutting components with all states + component catalogue
+- [ ] Playwright screenshot harness (screen × state × breakpoint, ID convention)
+- [ ] Puppeteer audit runner (axe-core, Lighthouse, console errors, captures)
+- [ ] Contact-sheet generator; commit baselines
+- [ ] Extend scripts/check.sh with the UI gates
+- [ ] Retro-fit Phase-2 screens onto tokens + components
+- [ ] Impeccable audit → normalize → polish pass on Phase-2 screens
+- [ ] Full quality-bar pass; grep proves no stray design values
+- [ ] Phase report + contact sheet + PR develop→main + ntfy
+
+Start-of-phase task: expand this into a step-by-step checklist (mirroring how Phase 1→2 were
+expanded from the MISSION §4 one-paragraph summary) before dispatching implementation work.
+
+## Phase 3 — Teacher + Parent surfaces
 Not yet started. Branch from `develop` as `feature/phase-3-teacher-parent`. Per MISSION §4:
 - Teacher: class management, per-class/per-student analytics, aggregate weakness topics,
   at-risk flagging (declining trend OR predicted grade ≥2 boundaries below target OR ≥14
@@ -70,8 +91,6 @@ Not yet started. Branch from `develop` as `feature/phase-3-teacher-parent`. Per 
   should land, since it needs the real class model this phase builds.
 - Acceptance: E2E per role; at-risk flags verified against seeded scenarios.
 
-Start-of-phase task: expand this into a step-by-step checklist (mirroring how Phase 1→2 were
-expanded from the MISSION §4 one-paragraph summary) before dispatching implementation work.
 
 ## Session journal
 See `BUILD/JOURNAL.md` for the dated 3-6 line entries; decisions and rationale live in
