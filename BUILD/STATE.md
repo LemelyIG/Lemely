@@ -141,7 +141,7 @@ Starting facts (established 2026-08-06, do not re-derive):
       (live-only) / 87% cov, up from 711 and 86.11%. All 12 gates green.
       Honest gaps: heatmap no-data cells are `None` not 0%; T-05 integrity signals omitted
       (no per-question data persisted); T-06 flag-dismissal deferred to P3.4.
-- [ ] todo — **P3.4** Review queue override-and-annotate (T-08). Accept / adjust marks with
+- [ ] doing — **P3.4** Review queue override-and-annotate (T-08). Accept / adjust marks with
       method+accuracy breakdown / note to student; overrides recorded as teacher corrections
       that supersede the AI mark on the student's result; integrity-flag dismissal leaves no
       student-visible record. Backend + tests.
