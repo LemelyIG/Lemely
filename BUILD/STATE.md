@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-05T00:00:00Z
+last_updated: 2026-08-05T03:30:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -904,10 +904,25 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           independently: re-ran typecheck/lint/build myself (clean, same pre-existing warning
           set); reviewed both screen diffs directly, confirmed only the 3 intended files
           changed (`git diff --stat`). Committing on feature/phase-2-core-loop.
-       3. [ ] todo — Grading screen: upload dual-file-input → upload→extract→grade chained
+       3. [x] done — Grading screen: upload dual-file-input → upload→extract→grade chained
           SSE, papers grid + selectable-paper sidebar per the design above. Update `data.ts`
           (remove `detected`/`pipeline`/`autoGrade`/`batchTabs`/`allPapers`/`filterPapers`/
           `PaperKind`/`Paper`/`BatchTab`/`BatchTabId` once Grading no longer imports them).
+          (Resumed on a dirty tree carrying a prior session's UNCOMMITTED Grading.tsx/data.ts
+          WIP — verified before trusting: matched the recorded design exactly (selected-paper
+          sidebar via `usePaperDetail(selectedPaperId)`, dual file-input → `uploadPaper` then
+          auto-chained `gradePaper` SSE with a `describeFrame()` running log, tabs/donut/
+          processing-count derived from real `PaperListDTO.tabs`, 409-from-not-yet-graded
+          rendered as an honest "Not graded yet"/"Grading in progress…" idle state via
+          `ApiError` status check, fabricated content dropped: "Pause" button, batch-wide MS
+          metadata banner, "~2 min remaining" ETA, "12 pg"/page-thumbnail-line decoration,
+          "Use custom mark scheme" separate button folded into the upload control). All 10
+          superseded mock exports removed from `data.ts` (100 lines). Verified myself rather
+          than trusting the prior WIP: re-ran `npm run typecheck`/`npm run lint`/`npm run build`
+          — clean, same pre-existing `only-export-components` warning set, build succeeds;
+          `git diff --stat` confirmed only the 2 target files changed. Backend gates re-run for
+          completeness (nothing under `lemely/` touched): ruff/ruff-format/lint-imports clean.
+          Committing on feature/phase-2-core-loop.)
        4. [ ] todo — Review screen: queue list + simplified per-question detail card per the
           design above. Update `data.ts` (remove `flagged`/`queue`/`reviewProgress`/
           `MarkingPoint`/`WorkingLine`/`FlaggedItem`/`QueueRow`/`PointState`).
