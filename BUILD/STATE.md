@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-05T03:30:00Z
+last_updated: 2026-08-05T04:15:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -785,7 +785,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           recorded inline in this checklist in enough detail to carry into P2.10's DELIVERY.md;
           a separate early stub would only duplicate it. **P2.7 (Student surface on real data)
           is now COMPLETE.**)
-- [~] doing — P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
+- [x] done — P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
        incrementally): Grading, Review (low-confidence/integrity queue), MarkSchemes,
        Overview. Fill audit "partial" hollow fields honestly or mark deferred.
        PLAN (recorded before dispatch so a killed session can resume; orchestrator read
@@ -974,11 +974,40 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           warning set, build succeeds; `git diff --stat` confirmed only the 2 target files
           changed. Backend gates re-run for completeness (nothing under `lemely/` touched):
           ruff/ruff-format/lint-imports clean. Committing on feature/phase-2-core-loop.
-       5. [ ] todo — `data.ts` final cleanup pass (mechanical grep-verify-delete, orchestrator
+       5. [x] done — `data.ts` final cleanup pass (mechanical grep-verify-delete, orchestrator
           does directly like P2.7 step 7) + full gate re-run (typecheck/lint/build; backend
           ruff/format/mypy/lint-imports/pytest since nothing under lemely/ should have
           changed) + commit + STATE.md update + `reports/phase-2/` note if any deviation
           needs to carry into P2.10's DELIVERY.md beyond what's already recorded here.
+          (Steps 2-4 each deleted their own screen's dead exports as they landed — this pass
+          found NOTHING further to delete. Verified systematically, not assumed: listed every
+          remaining top-level export in `data.ts` (26 names — NavItem/navItems/RecentClass/
+          recentClasses/StatCard/classStats/MasteryRow/mastery/DistributionTone/
+          DistributionBar/distribution/BubbleStudent/bubble/StudentRow/students/Difficulty/
+          difficulties/difficultyNote/predictedAvg/defaultTopics/QuestionPool/pools/
+          defaultPools/PreviewQuestion/preview/estMinutes) and grepped each across
+          `web/src` outside `data.ts` itself; every one still has a real consumer —
+          `index.tsx` (navItems/recentClasses, sidebar chrome), `Classes.tsx`, or
+          `Quizzes.tsx` — both screens explicitly OUT of P2.8 scope (Phase 3/4 per MISSION
+          §4) and untouched this phase. Interface-only types with 0 direct external imports
+          (RecentClass/MasteryRow/DistributionBar/BubbleStudent/StudentRow/QuestionPool) are
+          not dead — they type real exported consts those two screens still consume; this
+          matches the existing pattern already present before P2.8 (e.g. `PreviewQuestion`
+          IS imported explicitly by `Quizzes.tsx`, `QuestionPool` isn't but still types
+          `pools`). Confirmed all 4 wired screens (Grading/Review/MarkSchemes/Overview)
+          import nothing from `../data` at all as of this pass. Full gate re-run: web
+          typecheck/lint/build clean (same pre-existing warning set); backend
+          ruff/ruff-format/mypy/lint-imports clean; `pytest` exit 0, 0 failed/errored, ~50
+          skipped (Postgres/Supabase-live, unchanged environment limitation — stack still
+          down, root-owned `supabase/.temp/` dirs, sudo unavailable), 81.47% cov (>70%
+          floor, unchanged from P2.7's baseline since nothing under `lemely/` changed this
+          phase). No `reports/phase-2/` note created — every P2.8 deviation (Overview/
+          MarkSchemes honest cuts from step 2, Grading's per-paper-not-batch sidebar design
+          + upload-folded-into-console from step 3, Review's dropped override/transcript/
+          bulk-approve UI + real `reviewReason` upgrade from step 4) is already recorded
+          inline in this checklist in enough detail to carry into P2.10's DELIVERY.md; a
+          separate early stub would only duplicate it. **P2.8 (Teacher surface wiring) is
+          now COMPLETE.**)
 - [ ] todo — P2.9 PWA: manifest + service worker + installable + offline shell; camera
        capture UX; Lighthouse PWA checks pass. Gradio stays internal debug only.
 - [ ] todo — P2.10 Acceptance: Playwright E2E — seeded student uploads a fixture scan and
@@ -1108,6 +1137,21 @@ web typecheck/lint/build clean; backend ruff/format/mypy/lint-imports clean; pyt
 0 failed, 51 skipped (Postgres/Supabase-live, unchanged environment limitation), 81.47% cov.
 Next: P2.8 Teacher surface wiring where Phase-2 data exists (delete teacher/data.ts
 incrementally).
+
+**P2.8 DONE + VERIFIED (2026-08-05).** See checklist entries above (steps 1-5) for full
+detail. All 4 in-scope teacher screens now read real data: Overview/MarkSchemes (step 2),
+Grading (real upload->extract->grade SSE pipeline + selected-paper sidebar, step 3), Review
+(real grading-queue list + per-question detail with the actual `reviewReason`, step 4).
+`teacher/data.ts` lost the entire Grading + Review mock sections (235 lines across steps 3-4,
+plus 109 lines in step 2); everything remaining is consumed by `index.tsx`/`Classes.tsx`/
+`Quizzes.tsx`, out of P2.8 scope (Phase 3/4). Step 3 resumed a prior session's uncommitted
+WIP (verified against the plan before trusting); step 4 was dispatched fresh to `implementer`
+and orchestrator-verified independently. Full gate re-run (step 5): web typecheck/lint/build
+clean; backend ruff/format/mypy/lint-imports clean; pytest exit 0, 0 failed, ~50 skipped
+(Postgres/Supabase-live, unchanged environment limitation — stack still down, root-owned
+`supabase/.temp/` dirs, sudo unavailable), 81.47% cov (>70% floor).
+Next: P2.9 PWA (manifest + service worker + installable + offline shell; camera capture UX;
+Lighthouse PWA checks).
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:
