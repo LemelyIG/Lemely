@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-05T05:30:00Z
+last_updated: 2026-08-05T06:15:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -1302,6 +1302,36 @@ exactly what WAS verified by inspection, in `reports/phase-2/pwa-limitations.md`
 re-run: web typecheck/lint/build clean; backend ruff/format/lint-imports clean; pytest exit
 0, 0 failed, ~50 skipped (unchanged environment limitation), 81.47% cov.
 Next: P2.10 Acceptance (Playwright E2E, accuracy thresholds, phase report, merge to develop).
+
+**Environment unblocked mid-P2.10 planning (2026-08-05): the Supabase stack is UP.** See
+**D2.8** in DECISIONS.md — the long-standing `EACCES ... start-secrets` failure (root-owned
+dirs from the CLI's secret-staging, no host `sudo` available) is fixed by deleting the
+root-owned dir through a throwaway docker container (`sico` is in the `docker` group, which
+is root-equivalent for bind-mounted file ops); full stack (db/auth/storage/kong/rest/
+realtime/studio) came up healthy. This is the FIRST session all build where DB-integration
+tests can run for real. Ran the full suite live: coverage jumped 81.47%→86.38% as ~50
+previously-skipped tests actually executed — and immediately surfaced **two real bugs** that
+had shipped invisibly (both fixed and tested this session, see **D2.9**):
+1. `AttemptRepository.persist_correction` was creating a spurious, mislabeled
+   `low_confidence` review-queue row for any question flagged purely by
+   plagiarism/AI-detection (already-confident, in-range questions) — caught by
+   `test_student_correct.py::test_upload_then_correct_persists_attempt`, which could only
+   ever run against real Postgres. A companion `test_attempt_repo.py` assertion had encoded
+   the bug as intentional; corrected. Fixed in `lemely/db/attempt_repo.py` (commit 567b7e2).
+2. `HttpStorageBackend.download()` never actually detected a missing object against the real
+   API (which answers HTTP 400 + `{"code":"NoSuchKey"}`, not HTTP 404) — meaning the
+   optional mark-scheme-sibling lookup in `student.py`'s SSE pipeline would have hit an
+   unhandled `ExternalServiceError` for every paper corrected without a student-supplied
+   scheme, against a real backend. This class had zero hermetic tests before; added 4. Fixed
+   in `lemely/io/storage.py` (commit ec84450).
+Also: the `uploads` Storage bucket didn't exist in a fresh stack — declared in
+`supabase/config.toml` for future inits, created directly via the Storage API for this
+session's already-initialized volume (config.toml declaration didn't retroactively apply).
+**Consequence for P2.10:** the acceptance task's flagship flow (seeded student uploads a
+fixture scan, sees real marks/grade/weaknesses) can now genuinely be built and run against a
+live backend+DB+Storage+Auth stack, not just planned around a permanent environment gap. A
+future session picking this up should follow D2.8's fix immediately if it hits the same
+`EACCES` error, rather than re-falling into the skip-and-document pattern.
 
 ## Superseded — P2.1 scope (kept for provenance)
 Scope COMPLETE (2026-08-03). Design locked:

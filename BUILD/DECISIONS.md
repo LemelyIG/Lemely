@@ -1080,3 +1080,67 @@ per-question rendering simplification:**
   directory name may change (`supabase_db_Lemely` is derived from the project's docker-compose
   naming) — the general pattern (bind-mount + rm via docker) still applies, just confirm the
   actual failing path from the CLI's own error message first.
+
+### D2.9 — Two real bugs surfaced by D2.8's live-stack fix, both fixed
+
+The Supabase stack being live for the first time (D2.8) immediately exposed two real
+defects that had been invisible for the whole build because the tests that would have
+caught them were always skipping.
+
+**Bug 1 — duplicate/mislabeled `low_confidence` review-queue rows.** `AttemptRepository.
+persist_correction` (`lemely/db/attempt_repo.py`) queued a `ReviewReason.low_confidence`
+row whenever `qr.needs_teacher_review` was true, OR the confidence score was below
+threshold. But `apply_integrity_checks` (`lemely/io/integrity.py`, P2.4) also forces
+`needs_teacher_review=True` on any plagiarism/AI-detection flag — a case that already gets
+its own specific `plagiarism_flag`/`ai_detection_flag` row. A fully-confident (1.0),
+in-range question flagged only for plagiarism was getting a THIRD, spurious, mislabeled
+`low_confidence` row alongside its correct one. `tests/test_student_correct.py::
+test_upload_then_correct_persists_attempt` (real-PG, previously always skipped) caught this
+immediately once it could actually run: expected 2 review rows, got 3. A companion test,
+`tests/test_attempt_repo.py::test_review_queue_includes_integrity_flag_rows`, had encoded
+the BUG as intentional behavior in its own assertion (`reasons == {low_confidence,
+plagiarism_flag, ai_detection_flag}`) — both tests were written in the same P2.4 session but
+never reconciled against each other, since only the attempt_repo one could ever run
+(the student_correct one needs live PG). Fixed: the low_confidence branch now only fires
+when the MARKING side (real low confidence, or the D2.4 structural out-of-range/
+value-mismatch signal) is why review is needed, not when `needs_teacher_review` was flipped
+purely by an integrity flag that already has its own row. Corrected the
+`test_attempt_repo.py` assertion (was asserting the bug) and added
+`test_review_queue_low_confidence_row_survives_alongside_integrity_flags` to prove a
+*genuinely* low-confidence, *also* plagiarism-flagged question still correctly gets both
+rows — the fix must not suppress a real low-confidence signal when the two coincide.
+
+**Bug 2 — `HttpStorageBackend.download()` never actually detected a missing object.** The
+local/self-hosted Supabase Storage API answers a missing object with HTTP **400** (not 404)
+and a body like `{"statusCode": "404", "error": "not_found", "code": "NoSuchKey"}` —
+confirmed against the live stack via `curl`. `download()`'s `response.status_code == 404`
+check therefore never fired against the real API; every "no such object" case fell through
+to the generic `ExternalServiceError` branch instead of `StorageObjectNotFoundError`. This
+matters because `student.py`'s `run()` closure (P2.5) relies on catching
+`StorageObjectNotFoundError` specifically to distinguish "student didn't supply a mark-scheme
+sibling" (expected, handled) from a genuine Storage failure — meaning every paper corrected
+WITHOUT a student-supplied scheme would have hit an unhandled `ExternalServiceError` against
+a real backend, a P2.5-flagship-feature-breaking bug that no test had ever exercised live.
+Fixed: `_is_missing_key()` in `lemely/io/storage.py` inspects the response body's `code`
+field (`"NoSuchKey"` specifically, not `"NoSuchBucket"` — a real misconfiguration that should
+still surface as `ExternalServiceError`, not be silently treated as "not found"). Added
+`tests/test_storage.py` — this class had ZERO hermetic tests before (only the live-skip
+test, matching the `HttpGoTrueBackend` precedent), which is exactly how this shipped
+unnoticed; 4 new hermetic tests (`httpx.get` monkeypatched to return the exact real response
+shapes) pin: the NoSuchKey case, a literal-404 fallback, the NoSuchBucket
+non-suppression, and a plain success path.
+
+**Also:** the `uploads` Storage bucket did not exist in a fresh local stack — declared it in
+`supabase/config.toml`'s `[storage.buckets.uploads]` for future fresh inits, AND created it
+directly via the Storage API this session (`POST /storage/v1/bucket`) since the config.toml
+declaration did not retroactively materialize it against the existing initialized volume on
+a plain `supabase stop && supabase start` (only appears to apply on first-time volume
+creation / `db reset` — not confirmed further, out of scope to dig into the CLI's own
+behavior here). A future session hitting "Bucket not found" against an existing volume
+should create it via the API the same way rather than assuming the config.toml declaration
+alone is sufficient.
+
+**Verification:** full suite green against the live stack (D2.8): 86.38% coverage (up from
+81.47% with DB tests skipped — genuine new coverage from tests that can now actually run,
+not a regression), 0 failed. `ruff`/`ruff format`/`mypy`/`lint-imports`/`pre-commit
+--all-files` all clean.
