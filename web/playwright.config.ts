@@ -25,8 +25,14 @@ interface SupabaseStatus {
 
 function resolveSupabaseEnv(): Record<string, string> {
   try {
+    // The Supabase CLI is installed at ~/.local/bin/supabase, which this
+    // sandbox's non-interactive/non-login shells do not put on PATH
+    // (~/.bash_profile only sources ~/.bashrc, never ~/.profile, so the
+    // ~/.local/bin PATH entry there never applies) — prepend it explicitly
+    // rather than depend on the invoking shell's PATH.
     const raw = execSync("supabase status -o json", {
       stdio: ["ignore", "pipe", "ignore"],
+      env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` },
     }).toString()
     const status = JSON.parse(raw) as SupabaseStatus
     return {

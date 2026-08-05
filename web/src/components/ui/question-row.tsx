@@ -62,35 +62,57 @@ export function QuestionRow({
   const meta = stateMeta[state]
   const Icon = meta.icon
 
+  const toggle = onToggle ?? (() => setInternalOpen((o) => !o))
+
   return (
     <div className={cn("border-b border-border last:border-b-0", className)}>
-      <button
-        type="button"
-        onClick={onToggle ?? (() => setInternalOpen((o) => !o))}
-        aria-expanded={open}
-        className={cn(
-          "w-full flex items-center gap-3 py-3 px-2 -mx-2 text-left rounded-md cursor-pointer",
-          "hover:bg-surface-2 transition-colors",
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-        )}
-      >
-        <span className="font-mono text-metadata w-8 h-8 flex-none flex items-center justify-center border border-border rounded-md text-t2">
-          {number}
-        </span>
-        <Icon weight="fill" className={cn("w-5 h-5 flex-none", meta.text)} aria-hidden />
-        <span className="sr-only">{meta.label}.</span>
-        <MarkDisplay awarded={awarded} available={available} size="inline" />
-        {topic && (
-          <span className="hidden sm:inline text-sm text-t3 truncate min-w-0">{topic}</span>
-        )}
+      <div className="flex items-center gap-3 py-3 px-2 -mx-2">
+        {/*
+         * The row's toggle is its own button and stops short of the
+         * confidence chip, which owns its own tap-to-expand button (C-4) —
+         * a button cannot contain another button (invalid HTML, breaks
+         * keyboard/AT semantics), so the two controls sit side by side
+         * instead of nested.
+         */}
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className={cn(
+            "flex-1 min-w-0 flex items-center gap-3 text-left rounded-md cursor-pointer",
+            "hover:bg-surface-2 transition-colors",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+          )}
+        >
+          <span className="font-mono text-metadata w-8 h-8 flex-none flex items-center justify-center border border-border rounded-md text-t2">
+            {number}
+          </span>
+          <Icon weight="fill" className={cn("w-5 h-5 flex-none", meta.text)} aria-hidden />
+          <span className="sr-only">{meta.label}.</span>
+          <MarkDisplay awarded={awarded} available={available} size="inline" />
+          {topic && (
+            <span className="hidden sm:inline text-sm text-t3 truncate min-w-0">{topic}</span>
+          )}
+        </button>
         <span className="ml-auto flex items-center gap-2 flex-none">
           <ConfidenceIndicator tier={confidence} />
-          <CaretDown
-            className={cn("w-4 h-4 text-t3 transition-transform", open && "rotate-180")}
-            aria-hidden
-          />
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={open}
+            aria-label={open ? "Collapse question detail" : "Expand question detail"}
+            className={cn(
+              "p-1.5 rounded-md text-t3 hover:bg-surface-2 hover:text-t2 transition-colors cursor-pointer",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+            )}
+          >
+            <CaretDown
+              className={cn("w-4 h-4 transition-transform", open && "rotate-180")}
+              aria-hidden
+            />
+          </button>
         </span>
-      </button>
+      </div>
       {open && children && <div className="pb-4 px-2">{children}</div>}
     </div>
   )

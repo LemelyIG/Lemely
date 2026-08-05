@@ -54,24 +54,28 @@ test("student can log in, upload a scan, and see the marked result", async ({ pa
   await expect(page).toHaveURL(/\/student\/result\//, { timeout: 30_000 })
 
   // Marks: {awarded}/{max} — deterministic ground truth from the golden
-  // fixture (5/8), not a fuzzy accuracy metric. The label div ("Marks") and
-  // the value div ("5" + a nested "/8" span) are sibling divs.
-  const marksLabel = page.getByText("Marks", { exact: true })
-  const marksValue = marksLabel.locator("xpath=following-sibling::div[1]")
-  await expect(marksValue).toHaveText("5/8")
+  // fixture (5/8), not a fuzzy accuracy metric. Since the P2.5.4 retrofit
+  // this is the hero MarkDisplay (C-2), which carries the value in its own
+  // aria-label rather than a sibling text node — assert on that.
+  await expect(page.getByLabel("5 out of 8 marks, 63 percent")).toBeVisible()
 
   // Predicted grade: real boundary-lookup logic, just assert non-empty.
-  const gradeLabel = page.getByText("Predicted grade", { exact: true })
-  const gradeValue = gradeLabel.locator("xpath=following-sibling::div[1]")
-  const gradeText = await gradeValue.innerText()
-  expect(gradeText.trim().length).toBeGreaterThan(0)
+  // Since P2.5.4 this is the GradeBadge (C-1), role="img" with the grade in
+  // its aria-label ("Predicted grade B").
+  const gradeBadge = page.getByRole("img", { name: /^Predicted grade / })
+  const gradeText = await gradeBadge.getAttribute("aria-label")
+  expect(gradeText).toMatch(/^Predicted grade [A-Z*]+$/)
 
-  // 8 question cards, ids "1".."8" — each rendered as a font-mono/font-medium
-  // div holding just the questionId (see QuestionCard in PaperResult.tsx).
-  const questionIds = page.locator("div.font-mono.font-medium")
-  await expect(questionIds).toHaveCount(8)
-  const ids = await questionIds.allInnerTexts()
-  expect(ids.sort()).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"])
+  // 8 question rows, ids "1".."8" — since P2.5.4 each is a QuestionRow (C-6)
+  // toggle button whose accessible name starts with "{number} {state label}."
+  // (see QuestionRow in components/ui/question-row.tsx), not a bare div.
+  const questionRows = page.getByRole("button", {
+    name: /^\d+ (Correct|Partial credit|Incorrect)\./,
+  })
+  await expect(questionRows).toHaveCount(8)
+  const names = await questionRows.allInnerTexts()
+  const ids = names.map((n) => n.match(/^\d+/)?.[0]).sort()
+  expect(ids).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"])
 
   await page.screenshot({
     path: path.join(SCREENS_DIR, "p2.10-02-paper-result.png"),
