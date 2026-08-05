@@ -1185,18 +1185,24 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        deterministic-parser path runs unmocked — would break Phase-6 "one-command fresh clone"
        reproducibility; the golden fixtures ship already-parsed JSON specifically so hermetic
        tests never need the raw PDFs.
-       1. [ ] todo — NEW `scripts/e2e_server.py` (orchestrator writes directly — small,
-          mechanical, matches an already-proven pytest seam 1:1, no judgment calls left open):
-          `build_app()` loads real `Settings` via `load_settings()`, overrides only
-          `gemini_api_key=None`; monkeypatches `student.resolve_mark_scheme` /
-          `student.extract_answers` to closures reading the MCQ fixture's `mark_scheme.json` /
-          `answers.json` off disk (no test-only imports — reads the committed fixture files
-          directly by path); `create_app()`; `app.dependency_overrides[get_settings]` /
-          `[get_gemini_client]` set as above. `main()` calls `uvicorn.run(app, host="127.0.0.1",
-          port=int(os.environ.get("PORT", "8000")))` — matches `vite.config.ts`'s existing
-          `/api` proxy target verbatim, zero Vite config changes needed. Real DB/Storage/Auth
-          untouched (no other dependency overrides) — persistence, review-queue, and the
-          upload→Storage round-trip are all genuinely exercised.
+       1. [x] done — NEW `scripts/e2e_server.py`: `build_app()` loads real `Settings` via
+          `load_settings()`, overrides only `gemini_api_key=None`; monkeypatches
+          `student.resolve_mark_scheme`/`student.extract_answers` to closures reading the MCQ
+          fixture's `mark_scheme.json`/`answers.json` off disk; `create_app()`;
+          `dependency_overrides[get_settings]`/`[get_gemini_client]` set. `main()` runs uvicorn
+          on `PORT` env (default 8000, matches the Vite proxy target). Gates: ruff/format/mypy/
+          import-linter clean (commit 8246cd3). MANUALLY VERIFIED end-to-end against the live
+          stack before trusting it for dispatch (MISSION §5) — exported the local Supabase
+          service-role/anon keys (`supabase status`), booted the script on a throwaway port,
+          and drove the real HTTP surface with curl: signup → 200 (real GoTrue account),
+          upload → real paperId, `/student/correct` SSE → exactly the fixture's ground truth
+          (`awarded=5, max_marks=8, grade=B, pct=62`, 5 plagiarism-flagged questions from the
+          exact-match MCQ letters — real `PlagiarismChecker` behavior, not a test artifact).
+          Independently confirmed via a raw SQL query against the live Postgres that the
+          `Attempt`/8×`QuestionResult`/5×`ReviewQueueItem` rows actually persisted — not just
+          an SSE-payload illusion. Cleaned up the manual-verification rows afterward and
+          confirmed no leftover server process. This de-risks step 2: the seam the Playwright
+          spec will drive through the browser is now proven correct at the HTTP layer first.
        2. [ ] todo — Dispatch to `test-engineer`: (a) `web/playwright.config.ts` —
           `webServer: [{command: "python scripts/e2e_server.py" (cwd repo root, reuses the
           venv already on PATH), port: 8000}, {command: "npm run dev", cwd: "web", port: 5173}]`
