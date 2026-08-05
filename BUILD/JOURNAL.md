@@ -512,3 +512,33 @@
 - Next: P2.5.9 — phase report (`reports/phase-2.5/REPORT.md`) + contact sheet (already
   regenerating correctly via both `npm run audit` and `npm run test:e2e`) + `develop`
   merge + `gh pr create` (develop→main) + ntfy. This is the last task in Phase 2.5.
+
+## 2026-08-05 — Phase 2.5: P2.5.9 milestone report + merge — Phase 2.5 COMPLETE
+- Did: ran the full `./scripts/check.sh` one more time at HEAD to confirm every gate
+  passes before merging (all PASS, 0 skipped — reverted the incidental report-artifact
+  noise it regenerated, same known side effect as every prior audit/e2e re-run this
+  phase). Wrote `reports/phase-2.5/REPORT.md` covering all 9 tasks, the MISSION §4
+  acceptance checklist (every item met, none silently worked around), test/coverage
+  summary, gate evidence, D2.10-D2.14, screenshots, and known limitations carried
+  forward unchanged from Phase 2 (accuracy gate, PWA live-test). Committed, fast-forward
+  merged `feature/phase-2.5-design-system` → `develop` (fcc3e07), pushed. Pruned
+  STATE.md's ~200-line Phase 2.5 task log to a single summary paragraph per MISSION §8b
+  (the detail survives in git history + the phase report, not duplicated here).
+- Learned: `git push origin develop` surfaced a GitHub Dependabot notice — 18
+  vulnerabilities (15 high, 3 moderate), almost certainly transitive deps pulled in by
+  this phase's new devDependencies (puppeteer/lighthouse/axe-core, added back in
+  d83aa67's "design stack" commit, first actually installed+used this phase). Not
+  triaged this session — MISSION has no dependency-vulnerability gate, and doing so
+  properly (checking which are transitive-only vs. reachable, whether upgrades break
+  the pinned Lighthouse/Puppeteer versions the audit runner depends on) is its own task.
+  Flagging here rather than silently ignoring it; worth a dedicated look before ship
+  (Phase 6 hardening, or sooner if any high-severity one is directly reachable).
+- Phase 2.5 is COMPLETE: all 9 tasks done, every MISSION §4 acceptance criterion met
+  (grep-clean token/spacing sweep, full component catalogue, zero serious/critical axe,
+  Lighthouse a11y 100 across all 4 routes, 39-screenshot corpus + contact sheet
+  committed). `current_phase` in STATE.md advanced to 3.
+- Next: Phase 3 — Teacher + Parent surfaces. Branch `feature/phase-3-teacher-parent` from
+  `develop`. Read MISSION §4's Phase 3 section (class management, at-risk flagging,
+  review-queue override-and-annotate, teacher quiz builder, parent portal with mock
+  phone-OTP) plus the carried backlog items (D1.6 teacher per-tenant ownership, D1.9
+  CLI/Gradio history migration) before starting task breakdown.
