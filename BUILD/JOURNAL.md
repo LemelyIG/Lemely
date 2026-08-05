@@ -320,3 +320,24 @@
   (same pattern as Phase 1→2) before dispatching implementation. Carried backlog: D1.9 CLI/
   Gradio history migration, D1.6 teacher per-tenant ownership (this phase's class model is
   where it lands).
+
+## 2026-08-05 — Phase 2.5 started: tokens + component library (P2.5.1, P2.5.2)
+- Did: resumed on a dirty STATE.md (prior session's Phase-2.5 checklist wip, committed as-is);
+  verified environment (node 26.6, python 3.13.5, all 4 design skills present) and DESIGN.md/
+  PRODUCT.md/UI-spec/QUALITY-BAR.md (no placeholders). Dispatched scout to read the full
+  71-screen/13-component UI spec and cross-check against shipped Phase-2 screens — no conflict,
+  scope fixed to tokens+C-1..C-13+6-screen retrofit only, recorded as D2.10 (the other ~60
+  screens are Phase 3/4/5, not this phase). Built P2.5.1 (web/src/index.css token layer,
+  DESIGN.md hex palette replacing the pre-DESIGN.md OKLCH port under the same var names) and
+  P2.5.2 (all 13 cross-cutting components, two parallel worktree-isolated designer agents,
+  merged with zero file conflicts, docs/COMPONENT_CATALOGUE.md written). Both verified together
+  (tsc/build/oxlint clean) and committed on feature/phase-2.5-design-system.
+- Learned: Phase 2's token file (web/src/index.css) predated DESIGN.md entirely — an ad-hoc
+  OKLCH port from an earlier design mock — confirming the retrofit step is real, necessary work,
+  not busywork. Two pre-token-system components (viz.tsx::Bar, BoundaryRail.tsx) duplicate new
+  C-3/C-8 and should be deleted in the retrofit. Worktree isolation for parallel component-file
+  builds works cleanly when file ownership is split with zero overlap up front.
+- Next: P2.5.3 — retrofit the 6 shipped Phase-2 screens (home, upload/scanner, marking
+  progress, results, question detail) onto the new tokens + C-1..C-13, deleting the two
+  superseded ad-hoc components. Then P2.5.4 Impeccable pass, P2.5.5/6 screenshot+audit harness,
+  P2.5.7 check.sh gates, P2.5.8 quality-bar pass, P2.5.9 report+PR+ntfy.

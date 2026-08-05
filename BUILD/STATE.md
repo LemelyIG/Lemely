@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2.5
-last_updated: 2026-08-05T13:05:00Z
+last_updated: 2026-08-05T17:40:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -65,9 +65,12 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
       radii, motion tokens, 380/1440 breakpoints, confidence/mark-state/grade-band semantic
       scales. Verified: tsc clean, build clean, oxlint clean. Committed 98c6068 on
       feature/phase-2.5-design-system.
-- [ ] doing — P2.5.2: Build C-1..C-13 cross-cutting components with every state + catalogue doc
-- [ ] P2.5.3: Retro-fit the 6 shipped Phase-2 screens (home, upload/scanner, marking
-      progress, results, question detail) onto tokens + components
+- [x] P2.5.2: C-1..C-13 built (web/src/components/ui/, 13 files) via 2 parallel
+      worktree-isolated designer agents, merged + verified together (tsc/build/oxlint
+      clean). docs/COMPONENT_CATALOGUE.md documents every component. Committed 8882834.
+- [ ] doing — P2.5.3: Retro-fit the 6 shipped Phase-2 screens (home, upload/scanner, marking
+      progress, results, question detail) onto tokens + components. Also: delete
+      viz.tsx::Bar + BoundaryRail.tsx (superseded, see catalogue "known follow-ups")
 - [ ] P2.5.4: Impeccable audit → normalize → polish pass on those screens
 - [ ] P2.5.5: Playwright screenshot harness (screen × state × breakpoint, ID convention
       from LEMELY_UI_SPEC.md screen IDs)
