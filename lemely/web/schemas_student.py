@@ -103,8 +103,15 @@ class PaperBreakdownDTO(ApiModel):
 
 
 class PaperHistoryRowDTO(ApiModel):
-    """A row in the subject's paper history table (mirrors ``PaperHistoryRow``)."""
+    """A row in the subject's paper history table (mirrors ``PaperHistoryRow``).
 
+    ``id`` is the forward-position index into the student's full (unfiltered)
+    :class:`~lemely.core.history.StudentHistory.records` — the same addressing
+    scheme ``GET /api/student/result/{paper_id}`` uses — so a row can be passed
+    straight through as ``paper_id`` to look up its full result.
+    """
+
+    id: str
     paper: str
     note: str
     marks: str
@@ -207,6 +214,32 @@ class ResultDTO(ApiModel):
     theory: list[TheoryQuestionDTO]
     integrity: list[IntegrityRowDTO]
     provenance: str
+
+
+# ── Upload + correct (self-mark) ──────────────────────────────────────────────
+
+
+class StudentUploadResponse(ApiModel):
+    """Payload returned by ``POST /api/student/uploads``.
+
+    ``paperId`` is the id of the created :class:`Upload` row (== the on-disk
+    directory name); the caller passes it back to ``POST /api/student/correct``.
+    """
+
+    paperId: str
+
+
+class CorrectRequest(ApiModel):
+    """Request body for ``POST /api/student/correct``.
+
+    Names the paper to self-mark; the owning student is the authenticated caller
+    (``auth.user_id``), never a request field — so a student can only ever mark
+    their own upload.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    paperId: str
 
 
 # ── Study plan ────────────────────────────────────────────────────────────────

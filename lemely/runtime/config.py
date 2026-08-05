@@ -42,6 +42,13 @@ class GeminiSettings(BaseModel):
     integrity_model: str | None = None
     scan_metadata_model: str | None = None
     # Escalation: re-mark with a stronger model when marker confidence is low.
+    # NOTE (D2.2): this is a *budget* knob — "spend a thinking retry / a Pro call to
+    # try to improve this mark before it is final". It is NOT the human-review
+    # threshold, which is the separate, deliberately higher
+    # ``lemely.core.schemas.REVIEW_CONFIDENCE_THRESHOLD`` (0.90) and is not
+    # operator-tunable. The two were coincidentally equal (0.80) before D2.2 and
+    # are now free to move independently: raising this one costs Gemini dollars,
+    # raising that one costs teacher time.
     escalation_model: str | None = None
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
@@ -200,6 +207,19 @@ class IntegritySettings(BaseModel):
     ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
 
+class StorageSettings(BaseModel):
+    """Supabase Storage settings for the student self-mark upload path (P2.5).
+
+    Overrides via ``lemely.toml`` under the ``[storage]`` section or
+    ``LEMELY_STORAGE__*`` env vars. The bucket/keys used to authenticate against
+    Storage are the same ``supabase.url``/``service_role_key`` as GoTrue.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    bucket: str = "uploads"
+    signed_url_ttl_seconds: int = Field(default=3600, ge=1)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -219,6 +239,7 @@ class Settings(BaseSettings):
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
+    storage: StorageSettings = StorageSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()

@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class LoadGoldenCasesTests(unittest.TestCase):
@@ -189,3 +190,154 @@ class MetricComputationTests(unittest.TestCase):
         self.assertEqual(top.correct, 1)
         self.assertEqual(second.predictions, 1)
         self.assertEqual(second.correct, 0)
+
+
+class MeasureAccuracyTests(unittest.TestCase):
+    """Tests for measure_accuracy()'s scan_path-gated extraction path.
+
+    Mark schemes here are MCQ-only so `correct_paper` never needs a real (or
+    mocked) Gemini client — the only Gemini-touching seam under test is
+    `extract_answers`, which is mocked at its definition site
+    (`lemely.web.services.grading.extract_answers`) since `measure_accuracy`
+    lazily imports it by name on each call.
+    """
+
+    def _mark_scheme(self, question_ids: list[str]) -> object:
+        from lemely.core.loose_schemas import MarkScheme
+
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": len(question_ids),
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": qid, "marks": 1, "type": "mcq", "mcq_answer": "A"} for qid in question_ids
+            ],
+        }
+        return MarkScheme.model_validate(ms)
+
+    def test_no_scan_path_keeps_bypass_behaviour(self):
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+
+        case = GoldenCase(
+            paper_id="p1",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+
+        with patch("lemely.web.services.grading.extract_answers") as mock_extract:
+            result = measure_accuracy([case], gemini_client=None, settings=None)
+
+        mock_extract.assert_not_called()
+        self.assertIsNone(result.metrics.id_match_rate)
+        self.assertEqual(len(result.question_results), 1)
+        self.assertTrue(result.question_results[0].is_correct)
+
+    def test_scan_path_case_uses_extracted_answers_not_ground_truth(self):
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
+        # Ground truth text is deliberately NOT a valid MCQ letter — if the
+        # harness fed this into correct_paper instead of the extracted text,
+        # both questions would be marked wrong.
+        case = GoldenCase(
+            paper_id="p2",
+            mark_scheme=self._mark_scheme(["1", "2"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="ignored", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="ignored", awarded_marks=1),
+            },
+            scan_path=Path("/nonexistent/scan.pdf"),
+        )
+        fake_extracted = ExtractedAnswers(
+            paper_id="p2",
+            source_scan="fake",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(question_id="2", answer="A", confidence=0.9),
+            ],
+        )
+
+        with patch(
+            "lemely.web.services.grading.extract_answers", return_value=fake_extracted
+        ) as mock_extract:
+            result = measure_accuracy([case], gemini_client=None, settings=None)
+
+        mock_extract.assert_called_once()
+        self.assertEqual(result.metrics.id_match_rate, 1.0)
+        self.assertEqual(len(result.question_results), 2)
+        self.assertTrue(all(r.is_correct for r in result.question_results))
+
+    def test_scan_path_case_missing_id_reflected_in_id_match_rate(self):
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
+        case = GoldenCase(
+            paper_id="p3",
+            mark_scheme=self._mark_scheme(["1", "2", "3"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "3": GoldenAnswer(student_answer="A", awarded_marks=1),
+            },
+            scan_path=Path("/nonexistent/scan2.pdf"),
+        )
+        # Extraction misses question "3" entirely.
+        fake_extracted = ExtractedAnswers(
+            paper_id="p3",
+            source_scan="fake",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(question_id="2", answer="A", confidence=0.9),
+            ],
+        )
+
+        with patch("lemely.web.services.grading.extract_answers", return_value=fake_extracted):
+            result = measure_accuracy([case], gemini_client=None, settings=None)
+
+        self.assertAlmostEqual(result.metrics.id_match_rate, 2 / 3)
+        # No QuestionResult for "3" — nothing to compare, no crash.
+        self.assertEqual(len(result.question_results), 2)
+        self.assertNotIn("3", {r.question_id for r in result.question_results})
+
+    def test_mixed_batch_id_match_rate_only_from_extraction_case(self):
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
+        case_scan = GoldenCase(
+            paper_id="p4",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=Path("/nonexistent/scan3.pdf"),
+        )
+        case_bypass = GoldenCase(
+            paper_id="p5",
+            mark_scheme=self._mark_scheme(["1", "2"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+            },
+            scan_path=None,
+        )
+        fake_extracted = ExtractedAnswers(
+            paper_id="p4",
+            source_scan="fake",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.9)],
+        )
+
+        with patch(
+            "lemely.web.services.grading.extract_answers", return_value=fake_extracted
+        ) as mock_extract:
+            result = measure_accuracy([case_scan, case_bypass], gemini_client=None, settings=None)
+
+        mock_extract.assert_called_once()
+        self.assertEqual(result.metrics.id_match_rate, 1.0)
+        self.assertEqual(len(result.question_results), 3)

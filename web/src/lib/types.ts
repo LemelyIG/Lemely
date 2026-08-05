@@ -23,6 +23,7 @@ export interface QuestionResult {
   feedback?: string
   matchedPointIds?: string[]
   reviewReason?: string
+  topic?: string
 }
 
 export interface WeakArea {

@@ -24,12 +24,15 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
+from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
+from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
+from lemely.io.storage import HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 
@@ -61,6 +64,37 @@ def get_history_store() -> HistoryStoreProtocol:
 def get_gemini_client() -> GeminiClient:
     """Return the process-wide :class:`GeminiClient` singleton."""
     return GeminiClient(get_settings())
+
+
+@lru_cache(maxsize=1)
+def get_attempt_repo() -> AttemptRepository:
+    """Return the process-wide :class:`AttemptRepository` singleton (P2.1).
+
+    Persists the full self-mark :class:`AccuracyReport` (attempt + per-question
+    results + weaknesses + review-queue rows). Tests override this with a repo
+    bound to a throwaway Postgres database.
+    """
+    return AttemptRepository(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_student_upload_repo() -> StudentUploadRepository:
+    """Return the process-wide :class:`StudentUploadRepository` singleton (P2.1).
+
+    Owns the student :class:`Upload` rows that feed the self-mark flow. Tests
+    override this with a repo bound to a throwaway Postgres database.
+    """
+    return StudentUploadRepository(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_storage_backend() -> StorageBackend:
+    """Return the process-wide :class:`StorageBackend` singleton (P2.5).
+
+    Wired with the real HTTP client against Supabase Storage. Tests override
+    this with an in-memory ``FakeStorageBackend`` double (``tests/storage_fakes.py``).
+    """
+    return HttpStorageBackend(get_settings())
 
 
 @lru_cache(maxsize=1)
@@ -248,6 +282,9 @@ def reset_singletons() -> None:
     get_settings.cache_clear()
     get_history_store.cache_clear()
     get_gemini_client.cache_clear()
+    get_attempt_repo.cache_clear()
+    get_student_upload_repo.cache_clear()
+    get_storage_backend.cache_clear()
     get_device_registry.cache_clear()
     get_auth_service.cache_clear()
     get_seat_service.cache_clear()

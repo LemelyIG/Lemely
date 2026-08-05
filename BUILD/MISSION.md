@@ -102,6 +102,10 @@ it yourself), and an ntfy notification is sent.
   var must work everywhere, CLI, Gradio, and web).
 - Remove other confirmed dead code (`respx`, unused `live` marker, dead
   `lib/api.ts` gets rescued in Phase 2, leave it).
+- Create `scripts/check.sh` (the single quality-gate command described in §8b)
+  and `CLAUDE.md` (short, stable: stack, layout, commands, conventions, the
+  things every session would otherwise rediscover). Keep CLAUDE.md under 60
+  lines.
 - Acceptance: CI fully green including web; cost-cap tests prove persistence
   across processes; `lemely doctor` reports the real Gemini reachability.
 
@@ -253,6 +257,22 @@ it yourself), and an ntfy notification is sent.
   suite), and PR-wide reviews. Prefer many small workflows over one giant one —
   interrupted workflows do not survive session restarts, so keep each under ~30
   agents and checkpoint results to disk immediately after each run.
+- **Model discipline (this is a hard cost constraint):** you run on
+  **Sonnet by default**. Opus is expensive and scarce on this plan, so it is
+  reserved for work where a wrong answer is costly and hard to reverse.
+  Escalate a single run to Opus by setting `next_run_model: opus` in
+  `BUILD/STATE.md`, writing STATE.md carefully, and exiting cleanly — the
+  supervisor relaunches you on Opus for exactly one run, then reverts to
+  Sonnet. Escalate ONLY for: the database/tenancy schema design (Phase 1), the
+  auth + RBAC model (Phase 1), the det-parser keep/delete decision (Phase 0),
+  the marking-confidence + review-threshold design (Phase 2), and any bug that
+  survived two serious Sonnet debugging attempts. That is roughly 5–8 Opus runs
+  across the entire build; if you find yourself escalating more often, you are
+  using it as a crutch. Never escalate for implementation, tests, wiring,
+  docs, scraping, or refactors. The same rule governs subagents: `architect`
+  (Opus) is for design documents only, budget ~2 invocations per phase; use
+  `scout` and `reporter` (Haiku) freely, `implementer`/`test-engineer`/
+  `reviewer`/`debugger`/`data-engineer` (Sonnet) for everything else.
 - **Stuck protocol:** 3 failed attempts on the same problem → stop, write the
   problem + attempts to `BUILD/BLOCKERS.md`, ntfy with priority=high, mark the
   task `blocked`, move to the next independent task. Revisit blocked tasks once
@@ -301,8 +321,20 @@ it yourself), and an ntfy notification is sent.
     "actions": [{"action":"view","label":"Open repo","url":"https://github.com/LemelyIG/Lemely"}]
   }'
   ```
-  Priority: 3=default (phase start, heartbeat), 4=high (blocker, budget
-  warning), 5=urgent (build complete, halted). Suggested tags: `rocket` (phase
+  Every message you send must include a progress line as its first line:
+  `**Phase N** — X/Y tasks · <what just happened>`. A notification that says
+  only "task complete" is useless from a phone.
+  Send one on: phase start, each significant task completed (not every file
+  edit — roughly every 30–60 minutes of work), phase complete, blocker raised,
+  budget warning, and any decision recorded in DECISIONS.md.
+  Priority: 2=low (routine task progress), 3=default (phase start), 4=high
+  (blocker, budget warning, phase complete), 5=urgent (build complete, halted).
+  Use `sequence_id` for repeating message types so they update in place instead
+  of stacking: `lemely-task` for routine progress, `lemely-budget` for spend
+  updates. One-off events (phase complete, blockers) get no sequence_id so they
+  persist in the notification list. The supervisor owns `lemely-heartbeat`,
+  `lemely-limit`, `lemely-checkpoint` and `lemely-watchdog` — do not publish to
+  those sequence IDs yourself. Suggested tags: `rocket` (phase
   start), `white_check_mark` (phase/gate pass), `warning` (blocker),
   `moneybag` (budget), `tada` (build complete). When a notification concerns a
   specific artifact (a phase report, a failing test log), attach it instead of
@@ -319,6 +351,19 @@ it yourself), and an ntfy notification is sent.
 - Session journal: append a dated entry to `BUILD/JOURNAL.md` at the end of each
   session (3–6 lines: did, learned, next).
 
+## 7b. What the supervisor does for you
+
+You do not manage the process lifecycle — `supervisor.sh` does. It relaunches
+you after every exit, parses the reset time out of usage-limit messages and
+sleeps until precisely then (falling back to an hourly retry if no time is
+parseable), sends a 20-minute in-place progress heartbeat, refreshes a
+dead-man's-switch alert so the human is told if the machine dies, attaches new
+`reports/phase-N/REPORT.md` files to notifications as they appear, and stops
+cleanly if a reset is more than 14 hours out (weekly cap). It also honours
+`next_run_model: opus` for one-run escalation. Because it restarts you freely,
+**exiting is cheap and safe** — take that option rather than limping along in a
+bloated context.
+
 ## 8. Budget protocol (Gemini)
 
 Hard ceiling **$8.00** total, enforced by the Phase-0 persistent tracker; ntfy at
@@ -329,6 +374,44 @@ friend), (b) smoke-testing each AI feature once E2E. If the ceiling is reached:
 continue building with mocks/cache, record what still needs live validation in
 DELIVERY.md, ntfy priority=high. The human can top up (max +$12) but do not assume
 it.
+
+## 8b. Token discipline (treat tokens as a budget, like Gemini dollars)
+
+Every token you spend is capacity you cannot spend later in the build. These
+are requirements, not suggestions:
+
+- **Never read a large file to "get oriented."** Delegate to `scout` (Haiku)
+  and work from its summary. Read files in full only when you are about to
+  edit them, and prefer `Grep`/`Glob` with narrow patterns over `Read` on
+  anything over ~400 lines. Read specific line ranges when you know them.
+- **One gate command, not seven.** Phase 0 creates `scripts/check.sh` which
+  runs ruff + mypy + import-linter + pytest + the web checks, suppresses all
+  passing output, and prints only failures plus a one-line summary per tool
+  (`pytest -q --tb=short`, `ruff --quiet`, etc.). After Phase 0, run gates via
+  `./scripts/check.sh` and never by invoking the tools individually — verbose
+  green output is pure waste.
+- **Pipe noisy commands to a file and read the tail.** `cmd > /tmp/out 2>&1;
+  tail -n 40 /tmp/out`. Never let a full test suite, npm install, Docker build,
+  or scraper dump its entire output into context.
+- **Briefs carry paths, not contents.** When delegating, give the subagent file
+  paths and acceptance criteria; do not paste code into the brief. The subagent
+  can read what it needs.
+- **Keep the stable stuff stable.** `BUILD/MISSION.md` and `CLAUDE.md` are read
+  every session and benefit from prompt caching — do not rewrite them casually.
+  Volatile state belongs in `BUILD/STATE.md`, which stays small: a checklist,
+  not a narrative. Prune completed phases from STATE.md down to a single done
+  line once their report is committed.
+- **Checkpoint early.** Exit cleanly at ~60% context rather than pushing to the
+  limit; a fresh session re-reading a tight STATE.md is far cheaper than a
+  bloated one carrying dead context. Exiting is always safe.
+- **Don't re-derive.** Anything you learned that cost real work to discover
+  (an environment quirk, a mirror's URL pattern, a schema decision) goes into
+  `BUILD/DECISIONS.md` or `docs/` immediately so no future session pays for it
+  twice.
+- **Batch related edits.** One considered pass over a file beats five
+  re-reads and five small patches.
+- **No speculative work.** Do not build abstractions, tests, or docs for
+  features outside the current phase.
 
 ## 9. Full feature inventory (traceability — every item appears in DELIVERY.md)
 

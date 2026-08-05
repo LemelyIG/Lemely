@@ -3,22 +3,60 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { Avatar } from "../components/Avatar"
-import { overviewStats, atRisk, retention } from "../data"
+import { useTeacherOverview } from "@/lib/hooks/useTeacherApi"
 
-const TAG_TONE = {
-  err: "bg-err-bg text-[oklch(0.40_0.10_22)]",
-  warn: "bg-accent-subtle text-[oklch(0.42_0.10_68)]",
-  neutral: "bg-[oklch(0.93_0.008_78)] text-t2",
-} as const
+/*
+ * Overview. Wired to `GET /teacher/overview` via `useTeacherOverview()`.
+ *
+ * Cuts made vs. the mock (see `OverviewDTO` in `lib/teacherTypes.ts` /
+ * `lemely/web/routers/teacher.py::teacher_overview`):
+ *  - "Lesson retention" card dropped entirely — `retention` is always `[]`
+ *    (no lesson-video data source exists), so the chart + its narrative copy
+ *    would only ever render an empty/fabricated state.
+ *  - The "hours saved" ink box dropped entirely — no backing field anywhere
+ *    in `OverviewDTO`.
+ *  - "Needs you" cards render only the 4 real `AtRiskStudent` fields
+ *    (name/grade/delta/weakTopic); the mock's tag/note/action/avatar-tone
+ *    and the "Message parents" + per-student action buttons had no backend
+ *    source and are gone. Initials are derived client-side from `name`, a
+ *    pure display transform (same pattern as `data.ts`'s `student()`).
+ *  - The greeting paragraph now interpolates real numbers pulled from
+ *    `stats`/`atRisk` instead of the mock's hardcoded "twenty-eight papers…"
+ *    copy.
+ */
 
-const DELTA_TONE = {
-  err: "text-err",
-  warn: "text-[oklch(0.52_0.11_68)]",
-  t2: "text-t2",
-} as const
+function initialsOf(name: string): string {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+}
 
 export function Overview() {
   const navigate = useNavigate()
+  const { data, isPending, isError, error } = useTeacherOverview()
+
+  if (isPending) {
+    return (
+      <div className="lm-screen flex flex-col gap-6">
+        <div className="text-[13.5px] text-t2">Loading overview…</div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="lm-screen flex flex-col gap-6">
+        <div className="text-[13.5px] text-accent">
+          Couldn't load the overview: {error.message}
+        </div>
+      </div>
+    )
+  }
+
+  const { stats, atRisk } = data
+  const papersGraded = stats.find((s) => s.key === "Papers graded")
+  const needsEyes = stats.find((s) => s.key === "Need your eyes")
 
   return (
     <div className="lm-screen flex flex-col gap-6">
@@ -28,12 +66,18 @@ export function Overview() {
             Helwan Science Centre · Sunday 27 July
           </div>
           <div className="font-serif text-[40px] leading-[1.08] mt-2">
-            Good morning, Mr Sabry.
+            Good morning.
           </div>
           <div className="text-[14.5px] text-t2 mt-2 max-w-[62ch] text-pretty">
-            Twenty-eight papers were graded overnight. Twelve answers want your
-            eyes, three students want your attention, and one topic wants
-            re-teaching to the whole of 11-B.
+            {papersGraded ? `${papersGraded.value} papers graded so far. ` : ""}
+            {needsEyes
+              ? `${needsEyes.value} answers want your eyes`
+              : ""}
+            {atRisk.length > 0
+              ? `, and ${atRisk.length} student${atRisk.length === 1 ? "" : "s"} want${
+                  atRisk.length === 1 ? "s" : ""
+                } your attention.`
+              : "."}
           </div>
         </div>
         <div className="flex-1" />
@@ -43,121 +87,66 @@ export function Overview() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {overviewStats.map((s) => (
-          <StatCard key={s.k} stat={s} />
+        {stats.map((s) => (
+          <StatCard
+            key={s.key}
+            stat={{
+              k: s.key,
+              v: s.value,
+              unit: s.unit ?? undefined,
+              foot: s.foot ?? undefined,
+              valueTone: s.valueTone,
+              footTone: s.footTone,
+            }}
+          />
         ))}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-5 items-start">
-        {/* Needs you */}
-        <div className="bg-surface border border-border rounded-[14px] overflow-hidden">
-          <div className="px-5 pt-[18px] pb-[13px]">
-            <div className="font-serif text-[22px]">Needs you</div>
-            <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3 mt-[5px]">
-              Flagged by trajectory, not by one bad day
-            </div>
+      {/* Needs you */}
+      <div className="bg-surface border border-border rounded-[14px] overflow-hidden max-w-[560px] w-full">
+        <div className="px-5 pt-[18px] pb-[13px]">
+          <div className="font-serif text-[22px]">Needs you</div>
+          <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3 mt-[5px]">
+            Flagged by trajectory, not by one bad day
           </div>
-          {atRisk.map((r) => (
+        </div>
+        {atRisk.length === 0 ? (
+          <div className="border-t border-border px-5 py-[15px] text-[13px] text-t2">
+            No students flagged right now.
+          </div>
+        ) : (
+          atRisk.map((r) => (
             <div
               key={r.name}
               className="border-t border-border px-5 py-[15px] flex gap-[13px] items-start"
             >
-              <Avatar
-                initials={r.initials}
-                tone={r.avatarTone}
-                className="w-8 h-8 text-[11.5px]"
-              />
+              <Avatar initials={initialsOf(r.name)} className="w-8 h-8 text-[11.5px]" />
               <div className="flex-1">
                 <div className="flex items-center gap-[9px]">
                   <div className="text-[13.5px] font-medium">{r.name}</div>
-                  <div
-                    className={cn(
-                      "text-[10.5px] rounded-full px-[9px] py-0.5",
-                      TAG_TONE[r.tagTone],
-                    )}
-                  >
-                    {r.tag}
-                  </div>
+                  <div className="text-[12px] text-t2">Grade {r.grade}</div>
                   <div className="flex-1" />
-                  <div
-                    className={cn(
-                      "font-mono text-[12px]",
-                      DELTA_TONE[r.deltaTone],
-                    )}
-                  >
-                    {r.delta}
+                  {r.delta !== null ? (
+                    <div
+                      className={cn(
+                        "font-mono text-[12px]",
+                        r.delta < 0 ? "text-err" : r.delta > 0 ? "text-ok" : "text-t2",
+                      )}
+                    >
+                      {r.delta > 0 ? "+" : ""}
+                      {Math.round(r.delta)} pts
+                    </div>
+                  ) : null}
+                </div>
+                {r.weakTopic ? (
+                  <div className="text-[12.5px] text-t2 mt-[5px] leading-[1.45] text-pretty">
+                    Weakest topic: {r.weakTopic}
                   </div>
-                </div>
-                <div className="text-[12.5px] text-t2 mt-[5px] leading-[1.45] text-pretty">
-                  {r.note}
-                </div>
-                <div className="flex gap-2 mt-[11px]">
-                  <Button variant="secondary" size="sm" className="text-[11.5px] px-[11px] py-[6px]">
-                    {r.action}
-                  </Button>
-                  <Button variant="secondary" size="sm" className="text-[11.5px] px-[11px] py-[6px] text-t2">
-                    Message parents
-                  </Button>
-                </div>
+                ) : null}
               </div>
             </div>
-          ))}
-        </div>
-
-        {/* Retention + hours saved */}
-        <div className="flex flex-col gap-5">
-          <div className="bg-surface border border-border rounded-[14px] p-5">
-            <div className="flex items-baseline gap-2.5 flex-wrap">
-              <div className="font-serif text-[22px]">Lesson retention</div>
-              <div className="font-mono text-[11px] text-t3">
-                MOMENTS &amp; EQUILIBRIUM · 22 MIN · 21 VIEWERS
-              </div>
-            </div>
-            <div className="text-[12.5px] text-t2 my-2.5 mb-[18px] text-pretty">
-              Two replay spikes, both on the worked example where the
-              substitution step is skipped. Worth re-recording those ninety
-              seconds.
-            </div>
-            <div className="flex items-end gap-0.5 h-20">
-              {retention.map((r, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    "flex-1 rounded-t-sm",
-                    r.spike ? "bg-accent" : "bg-[oklch(0.88_0.04_68)]",
-                  )}
-                  style={{ height: `${r.h}%` }}
-                />
-              ))}
-            </div>
-            <div className="flex justify-between text-[10.5px] text-t3 font-mono mt-[7px]">
-              <span>00:00</span>
-              <span>08:40</span>
-              <span>14:10</span>
-              <span>22:00</span>
-            </div>
-          </div>
-
-          <div className="bg-ink text-[oklch(0.95_0.008_78)] rounded-[14px] p-[22px] flex gap-[22px] items-center">
-            <div className="flex-1">
-              <div className="font-serif text-[22px]">
-                This week you would have spent 9 hours marking
-              </div>
-              <div className="text-[13px] opacity-70 mt-2 leading-[1.5] text-pretty">
-                You spent 34 minutes, all of it on the twelve answers Lemely
-                refused to guess at.
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="font-serif text-[46px] leading-none text-accent">
-                38h
-              </div>
-              <div className="font-mono text-[10.5px] opacity-60 tracking-[0.08em]">
-                SAVED THIS MONTH
-              </div>
-            </div>
-          </div>
-        </div>
+          ))
+        )}
       </div>
     </div>
   )

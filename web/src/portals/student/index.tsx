@@ -95,10 +95,28 @@ function Sidebar() {
   )
 }
 
+/**
+ * Resolve the breadcrumb for a pathname: exact static lookup first (the
+ * `crumbs` map), falling back to pattern matching for routes with a dynamic
+ * segment that can't be enumerated in that map ahead of time.
+ */
+function resolveCrumb(pathname: string): string {
+  const exact = crumbs[pathname]
+  if (exact) return exact
+
+  const subjectMatch = pathname.match(/^\/student\/subject\/([^/]+)$/)
+  if (subjectMatch) return `Home / ${subjectMatch[1]}`
+
+  const resultMatch = pathname.match(/^\/student\/result\/([^/]+)$/)
+  if (resultMatch) return `Home / Result ${resultMatch[1]}`
+
+  return "Home"
+}
+
 function Header() {
   const location = useLocation()
   const navigate = useNavigate()
-  const crumb = crumbs[location.pathname] ?? "Home"
+  const crumb = resolveCrumb(location.pathname)
   return (
     <header className="lm-head flex items-center gap-[18px] px-[34px] py-4 border-b border-border bg-[oklch(0.97_0.007_40/0.82)] backdrop-blur-[10px] sticky top-0 z-20">
       <div className="font-mono text-[11.5px] text-t2">{crumb}</div>
@@ -143,8 +161,8 @@ export const studentRoute: RouteObject = {
   element: <StudentLayout />,
   children: [
     { index: true, element: <Overview /> },
-    { path: "subject", element: <Subject /> },
-    { path: "result", element: <PaperResult /> },
+    { path: "subject/:code", element: <Subject /> },
+    { path: "result/:paperId", element: <PaperResult /> },
     { path: "correct", element: <CorrectPaper /> },
     { path: "plan", element: <StudyPlan /> },
     { path: "board", element: <Standings /> },

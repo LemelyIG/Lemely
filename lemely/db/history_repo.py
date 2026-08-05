@@ -60,7 +60,7 @@ class DbHistoryStore:
             ValueError: ``student_id`` is not a valid UUID, or ``session_month``
                 is not a recognised CAIE label.
         """
-        user_id = _parse_user_id(student_id)
+        user_id = parse_user_id(student_id)
         attempt = self._to_attempt(user_id, record)
         with self._sm.begin() as session:
             session.add(attempt)
@@ -74,7 +74,7 @@ class DbHistoryStore:
         Raises:
             ValueError: ``student_id`` is not a valid UUID string.
         """
-        user_id = _parse_user_id(student_id)
+        user_id = parse_user_id(student_id)
         stmt = (
             select(Attempt)
             .where(Attempt.user_id == user_id)
@@ -96,7 +96,7 @@ class DbHistoryStore:
         attempt = Attempt(
             user_id=user_id,
             subject_code=meta.subject_code,
-            session_month=_month_to_enum(meta.session_month),
+            session_month=month_to_enum(meta.session_month),
             session_year=meta.session_year,
             paper_number=meta.paper_number,
             paper_variant=meta.paper_variant,
@@ -120,7 +120,12 @@ class DbHistoryStore:
         return attempt
 
 
-def _parse_user_id(student_id: str) -> uuid.UUID:
+def parse_user_id(student_id: str) -> uuid.UUID:
+    """Parse a student/user id string into a UUID, or raise ``ValueError``.
+
+    Public so the DB-backed persistence repos (history + attempt) share one
+    canonical id-validation contract with an identical error message.
+    """
     try:
         return uuid.UUID(student_id)
     except (ValueError, AttributeError, TypeError) as exc:
@@ -129,7 +134,12 @@ def _parse_user_id(student_id: str) -> uuid.UUID:
         ) from exc
 
 
-def _month_to_enum(label: str) -> SessionMonth:
+def month_to_enum(label: str) -> SessionMonth:
+    """Map a CAIE display label ("May/June") to its :class:`SessionMonth` member.
+
+    Public so the attempt repo can reuse the same label→enum mapping the history
+    store uses; raises ``ValueError`` on an unrecognised label.
+    """
     try:
         return _MONTH_TO_ENUM[label]
     except KeyError as exc:
@@ -202,4 +212,9 @@ def migrate_json_history(
     return results
 
 
-__all__ = ["DbHistoryStore", "migrate_json_history"]
+__all__ = [
+    "DbHistoryStore",
+    "migrate_json_history",
+    "month_to_enum",
+    "parse_user_id",
+]

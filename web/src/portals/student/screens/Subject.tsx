@@ -1,20 +1,51 @@
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 import { Card } from "@/components/ui/card"
-import {
-  paperHistory,
-  papersBreakdown,
-  subjectHeader,
-  topicMap,
-} from "../data"
+import { ApiError } from "@/lib/api"
+import { useSubject } from "@/lib/hooks/useStudentApi"
 import { vizText } from "../components/colors"
 
 /*
- * Subject (isSubject) - Physics. Header with forecast/weighted-mean stat cards,
- * two per-paper breakdown cards (bar strips + boundary/position), then a paper
- * history ledger and a topic map grid.
+ * Subject (isSubject). Wired to `GET /student/subject/{code}` via
+ * useSubject(code), code taken from the `subject/:code` route param. Header
+ * with forecast/weighted-mean stat cards, two per-paper breakdown cards (bar
+ * strips + boundary/position), then a paper history ledger and a topic map
+ * grid — every section is backed by the `Subject` DTO.
  */
 export function Subject() {
   const navigate = useNavigate()
+  const { code } = useParams<{ code: string }>()
+  const { data, isPending, isError, error } = useSubject(code ?? "")
+
+  if (isPending) {
+    return (
+      <div className="lm-screen flex flex-col gap-6">
+        <div className="text-[13.5px] text-t2">Loading subject…</div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    if (error instanceof ApiError && error.status === 404) {
+      return (
+        <div className="lm-screen flex flex-col gap-6">
+          <div className="text-[13.5px] text-t2">
+            No papers recorded for {code} yet.
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div className="lm-screen flex flex-col gap-6">
+        <div className="text-[13.5px] text-accent">
+          Couldn't load this subject: {error.message}
+        </div>
+      </div>
+    )
+  }
+
+  const { header: subjectHeader, papersBreakdown, topicMap, paperHistory } =
+    data
+
   return (
     <div className="lm-screen flex flex-col gap-6">
       <div className="flex items-start gap-[22px] flex-wrap">
@@ -109,8 +140,8 @@ export function Subject() {
           </div>
           {paperHistory.map((h) => (
             <button
-              key={h.paper}
-              onClick={() => navigate(`/student/result?tab=${h.tab}`)}
+              key={h.id}
+              onClick={() => navigate(`/student/result/${h.id}`)}
               className="grid grid-cols-[150px_1fr_90px_70px_44px] gap-3 items-center w-full text-left border-0 border-t border-border bg-transparent font-sans cursor-pointer px-5 py-3 transition-colors hover:bg-surface-2"
             >
               <span className="font-mono text-[12px]">{h.paper}</span>

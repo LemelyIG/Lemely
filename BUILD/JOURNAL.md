@@ -1,5 +1,68 @@
 # Session journal
 
+## 2026-08-05 — Phase 2, P2.7 steps 5b-8 (student surface complete)
+- Did: resumed on a clean tree at P2.7 step 5b. Dispatched three `implementer` rounds
+  (CorrectPaper+PaperResult real upload/SSE wiring; StudyPlan+Standings+Onboarding wiring;
+  did the final data.ts cleanup pass myself, mechanical grep-verify-delete). Orchestrator-
+  verified every round independently — read every diff, re-ran typecheck/lint/build myself
+  (never trusted subagent claims), and for Standings specifically read the backend
+  `student_standings` handler myself to confirm `rank` is honestly `""` (no cross-student
+  cohort) rather than fabricated, per MISSION's leaderboard/grade-privacy rules.
+- Learned: caught and fixed one regression the first implementer round flagged but didn't
+  resolve — the sidebar's "Paper result" nav link 404'd once `result` became `result/:paperId`;
+  removed it (no non-parameterized target exists) rather than leave it broken, matching the
+  established remove-don't-fake precedent (D1.6 M2). `student/data.ts` had accumulated dead
+  Overview/Subject mock exports across steps 3-4 that nobody cleaned up until step 7 — worth
+  double-checking "done" steps' cleanup claims against actual grep results, not just their
+  self-report.
+- Next: P2.8 — teacher surface wiring (Grading, Review queue, MarkSchemes, Overview; delete
+  teacher/data.ts incrementally). Full gate suite is green (web + backend, 81.47% cov, 0
+  failed/51 skipped-as-usual) and pushed as of commit 2f9a513. Exiting cleanly here per MISSION
+  §5 context-hygiene guidance — this is a clean task-boundary checkpoint, not mid-task.
+
+## 2026-08-04 — Phase 2, P2.3 step 6 (D2.2 review-confidence threshold, resolved)
+- Did: resumed on a clean tree (no wip commit needed). Prior session had escalated step 6 via
+  `next_run_model: opus`, but this run launched on Sonnet, so rather than decide an Opus-reserved
+  item myself, delegated the full design brief to the `architect` subagent (Opus-tier by MISSION
+  §5's own model-discipline table for subagents) — a valid alternative path to the literal
+  supervisor-relaunch mechanism. Verified its work rather than trusting the report: read the full
+  D2.2 DECISIONS.md entry, then ran ruff/ruff-format/mypy/lint-imports/pytest myself. All clean;
+  full suite green (0 failures, 45 skips — Postgres/live-auth pattern, unchanged), 81.92% cov.
+- Learned: architect's decision was well-grounded — single shared `REVIEW_CONFIDENCE_THRESHOLD =
+  0.90` constant (not config, deliberately — cross-layer invariant, not an operator knob) dedupes
+  THREE call sites (found a 4th duplicate in teacher.py nobody had tracked). Rejected the
+  `awarded_marks != question.marks` secondary-signal idea on the actual data (proved
+  anti-correlated with itself across the 3 failure cases — 2 errors awarded full marks, 1 awarded
+  partial). Added a genuinely zero-false-positive signal instead (out-of-range award, fires 0x on
+  current corpus). Confirmed the Phase-2 accuracy gate still does NOT pass — this task fixed the
+  threshold plumbing/honesty, not the underlying accuracy: mark_accuracy_theory 85.7% is really a
+  marking defect (A-marks awarded without checking the final numeric value), which is a future
+  accuracy task, not a thresholds task.
+- Next: P2.3 step 7 — source real 0580/0606 past papers + mark schemes (required per D2.2 for
+  statistical power, not optional/deferred). After that, consider whether the A-mark
+  final-value-verification fix belongs inside P2.3's closure or as an explicit follow-up before
+  moving to P2.4 (plagiarism/AI-detection flags).
+
+## 2026-08-04 — Phase 2, P2.3 sub-step 5 (live calibration batch) + Opus escalation for step 6
+- Did: resumed on a clean tree (no wip commit needed). Verified environment (`lemely doctor`
+  all green, gemini_reachable=true) then ran the live-Gemini `measure-accuracy` batch against
+  the 4 committed golden fixtures (P2.3 sub-plan step 5). All calls hit the disk cache from an
+  earlier live run — genuinely-real Gemini data, zero incremental spend (cumulative_usd stayed
+  0.0102). Gitignored the timestamped results dir output (regenerable artifact).
+- Learned: current confidence scores do NOT separate correct from wrong marks at this fixture's
+  scale — the 3 disagreements (all the same method-mark off-by-one failure mode) score
+  0.85/0.98/0.98, directly overlapping 19 correct answers scored 0.98-1.00. Traced THREE
+  independent, only-coincidentally-equal threshold values in the codebase (escalation trigger in
+  config.py, a hardcoded-duplicate 0.80 literal in correction_ai.py that actually drives the
+  harness's flag metrics, and the real DB review-queue gate in attempt_repo.py at 0.90) — none of
+  which currently satisfies the Phase-2 gate ("100% of disagreements below review threshold").
+  This is squarely the MISSION §5 Opus-reserved "marking-confidence + review-threshold design"
+  item, so did not decide it on Sonnet.
+- Next: escalated via `next_run_model: opus` in STATE.md with a full brief (three-threshold
+  landscape with file:line refs, the overconfidence finding, and the exact questions to resolve
+  + record as D2.2) written into the P2.3 sub-plan. Opus run should decide+fix+retest, then
+  continue to step 7 (0580/0606 sourcing, bundled into the same decision) and P2.4+.
+
 ## 2026-07-31 — Phase 1 (Device/session registry P1.11/D1.11 + acceptance groundwork)
 - Did: completed the device/session registry. Resumed on a dirty tree carrying a prior
   session's PARTIAL device work — a complete untracked device_repo.py (DeviceRegistry) plus
@@ -80,3 +143,154 @@
 - Next: Phase 2 — core loop end-to-end. Branch feature/phase-2-core-loop from develop; scope
   the SPA mock→real migration (web/lib/api.ts + **/data.ts) and boundary/fixture pipelines;
   drive the fan-out with small checkpointed workflows.
+
+## 2026-08-03 — P2.1 real correction pipeline (Phase 2)
+- Did: Resumed clean tree on feature/phase-2-core-loop (P2.1 marked `doing`). Scoped the stub
+  `/api/student/correct`, the marking pipeline (grading service, correct_paper), and the DB models
+  (Attempt/QuestionResult/WeaknessRecord/ReviewQueueItem — all columns already exist from P1.3).
+  Delegated implementation to implementer(opus) with a full self-contained brief; verified every
+  §6 gate myself (never trusted the claim): ruff/format/mypy(114)/lint-imports clean; 561 passed /
+  2 skipped (live-only) / 12 subtests; new tests 12 passed. Adversarially reviewed the /correct
+  rewrite + the one replaced test (honest evolution, not a weakening). Committed signed f2d4c97.
+- Learned: `grade_paper(student_id=None)` returns the AccuracyReport without persisting — reused it,
+  then persisted the full report (Attempt + per-question QuestionResult + WeaknessRecord +
+  ReviewQueue) via a new AttemptRepository. `matched_point_ids` JSONB is the method-mark breakdown
+  (no separate column). SSE bus is global/single-stream — /correct tests run serially. pre-commit
+  `--all-files` keeps re-flagging 2 newline-less Sources/*.json (pre-existing drift) — stage only
+  the task's files and run pre-commit on the staged set instead.
+- Next: P2.2 grade-boundary ingestion (scrape 0580/0606/0625 per-variant thresholds w/ provenance
+  → parse into boundary table → exact lookup + per-subject-avg fallback with "estimated" flag).
+  Use a checkpointed Workflow for the scrape/parse fan-out (MISSION authorizes it). Start by scoping
+  lemely/io/grade_boundaries.py (GradeBoundaryStore.resolve) + its boundary data source.
+  CARRIED: restore coverage 85.10%→≥85.44% before the P2.10 develop merge (named branches in STATE).
+
+## 2026-08-04 — P2.2 grade-boundary ingestion (Phase 2)
+- Did: Resumed on a dirty tree carrying a prior session's COMPLETE but uncommitted P2.2 work
+  (scripts/ingest_grade_boundaries.py, populated lemely/data/grade_boundaries.json +
+  grade_boundaries_provenance.json, D2.1 already drafted in DECISIONS.md, test + student.py copy
+  changes, a uv.lock drift fix). Verified before trusting: reran the script's math independently
+  (347 exact keys == provenance keys, per-subject `_defaults` genuinely distinct, sample entries
+  match provenance URLs), ran all §6 static gates fresh (ruff/format/mypy incl. scripts//
+  lint-imports all clean) and the full pytest suite (green, cov-fail-under=70 met at 81.28% —
+  lower than the 85%+ baseline only because Postgres/Supabase were down this session so all
+  DB-integration tests skip, same known pattern as prior sessions) plus test_grade_boundaries.py
+  standalone (20/20 pass). Everything checked out — committed as-is rather than redoing the work.
+  Added BUILD/.supervisor_phase to .gitignore (new marker file type, same family as the ones
+  already ignored).
+- Learned: gceguide.com (one of the 3 mirrors MISSION §4 named) is now a squatted gambling-slot
+  site — do not fetch it again. cambridgeinternational.org publishes the same grade-threshold PDFs
+  directly with a predictable per-session index; better provenance than any mirror. The `db` extra
+  in pyproject.toml (alembic/sqlalchemy/psycopg/pyjwt) was declared but had never actually been
+  resolved into uv.lock — fixed as a drive-by.
+- Next: P2.3 accuracy harness + golden fixtures (real past papers/mark schemes for the 3 subjects,
+  synthetic handwritten answer sheets with known ground truth, ≥99% MCQ / ≥95% mark-level gates).
+  Kicked off `supabase start` in the background at session end (stack was fully torn down —
+  no containers existed, first-run image pulls) to restore DB-integration test coverage for the
+  next session; check it came up before relying on Postgres-backed tests.
+
+## 2026-08-04 (resumed session — P2.3 step 7 verify+commit, D2.3, marking-fix identified)
+- Resumed on a dirty tree carrying the prior session's un-committed step-7 output (dispatched
+  two data-engineer subagents for 0580/0606 fixtures, then died before verify/commit). Verified
+  before trusting: read page 1 of all 4 sourced PDFs via pdfplumber — genuine Cambridge 0580/22
+  and 0606/12 (May/June 2023) headers, not fabricated; validated all 6 mark_scheme.json against
+  MarkScheme; spot-checked answer points against fixture content. Found and fixed a real latent
+  bug the dispatch surfaced: 0580 had no SubjectProfile registered in lemely/io/det/profiles.py,
+  so it silently fell through to _DEFAULT_PROFILE (paper 1 → MCQ) — wrong, 0580 has no MCQ
+  component at all. Added the correct profile + fixed a comment that had asserted otherwise.
+- Ran the mandatory D2.2 revisit: full measure-accuracy across all 10 golden fixtures (n=68,
+  up from n=29). Recorded as D2.3. Metrics got WORSE with more data (mark_accuracy 89.7%→80.9%,
+  theory 85.7%→78.3%), confirming D2.2's diagnosis far more strongly than the thin Physics-only
+  sample could: no non-degenerate confidence threshold (below the already-rejected 0.99
+  flag-everything case) gets close to the §4 100%-disagreements-flagged target. Kept
+  REVIEW_CONFIDENCE_THRESHOLD at 0.90 — the data doesn't support moving it. Gemini spend +$0.015
+  (cumulative $0.0502/$8.00).
+- Learned: local Supabase stack cannot be restarted this session — `supabase/.temp/
+  start-secrets/supabase_db_Lemely/` has root-owned directories from a prior crashed container
+  that a non-privileged shell cannot rm -rf (recursion needs write access to the root-owned dirs
+  themselves, not just their parent). Needs a session with sudo/docker-group cleanup rights.
+  DB-integration tests keep skipping locally until then; not a regression, CI is unaffected.
+- Also: accidentally echoed the live GEMINI_API_KEY into a debug command's output this session —
+  flagged to the user immediately and recommended rotating it. Lesson for future sessions: never
+  `env | grep` or `cat` a file known to contain a live secret; check presence via a boolean
+  (`bool(settings.gemini.api_key)`) instead.
+- Next: P2.3 step 8 — the marking-quality fix (verify the final numeric/algebraic value before
+  awarding an A mark on partial-credit theory questions; two approaches sketched in STATE.md).
+  This is the last blocker on P2.3's accuracy gate. Re-run measure-accuracy after the fix and
+  redo the threshold sweep once more before declaring P2.3 done.
+
+## 2026-08-04 (resumed session — P2.4 verify+commit)
+- Resumed on a dirty tree carrying the prior session's un-committed P2.4 implementer output
+  (plagiarism/AI-detection advisory-flag wiring). Verified before trusting: read the full diff
+  against the recorded PLAN in STATE.md (matched exactly), confirmed `IntegritySettings`/
+  `settings.integrity` actually exist via tokensave search, reviewed the new tests for
+  substance (not just coverage padding — they assert on flag values, review_reason content,
+  marks untouched, independent multi-reason review-queue rows, opt-in Gemini non-call).
+  Ran all gates fresh: ruff/format/mypy/lint-imports clean, pytest exit 0 (0 FAILED/ERROR,
+  82.04% cov locally — DB-integration tests still skip per the known Supabase-down issue, CI
+  unaffected), pre-commit --all-files clean. Committed d31a5ba.
+- Noted a gap: `scripts/check.sh` (mandated by MISSION Phase-0 + referenced throughout §8b as
+  THE gate command) does not exist on disk despite Phase 0 being marked done. Logged in
+  STATE.md as non-blocking opportunistic cleanup, not chased down this session to stay
+  focused on P2.4→P2.5 momentum.
+- Next: P2.5 — upload path (plain file upload + PWA camera capture → client-side multi-page
+  PDF assembly → Supabase Storage → backend job); wire storage bucket + signed access.
+
+## 2026-08-04 (resumed session — P2.5 verify+finish+commit)
+- Resumed on a dirty tree carrying the prior session's PARTIAL, uncommitted P2.5 implementer
+  output: `lemely/io/storage.py` + `tests/storage_fakes.py` (untracked) and edits to
+  `runtime/config.py`/`web/deps.py`/`web/upload_utils.py`. Verified before trusting: read the
+  diffs against the recorded PLAN — steps 1-3 (StorageSettings, StorageBackend/
+  HttpStorageBackend, FakeStorageBackend, get_storage_backend singleton, check_upload_cap
+  extraction) matched exactly and were sound; steps 4-6 (student.py router wiring, tests) had
+  NOT been started — `student_upload`/`student_correct` still used local-disk paths, storage.py
+  had no callers.
+- Completed the unit: wired `student_upload` + `student_correct`'s `run()` closure to the
+  `StorageBackend` (object key `uploads/{user_id}/{paperId}/{filename}`; `run()` downloads into
+  a `tempfile.TemporaryDirectory`). Found and fixed a design gap in the recorded PLAN itself
+  before writing code: the PLAN only described downloading the scan, but `student_upload` has
+  always accepted an optional sibling mark-scheme upload that `resolve_mark_scheme` finds via a
+  same-directory disk check — downloading only the scan would have silently dropped that
+  feature. Added `StorageObjectNotFoundError` (shared between `HttpStorageBackend`'s 404 path
+  and `FakeStorageBackend`, moved out of test-only scope) so `run()` can download the sibling
+  when present and skip cleanly when not. Recorded both this and the "no hermetic
+  HttpStorageBackend test — mirrors HttpGoTrueBackend's live-skip-only precedent, verified via
+  grep before assuming a pattern existed" deviation in D2.6's completion note.
+- Also caught a test-fixture bug before running anything: the first draft of the
+  `get_storage_backend` override used `lambda: FakeStorageBackend()`, which would have handed
+  every request a FRESH empty fake instead of the shared one the `upload_repo`/`attempt_repo`
+  overrides use — silently breaking the upload→correct flow (upload writes to instance A,
+  correct reads from instance B). Fixed to close over one shared instance, same pattern as the
+  existing overrides.
+- Ran full gates fresh: ruff/format/mypy(clean, 0 errors)/lint-imports all clean; pytest exit 0,
+  0 FAILED/ERROR, 49 skipped (Postgres/Supabase-live only — stack still down, confirmed sudo is
+  also unavailable in this sandbox so the root-owned `.temp/start-secrets/` cleanup from prior
+  sessions' notes still can't be done here either), coverage gate (70%) passed at 81.45%.
+  Committing on `feature/phase-2-core-loop`.
+- Next: P2.6 — Frontend API foundation (resurrect `web/src/lib/api.ts` + `@tanstack/react-query`,
+  typed hooks, deviceId-minting auth per D1.11, verify the Vite proxy end-to-end).
+
+## 2026-08-04 (P2.6 — frontend API foundation)
+- Resumed on a clean tree (P2.5 was the last commit, already merged/pushed). No wip commit
+  needed. Read STATE/DECISIONS/MISSION, confirmed next non-done task was P2.6.
+- Scoped and recorded a PLAN in STATE.md before dispatch (committed separately, 8c872fb):
+  session storage + deviceId minting (D1.11), bearer-header wiring in api.ts, an AuthContext
+  wrapping the 4 auth endpoints as react-query mutations, a RequireAuth route guard, and one
+  minimal Login screen — foundation only, no existing screens touched (student/data.ts and
+  teacher/data.ts stay mock until P2.7/P2.8 by design).
+- Dispatched to `implementer` (Sonnet); verified independently rather than trusting its report:
+  re-ran typecheck/lint/build myself (all clean), and separately started uvicorn + vite and
+  curled through the Vite proxy myself — confirmed otp/request 200, malformed login 422,
+  well-formed login 401 on the (already-documented, still-down) Supabase dependency. Matched
+  the subagent's claims exactly. Also confirmed the `AuthProvider` addition to main.tsx (not
+  spelled out in the plan's literal text) was a correct, necessary deviation, not scope creep.
+- Local Supabase stack is still down this session — same root-owned `.temp/start-secrets/`
+  issue, sudo still unavailable in this sandbox. Unchanged, not re-investigated further (already
+  documented, needs a session with root access).
+- Committed (9ea2662) and pushed to feature/phase-2-core-loop. ntfy sent (6/10 P2 tasks done).
+- Checkpointing here per MISSION §5 context hygiene — clean phase-task boundary, and P2.7 (the
+  next task) is a large multi-screen migration MISSION explicitly calls for a workflow on;
+  better started fresh than mid-context.
+- Next: P2.7 — Student surface on real data, screen-by-screen (Overview, Subject, PaperResult,
+  CorrectPaper, Onboarding/StudyPlan/Standings), deleting student/data.ts incrementally. Mission
+  explicitly suggests a workflow for this fan-out; keep each workflow under ~30 agents and
+  checkpoint to disk after each run.
