@@ -25,6 +25,7 @@ from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
 from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
@@ -175,6 +176,18 @@ def get_seat_service() -> SeatService:
     )
 
 
+@lru_cache(maxsize=1)
+def get_class_service() -> ClassService:
+    """Return the process-wide :class:`ClassService` singleton (D3.1).
+
+    Wired with the DB session factory alone — unlike :class:`SeatService`,
+    class ownership/enrolment needs no account-creation seam, so there is no
+    GoTrue dependency here at all. Tests override this dependency with a
+    service built on a throwaway Postgres database.
+    """
+    return ClassService(get_sessionmaker(get_settings()))
+
+
 @dataclass(frozen=True, slots=True)
 class AuthContext:
     """The authenticated caller, resolved from a validated bearer token.
@@ -288,3 +301,4 @@ def reset_singletons() -> None:
     get_device_registry.cache_clear()
     get_auth_service.cache_clear()
     get_seat_service.cache_clear()
+    get_class_service.cache_clear()

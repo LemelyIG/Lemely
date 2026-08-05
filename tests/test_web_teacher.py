@@ -609,43 +609,26 @@ def test_quiz_generate_without_key_returns_pool_not_500(
 
 # ---------------------------------------------------------------------------
 # Classes.
+#
+# P3.1/D3.1 replaced the implicit ``"all"`` cohort these two endpoints used to
+# serve (every student with *any* history, treated as one fake class) with the
+# real DB-backed class model. The three tests that lived here
+# (``test_classes_empty``, ``test_classes_summary_from_history``,
+# ``test_class_detail_distribution_and_roster``) asserted exactly that
+# implicit behaviour — an empty store meaning "no classes" and *every* student
+# with history appearing in a single synthetic "All students" class — which is
+# now the cross-tenant leak D1.6 flagged as the outstanding gap. That
+# behaviour no longer exists (a class is only ever the teacher's *real*,
+# explicitly-enrolled roster), so those three assertions are obsolete rather
+# than something to rewrite in place; they are superseded by:
+#   * tests/test_class_repo.py — ClassService ownership/roster/enrolment
+#     logic against real Postgres.
+#   * tests/test_web_classes.py — the same GET /api/teacher/classes and
+#     GET /api/classes/{id} HTTP paths this file used to cover, now exercised
+#     against a real teacher-owned class with a real enrolled roster,
+#     including the regression that matters most here: a student with history
+#     but NOT enrolled in the class must not appear in it.
 # ---------------------------------------------------------------------------
-
-
-def test_classes_empty(client: TestClient) -> None:
-    """No history → no classes."""
-    assert client.get("/api/teacher/classes").json()["classes"] == []
-
-
-def test_classes_summary_from_history(client: TestClient, history_store: HistoryStore) -> None:
-    """The implicit class summarises the cohort mean and student count from history."""
-    _seed_history_record(history_store, "amelia", percentage=90.0, grade="A")
-    _seed_history_record(history_store, "jonas", percentage=50.0, grade="D")
-
-    classes = client.get("/api/teacher/classes").json()["classes"]
-    assert len(classes) == 1
-    assert classes[0]["studentCount"] == 2
-    assert classes[0]["average"] == 70.0
-
-
-def test_class_detail_distribution_and_roster(
-    client: TestClient, history_store: HistoryStore
-) -> None:
-    """Class detail exposes grade distribution, roster, and mastery — no benchmarks."""
-    _seed_history_record(history_store, "amelia", percentage=90.0, grade="A")
-    _seed_history_record(history_store, "jonas", percentage=50.0, grade="D")
-
-    body = client.get("/api/classes/all").json()
-    dist = {b["grade"]: b["count"] for b in body["distribution"]}
-    assert dist["A"] == 1
-    assert dist["D"] == 1
-    assert dist["U"] == 0
-    names = {r["name"] for r in body["students"]}
-    assert names == {"amelia", "jonas"}
-    # Mastery rows are data-backed but carry no national benchmark.
-    assert all(m["national"] is None for m in body["mastery"])
-    at_risk_stat = next(s for s in body["stats"] if s["key"] == "At risk")
-    assert at_risk_stat["value"] == "1"
 
 
 # ---------------------------------------------------------------------------

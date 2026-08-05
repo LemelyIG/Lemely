@@ -1,6 +1,65 @@
 # Decisions log
 (orchestrator records every non-trivial decision here: what, why, alternatives)
 
+## Phase 3
+
+### D3.1 — Real class model: nullable `school_id` for independent teachers, join codes, and the ownership rule that lands D1.6
+- **What:** P3.1 replaces the two implicit-class endpoints
+  (`lemely/web/routers/teacher.py::list_classes` / `get_class`, which treated *every*
+  student with history as one cohort keyed `"all"`) with the DB-backed `classes` /
+  `class_enrollments` tables from P1.3, behind a new `lemely/db/class_repo.py`
+  (`ClassService`) modelled directly on `SeatService` (D1.10): pure ownership/CRUD
+  logic over a `sessionmaker`, domain errors mapped to status codes by a thin HTTP
+  layer, testable against Postgres with no GoTrue dependency.
+- **`classes.school_id` becomes NULLABLE — the one schema relaxation, and it is
+  required by the product model, not convenience.** MISSION §1 states "a teacher can
+  be independent, belong to a school, or both." P1.3 shipped `classes.school_id` as
+  `NOT NULL`, which makes an independent teacher's class unrepresentable. The
+  alternatives were worse: minting a synthetic one-teacher `School` row per
+  independent teacher (pollutes the seat/quota/membership model with rows that are
+  not schools, and `SeatService.list_admin_schools` would start returning them), or
+  blocking independent teachers entirely (contradicts the MISSION). Dropping a
+  `NOT NULL` is a *relaxation*: it invalidates no existing row, needs no data
+  backfill, and is reversible by re-adding the constraint once every row has a
+  school. It is not literally additive, so it is recorded here as a deliberate,
+  scoped exception to D1.2's additive-only guarantee rather than slipped in silently.
+- **Ownership rule (this is D1.6's deferred row-level tenancy, now landed):**
+  - `teacher` → sees and mutates **only** classes where `classes.teacher_id ==
+    auth.user_id`. Any other class id is a **403, never a 404-vs-403 oracle and
+    never data**.
+  - `school_admin` → sees classes whose `school_id` is a school they hold a
+    `school_admin` `SchoolMembership` for (read + roster management), mirroring how
+    `SeatService` scopes every mutation to an admin's own schools.
+  - `platform_admin` → **no classes**. Consistent with D1.6/D1.10's no-super-role
+    rule; a platform admin reaching class data comes via a dedicated admin surface
+    (X-01..X-03, unbuilt), not by inheriting the teacher router's role gate.
+  The router-level `require_role(teacher, school_admin, platform_admin)` guard stays
+  as the 401-then-403 outer boundary; the ownership check is the inner one.
+- **Two enrolment paths, matching MISSION §4 P3.1 ("invite code / school seat"):**
+  1. **Join code** — additive `classes.join_code` column (unique, indexed,
+     server-generated at create). A student self-enrols by posting the code. This is
+     the path an independent teacher (no school, no seats) must have.
+  2. **Direct add** — a teacher/school_admin enrols an existing student who holds a
+     non-revoked `Seat` in the same school as the class. Gated on the class having a
+     `school_id`; an independent teacher's class has no seat pool, so this path 403s
+     for them by construction rather than by a special case.
+  A student may be in many classes; `uq_class_enrollments_class_id_student_id`
+  already makes re-enrolment idempotent rather than duplicated.
+- **Roster identity comes from `users.display_name`, falling back to `email`.** The
+  old `StudentRowDTO.name` carried the raw history key (a UUID string) because there
+  was no user join. With a real roster there is one, so the DTO now carries a real
+  name plus the student id as a separate field — the frontend (P3.7) needs the id to
+  link through to the student detail screen and must not parse it out of a label.
+- **DTO shapes extend, never break.** `ClassSummaryDTO`/`ClassDetailDTO` keep every
+  existing field so `web/` keeps building through P3.1–P3.6 (the teacher frontend is
+  P3.7/P3.8); new fields are added optional-with-default.
+- **Alternatives rejected:** keeping the implicit `"all"` cohort alongside the real
+  model (rejected — two sources of truth for "who is in this class", and the implicit
+  one is exactly the cross-tenant leak D1.6 recorded as outstanding); enforcing
+  ownership in the router instead of the service (rejected — D1.10 already proved the
+  service-layer placement is the testable one, and it keeps the guarantee in one
+  place for the P3.3/P3.4/P3.5 surfaces that will reuse it).
+
 ## Phase 2.5
 
 ### D2.12 — P2.5.5 kickoff: E2E harness had a silent PATH blocker; fixed in-repo, and its first real run caught two P2.5.3/4 regressions

@@ -35,6 +35,7 @@ from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.core.study import StudentProfile, StudyPlan
 from lemely.core.study_plan import build_study_plan
 from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.models.enums import Role, UploadStatus
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
@@ -47,6 +48,7 @@ from lemely.runtime.config import Settings
 from lemely.web.deps import (
     AuthContext,
     get_attempt_repo,
+    get_class_service,
     get_gemini_client,
     get_history_store,
     get_settings,
@@ -55,6 +57,7 @@ from lemely.web.deps import (
     require_role,
 )
 from lemely.web.schemas import question_to_dto
+from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
 from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
@@ -902,3 +905,28 @@ def student_onboarding(
         weeklyStudyHours=profile.weekly_study_hours,
         confidenceBySubject=profile.confidence_by_subject,
     )
+
+
+# ── Classes (join by code) ────────────────────────────────────────────────────
+
+
+@router.post("/student/classes/join", response_model=JoinClassResponseDTO)
+def student_join_class(
+    payload: JoinClassRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+) -> JoinClassResponseDTO:
+    """Self-enrol the authenticated student into a class via its join code.
+
+    Identity is always the authenticated caller (``auth.user_id``), never a
+    caller-supplied id (D1.6 — the IDOR pattern the two former ``studentId``
+    body fields were removed for). Idempotent: re-joining an already-enrolled
+    class is a no-op. An unknown code is a clean 404, never a 500.
+    """
+    try:
+        row = service.join_by_code(auth.user_id, payload.joinCode)
+    except JoinCodeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JoinClassResponseDTO(classId=str(row.class_id), className=row.name)

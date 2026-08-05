@@ -90,9 +90,21 @@ Starting facts (established 2026-08-06, do not re-derive):
   review/override + teacher quiz marking*, not as a standalone upload screen.
 
 ### Task checklist
-- [ ] doing — **P3.1** Real class model + teacher tenancy. Class CRUD, roster, add students
-      (invite code / school seat), replace the implicit-class endpoints. Lands D1.6's deferred
-      own-classes-only row-level ownership. Backend + authz tests.
+- [x] done — **P3.1** Real class model + teacher tenancy (D3.1). `lemely/db/class_repo.py`
+      (`ClassService`, modelled on `SeatService`), migration `0004_class_model` (nullable
+      `classes.school_id` for independent teachers + `classes.join_code`), new
+      `lemely/web/routers/classes.py` (CRUD/roster/enrol) + student join-by-code on the
+      student router. The implicit "all students are one cohort" endpoints are gone — the
+      cross-tenant leak D1.6 recorded as outstanding is closed. 687 tests (683 passed / 4
+      skipped live-only) / 85.76% cov (up from develop's 85.54%). All 12 gates green;
+      `alembic check` reports no drift.
+- [ ] doing — **P3.1b** Fix the self-defeating visual baseline gate. `web/scripts/audit.mjs:60`
+      hardcodes `REPORTS_DIR = reports/phase-2.5`, so every `./scripts/check.sh` run
+      overwrites the committed Phase-2.5 baselines in place — the reference MISSION §11's
+      "unintended diff is a blocker" rule compares against is destroyed by the very act of
+      running the gate. Route routine runs to a gitignored scratch dir; re-baselining becomes
+      explicit and per-phase. Found during P3.1 (a backend-only change still produced a
+      53-file dirty tree of re-rendered PNGs).
 - [ ] todo — **P3.2** At-risk flagging engine. Pure rules module (declining trend across last N
       papers OR predicted grade ≥2 boundaries below target OR ≥14 days inactive), each flag
       carrying its reason + evidence. Backend + unit tests on seeded scenarios.

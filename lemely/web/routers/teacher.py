@@ -67,13 +67,8 @@ from lemely.web.schemas import (
 from lemely.web.schemas_teacher import (
     AtRiskStudentDTO,
     BatchTabDTO,
-    ClassDetailDTO,
-    ClassListDTO,
-    ClassSummaryDTO,
     DetectedFieldDTO,
-    DistributionBarDTO,
     GradingQueueDTO,
-    MasteryRowDTO,
     OverviewDTO,
     PaperDetailDTO,
     PaperKind,
@@ -100,9 +95,10 @@ from lemely.web.upload_utils import (
 
 # Every teacher-portal route is staff-only. Gating at the router level means a
 # 401 (no/invalid token) or 403 (student/parent) is enforced uniformly and any
-# future teacher route inherits the guard by construction. Per-teacher tenancy
-# (a teacher only seeing their own classes) is deferred to when these routes move
-# off the shared interim HistoryStore onto the DB-backed class model (D1.6).
+# future teacher route inherits the guard by construction. Per-teacher row-level
+# tenancy (a teacher only seeing their own classes) landed in P3.1: the class
+# CRUD/roster/enrolment routes live in ``lemely.web.routers.classes`` on top of
+# the DB-backed class model (D3.1), not the shared interim HistoryStore.
 router = APIRouter(
     prefix="/api",
     dependencies=[Depends(require_role(Role.teacher, Role.school_admin, Role.platform_admin))],
@@ -910,11 +906,25 @@ def quiz_generate(
 
 # ---------------------------------------------------------------------------
 # Classes.
+#
+# The class CRUD/roster/enrolment routes themselves live in
+# ``lemely.web.routers.classes`` (P3.1, D3.1) on top of the DB-backed class
+# model. ``_student_row`` stays here because it is a roster-row *analytics*
+# helper (built from a student's history) reused by that router, alongside
+# ``_latest_records``/``_mean``/``_aggregate_history_weaknesses``/
+# ``_student_delta``/``_GRADE_ORDER``/``_AT_RISK_GRADES`` above.
 # ---------------------------------------------------------------------------
 
 
-def _student_row(history: StudentHistory) -> StudentRowDTO | None:
-    """Build a roster row from a student's history, or ``None`` if empty."""
+def _student_row(
+    history: StudentHistory, *, display_name: str, student_id: str
+) -> StudentRowDTO | None:
+    """Build a roster row from a student's history, or ``None`` if empty.
+
+    ``display_name``/``student_id`` come from the real class roster (D3.1) —
+    ``history.student_id`` is the raw user-id key used to address the history
+    store, not a human name.
+    """
     if not history.records:
         return None
     latest = history.records[-1]
@@ -924,96 +934,13 @@ def _student_row(history: StudentHistory) -> StudentRowDTO | None:
         default=None,
     )
     return StudentRowDTO(
-        name=history.student_id,
+        name=display_name,
+        studentId=student_id,
         grade=latest.grade,
         mark=f"{latest.awarded_marks}/{latest.maximum_marks}",
         delta=_student_delta(history),
         weakTopic=weakest.topic if weakest is not None else None,
         gradeAtRisk=latest.grade in _AT_RISK_GRADES,
-    )
-
-
-@router.get("/teacher/classes", response_model=ClassListDTO)
-def list_classes(
-    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
-) -> ClassListDTO:
-    """Return the (single, implicit) class summary derived from all history.
-
-    The domain has no class/roster model yet, so every student with history is
-    treated as one cohort. ``average`` is the mean latest percentage across
-    students; empty history yields an empty class list.
-    """
-    latest = _latest_records(history_store)
-    if not latest:
-        return ClassListDTO(classes=[])
-    average = _mean([r.percentage for r in latest])
-    return ClassListDTO(
-        classes=[
-            ClassSummaryDTO(
-                id="all",
-                label="All students",
-                studentCount=len(latest),
-                average=average,
-            )
-        ]
-    )
-
-
-@router.get("/classes/{class_id}", response_model=ClassDetailDTO)
-def get_class(
-    class_id: str,
-    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
-) -> ClassDetailDTO:
-    """Return mastery, grade distribution, and the roster for a class.
-
-    Mastery is per-topic accuracy across the cohort's aggregate weaknesses;
-    distribution counts students by latest grade; the roster is one row per
-    student. National benchmarks and hours-saved narratives have no backend
-    source and are omitted / left ``None``.
-    """
-    student_ids = history_store.list_students()
-    histories = [history_store.load(sid) for sid in student_ids]
-    latest = [h.records[-1] for h in histories if h.records]
-
-    rows = [row for h in histories if (row := _student_row(h)) is not None]
-
-    aggregate = _aggregate_history_weaknesses(history_store)
-    mastery = [
-        MasteryRowDTO(topic=area.topic, value=round(area.accuracy * 100))
-        for area in aggregate.weak_areas
-    ]
-
-    grade_counts: dict[str, int] = {}
-    for record in latest:
-        grade_counts[record.grade] = grade_counts.get(record.grade, 0) + 1
-    distribution = [DistributionBarDTO(grade=g, count=grade_counts.get(g, 0)) for g in _GRADE_ORDER]
-
-    average = _mean([r.percentage for r in latest])
-    at_risk = sum(1 for r in latest if r.grade in _AT_RISK_GRADES)
-    stats = [
-        StatCardDTO(
-            key="Class average",
-            value=str(round(average)) if average is not None else "—",
-            unit="%",
-            footTone="ok",
-        ),
-        StatCardDTO(key="Students", value=str(len(latest)), unit="tracked"),
-        StatCardDTO(
-            key="At risk",
-            value=str(at_risk),
-            unit="students",
-            valueTone="err" if at_risk else "t1",
-            footTone="err" if at_risk else "t2",
-        ),
-    ]
-
-    return ClassDetailDTO(
-        id=class_id,
-        label="All students",
-        stats=stats,
-        mastery=mastery,
-        distribution=distribution,
-        students=rows,
     )
 
 

@@ -262,10 +262,13 @@ class DistributionBarDTO(ApiModel):
 class StudentRowDTO(ApiModel):
     """A class roster row.
 
-    Data-backed: ``name`` (student id), ``grade``, ``mark`` (awarded/max of latest
-    paper), ``delta`` (percentage change vs. prior same paper, ``None`` when no
-    prior), ``weakTopic`` (weakest area of the latest paper). ``gradeAtRisk`` is
-    computed from ``grade``.
+    Data-backed: ``name`` (the student's real ``display_name``, falling back to
+    ``email`` — D3.1; previously this carried the raw history-key student id),
+    ``studentId`` (the real user id, added D3.1 so the frontend can link
+    through to student detail without parsing it out of ``name``), ``grade``,
+    ``mark`` (awarded/max of latest paper), ``delta`` (percentage change vs.
+    prior same paper, ``None`` when no prior), ``weakTopic`` (weakest area of
+    the latest paper). ``gradeAtRisk`` is computed from ``grade``.
     """
 
     name: str
@@ -274,19 +277,26 @@ class StudentRowDTO(ApiModel):
     delta: float | None = None
     weakTopic: str | None = None
     gradeAtRisk: bool = False
+    studentId: str = ""
 
 
 class ClassSummaryDTO(ApiModel):
     """One class in ``GET /api/teacher/classes``.
 
-    Data-backed: ``id``, ``label``, ``studentCount``, ``average`` (mean latest
-    percentage across students).
+    Data-backed: ``id``, ``label`` (the class name), ``studentCount``,
+    ``average`` (mean latest percentage across enrolled students with
+    history). ``subjectCode``/``schoolId``/``joinCode`` are the real class
+    model's remaining fields, added D3.1 (optional so older callers keep
+    working).
     """
 
     id: str
     label: str
     studentCount: int
     average: float | None = None
+    subjectCode: str | None = None
+    schoolId: str | None = None
+    joinCode: str | None = None
 
 
 class ClassListDTO(ApiModel):
@@ -299,8 +309,11 @@ class ClassDetailDTO(ApiModel):
     """Response for ``GET /api/classes/{id}``.
 
     Data-backed: ``stats``, ``mastery`` (per-topic accuracy), ``distribution``
-    (grade counts), ``students`` (roster). Fields the mock shows without a
-    backend source (bubble predictions, hours-saved narratives) are omitted.
+    (grade counts), ``students`` (roster) — all computed over the class's real
+    enrolled roster (D3.1), not every student in the store. Fields the mock
+    shows without a backend source (bubble predictions, hours-saved
+    narratives) are omitted. ``subjectCode``/``schoolId``/``joinCode`` are the
+    real class model's remaining fields, added D3.1.
     """
 
     id: str
@@ -309,6 +322,9 @@ class ClassDetailDTO(ApiModel):
     mastery: list[MasteryRowDTO] = Field(default_factory=list)
     distribution: list[DistributionBarDTO] = Field(default_factory=list)
     students: list[StudentRowDTO] = Field(default_factory=list)
+    subjectCode: str | None = None
+    schoolId: str | None = None
+    joinCode: str | None = None
 
 
 class AtRiskStudentDTO(ApiModel):
