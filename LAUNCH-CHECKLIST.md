@@ -7,7 +7,7 @@ Do these in order. The run starts at step 9. Total setup: ~20 minutes.
 
 ## 1. Install the kit into the repo
 ```bash
-cd /home/sico/Code/Lemely
+cd /home/sico/Lemely
 # copy from wherever you downloaded the kit:
 cp -r <kit>/BUILD .
 cp -r <kit>/.claude .            # merges settings.json + agents/ into the repo
@@ -41,7 +41,7 @@ npm i -g supabase 2>/dev/null || true   # optional; agents can install it, this 
 
 ## 4. Claude Code config (one-time, interactive)
 ```bash
-cd /home/sico/Code/Lemely && claude
+cd /home/sico/Lemely && claude
 ```
 Inside the session:
 - `/config` → turn **Dynamic workflows** ON (required on Pro)
@@ -80,7 +80,7 @@ grep -n "8.00" BUILD/MISSION.md                                    # budget ceil
 
 ## 9. LAUNCH
 ```bash
-cd /home/sico/Code/Lemely
+cd /home/sico/Lemely
 tmux new -s lemely './supervisor.sh'
 ```
 You'll get an ntfy "Supervisor started" within seconds and a Phase-0 start

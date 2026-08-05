@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Steer the running build without stopping it.
+#
+#   ./nudge "prioritise the review queue over the quiz builder"   # free-text directive
+#   ./nudge SYNC                 push all local branches to GitHub
+#   ./nudge SYNC feature/x       push one branch
+#   ./nudge STATUS               progress + recent commits
+#   ./nudge PAUSE                hold after the current run finishes
+#   ./nudge STOP                 kill the current run, then hold
+#   ./nudge RESUME               continue
+#   ./nudge SKIP                 abandon the stuck task, move on
+#   ./nudge DIGEST               force the daily digest now
+#
+# With no arguments, prints the current inbox.
+set -u
+CTRL_TOPIC="lemely-ctl-9QmZR4vXpL2wDA7t"
+INBOX="$(dirname "$0")/BUILD/INBOX.md"
+
+if [ $# -eq 0 ]; then
+  [ -f "$INBOX" ] && cat "$INBOX" || echo "Inbox empty."
+  exit 0
+fi
+curl -s -d "$*" "https://ntfy.sh/$CTRL_TOPIC" >/dev/null && echo "Sent: $*"

@@ -252,22 +252,14 @@ stalling. Full usage rules are in §10.
   suite), and PR-wide reviews. Prefer many small workflows over one giant one —
   interrupted workflows do not survive session restarts, so keep each under ~30
   agents and checkpoint results to disk immediately after each run.
-- **Model discipline (this is a hard cost constraint):** you run on
-  **Sonnet by default**. Opus is expensive and scarce on this plan, so it is
-  reserved for work where a wrong answer is costly and hard to reverse.
-  Escalate a single run to Opus by setting `next_run_model: opus` in
-  `BUILD/STATE.md`, writing STATE.md carefully, and exiting cleanly — the
-  supervisor relaunches you on Opus for exactly one run, then reverts to
-  Sonnet. Escalate ONLY for: the database/tenancy schema design (Phase 1), the
-  auth + RBAC model (Phase 1), the det-parser keep/delete decision (Phase 0),
-  the marking-confidence + review-threshold design (Phase 2), and any bug that
-  survived two serious Sonnet debugging attempts. That is roughly 5–8 Opus runs
-  across the entire build; if you find yourself escalating more often, you are
-  using it as a crutch. Never escalate for implementation, tests, wiring,
-  docs, scraping, or refactors. The same rule governs subagents: `architect`
-  (Opus) is for design documents only, budget ~2 invocations per phase; use
-  `scout` and `reporter` (Haiku) freely, `implementer`/`test-engineer`/
-  `reviewer`/`debugger`/`data-engineer` (Sonnet) for everything else.
+- **Model:** you run on **Opus** for every run. There is no escalation
+  mechanism and no `next_run_model` field to set — ignore any older instruction
+  that mentions one. Opus on this plan consumes the usage window quickly, so the
+  token discipline in §8b is the binding constraint on how much you get done
+  per window: delegate reading to `scout` (Haiku), keep subagents on their
+  assigned tiers (`architect` Opus for design documents only, the
+  implementation/test/review/debug/data agents on Sonnet, `scout` and `reporter`
+  on Haiku), and checkpoint early rather than burning context on rediscovery.
 - **Stuck protocol:** 3 failed attempts on the same problem → stop, write the
   problem + attempts to `BUILD/BLOCKERS.md`, ntfy with priority=high, mark the
   task `blocked`, move to the next independent task. Revisit blocked tasks once
@@ -322,9 +314,14 @@ stalling. Full usage rules are in §10.
     "actions": [{"action":"view","label":"Open repo","url":"https://github.com/LemelyIG/Lemely"}]
   }'
   ```
-  Every message you send must include a progress line as its first line:
+  Every message you send must open with a progress line:
   `**Phase N** — X/Y tasks · <what just happened>`. A notification that says
-  only "task complete" is useless from a phone.
+  only "task complete" is useless from a phone. Say what changed, what it means,
+  and what is next — e.g. "Boundary ingestion done: 0580 covered for 2019–2025
+  (42 variants), 0606 has gaps in 2019. Next: wiring prediction to the table."
+  The supervisor already sends heartbeats, run summaries, commit lists and
+  screenshots, so do not duplicate those — send the things only you know:
+  what a result means, what you decided, what you are worried about.
   Send one on: phase start, each significant task completed (not every file
   edit — roughly every 30–60 minutes of work), phase complete, blocker raised,
   budget warning, and any decision recorded in DECISIONS.md.
@@ -551,6 +548,33 @@ scroll at any breakpoint from 320px up).
 Keep the harness cheap in tokens: these runs produce enormous output. Always
 redirect to a file and read the summary plus failures only — never let a
 Lighthouse or axe JSON dump land in context.
+
+
+## 12. Taking direction mid-run (BUILD/INBOX.md)
+
+The human can send you instructions while you work, without stopping the run.
+They arrive as unhandled `- [ ]` items in `BUILD/INBOX.md`.
+
+- **Read `BUILD/INBOX.md` at the start of every session and after every
+  completed task.** It is the first file you read on resume, before MISSION.md.
+- Treat an unhandled directive as **higher priority than your current plan**.
+  If it changes what you should do next, change what you do next.
+- Act on it, then mark it `- [x]` with a one-line note on what you did. Never
+  delete an item.
+- If a directive conflicts with MISSION.md, **the directive wins** — it is the
+  human speaking now, and MISSION.md was written in advance. Record the conflict
+  and your resolution in `BUILD/DECISIONS.md`, and note it in the phase report.
+- If a directive is ambiguous or you believe it is a mistake, do the safest
+  reasonable interpretation, say so in the INBOX entry when you mark it handled,
+  and send an ntfy message explaining your reading. Do not stall waiting for
+  clarification — the human may be asleep.
+- If a directive would violate a product principle in `docs/LEMELY_UI_SPEC.md`
+  §1.4 (visible confidence, flags-not-verdicts, grades private, teacher
+  authority, no invented precision) or would require faking a passing test,
+  do not silently comply: mark it handled with a refusal note, explain why in an
+  ntfy message with priority high, and continue with the rest of the work.
+- `BUILD/PAUSE` may appear — that is the supervisor's business, not yours.
+  Finish your current task and exit cleanly as normal.
 
 ---
 

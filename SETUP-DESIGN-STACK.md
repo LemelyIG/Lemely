@@ -11,7 +11,7 @@ python3 -V   # must be 3.x    — UI/UX Pro Max's search scripts require it
 If Node is below 24, upgrade before continuing (`nvm install 24 && nvm use 24`).
 
 ## 2. Install the design skills
-From `/home/sico/Code/Lemely`:
+From `/home/sico/Lemely`:
 
 ```bash
 # Impeccable — primary design workflow
@@ -69,7 +69,7 @@ binaries on disk so it isn't downloading browsers mid-run.)
 
 ## 5. Copy the updated kit in
 ```bash
-cd /home/sico/Code/Lemely
+cd /home/sico/Lemely
 cp -r <kit>/BUILD .            # MISSION.md, STATE.md, QUALITY-BAR.md
 cp -r <kit>/.claude .          # updated settings + designer & visual-qa agents
 cp -r <kit>/docs .             # LEMELY_UI_SPEC.md
