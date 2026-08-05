@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test"
+import { screensDir } from "./report-dir"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -15,7 +16,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  *
  * Kept separate from correct-paper.spec.ts / _smoke.spec.ts: this suite
  * captures a corpus rather than asserting product behaviour end to end, so
- * it can be re-run independently to regenerate reports/phase-2.5/screens/.
+ * it can be re-run independently to regenerate a phase's screens/ corpus
+ * (see report-dir.ts — set LEMELY_REPORT_DIR to re-baseline a phase).
  *
  * NOTE on the "invalid file" error trigger for S-14/error: e2e_server.py
  * unconditionally monkeypatches `student.resolve_mark_scheme` /
@@ -34,7 +36,7 @@ const SCAN_PATH = path.resolve(
   __dirname,
   "../../tests/golden/0625_m20_qp_12_mcq/scan.pdf",
 )
-const SCREENS_DIR = path.resolve(__dirname, "../../reports/phase-2.5/screens")
+const SCREENS_DIR = screensDir()
 const PASSWORD = "CorrectHorseBattery9!"
 
 const BREAKPOINTS: { width: number; height: number }[] = [

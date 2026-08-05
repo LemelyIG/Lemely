@@ -11,6 +11,18 @@
 # boot themselves; when the stack isn't up they SKIP (not FAIL) with an
 # explanation, mirroring the existing pytest DB-integration-test skip
 # pattern, rather than blocking gates that don't need it.
+#
+# Those UI gates write screenshots and axe/Lighthouse JSON to the gitignored
+# scratch dir reports/.scratch (LEMELY_REPORT_DIR's default). They deliberately
+# do NOT write into reports/phase-N/: those are the committed baselines the
+# "no unintended visual regression" gate compares against, and a gate run that
+# overwrites its own reference cannot detect a regression. To re-baseline a
+# phase — an explicit, reviewable act — name it:
+#
+#   cd web && LEMELY_REPORT_DIR=reports/phase-3 npm run test:e2e
+#   cd web && LEMELY_REPORT_DIR=reports/phase-3 npm run audit
+#
+# then commit the diff with a note in the phase report (MISSION §11).
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export PATH="$HOME/.local/bin:$PATH"

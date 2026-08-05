@@ -3,6 +3,43 @@
 
 ## Phase 3
 
+### D3.2 — The visual-baseline gate was self-defeating: routine gate runs overwrote the baselines they compare against
+- **What:** `web/scripts/audit.mjs` (`REPORTS_DIR`), `web/e2e/screenshots.spec.ts` and
+  `web/e2e/correct-paper.spec.ts` (`SCREENS_DIR`) all hardcoded a committed phase
+  report directory (`reports/phase-2.5/`, and `reports/phase-2/` for the last),
+  and `scripts/check_ui_gates.py` read its thresholds from the same place. So every
+  `./scripts/check.sh` invocation **rewrote the Phase-2/2.5 baselines in place**.
+- **Why that is a real defect, not cosmetics:** MISSION §11 says "Commit baselines.
+  Compare against them each phase; an unintended diff is a blocker." A gate that
+  destroys its own reference can never report a regression — after any run, the
+  baseline *is* the current render by construction, so the comparison is vacuous.
+  It also poisons every diff: P3.1 is a backend-only change (zero files under
+  `web/src/`) and still produced a 53-file dirty tree of re-rendered PNGs, ±1
+  Lighthouse performance jitter, and a fresh random paper-UUID in the axe summary.
+  Committing that would have buried any genuine future visual change in noise and
+  made "no visual regression" unfalsifiable for the rest of the build.
+- **Fix:** one env seam, `LEMELY_REPORT_DIR` (repo-relative or absolute), defaulting
+  to the gitignored `reports/.scratch`. Routine gate runs write there; the committed
+  baselines are never touched. Re-baselining becomes an explicit, reviewable act that
+  names its phase — `LEMELY_REPORT_DIR=reports/phase-3 npm run audit`. The two
+  Playwright specs share `web/e2e/report-dir.ts`; `audit.mjs` and `check_ui_gates.py`
+  each carry the same default with a comment pointing at the others, because if the
+  three ever disagree the threshold gate silently reads output the audit runner never
+  wrote (a false PASS — the failure mode worth guarding hardest).
+- **Verified:** full `./scripts/check.sh` green on all 12 gates with the working tree
+  showing only the intended source edits afterwards; `reports/.scratch/` populated by
+  both runners (screens from Playwright *and* the audit runner's G-04, axe summary
+  zero violations) and confirmed ignored by git.
+- **Alternatives rejected:** `git checkout -- reports/` after each run (rejected — hides
+  the problem behind a ritual every future session must remember, and one forgotten
+  revert silently re-baselines); committing the regenerated artifacts each time
+  (rejected — that *is* the vacuous-comparison bug, just accepted); dropping the
+  screenshot corpus from `check.sh` (rejected — MISSION §11 wants it run often, and
+  it caught two real regressions in Phase 2.5 per D2.12).
+- **Applies to:** every later phase's UI gate (P3.10, P4, P5, P6's full sweep). When a
+  phase legitimately changes a screen, re-baseline explicitly and note it in that
+  phase's report, exactly as MISSION §11 prescribes.
+
 ### D3.1 — Real class model: nullable `school_id` for independent teachers, join codes, and the ownership rule that lands D1.6
 - **What:** P3.1 replaces the two implicit-class endpoints
   (`lemely/web/routers/teacher.py::list_classes` / `get_class`, which treated *every*

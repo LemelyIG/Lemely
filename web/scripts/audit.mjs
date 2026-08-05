@@ -57,7 +57,16 @@ const PASSWORD = "CorrectHorseBattery9!"
 const SCAN_PATH = path.resolve(repoRoot, "tests/golden/0625_m20_qp_12_mcq/scan.pdf")
 const AXE_SCRIPT = path.resolve(webRoot, "node_modules/axe-core/axe.min.js")
 
-const REPORTS_DIR = path.resolve(repoRoot, "reports/phase-2.5")
+// Where this run's artifacts land. Defaults to a gitignored scratch dir so a
+// routine `./scripts/check.sh` never overwrites a committed phase baseline —
+// that would destroy the very reference MISSION §11's "an unintended diff is a
+// blocker" rule compares against. Re-baselining is explicit:
+//   LEMELY_REPORT_DIR=reports/phase-3 npm run audit
+// Keep this default in sync with scripts/check_ui_gates.py's.
+const REPORT_DIR_SETTING = process.env.LEMELY_REPORT_DIR || "reports/.scratch"
+const REPORTS_DIR = path.isAbsolute(REPORT_DIR_SETTING)
+  ? REPORT_DIR_SETTING
+  : path.resolve(repoRoot, REPORT_DIR_SETTING)
 const AXE_DIR = path.join(REPORTS_DIR, "axe")
 const LH_DIR = path.join(REPORTS_DIR, "lighthouse")
 const SCREENS_DIR = path.join(REPORTS_DIR, "screens")

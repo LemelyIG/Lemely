@@ -5,10 +5,16 @@ Checks the most recent `npm run audit` output (web/scripts/audit.mjs)
 so scripts/check.sh fails the build the same way a human reviewer would
 reject the diff.
 
-Reads reports/phase-2.5/axe/_summary.json and
-reports/phase-2.5/lighthouse/_summary.json — the per-route summaries the audit
-runner writes on every run. Does not run the audit itself; scripts/check.sh
-runs `npm run audit` first and only calls this on fresh output.
+Reads <report-dir>/axe/_summary.json and <report-dir>/lighthouse/_summary.json
+— the per-route summaries the audit runner writes on every run. Does not run
+the audit itself; scripts/check.sh runs `npm run audit` first and only calls
+this on fresh output.
+
+``<report-dir>`` comes from ``LEMELY_REPORT_DIR`` (repo-relative or absolute)
+and defaults to the gitignored scratch dir ``reports/.scratch``, so a routine
+gate run never overwrites a committed phase baseline. Re-baselining is the
+explicit act of naming the phase:
+``LEMELY_REPORT_DIR=reports/phase-3 npm run audit`` (see web/scripts/audit.mjs).
 
 Gates (QUALITY-BAR.md "Accessibility"):
   - zero serious or critical axe violations, per route
@@ -18,12 +24,19 @@ Gates (QUALITY-BAR.md "Accessibility"):
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-AXE_SUMMARY = REPO_ROOT / "reports/phase-2.5/axe/_summary.json"
-LH_SUMMARY = REPO_ROOT / "reports/phase-2.5/lighthouse/_summary.json"
+# Keep this default byte-identical to audit.mjs's, or the gate reads a
+# different directory than the audit runner just wrote.
+DEFAULT_REPORT_DIR = "reports/.scratch"
+REPORT_DIR = Path(os.environ.get("LEMELY_REPORT_DIR") or DEFAULT_REPORT_DIR)
+if not REPORT_DIR.is_absolute():
+    REPORT_DIR = REPO_ROOT / REPORT_DIR
+AXE_SUMMARY = REPORT_DIR / "axe/_summary.json"
+LH_SUMMARY = REPORT_DIR / "lighthouse/_summary.json"
 ACCESSIBILITY_FLOOR = 95
 
 
@@ -44,7 +57,7 @@ def main() -> int:
             failures.append(
                 f"axe: {route['slug']} has {counts['critical']} critical + "
                 f"{counts['serious']} serious violation(s) (moderate={counts['moderate']}, "
-                f"minor={counts['minor']}) — see reports/phase-2.5/axe/{route['slug']}.json"
+                f"minor={counts['minor']}) — see {REPORT_DIR}/axe/{route['slug']}.json"
             )
 
     for route in lighthouse:
@@ -52,7 +65,7 @@ def main() -> int:
         if score is None or score < ACCESSIBILITY_FLOOR:
             failures.append(
                 f"lighthouse: {route['slug']} accessibility score {score} < "
-                f"{ACCESSIBILITY_FLOOR} — see reports/phase-2.5/lighthouse/{route['slug']}.json"
+                f"{ACCESSIBILITY_FLOOR} — see {REPORT_DIR}/lighthouse/{route['slug']}.json"
             )
 
     if failures:

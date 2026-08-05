@@ -98,13 +98,13 @@ Starting facts (established 2026-08-06, do not re-derive):
       cross-tenant leak D1.6 recorded as outstanding is closed. 687 tests (683 passed / 4
       skipped live-only) / 85.76% cov (up from develop's 85.54%). All 12 gates green;
       `alembic check` reports no drift.
-- [ ] doing — **P3.1b** Fix the self-defeating visual baseline gate. `web/scripts/audit.mjs:60`
-      hardcodes `REPORTS_DIR = reports/phase-2.5`, so every `./scripts/check.sh` run
-      overwrites the committed Phase-2.5 baselines in place — the reference MISSION §11's
-      "unintended diff is a blocker" rule compares against is destroyed by the very act of
-      running the gate. Route routine runs to a gitignored scratch dir; re-baselining becomes
-      explicit and per-phase. Found during P3.1 (a backend-only change still produced a
-      53-file dirty tree of re-rendered PNGs).
+- [x] done — **P3.1b** Fixed the self-defeating visual baseline gate (D3.2). All four
+      runners (`audit.mjs`, both Playwright specs, `check_ui_gates.py`) hardcoded a
+      committed phase report dir, so every `./scripts/check.sh` run overwrote the
+      baselines the "no unintended visual regression" gate compares against — making
+      that gate vacuous. Now behind `LEMELY_REPORT_DIR`, defaulting to gitignored
+      `reports/.scratch`; re-baselining is explicit and names its phase. Verified: 12/12
+      gates green with a clean tree afterwards.
 - [ ] todo — **P3.2** At-risk flagging engine. Pure rules module (declining trend across last N
       papers OR predicted grade ≥2 boundaries below target OR ≥14 days inactive), each flag
       carrying its reason + evidence. Backend + unit tests on seeded scenarios.

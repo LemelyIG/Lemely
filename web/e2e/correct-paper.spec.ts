@@ -1,6 +1,7 @@
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test, expect, type APIRequestContext } from "@playwright/test"
+import { screensDir } from "./report-dir"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -17,7 +18,7 @@ const SCAN_PATH = path.resolve(
   __dirname,
   "../../tests/golden/0625_m20_qp_12_mcq/scan.pdf",
 )
-const SCREENS_DIR = path.resolve(__dirname, "../../reports/phase-2/screens")
+const SCREENS_DIR = screensDir()
 
 const email = `e2e-${Date.now()}@example.com`
 const password = "CorrectHorseBattery9!"
