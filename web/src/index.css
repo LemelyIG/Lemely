@@ -5,19 +5,202 @@
 @import "@fontsource-variable/work-sans";
 @import "@fontsource-variable/jetbrains-mono";
 
-/*
- * Lemely design tokens — ported 1:1 from the Claude Design mock
- * (design/project/Lemely Teacher.dc.html + Lemely Student.dc.html).
+/* ============================================================================
+ * Lemely design tokens — sourced from DESIGN.md ("Academic Warmth").
  *
- * Two portals share the type system (Instrument Serif / Work Sans / JetBrains
- * Mono) but differ on accent + neutral hue:
- *   - Teacher: amber accent (oklch hue 68), dark "ink" primary buttons
- *   - Student: terracotta accent (oklch hue 35), accent primary buttons
+ * P2.5.1: replaces the earlier OKLCH port (pre-DESIGN.md Claude mock) with
+ * DESIGN.md's real hex palette, kept behind the SAME semantic var names
+ * (--bg, --surface, --accent, --t1..t3, --ok/--warn/--err, etc.) so the ~20
+ * existing .tsx files that already consume them via Tailwind utilities
+ * (bg-surface, text-t2, text-accent, border-border, …) do not need to change
+ * for this task. Component/screen retrofit is a separate later task.
  *
- * Semantic vars are defined per-portal under [data-portal="…"]; @theme inline
- * maps Tailwind color utilities to those vars so `bg-surface`, `text-t2`,
- * `text-accent`, `border-border` follow whichever portal scope is active.
+ * ── Traceability ────────────────────────────────────────────────────────
+ * Every literal hex code lives ONLY in the `--md-*` block below, each one
+ * copied verbatim from DESIGN.md's YAML frontmatter `colors:` map (comment
+ * next to each names the exact DESIGN.md key). Every other token — per
+ * portal, per role — is a `var(--md-*)` reference or a `color-mix()` of two
+ * `--md-*` refs (documented inline). The ONE exception is a single new
+ * amber pair (--amber-base / --amber-subtle): DESIGN.md's frontmatter has
+ * no warning/amber hue at all (only primary/secondary/tertiary/error), and
+ * the task brief explicitly allows one new hue for this case as long as it
+ * stays in the palette's tone/chroma family and is documented — see the
+ * "Amber" comment below. It is grep-auditable: exactly two new hex
+ * literals, named and explained, nothing else invented.
+ *
+ * ── Portal → DESIGN.md role map ─────────────────────────────────────────
+ *   STUDENT accent  = primary     (#964232 terracotta)
+ *   TEACHER accent  = tertiary    (#006857 teal)
+ *   TEACHER secondary (new token, high-contrast alt action per DESIGN.md
+ *                       "Portal Scoping" prose) = secondary (#80534a archival
+ *                       brown). Also defined for student for symmetry (same
+ *                       underlying DESIGN.md palette, only the "student"
+ *                       vs. "teacher" README emphasis differs).
+ *   --bg            = background                (#fff8f6, both portals)
+ *   --surface       = surface-container-lowest   (#ffffff, "pure containers")
+ *   --surface-2 (student) = surface-container      (#fceae6, "wells/sidebars")
+ *   --surface-2 (teacher) = surface-container-high  (#f6e4e0, one tier deeper
+ *                       — teacher reads slightly denser/"archival" per the
+ *                       brand prose, without a second full palette)
+ *   --border (student)    = outline-variant  (#dbc1bb, soft)
+ *   --border (teacher)    = outline           (#88726e, firmer/structural —
+ *                       the "authoritative" half of the prose's temperature
+ *                       shift)
+ *   --ink / --ink-hover    = inverse-surface (#392e2c) / on-surface (#231917)
+ *                       — shared by both portals (button.tsx's `ink` variant
+ *                       is used in both). inverse-surface is DESIGN.md's
+ *                       deep neutral-brown ("Ink" in the Elevation & Depth
+ *                       prose, #362f2e there ≈ #392e2c here); on-surface is
+ *                       verified darker (17.17:1 vs 13.12:1 white-text
+ *                       contrast) so it works as a true hover-darken with no
+ *                       invented shade.
+ *   --t1 / --t2 / --t3     = on-surface / on-surface-variant / a color-mix of
+ *                       outline + on-surface-variant (80/20). Plain `outline`
+ *                       alone is 4.28:1 on background — just under the 4.5:1
+ *                       AA floor for the small (11px) metadata text this
+ *                       feeds — so t3 is nudged via color-mix() of two
+ *                       DESIGN.md-literal tokens (still zero invented hex)
+ *                       to ≈4.9:1.
+ *   --ok / --ok-bg (student) = tertiary / tertiary-fixed (teal reads as
+ *                       "success" — DESIGN.md's frontmatter has no separate
+ *                       success role, and Material's tertiary conventionally
+ *                       doubles as one).
+ *   --ok / --ok-bg (teacher) = on-tertiary-fixed-variant / tertiary-fixed-dim.
+ *                       Teacher's accent IS tertiary, so --ok reuses the same
+ *                       hue family at a different tone (darker text, more
+ *                       saturated bg) rather than the identical accent value
+ *                       — DESIGN.md has no second green/teal hue to draw on,
+ *                       and the brief explicitly sanctions a tone-only shift
+ *                       here over inventing a new hue.
+ *   --warn / --warn-bg      = amber-base / amber-subtle (new hue, see Amber).
+ *   --err / --err-bg        = error / error-container (both portals, shared —
+ *                       DESIGN.md defines one error role, not per-portal).
+ *
+ * ── Amber (the one new hue) ─────────────────────────────────────────────
+ * DESIGN.md's frontmatter has primary (terracotta), secondary (brown),
+ * tertiary (teal) and error (red) — no amber/warning hue anywhere. The task
+ * brief explicitly allows adding one, "in the same tone/chroma family", for
+ * exactly this gap. #7a4f00 / #fbe8c6 were picked to sit at roughly the same
+ * tone (~40) and a similar warm-neutral chroma as primary/secondary, and
+ * verified at 6.79:1 (text vs background) and 5.93:1 (text vs its own
+ * subtle bg) — both clear AA. This single pair is reused everywhere an
+ * amber/"warning"/"uncertain"/"partial" signal is needed (--warn, the
+ * confidence scale's "medium" tier, the marking-state scale's "partial"
+ * tier, and the grade-band "borderline" tier) rather than inventing several.
+ * ==========================================================================
  */
+
+:root {
+  /* ---- Material role tokens — verbatim from DESIGN.md YAML frontmatter ---- */
+  --md-background: #fff8f6; /* background */
+  --md-surface: #fff8f6; /* surface */
+  --md-surface-container-lowest: #ffffff; /* surface-container-lowest */
+  --md-surface-container-low: #fff0ed; /* surface-container-low */
+  --md-surface-container: #fceae6; /* surface-container */
+  --md-surface-container-high: #f6e4e0; /* surface-container-high */
+  --md-surface-container-highest: #f1dfdb; /* surface-container-highest */
+  --md-on-surface: #231917; /* on-surface */
+  --md-on-surface-variant: #55423f; /* on-surface-variant */
+  --md-inverse-surface: #392e2c; /* inverse-surface */
+  --md-inverse-on-surface: #ffede9; /* inverse-on-surface */
+  --md-outline: #88726e; /* outline */
+  --md-outline-variant: #dbc1bb; /* outline-variant */
+
+  --md-primary: #964232; /* primary */
+  --md-on-primary: #ffffff; /* on-primary */
+  --md-primary-fixed: #ffdad3; /* primary-fixed */
+  --md-on-primary-fixed-variant: #7b2e1f; /* on-primary-fixed-variant */
+
+  --md-secondary: #80534a; /* secondary */
+  --md-on-secondary: #ffffff; /* on-secondary */
+  --md-secondary-fixed: #ffdad3; /* secondary-fixed */
+  --md-on-secondary-fixed-variant: #653c33; /* on-secondary-fixed-variant */
+
+  --md-tertiary: #006857; /* tertiary */
+  --md-on-tertiary: #ffffff; /* on-tertiary */
+  --md-tertiary-fixed: #8cf6db; /* tertiary-fixed */
+  --md-tertiary-fixed-dim: #6fd9bf; /* tertiary-fixed-dim */
+  --md-on-tertiary-fixed-variant: #005143; /* on-tertiary-fixed-variant */
+
+  --md-error: #ba1a1a; /* error */
+  --md-on-error: #ffffff; /* on-error */
+  --md-error-container: #ffdad6; /* error-container */
+  --md-on-error-container: #93000a; /* on-error-container */
+
+  /* New hue (documented above) — not in DESIGN.md, kept to one pair. */
+  --amber-base: #7a4f00;
+  --amber-subtle: #fbe8c6;
+
+  /* ---- Confidence scale (MISSION §4) — shared across portals ---- */
+  /* 3 tiers, distinguished by hue AND a monotonic lightness step (relative
+     luminance 0.106 → 0.097 → 0.062, confident→uncertain→needs-review) so
+     the ladder still reads in greyscale, not just via hue. */
+  --confidence-high: var(--md-tertiary); /* confident */
+  --confidence-high-bg: var(--md-tertiary-fixed);
+  --confidence-medium: var(--amber-base); /* uncertain */
+  --confidence-medium-bg: var(--amber-subtle);
+  --confidence-low: var(--md-on-error-container); /* needs-review */
+  --confidence-low-bg: var(--md-error-container);
+
+  /* ---- Marking-state scale (correct/partial/wrong) — colorblind-safe ---- */
+  /* Teal/amber/red rather than green/amber/red: avoids the classic red-green
+     confusion pair, teal + red stay distinguishable under deuteranopia and
+     protanopia simulation where pure green + red do not. Colors only — the
+     shape/icon differentiation happens in the C-6 question-row component. */
+  --mark-correct: var(--md-tertiary);
+  --mark-correct-bg: var(--md-tertiary-fixed);
+  --mark-partial: var(--amber-base);
+  --mark-partial-bg: var(--amber-subtle);
+  --mark-wrong: var(--md-error);
+  --mark-wrong-bg: var(--md-error-container);
+
+  /* ---- Grade-band scale — 4 grouped bands across A*–G/U ---- */
+  /* top = A-star/A/B, mid = C/D, borderline = E, fail = F/G/U. Reuses
+     tertiary/secondary/amber/error rather than primary (kept free as the
+     interactive/accent color so a grade badge never reads as a button). */
+  --grade-top: var(--md-tertiary);
+  --grade-top-bg: var(--md-tertiary-fixed);
+  --grade-mid: var(--md-secondary);
+  --grade-mid-bg: var(--md-secondary-fixed);
+  --grade-borderline: var(--amber-base);
+  --grade-borderline-bg: var(--amber-subtle);
+  --grade-fail: var(--md-error);
+  --grade-fail-bg: var(--md-error-container);
+
+  /* ---- Type scale (raw values) — see DESIGN.md `typography:` ---- */
+  --fs-display-hero: 62px;
+  --lh-display-hero: 1.04;
+  --ls-display-hero: -0.01em;
+  --fw-display-hero: 400;
+  --fs-display-lg: 40px;
+  --lh-display-lg: 1.1;
+  --fs-display-md: 30px;
+  --lh-display-md: 1.1;
+  --fs-body-lg: 15px;
+  --lh-body-lg: 1.55;
+  --fs-body-md: 14px;
+  --lh-body-md: 1.55;
+  --fs-label-sm: 11px;
+  --lh-label-sm: 1;
+  --ls-label-sm: 0.1em;
+  --fw-label-sm: 600;
+  --fs-metadata: 11px;
+  --lh-metadata: 1;
+  --ls-metadata: 0.05em;
+  --fw-metadata: 500;
+  --fs-button-text: 13px;
+  --lh-button-text: 1;
+  --fw-button-text: 500;
+
+  /* ---- Motion — pulled out of the .lm-screen rule below into reusable
+     tokens. Only one duration (0.32s) existed before; short/long are new,
+     conservative steps around it since DESIGN.md doesn't specify exact
+     motion values beyond the 1px "Tactile Interaction" translate. ---- */
+  --motion-duration-short: 0.16s;
+  --motion-duration-medium: 0.32s;
+  --motion-duration-long: 0.48s;
+  --motion-ease-standard: cubic-bezier(0.2, 0.7, 0.3, 1);
+}
 
 @theme inline {
   /* Colors follow the active [data-portal] scope (see below). */
@@ -34,6 +217,11 @@
   --color-accent-subtle: var(--accent-subtle);
   --color-accent-on: var(--accent-on);
 
+  --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-secondary-subtle: var(--secondary-subtle);
+  --color-secondary-on: var(--secondary-on);
+
   --color-t1: var(--t1);
   --color-t2: var(--t2);
   --color-t3: var(--t3);
@@ -45,71 +233,130 @@
   --color-err: var(--err);
   --color-err-bg: var(--err-bg);
 
+  /* Semantic scales (MISSION §4) — not portal-scoped, defined once above. */
+  --color-confidence-high: var(--confidence-high);
+  --color-confidence-high-bg: var(--confidence-high-bg);
+  --color-confidence-medium: var(--confidence-medium);
+  --color-confidence-medium-bg: var(--confidence-medium-bg);
+  --color-confidence-low: var(--confidence-low);
+  --color-confidence-low-bg: var(--confidence-low-bg);
+
+  --color-mark-correct: var(--mark-correct);
+  --color-mark-correct-bg: var(--mark-correct-bg);
+  --color-mark-partial: var(--mark-partial);
+  --color-mark-partial-bg: var(--mark-partial-bg);
+  --color-mark-wrong: var(--mark-wrong);
+  --color-mark-wrong-bg: var(--mark-wrong-bg);
+
+  --color-grade-top: var(--grade-top);
+  --color-grade-top-bg: var(--grade-top-bg);
+  --color-grade-mid: var(--grade-mid);
+  --color-grade-mid-bg: var(--grade-mid-bg);
+  --color-grade-borderline: var(--grade-borderline);
+  --color-grade-borderline-bg: var(--grade-borderline-bg);
+  --color-grade-fail: var(--grade-fail);
+  --color-grade-fail-bg: var(--grade-fail-bg);
+
   /* Shared type system. */
   --font-sans: "Work Sans", system-ui, sans-serif;
   --font-serif: "Instrument Serif", Georgia, serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
 
-  /* Shared radius scale (mock uses 8–16px). */
-  --radius-sm: 8px;
-  --radius: 11px;
-  --radius-lg: 14px;
-  --radius-xl: 16px;
+  /* Radii — DESIGN.md `rounded` scale (sm 0.25rem / DEFAULT 0.5rem /
+     md 0.75rem / lg 1rem / xl 1.5rem). `rounded-full` uses Tailwind's
+     built-in 9999px utility, no override needed. */
+  --radius-sm: 0.25rem;
+  --radius: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+
+  /* Spacing — DESIGN.md `spacing:` block, additive to Tailwind's default
+     4px base scale (--spacing: 0.25rem, untouched — p-1/p-2/gap-2/etc. all
+     still work as before). These are named extras for the specific values
+     DESIGN.md calls out, generating utilities like `px-container-desktop`,
+     `gap-gap-tight`, `mb-section-margin`. */
+  --spacing-container-desktop: 34px;
+  --spacing-container-mobile: 22px;
+  --spacing-gutter-grid: 24px;
+  --spacing-gap-component: 16px;
+  --spacing-gap-tight: 8px;
+  --spacing-section-margin: 64px;
+
+  /* Breakpoints — BUILD/QUALITY-BAR.md / MISSION §11 fix 380/768/1440 as the
+     three QA screenshot widths. 768px already equals Tailwind's built-in
+     `md:` (untouched, still used by existing components) so no new token is
+     needed for it — use `md:`. 380 and 1440 don't correspond to any
+     existing sm/md/lg/xl/2xl value, so they're added as new, non-colliding
+     named variants (`xs:` / `desktop:`) rather than overriding the built-in
+     scale that ~8 existing files already depend on. */
+  --breakpoint-xs: 380px;
+  --breakpoint-desktop: 1440px;
 }
 
 /* ── Student portal (terracotta) — also the default scope ──────────────── */
 :root,
 [data-portal="student"] {
-  --bg: oklch(0.97 0.007 40);
-  --surface: oklch(0.995 0.003 40);
-  --surface-2: oklch(0.955 0.008 40);
-  --border: oklch(0.87 0.006 40);
+  --bg: var(--md-background);
+  --surface: var(--md-surface-container-lowest);
+  --surface-2: var(--md-surface-container);
+  --border: var(--md-outline-variant);
 
-  --ink: oklch(0.2 0.02 35);
-  --ink-hover: oklch(0.28 0.02 35);
+  --ink: var(--md-inverse-surface);
+  --ink-hover: var(--md-on-surface);
 
-  --accent: oklch(0.62 0.13 35);
-  --accent-hover: oklch(0.57 0.13 35);
-  --accent-subtle: oklch(0.94 0.04 35);
-  --accent-on: oklch(0.99 0.003 40);
+  --accent: var(--md-primary);
+  --accent-hover: var(--md-on-primary-fixed-variant);
+  --accent-subtle: var(--md-primary-fixed);
+  --accent-on: var(--md-on-primary);
 
-  --t1: oklch(0.2 0.02 35);
-  --t2: oklch(0.48 0.018 35);
-  --t3: oklch(0.65 0.01 35);
+  --secondary: var(--md-secondary);
+  --secondary-hover: var(--md-on-secondary-fixed-variant);
+  --secondary-subtle: var(--md-secondary-fixed);
+  --secondary-on: var(--md-on-secondary);
 
-  --ok: oklch(0.52 0.12 150);
-  --ok-bg: oklch(0.96 0.02 150);
-  --warn: oklch(0.62 0.11 70);
-  --warn-bg: oklch(0.93 0.05 70);
-  --err: oklch(0.52 0.14 20);
-  --err-bg: oklch(0.93 0.05 20);
+  --t1: var(--md-on-surface);
+  --t2: var(--md-on-surface-variant);
+  --t3: color-mix(in srgb, var(--md-outline) 80%, var(--md-on-surface-variant) 20%);
+
+  --ok: var(--md-tertiary);
+  --ok-bg: var(--md-tertiary-fixed);
+  --warn: var(--amber-base);
+  --warn-bg: var(--amber-subtle);
+  --err: var(--md-error);
+  --err-bg: var(--md-error-container);
 }
 
-/* ── Teacher portal (amber + ink) ─────────────────────────────────────── */
+/* ── Teacher portal (teal + archival brown) ─────────────────────────────── */
 [data-portal="teacher"] {
-  --bg: oklch(0.965 0.012 78);
-  --surface: oklch(0.995 0.005 80);
-  --surface-2: oklch(0.945 0.012 78);
-  --border: oklch(0.89 0.012 75);
+  --bg: var(--md-background);
+  --surface: var(--md-surface-container-lowest);
+  --surface-2: var(--md-surface-container-high);
+  --border: var(--md-outline);
 
-  --ink: oklch(0.19 0.015 60);
-  --ink-hover: oklch(0.28 0.015 60);
+  --ink: var(--md-inverse-surface);
+  --ink-hover: var(--md-on-surface);
 
-  --accent: oklch(0.72 0.13 68);
-  --accent-hover: oklch(0.66 0.13 68);
-  --accent-subtle: oklch(0.94 0.055 68);
-  --accent-on: oklch(0.99 0.004 80);
+  --accent: var(--md-tertiary);
+  --accent-hover: var(--md-on-tertiary-fixed-variant);
+  --accent-subtle: var(--md-tertiary-fixed);
+  --accent-on: var(--md-on-tertiary);
 
-  --t1: oklch(0.22 0.015 60);
-  --t2: oklch(0.48 0.015 60);
-  --t3: oklch(0.66 0.012 60);
+  --secondary: var(--md-secondary);
+  --secondary-hover: var(--md-on-secondary-fixed-variant);
+  --secondary-subtle: var(--md-secondary-fixed);
+  --secondary-on: var(--md-on-secondary);
 
-  --ok: oklch(0.55 0.11 152);
-  --ok-bg: oklch(0.93 0.05 152);
-  --warn: oklch(0.72 0.13 68);
-  --warn-bg: oklch(0.94 0.055 68);
-  --err: oklch(0.58 0.13 22);
-  --err-bg: oklch(0.92 0.055 22);
+  --t1: var(--md-on-surface);
+  --t2: var(--md-on-surface-variant);
+  --t3: color-mix(in srgb, var(--md-outline) 80%, var(--md-on-surface-variant) 20%);
+
+  --ok: var(--md-on-tertiary-fixed-variant);
+  --ok-bg: var(--md-tertiary-fixed-dim);
+  --warn: var(--amber-base);
+  --warn-bg: var(--amber-subtle);
+  --err: var(--md-error);
+  --err-bg: var(--md-error-container);
 }
 
 * {
@@ -126,6 +373,65 @@ body {
 
 ::selection {
   background: var(--accent-subtle);
+}
+
+/* ── Type-scale utilities ────────────────────────────────────────────────
+ * Tailwind v4's @theme --text-* tokens can carry a companion line-height /
+ * letter-spacing / font-weight, but not font-family — and every one of
+ * these rows needs a specific family (Instrument Serif / Work Sans /
+ * JetBrains Mono). Plain classes bundling family+size+weight+lh+tracking are
+ * the reliable option here (also the brief's suggested fallback), usable as
+ * className="text-display-hero" etc. exactly like a Tailwind utility. */
+.text-display-hero {
+  font-family: var(--font-serif);
+  font-size: var(--fs-display-hero);
+  font-weight: var(--fw-display-hero);
+  line-height: var(--lh-display-hero);
+  letter-spacing: var(--ls-display-hero);
+}
+.text-display-lg {
+  font-family: var(--font-serif);
+  font-size: var(--fs-display-lg);
+  font-weight: 400;
+  line-height: var(--lh-display-lg);
+}
+.text-display-md {
+  font-family: var(--font-serif);
+  font-size: var(--fs-display-md);
+  font-weight: 400;
+  line-height: var(--lh-display-md);
+}
+.text-body-lg {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body-lg);
+  font-weight: 400;
+  line-height: var(--lh-body-lg);
+}
+.text-body-md {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body-md);
+  font-weight: 400;
+  line-height: var(--lh-body-md);
+}
+.text-label-sm {
+  font-family: var(--font-sans);
+  font-size: var(--fs-label-sm);
+  font-weight: var(--fw-label-sm);
+  line-height: var(--lh-label-sm);
+  letter-spacing: var(--ls-label-sm);
+}
+.text-metadata {
+  font-family: var(--font-mono);
+  font-size: var(--fs-metadata);
+  font-weight: var(--fw-metadata);
+  line-height: var(--lh-metadata);
+  letter-spacing: var(--ls-metadata);
+}
+.text-button-text {
+  font-family: var(--font-sans);
+  font-size: var(--fs-button-text);
+  font-weight: var(--fw-button-text);
+  line-height: var(--lh-button-text);
 }
 
 /* Screen entry + status animations from the mock (respect reduced motion). */
@@ -155,7 +461,7 @@ body {
 }
 
 .lm-screen {
-  animation: lm-in 0.32s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation: lm-in var(--motion-duration-medium) var(--motion-ease-standard) both;
 }
 
 .lm-scroll::-webkit-scrollbar {
