@@ -25,6 +25,29 @@ _TIMEOUT_SECONDS = 10.0
 _TRANSFER_TIMEOUT_SECONDS = 30.0
 
 
+def _is_missing_key(response: httpx.Response) -> bool:
+    """Detect a missing-object response the real Supabase Storage API's way.
+
+    The local/self-hosted Storage API answers a missing object with HTTP
+    **400** (not 404) and a JSON body like ``{"statusCode": "404", "error":
+    "not_found", "message": "Object not found", "code": "NoSuchKey"}`` —
+    confirmed against a live local stack (D2.8). Checking only the outer HTTP
+    status therefore never actually distinguishes "no such object" from any
+    other 4xx failure. ``code == "NoSuchKey"`` specifically (not
+    ``"NoSuchBucket"``, a real misconfiguration that should still surface as
+    :class:`~lemely.runtime.errors.ExternalServiceError`) is the reliable
+    signal. Defensive against a non-JSON or differently-shaped body — treated
+    as "not the missing-key case" rather than raising here.
+    """
+    if response.status_code != 400:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("code") == "NoSuchKey"
+
+
 class StorageObjectNotFoundError(KeyError):
     """Raised by :meth:`StorageBackend.download` for a missing object.
 
@@ -120,7 +143,7 @@ class HttpStorageBackend:
             )
         except httpx.HTTPError as exc:
             raise ExternalServiceError(f"Storage download request failed: {exc}") from exc
-        if response.status_code == 404:
+        if response.status_code == 404 or _is_missing_key(response):
             raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}")
         if response.status_code >= 300:
             raise ExternalServiceError(
