@@ -1144,7 +1144,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           camera/browser for a live capture test) with exactly what WAS verified by inspection
           for each, so P2.10's DELIVERY.md can cite it directly instead of re-deriving. **P2.9
           (PWA) is now COMPLETE**, with the two limitations above carried forward explicitly.
-- [ ] todo — P2.10 Acceptance: Playwright E2E — seeded student uploads a fixture scan and
+- [~] doing — P2.10 Acceptance: Playwright E2E — seeded student uploads a fixture scan and
        sees correct marks/grade/weaknesses on the dashboard; accuracy thresholds met;
        screenshots in reports/phase-2/screens/. §6 gates green; reports/phase-2/REPORT.md;
        merge feature→develop; push; open develop→main PR via gh (DO NOT MERGE); ntfy.
