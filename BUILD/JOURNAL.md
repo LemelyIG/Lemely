@@ -341,3 +341,25 @@
   progress, results, question detail) onto the new tokens + C-1..C-13, deleting the two
   superseded ad-hoc components. Then P2.5.4 Impeccable pass, P2.5.5/6 screenshot+audit harness,
   P2.5.7 check.sh gates, P2.5.8 quality-bar pass, P2.5.9 report+PR+ntfy.
+
+## 2026-08-05 — Phase 2.5: P2.5.3 screen retrofit
+- Did: resumed on a clean tree at P2.5.3. Dispatched one `designer` agent to retrofit
+  Overview.tsx (home), CorrectPaper.tsx (upload/scanner/marking-progress — S-14 now uses
+  ProcessingState C-10 with 3 real SSE-backed stages instead of a scrolling log), and
+  PaperResult.tsx (results/question-detail — QuestionRow C-6, ConfidenceIndicatorSummary,
+  BoundaryBar C-3) onto the token layer + C-1..C-13, and to delete the two superseded
+  components (viz.tsx::Bar, BoundaryRail.tsx) called out in the catalogue's follow-ups.
+  Directions.tsx (out of retrofit scope) needed a minimal import-only fix since it also
+  imported BoundaryRail. Orchestrator-verified independently before committing: re-ran
+  tsc/build/oxlint myself (all clean), read every diff line-by-line, grepped for stray
+  oklch()/leftover imports. Committed 16cb17d.
+- Learned: the retrofit surfaced a real pre-existing bug, not just styling debt —
+  PaperResult was rendering plagiarism/AI-detection flags directly to students, violating
+  QUALITY-BAR.md's teacher-only-integrity-flags rule. Fixed as part of the same commit.
+  Also surfaced genuine content/data gaps (no real per-grade boundary thresholds on
+  ResultDTO, no SSE signal for 2 of S-14's 5 stages or a live question count, S-15's
+  comparison/mistakes/weak-topic-chips have no backing data) — recorded in STATE.md and
+  the commit body, not fixed (backend/DTO work, out of this phase's scope).
+- Next: P2.5.4 — Impeccable audit → normalize → polish pass on the same 4 touched screens
+  (per MISSION §10 command sequence). Then P2.5.5/6 screenshot+audit harness, P2.5.7
+  check.sh gates, P2.5.8 quality-bar pass, P2.5.9 report+PR+ntfy.
