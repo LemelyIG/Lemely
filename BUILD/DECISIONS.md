@@ -3,6 +3,29 @@
 
 ## Phase 2.5
 
+### D2.11 — Installed Impeccable v4.0.4 has no `normalize` command; P2.5.4 runs audit → polish instead
+- **What:** MISSION §10 and STATE.md's P2.5.4 line specify `/impeccable audit` →
+  `/impeccable normalize` → `/impeccable polish` for the retrofit pass. The installed
+  skill (`.claude/skills/impeccable/SKILL.md`, v4.0.4) has no `normalize` command in its
+  command table — only `audit`, `critique`, `polish`, and other named commands exist.
+- **Why:** genuinely undecidable fork per MISSION §1 (skill version drift, not a design
+  choice) — proceeding without stalling per protocol. `audit`'s dimension 3 (Theming)
+  explicitly checks token conformance/hard-coded colors/dark-mode drift, and `polish`'s
+  step-1 triage explicitly classifies and fixes "missing token" and "one-off
+  implementation" drift against DESIGN.md and shared components. Together they cover
+  everything `normalize` (align with our tokens) would have done; `critique` (UX
+  heuristic scoring against intent) is skipped because it targets new-work concept
+  evaluation, not a retrofit of already-shipped, already-speced screens, and the
+  original P2.5.3/STATE.md line for this task only ever named audit→normalize→polish,
+  never critique.
+- **Alternatives rejected:** stall and wait for human (violates "never stop" rule);
+  hand-roll a bespoke "normalize" pass duplicating what audit/polish already cover
+  (wasteful, diverges from the maintained skill).
+- **Applies to:** P2.5.4 only, and any later phase's UI retrofit/build pass that cites
+  the same three-command sequence — use audit → polish (+ critique only for genuinely
+  new surfaces per the skill's own routing.md) until/unless a skill update reintroduces
+  `normalize`.
+
 ### D2.10 — UI spec read in full; Phase 2.5 scope fixed to tokens + C-1..C-13 + retrofit of the 6 shipped Phase-2 screens only
 - **What:** `docs/LEMELY_UI_SPEC.md` defines **71 screens** across 6 portals (Global,
   Student S-01..S-31, Teacher T-01..T-12, Parent P-01..P-04, School Admin K-01..K-04,
