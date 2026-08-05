@@ -1241,12 +1241,11 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           no dedicated `tsconfig.playwright.json` was needed, contrary to the plan's
           speculative concern). Committed this checkpoint (package.json script + playwright
           config + spec + screenshots) before writing the phase report.
-       4. [ ] todo — `reports/phase-2/REPORT.md`: phase summary covering all of P2.1-P2.10,
-          explicitly citing the carried-forward honest limitations already recorded inline in
-          this checklist (D2.5 theory-accuracy gap at 83.8% vs 95% target; P2.10's MCQ-only
-          E2E scope choice and why; P2.9's Lighthouse-unrunnable + camera-untestable notes;
-          D1.9's deferred CLI/Gradio history migration) — MISSION's honesty precedent (D1.6 M2)
-          applies to the report too: state what's NOT done plainly, don't imply full coverage.
+       4. [x] done — `reports/phase-2/REPORT.md` written: covers all of P2.1-P2.10, explicitly
+          citing D2.5 (accuracy gate NOT met, 83.8%<95%), the MCQ-only E2E scope choice and why,
+          P2.9's Lighthouse/camera limitations, D1.9's deferred CLI/Gradio migration. Cites the
+          real numbers from this session's own gate run (609 passed/3 skipped/86.38% cov,
+          live Supabase stack), not stale figures.
        5. [ ] todo — §6 gates green (full backend + web) one more time after the report lands;
           commit; merge `feature/phase-2-core-loop` → `develop`; push; open a `develop`→`main`
           PR via `gh` (DO NOT MERGE it — human reviews main, same as Phase 0/1); ntfy
