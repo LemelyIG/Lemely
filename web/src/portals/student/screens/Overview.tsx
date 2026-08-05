@@ -21,7 +21,10 @@ export function Overview() {
   if (isPending) {
     return (
       <div className="lm-screen flex flex-col gap-[26px]">
-        <div className="text-sm text-t2">Loading overview…</div>
+        <h1 className="sr-only">Overview</h1>
+        <div role="status" className="text-sm text-t2">
+          Loading overview…
+        </div>
       </div>
     )
   }
@@ -29,6 +32,7 @@ export function Overview() {
   if (isError) {
     return (
       <div className="lm-screen flex flex-col gap-[26px]">
+        <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load your overview"
           body={error.message}
@@ -51,9 +55,9 @@ export function Overview() {
   if (subjects.length === 0) {
     return (
       <div className="lm-screen flex flex-col gap-[26px]">
-        <div className="text-display-lg text-t1">
+        <h1 className="text-display-lg text-t1">
           Good afternoon, {greetingName}.
-        </div>
+        </h1>
         <Card>
           <EmptyState
             heading="Correct your first paper to see it here"
@@ -67,9 +71,9 @@ export function Overview() {
 
   return (
     <div className="lm-screen flex flex-col gap-[26px]">
-      <div className="text-display-lg text-t1">
+      <h1 className="text-display-lg text-t1">
         Good afternoon, {greetingName}.
-      </div>
+      </h1>
 
       <Card className="overflow-hidden">
         <div className="flex items-baseline gap-3 px-5 pt-[18px] pb-[14px]">
@@ -83,13 +87,21 @@ export function Overview() {
           <button
             key={s.code}
             onClick={() => navigate(`/student/subject/${s.code}`)}
-            className="grid grid-cols-[64px_1fr_132px_86px_54px] items-center gap-[14px] w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-[14px] transition-colors hover:bg-surface-2"
+            className="flex flex-col gap-2 md:grid md:grid-cols-[64px_1fr_132px_86px_54px] md:items-center md:gap-[14px] w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-[14px] transition-colors hover:bg-surface-2"
           >
-            <span className="font-mono text-xs text-t2">{s.code}</span>
-            <span className="flex flex-col gap-[3px]">
-              <span className="text-sm font-medium">{s.name}</span>
-              <span className="text-xs text-t2">{s.detail}</span>
-            </span>
+            <div className="flex items-center gap-3 md:contents">
+              <span className="font-mono text-xs text-t2">{s.code}</span>
+              <span className="flex flex-col gap-[3px] flex-1 min-w-0 md:flex-none">
+                <span className="text-sm font-medium">{s.name}</span>
+                <span className="text-xs text-t2">{s.detail}</span>
+              </span>
+              <GradeBadge
+                grade={s.grade}
+                size="inline"
+                basis="predicted"
+                className="md:hidden"
+              />
+            </div>
             <span className="flex flex-col gap-[5px]">
               <Meter value={s.pct} fillClassName={vizBg(s.barColor)} />
               <span className="text-xs text-t2 font-mono">
@@ -101,7 +113,12 @@ export function Overview() {
             >
               {s.trend}
             </span>
-            <GradeBadge grade={s.grade} size="inline" basis="predicted" className="ml-auto" />
+            <GradeBadge
+              grade={s.grade}
+              size="inline"
+              basis="predicted"
+              className="hidden md:block md:ml-auto"
+            />
           </button>
         ))}
       </Card>

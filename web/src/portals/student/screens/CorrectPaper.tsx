@@ -188,12 +188,12 @@ export function CorrectPaper() {
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-[22px]">
+    <div className="lm-screen flex flex-col gap-container-mobile">
       <div className="flex items-end gap-5 flex-wrap">
         <div>
-          <div className="font-serif text-[36px] leading-[1.1]">
+          <h1 className="text-display-lg text-t1">
             Correct a paper
-          </div>
+          </h1>
           <div className="text-sm text-t2 mt-[7px] max-w-[60ch] text-pretty">
             Scan or drop the paper. Lemely reads page one, identifies the exam,
             fetches the official mark scheme, and marks it.
@@ -212,17 +212,22 @@ export function CorrectPaper() {
 
       <div className="lm-cols grid grid-cols-[1.5fr_1fr] gap-5 items-start max-[1180px]:grid-cols-1">
         <div className="flex flex-col gap-5">
-          <Card className="p-[22px] flex flex-col gap-5">
+          <Card className="p-container-mobile flex flex-col gap-5">
             <div>
-              <div className="text-sm font-medium block mb-1.5">
-                Scanned paper
+              <div id="scan-label" className="text-sm font-medium block mb-1.5">
+                Scanned paper <span className="text-t3 font-normal">(required)</span>
               </div>
-              <div className="inline-flex rounded-[10px] border border-border p-0.5 bg-surface-2 mb-3">
+              <div
+                role="group"
+                aria-label="Scan source"
+                className="inline-flex rounded-md border border-border p-0.5 bg-surface-2 mb-3"
+              >
                 <button
                   type="button"
                   onClick={() => chooseScanSource("file")}
                   disabled={running}
-                  className={`text-xs font-medium rounded-[8px] px-3 py-1.5 cursor-pointer transition-colors disabled:cursor-not-allowed ${
+                  aria-pressed={scanSource === "file"}
+                  className={`text-xs font-medium rounded px-3 py-1.5 cursor-pointer transition-colors disabled:cursor-not-allowed ${
                     scanSource === "file"
                       ? "bg-surface text-t1 shadow-sm"
                       : "text-t2 hover:text-t1"
@@ -234,7 +239,8 @@ export function CorrectPaper() {
                   type="button"
                   onClick={() => chooseScanSource("camera")}
                   disabled={running}
-                  className={`text-xs font-medium rounded-[8px] px-3 py-1.5 cursor-pointer transition-colors disabled:cursor-not-allowed ${
+                  aria-pressed={scanSource === "camera"}
+                  className={`text-xs font-medium rounded px-3 py-1.5 cursor-pointer transition-colors disabled:cursor-not-allowed ${
                     scanSource === "camera"
                       ? "bg-surface text-t1 shadow-sm"
                       : "text-t2 hover:text-t1"
@@ -247,6 +253,7 @@ export function CorrectPaper() {
               {scanSource === "file" ? (
                 <input
                   id="scan-file"
+                  aria-labelledby="scan-label"
                   type="file"
                   accept="application/pdf,image/*"
                   disabled={running}
@@ -309,8 +316,9 @@ export function CorrectPaper() {
 
         <div className="flex flex-col gap-5">
           <Card className="p-5">
-            <div className="flex items-center gap-[9px] mb-4">
+            <div role="status" className="flex items-center gap-[9px] mb-4">
               <span
+                aria-hidden="true"
                 className={`w-[7px] h-[7px] rounded-full animate-[lm-pulse_1.6s_infinite] ${running ? "bg-accent" : error ? "bg-warn" : "bg-ok"}`}
               />
               <div className="text-body-lg font-semibold">

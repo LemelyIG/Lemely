@@ -117,10 +117,14 @@ function ResultHeader({ res }: { res: Result }) {
             {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
           </div>
           {res.headline ? (
-            <div className="font-serif text-[34px] leading-[1.12] mt-2.5">
+            <h1 className="text-display-md text-t1 mt-2.5">
               {res.headline}
-            </div>
-          ) : null}
+            </h1>
+          ) : (
+            <h1 className="sr-only">
+              Paper result — {res.code} {res.paper}
+            </h1>
+          )}
           {res.summary ? (
             <div className="text-body-md text-t2 mt-[9px] max-w-[56ch] text-pretty">
               {res.summary}
@@ -132,7 +136,7 @@ function ResultHeader({ res }: { res: Result }) {
             <GradeBadge grade={res.grade} size="hero" basis="predicted" />
           </div>
 
-          <div className="mt-[30px] border-t border-border pt-[22px]">
+          <div className="mt-[30px] border-t border-border pt-container-mobile">
             <div className="flex items-baseline gap-2.5 mb-3 flex-wrap">
               <Eyebrow>Against the {res.boundaryYear} boundaries</Eyebrow>
               <div className="flex-1" />
@@ -149,7 +153,7 @@ function ResultHeader({ res }: { res: Result }) {
           </div>
         </div>
 
-        <div className="border-l border-border bg-surface-2 px-[22px] py-6 flex flex-col gap-4">
+        <div className="border-l border-border bg-surface-2 px-container-mobile py-6 flex flex-col gap-4">
           <div className="text-sm font-semibold">
             Integrity &amp; provenance
           </div>
@@ -215,7 +219,7 @@ function QuestionList({ questions }: { questions: QuestionResult[] }) {
               {q.markerSource}
             </Chip>
             {q.feedback ? (
-              <div className="rounded-[10px] bg-surface-2 px-[14px] py-3 text-body-md text-t2 text-pretty">
+              <div className="rounded-md bg-surface-2 px-3.5 py-3 text-body-md text-t2 text-pretty">
                 {q.feedback}
               </div>
             ) : null}
@@ -242,7 +246,7 @@ export function PaperResult() {
   if (live) {
     const summary = confidenceSummary(live.questions)
     return (
-      <div className="lm-screen flex flex-col gap-[22px]">
+      <div className="lm-screen flex flex-col gap-container-mobile">
         <ResultHeader res={live} />
         {live.questions.length > 0 ? (
           <ConfidenceIndicatorSummary
@@ -259,7 +263,10 @@ export function PaperResult() {
   if (isPending) {
     return (
       <div className="lm-screen flex flex-col gap-6">
-        <div className="text-sm text-t2">Loading result…</div>
+        <h1 className="sr-only">Paper result</h1>
+        <div role="status" className="text-sm text-t2">
+          Loading result…
+        </div>
       </div>
     )
   }
@@ -268,6 +275,7 @@ export function PaperResult() {
     if (error instanceof ApiError && error.status === 404) {
       return (
         <div className="lm-screen flex flex-col gap-6">
+          <h1 className="sr-only">Paper result</h1>
           <EmptyState
             heading="No paper recorded at this address"
             body={`We don't have a result at ${paperId}.`}
@@ -279,6 +287,7 @@ export function PaperResult() {
     }
     return (
       <div className="lm-screen flex flex-col gap-6">
+        <h1 className="sr-only">Paper result</h1>
         <ErrorState
           heading="Couldn't load this result"
           body={error.message}
@@ -289,7 +298,7 @@ export function PaperResult() {
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-[22px]">
+    <div className="lm-screen flex flex-col gap-container-mobile">
       <ResultHeader res={data} />
       <EmptyState {...NO_QUESTION_DETAIL} />
     </div>
