@@ -10,11 +10,17 @@ national benchmarks) are asserted empty/None.
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.history import PaperRecord, now_iso
 from lemely.core.schemas import (
@@ -27,13 +33,18 @@ from lemely.core.schemas import (
     WeakArea,
     WeaknessReport,
 )
+from lemely.db.base import Base
+from lemely.db.class_repo import ClassService
+from lemely.db.models import User
+from lemely.db.models.enums import Role
 from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import Settings, load_settings
+from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
+    get_class_service,
     get_gemini_client,
     get_history_store,
     get_settings,
@@ -91,6 +102,75 @@ def client(
     yield TestClient(app)
     app.dependency_overrides.clear()
     papers_store.clear()
+
+
+# ---------------------------------------------------------------------------
+# Postgres-backed fixtures for routes needing the real class model (P3.3:
+# overview scoping, student detail, at-risk list). Self-contained (mirrors
+# ``tests/test_web_classes.py``/``tests/test_class_repo.py``) rather than
+# shared via conftest, so only the tests that request these fixtures pay the
+# Postgres-reachability cost — every other test in this file stays DB-free.
+# ---------------------------------------------------------------------------
+
+
+def _server_reachable(url: str) -> bool:
+    server_url = make_url(url).set(database="postgres")
+    engine = create_engine(server_url)
+    try:
+        with engine.connect():
+            return True
+    except OperationalError:
+        return False
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    """A sessionmaker bound to a throwaway Postgres DB; skips if unreachable."""
+    base_url = DatabaseSettings().url
+    if not _server_reachable(base_url):
+        pytest.skip("local Postgres not reachable")
+
+    server_url = make_url(base_url).set(database="postgres")
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_test_{uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    engine = create_engine(make_url(base_url).set(database=dbname))
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def class_service(pg_sessionmaker: sessionmaker[Session]) -> ClassService:
+    return ClassService(pg_sessionmaker)
+
+
+def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None = None) -> uuid.UUID:
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(User(id=uid, email=f"{uid}@example.com", role=role, display_name=display_name))
+    return uid
+
+
+def _use_class_service(client: TestClient, class_service: ClassService) -> None:
+    """Override ``get_class_service`` on ``client`` for a real-tenancy test."""
+    client.app.dependency_overrides[get_class_service] = lambda: class_service  # type: ignore[union-attr]
+
+
+def _auth_as(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
+    """Override ``get_auth_context`` on ``client`` to authenticate as ``user_id``."""
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(user_id), role=role.value
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -640,30 +720,65 @@ def test_quiz_generate_without_key_returns_pool_not_500(
 
 
 # ---------------------------------------------------------------------------
-# Overview.
+# Overview (P3.3: scoped to the caller's own classes, real display names —
+# fixes the cross-tenant leak where this route called
+# ``history_store.list_students()`` for *every* student in the store and named
+# at-risk rows from the raw ``history.student_id`` uuid).
 # ---------------------------------------------------------------------------
 
 
-def test_overview_empty(client: TestClient) -> None:
-    """Empty history yields zeroed stats, no at-risk students, and empty retention."""
+def _join_student(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    join_code: str,
+    display_name: str,
+) -> uuid.UUID:
+    """Seed a student user and enrol them into a class via its join code."""
+    student = _seed_user(pg_sessionmaker, Role.student, display_name=display_name)
+    class_service.join_by_code(student, join_code)
+    return student
+
+
+def test_overview_empty_for_teacher_with_no_classes(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    """A teacher with no classes gets a coherent empty overview, never a 500."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+
     body = client.get("/api/teacher/overview").json()
     assert body["atRisk"] == []
     assert body["retention"] == []  # structurally-empty: no backend source
     stats = {s["key"]: s["value"] for s in body["stats"]}
     assert stats["Papers graded"] == "0"
+    assert stats["At risk"] == "0"
 
 
-def test_overview_flags_at_risk(client: TestClient, history_store: HistoryStore) -> None:
+def test_overview_flags_at_risk(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
     """A student on a declining trend (D3.3 rule 1) appears in at-risk; a stable one does not."""
-    _seed_history_record(history_store, "ziad", percentage=72.0, grade="B")
-    _seed_history_record(history_store, "ziad", percentage=65.0, grade="C")
-    _seed_history_record(history_store, "ziad", percentage=58.0, grade="D")
-    _seed_history_record(history_store, "amelia", percentage=90.0, grade="A")
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _join_student(pg_sessionmaker, class_service, cls.join_code, "Ziad")
+    amelia = _join_student(pg_sessionmaker, class_service, cls.join_code, "Amelia")
+    _seed_history_record(history_store, str(ziad), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(ziad), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(ziad), percentage=58.0, grade="D")
+    _seed_history_record(history_store, str(amelia), percentage=90.0, grade="A")
 
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
     body = client.get("/api/teacher/overview").json()
     at_risk_names = {s["name"] for s in body["atRisk"]}
-    assert "ziad" in at_risk_names
-    assert "amelia" not in at_risk_names
+    # The real display name, never the raw uuid history key (the P3.3 fix).
+    assert at_risk_names == {"Ziad"}
+    assert "Amelia" not in at_risk_names
     stats = {s["key"]: s["value"] for s in body["stats"]}
     assert stats["Papers graded"] == "4"
     assert stats["Group mean"] == "74"  # round((58 + 90) / 2), latest paper per student
@@ -671,30 +786,343 @@ def test_overview_flags_at_risk(client: TestClient, history_store: HistoryStore)
 
 
 def test_overview_at_risk_carries_reason_and_evidence(
-    client: TestClient, history_store: HistoryStore
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
 ) -> None:
     """The at-risk DTO surfaces the D3.3 reason label and structured evidence, not a bare badge."""
-    _seed_history_record(history_store, "ziad", percentage=72.0, grade="B")
-    _seed_history_record(history_store, "ziad", percentage=65.0, grade="C")
-    _seed_history_record(history_store, "ziad", percentage=58.0, grade="D")
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _join_student(pg_sessionmaker, class_service, cls.join_code, "Ziad")
+    _seed_history_record(history_store, str(ziad), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(ziad), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(ziad), percentage=58.0, grade="D")
 
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
     body = client.get("/api/teacher/overview").json()
-    ziad = next(s for s in body["atRisk"] if s["name"] == "ziad")
-    assert len(ziad["flags"]) == 1
-    flag = ziad["flags"][0]
+    ziad_row = next(s for s in body["atRisk"] if s["name"] == "Ziad")
+    assert len(ziad_row["flags"]) == 1
+    flag = ziad_row["flags"][0]
     assert flag["reason"] == "declining_trend"
     assert flag["summary"]  # human-readable, not an unexplained badge (spec 1.4)
     assert flag["evidence"]["percentages"] == [72.0, 65.0, 58.0]
 
 
-def test_overview_flags_inactive_student(client: TestClient, history_store: HistoryStore) -> None:
+def test_overview_flags_inactive_student(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
     """A student inactive >=14 days (D3.3 rule 3) is flagged even with a strong last grade."""
     from datetime import UTC, datetime, timedelta
 
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    priya = _join_student(pg_sessionmaker, class_service, cls.join_code, "Priya")
     stale = (datetime.now(UTC) - timedelta(days=20)).isoformat()
-    _seed_history_record(history_store, "priya", percentage=95.0, grade="A*", recorded_at=stale)
+    _seed_history_record(history_store, str(priya), percentage=95.0, grade="A*", recorded_at=stale)
 
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
     body = client.get("/api/teacher/overview").json()
-    priya = next(s for s in body["atRisk"] if s["name"] == "priya")
-    assert priya["flags"][0]["reason"] == "inactive"
-    assert priya["flags"][0]["evidence"]["daysInactive"] >= 20
+    priya_row = next(s for s in body["atRisk"] if s["name"] == "Priya")
+    assert priya_row["flags"][0]["reason"] == "inactive"
+    assert priya_row["flags"][0]["evidence"]["daysInactive"] >= 20
+
+
+def test_overview_scopes_to_each_teachers_own_classes(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """Two teachers with disjoint classes each see only their own students.
+
+    This is the precise regression P3.3 fixes: the route used to call
+    ``history_store.list_students()`` — every student in the store, regardless
+    of who owns them — so teacher A would have seen teacher B's students (and
+    their at-risk rows) too.
+    """
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    class_a = class_service.create_class(teacher_a, "A's class")
+    class_b = class_service.create_class(teacher_b, "B's class")
+    assert class_a.join_code is not None
+    assert class_b.join_code is not None
+
+    student_a = _join_student(pg_sessionmaker, class_service, class_a.join_code, "Student A")
+    student_b = _join_student(pg_sessionmaker, class_service, class_b.join_code, "Student B")
+    # Student A is declining (at-risk); student B is not.
+    _seed_history_record(history_store, str(student_a), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(student_a), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(student_a), percentage=58.0, grade="D")
+    _seed_history_record(history_store, str(student_b), percentage=90.0, grade="A")
+
+    _use_class_service(client, class_service)
+
+    _auth_as(client, teacher_a, Role.teacher)
+    body_a = client.get("/api/teacher/overview").json()
+    stats_a = {s["key"]: s["value"] for s in body_a["stats"]}
+    assert stats_a["Papers graded"] == "3"
+    assert {s["name"] for s in body_a["atRisk"]} == {"Student A"}
+
+    _auth_as(client, teacher_b, Role.teacher)
+    body_b = client.get("/api/teacher/overview").json()
+    stats_b = {s["key"]: s["value"] for s in body_b["stats"]}
+    assert stats_b["Papers graded"] == "1"
+    assert body_b["atRisk"] == []
+
+
+def test_overview_malformed_caller_id_is_422(
+    client: TestClient, class_service: ClassService
+) -> None:
+    """A token whose ``sub`` is not a UUID must not reach the DB as a 500."""
+    _use_class_service(client, class_service)
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id="not-a-uuid", role=Role.teacher.value
+    )
+    assert client.get("/api/teacher/overview").status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Student detail (teacher view) — T-05 (P3.3).
+# ---------------------------------------------------------------------------
+
+
+def test_student_detail_happy_path_payload_shape(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    student = _join_student(pg_sessionmaker, class_service, cls.join_code, "Amelia")
+    _seed_history_record(history_store, str(student), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(student), percentage=90.0, grade="A")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.get(f"/api/teacher/students/{student}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["studentId"] == str(student)
+    assert body["displayName"] == "Amelia"
+    assert len(body["attempts"]) == 2
+    # Newest first.
+    assert body["attempts"][0]["grade"] == "A"
+    assert body["subjects"][0]["predictedGrade"] == "A"
+    assert body["subjects"][0]["paperCount"] == 2
+    assert len(body["trend"]) == 2
+    assert body["engagement"]["totalPapers"] == 2
+    assert body["engagement"]["daysSinceLastSubmission"] == 0
+    assert "integrity" not in body  # deliberately omitted: no backend source (P3.3)
+
+
+def test_student_detail_carries_at_risk_status(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    student = _join_student(pg_sessionmaker, class_service, cls.join_code, "Ziad")
+    _seed_history_record(history_store, str(student), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(student), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(student), percentage=58.0, grade="D")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    body = client.get(f"/api/teacher/students/{student}").json()
+    assert body["isAtRisk"] is True
+    assert body["atRiskFlags"][0]["reason"] == "declining_trend"
+
+
+def test_student_detail_unenrolled_student_is_403(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> None:
+    """A real user who is simply not in any of the caller's classes -> 403."""
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    class_b = class_service.create_class(teacher_b, "B's class")
+    assert class_b.join_code is not None
+    other_teachers_student = _join_student(
+        pg_sessionmaker, class_service, class_b.join_code, "Not Mine"
+    )
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_a, Role.teacher)
+    resp = client.get(f"/api/teacher/students/{other_teachers_student}")
+    assert resp.status_code == 403
+    assert "Not Mine" not in resp.text
+
+
+def test_student_detail_unknown_id_is_404(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    """An id matching no user anywhere is a 404, distinct from "not my student"."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.get(f"/api/teacher/students/{uuid.uuid4()}")
+    assert resp.status_code == 404
+
+
+def test_student_detail_malformed_id_is_4xx_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.get("/api/teacher/students/not-a-uuid")
+    assert 400 <= resp.status_code < 500
+
+
+def test_student_detail_platform_admin_gets_403_no_super_role_bypass(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    """platform_admin sees no classes (D1.6/D1.10), so every student is 403 for them."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    admin_id = _seed_user(pg_sessionmaker, Role.platform_admin)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    student = _join_student(pg_sessionmaker, class_service, cls.join_code, "Amelia")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, admin_id, Role.platform_admin)
+    resp = client.get(f"/api/teacher/students/{student}")
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# At-risk list — T-06 (P3.3).
+# ---------------------------------------------------------------------------
+
+
+def test_at_risk_list_happy_path(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _join_student(pg_sessionmaker, class_service, cls.join_code, "Ziad")
+    amelia = _join_student(pg_sessionmaker, class_service, cls.join_code, "Amelia")
+    _seed_history_record(history_store, str(ziad), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(ziad), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(ziad), percentage=58.0, grade="D")
+    _seed_history_record(history_store, str(amelia), percentage=90.0, grade="A")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    body = client.get("/api/teacher/at-risk").json()
+    names = {s["displayName"] for s in body["students"]}
+    assert names == {"Ziad"}
+    row = next(s for s in body["students"] if s["displayName"] == "Ziad")
+    assert row["classId"] == str(cls.class_id)
+    assert row["className"] == "Physics 10A"
+    assert row["flags"][0]["reason"] == "declining_trend"
+
+
+def test_at_risk_list_filters_by_reason(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    declining = _join_student(pg_sessionmaker, class_service, cls.join_code, "Declining")
+    inactive = _join_student(pg_sessionmaker, class_service, cls.join_code, "Inactive")
+    _seed_history_record(history_store, str(declining), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(declining), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(declining), percentage=58.0, grade="D")
+    stale = (datetime.now(UTC) - timedelta(days=20)).isoformat()
+    _seed_history_record(
+        history_store, str(inactive), percentage=95.0, grade="A*", recorded_at=stale
+    )
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    body = client.get("/api/teacher/at-risk?reason=inactive").json()
+    assert {s["displayName"] for s in body["students"]} == {"Inactive"}
+
+
+def test_at_risk_list_sorted_by_severity_flag_count_then_worst_grade(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """More flags first; among equally-flagged students, the worse grade first."""
+    from datetime import UTC, datetime, timedelta
+
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    # One flag only (declining trend), grade C.
+    one_flag = _join_student(pg_sessionmaker, class_service, cls.join_code, "OneFlag")
+    _seed_history_record(history_store, str(one_flag), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(one_flag), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(one_flag), percentage=59.0, grade="C")
+    # Two flags (declining trend + inactive), grade D — must sort first.
+    two_flags = _join_student(pg_sessionmaker, class_service, cls.join_code, "TwoFlags")
+    stale = (datetime.now(UTC) - timedelta(days=20)).isoformat()
+    _seed_history_record(history_store, str(two_flags), percentage=80.0, grade="B")
+    _seed_history_record(history_store, str(two_flags), percentage=70.0, grade="C")
+    _seed_history_record(
+        history_store, str(two_flags), percentage=60.0, grade="D", recorded_at=stale
+    )
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    body = client.get("/api/teacher/at-risk").json()
+    names_in_order = [s["displayName"] for s in body["students"]]
+    assert names_in_order == ["TwoFlags", "OneFlag"]
+
+
+def test_at_risk_list_never_shows_another_teachers_students(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    class_a = class_service.create_class(teacher_a, "A's class")
+    class_b = class_service.create_class(teacher_b, "B's class")
+    assert class_a.join_code is not None
+    assert class_b.join_code is not None
+    student_b = _join_student(pg_sessionmaker, class_service, class_b.join_code, "B's Student")
+    _seed_history_record(history_store, str(student_b), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(student_b), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(student_b), percentage=58.0, grade="D")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_a, Role.teacher)
+    body = client.get("/api/teacher/at-risk").json()
+    assert body["students"] == []
+
+
+def test_at_risk_list_platform_admin_sees_none(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    admin_id = _seed_user(pg_sessionmaker, Role.platform_admin)
+    _use_class_service(client, class_service)
+    _auth_as(client, admin_id, Role.platform_admin)
+    assert client.get("/api/teacher/at-risk").json()["students"] == []

@@ -175,6 +175,19 @@ class ClassService:
             self._assert_scope(session, caller_uuid, caller_role, cls)
             return self._roster_entries(session, class_uuid)
 
+    def user_exists(self, user_id: uuid.UUID | str) -> bool:
+        """Return whether any user exists with ``user_id``.
+
+        Deliberately carries no ownership/tenancy check — this exists purely
+        so a caller (the teacher-portal student-detail route, P3.3) can
+        distinguish "no such user anywhere" (404) from "exists, but outside my
+        classes" (403) without a 404-vs-403 existence oracle collapsing the
+        two into one response.
+        """
+        user_uuid = _as_uuid(user_id)
+        with self._sessionmaker() as session:
+            return session.get(User, user_uuid) is not None
+
     # -- CRUD (owner-scoped: the creating teacher only) ----------------------
 
     def create_class(

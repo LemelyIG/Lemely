@@ -310,6 +310,152 @@ def test_class_detail_by_non_owner_is_403_not_leaked_data(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/classes/{class_id}/analytics — T-04 cohort analytics (P3.3).
+# ---------------------------------------------------------------------------
+
+
+def test_class_analytics_happy_path_payload_shape(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    amelia = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
+    jonas = _seed_user(pg_sessionmaker, Role.student, display_name="Jonas")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(amelia, cls.join_code)
+    class_service.join_by_code(jonas, cls.join_code)
+    _seed_history(history_store, amelia, percentage=90.0, grade="A")
+    _seed_history(history_store, jonas, percentage=50.0, grade="D")
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    body = client.get(f"/api/classes/{cls.class_id}/analytics").json()
+
+    # Both students share the seeded "Thermal physics" weak area -> ranked #1.
+    assert body["topicWeaknesses"]
+    top = body["topicWeaknesses"][0]
+    assert top["topic"] == "Thermal physics"
+    assert set(top["studentIds"]) == {str(amelia), str(jonas)}
+
+    heatmap_students = {c["studentId"] for c in body["heatmap"]}
+    assert heatmap_students == {str(amelia), str(jonas)}
+
+    assert len(body["gradeDistribution"]) == 7  # full GRADE_ORDER ladder
+    dist = {b["grade"]: b["count"] for b in body["gradeDistribution"]}
+    assert dist["A"] == 1
+    assert dist["D"] == 1
+
+    assert body["trend"]
+    assert body["paperComparison"]
+    paper = body["paperComparison"][0]
+    assert paper["studentCount"] == 2
+    assert paper["attemptCount"] == 2
+
+    engagement = body["engagement"]
+    assert engagement["neverActiveCount"] == 0
+    assert engagement["activeStudentsLast7Days"] == 2
+
+
+def test_class_analytics_scopes_to_enrolled_roster_only(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """An outsider with history but not enrolled must not leak into analytics."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    amelia = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
+    outsider = _seed_user(pg_sessionmaker, Role.student, display_name="Outsider")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(amelia, cls.join_code)
+    _seed_history(history_store, amelia, percentage=90.0, grade="A")
+    _seed_history(history_store, outsider, percentage=10.0, grade="U")
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    body = client.get(f"/api/classes/{cls.class_id}/analytics").json()
+    dist = {b["grade"]: b["count"] for b in body["gradeDistribution"]}
+    assert dist["U"] == 0  # outsider's U must not leak in
+    heatmap_students = {c["studentId"] for c in body["heatmap"]}
+    assert str(outsider) not in heatmap_students
+
+
+def test_class_analytics_empty_class_is_a_coherent_empty_payload(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Empty Class")
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    body = client.get(f"/api/classes/{cls.class_id}/analytics").json()
+    assert body["topicWeaknesses"] == []
+    assert body["heatmap"] == []
+    assert body["trend"] == []
+    assert body["paperComparison"] == []
+    assert body["engagement"]["neverActiveCount"] == 0
+    assert body["engagement"]["medianDaysSinceLastSubmission"] is None
+
+
+def test_class_analytics_unknown_id_is_404(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    resp = client.get(f"/api/classes/{uuid.uuid4()}/analytics")
+    assert resp.status_code == 404
+
+
+def test_class_analytics_malformed_id_is_4xx_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    resp = client.get("/api/classes/not-a-uuid/analytics")
+    assert 400 <= resp.status_code < 500
+
+
+def test_class_analytics_by_non_owner_is_403_not_leaked_data(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    owner = _seed_user(pg_sessionmaker, Role.teacher)
+    stranger = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(owner, "Physics 10A")
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(stranger), role=Role.teacher.value
+    )
+    resp = client.get(f"/api/classes/{cls.class_id}/analytics")
+    assert resp.status_code == 403
+
+
+def test_class_analytics_platform_admin_gets_403(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    """No super-role bypass (D1.6/D1.10): platform_admin sees no class analytics."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    admin = _seed_user(pg_sessionmaker, Role.platform_admin)
+    cls = class_service.create_class(teacher, "Physics 10A")
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(admin), role=Role.platform_admin.value
+    )
+    resp = client.get(f"/api/classes/{cls.class_id}/analytics")
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # CRUD + roster + enrolment + join.
 # ---------------------------------------------------------------------------
 

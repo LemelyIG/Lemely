@@ -55,6 +55,7 @@ from lemely.core.schemas import (
     ExamMetadata,
     WeaknessReport,
 )
+from lemely.db.class_repo import ClassService, RosterEntry
 from lemely.db.models.enums import Role
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
@@ -63,6 +64,8 @@ from lemely.io.teacher_quiz import TeacherQuizBuilder
 from lemely.runtime.config import Settings
 from lemely.runtime.events import EventType, bus
 from lemely.web.deps import (
+    AuthContext,
+    get_class_service,
     get_gemini_client,
     get_history_store,
     get_settings,
@@ -72,6 +75,16 @@ from lemely.web.jobs import registry
 from lemely.web.schemas import (
     question_to_dto,
     weak_area_to_dto,
+)
+from lemely.web.schemas_analytics import (
+    AtRiskListDTO,
+    AtRiskListEntryDTO,
+    AttemptDTO,
+    StudentDetailDTO,
+    StudentEngagementDTO,
+    StudentTrendPointDTO,
+    StudentWeaknessDTO,
+    SubjectPredictionDTO,
 )
 from lemely.web.schemas_teacher import (
     AtRiskFlagDTO,
@@ -136,6 +149,14 @@ _GRADE_ORDER = GRADE_ORDER
 # trajectory" — the two must not be conflated. Kept as its own literal set
 # because it has no analogue in ``lemely.core.at_risk``.
 _AT_RISK_GRADES = {"D", "E", "U"}
+
+# The staff triple every route needing per-caller tenancy scoping (overview,
+# student detail, at-risk list, P3.3) authenticates against. Named so the long
+# Annotated[...] signatures stay under the line-length limit, mirroring
+# ``lemely.web.routers.classes._STAFF_ROLES`` exactly (same three roles, same
+# reasoning) — not re-imported from there to avoid a classes<->teacher import
+# cycle (``classes.py`` already imports from this module).
+_STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
 
 
 # ---------------------------------------------------------------------------
@@ -963,6 +984,30 @@ def _student_row(
     )
 
 
+def _visible_students(service: ClassService, auth: AuthContext) -> dict[str, RosterEntry]:
+    """Union of every roster in every class the caller may see (D3.1 tenancy).
+
+    The single authorization gate every student-scoped teacher route (P3.3:
+    the overview, ``GET /teacher/students/{id}``, ``GET /teacher/at-risk``)
+    is built on: a teacher/school_admin may reach a student only if that
+    student appears in the roster of at least one class the caller
+    owns/administers. ``ClassService.list_classes`` already returns ``[]`` for
+    platform_admin (no super-role bypass, D1.6/D1.10), so this is always empty
+    for them too — there is no separate case to special-case here.
+
+    When a class appears in more than one roster this iterates (unlikely
+    given ownership is per-teacher, but school_admin scope could theoretically
+    overlap two classes with the same enrolled student) the later class simply
+    overwrites the earlier ``RosterEntry`` for that student id; both carry the
+    same identity, so this is harmless.
+    """
+    visible: dict[str, RosterEntry] = {}
+    for row in service.list_classes(auth.user_id, auth.role):
+        for entry in service.roster(auth.user_id, auth.role, row.class_id):
+            visible[str(entry.student_id)] = entry
+    return visible
+
+
 # ---------------------------------------------------------------------------
 # Overview.
 # ---------------------------------------------------------------------------
@@ -970,17 +1015,35 @@ def _student_row(
 
 @router.get("/teacher/overview", response_model=OverviewDTO)
 def teacher_overview(
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> OverviewDTO:
     """Return headline stats plus at-risk students, all from history/analytics.
+
+    Scoped to the union of the caller's own classes (``_visible_students``,
+    D3.1) — this route used to call ``history_store.list_students()``, i.e.
+    *every* student in the store regardless of owner, and built each at-risk
+    student's ``name`` from the raw ``history.student_id`` (a uuid, not a
+    human name). Both were the one remaining instance of the cross-tenant leak
+    P3.1 fixed everywhere else (``/teacher/classes``, ``/classes/{id}``); this
+    closes it and names students from their real ``RosterEntry.display_name``.
+    A teacher with no classes gets a coherent empty overview (zeros, an empty
+    at-risk list), never a 500 and never someone else's students.
 
     ``retention`` (lesson-retention minutes) has no backend source and is always
     empty. At-risk students are those flagged by the D3.3 rules engine
     (declining trend / predicted below target / inactive) — see ``_at_risk``.
     """
-    student_ids = history_store.list_students()
-    histories = [history_store.load(sid) for sid in student_ids]
-    latest = [h.records[-1] for h in histories if h.records]
+    try:
+        visible = _visible_students(service, auth)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    histories = [
+        (history_store.load(student_id), entry.display_name)
+        for student_id, entry in visible.items()
+    ]
+    latest = [history.records[-1] for history, _ in histories if history.records]
 
     average = _mean([r.percentage for r in latest])
     needs_review = _count_review_papers()
@@ -989,7 +1052,7 @@ def teacher_overview(
     stats = [
         StatCardDTO(
             key="Papers graded",
-            value=str(sum(len(h.records) for h in histories)),
+            value=str(sum(len(history.records) for history, _ in histories)),
             unit="papers",
         ),
         StatCardDTO(
@@ -1024,8 +1087,15 @@ def _count_review_papers() -> int:
     )
 
 
-def _at_risk(histories: list[StudentHistory], *, now: datetime) -> list[AtRiskStudentDTO]:
+def _at_risk(
+    histories: list[tuple[StudentHistory, str]], *, now: datetime
+) -> list[AtRiskStudentDTO]:
     """Identify at-risk students via the D3.3 rules engine.
+
+    ``histories`` pairs each student's history with their real
+    ``RosterEntry.display_name`` (D3.1/P3.3) — ``AtRiskStudentDTO.name`` used
+    to be the raw ``history.student_id`` (a uuid), which this signature makes
+    impossible to regress back to.
 
     Runs ``lemely.core.at_risk.assess_at_risk`` (declining trend / predicted
     below target / inactive, combined with OR) over each student's history. No
@@ -1036,7 +1106,7 @@ def _at_risk(histories: list[StudentHistory], *, now: datetime) -> list[AtRiskSt
     none of the three specified rules and carried no reason label.
     """
     at_risk: list[AtRiskStudentDTO] = []
-    for history in histories:
+    for history, display_name in histories:
         if not history.records:
             continue
         assessment = assess_at_risk(history, now=now)
@@ -1046,7 +1116,7 @@ def _at_risk(histories: list[StudentHistory], *, now: datetime) -> list[AtRiskSt
         weakest = min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
         at_risk.append(
             AtRiskStudentDTO(
-                name=history.student_id,
+                name=display_name,
                 grade=latest.grade,
                 delta=_student_delta(history),
                 weakTopic=weakest.topic if weakest is not None else None,
@@ -1082,3 +1152,255 @@ def _at_risk_flag_dto(flag: AtRiskFlag) -> AtRiskFlagDTO:
     else:
         raise TypeError(f"Unhandled AtRiskFlag evidence type: {type(evidence)!r}")
     return AtRiskFlagDTO(reason=flag.reason.value, summary=flag.summary, evidence=payload)
+
+
+# ---------------------------------------------------------------------------
+# Student detail (teacher view) — T-05.
+# ---------------------------------------------------------------------------
+
+
+def _parse_recorded_at(value: str) -> datetime | None:
+    """Defensively parse a ``PaperRecord.recorded_at`` ISO string.
+
+    A private per-module copy, matching the existing convention: both
+    ``lemely.core.at_risk`` and ``lemely.core.class_analytics`` (and
+    ``lemely.db.history_repo``/``lemely.db.attempt_repo``) each carry their own
+    copy of this exact defensive-parse rather than reaching across modules for
+    a leading-underscore helper.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def _subject_predictions(history: StudentHistory) -> list[SubjectPredictionDTO]:
+    """Group a student's history by subject and report the latest grade/pct.
+
+    ``predictedGrade`` is the student's latest recorded grade for that
+    subject — the same domain notion of "predicted grade"
+    ``lemely.core.at_risk`` already uses for its below-target rule
+    (``history.records[-1].grade``), not a second, differently-computed
+    forecast that could disagree with the at-risk engine's own reading of the
+    same data.
+    """
+    by_subject: dict[str, list[PaperRecord]] = {}
+    for record in history.records:
+        by_subject.setdefault(record.metadata.subject_code, []).append(record)
+    return [
+        SubjectPredictionDTO(
+            subjectCode=code,
+            predictedGrade=records[-1].grade,
+            latestPercentage=records[-1].percentage,
+            paperCount=len(records),
+        )
+        for code, records in sorted(by_subject.items())
+    ]
+
+
+def _paper_id(record: PaperRecord) -> str:
+    """Human paper identity: ``"0625/32"`` (subject/paper+variant)."""
+    m = record.metadata
+    return f"{m.subject_code}/{m.paper_number}{m.paper_variant}"
+
+
+def _attempt_dto(record: PaperRecord) -> AttemptDTO:
+    """Convert one recorded paper into its T-05 attempt-history row."""
+    m = record.metadata
+    return AttemptDTO(
+        paperId=_paper_id(record),
+        subjectCode=m.subject_code,
+        paperNumber=m.paper_number,
+        paperVariant=m.paper_variant,
+        awardedMarks=record.awarded_marks,
+        maximumMarks=record.maximum_marks,
+        percentage=record.percentage,
+        grade=record.grade,
+        recordedAt=record.recorded_at,
+    )
+
+
+def _student_engagement_dto(history: StudentHistory, *, now: datetime) -> StudentEngagementDTO:
+    """This student's own activity stats, purely from ``recorded_at`` values."""
+    if not history.records:
+        return StudentEngagementDTO(totalPapers=0, lastActiveAt=None, daysSinceLastSubmission=None)
+    last = history.records[-1]
+    last_active = _parse_recorded_at(last.recorded_at)
+    days_since = (now - last_active).days if last_active is not None else None
+    return StudentEngagementDTO(
+        totalPapers=len(history.records),
+        lastActiveAt=last.recorded_at,
+        daysSinceLastSubmission=days_since,
+    )
+
+
+def _student_detail_dto(
+    entry: RosterEntry, history: StudentHistory, *, now: datetime
+) -> StudentDetailDTO:
+    """Build the T-05 student-detail DTO from one student's real history.
+
+    Reuses ``aggregate_weaknesses_from_history`` (weaknesses),
+    ``assess_at_risk``/``_at_risk_flag_dto`` (at-risk status — never a second,
+    re-implemented translation), and this module's own subject/attempt/
+    engagement helpers. Integrity signals are deliberately absent: see the
+    route docstring.
+    """
+    assessment = assess_at_risk(history, now=now)
+    return StudentDetailDTO(
+        studentId=str(entry.student_id),
+        displayName=entry.display_name,
+        subjects=_subject_predictions(history),
+        attempts=[_attempt_dto(r) for r in reversed(history.records)],
+        weaknesses=[
+            StudentWeaknessDTO(
+                topic=w.topic,
+                lostMarks=w.lost_marks,
+                maximumMarks=w.maximum_marks,
+                accuracy=w.accuracy,
+                questionIds=w.question_ids,
+            )
+            for w in aggregate_weaknesses_from_history(history).weak_areas
+        ],
+        trend=[
+            StudentTrendPointDTO(recordedAt=r.recorded_at, percentage=r.percentage)
+            for r in history.records
+        ],
+        isAtRisk=assessment.is_at_risk,
+        atRiskFlags=[_at_risk_flag_dto(flag) for flag in assessment.flags],
+        engagement=_student_engagement_dto(history, now=now),
+    )
+
+
+@router.get("/teacher/students/{student_id}", response_model=StudentDetailDTO)
+def teacher_student_detail(
+    student_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+) -> StudentDetailDTO:
+    """Return T-05's full student detail for one student (P3.3).
+
+    Subjects and predicted grades, full attempt history, weakness list with
+    evidence, this student's own trend series, at-risk status with reasons and
+    evidence (reusing ``assess_at_risk``/``_at_risk_flag_dto``), and
+    activity/engagement.
+
+    **Authz is the whole point of this route.** A teacher/school_admin may see
+    a student ONLY if that student is enrolled in one of the caller's own
+    classes (``_visible_students`` — the union of every roster the caller may
+    see, D3.1). A student who exists but is in nobody's class the caller
+    owns/administers is a 403; a student id matching no user at all is a 404;
+    a malformed (non-UUID) id is a clean 422. This is checked identically
+    regardless of *why* the student is out of scope, so the response never
+    lets a caller distinguish "not my student" from "no such student" by
+    brute-forcing ids (no 404-vs-403 existence oracle). platform_admin always
+    sees no classes (``ClassService.list_classes``), so this is always 403 for
+    them — no super-role bypass (D1.6/D1.10).
+
+    **Integrity signals are deliberately omitted from the response**, not
+    stubbed as an always-empty field: a persisted :class:`PaperRecord` carries
+    only totals, weak-areas, and metadata, never the per-question answers
+    that plagiarism/AI-content detection needs (those checks run only in the
+    live, in-process ``/papers/{id}/grade`` flow, whose paper store is keyed by
+    an ephemeral paper id, not yet a verified real-student identity — see
+    ``upload_paper``'s docstring). There is nothing honest to compute here.
+    """
+    try:
+        visible = _visible_students(service, auth)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    entry = visible.get(student_id)
+    if entry is not None:
+        history = history_store.load(student_id)
+        return _student_detail_dto(entry, history, now=datetime.now(UTC))
+    try:
+        exists = service.user_exists(student_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not exists:
+        raise HTTPException(status_code=404, detail=f"Unknown student: {student_id}")
+    raise HTTPException(
+        status_code=403, detail=f"Student {student_id} is not in any of the caller's classes"
+    )
+
+
+# ---------------------------------------------------------------------------
+# At-risk list — T-06.
+# ---------------------------------------------------------------------------
+
+
+def _grade_severity_rank(grade: str) -> int:
+    """Position of ``grade`` on the ladder (0 = A*, higher = worse).
+
+    An unrecognised grade defensively ranks as the mildest possible (``-1``),
+    mirroring ``lemely.core.at_risk``'s "unrecognised = not fired" judgment
+    call rather than crashing the sort.
+    """
+    return _GRADE_ORDER.index(grade) if grade in _GRADE_ORDER else -1
+
+
+def _at_risk_severity_key(entry: AtRiskListEntryDTO) -> tuple[int, int]:
+    """Sort key for T-06: most flags first, then worst grade first.
+
+    Documented severity definition (per the P3.3 brief): **flag count
+    descending**, then **worst latest grade** (furthest down
+    ``GRADE_ORDER``) **first**. A student flagged by all three D3.3 rules
+    outranks one flagged by one rule regardless of grade; among
+    equally-flagged students, the one with the worse grade surfaces first.
+    """
+    return (-len(entry.flags), -_grade_severity_rank(entry.grade))
+
+
+@router.get("/teacher/at-risk", response_model=AtRiskListDTO)
+def teacher_at_risk_list(
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    reason: str | None = None,
+) -> AtRiskListDTO:
+    """Return every flagged student across the caller's own classes (T-06).
+
+    Reuses ``assess_at_risk`` (never a fourth at-risk heuristic) over each
+    roster entry in each class the caller owns/administers — never a student
+    outside that scope, and never every student in the store. ``reason``
+    (optional query param) filters to students carrying at least one flag
+    whose ``AtRiskReason.value`` matches; an unrecognised reason value simply
+    yields no matches, never a 500. Sorted by severity — see
+    ``_at_risk_severity_key`` for the exact, documented definition.
+
+    Deliberately NOT built here: dismissing/acknowledging a flag with a note
+    (T-06's other listed action) is a mutation with no backing table yet —
+    out of scope for this read-only analytics phase.
+    """
+    try:
+        rows = service.list_classes(auth.user_id, auth.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    now = datetime.now(UTC)
+    entries: list[AtRiskListEntryDTO] = []
+    for row in rows:
+        roster = service.roster(auth.user_id, auth.role, row.class_id)
+        for roster_entry in roster:
+            history = history_store.load(str(roster_entry.student_id))
+            if not history.records:
+                continue
+            assessment = assess_at_risk(history, now=now)
+            if not assessment.flags:
+                continue
+            if reason is not None and reason not in {f.reason.value for f in assessment.flags}:
+                continue
+            entries.append(
+                AtRiskListEntryDTO(
+                    studentId=str(roster_entry.student_id),
+                    displayName=roster_entry.display_name,
+                    classId=str(row.class_id),
+                    className=row.name,
+                    grade=history.records[-1].grade,
+                    flags=[_at_risk_flag_dto(flag) for flag in assessment.flags],
+                )
+            )
+    entries.sort(key=_at_risk_severity_key)
+    return AtRiskListDTO(students=entries)

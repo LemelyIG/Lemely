@@ -32,6 +32,15 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.core.analytics import aggregate_weaknesses_from_history
 from lemely.core.at_risk import assess_at_risk
+from lemely.core.class_analytics import (
+    EngagementStats,
+    cohort_trend,
+    engagement_stats,
+    grade_distribution,
+    per_paper_comparison,
+    rank_topic_weaknesses,
+    topic_student_heatmap,
+)
 from lemely.core.history import HistoryStoreProtocol, StudentHistory
 from lemely.db.class_repo import (
     ClassError,
@@ -49,6 +58,15 @@ from lemely.web.routers.teacher import (
     _GRADE_ORDER,
     _mean,
     _student_row,
+)
+from lemely.web.schemas_analytics import (
+    ClassAnalyticsDTO,
+    EngagementStatsDTO,
+    GradeDistributionBucketDTO,
+    HeatmapCellDTO,
+    PaperComparisonDTO,
+    TopicWeaknessDTO,
+    TrendPointDTO,
 )
 from lemely.web.schemas_classes import (
     CreateClassRequestDTO,
@@ -207,6 +225,76 @@ def _class_row_to_detail(
     )
 
 
+def _class_analytics_dto(
+    roster: list[RosterEntry], history_store: HistoryStoreProtocol
+) -> ClassAnalyticsDTO:
+    """Build the T-04 cohort-analytics DTO from the class's real roster (P3.3).
+
+    Every section is computed by ``lemely.core.class_analytics``'s pure
+    functions over the roster's histories — the DTO is a direct field-by-field
+    mirror of those return models, so this converter cannot silently diverge
+    from the analytics it wraps (the same anti-drift discipline
+    ``_class_row_to_detail`` already applies to mastery/distribution).
+    """
+    histories = [history_store.load(str(entry.student_id)) for entry in roster]
+    ranked = rank_topic_weaknesses(histories)
+
+    return ClassAnalyticsDTO(
+        topicWeaknesses=[
+            TopicWeaknessDTO(
+                topic=w.topic,
+                lostMarks=w.lost_marks,
+                maximumMarks=w.maximum_marks,
+                accuracy=w.accuracy,
+                studentIds=w.student_ids,
+            )
+            for w in ranked
+        ],
+        heatmap=[
+            HeatmapCellDTO(topic=c.topic, studentId=c.student_id, accuracy=c.accuracy)
+            for c in topic_student_heatmap(histories, ranked)
+        ],
+        gradeDistribution=[
+            GradeDistributionBucketDTO(grade=b.grade, count=b.count)
+            for b in grade_distribution(histories)
+        ],
+        trend=[
+            TrendPointDTO(
+                timestamp=p.timestamp,
+                label=p.label,
+                meanPercentage=p.mean_percentage,
+                sampleSize=p.sample_size,
+            )
+            for p in cohort_trend(histories)
+        ],
+        paperComparison=[
+            PaperComparisonDTO(
+                paperId=p.paper_id,
+                subjectCode=p.subject_code,
+                paperNumber=p.paper_number,
+                paperVariant=p.paper_variant,
+                meanPercentage=p.mean_percentage,
+                attemptCount=p.attempt_count,
+                studentCount=p.student_count,
+            )
+            for p in per_paper_comparison(histories)
+        ],
+        engagement=_engagement_stats_dto(engagement_stats(histories, now=datetime.now(UTC))),
+    )
+
+
+def _engagement_stats_dto(stats: EngagementStats) -> EngagementStatsDTO:
+    """Convert a core ``EngagementStats`` into its camelCase wire DTO."""
+    return EngagementStatsDTO(
+        submissionsLast7Days=stats.submissions_last_7_days,
+        submissionsLast30Days=stats.submissions_last_30_days,
+        activeStudentsLast7Days=stats.active_students_last_7_days,
+        activeStudentsLast30Days=stats.active_students_last_30_days,
+        neverActiveCount=stats.never_active_count,
+        medianDaysSinceLastSubmission=stats.median_days_since_last_submission,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Class list / detail (keeps the pre-P3.1 paths byte-identical).
 # ---------------------------------------------------------------------------
@@ -256,6 +344,37 @@ def get_class(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _class_row_to_detail(row, roster, history_store)
+
+
+@router.get("/classes/{class_id}/analytics", response_model=ClassAnalyticsDTO)
+def class_analytics(
+    class_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+) -> ClassAnalyticsDTO:
+    """Return T-04 cohort analytics for one class (P3.3).
+
+    Ranked topic weaknesses (the screen's centrepiece — "the thing that
+    changes what a teacher teaches next week"), the topic x student heatmap
+    restricted to those ranked topics, grade distribution over the full grade
+    ladder, a performance-over-time trend, per-paper comparison, and
+    engagement stats — all computed by ``lemely.core.class_analytics``'s pure
+    functions over the class's real enrolled roster, never every student in
+    the store.
+
+    Authz mirrors ``get_class`` exactly: a class outside the caller's scope is
+    a 403 (never a 404-vs-403 existence oracle); an id that maps to no class
+    anywhere is a 404; a malformed (non-UUID) id is a clean 422, never a 500.
+    """
+    try:
+        service.get_class(auth.user_id, auth.role, class_id)  # existence + scope check only
+        roster = service.roster(auth.user_id, auth.role, class_id)
+    except (ClassNotFoundError, ClassOwnershipError) as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _class_analytics_dto(roster, history_store)
 
 
 # ---------------------------------------------------------------------------
