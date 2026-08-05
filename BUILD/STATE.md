@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 3
-last_updated: 2026-08-05T22:20:00Z
+last_updated: 2026-08-06T00:00:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -71,22 +71,53 @@ report §8 (sub-44px touch target, non-heading empty/error tags, no mobile Botto
 `max-[1180px]:` literals outside the retrofitted screens, momentum-chart/TrendSparkline
 duplication blocked on a DTO change).
 
-## Phase 3 — Teacher + Parent surfaces
-Not yet started. Branch from `develop` as `feature/phase-3-teacher-parent`. Per MISSION §4:
-- Teacher: class management, per-class/per-student analytics, aggregate weakness topics,
-  at-risk flagging (declining trend OR predicted grade ≥2 boundaries below target OR ≥14
-  days inactive — each flag labeled with its reason), human-review queue override-and-annotate
-  flow (overrides feed back as recorded corrections; the review-queue *display* already exists
-  from P2.8 — this phase adds the override action and at-risk logic on top of it).
-- Teacher quiz builder: difficulty targeting by expected grade, included-material selection,
-  question pool from generated/classified past-paper questions, assign to class, auto-marked,
-  results feed analytics.
-- Parent portal: phone-OTP login (the mock-provider auth backend already exists from P1.4 —
-  this phase builds the actual portal screens/routes, which don't exist yet), linked children,
-  performance + weakness views (read-only), notification preferences.
-- This phase is also where teacher per-tenant ownership (own-classes-only, deferred from D1.6)
-  should land, since it needs the real class model this phase builds.
-- Acceptance: E2E per role; at-risk flags verified against seeded scenarios.
+## Phase 3 — Teacher + Parent surfaces — IN PROGRESS
+Branch: `feature/phase-3-teacher-parent` (from develop @ faef29c).
+
+Starting facts (established 2026-08-06, do not re-derive):
+- Tables already exist from Phase 1: `classes`, `class_enrollments`, `parent_child_links`,
+  `review_queue`, `announcements`, `notifications`, `seats`, `school_memberships`.
+  Phase 3 builds the *routes + screens* on top; schema changes are additive-only (D1.2/D1.3).
+- `GET /teacher/classes` and `GET /classes/{id}` currently derive a single **implicit** class
+  from history (`lemely/web/routers/teacher.py`, ~1100 LOC). P3.1 replaces them with the real
+  class model. Existing teacher routes: papers upload/extract/grade/list/detail,
+  grading/queue, schemes, quizzes pools/topics/preview/generate, teacher/overview.
+- Frontend teacher portal screens exist (Overview, Classes, Grading, MarkSchemes, Quizzes,
+  Review) under `web/src/portals/teacher/`; hooks in `web/src/lib/hooks/useTeacherApi.ts`.
+  No parent portal exists at all.
+- Parent phone-OTP auth backend exists from P1.4 (`/auth/otp/request`, `/auth/otp/verify`).
+- T-11 (custom paper + mark-scheme upload) is scoped by MISSION §9 to be delivered *via
+  review/override + teacher quiz marking*, not as a standalone upload screen.
+
+### Task checklist
+- [ ] doing — **P3.1** Real class model + teacher tenancy. Class CRUD, roster, add students
+      (invite code / school seat), replace the implicit-class endpoints. Lands D1.6's deferred
+      own-classes-only row-level ownership. Backend + authz tests.
+- [ ] todo — **P3.2** At-risk flagging engine. Pure rules module (declining trend across last N
+      papers OR predicted grade ≥2 boundaries below target OR ≥14 days inactive), each flag
+      carrying its reason + evidence. Backend + unit tests on seeded scenarios.
+- [ ] todo — **P3.3** Teacher analytics. Per-class and per-student analytics, aggregate/ranked
+      weakness topics (T-04 heatmap data), grade distribution, trend series. Backend.
+- [ ] todo — **P3.4** Review queue override-and-annotate (T-08). Accept / adjust marks with
+      method+accuracy breakdown / note to student; overrides recorded as teacher corrections
+      that supersede the AI mark on the student's result; integrity-flag dismissal leaves no
+      student-visible record. Backend + tests.
+- [ ] todo — **P3.5** Teacher quiz builder backend (T-09/T-10). Difficulty targeting by expected
+      grade, material selection, pool from past-paper/generated questions, assign to class,
+      auto-mark, results feed analytics.
+- [ ] todo — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
+      subject detail / weaknesses (read-only), notification preferences. Parent authz: only
+      own linked children.
+- [ ] todo — **P3.7** Teacher frontend T-01..T-06 (dashboard, classes list, class detail roster,
+      class analytics, student detail, at-risk list).
+- [ ] todo — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
+      builder + class results), T-12 (announcement composer).
+- [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
+- [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
+      seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
+      Lighthouse a11y ≥95, screenshot corpus for every new screen × state × breakpoint,
+      Impeccable audit+polish, no regression vs Phase-2.5 baselines).
+- [ ] todo — **P3.11** Phase-3 report, merge to develop, push, update PR #3, ntfy.
 
 
 ## Session journal
