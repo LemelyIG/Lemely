@@ -121,7 +121,19 @@ class AttemptRepository:
             session.flush()
             attempt_id = attempt.id
             for qr, cq in zip(attempt.question_results, correction.questions, strict=True):
-                if qr.needs_teacher_review or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
+                # ``needs_teacher_review`` is also forced True by an integrity flag
+                # (see ``apply_integrity_checks``), which already gets its own,
+                # more specific row below — only fall back to the generic
+                # low_confidence reason when something on the MARKING side (an
+                # actual low confidence score, or the D2.4 structural
+                # out-of-range/value-mismatch signal) is why review is needed, so
+                # a high-confidence, in-range question that is *purely*
+                # plagiarism/AI-detection-flagged doesn't also get a duplicate,
+                # mislabeled low_confidence row.
+                marking_flagged = qr.needs_teacher_review and not (
+                    cq.plagiarism_flagged or cq.ai_detection_flagged
+                )
+                if marking_flagged or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
                     session.add(
                         ReviewQueueItem(
                             attempt_id=attempt_id,

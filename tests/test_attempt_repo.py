@@ -233,12 +233,14 @@ def test_review_queue_only_for_flagged_questions(
 
 
 def _report_with_integrity_flags() -> AccuracyReport:
-    """One question flagged for BOTH plagiarism and AI-detection.
+    """One HIGH-confidence question flagged for BOTH plagiarism and AI-detection.
 
-    ``needs_teacher_review`` is True as ``apply_integrity_checks`` would set it,
-    so the existing low_confidence-or-flagged check in ``persist_correction``
-    still queues a ``low_confidence`` row alongside the two new integrity rows
-    — the three reasons are independent, additive rows, not a replacement.
+    ``needs_teacher_review`` is True purely because ``apply_integrity_checks``
+    set it (confidence_score is 1.0, well above the review threshold, and
+    there is no marking-side out-of-range/value-mismatch signal either) — so
+    ``persist_correction`` must NOT also queue a ``low_confidence`` row for
+    this question; that would misleadingly label a fully-confident mark as
+    low-confidence. Only the two integrity-specific rows should appear.
     """
     metadata = ExamMetadata(
         subject_code="0625",
@@ -291,14 +293,74 @@ def test_review_queue_includes_integrity_flag_rows(
     with pg_sessionmaker() as session:
         items = session.scalars(select(ReviewQueueItem)).all()
         reasons = {item.reason for item in items}
+        # NOT low_confidence: confidence_score is 1.0 and there is no marking-side
+        # out-of-range/value-mismatch signal, so needs_teacher_review is True purely
+        # from the two integrity flags, which already have their own rows below.
         assert reasons == {
-            ReviewReason.low_confidence,
             ReviewReason.plagiarism_flag,
             ReviewReason.ai_detection_flag,
         }
         assert all(item.attempt_id == attempt_id for item in items)
         question_result_ids = {item.question_result_id for item in items}
         assert len(question_result_ids) == 1
+
+
+def test_review_queue_low_confidence_row_survives_alongside_integrity_flags(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A genuinely low-confidence question that is ALSO integrity-flagged still
+    gets its own low_confidence row — the fix that stops a high-confidence,
+    purely-integrity-flagged question from getting a spurious low_confidence
+    row must not suppress a real low-confidence signal when the two coincide.
+    """
+    metadata = ExamMetadata(
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=2,
+        session_month="May/June",
+        session_year=2020,
+    )
+    flagged = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.5,
+        needs_teacher_review=True,
+        student_answer="A",
+        expected_answer="A",
+        topic="Waves",
+        review_reason="confidence 0.50 below review threshold 0.90 | plagiarism (score 0.95)",
+        marker_source="deterministic",
+        matched_point_ids=["p1"],
+        plagiarism_flagged=True,
+    )
+    correction = CorrectionResult(metadata=metadata, questions=[flagged])
+    prediction = GradePrediction(
+        awarded_marks=0,
+        maximum_marks=1,
+        percentage=0.0,
+        grade="U",
+        confidence=ConfidenceBand.LOW,
+        needs_teacher_review=True,
+        boundary_source="subject_default",
+    )
+    report = AccuracyReport(
+        correction=correction,
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=prediction,
+    )
+
+    user_id = _seed_user(pg_sessionmaker)
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=user_id, report=report
+    )
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(select(ReviewQueueItem)).all()
+        reasons = {item.reason for item in items}
+        assert reasons == {ReviewReason.low_confidence, ReviewReason.plagiarism_flag}
+        assert all(item.attempt_id == attempt_id for item in items)
 
 
 def test_coexists_with_db_history_store(
