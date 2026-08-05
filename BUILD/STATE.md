@@ -125,8 +125,11 @@ Starting facts (established 2026-08-06, do not re-derive):
       production — no target-grade column exists until P4's onboarding questionnaire; the
       engine reports it as *not evaluable*, never as a pass. 711 tests (707 passed / 4
       live-only skips), at_risk.py at 100% cov, total 86.11%. All 12 gates green.
-- [ ] todo — **P3.3** Teacher analytics. Per-class and per-student analytics, aggregate/ranked
+- [ ] doing — **P3.3** Teacher analytics. Per-class and per-student analytics, aggregate/ranked
       weakness topics (T-04 heatmap data), grade distribution, trend series. Backend.
+      Also closes a tenancy hole P3.1 missed: `/api/teacher/overview` still enumerates
+      `history_store.list_students()` (every student in the store) instead of the caller's
+      own rosters, and labels at-risk rows with the raw `history.student_id`.
 - [ ] todo — **P3.4** Review queue override-and-annotate (T-08). Accept / adjust marks with
       method+accuracy breakdown / note to student; overrides recorded as teacher corrections
       that supersede the AI mark on the student's result; integrity-flag dismissal leaves no
