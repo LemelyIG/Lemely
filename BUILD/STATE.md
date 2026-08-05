@@ -1148,6 +1148,101 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        sees correct marks/grade/weaknesses on the dashboard; accuracy thresholds met;
        screenshots in reports/phase-2/screens/. §6 gates green; reports/phase-2/REPORT.md;
        merge feature→develop; push; open develop→main PR via gh (DO NOT MERGE); ntfy.
+       RESUMED 2026-08-05 on a dirty tree carrying a prior (session-limit-killed) session's
+       partial WIP: `@playwright/test` devDependency + lockfile update + `web/e2e/_smoke.spec.ts`
+       (confirms Chromium launches headless in THIS sandbox — corrects P2.9's earlier
+       "no Chromium available" note, which was accurate at the time but is now stale) + STATE.md
+       marked `doing`. Verified before trusting: ran the smoke spec, genuinely passes
+       (`web/test-results/.last-run.json`: `{"status":"passed"}`). Committed as a checkpoint
+       (commit f56a668) + gitignored `web/test-results/` (Playwright's own output dir, was
+       untracked). Confirmed environment is now materially better than P2.9 assumed: Supabase
+       stack UP (`docker ps` — all healthy) AND Playwright's Chromium already cached at
+       `~/.cache/ms-playwright`. Full backend pytest re-run clean: 0 failed, 4 skipped (only
+       the 3 *_live.py tests that need SUPABASE_SERVICE_ROLE_KEY/ANON_KEY exported into this
+       shell — stack is up but keys aren't in env by default), 85.54% cov.
+       PLAN (recorded before dispatch so a killed session can resume): the real end-to-end flow
+       (browser → Vite → FastAPI → real Postgres/GoTrue/Storage) with ONLY the Gemini-vision
+       seam replaced, per MISSION §3 ("all automated tests mock Gemini"). Traced the exact
+       seam from `tests/test_student_correct.py` (already proven in P2.1's own pytest suite):
+       `student.resolve_mark_scheme` / `student.extract_answers` (module-level functions on
+       `lemely.web.routers.student`, reassignable like any Python attribute — works identically
+       whether the app runs under `TestClient` or real `uvicorn`, since FastAPI resolves them at
+       call time) + `Settings.gemini_api_key = None` (skips `ScanMetadataExtractor` entirely,
+       confirmed by reading `student_correct`'s `run()`: `if settings.gemini_api_key is not
+       None: ScanMetadataExtractor(...)`) + `get_gemini_client` dependency-overridden to a
+       `MagicMock(spec=GeminiClient)` (never actually called once the two seams above are
+       replaced, but must not fail to construct). Chose the MCQ fixture
+       (`tests/golden/0625_m20_qp_12_mcq/`: `mark_scheme.json` + `answers.json`, 8 questions,
+       ground truth 5/8 correct: q1,2,4,6,7 award 1, q3,5,8 award 0) over a theory fixture
+       DELIBERATELY: MCQ marking is 100% deterministic (D0.5, no Gemini needed for the actual
+       marking step, only for reading the scan/scheme — which this bootstrap replaces), so the
+       E2E test's "accuracy thresholds met" criterion is the clean, already-satisfied MCQ bar,
+       not P2.3's separately-and-honestly-documented 83.8%-theory gap (D2.5, unresolved,
+       carried to DELIVERY.md) — this is a deliberate scope choice, not sidestepping the theory
+       gap silently; the phase report must say so explicitly.
+       Rejected alternative: uploading a real raw mark-scheme PDF from `Sources/` (gitignored,
+       not guaranteed present in a fresh clone/CI) so `resolve_mark_scheme`'s real
+       deterministic-parser path runs unmocked — would break Phase-6 "one-command fresh clone"
+       reproducibility; the golden fixtures ship already-parsed JSON specifically so hermetic
+       tests never need the raw PDFs.
+       1. [ ] todo — NEW `scripts/e2e_server.py` (orchestrator writes directly — small,
+          mechanical, matches an already-proven pytest seam 1:1, no judgment calls left open):
+          `build_app()` loads real `Settings` via `load_settings()`, overrides only
+          `gemini_api_key=None`; monkeypatches `student.resolve_mark_scheme` /
+          `student.extract_answers` to closures reading the MCQ fixture's `mark_scheme.json` /
+          `answers.json` off disk (no test-only imports — reads the committed fixture files
+          directly by path); `create_app()`; `app.dependency_overrides[get_settings]` /
+          `[get_gemini_client]` set as above. `main()` calls `uvicorn.run(app, host="127.0.0.1",
+          port=int(os.environ.get("PORT", "8000")))` — matches `vite.config.ts`'s existing
+          `/api` proxy target verbatim, zero Vite config changes needed. Real DB/Storage/Auth
+          untouched (no other dependency overrides) — persistence, review-queue, and the
+          upload→Storage round-trip are all genuinely exercised.
+       2. [ ] todo — Dispatch to `test-engineer`: (a) `web/playwright.config.ts` —
+          `webServer: [{command: "python scripts/e2e_server.py" (cwd repo root, reuses the
+          venv already on PATH), port: 8000}, {command: "npm run dev", cwd: "web", port: 5173}]`
+          (both auto-started, so `npx playwright test` is self-contained — no manual server
+          juggling); `testDir: "./e2e"`; screenshot-on-failure + explicit `page.screenshot()`
+          calls at the two acceptance moments (post-login dashboard, final result screen) into
+          `reports/phase-2/screens/` (repo-root-relative, NOT `web/test-results/` — the mission
+          line names `reports/phase-2/screens/` explicitly). (b) NEW `web/e2e/correct-paper.spec.ts`:
+          global setup or a `test.beforeAll` signs up a fresh student via a direct
+          `POST /api/auth/signup` call (`{email: `e2e-${Date.now()}@example.com`, password,
+          role: "student"}` — real GoTrue account, no UI signup screen exists yet, confirmed);
+          the spec itself drives ONLY the real UI from there: `/login` → fill
+          email/password (labelled inputs, see `Login.tsx`) → submit → expect navigation to a
+          student route; navigate to Correct-a-paper → `#scan-file` `setInputFiles(...)` with
+          the MCQ fixture's `tests/golden/0625_m20_qp_12_mcq/scan.pdf` (leave `#scheme-file`
+          empty — the mocked `resolve_mark_scheme` seam supplies the scheme regardless) → click
+          "Mark this paper" → wait for navigation to `/student/result/:paperId` → assert the
+          rendered marks are exactly `5` awarded / `8` max (ground truth above) and a
+          non-empty predicted-grade string is rendered (grade/pct come from the real boundary
+          lookup — assert presence/shape, not a hand-computed value, since that's real app
+          logic already covered by other tests, not this test's job to re-derive) → assert 8
+          `QuestionCard`s render (one per question id `"1"`..`"8"`). Keep the existing
+          `_smoke.spec.ts` (cheap, already proven, harmless). (c) `package.json`: add
+          `"test:e2e": "playwright test"`; confirm `tsc -b` (the `build` script) does NOT
+          typecheck `web/e2e/**` against the app's `tsconfig.app.json` (check
+          `tsconfig.json`'s project references / `include` — Playwright specs use their own
+          ambient types and must not break `npm run build`); add a dedicated
+          `tsconfig.playwright.json` if the existing config would otherwise choke on it.
+       3. [ ] todo — Orchestrator-verify (don't just trust the subagent): actually run
+          `npx playwright test` myself from a clean shell (stack already up), confirm it
+          passes against the REAL flow (not a mocked TestClient) — check the persisted
+          `Attempt`/`QuestionResult` rows landed in Postgres for the seeded student as
+          independent proof beyond the UI assertions; re-run `npm run typecheck`/
+          `npm run lint`/`npm run build` (confirm the e2e dir doesn't regress these); re-run
+          full backend pytest (confirm the bootstrap script didn't touch anything under
+          `lemely/` in a way that breaks the suite — it shouldn't, it's additive-only).
+       4. [ ] todo — `reports/phase-2/REPORT.md`: phase summary covering all of P2.1-P2.10,
+          explicitly citing the carried-forward honest limitations already recorded inline in
+          this checklist (D2.5 theory-accuracy gap at 83.8% vs 95% target; P2.10's MCQ-only
+          E2E scope choice and why; P2.9's Lighthouse-unrunnable + camera-untestable notes;
+          D1.9's deferred CLI/Gradio history migration) — MISSION's honesty precedent (D1.6 M2)
+          applies to the report too: state what's NOT done plainly, don't imply full coverage.
+       5. [ ] todo — §6 gates green (full backend + web) one more time after the report lands;
+          commit; merge `feature/phase-2-core-loop` → `develop`; push; open a `develop`→`main`
+          PR via `gh` (DO NOT MERGE it — human reviews main, same as Phase 0/1); ntfy
+          phase-complete. Sets `current_phase: 3` in STATE.md header once this lands.
 
 ## Next action
 **P2.1 DONE + VERIFIED (2026-08-03).** New: lemely/db/attempt_repo.py (AttemptRepository.
