@@ -1,0 +1,127 @@
+import type { HTMLAttributes, ReactNode } from "react"
+import {
+  CheckCircle,
+  CircleNotch,
+  Circle,
+  XCircle,
+} from "@phosphor-icons/react"
+import { cn } from "@/lib/utils"
+
+/*
+ * C-10 · Processing state — the marking pipeline's staged progress (S-14).
+ *
+ * HARD PRODUCT REQUIREMENT ("no fake progress bar" — LEMELY_UI_SPEC S-14
+ * design note): this renders discrete, independently-stated stages, each
+ * with its own success/in-progress/fail state and — for the marking stage —
+ * a real per-question counter. There is no single animated bar standing in
+ * for the whole pipeline. The only animation is a spinner on the ONE stage
+ * that is genuinely, currently running, and that respects
+ * prefers-reduced-motion via the global rule in index.css (animate-spin's
+ * duration is zeroed there, not re-implemented here).
+ *
+ * Failure messages are caller-supplied per stage (`errorMessage`) — this
+ * component never renders a generic "something went wrong" fallback; per
+ * the spec, each stage must fail with a specific, actionable message (mark
+ * scheme not found / pages unreadable / service unavailable, etc.).
+ */
+
+export type ProcessingStageStatus = "pending" | "active" | "done" | "error"
+
+export interface ProcessingStageProgress {
+  current: number
+  total: number
+  /** e.g. "question" → renders "Question 7 of 21". Defaults to "item". */
+  unit?: string
+}
+
+export interface ProcessingStage {
+  id: string
+  label: string
+  status: ProcessingStageStatus
+  /** Real, specific detail shown while active/done (e.g. "Reading page 4 of 6"). */
+  detail?: string
+  /** Required by product rule when status === "error" — no generic fallback is rendered if omitted. */
+  errorMessage?: string
+  /** Marking stage: per-question counter. */
+  progress?: ProcessingStageProgress
+}
+
+export interface ProcessingStateProps extends HTMLAttributes<HTMLDivElement> {
+  stages: ProcessingStage[]
+  /** Optional trailing slot — e.g. "You can leave, we'll notify you" + a button (S-14). */
+  footer?: ReactNode
+  className?: string
+}
+
+function capitalize(word: string) {
+  return word.length === 0 ? word : word[0].toUpperCase() + word.slice(1)
+}
+
+function StageGlyph({ status }: { status: ProcessingStageStatus }) {
+  if (status === "done") {
+    return <CheckCircle size={20} weight="fill" className="text-ok" />
+  }
+  if (status === "active") {
+    return (
+      <CircleNotch size={20} className="animate-spin text-accent" aria-label="In progress" />
+    )
+  }
+  if (status === "error") {
+    return <XCircle size={20} weight="fill" className="text-err" />
+  }
+  return <Circle size={20} className="text-border" />
+}
+
+export function ProcessingState({
+  stages,
+  footer,
+  className,
+  ...props
+}: ProcessingStateProps) {
+  return (
+    <div className={cn("flex flex-col", className)} {...props}>
+      {stages.map((stage, i) => {
+        const isLast = i === stages.length - 1
+        return (
+          <div key={stage.id} className="flex gap-3">
+            <div className="flex flex-col items-center">
+              <StageGlyph status={stage.status} />
+              {!isLast ? (
+                <span
+                  className={cn(
+                    "min-h-4 w-px flex-1",
+                    stage.status === "done" ? "bg-ok" : "bg-border",
+                  )}
+                />
+              ) : null}
+            </div>
+            <div className={cn("min-w-0 flex-1", !isLast && "pb-5")}>
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className={cn(
+                    "text-body-md font-medium",
+                    stage.status === "pending" ? "text-t3" : "text-t1",
+                  )}
+                >
+                  {stage.label}
+                </span>
+                {stage.status === "active" && stage.progress ? (
+                  <span className="flex-none text-metadata text-t2">
+                    {capitalize(stage.progress.unit ?? "item")} {stage.progress.current} of{" "}
+                    {stage.progress.total}
+                  </span>
+                ) : null}
+              </div>
+              {stage.status === "error" && stage.errorMessage ? (
+                <p className="mt-1 text-body-md text-err">{stage.errorMessage}</p>
+              ) : stage.detail ? (
+                <p className="mt-1 text-metadata text-t3">{stage.detail}</p>
+              ) : null}
+            </div>
+          </div>
+        )
+      })}
+      {footer ? <div className="mt-2 border-t border-border pt-4">{footer}</div> : null}
+    </div>
+  )
+}
