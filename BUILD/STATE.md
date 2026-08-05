@@ -923,9 +923,37 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           `git diff --stat` confirmed only the 2 target files changed. Backend gates re-run for
           completeness (nothing under `lemely/` touched): ruff/ruff-format/lint-imports clean.
           Committing on feature/phase-2-core-loop.)
-       4. [ ] todo — Review screen: queue list + simplified per-question detail card per the
+       4. [~] doing — Review screen: queue list + simplified per-question detail card per the
           design above. Update `data.ts` (remove `flagged`/`queue`/`reviewProgress`/
           `MarkingPoint`/`WorkingLine`/`FlaggedItem`/`QueueRow`/`PointState`).
+          PLAN (recorded before dispatch so a killed session can resume): rewrite
+          `web/src/portals/teacher/screens/Review.tsx` on `useGradingQueue()` (rows:
+          paperId/name/questionId/topic/confidence/awardedMarks/maxMarks, real, one row per
+          flagged QUESTION — already exists at `useTeacherApi.ts:57`) for the right-hand
+          queue list (replaces `queue`/`reviewProgress` mock). Selecting a row (default:
+          first row) fetches `usePaperDetail(selectedRow.paperId)` (already exists, 409s
+          honestly if ungraded — same `ApiError` status-check pattern Grading.tsx just used)
+          and finds the matching question via `.questions.find(q => q.questionId ===
+          selectedRow.questionId)` for the detail panel. Detail panel renders: student name
+          (from the queue row), question id, topic, a confidence bar (reuse the existing
+          `confW`-style width calc), awarded/max, `feedback` text if present, and the REAL
+          `reviewReason` (replaces the mock's fabricated `why` narrative — genuine
+          improvement, not just a cut) + plagiarism/AI-detection badges if
+          `plagiarismFlagged`/`aiDetectionFlagged`. DROP entirely (no backing data/endpoint):
+          the working-transcript panel (`WorkingLine`/`current.working`), marking-points
+          breakdown (`MarkingPoint`/`PointRow`/`POINT_STYLE`), award-option buttons +
+          "Confirm & next" (no override-submission endpoint — Phase 3 per MISSION §4), "Filter"
+          button (no filter concept), "Approve all (N)" (no bulk-approve endpoint), the
+          `reviewProgress` footer/progress bar (no clean same-unit backend source — queue is
+          question-count, overview stats are paper-count). KEEP prev/next through queue rows
+          (pure client nav over `useGradingQueue()`'s rows array, real). Header: replace the
+          hardcoded "12 answers · 0625/31 · May/June 2020" with a real `{rows.length} flagged
+          answer(s)` count; drop the fake "Live" pill unless a real signal backs it (implementer's
+          call, document which). Empty queue (0 rows) -> a plain "Nothing flagged right now"
+          empty state, not a crash. `data.ts`: remove `flagged`/`queue`/`reviewProgress`/
+          `MarkingPoint`/`WorkingLine`/`FlaggedItem`/`QueueRow`/`PointState` (data.ts:59-192) —
+          grep for other importers first (none expected; Review.tsx is their only consumer).
+          Dispatching to `implementer` (Sonnet).
        5. [ ] todo — `data.ts` final cleanup pass (mechanical grep-verify-delete, orchestrator
           does directly like P2.7 step 7) + full gate re-run (typecheck/lint/build; backend
           ruff/format/mypy/lint-imports/pytest since nothing under lemely/ should have
