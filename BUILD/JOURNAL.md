@@ -388,3 +388,26 @@
   matches — e.g. Directions.tsx's `text-[34px]`/`gap-[26px]`-style values that don't map
   to index.css's spacing scale or Tailwind's 4px default scale; P2.5.8 owns resolving
   this, not deferred silently), P2.5.9 report+PR+ntfy.
+
+## 2026-08-05 — Phase 2.5: P2.5.5 Playwright screenshot harness
+- Did: resumed a session that had died mid-P2.5.5 (STATE.md said a `visual-qa` agent was
+  "running" but no task was actually tracked). Found `web/e2e/screenshots.spec.ts` and 24
+  of an expected 30 screenshots already on disk, uncommitted. Verified rather than trusted
+  before committing (MISSION delegation protocol): ran the suite myself against the live
+  Supabase stack. It failed, exposing two real bugs in the harness (not the app): (1)
+  React.StrictMode double-invoking the mount effect aborts the first overview fetch on
+  reload, so the delayed-route handler simulating the loading state threw "Route is
+  already handled!" when its `continue()` finally fired — wrapped in try/catch, benign;
+  (2) the zero-console-errors assertion caught the browser's own "Failed to load
+  resource: 500/413" logging from the two states this suite deliberately simulates as
+  failures — excluded that one message pattern from the watcher, still catching real app
+  errors. Fixed both, re-ran: 6/6 screenshot tests green, all 30 PNGs captured, full E2E
+  suite green (8/8, no regression to _smoke/correct-paper), tsc/build/oxlint clean,
+  pre-commit scoped to the changed spec file clean. Reverted two Phase-2 baseline PNGs
+  that a full-suite run regenerated as a side effect (out of scope). Committed.
+- Learned: a STATE.md line claiming a background agent is "running" does not mean it
+  still is — TaskList showed nothing tracked, meaning the session that wrote that line
+  died before finishing. Always verify by actually running the deliverable, not by
+  reading the last-known status.
+- Next: P2.5.6 — Puppeteer audit runner (axe-core, Lighthouse, console errors, full-page
+  captures) + contact-sheet generator; commit baselines.

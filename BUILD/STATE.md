@@ -112,9 +112,38 @@ Report: `reports/phase-2/REPORT.md`. Gemini cumulative spend $0.058/$8.00.
       shell uses raw oklch() nav literals and has no C-13 BottomNav mounted on mobile.
       These are real gaps for a future component-library/DTO pass, not P2.5.4 scope.
       Uncommitted at write time — committing this + STATE.md + JOURNAL.md together next.
-- [ ] doing — P2.5.5: Playwright screenshot harness (screen × state × breakpoint, ID convention
-      from LEMELY_UI_SPEC.md screen IDs)
-- [ ] P2.5.6: Puppeteer audit runner (axe-core, Lighthouse, console errors, full-page
+- [x] P2.5.5: Playwright screenshot harness (screen × state × breakpoint, ID convention
+      from LEMELY_UI_SPEC.md screen IDs). Prereq fixed first (D2.12, committed 2148e41 +
+      ad727c8): the E2E harness had a silent PATH blocker that meant the suite hadn't run at
+      all since P2.5.1, and its first real run caught + fixed a genuine nested-<button> a11y
+      bug in QuestionRow (C-6). `web/e2e/screenshots.spec.ts` drives the 4 retrofitted
+      screens against the live stack (Overview→S-06, CorrectPaper→S-10 entry + S-14
+      marking-in-progress, PaperResult→S-15/S-17; Directions.tsx explicitly excluded — it's
+      a static internal design gallery, not a docs/LEMELY_UI_SPEC.md screen, out of D2.10
+      scope) at 380/768/1440, capturing every real state reachable without a second live
+      paper (default/empty/loading/error for S-06, default/file-selected for S-10,
+      marking-in-progress/error for S-14, default for S-15, expanded for S-17) = 30 PNGs
+      under `reports/phase-2.5/screens/`. Found on disk uncommitted from a prior session
+      (dispatched to `visual-qa`, STATE.md said "running") but the corpus was short 6 files
+      (S-06/error, S-14/error) — verified by actually running the suite myself rather than
+      trusting the prior session's claim, per MISSION delegation protocol, and it failed:
+      2 real bugs in the harness, not the app. (1) The delayed-route handler simulating
+      S-06's loading state called `route.continue()` unguarded; React.StrictMode
+      (`main.tsx`) double-invokes the mount effect in dev, aborting the first overview
+      fetch on remount, so the delayed `continue()` fired against an already-aborted
+      request and threw "Route is already handled!" before the error-state reload ever
+      ran — wrapped in try/catch (aborted-first-request is benign, the second real request
+      gets its own route invocation). (2) The zero-console-errors assertion caught the
+      browser's own "Failed to load resource: 500/413" logging, which fires for ANY
+      non-2xx response — including the ones this suite deliberately simulates to reach the
+      error states it's supposed to capture; `watchConsole` now excludes that one message
+      pattern, still catching genuine app errors (React warnings, uncaught exceptions).
+      All 30 screenshots now captured, full E2E suite green (8/8, including the
+      pre-existing _smoke/correct-paper specs — no regression), tsc/build/oxlint clean,
+      pre-commit scoped to the changed spec file clean. Two incidentally-regenerated
+      Phase-2 baseline PNGs (side effect of re-running correct-paper.spec.ts) reverted,
+      not committed — out of this task's scope.
+- [ ] doing — P2.5.6: Puppeteer audit runner (axe-core, Lighthouse, console errors, full-page
       captures) + contact-sheet generator; commit baselines
 - [ ] P2.5.7: Extend scripts/check.sh with the UI gates (axe/Lighthouse/impeccable detect)
 - [ ] P2.5.8: Full BUILD/QUALITY-BAR.md pass; grep proves no stray hex/spacing values
