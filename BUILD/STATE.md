@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 2
-last_updated: 2026-08-05T06:15:00Z
+last_updated: 2026-08-05T12:50:00Z
 gemini_spend_usd: 0.0580
 
 ## Rules for maintaining this file
@@ -1203,42 +1203,44 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           an SSE-payload illusion. Cleaned up the manual-verification rows afterward and
           confirmed no leftover server process. This de-risks step 2: the seam the Playwright
           spec will drive through the browser is now proven correct at the HTTP layer first.
-       2. [ ] todo — Dispatch to `test-engineer`: (a) `web/playwright.config.ts` —
-          `webServer: [{command: "python scripts/e2e_server.py" (cwd repo root, reuses the
-          venv already on PATH), port: 8000}, {command: "npm run dev", cwd: "web", port: 5173}]`
-          (both auto-started, so `npx playwright test` is self-contained — no manual server
-          juggling); `testDir: "./e2e"`; screenshot-on-failure + explicit `page.screenshot()`
-          calls at the two acceptance moments (post-login dashboard, final result screen) into
-          `reports/phase-2/screens/` (repo-root-relative, NOT `web/test-results/` — the mission
-          line names `reports/phase-2/screens/` explicitly). (b) NEW `web/e2e/correct-paper.spec.ts`:
-          global setup or a `test.beforeAll` signs up a fresh student via a direct
-          `POST /api/auth/signup` call (`{email: `e2e-${Date.now()}@example.com`, password,
-          role: "student"}` — real GoTrue account, no UI signup screen exists yet, confirmed);
-          the spec itself drives ONLY the real UI from there: `/login` → fill
-          email/password (labelled inputs, see `Login.tsx`) → submit → expect navigation to a
-          student route; navigate to Correct-a-paper → `#scan-file` `setInputFiles(...)` with
-          the MCQ fixture's `tests/golden/0625_m20_qp_12_mcq/scan.pdf` (leave `#scheme-file`
-          empty — the mocked `resolve_mark_scheme` seam supplies the scheme regardless) → click
-          "Mark this paper" → wait for navigation to `/student/result/:paperId` → assert the
-          rendered marks are exactly `5` awarded / `8` max (ground truth above) and a
-          non-empty predicted-grade string is rendered (grade/pct come from the real boundary
-          lookup — assert presence/shape, not a hand-computed value, since that's real app
-          logic already covered by other tests, not this test's job to re-derive) → assert 8
-          `QuestionCard`s render (one per question id `"1"`..`"8"`). Keep the existing
-          `_smoke.spec.ts` (cheap, already proven, harmless). (c) `package.json`: add
-          `"test:e2e": "playwright test"`; confirm `tsc -b` (the `build` script) does NOT
-          typecheck `web/e2e/**` against the app's `tsconfig.app.json` (check
-          `tsconfig.json`'s project references / `include` — Playwright specs use their own
-          ambient types and must not break `npm run build`); add a dedicated
-          `tsconfig.playwright.json` if the existing config would otherwise choke on it.
-       3. [ ] todo — Orchestrator-verify (don't just trust the subagent): actually run
-          `npx playwright test` myself from a clean shell (stack already up), confirm it
-          passes against the REAL flow (not a mocked TestClient) — check the persisted
-          `Attempt`/`QuestionResult` rows landed in Postgres for the seeded student as
-          independent proof beyond the UI assertions; re-run `npm run typecheck`/
-          `npm run lint`/`npm run build` (confirm the e2e dir doesn't regress these); re-run
-          full backend pytest (confirm the bootstrap script didn't touch anything under
-          `lemely/` in a way that breaks the suite — it shouldn't, it's additive-only).
+       2. [x] done — `web/playwright.config.ts` + `web/e2e/correct-paper.spec.ts` +
+          `package.json` `test:e2e` script. RESUMED from a prior (session-limit-killed)
+          session's uncommitted WIP — found already on disk this session (git status showed
+          modified package.json + untracked playwright.config.ts/correct-paper.spec.ts/
+          reports/phase-2/screens/ with two PNGs dated today), matching this step's plan
+          almost exactly: config resolves Supabase local-stack keys via `supabase status -o
+          json` at config-eval time (self-contained, no shell env dependency), boots BOTH
+          `scripts/e2e_server.py` (port 8000) and `npm run dev -- --host 127.0.0.1` (port
+          5173, IPv4-forced — v8 Vite binds bare `localhost` to `::1` only, which
+          Playwright's readiness probe can't reach) as webServer entries. Spec signs up via a
+          direct API call in `beforeAll`, then drives only the real UI: login → upload the
+          MCQ fixture scan → click "Mark this paper" → asserts 5/8 marks, non-empty predicted
+          grade, 8 question cards ids "1".."8" → 2 screenshots into
+          `reports/phase-2/screens/`. Did NOT just trust the pre-existing WIP (MISSION §5)
+          — see step 3.
+       3. [x] done — Orchestrator-verified independently, not trusted: ran `npx playwright
+          test` myself from a clean shell (stack already up) — both specs (`_smoke` +
+          `correct-paper`) genuinely pass (2 passed, 14.5s). Went further than the plan asked:
+          queried the live Postgres directly (`docker exec supabase_db_Lemely psql`) for the
+          3 accumulated e2e-run attempts (mine + 2 prior) — each has exactly 8
+          `question_results` and 5 `review_queue` rows (matching the 5 plagiarism-flagged
+          questions visible in the screenshot), `awarded_marks=5/8`, `predicted_grade=B` —
+          proof the persistence is real, not an SSE-payload illusion. Re-ran gates fresh:
+          web `typecheck`/`build` clean, `lint` only the pre-existing `only-export-components`
+          warnings (unchanged from P2.6-era baseline); backend `ruff check`/`ruff format
+          --check`/`mypy lemely`/`lint-imports` all clean; full `pytest` with live Supabase
+          keys exported (`supabase status -o json`, D2.8's method) — 0 failed, coverage
+          86.38% (matches D2.8's exact figure — `test_auth_live.py` now runs for real).
+          3 of the 4 live-skip tests still skipped in the FULL-suite run despite exporting
+          the same keys that make them pass when run in isolation (`pytest
+          tests/test_storage_live.py tests/test_seat_invite_live.py` alone: all pass, 0
+          skip) — an env-var-visibility ordering artifact somewhere in the full suite,
+          NOT a regression from this task (pre-existing pattern, doesn't affect the 0-failure
+          gate or the coverage floor). Confirmed the E2E dir doesn't regress typecheck/build
+          (tsconfig.app.json's `include` is `["src"]` only — `web/e2e/**` is outside it, so
+          no dedicated `tsconfig.playwright.json` was needed, contrary to the plan's
+          speculative concern). Committed this checkpoint (package.json script + playwright
+          config + spec + screenshots) before writing the phase report.
        4. [ ] todo — `reports/phase-2/REPORT.md`: phase summary covering all of P2.1-P2.10,
           explicitly citing the carried-forward honest limitations already recorded inline in
           this checklist (D2.5 theory-accuracy gap at 83.8% vs 95% target; P2.10's MCQ-only
