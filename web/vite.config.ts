@@ -2,10 +2,58 @@ import path from "node:path"
 import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
+import { VitePWA } from "vite-plugin-pwa"
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      registerType: "autoUpdate",
+      // App shell only: precache built JS/CSS/fonts/icons so the SPA loads
+      // offline. Never cache /api/* — student/teacher marks, grades, and
+      // review-queue data are live and must not be served stale, and the
+      // SSE/POST endpoints under it aren't meaningfully cacheable anyway.
+      manifest: {
+        name: "Lemely",
+        short_name: "Lemely",
+        description:
+          "Lemely marks a student's photographed or uploaded past-paper attempt against the official marking scheme with method-mark awareness, returning per-question marks, grade, and weakness topics.",
+        start_url: "/",
+        display: "standalone",
+        // Computed from index.css's student/default theme tokens via a real
+        // oklch->sRGB conversion (culori formatHex): --ink oklch(0.2 0.02 35)
+        // -> #1e1310, --bg oklch(0.97 0.007 40) -> #faf4f2. Both are in the
+        // sRGB gamut, so the conversion is exact (no clipping).
+        theme_color: "#1e1310",
+        background_color: "#faf4f2",
+        icons: [
+          {
+            src: "pwa-192x192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+          {
+            src: "pwa-512x512.png",
+            sizes: "512x512",
+            type: "image/png",
+          },
+          {
+            src: "maskable-icon-512x512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable",
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2}"],
+        navigateFallback: "/index.html",
+        navigateFallbackDenylist: [/^\/api/],
+      },
+    }),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

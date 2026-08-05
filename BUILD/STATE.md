@@ -1023,7 +1023,7 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
        a fetch handler, offline navigation fallback, real icons) and record this as a carried
        environment limitation, same class as the Supabase-stack-down note.
        Two sequential sub-steps (each: dispatch to `implementer`, orchestrator-verify, commit):
-       1. [ ] todo — PWA foundation: add `vite-plugin-pwa` (devDependency); configure in
+       1. [x] done — PWA foundation: add `vite-plugin-pwa` (devDependency); configure in
           `vite.config.ts` with `registerType: 'autoUpdate'`, a real `manifest` block (name
           "Lemely", short_name, description from MISSION §1's value prop, `start_url: "/"`,
           `display: "standalone"`, `theme_color`/`background_color` computed via a real
@@ -1043,6 +1043,34 @@ Each task: update STATE before/after, commit small, run §6 gates before merge.
           manifest JSON (required fields present, icon paths resolve, sizes correct);
           `npm run typecheck`/`npm run lint` clean. Document the Lighthouse-unavailable
           limitation from above instead of claiming a checkmark that wasn't actually run.
+          DONE + VERIFIED (2026-08-05). `vite-plugin-pwa` (v1.3.0) + `sharp` (v0.35.3, icon
+          rasterization only) added as devDependencies. `vite.config.ts`: `VitePWA({
+          registerType: 'autoUpdate', manifest: {...}, workbox: {...} })` — manifest has real
+          name/short_name/description (MISSION §1 value prop, not generic marketing copy),
+          `start_url: "/"`, `display: "standalone"`, `theme_color: "#1e1310"` /
+          `background_color: "#faf4f2"` computed from `index.css`'s student-theme `--ink`/
+          `--bg` oklch tokens. `workbox.navigateFallbackDenylist: [/^\/api/]`, no `/api/*`
+          runtime-caching entry anywhere. 3 real PNG icons generated from `public/favicon.svg`
+          via a throwaway sharp script (192, 512, maskable-512 with an 80%-safe-zone
+          `#faf4f2` background so OS icon masks don't clip the mark) — visually confirmed
+          real brand mark, not a placeholder. `index.html` gained the meta tags
+          `vite-plugin-pwa` doesn't auto-inject (apple-touch-icon, theme-color,
+          apple-mobile-web-app-*). Orchestrator-verified independently, not just trusted:
+          re-ran `npm run build` myself — succeeds, `dist/manifest.webmanifest` fields all
+          real (cat + inspected), `dist/sw.js`/`workbox-*.js` generated, 28-entry/1082 KiB
+          precache, confirmed `api/]` denylist string present in the built SW; independently
+          re-derived the oklch->sRGB math myself (not just trusted the report) and got the
+          IDENTICAL hex values (#1e1310, #faf4f2) — conversion is correct, not eyeballed;
+          re-ran `npm run typecheck`/`npm run lint` — clean, identical pre-existing warning
+          set. `git diff --stat` confirmed only `vite.config.ts`/`index.html`/
+          `package.json`/`package-lock.json` + 3 new icon PNGs changed; backend untouched
+          (`ruff check`/`lint-imports` re-run clean for completeness). `npm audit`: 2
+          pre-existing high-severity `react-router` findings, unrelated (that package wasn't
+          touched by this change) — not fixed here, out of scope, flagged for a dedicated
+          dependency-bump pass. Confirmed (again) no Chromium available — no live Lighthouse
+          run; installability verified by inspection only (manifest/icons/SW/fetch-handler/
+          offline-navigation all present and correct), documented as a carried limitation, not
+          silently claimed as a passing check. Committing on feature/phase-2-core-loop.
        2. [ ] todo — Camera capture UX: a `getUserMedia`-based multi-shot capture component
           (new, e.g. `web/src/components/CameraCapture.tsx`) — live camera preview, "Capture
           page" button per shot (supports multiple pages), a review strip of captured shots
