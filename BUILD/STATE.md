@@ -78,10 +78,20 @@ Starting facts (established 2026-08-06, do not re-derive):
 - Tables already exist from Phase 1: `classes`, `class_enrollments`, `parent_child_links`,
   `review_queue`, `announcements`, `notifications`, `seats`, `school_memberships`.
   Phase 3 builds the *routes + screens* on top; schema changes are additive-only (D1.2/D1.3).
-- `GET /teacher/classes` and `GET /classes/{id}` currently derive a single **implicit** class
-  from history (`lemely/web/routers/teacher.py`, ~1100 LOC). P3.1 replaces them with the real
-  class model. Existing teacher routes: papers upload/extract/grade/list/detail,
-  grading/queue, schemes, quizzes pools/topics/preview/generate, teacher/overview.
+- ~~`GET /teacher/classes` / `GET /classes/{id}` derive an implicit class from history~~ —
+  **done in P3.1**; they now serve the real class model from `lemely/web/routers/classes.py`
+  via `ClassService`. Other teacher routes still in `lemely/web/routers/teacher.py` (~1100
+  LOC): papers upload/extract/grade/list/detail, grading/queue, schemes, quizzes
+  pools/topics/preview/generate, teacher/overview.
+- Reusable seams P3.3+ should build on rather than re-derive: `ClassService.roster()` for
+  "which students am I allowed to see", `lemely.core.at_risk.assess_at_risk()` for at-risk,
+  `lemely.core.at_risk.GRADE_ORDER` for the ladder, and `teacher.py`'s `_mean`/`_student_row`/
+  `_student_delta`/`_AT_RISK_GRADES` helpers.
+- The UI gates write to gitignored `reports/.scratch` (D3.2). Never commit anything under
+  `reports/phase-2/` or `reports/phase-2.5/`; re-baseline explicitly with `LEMELY_REPORT_DIR`.
+- Both P3.1 and P3.2 subagents stalled waiting on background runs instead of reporting.
+  Brief future agents to run `./scripts/check.sh` in the **foreground**, and verify their
+  work yourself regardless (MISSION §5).
 - Frontend teacher portal screens exist (Overview, Classes, Grading, MarkSchemes, Quizzes,
   Review) under `web/src/portals/teacher/`; hooks in `web/src/lib/hooks/useTeacherApi.ts`.
   No parent portal exists at all.
