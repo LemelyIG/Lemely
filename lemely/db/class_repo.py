@@ -8,8 +8,8 @@ Ownership (this is D1.6's deferred row-level teacher tenancy, landed here):
 
 * ``teacher`` sees and mutates **only** classes where ``classes.teacher_id ==
   caller``. A class the caller does not own is a
-  :class:`ClassOwnershipError` (403), never data and never a 404-vs-403
-  existence oracle across the whole platform.
+  :class:`ClassOwnershipError` (403) carrying no data — though the 403-vs-404
+  split does leak whether an id exists at all; see ``user_exists``.
 * ``school_admin`` sees classes whose ``school_id`` is a school they hold a
   ``school_admin`` :class:`~lemely.db.models.orgs.SchoolMembership` for
   (read + roster management — they do not create/update/delete classes,
@@ -181,8 +181,15 @@ class ClassService:
         Deliberately carries no ownership/tenancy check — this exists purely
         so a caller (the teacher-portal student-detail route, P3.3) can
         distinguish "no such user anywhere" (404) from "exists, but outside my
-        classes" (403) without a 404-vs-403 existence oracle collapsing the
-        two into one response.
+        classes" (403) rather than collapsing the two into one response.
+
+        That distinction is, precisely, a user-existence oracle, and this
+        method is the thing that makes it possible. It leaks one bit
+        (does this uuid belong to a user?) to any authenticated staff caller
+        and no data whatsoever. Accepted because ids are random 122-bit
+        UUIDs; see ``teacher_student_detail``'s docstring for the full
+        rationale. Do not widen this method to return anything about the
+        user — the one bit is the entire contract.
         """
         user_uuid = _as_uuid(user_id)
         with self._sessionmaker() as session:

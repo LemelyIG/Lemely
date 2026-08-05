@@ -125,15 +125,31 @@ Starting facts (established 2026-08-06, do not re-derive):
       production — no target-grade column exists until P4's onboarding questionnaire; the
       engine reports it as *not evaluable*, never as a pass. 711 tests (707 passed / 4
       live-only skips), at_risk.py at 100% cov, total 86.11%. All 12 gates green.
-- [ ] doing — **P3.3** Teacher analytics. Per-class and per-student analytics, aggregate/ranked
-      weakness topics (T-04 heatmap data), grade distribution, trend series. Backend.
-      Also closes a tenancy hole P3.1 missed: `/api/teacher/overview` still enumerates
-      `history_store.list_students()` (every student in the store) instead of the caller's
-      own rosters, and labels at-risk rows with the raw `history.student_id`.
+- [x] done — **P3.3** Teacher analytics (D3.4). `lemely/core/class_analytics.py` (pure,
+      injected clock): ranked topic weaknesses, topic×student heatmap, grade distribution,
+      cohort trend, per-paper comparison, engagement stats. Three read-only routes —
+      `GET /api/classes/{id}/analytics` (T-04), `GET /api/teacher/students/{id}` (T-05),
+      `GET /api/teacher/at-risk` (T-06, `?reason=` filter) — all scoped through one
+      `_visible_students()` helper delegating to `ClassService`. **Closed the last
+      cross-tenant leak:** `/api/teacher/overview` was still enumerating
+      `history_store.list_students()` (every student in the store) and naming at-risk rows
+      from the raw uuid; now roster-scoped with real display names, pinned by a two-teacher
+      disjoint-class regression. Also corrected four docstrings across `classes.py`/
+      `teacher.py`/`class_repo.py` that claimed "never a 404-vs-403 existence oracle" while
+      implementing exactly that — behaviour kept, false security claim replaced with an
+      honest one (D3.4). No migration (`alembic check` clean). 752 passed / 4 skipped
+      (live-only) / 87% cov, up from 711 and 86.11%. All 12 gates green.
+      Honest gaps: heatmap no-data cells are `None` not 0%; T-05 integrity signals omitted
+      (no per-question data persisted); T-06 flag-dismissal deferred to P3.4.
 - [ ] todo — **P3.4** Review queue override-and-annotate (T-08). Accept / adjust marks with
       method+accuracy breakdown / note to student; overrides recorded as teacher corrections
       that supersede the AI mark on the student's result; integrity-flag dismissal leaves no
       student-visible record. Backend + tests.
+      Two items P3.3 handed to this task: (a) `_count_review_papers()` in `teacher.py`
+      counts the *whole* in-process `papers_store` with no owner filter — every teacher sees
+      a global "Need your eyes" count; the P2-legacy store has no owner column, so this is a
+      store change not a query change. (b) T-06's dismiss/acknowledge-a-flag-with-a-note
+      action needs a backing table (none exists).
 - [ ] todo — **P3.5** Teacher quiz builder backend (T-09/T-10). Difficulty targeting by expected
       grade, material selection, pool from past-paper/generated questions, assign to class,
       auto-mark, results feed analytics.

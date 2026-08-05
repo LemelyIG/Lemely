@@ -3,6 +3,57 @@
 
 ## Phase 3
 
+### D3.4 — Teacher analytics: the last cross-tenant leak, and calling the 403/404 oracle what it is
+
+- **What:** P3.3 built `lemely/core/class_analytics.py` (pure, injected-clock cohort
+  analytics) plus three read-only routes — `GET /api/classes/{id}/analytics` (T-04),
+  `GET /api/teacher/students/{id}` (T-05), `GET /api/teacher/at-risk` (T-06) — all
+  scoped through a single `_visible_students()` helper (the union of every roster the
+  caller may see, delegating entirely to `ClassService`).
+
+- **The leak P3.1 missed.** `GET /api/teacher/overview` still called
+  `history_store.list_students()` — *every student in the store, regardless of owner* —
+  and labelled at-risk rows with the raw `history.student_id` uuid. P3.1 closed D1.6 on
+  `/teacher/classes` and `/classes/{id}` and the phase was recorded as done, but this
+  third route was never audited because it did not *look* class-shaped. **Lesson for
+  future tenancy work: enumerate the routes that read student data and check each one,
+  rather than checking the routes whose names contain the resource you just fixed.**
+  Now scoped + named from `RosterEntry.display_name`, pinned by a two-teacher
+  disjoint-class regression test.
+
+- **The 403/404 existence oracle — decided, not overlooked.** Both P3.1 and P3.3 return
+  403 for "exists but out of your scope" and 404 for "no such id anywhere". Four
+  docstrings across `classes.py`, `teacher.py` and `class_repo.py` simultaneously
+  described that split *and* claimed it was "never a 404-vs-403 existence oracle" —
+  a security claim flatly contradicted by the code beneath it. The behaviour is
+  correct and stays (it matches the brief and P3.1's precedent); the **claim** was
+  wrong and is now replaced everywhere with an honest statement: this leaks exactly
+  one bit (does this uuid belong to a real user/class?) to an already-authenticated
+  staff caller, no data, and is accepted because ids are random 122-bit UUIDs.
+  `ClassService.user_exists()` is the method that makes it possible and is documented
+  as deliberately never returning anything *about* the user.
+  **Alternative rejected:** collapsing both to 404 (textbook advice). It would make a
+  genuine "you can't see this" indistinguishable from a typo'd id for a legitimate
+  teacher, and buys nothing real against unguessable UUIDs.
+  **How to apply:** never let a docstring assert a security property the function does
+  not have — an inaccurate reassurance is worse than no comment, because it stops the
+  next reviewer from looking.
+
+- **Honest gaps, deliberately not papered over.** (a) Heatmap cells for a student with
+  no data on a ranked topic are `None`, never 0% — persisted `weak_areas` drop
+  zero-loss topics upstream, so a perfect scorer and a non-attempter are
+  indistinguishable in the data; guessing either way would invent precision
+  (UI-spec §1.4). (b) T-05 integrity signals are **omitted as a field**, not stubbed
+  empty: persisted `PaperRecord`s carry no per-question answers for the
+  plagiarism/AI checks to run on. (c) T-06's dismiss/acknowledge-a-flag action is a
+  mutation with no backing table — deferred to P3.4.
+
+- **Found and deferred, not fixed here:** `_count_review_papers()` (the "Need your eyes"
+  stat on `/teacher/overview`) counts the *entire* in-process `papers_store` with no
+  owner filter, so every teacher sees a global review count. The store is the P2-legacy
+  teacher-upload store with no owner column at all, so scoping it is a store change,
+  not a query change — it belongs to P3.4 (review queue), which owns that surface.
+
 ### D3.3 — At-risk flagging: the three MISSION rules, their open parameters resolved, and the one rule that cannot fire until Phase 4
 - **What:** `lemely/core/at_risk.py` — a pure rules module (bottom layer, no I/O, no DB,
   no clock of its own) that takes a `StudentHistory` plus an injected `now` and an

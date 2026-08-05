@@ -1293,12 +1293,19 @@ def teacher_student_detail(
     classes (``_visible_students`` — the union of every roster the caller may
     see, D3.1). A student who exists but is in nobody's class the caller
     owns/administers is a 403; a student id matching no user at all is a 404;
-    a malformed (non-UUID) id is a clean 422. This is checked identically
-    regardless of *why* the student is out of scope, so the response never
-    lets a caller distinguish "not my student" from "no such student" by
-    brute-forcing ids (no 404-vs-403 existence oracle). platform_admin always
-    sees no classes (``ClassService.list_classes``), so this is always 403 for
-    them — no super-role bypass (D1.6/D1.10).
+    a malformed (non-UUID) id is a clean 422. platform_admin always sees no
+    classes (``ClassService.list_classes``), so this is always 403 for them —
+    no super-role bypass (D1.6/D1.10).
+
+    Note honestly what that 403-vs-404 split *is*: a user-existence oracle. An
+    authenticated staff caller who probes an id learns whether it belongs to a
+    real user, even when they may not see that user. This is a deliberate,
+    accepted trade — it matches the class routes' established behaviour
+    (``get_class``), and user ids are random 122-bit UUIDs, so enumerating
+    them is infeasible rather than merely discouraged. It is recorded here
+    because the alternative (collapsing both to 404) is the textbook advice,
+    and a future reader should see that the deviation was a decision, not an
+    oversight. No student *data* crosses a tenancy boundary either way.
 
     **Integrity signals are deliberately omitted from the response**, not
     stubbed as an always-empty field: a persisted :class:`PaperRecord` carries

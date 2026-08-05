@@ -332,9 +332,10 @@ def get_class(
 ) -> ClassDetailDTO:
     """Return mastery, grade distribution, and the roster for one class.
 
-    A class outside the caller's scope is a 403 (never a 404-vs-403 existence
-    oracle); an id that maps to no class anywhere is a 404. A malformed
-    (non-UUID) id is a clean 422, never a 500.
+    A class outside the caller's scope is a 403; an id that maps to no class
+    anywhere is a 404. A malformed (non-UUID) id is a clean 422, never a 500.
+    The 403/404 split is a class-existence oracle by construction — an
+    accepted trade, documented in full on ``teacher_student_detail``.
     """
     try:
         row = service.get_class(auth.user_id, auth.role, class_id)
@@ -364,8 +365,11 @@ def class_analytics(
     the store.
 
     Authz mirrors ``get_class`` exactly: a class outside the caller's scope is
-    a 403 (never a 404-vs-403 existence oracle); an id that maps to no class
-    anywhere is a 404; a malformed (non-UUID) id is a clean 422, never a 500.
+    a 403; an id that maps to no class anywhere is a 404; a malformed
+    (non-UUID) id is a clean 422, never a 500. That split is a class-existence
+    oracle by construction — accepted for the same reason the student-detail
+    route documents at length (random-UUID ids make enumeration infeasible,
+    and no class *data* crosses the boundary either way).
     """
     try:
         service.get_class(auth.user_id, auth.role, class_id)  # existence + scope check only
