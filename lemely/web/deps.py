@@ -30,6 +30,8 @@ from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
+from lemely.db.question_bank_repo import QuestionBankService
+from lemely.db.quiz_repo import QuizService
 from lemely.db.review_repo import ReviewService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
@@ -205,6 +207,34 @@ def get_review_service() -> ReviewService:
 
 
 @lru_cache(maxsize=1)
+def get_question_bank_service() -> QuestionBankService:
+    """Return the process-wide :class:`QuestionBankService` singleton (P3.5 chunk B).
+
+    Wired with the DB session factory alone — the bank's visibility
+    predicate takes caller/school ids as call arguments, so this service
+    needs no per-request context injected here. Tests override this
+    dependency with a service built on a throwaway Postgres database.
+    """
+    return QuestionBankService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_quiz_service() -> QuizService:
+    """Return the process-wide :class:`QuizService` singleton (P3.5 chunk D).
+
+    Wired with the DB session factory and the same :class:`ClassService`/
+    :class:`QuestionBankService` singletons every other teacher-portal
+    service composes, so quiz tenancy and bank visibility never diverge from
+    what the rest of the teacher portal already enforces (D3.1/D3.6 §1.3).
+    Tests override this dependency with a service built on a throwaway
+    Postgres database.
+    """
+    return QuizService(
+        get_sessionmaker(get_settings()), get_class_service(), get_question_bank_service()
+    )
+
+
+@lru_cache(maxsize=1)
 def get_at_risk_ack_service() -> AtRiskAckService:
     """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
 
@@ -334,3 +364,5 @@ def reset_singletons() -> None:
     get_class_service.cache_clear()
     get_review_service.cache_clear()
     get_at_risk_ack_service.cache_clear()
+    get_question_bank_service.cache_clear()
+    get_quiz_service.cache_clear()

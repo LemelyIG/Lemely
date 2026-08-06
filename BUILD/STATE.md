@@ -266,7 +266,7 @@ Starting facts (established 2026-08-06, do not re-derive):
             is a documented default (`explanation`), not an inferred type; safe because
             `correction`/`correction_ai` branch only on MCQ vs non-MCQ and generated
             questions are never MCQ.
-      - [ ] **D** doing (next) — quiz CRUD + draft PATCH + pool-count endpoint + question
+      - [ ] **D** doing — quiz CRUD + draft PATCH + pool-count endpoint + question
             selection; `/quizzes/pools` moves off disk onto the bank (closes the
             process-global every-teacher-sees-every-question leak). All scoped through
             `ClassService`. Build on chunk B's `visible_bank_filter` / `count_by_band` /

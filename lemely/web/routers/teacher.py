@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import json
 import threading
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -63,7 +64,15 @@ from lemely.db.at_risk_repo import (
     AtRiskAckService,
 )
 from lemely.db.class_repo import ClassService, RosterEntry
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import QuestionSource, Role
+from lemely.db.question_bank_repo import (
+    QuestionBankRow,
+    QuestionBankService,
+    generated_questions_to_bank_rows,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 from lemely.db.review_repo import ReviewService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
@@ -77,6 +86,7 @@ from lemely.web.deps import (
     get_class_service,
     get_gemini_client,
     get_history_store,
+    get_question_bank_service,
     get_review_service,
     get_settings,
     require_role,
@@ -169,6 +179,12 @@ _AT_RISK_GRADES = {"D", "E", "U"}
 # reasoning) — not re-imported from there to avoid a classes<->teacher import
 # cycle (``classes.py`` already imports from this module).
 _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
+
+#: Per-band ceiling on how many previously generated bank questions
+#: :func:`_existing_questions` pulls in as reuse material. A bound, not a
+#: page size: the builder only ever needs a few candidates per band, and an
+#: unbounded read would grow with a teacher's whole generation history.
+_REUSE_POOL_PER_BAND = 20
 
 
 # ---------------------------------------------------------------------------
@@ -740,52 +756,109 @@ async def upload_scheme(
 # ---------------------------------------------------------------------------
 
 
-def _existing_questions(settings: Settings) -> list[GeneratedQuestion]:
-    """Load the teacher's existing generated-question pool from disk.
+def _existing_questions(
+    bank_service: QuestionBankService,
+    caller_id: uuid.UUID,
+    school_ids: Sequence[uuid.UUID],
+    subject_code: str,
+) -> list[GeneratedQuestion]:
+    """Load the caller's reusable generated-question pool from the question bank.
 
-    Reads ``output_dir/questions/*.json`` (each a :class:`GeneratedQuiz`). Returns
-    an empty list when the pool directory is absent — the quiz builder then relies
-    purely on generation.
+    Reads the bank behind ``visible_bank_filter`` — platform-shared rows, the
+    caller's own, and their school's — rather than the old
+    ``output_dir/questions/*.json`` scan. Two reasons, both load-bearing:
+
+    * That scan was the same process-global tenancy leak ``/quizzes/pools``
+      was moved off (``docs/quiz-model.md`` §1.3): it fed *every* teacher's
+      generated questions into *every* other teacher's quiz.
+    * Since chunk D, ``/quizzes/generate`` persists to the bank instead of
+      writing those JSON files, so nothing writes that directory any more.
+      Left on disk this would have been a reuse path that silently always
+      returned nothing — every preview re-generating from scratch against
+      the Gemini budget, and the no-key degraded path returning an empty
+      quiz forever, with a docstring still claiming a working pool.
+
+    Only ``generated`` rows are reused: ``past_paper`` and ``teacher_upload``
+    rows are not this builder's material, and blending them here would let a
+    band-less ad-hoc generation quietly serve up past-paper content.
     """
-    pool_dir = settings.paths.output_dir / "questions"
-    if not pool_dir.exists():
-        return []
-    questions: list[GeneratedQuestion] = []
-    for path in sorted(pool_dir.glob("*.json")):
-        try:
-            quiz = GeneratedQuiz.model_validate_json(path.read_text(encoding="utf-8"))
-        except (ValidationError, OSError):
-            continue
-        questions.extend(quiz.questions)
-    return questions
+    rows: list[QuestionBankRow] = []
+    for band in ("foundation", "standard", "challenge"):
+        rows.extend(
+            bank_service.select_questions(
+                caller_id,
+                school_ids,
+                subject_code=subject_code,
+                band=band,
+                count=_REUSE_POOL_PER_BAND,
+                source=QuestionSource.generated,
+            )
+        )
+    return [
+        GeneratedQuestion(
+            topic=row.topic or "",
+            difficulty=row.difficulty,
+            prompt=row.prompt,
+            model_answer=row.model_answer or "",
+            mark_scheme_points=list(row.mark_scheme_points),
+            total_marks=row.total_marks,
+            source_question_ids=list(row.source_question_ids),
+        )
+        for row in rows
+    ]
 
 
 @router.get("/quizzes/pools", response_model=QuizPoolsDTO)
 def quiz_pools(
-    settings: Annotated[Settings, Depends(get_settings)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    class_service: Annotated[ClassService, Depends(get_class_service)],
+    bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
+    subject_code: str = "",
 ) -> QuizPoolsDTO:
-    """Return the quiz question-source pools with live counts.
+    """Return the quiz question-source pools with live counts, from the bank.
 
-    ``past`` counts existing questions carrying source ids (from parsed papers);
-    ``mine`` counts uploaded questions without source ids; ``ai`` is a generative
-    pool (count 0 until questions are generated). All counts are data-backed.
+    Moved off the process-global ``output_dir/questions`` disk scan onto
+    :class:`QuestionBankService` behind ``visible_bank_filter``
+    (``docs/quiz-model.md`` §2/§1.3): the previous scan read every teacher's
+    generated questions indiscriminately (a tenancy leak); this reads only
+    what is platform-shared, the caller's own, or their school's. ``past`` is
+    genuinely ``0`` for a subject with no indexed past-paper rows (D3.7) —
+    ``detail`` then carries the exact honest-degradation wording rather than
+    a plausible-looking zero with no explanation. ``ai`` is now real data
+    too: ``POST /quizzes/generate`` (below) is the only path that ever fills
+    it (D3.7's "the bank ships empty" consequence).
     """
-    existing = _existing_questions(settings)
-    past = sum(1 for q in existing if q.source_question_ids)
-    mine = sum(1 for q in existing if not q.source_question_ids)
+    try:
+        caller_uuid = uuid.UUID(auth.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    resolved_subject = subject_code or _infer_subject_code(history_store) or "0000"
+    school_ids = class_service.member_school_ids(caller_uuid)
+
+    def _pool_total(source: QuestionSource) -> int:
+        counts = bank_service.count_by_band(
+            caller_uuid, school_ids, subject_code=resolved_subject, source=source
+        )
+        return sum(counts.values())
+
+    past = _pool_total(QuestionSource.past_paper)
+    ai = _pool_total(QuestionSource.generated)
+    mine = _pool_total(QuestionSource.teacher_upload)
+
+    past_detail = (
+        f"No past-paper questions indexed for {resolved_subject} yet; use generated questions."
+        if past == 0
+        else "CAIE official, from parsed papers"
+    )
     return QuizPoolsDTO(
         pools=[
-            QuestionPoolDTO(
-                key="past",
-                label="Past papers",
-                detail="CAIE official, from parsed papers",
-                count=past,
-            ),
+            QuestionPoolDTO(key="past", label="Past papers", detail=past_detail, count=past),
             QuestionPoolDTO(
                 key="ai",
                 label="AI-generated",
                 detail="Stylistically matched to CAIE",
-                count=0,
+                count=ai,
             ),
             QuestionPoolDTO(
                 key="mine",
@@ -844,11 +917,14 @@ def _build_quiz(
     settings: Settings,
     history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
+    bank_service: QuestionBankService,
+    caller_id: uuid.UUID,
+    school_ids: Sequence[uuid.UUID],
     *,
     subject_code: str,
     count: int,
     topics: list[str] | None,
-) -> GeneratedQuiz:
+) -> tuple[GeneratedQuiz, set[str]]:
     """Assemble a quiz via :class:`TeacherQuizBuilder` (select-then-generate).
 
     Generation is only attempted when an API key is configured (mirroring
@@ -856,10 +932,24 @@ def _build_quiz(
     question pool alone so the endpoint degrades to a partial result instead of
     raising an unhandled 500 on the default no-key state. A runtime generation
     failure is surfaced as a clean 503, never a 500.
+
+    The reuse pool comes from the question bank scoped to ``caller_id``/
+    ``school_ids`` (see :func:`_existing_questions`), so one teacher's
+    generated questions never reach another's quiz.
+
+    Returns the quiz **and the prompts that came from the reuse pool**. The
+    caller needs the second element to avoid writing a reused question back
+    into the bank it was just read from: now that reuse reads the bank
+    rather than a directory nothing writes, an unfiltered write-back would
+    duplicate every reused question on every generate, inflating the live
+    pool count — the exact failure ``uq_question_bank_paper_question`` exists
+    to prevent on the past-paper side (§1.3), which generated rows (no
+    ``paper_id``) are not covered by.
     """
     aggregate = _aggregate_history_weaknesses(history_store)
-    existing = _existing_questions(settings)
     resolved_subject = subject_code or _infer_subject_code(history_store) or "0000"
+    existing = _existing_questions(bank_service, caller_id, school_ids, resolved_subject)
+    reused_prompts = {q.prompt for q in existing}
 
     if settings.gemini_api_key is None:
         # No generation possible: return whatever the existing pool can supply.
@@ -867,11 +957,14 @@ def _build_quiz(
             QuestionGenerator(gemini_client),
             existing_questions=existing,
         )
-        return builder.build(
-            resolved_subject,
-            WeaknessReport(weak_areas=[]),  # empty → builder skips generation
-            count=count,
-            topics=topics,
+        return (
+            builder.build(
+                resolved_subject,
+                WeaknessReport(weak_areas=[]),  # empty → builder skips generation
+                count=count,
+                topics=topics,
+            ),
+            reused_prompts,
         )
 
     builder = TeacherQuizBuilder(
@@ -879,11 +972,14 @@ def _build_quiz(
         existing_questions=existing,
     )
     try:
-        return builder.build(
-            resolved_subject,
-            aggregate,
-            count=count,
-            topics=topics,
+        return (
+            builder.build(
+                resolved_subject,
+                aggregate,
+                count=count,
+                topics=topics,
+            ),
+            reused_prompts,
         )
     except Exception as exc:  # generation failed at runtime — degrade cleanly.
         raise HTTPException(
@@ -912,18 +1008,33 @@ def _quiz_to_preview(quiz: GeneratedQuiz) -> QuizPreviewDTO:
 
 @router.post("/quizzes/preview", response_model=QuizPreviewDTO)
 def quiz_preview(
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    class_service: Annotated[ClassService, Depends(get_class_service)],
+    bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
     subject_code: str = "",
     count: int = 4,
     topics: list[str] | None = None,
 ) -> QuizPreviewDTO:
-    """Preview a quiz assembled from existing questions, topping up via generation."""
-    quiz = _build_quiz(
+    """Preview a quiz assembled from existing questions, topping up via generation.
+
+    Takes ``auth`` explicitly (the router already requires a staff role) so
+    the reuse pool can be scoped to this caller rather than read from a
+    process-global pool — see :func:`_existing_questions`.
+    """
+    try:
+        caller_uuid = uuid.UUID(auth.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    quiz, _reused = _build_quiz(
         settings,
         history_store,
         gemini_client,
+        bank_service,
+        caller_uuid,
+        class_service.member_school_ids(caller_uuid),
         subject_code=subject_code,
         count=count,
         topics=topics,
@@ -933,26 +1044,50 @@ def quiz_preview(
 
 @router.post("/quizzes/generate", response_model=QuizPreviewDTO)
 def quiz_generate(
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    class_service: Annotated[ClassService, Depends(get_class_service)],
+    bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
     subject_code: str = "",
     count: int = 5,
     topics: list[str] | None = None,
 ) -> QuizPreviewDTO:
-    """Generate a full quiz and persist it to the teacher's question pool on disk."""
-    quiz = _build_quiz(
+    """Generate a full quiz and persist it to the question bank.
+
+    Writes bank rows instead of a JSON file (``docs/quiz-model.md`` §2:
+    "``/quizzes/generate`` writes bank rows instead of a JSON file") —
+    ``source=generated``, ``difficulty_source=declared_by_generator``, and
+    ``owner_id=`` the generating teacher (their generation, their pool per
+    §1.3's visibility tiers), never the ``owner_id=NULL`` the one-shot
+    legacy on-disk importer uses. This is now the *only* path that ever
+    fills the bank's generated pool (D3.7 consequence): the bank ships
+    empty, and stays empty for a subject until a teacher generates here.
+    """
+    try:
+        caller_uuid = uuid.UUID(auth.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    quiz, reused_prompts = _build_quiz(
         settings,
         history_store,
         gemini_client,
+        bank_service,
+        caller_uuid,
+        class_service.member_school_ids(caller_uuid),
         subject_code=subject_code,
         count=count,
         topics=topics,
     )
-    pool_dir = settings.paths.output_dir / "questions"
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    out_path = pool_dir / f"quiz_{now_iso().replace(':', '-')}.json"
-    out_path.write_text(quiz.model_dump_json(indent=2), encoding="utf-8")
+    # Only genuinely new questions are written back: a question the builder
+    # reused *from* the bank is already a row there, and re-inserting it
+    # would inflate the pool count on every generate (see :func:`_build_quiz`).
+    fresh = GeneratedQuiz(
+        subject_code=quiz.subject_code,
+        questions=[q for q in quiz.questions if q.prompt not in reused_prompts],
+    )
+    bank_service.add_questions(generated_questions_to_bank_rows(fresh, owner_id=caller_uuid))
     return _quiz_to_preview(quiz)
 
 

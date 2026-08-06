@@ -175,6 +175,24 @@ class ClassService:
             self._assert_scope(session, caller_uuid, caller_role, cls)
             return self._roster_entries(session, class_uuid)
 
+    def member_school_ids(self, user_id: uuid.UUID | str) -> list[uuid.UUID]:
+        """Return every school id ``user_id`` holds *any* membership in.
+
+        Unlike ``_admin_school_ids`` (``school_admin`` only), this includes
+        both :class:`~lemely.db.models.enums.MembershipRole` values — used by
+        :func:`~lemely.db.question_bank_repo.visible_bank_filter` (D3.6 §1.3),
+        where a plain teacher's own school membership, not just an admin's,
+        is what makes a school-shared question-bank row visible to them.
+        """
+        user_uuid = _as_uuid(user_id)
+        with self._sessionmaker() as session:
+            stmt = (
+                select(SchoolMembership.school_id)
+                .where(SchoolMembership.user_id == user_uuid)
+                .order_by(SchoolMembership.school_id)
+            )
+            return list(session.scalars(stmt).all())
+
     def user_exists(self, user_id: uuid.UUID | str) -> bool:
         """Return whether any user exists with ``user_id``.
 

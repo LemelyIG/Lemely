@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -38,7 +38,9 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.models import User
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import DifficultySource, QuestionDifficulty, QuestionSource, Role
+from lemely.db.models.quizzes import QuestionBank
+from lemely.db.question_bank_repo import QuestionBankService
 from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
@@ -50,6 +52,7 @@ from lemely.web.deps import (
     get_class_service,
     get_gemini_client,
     get_history_store,
+    get_question_bank_service,
     get_settings,
 )
 from lemely.web.routers import teacher
@@ -158,6 +161,11 @@ def class_service(pg_sessionmaker: sessionmaker[Session]) -> ClassService:
 
 
 @pytest.fixture
+def bank_service(pg_sessionmaker: sessionmaker[Session]) -> QuestionBankService:
+    return QuestionBankService(pg_sessionmaker)
+
+
+@pytest.fixture
 def ack_service(
     pg_sessionmaker: sessionmaker[Session], class_service: ClassService
 ) -> AtRiskAckService:
@@ -169,6 +177,44 @@ def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None =
     with sm.begin() as session:
         session.add(User(id=uid, email=f"{uid}@example.com", role=role, display_name=display_name))
     return uid
+
+
+def _seed_bank_row(
+    sm: sessionmaker[Session],
+    *,
+    subject_code: str,
+    difficulty: QuestionDifficulty = QuestionDifficulty.standard,
+    owner_id: uuid.UUID | None = None,
+    source: QuestionSource = QuestionSource.generated,
+    difficulty_source: DifficultySource = DifficultySource.declared_by_generator,
+    prompt: str = "A dummy prompt",
+    source_question_ids: list[str] | None = None,
+) -> uuid.UUID:
+    from lemely.db.models.enums import ExamBoard
+
+    row_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            QuestionBank(
+                id=row_id,
+                board=ExamBoard.caie,
+                subject_code=subject_code,
+                source=source,
+                owner_id=owner_id,
+                difficulty=difficulty,
+                difficulty_source=difficulty_source,
+                question_type="explanation",
+                prompt=prompt,
+                total_marks=2,
+                source_question_ids=source_question_ids or [],
+            )
+        )
+    return row_id
+
+
+def _use_bank_service(client: TestClient, bank_service: QuestionBankService) -> None:
+    """Override ``get_question_bank_service`` on ``client`` for a real-tenancy test."""
+    client.app.dependency_overrides[get_question_bank_service] = lambda: bank_service  # type: ignore[union-attr]
 
 
 def _use_class_service(client: TestClient, class_service: ClassService) -> None:
@@ -569,41 +615,96 @@ def test_schemes_lists_parsed(client: TestClient, settings: Settings) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_quiz_pools_counts_from_disk(client: TestClient, settings: Settings) -> None:
-    """Pool counts reflect real question files on disk (past vs. mine vs. ai)."""
-    from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
+def test_quiz_pools_counts_from_bank(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    bank_service: QuestionBankService,
+) -> None:
+    """Pool counts reflect the bank (past/mine/ai), not the on-disk scan.
 
-    pool_dir = settings.paths.output_dir / "questions"
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    quiz = GeneratedQuiz(
+    D3.6 §2: ``/quizzes/pools`` moved off ``output_dir/questions`` onto
+    :class:`QuestionBankService` (chunk D). ``mine`` counts this teacher's
+    own ``teacher_upload`` rows; ``ai`` counts visible ``generated`` rows
+    (platform-shared here); ``past`` counts visible ``past_paper`` rows.
+    """
+    _use_class_service(client, class_service)
+    _use_bank_service(client, bank_service)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _auth_as(client, teacher, Role.teacher)
+
+    _seed_bank_row(pg_sessionmaker, subject_code="0625", source=QuestionSource.past_paper)
+    _seed_bank_row(
+        pg_sessionmaker,
         subject_code="0625",
-        questions=[
-            GeneratedQuestion(
-                topic="Thermal",
-                difficulty="standard",
-                prompt="Q with source",
-                model_answer="a",
-                mark_scheme_points=["p"],
-                total_marks=2,
-                source_question_ids=["0625/41 Q3"],
-            ),
-            GeneratedQuestion(
-                topic="Waves",
-                difficulty="standard",
-                prompt="Q without source",
-                model_answer="b",
-                mark_scheme_points=["p"],
-                total_marks=1,
-                source_question_ids=[],
-            ),
-        ],
+        source=QuestionSource.teacher_upload,
+        owner_id=teacher,
     )
-    (pool_dir / "pool.json").write_text(quiz.model_dump_json(), encoding="utf-8")
+    _seed_bank_row(pg_sessionmaker, subject_code="0625", source=QuestionSource.generated)
 
-    pools = {p["key"]: p for p in client.get("/api/quizzes/pools").json()["pools"]}
+    pools = {
+        p["key"]: p for p in client.get("/api/quizzes/pools?subject_code=0625").json()["pools"]
+    }
     assert pools["past"]["count"] == 1
     assert pools["mine"]["count"] == 1
-    assert pools["ai"]["count"] == 0
+    assert pools["ai"]["count"] == 1
+
+
+def test_quiz_pools_past_paper_honest_zero_message(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    bank_service: QuestionBankService,
+) -> None:
+    """A subject with no indexed past-paper rows says so in D3.7's exact words."""
+    _use_class_service(client, class_service)
+    _use_bank_service(client, bank_service)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _auth_as(client, teacher, Role.teacher)
+
+    pools = {
+        p["key"]: p
+        for p in client.get("/api/quizzes/pools?subject_code=0625-empty").json()["pools"]
+    }
+    assert pools["past"]["count"] == 0
+    assert "no past-paper questions indexed for 0625-empty" in pools["past"]["detail"].lower()
+    assert "use generated questions" in pools["past"]["detail"].lower()
+
+
+def test_quiz_pools_two_teacher_isolation(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    bank_service: QuestionBankService,
+) -> None:
+    """Teacher A must never see teacher B's uploaded questions in ``mine`` (D3.6 §2).
+
+    The pre-chunk-D behaviour scanned a process-global disk directory, so
+    every teacher saw every other teacher's generated/uploaded questions —
+    the leak this chunk closes. Pinned here with two real teachers.
+    """
+    _use_class_service(client, class_service)
+    _use_bank_service(client, bank_service)
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    _seed_bank_row(
+        pg_sessionmaker,
+        subject_code="0625-iso",
+        source=QuestionSource.teacher_upload,
+        owner_id=teacher_b,
+    )
+
+    _auth_as(client, teacher_a, Role.teacher)
+    pools_a = {
+        p["key"]: p for p in client.get("/api/quizzes/pools?subject_code=0625-iso").json()["pools"]
+    }
+    assert pools_a["mine"]["count"] == 0
+
+    _auth_as(client, teacher_b, Role.teacher)
+    pools_b = {
+        p["key"]: p for p in client.get("/api/quizzes/pools?subject_code=0625-iso").json()["pools"]
+    }
+    assert pools_b["mine"]["count"] == 1
 
 
 def test_quiz_topics_from_history(client: TestClient, history_store: HistoryStore) -> None:
@@ -619,39 +720,84 @@ def test_quiz_topics_from_history(client: TestClient, history_store: HistoryStor
 
 
 def test_quiz_preview_selects_existing_without_gemini(
-    client: TestClient, settings: Settings, gemini_client: MagicMock
+    client: TestClient,
+    gemini_client: MagicMock,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    bank_service: QuestionBankService,
 ) -> None:
-    """Preview selects existing questions and never calls Gemini when count is met."""
-    from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
+    """Preview reuses bank questions and never calls Gemini when count is met.
 
-    pool_dir = settings.paths.output_dir / "questions"
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    quiz = GeneratedQuiz(
+    The reuse pool moved off ``output_dir/questions`` onto the bank in chunk
+    D: nothing writes that directory any more, so a disk-seeded pool would
+    make this test assert a path that can no longer fire in production.
+    """
+    _use_class_service(client, class_service)
+    _use_bank_service(client, bank_service)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _auth_as(client, teacher, Role.teacher)
+
+    _seed_bank_row(
+        pg_sessionmaker,
         subject_code="0625",
-        questions=[
-            GeneratedQuestion(
-                topic="Thermal",
-                difficulty="standard",
-                prompt="Existing Q",
-                model_answer="a",
-                mark_scheme_points=["p"],
-                total_marks=2,
-                source_question_ids=["src1"],
-            ),
-        ],
+        source=QuestionSource.generated,
+        owner_id=teacher,
+        prompt="Existing Q",
+        source_question_ids=["src1"],
     )
-    (pool_dir / "pool.json").write_text(quiz.model_dump_json(), encoding="utf-8")
 
     body = client.post("/api/quizzes/preview?subject_code=0625&count=1").json()
     assert body["subjectCode"] == "0625"
     assert len(body["questions"]) == 1
     assert body["questions"][0]["source"] == "existing"
-    assert body["estMinutes"] == round(1 * 2.5)  # 2 marks, ~2.5 min/question
+    assert body["questions"][0]["prompt"] == "Existing Q"
+    gemini_client.generate_structured.assert_not_called()
+
+
+def test_quiz_preview_reuse_pool_is_scoped_to_the_calling_teacher(
+    client: TestClient,
+    gemini_client: MagicMock,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    bank_service: QuestionBankService,
+) -> None:
+    """One teacher's generated questions never reach another's preview.
+
+    The old ``output_dir/questions`` scan was process-global — every
+    teacher's generated questions fed every other teacher's quiz. Reading
+    the bank behind ``visible_bank_filter`` closes that in the
+    preview/generate path, not just in ``/quizzes/pools``.
+    """
+    _use_class_service(client, class_service)
+    _use_bank_service(client, bank_service)
+    owner = _seed_user(pg_sessionmaker, Role.teacher)
+    intruder = _seed_user(pg_sessionmaker, Role.teacher)
+    _seed_bank_row(
+        pg_sessionmaker,
+        subject_code="0625",
+        source=QuestionSource.generated,
+        owner_id=owner,
+        prompt="Owner's private Q",
+        source_question_ids=["src1"],
+    )
+
+    _auth_as(client, intruder, Role.teacher)
+    body = client.post("/api/quizzes/preview?subject_code=0625&count=1").json()
+    prompts = [q["prompt"] for q in body["questions"]]
+    assert "Owner's private Q" not in prompts
+
+    _auth_as(client, owner, Role.teacher)
+    body = client.post("/api/quizzes/preview?subject_code=0625&count=1").json()
+    assert [q["prompt"] for q in body["questions"]] == ["Owner's private Q"]
     gemini_client.generate_structured.assert_not_called()
 
 
 def test_quiz_preview_without_key_returns_pool_not_500(
-    client: TestClient, settings: Settings, gemini_client: MagicMock
+    client: TestClient,
+    gemini_client: MagicMock,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    bank_service: QuestionBankService,
 ) -> None:
     """With no API key and a shortfall, preview returns pool questions, never 500.
 
@@ -659,25 +805,19 @@ def test_quiz_preview_without_key_returns_pool_not_500(
     attempt generation (which would raise → 500). The one existing question is
     still returned; the AI top-up is silently skipped.
     """
-    from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
+    _use_class_service(client, class_service)
+    _use_bank_service(client, bank_service)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _auth_as(client, teacher, Role.teacher)
 
-    pool_dir = settings.paths.output_dir / "questions"
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    quiz = GeneratedQuiz(
+    _seed_bank_row(
+        pg_sessionmaker,
         subject_code="0625",
-        questions=[
-            GeneratedQuestion(
-                topic="Thermal",
-                difficulty="standard",
-                prompt="Existing Q",
-                model_answer="a",
-                mark_scheme_points=["p"],
-                total_marks=2,
-                source_question_ids=["src1"],
-            ),
-        ],
+        source=QuestionSource.generated,
+        owner_id=teacher,
+        prompt="Existing Q",
+        source_question_ids=["src1"],
     )
-    (pool_dir / "pool.json").write_text(quiz.model_dump_json(), encoding="utf-8")
 
     # count=5 > 1 existing → a shortfall that would normally trigger generation.
     resp = client.post("/api/quizzes/preview?subject_code=0625&count=5")
@@ -689,32 +829,92 @@ def test_quiz_preview_without_key_returns_pool_not_500(
 
 
 def test_quiz_generate_without_key_returns_pool_not_500(
-    client: TestClient, settings: Settings, gemini_client: MagicMock
+    client: TestClient,
+    gemini_client: MagicMock,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    bank_service: QuestionBankService,
 ) -> None:
-    """generate with no key + shortfall returns pool questions (non-500)."""
-    from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
+    """generate with no key + shortfall returns pool questions (non-500).
 
-    pool_dir = settings.paths.output_dir / "questions"
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    quiz = GeneratedQuiz(
+    Also asserts the D3.6/D3.7 write-side change: the resulting question(s)
+    are now persisted to the question bank (``source=generated``,
+    ``difficulty_source=declared_by_generator``, ``owner_id=`` the calling
+    teacher) instead of a JSON file — chunk D moved this write off disk.
+    """
+    _use_class_service(client, class_service)
+    _use_bank_service(client, bank_service)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _auth_as(client, teacher, Role.teacher)
+
+    _seed_bank_row(
+        pg_sessionmaker,
         subject_code="0625",
-        questions=[
-            GeneratedQuestion(
-                topic="Thermal",
-                difficulty="standard",
-                prompt="Existing Q",
-                model_answer="a",
-                mark_scheme_points=["p"],
-                total_marks=2,
-                source_question_ids=["src1"],
-            ),
-        ],
+        source=QuestionSource.generated,
+        owner_id=teacher,
+        prompt="Existing Q",
+        source_question_ids=["src1"],
     )
-    (pool_dir / "pool.json").write_text(quiz.model_dump_json(), encoding="utf-8")
 
     resp = client.post("/api/quizzes/generate?subject_code=0625&count=5")
     assert resp.status_code == 200
     assert len(resp.json()["questions"]) == 1
+    gemini_client.generate_structured.assert_not_called()
+
+    # Still exactly one row: the reused question is not written back into the
+    # bank it was read from. An unfiltered write-back would inflate the live
+    # pool count on every generate.
+    with pg_sessionmaker() as session:
+        rows = session.scalars(
+            select(QuestionBank).where(QuestionBank.subject_code == "0625")
+        ).all()
+    assert len(rows) == 1
+    assert rows[0].source == QuestionSource.generated
+    assert rows[0].difficulty_source == DifficultySource.declared_by_generator
+    assert rows[0].owner_id == teacher
+    assert rows[0].prompt == "Existing Q"
+
+
+def test_quiz_generate_repeated_does_not_duplicate_reused_bank_rows(
+    client: TestClient,
+    gemini_client: MagicMock,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    bank_service: QuestionBankService,
+) -> None:
+    """Generating twice must not grow the bank by re-inserting reused questions.
+
+    Since the reuse pool now reads the bank, a naive "persist every question
+    in the built quiz" would re-insert what it just read, doubling the pool
+    on each call. Generated rows carry no ``paper_id``, so the partial
+    unique index that makes the past-paper ingest idempotent does not cover
+    them — this has to be enforced in the write path.
+    """
+    _use_class_service(client, class_service)
+    _use_bank_service(client, bank_service)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _auth_as(client, teacher, Role.teacher)
+
+    _seed_bank_row(
+        pg_sessionmaker,
+        subject_code="0625",
+        source=QuestionSource.generated,
+        owner_id=teacher,
+        prompt="Existing Q",
+        source_question_ids=["src1"],
+    )
+
+    def _bank_count() -> int:
+        with pg_sessionmaker() as session:
+            return len(
+                session.scalars(
+                    select(QuestionBank).where(QuestionBank.subject_code == "0625")
+                ).all()
+            )
+
+    for _ in range(3):
+        assert client.post("/api/quizzes/generate?subject_code=0625&count=5").status_code == 200
+        assert _bank_count() == 1
     gemini_client.generate_structured.assert_not_called()
 
 

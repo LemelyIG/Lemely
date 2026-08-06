@@ -294,6 +294,39 @@ class QuestionBankService:
             objs = session.scalars(stmt).all()
             return [_to_row(obj) for obj in objs]
 
+    def has_inferred_difficulty(
+        self,
+        caller_id: uuid.UUID | None,
+        school_ids: Sequence[uuid.UUID],
+        *,
+        subject_code: str,
+        topics: Sequence[str] | None = None,
+        source: QuestionSource | None = None,
+    ) -> bool:
+        """Whether the visible, active matching set contains any ``inferred_from_marks`` row.
+
+        Backs the pool-count endpoint's ``difficultyEstimated`` flag (chunk D,
+        ``docs/quiz-model.md`` §2/§3.2): true whenever any past-paper question
+        in the matching set carries an *estimated* (not declared or
+        teacher-set) difficulty band, so the UI can label the count
+        accordingly rather than presenting every band as equally precise.
+
+        Reuses :meth:`_filters` — the exact predicate :meth:`count_by_band`
+        and :meth:`select_questions` build from — so "matching" can never
+        mean something different here than it does for the count itself
+        (§1.3's shared-predicate discipline).
+        """
+        with self._sessionmaker() as session:
+            stmt = (
+                select(QuestionBank.id)
+                .where(
+                    *self._filters(caller_id, school_ids, subject_code, topics, source),
+                    QuestionBank.difficulty_source == DifficultySource.inferred_from_marks,
+                )
+                .limit(1)
+            )
+            return session.scalars(stmt).first() is not None
+
     def _filters(
         self,
         caller_id: uuid.UUID | None,
@@ -360,22 +393,56 @@ class GeneratedImportResult:
     skipped: list[GeneratedImportSkip]
 
 
+def generated_questions_to_bank_rows(
+    quiz: GeneratedQuiz,
+    *,
+    owner_id: uuid.UUID | None = None,
+    school_id: uuid.UUID | None = None,
+) -> list[NewBankQuestion]:
+    """Map a :class:`GeneratedQuiz`'s questions onto :class:`NewBankQuestion` rows.
+
+    The single field-mapping shared by :func:`import_generated_quiz_files`
+    (the one-shot on-disk backfill, ``owner_id=None`` — platform-shared) and
+    ``POST /quizzes/generate`` (chunk D, ``owner_id=`` the generating
+    teacher — ``docs/quiz-model.md`` §2: "their generation, their pool")
+    so the mapping, including :data:`_GENERATED_QUESTION_TYPE`'s documented
+    gap, is expressed exactly once rather than drifting between the two
+    writers.
+    """
+    return [
+        NewBankQuestion(
+            subject_code=quiz.subject_code,
+            source=QuestionSource.generated,
+            difficulty=question.difficulty,
+            difficulty_source=DifficultySource.declared_by_generator,
+            question_type=_GENERATED_QUESTION_TYPE,
+            prompt=question.prompt,
+            total_marks=question.total_marks,
+            topic=question.topic,
+            model_answer=question.model_answer,
+            mark_scheme_points=list(question.mark_scheme_points),
+            source_question_ids=list(question.source_question_ids),
+            owner_id=owner_id,
+            school_id=school_id,
+        )
+        for question in quiz.questions
+    ]
+
+
 def import_generated_quiz_files(
     service: QuestionBankService, directory: Path
 ) -> GeneratedImportResult:
     """Import on-disk ``GeneratedQuiz`` JSON files into the question bank.
 
     Reads every ``*.json`` file in ``directory`` (``output_dir/questions``,
-    where ``lemely.web.routers.teacher.quiz_generate`` already writes
-    them), each expected to deserialise as a
-    :class:`~lemely.core.generation.GeneratedQuiz`. Every
-    :class:`~lemely.core.generation.GeneratedQuestion` in it maps onto a
-    bank row: ``source = generated``, ``difficulty_source =
-    declared_by_generator``, ``owner_id = school_id = None`` (platform-shared
-    — ``docs/quiz-model.md`` §2: "imported once ... with ``owner_id =
-    NULL``"), and ``source_question_ids`` carried through as provenance. See
-    :data:`_GENERATED_QUESTION_TYPE` for the one field this mapping cannot
-    be literally field-for-field about.
+    where ``lemely.web.routers.teacher.quiz_generate`` wrote them **before**
+    chunk D moved that route onto the bank directly — this importer now
+    exists purely to backfill whatever such files already exist on disk from
+    that earlier behaviour), each expected to deserialise as a
+    :class:`~lemely.core.generation.GeneratedQuiz`, mapped onto bank rows by
+    :func:`generated_questions_to_bank_rows` with ``owner_id = school_id =
+    None`` (platform-shared — ``docs/quiz-model.md`` §2: "imported once ...
+    with ``owner_id = NULL``").
 
     A file that is not valid JSON or fails :class:`GeneratedQuiz` validation
     is reported in :attr:`GeneratedImportResult.skipped` and the run
@@ -412,22 +479,7 @@ def import_generated_quiz_files(
             skipped.append(GeneratedImportSkip(path=path, reason=reason))
             log.warning("generated_quiz_import_skipped", path=str(path), reason=reason)
             continue
-        for question in quiz.questions:
-            rows.append(
-                NewBankQuestion(
-                    subject_code=quiz.subject_code,
-                    source=QuestionSource.generated,
-                    difficulty=question.difficulty,
-                    difficulty_source=DifficultySource.declared_by_generator,
-                    question_type=_GENERATED_QUESTION_TYPE,
-                    prompt=question.prompt,
-                    total_marks=question.total_marks,
-                    topic=question.topic,
-                    model_answer=question.model_answer,
-                    mark_scheme_points=list(question.mark_scheme_points),
-                    source_question_ids=list(question.source_question_ids),
-                )
-            )
+        rows.extend(generated_questions_to_bank_rows(quiz))
 
     ids = service.add_questions(rows)
     return GeneratedImportResult(files_read=files_read, rows_created=len(ids), skipped=skipped)
@@ -558,6 +610,7 @@ __all__ = [
     "PastPaperSurveyReport",
     "QuestionBankRow",
     "QuestionBankService",
+    "generated_questions_to_bank_rows",
     "import_generated_quiz_files",
     "survey_past_paper_questions",
     "visible_bank_filter",

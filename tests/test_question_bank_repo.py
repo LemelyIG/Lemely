@@ -33,6 +33,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
 from lemely.core.loose_schemas import MarkScheme as LooseMarkScheme
 from lemely.db.base import Base
 from lemely.db.models import Paper, School, Subject, User
@@ -48,6 +49,7 @@ from lemely.db.models.enums import (
 from lemely.db.models.quizzes import QuestionBank
 from lemely.db.question_bank_repo import (
     QuestionBankService,
+    generated_questions_to_bank_rows,
     import_generated_quiz_files,
     survey_past_paper_questions,
     visible_bank_filter,
@@ -369,6 +371,143 @@ def test_import_generated_quiz_files_missing_directory_is_honest_zero(
     assert result.files_read == 0
     assert result.rows_created == 0
     assert result.skipped == []
+
+
+# ---------------------------------------------------------------------------
+# generated_questions_to_bank_rows (chunk D: /quizzes/generate's write path)
+# ---------------------------------------------------------------------------
+
+
+def test_generated_questions_to_bank_rows_sets_owner_when_given(
+    bank_service: QuestionBankService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The mapping ``/quizzes/generate`` (chunk D) uses: owner_id = the generating
+    teacher, not the ``None`` the one-shot legacy importer passes."""
+    teacher = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(User(id=teacher, email=f"{teacher}@example.com", role=Role.teacher))
+
+    quiz = GeneratedQuiz(
+        subject_code="0625",
+        questions=[
+            GeneratedQuestion(
+                topic="Waves",
+                difficulty="standard",
+                prompt="Explain diffraction.",
+                model_answer="Bending of waves around an obstacle.",
+                mark_scheme_points=["bending", "obstacle"],
+                total_marks=2,
+                source_question_ids=[],
+            )
+        ],
+    )
+
+    rows = generated_questions_to_bank_rows(quiz, owner_id=teacher)
+    assert len(rows) == 1
+    assert rows[0].owner_id == teacher
+    assert rows[0].source == QuestionSource.generated
+    assert rows[0].difficulty_source == DifficultySource.declared_by_generator
+
+    ids = bank_service.add_questions(rows)
+    with pg_sessionmaker() as session:
+        stored = session.get(QuestionBank, ids[0])
+    assert stored is not None
+    assert stored.owner_id == teacher
+
+
+def test_generated_questions_to_bank_rows_defaults_owner_to_none(
+    bank_service: QuestionBankService,
+) -> None:
+    """The legacy one-shot importer's contract: platform-shared, no owner."""
+    quiz = GeneratedQuiz(
+        subject_code="0625",
+        questions=[
+            GeneratedQuestion(
+                topic="Forces",
+                difficulty="foundation",
+                prompt="State Newton's first law.",
+                model_answer="An object stays at rest or in uniform motion unless acted on.",
+                mark_scheme_points=["state the law"],
+                total_marks=1,
+                source_question_ids=[],
+            )
+        ],
+    )
+    rows = generated_questions_to_bank_rows(quiz)
+    assert rows[0].owner_id is None
+    assert rows[0].school_id is None
+
+
+# ---------------------------------------------------------------------------
+# has_inferred_difficulty (chunk D: pool-count's difficultyEstimated flag)
+# ---------------------------------------------------------------------------
+
+
+def test_has_inferred_difficulty_true_only_when_an_estimated_row_matches(
+    pg_sessionmaker: sessionmaker[Session], bank_service: QuestionBankService
+) -> None:
+    subject = "0580-inferred"
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            QuestionBank(
+                board=ExamBoard.caie,
+                subject_code=subject,
+                source=QuestionSource.generated,
+                difficulty=QuestionDifficulty.standard,
+                difficulty_source=DifficultySource.declared_by_generator,
+                question_type="explanation",
+                prompt="Declared-band question",
+                total_marks=1,
+            )
+        )
+    assert bank_service.has_inferred_difficulty(None, [], subject_code=subject) is False
+
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            QuestionBank(
+                board=ExamBoard.caie,
+                subject_code=subject,
+                source=QuestionSource.past_paper,
+                difficulty=QuestionDifficulty.foundation,
+                difficulty_source=DifficultySource.inferred_from_marks,
+                question_type="mcq",
+                prompt="Estimated-band question",
+                total_marks=1,
+            )
+        )
+    assert bank_service.has_inferred_difficulty(None, [], subject_code=subject) is True
+    # Scoped to source, like every other bank query.
+    assert (
+        bank_service.has_inferred_difficulty(
+            None, [], subject_code=subject, source=QuestionSource.generated
+        )
+        is False
+    )
+
+
+def test_has_inferred_difficulty_respects_visibility(
+    pg_sessionmaker: sessionmaker[Session], bank_service: QuestionBankService
+) -> None:
+    subject = "0580-inferred-vis"
+    owner = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(User(id=owner, email=f"{owner}@example.com", role=Role.teacher))
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            QuestionBank(
+                board=ExamBoard.caie,
+                subject_code=subject,
+                source=QuestionSource.past_paper,
+                owner_id=owner,
+                difficulty=QuestionDifficulty.foundation,
+                difficulty_source=DifficultySource.inferred_from_marks,
+                question_type="mcq",
+                prompt="Owner-only estimated question",
+                total_marks=1,
+            )
+        )
+    assert bank_service.has_inferred_difficulty(None, [], subject_code=subject) is False
+    assert bank_service.has_inferred_difficulty(owner, [], subject_code=subject) is True
 
 
 # ---------------------------------------------------------------------------

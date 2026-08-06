@@ -1,0 +1,132 @@
+"""API DTOs for the quiz-builder endpoints (``/api/teacher/quizzes/*``, P3.5 chunk D).
+
+Field names are camelCase to match the frontend contract, mirroring the
+other ``schemas_*.py`` modules. Converters live in
+:mod:`lemely.web.routers.quiz`.
+"""
+
+from __future__ import annotations
+
+from lemely.web.schemas import ApiModel
+
+
+class QuizQuestionDTO(ApiModel):
+    """One materialized quiz question — the frozen snapshot (§1.5).
+
+    ``status`` is ``"included"`` or ``"removed"`` — removed rows are kept,
+    not deleted, and still appear here (the curation audit trail).
+    """
+
+    id: str
+    questionBankId: str | None
+    questionRef: str
+    position: int
+    status: str
+    replacedById: str | None
+    topic: str | None
+    difficulty: str
+    questionType: str
+    prompt: str
+    modelAnswer: str | None
+    markSchemePoints: list[str]
+    mcqOptions: list[str] | None
+    mcqAnswer: str | None
+    totalMarks: int
+
+
+class QuizSummaryDTO(ApiModel):
+    """One quiz, draft or otherwise — the builder's resumable state (§1.4)."""
+
+    id: str
+    subjectCode: str
+    title: str
+    status: str
+    targetGrade: str | None
+    includedTopics: list[str]
+    poolSource: str | None
+    requestedCount: int | None
+    timeLimitMinutes: int | None
+    builderStep: int
+    questionCount: int
+
+
+class QuizListDTO(ApiModel):
+    """Response for ``GET /api/teacher/quizzes``."""
+
+    quizzes: list[QuizSummaryDTO]
+
+
+class QuizDetailDTO(ApiModel):
+    """Response for ``GET /api/teacher/quizzes/{quiz_id}``."""
+
+    quiz: QuizSummaryDTO
+    questions: list[QuizQuestionDTO]
+
+
+class CreateQuizRequestDTO(ApiModel):
+    """Create a draft quiz: entering step 1 of the builder (§1.4)."""
+
+    subjectCode: str
+    title: str
+
+
+class UpdateQuizDraftRequestDTO(ApiModel):
+    """Partial-update a draft quiz's step-2/3/4 fields.
+
+    Every field omitted (``None``) leaves the stored value untouched — see
+    ``QuizService.patch_draft``'s docstring. ``poolSource`` must be one of
+    ``"past_paper"`` / ``"generated"`` / ``"teacher_upload"`` when supplied.
+    """
+
+    title: str | None = None
+    targetGrade: str | None = None
+    includedTopics: list[str] | None = None
+    poolSource: str | None = None
+    requestedCount: int | None = None
+    timeLimitMinutes: int | None = None
+    builderStep: int | None = None
+
+
+class SetQuizStatusRequestDTO(ApiModel):
+    """Transition a quiz's status — one of ``draft``/``assigned``/``closed``/``archived``."""
+
+    status: str
+
+
+class GenerateQuizQuestionsResponseDTO(ApiModel):
+    """Response for ``POST /api/teacher/quizzes/{quiz_id}/questions/generate``."""
+
+    created: list[QuizQuestionDTO]
+    shortfall: dict[str, int] | None = None
+
+
+class QuizPoolCountDTO(ApiModel):
+    """Response for ``GET /api/teacher/quizzes/pool-count`` (§2).
+
+    ``byBand`` is the same allocation the builder will use
+    (:func:`~lemely.core.difficulty.allocate_difficulty`); ``shortfall`` is
+    ``None`` when nothing is short, or a band -> deficit map naming which
+    constraint to loosen. ``message`` carries the exact honest-degradation
+    wording (D3.7/§2) when ``source=past_paper`` matches zero rows for the
+    subject — never a plausible-looking number presented without it.
+    """
+
+    matching: int
+    requested: int
+    byBand: dict[str, int]
+    shortfall: dict[str, int] | None = None
+    difficultyEstimated: bool = False
+    message: str | None = None
+
+
+__all__ = [
+    "CreateQuizRequestDTO",
+    "GenerateQuizQuestionsResponseDTO",
+    "QuizDetailDTO",
+    "QuizListDTO",
+    "QuizPoolCountDTO",
+    "QuizQuestionDTO",
+    "QuizSummaryDTO",
+    "SetQuizStatusRequestDTO",
+    "UpdateQuizDraftRequestDTO",
+]
