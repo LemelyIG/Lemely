@@ -49,6 +49,9 @@ from lemely.core.history import (
     HistoryStoreProtocol,
     PaperRecord,
     StudentHistory,
+    grade_bearing,
+    is_paper,
+    latest_grade_bearing,
     now_iso,
 )
 from lemely.core.loose_schemas import MarkScheme
@@ -357,11 +360,17 @@ def _student_delta(history: StudentHistory) -> float | None:
 
     Data-backed via :func:`compare_performance`; ``None`` when there is no prior
     attempt of the same subject+paper.
+
+    Paper comparison, so grade-bearing records only (``docs/quiz-model.md``
+    §5). Left unfiltered, a quiz would both stand in as "the latest paper" and
+    be matched as a prior attempt of "Paper 1/1" — the synthetic paper number
+    the marking call needed — comparing a topic quiz against a real paper.
     """
-    if not history.records:
+    records = grade_bearing(history.records)
+    if not records:
         return None
-    latest = history.records[-1]
-    prior = StudentHistory(student_id=history.student_id, records=history.records[:-1])
+    latest = records[-1]
+    prior = StudentHistory(student_id=history.student_id, records=records[:-1])
     return compare_performance(prior, latest).percentage_delta
 
 
@@ -1111,23 +1120,33 @@ def _student_row(
     ``display_name``/``student_id`` come from the real class roster (D3.1) —
     ``history.student_id`` is the raw user-id key used to address the history
     store, not a human name.
+
+    The row exists for any student with *any* recorded activity, but every
+    grade/mark field on it reads the latest **grade-bearing** record
+    (``docs/quiz-model.md`` §5) — a quiz has no grade and its mark is out of a
+    quiz total, not a paper total. A student whose only activity is quizzes
+    therefore appears on the roster with an empty grade and no mark, which is
+    the honest reading: they are here, they have done work, and they have no
+    paper grade yet. ``grade=""`` is the same "no grade" value
+    ``DbHistoryStore`` already produces for an attempt with a NULL grade, so
+    this introduces no new state for the frontend to handle.
     """
     if not history.records:
         return None
-    latest = history.records[-1]
-    weakest = min(
-        latest.weak_areas,
-        key=lambda a: a.accuracy,
-        default=None,
+    latest = latest_grade_bearing(history.records)
+    weakest = (
+        min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
+        if latest is not None
+        else None
     )
     return StudentRowDTO(
         name=display_name,
         studentId=student_id,
-        grade=latest.grade,
-        mark=f"{latest.awarded_marks}/{latest.maximum_marks}",
+        grade=latest.grade if latest is not None else "",
+        mark=f"{latest.awarded_marks}/{latest.maximum_marks}" if latest is not None else "",
         delta=_student_delta(history),
         weakTopic=weakest.topic if weakest is not None else None,
-        gradeAtRisk=latest.grade in _AT_RISK_GRADES,
+        gradeAtRisk=latest is not None and latest.grade in _AT_RISK_GRADES,
     )
 
 
@@ -1220,7 +1239,13 @@ def teacher_overview(
         (history_store.load(student_id), entry.display_name)
         for student_id, entry in visible.items()
     ]
-    latest = [history.records[-1] for history, _ in histories if history.records]
+    # Group mean is a percentage claim, so it sees each student's latest
+    # *paper*, never their latest quiz (``docs/quiz-model.md`` §5).
+    latest = [
+        record
+        for history, _ in histories
+        if (record := latest_grade_bearing(history.records)) is not None
+    ]
 
     average = _mean([r.percentage for r in latest])
     needs_review = _count_review_items(review_service, auth)
@@ -1230,7 +1255,14 @@ def teacher_overview(
     stats = [
         StatCardDTO(
             key="Papers graded",
-            value=str(sum(len(history.records) for history, _ in histories)),
+            # Counts papers, so ``is_paper`` (origin only) rather than
+            # ``is_grade_bearing``: a past paper whose grade came back
+            # unreadable is still a paper the student sat and this teacher had
+            # marked, but a quiz is not a paper and must not inflate the count
+            # of a card that says "papers" (``docs/quiz-model.md`` §5).
+            value=str(
+                sum(1 for history, _ in histories for record in history.records if is_paper(record))
+            ),
             unit="papers",
         ),
         StatCardDTO(
@@ -1316,12 +1348,20 @@ def _at_risk(
         assessment = assess_at_risk(history, now=now)
         if not assessment.flags:
             continue
-        latest = history.records[-1]
-        weakest = min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
+        # ``grade``/``weakTopic`` describe the student's standing, which only a
+        # real paper establishes (``docs/quiz-model.md`` §5). A student flagged
+        # purely on inactivity may legitimately have no paper at all — the
+        # flag still stands, the grade is honestly empty.
+        latest = latest_grade_bearing(history.records)
+        weakest = (
+            min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
+            if latest is not None
+            else None
+        )
         at_risk.append(
             AtRiskStudentDTO(
                 name=display_name,
-                grade=latest.grade,
+                grade=latest.grade if latest is not None else "",
                 delta=_student_delta(history),
                 weakTopic=weakest.topic if weakest is not None else None,
                 flags=[
@@ -1425,9 +1465,15 @@ def _subject_predictions(history: StudentHistory) -> list[SubjectPredictionDTO]:
     (``history.records[-1].grade``), not a second, differently-computed
     forecast that could disagree with the at-risk engine's own reading of the
     same data.
+
+    Grade-bearing records only, for exactly that reason: ``at_risk``'s
+    below-target rule filters the same way (``docs/quiz-model.md`` §5), so
+    reading quizzes here would make this screen's predicted grade disagree
+    with the at-risk badge sitting beside it. A subject with only quiz
+    activity produces no row at all rather than a row predicting ``""``.
     """
     by_subject: dict[str, list[PaperRecord]] = {}
-    for record in history.records:
+    for record in grade_bearing(history.records):
         by_subject.setdefault(record.metadata.subject_code, []).append(record)
     return [
         SubjectPredictionDTO(
@@ -1463,14 +1509,22 @@ def _attempt_dto(record: PaperRecord) -> AttemptDTO:
 
 
 def _student_engagement_dto(history: StudentHistory, *, now: datetime) -> StudentEngagementDTO:
-    """This student's own activity stats, purely from ``recorded_at`` values."""
+    """This student's own activity stats, purely from ``recorded_at`` values.
+
+    ``lastActiveAt``/``daysSinceLastSubmission`` read **all** records: a quiz
+    is activity, and ``at_risk``'s inactivity rule counts it the same way
+    (``docs/quiz-model.md`` §5) — a screen that told a teacher a student had
+    been silent for 20 days while the at-risk engine saw them last week would
+    be reporting on a different student than the badge next to it.
+    ``totalPapers`` says *papers*, so it counts only those (``is_paper``).
+    """
     if not history.records:
         return StudentEngagementDTO(totalPapers=0, lastActiveAt=None, daysSinceLastSubmission=None)
     last = history.records[-1]
     last_active = _parse_recorded_at(last.recorded_at)
     days_since = (now - last_active).days if last_active is not None else None
     return StudentEngagementDTO(
-        totalPapers=len(history.records),
+        totalPapers=sum(1 for record in history.records if is_paper(record)),
         lastActiveAt=last.recorded_at,
         daysSinceLastSubmission=days_since,
     )
@@ -1495,11 +1549,18 @@ def _student_detail_dto(
     """
     assessment = assess_at_risk(history, now=now)
     student_id = str(entry.student_id)
+    # ``attempts``/``trend`` are the paper-history table and the percentage
+    # sparkline — both paper-comparison claims, both grade-bearing only
+    # (``docs/quiz-model.md`` §5). A quiz listed here would render as
+    # "0625/11", the synthetic paper identity the marking call needed, against
+    # a percentage out of a quiz total. ``weaknesses`` below is deliberately
+    # unfiltered: a weakness is a weakness whatever revealed it.
+    paper_records = grade_bearing(history.records)
     return StudentDetailDTO(
         studentId=student_id,
         displayName=entry.display_name,
         subjects=_subject_predictions(history),
-        attempts=[_attempt_dto(r) for r in reversed(history.records)],
+        attempts=[_attempt_dto(r) for r in reversed(paper_records)],
         weaknesses=[
             StudentWeaknessDTO(
                 topic=w.topic,
@@ -1512,7 +1573,7 @@ def _student_detail_dto(
         ],
         trend=[
             StudentTrendPointDTO(recordedAt=r.recorded_at, percentage=r.percentage)
-            for r in history.records
+            for r in paper_records
         ],
         isAtRisk=assessment.is_at_risk,
         atRiskFlags=[
@@ -1667,13 +1728,17 @@ def teacher_at_risk_list(
                 (f.acknowledged is not None) == acknowledged for f in flags_dto
             ):
                 continue
+            # Latest *paper* grade, matching the overview's at-risk rows
+            # exactly (``_at_risk`` above); empty when the student has only
+            # quiz activity (``docs/quiz-model.md`` §5).
+            latest_paper = latest_grade_bearing(history.records)
             entries.append(
                 AtRiskListEntryDTO(
                     studentId=student_id,
                     displayName=roster_entry.display_name,
                     classId=str(row.class_id),
                     className=row.name,
-                    grade=history.records[-1].grade,
+                    grade=latest_paper.grade if latest_paper is not None else "",
                     flags=flags_dto,
                 )
             )

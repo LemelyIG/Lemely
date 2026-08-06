@@ -3,6 +3,68 @@
 
 ## Phase 3
 
+### D3.9 — Three predicates, not one: `is_paper` beside `is_grade_bearing` at the web layer (P3.5 chunk F1)
+
+`docs/quiz-model.md` §5 fixes the grade-bearing / topic-bearing split for `lemely/core/`,
+and chunk G wired it there. Chunk G also handed chunk F a list of web-layer sites that
+derive a grade or percentage straight off `history.records` — harmless until a quiz
+attempt exists, live corruption the moment F1 starts writing them. Applying the filter to
+those sites turned up a third category the §5 table does not have a row for.
+
+**The problem.** Three surfaces report a *count* that calls itself papers: the teacher
+overview's "Papers graded" stat card, T-05's `engagement.totalPapers`, and the student
+standings' `paperCount` / per-subject `papers`. Neither existing option is right for them.
+Leaving them unfiltered counts a quiz as a paper. Filtering them on `is_grade_bearing`
+also drops a *real past paper whose grade came back unreadable* — a paper the student
+demonstrably sat and a teacher demonstrably marked — from a count that has nothing to do
+with grades. Chunk G hit the same edge from the other side and recorded it: it kept
+`grade_distribution` on "latest paper, skipped if its grade is unreadable" rather than
+letting an unreadable grade silently promote an older, better one.
+
+**Decision.** Split the predicate in two in `lemely/core/history.py`:
+
+* `is_paper(record)` — origin only. For counting claims that say "papers".
+* `is_grade_bearing(record)` — `is_paper(record) and record.grade in GRADE_ORDER`,
+  unchanged in meaning and now defined in terms of the narrower one. For anything
+  reporting a grade, a percentage, or a paper comparison.
+
+Plus two list helpers, `grade_bearing()` and `latest_grade_bearing()`, because ~15 call
+sites needed "the latest grade-bearing record" and inlining that comprehension at each is
+how one of them eventually gets forgotten.
+
+**Rejected: filter everything on `is_grade_bearing`.** Simpler, one predicate, and wrong
+in the direction that matters — it makes a student's paper count silently disagree with
+the paper list beside it whenever a grade fails to parse.
+
+**Rejected: rename the cards** ("Work marked" instead of "Papers graded"). The labels come
+from `docs/LEMELY_UI_SPEC.md`, which outranks a backend convenience (MISSION §10 authority
+order), and a copy change is not the right fix for a counting bug.
+
+**Third category, applied consistently: activity.** `streakDays`, `lastActiveAt`, and
+`daysSinceLastSubmission` take **all** records, quizzes included — matching
+`at_risk._check_inactivity`, which §5 already puts in the all-records column. This
+deliberately makes T-05 report `totalPapers=1` beside `lastActiveAt` pointing at a quiz.
+That is not an inconsistency: a screen telling a teacher a student had been silent for
+20 days, next to an at-risk badge that saw them yesterday, would be describing a different
+student than the badge next to it.
+
+**Consequences a caller must handle.** A student whose only activity is quizzes now has no
+grade anywhere: `StudentRowDTO.grade`, `AtRiskStudentDTO.grade` and `AtRiskListEntryDTO.grade`
+report `""`. That is the same "no grade" value `DbHistoryStore` already produces for an
+attempt with a NULL grade, so it is not a new state for the frontend — no DTO was made
+nullable for this. The roster row itself is *kept* (they are enrolled and they have done
+work); what is dropped is the grade claim, not the student. `GET /student/subject/{code}`
+404s for a subject the student has only quizzed, because every number on that screen is
+paper-derived; the quiz's evidence still appears on the Overview weak threads and in the
+topic map of any subject they have also papered.
+
+**Not filtered, deliberately:** `aggregate_weaknesses_from_history` and every topic map,
+weakness list, and weak-thread anywhere. A weakness is a weakness whatever revealed it,
+and a topic quiz is precisely the evidence those surfaces exist to show. Pinned by
+`tests/test_web_quiz_origin_filtering.py`, which asserts both halves on the same seeded
+history — 16 of its 18 tests fail against the pre-filter routers, verified by reverting
+them.
+
 ### D3.8 — Quiz "open" has no column: closed vs overdue, and the unassign guard (P3.5 chunk E)
 
 `docs/quiz-model.md` §1.6 gives `quiz_assignments` a `due_at` and a `closes_at` but **no

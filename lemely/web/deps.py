@@ -31,6 +31,7 @@ from lemely.db.device_repo import DeviceRegistry
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
 from lemely.db.question_bank_repo import QuestionBankService
+from lemely.db.quiz_marking_repo import QuizMarkingService
 from lemely.db.quiz_repo import QuizService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
@@ -252,6 +253,23 @@ def get_quiz_taking_service() -> QuizTakingService:
 
 
 @lru_cache(maxsize=1)
+def get_quiz_marking_service() -> QuizMarkingService:
+    """Return the process-wide :class:`QuizMarkingService` singleton (P3.5 chunk F1).
+
+    Wired with the DB session factory, the same :class:`AttemptRepository`
+    singleton the student self-mark route (``lemely.web.routers.student``)
+    persists through — so a quiz mark and a past-paper mark share the exact
+    same writer, ``docs/quiz-model.md`` §4.4 — and the process-wide
+    :class:`~lemely.io.gemini.GeminiClient`. Tests override this dependency
+    with a service built on a throwaway Postgres database and a stubbed
+    Gemini client (never a live call — the budget is hard-capped).
+    """
+    return QuizMarkingService(
+        get_sessionmaker(get_settings()), get_attempt_repo(), get_gemini_client()
+    )
+
+
+@lru_cache(maxsize=1)
 def get_at_risk_ack_service() -> AtRiskAckService:
     """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
 
@@ -384,3 +402,4 @@ def reset_singletons() -> None:
     get_question_bank_service.cache_clear()
     get_quiz_service.cache_clear()
     get_quiz_taking_service.cache_clear()
+    get_quiz_marking_service.cache_clear()

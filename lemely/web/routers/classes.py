@@ -41,7 +41,7 @@ from lemely.core.class_analytics import (
     rank_topic_weaknesses,
     topic_student_heatmap,
 )
-from lemely.core.history import HistoryStoreProtocol, StudentHistory
+from lemely.core.history import HistoryStoreProtocol, StudentHistory, latest_grade_bearing
 from lemely.db.class_repo import (
     ClassError,
     ClassHasNoSchoolError,
@@ -120,11 +120,18 @@ def _raise_for(exc: ClassError) -> NoReturn:
 
 
 def _average_for(student_ids: list[str], history_store: HistoryStoreProtocol) -> float | None:
-    """Mean latest percentage across ``student_ids`` with recorded history."""
+    """Mean latest *paper* percentage across ``student_ids`` with recorded history.
+
+    Grade-bearing records only (``docs/quiz-model.md`` §5): a quiz percentage
+    is not comparable to a paper percentage, so averaging the two would make a
+    class mean move for a reason no teacher could account for. A student with
+    only quiz activity contributes nothing here rather than contributing a
+    number that means something else.
+    """
     latest_pcts = [
-        history.records[-1].percentage
+        record.percentage
         for sid in student_ids
-        if (history := history_store.load(sid)).records
+        if (record := latest_grade_bearing(history_store.load(sid).records)) is not None
     ]
     return _mean(latest_pcts)
 
@@ -157,7 +164,15 @@ def _class_row_to_detail(
     ``None``.
     """
     histories = [(entry, history_store.load(str(entry.student_id))) for entry in roster]
-    latest = [history.records[-1] for _, history in histories if history.records]
+    # Grade distribution and the class mean below are grade/percentage claims,
+    # so they see each student's latest *paper*, never their latest quiz
+    # (``docs/quiz-model.md`` §5). ``all_records`` further down is deliberately
+    # unfiltered — it feeds topic aggregation, where a quiz counts.
+    latest = [
+        record
+        for _, history in histories
+        if (record := latest_grade_bearing(history.records)) is not None
+    ]
 
     rows = [
         student_row

@@ -10,13 +10,14 @@ none of ``modelAnswer``/``markSchemePoints``/``mcqAnswer``.
 
 from __future__ import annotations
 
+import threading
 import uuid
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -31,13 +32,18 @@ from lemely.db.models.enums import (
     QuestionSource,
     Role,
 )
-from lemely.db.models.quizzes import QuestionBank
+from lemely.db.models.quizzes import QuestionBank, QuizSubmission
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_repo import QuizService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
-from lemely.web.deps import AuthContext, get_auth_context, get_quiz_taking_service
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_quiz_marking_service,
+    get_quiz_taking_service,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -116,9 +122,40 @@ def taking_service(
     return QuizTakingService(pg_sessionmaker, class_service)
 
 
+@pytest.fixture
+def marking_service() -> _RecordingMarkingService:
+    return _RecordingMarkingService()
+
+
 def _use_taking_service(client: TestClient, taking_service: QuizTakingService) -> None:
     client.app.dependency_overrides[get_quiz_taking_service] = (  # type: ignore[union-attr]
         lambda: taking_service
+    )
+
+
+class _RecordingMarkingService:
+    """A stand-in for :class:`QuizMarkingService` that never touches Gemini.
+
+    Route-level tests care only that the submit endpoint *triggers* marking
+    and returns without waiting for it — real marking correctness (the
+    synthetic-metadata trap, the review-queue fan-out, ...) is exercised
+    against the real ``QuizMarkingService`` in ``tests/test_quiz_marking_repo.py``.
+    ``event`` lets a test wait deterministically for the background thread to
+    call in, instead of a flaky sleep loop.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[uuid.UUID] = []
+        self.event = threading.Event()
+
+    def mark_submission(self, submission_id: uuid.UUID) -> None:
+        self.calls.append(submission_id)
+        self.event.set()
+
+
+def _use_marking_service(client: TestClient, marking_service: _RecordingMarkingService) -> None:
+    client.app.dependency_overrides[get_quiz_marking_service] = (  # type: ignore[union-attr]
+        lambda: marking_service
     )
 
 
@@ -453,8 +490,10 @@ def test_submit_route_happy_path(
     quiz_service: QuizService,
     class_service: ClassService,
     taking_service: QuizTakingService,
+    marking_service: _RecordingMarkingService,
 ) -> None:
     _use_taking_service(client, taking_service)
+    _use_marking_service(client, marking_service)
     teacher, class_id, assignment_id = _assigned_quiz(quiz_service, class_service, pg_sessionmaker)
     student = _enroll(pg_sessionmaker, class_id)
     _auth_as(client, student, Role.student)
@@ -472,14 +511,51 @@ def test_submit_route_happy_path(
     assert body["unansweredCount"] == 0
 
 
+def test_submit_route_triggers_background_marking(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+    taking_service: QuizTakingService,
+    marking_service: _RecordingMarkingService,
+) -> None:
+    """The response must not block on marking, but marking must still fire.
+
+    Waits on the fake service's ``threading.Event`` (set the moment its
+    ``mark_submission`` is called) rather than a sleep loop — deterministic
+    without coupling the test to how long the background thread takes to
+    schedule.
+    """
+    _use_taking_service(client, taking_service)
+    _use_marking_service(client, marking_service)
+    teacher, class_id, assignment_id = _assigned_quiz(quiz_service, class_service, pg_sessionmaker)
+    student = _enroll(pg_sessionmaker, class_id)
+    _auth_as(client, student, Role.student)
+    client.get(f"/api/student/quizzes/{assignment_id}")
+
+    resp = client.post(f"/api/student/quizzes/{assignment_id}/submit")
+    assert resp.status_code == 200
+    assert marking_service.event.wait(timeout=5.0), "background marking was never triggered"
+    assert len(marking_service.calls) == 1
+
+    with pg_sessionmaker() as session:
+        submission = session.scalars(
+            select(QuizSubmission).where(QuizSubmission.assignment_id == uuid.UUID(assignment_id))
+        ).first()
+        assert submission is not None
+        assert marking_service.calls[0] == submission.id
+
+
 def test_submit_route_second_submit_is_422(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
     quiz_service: QuizService,
     class_service: ClassService,
     taking_service: QuizTakingService,
+    marking_service: _RecordingMarkingService,
 ) -> None:
     _use_taking_service(client, taking_service)
+    _use_marking_service(client, marking_service)
     teacher, class_id, assignment_id = _assigned_quiz(quiz_service, class_service, pg_sessionmaker)
     student = _enroll(pg_sessionmaker, class_id)
     _auth_as(client, student, Role.student)
@@ -496,14 +572,17 @@ def test_submit_route_without_opening_first_is_422(
     quiz_service: QuizService,
     class_service: ClassService,
     taking_service: QuizTakingService,
+    marking_service: _RecordingMarkingService,
 ) -> None:
     _use_taking_service(client, taking_service)
+    _use_marking_service(client, marking_service)
     teacher, class_id, assignment_id = _assigned_quiz(quiz_service, class_service, pg_sessionmaker)
     student = _enroll(pg_sessionmaker, class_id)
     _auth_as(client, student, Role.student)
 
     resp = client.post(f"/api/student/quizzes/{assignment_id}/submit")
     assert resp.status_code == 422
+    assert marking_service.calls == []
 
 
 def test_submit_route_not_enrolled_is_403(
@@ -512,8 +591,10 @@ def test_submit_route_not_enrolled_is_403(
     quiz_service: QuizService,
     class_service: ClassService,
     taking_service: QuizTakingService,
+    marking_service: _RecordingMarkingService,
 ) -> None:
     _use_taking_service(client, taking_service)
+    _use_marking_service(client, marking_service)
     teacher, class_id, assignment_id = _assigned_quiz(quiz_service, class_service, pg_sessionmaker)
     outsider = _seed_user(pg_sessionmaker, Role.student)
     _auth_as(client, outsider, Role.student)

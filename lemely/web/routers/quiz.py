@@ -21,13 +21,16 @@ quizzes").
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError
 from lemely.db.models.enums import QuestionSource, QuizStatus, Role
+from lemely.db.quiz_marking_repo import QuizMarkingError, QuizMarkingService
 from lemely.db.quiz_repo import (
     PoolCountResult,
     QuestionGenerationResult,
@@ -54,6 +57,7 @@ from lemely.db.quiz_taking_repo import (
 )
 from lemely.web.deps import (
     AuthContext,
+    get_quiz_marking_service,
     get_quiz_service,
     get_quiz_taking_service,
     require_role,
@@ -80,6 +84,11 @@ from lemely.web.schemas_quiz import (
     SubmitQuizResponseDTO,
     UpdateQuizDraftRequestDTO,
 )
+
+if TYPE_CHECKING:
+    import uuid
+
+log = structlog.get_logger(__name__)
 
 # Mirrors teacher.py's/classes.py's/review.py's staff triple.
 _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
@@ -337,6 +346,42 @@ def _submit_to_dto(row: SubmitResultRow) -> SubmitQuizResponseDTO:
         answeredCount=row.answered_count,
         unansweredCount=row.unanswered_count,
     )
+
+
+def _trigger_marking_in_background(
+    marking_service: QuizMarkingService, submission_id: uuid.UUID
+) -> None:
+    """Kick off ``QuizMarkingService.mark_submission`` on a background thread.
+
+    Mirrors the ``def run(): ...`` + daemon-thread shape
+    ``lemely.web.sse.bus_event_stream``/``lemely.web.routers.student.student_correct``
+    use for the self-mark pipeline (``docs/quiz-model.md`` §4.2: "a synchronous
+    mark would put a multi-question Gemini round trip inside an HTTP
+    request"). Unlike that SSE case, the submit response is a plain JSON body
+    that must not block on marking at all, so this thread is fire-and-forget
+    — the caller (:func:`submit_student_quiz`) returns immediately after
+    starting it.
+
+    ``mark_submission`` already catches and records its own marking failures
+    (``quiz_submissions.marking_error``, see ``lemely.db.quiz_marking_repo``'s
+    module docstring); the ``except`` clauses here are a last-resort net for
+    state races (``QuizMarkingError``) or a genuine bug, so a daemon thread
+    never fails silently with only a bare stderr traceback.
+    """
+
+    def run() -> None:
+        try:
+            marking_service.mark_submission(submission_id)
+        except QuizMarkingError as exc:
+            log.warning(
+                "quiz_marking_trigger_rejected",
+                submission_id=str(submission_id),
+                error=str(exc),
+            )
+        except Exception:
+            log.exception("quiz_marking_trigger_unexpected_error", submission_id=str(submission_id))
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -672,14 +717,24 @@ def submit_student_quiz(
     assignment_id: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[QuizTakingService, Depends(get_quiz_taking_service)],
+    marking_service: Annotated[QuizMarkingService, Depends(get_quiz_marking_service)],
 ) -> SubmitQuizResponseDTO:
-    """Submit: ``status=submitted``. No marking happens here — that is chunk F."""
+    """Submit: ``status=submitted``, then trigger marking in the background.
+
+    The response returns as soon as the submission is recorded —
+    ``submissionStatus`` is always ``"submitted"`` here, never ``"marked"``.
+    Marking (``QuizMarkingService.mark_submission``, P3.5 chunk F1) runs on a
+    background thread so a multi-question Gemini round trip never sits inside
+    this request (``docs/quiz-model.md`` §4.2); the student sees "being
+    marked" until a later read observes ``marked``.
+    """
     try:
         result = service.submit(auth.user_id, assignment_id)
     except (QuizTakingNotFoundError, QuizTakingOwnershipError, QuizTakingValidationError) as exc:
         _raise_for_taking(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _trigger_marking_in_background(marking_service, result.submission_id)
     return _submit_to_dto(result)
 
 

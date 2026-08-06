@@ -177,8 +177,16 @@ class SubmitResultRow:
     ``attempt_id`` stays NULL on the underlying row and the status stops at
     ``submitted`` — chunk F's ``QuizMarkingService`` is what advances it to
     ``marked``. Nothing here stubs, fakes, or pre-empts that.
+
+    ``submission_id`` (P3.5 chunk F1) is not part of the wire response — the
+    router does not serialise it — it exists so the web layer can hand this
+    submission straight to ``QuizMarkingService.mark_submission`` without a
+    second query to re-derive which row :meth:`QuizTakingService.submit` just
+    located, keeping this repository the single place that resolves
+    "(student, assignment) -> submission".
     """
 
+    submission_id: uuid.UUID
     submission_status: QuizSubmissionStatus
     answered_count: int
     unanswered_count: int
@@ -505,6 +513,7 @@ class QuizTakingService:
                 or 0
             )
             return SubmitResultRow(
+                submission_id=submission.id,
                 submission_status=submission.status,
                 answered_count=int(answered),
                 unanswered_count=total - int(answered),

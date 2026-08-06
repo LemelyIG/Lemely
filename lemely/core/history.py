@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import Field
 
 from lemely.core.schemas import ExamMetadata, StrictModel, WeakArea
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def now_iso() -> str:
@@ -53,6 +56,19 @@ class PaperRecord(StrictModel):
     """
 
 
+def is_paper(record: PaperRecord) -> bool:
+    """Whether this record describes a full past paper at all (P3.5 chunk F1).
+
+    Origin only — it says nothing about whether the record carries a usable
+    grade. Use this for *counting* claims that call themselves papers
+    ("Papers graded", ``totalPapers``, ``paperCount``): a past paper whose
+    grade came back unreadable is still a paper the student sat, but a quiz
+    never is. Use :func:`is_grade_bearing` — which is strictly narrower —
+    for anything that reports a grade, percentage, or paper comparison.
+    """
+    return record.origin == "past_paper"
+
+
 def is_grade_bearing(record: PaperRecord) -> bool:
     """Whether this record may back a grade, boundary, or paper-comparison claim.
 
@@ -66,7 +82,30 @@ def is_grade_bearing(record: PaperRecord) -> bool:
     a weakness whatever revealed it, and a quiz *is* activity. The split of
     which consumer applies it is tabulated in ``docs/quiz-model.md`` §5.
     """
-    return record.origin == "past_paper" and record.grade in GRADE_ORDER
+    return is_paper(record) and record.grade in GRADE_ORDER
+
+
+def grade_bearing(records: Iterable[PaperRecord]) -> list[PaperRecord]:
+    """The :func:`is_grade_bearing` subset of ``records``, order preserved.
+
+    The list form exists because nearly every web-layer consumer needs the
+    *latest* grade-bearing record (``grade_bearing(...)[-1]``) or a mean over
+    the subset, and writing that comprehension inline at each of the ~15 call
+    sites is how one of them eventually gets forgotten (``docs/quiz-model.md``
+    §5 — the split is meant to be one predicate in one place).
+    """
+    return [record for record in records if is_grade_bearing(record)]
+
+
+def latest_grade_bearing(records: Iterable[PaperRecord]) -> PaperRecord | None:
+    """The most recent :func:`is_grade_bearing` record, or ``None`` if there is none.
+
+    ``None`` is a real answer, not an error: a student whose only activity is
+    quizzes has no grade, and every caller must render that as "no grade yet"
+    rather than reaching past the filter for the raw latest record.
+    """
+    kept = grade_bearing(records)
+    return kept[-1] if kept else None
 
 
 # Bump when the persisted StudentHistory shape changes in a non-additive way.

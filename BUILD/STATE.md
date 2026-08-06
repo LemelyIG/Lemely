@@ -324,19 +324,55 @@ Starting facts (established 2026-08-06, do not re-derive):
             Known minor: `list_assigned`/`list_assignments` call `roster`/count per
             assignment (bounded N+1, tens of rows per student/quiz) — fine now, revisit only
             if T-10 makes it hot.
-      - [ ] **F** doing — split into two commits: **F1** marking core (`_persist` refactor,
-            `persist_quiz_correction`, `_recompute_attempt_totals` quiz guard,
-            `QuizMarkingService` + the pure `quiz_question_to_scheme_question` adapter,
-            background marking on submit); **F2** T-10 class-results endpoints.
-            Full scope — `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
-            refactor, review-queue integration, **the `_recompute_attempt_totals` quiz guard**
-            (without it the first teacher override on a quiz invents a grade the marking path
-            never wrote), T-10 endpoints. Second-highest risk — it touches the shared persist
-            path and `ReviewService`, which past-paper marking depends on; any change in the
-            existing past-paper regression suite is a defect in the refactor, not acceptable
-            fallout.
-      Also: `ExamMetadata` forces a synthetic paper_number/variant/session for the marking
-      call — **never persist those**; copying `persist_correction` gets this wrong by default.
+      - [x] **F1** done — marking core. `AttemptRepository._persist` is now the single
+            writer behind both `persist_correction` (past paper, carries a
+            `GradePrediction`, `origin=past_paper`) and the new `persist_quiz_correction`
+            (no prediction, `origin=quiz`) — review-queue fan-out shared, not copied.
+            `lemely/db/quiz_marking_repo.py` (`QuizMarkingService`, injected clock +
+            `IntegritySettings`) adapts each `quiz_questions` row through the pure
+            module-level `quiz_question_to_scheme_question`, runs the **existing**
+            `correct_paper` + `apply_integrity_checks`, and persists through that shared
+            writer, so a low-confidence quiz answer lands in the P3.4 review queue with no
+            new engine and no new prompt. Every DB read happens in one short session that
+            is **closed before** the Gemini round trip; the persist/status writes are fresh
+            short transactions afterwards. `submit` triggers it on a daemon thread
+            (`_trigger_marking_in_background`), so `submissionStatus` is always
+            `"submitted"` on the wire, never `"marked"`. Idempotent (re-marking a `marked`
+            submission is a no-op); a marking failure sets `quiz_submissions.marking_error`
+            and leaves status at `submitted`, while a bad id / wrong state still raises.
+            **The `_recompute_attempt_totals` quiz guard is in** (`review_repo.py`): for
+            `origin=quiz` it recomputes `awarded_marks`/`percentage` but never calls
+            `_boundaries_for` and never writes `grade`/`predicted_grade`/`boundary_source`
+            — without it the first teacher override on a quiz would invent a grade the
+            marking path deliberately never wrote. Paper-level `confidence_band` for a quiz
+            is the *weakest* per-question band, ordered by an explicit table, not enum
+            declaration order. The synthetic `paper_number=1`/`variant=1`/`Specimen`
+            metadata `ExamMetadata` forces on the in-memory marking call is **never
+            persisted** — `_persist` NULLs all four session/paper columns when
+            `prediction is None`.
+            **Chunk G's handed prerequisite is discharged in the same commit (D3.9).** All
+            the web-layer sites that derived a grade/percentage/paper-comparison straight
+            off `history.records` now filter: `classes._average_for` + class-detail
+            `latest`; `teacher._student_row`/`_student_delta`/`_subject_predictions`/
+            `_at_risk`/T-05 `attempts`+`trend`/overview mean; `student._momentum`/
+            `_subjects`/`GET /student/subject/{code}`. A third predicate `is_paper`
+            (origin only) was needed for the three counts that say *papers* — see D3.9 for
+            why `is_grade_bearing` is wrong for those. Topic aggregation, `streakDays`,
+            `lastActiveAt` and every weakness surface stay unfiltered, deliberately.
+            **Do not "tidy" a quiz record back into any of these** — 16 of the 18 tests in
+            `tests/test_web_quiz_origin_filtering.py` were verified to fail against the
+            pre-filter routers.
+            1703 tests (1699 passed / 4 live-only skips), 88.48% cov (from 88.35%).
+            All 12 gates green, `alembic check` clean, no schema change. Zero pre-existing
+            past-paper tests changed — the `_persist` refactor is a proven behavioural
+            no-op on that path.
+      - [ ] **F2** todo — T-10 teacher class-results endpoints (quiz results per class:
+            per-student scores, per-question breakdown, cohort weak topics). Read D3.6
+            §4.6 + D3.8 first. Reuse: `QuizService` (strictly `teacher_id`-scoped, no
+            `school_admin` view — do not invent one), `ClassService.roster`, and the
+            `attempts`/`question_results` rows F1 now writes (`origin=quiz`). Known minor
+            carried from E: `list_assigned`/`list_assignments` call `roster`/count per
+            assignment (bounded N+1) — revisit only if T-10 makes it hot.
 - [ ] todo — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
       subject detail / weaknesses (read-only), notification preferences. Parent authz: only
       own linked children.

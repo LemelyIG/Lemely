@@ -91,7 +91,13 @@ from lemely.core.analytics import (
 )
 from lemely.core.schemas import ExamMetadata
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
-from lemely.db.models.enums import SESSION_MONTH_LABELS, BoundarySource, ReviewReason, ReviewStatus
+from lemely.db.models.enums import (
+    SESSION_MONTH_LABELS,
+    AttemptOrigin,
+    BoundarySource,
+    ReviewReason,
+    ReviewStatus,
+)
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.io.grade_boundaries import GradeBoundaryStore
 
@@ -512,17 +518,31 @@ class ReviewService:
         docstring. ``results`` is every :class:`QuestionResult` on this
         attempt, passed in (not re-queried) so the caller can share one fetch
         with :meth:`_recompute_weakness_records`.
+
+        **The quiz guard (``docs/quiz-model.md`` §4.5, mandatory).** For
+        ``attempt.origin == AttemptOrigin.quiz``, ``grade``/``predicted_grade``/
+        ``boundary_source`` are left exactly as the marking path wrote them
+        (NULL — a quiz has no grade boundaries, ``AttemptRepository._persist``
+        never sets them) and :meth:`_boundaries_for` is never even called.
+        Without this guard, the *first* teacher override on any quiz would
+        invent a grade the marking path deliberately never wrote — precisely
+        the "never invent precision" violation this design spent a column
+        avoiding, arriving through the review-override side door.
+        ``awarded_marks``/``percentage`` are still recomputed from
+        ``effective_marks`` regardless of origin: a quiz mark correction must
+        still show up in the student's/teacher's percentage view.
         """
         awarded = sum(qr.effective_marks for qr in results)
         maximum = attempt.maximum_marks
         percentage = round((awarded / maximum) * 100.0, 2) if maximum else 0.0
-        boundaries, boundary_source = self._boundaries_for(attempt)
-        grade = grade_for_percentage(percentage, boundaries)
         attempt.awarded_marks = awarded
         attempt.percentage = percentage
-        attempt.grade = grade
-        attempt.predicted_grade = grade
-        attempt.boundary_source = boundary_source
+        if attempt.origin != AttemptOrigin.quiz:
+            boundaries, boundary_source = self._boundaries_for(attempt)
+            grade = grade_for_percentage(percentage, boundaries)
+            attempt.grade = grade
+            attempt.predicted_grade = grade
+            attempt.boundary_source = boundary_source
         session.flush()
 
     def _recompute_weakness_records(

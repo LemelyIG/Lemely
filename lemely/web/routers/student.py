@@ -29,7 +29,14 @@ from fastapi.responses import StreamingResponse
 # FastAPI dependency injection and the response converters resolve their
 # annotations at call time, so they cannot move into a TYPE_CHECKING block.
 from lemely.core.analytics import aggregate_weaknesses_from_history
-from lemely.core.history import HistoryStoreProtocol, PaperRecord, StudentHistory
+from lemely.core.history import (
+    HistoryStoreProtocol,
+    PaperRecord,
+    StudentHistory,
+    grade_bearing,
+    is_grade_bearing,
+    is_paper,
+)
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.core.study import StudentProfile, StudyPlan
@@ -147,8 +154,14 @@ def _momentum(records: list[PaperRecord]) -> MomentumDTO:
     Uses the same coordinate transform as ``web/src/portals/student/data.ts``
     (300x88 viewbox, 55-100 % band). Returns empty ``path``/``area`` when fewer
     than two papers exist (a polyline needs at least two points).
+
+    Filters to grade-bearing records itself rather than trusting each caller to
+    do it (``docs/quiz-model.md`` §5) — this is a percentage-over-time claim,
+    and one quiz scoring 40% on a hard topic would draw a dive in a line the
+    student reads as "my papers are getting worse".
     """
-    series = [r.percentage for r in records]
+    papers = grade_bearing(records)
+    series = [r.percentage for r in papers]
     if len(series) < 2:
         return MomentumDTO(path="", area="", lastX="0.0", lastY="88.0", labels=[])
 
@@ -160,7 +173,7 @@ def _momentum(records: list[PaperRecord]) -> MomentumDTO:
 
     path = " ".join(f"{'L' if i else 'M'}{mx(i):.1f} {my(v):.1f}" for i, v in enumerate(series))
     last_i = len(series) - 1
-    labels = [r.recorded_at[:7] for r in records]
+    labels = [r.recorded_at[:7] for r in papers]
     return MomentumDTO(
         path=path,
         area=f"{path} L300 88 L0 88 Z",
@@ -178,10 +191,17 @@ def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
     resolves against real boundaries. ``name``/``detail`` are neutral (history
     records carry no human subject name or teacher), so ``name`` echoes the code
     and ``detail`` reports the paper count only.
+
+    Grade-bearing records only (``docs/quiz-model.md`` §5): every number on
+    this row — the mark-weighted mean, the first-to-last delta, and a grade
+    resolved against real CAIE boundaries — is a paper claim. A quiz total
+    folded into that weighted mean would move a student's forecast grade with
+    marks the boundaries were never drawn for. A subject the student has only
+    quizzed produces no row, which is honest: they have no standing in it yet.
     """
     boundary_store = GradeBoundaryStore()
     by_code: dict[str, list[PaperRecord]] = {}
-    for record in history.records:
+    for record in grade_bearing(history.records):
         by_code.setdefault(record.metadata.subject_code, []).append(record)
 
     rows: list[SubjectRowDTO] = []
@@ -248,12 +268,27 @@ def student_subject(
     Data-backed: per-paper breakdown bars (percentage per recorded paper),
     weighted mean, predicted grade + boundary, per-topic accuracy tiles, and the
     paper-history table. 404 when the student has no papers for ``code``.
+
+    Every number here except the topic map is a paper claim, so the paper
+    surfaces read grade-bearing records only (``docs/quiz-model.md`` §5) —
+    otherwise a quiz would open a bogus "Paper 1" breakdown card (1/1 is the
+    synthetic paper identity the marking call needed) and drag the weighted
+    mean the forecast grade is resolved from. ``topicMap`` deliberately keeps
+    *all* of the subject's records, quizzes included: a weakness is a weakness
+    whatever revealed it, and a topic quiz is precisely the kind of evidence
+    that map exists to show.
     """
     history = history_store.load(auth.user_id)
-    indexed_records = _subject_records(history, code)
-    if not indexed_records:
+    all_subject_records = _subject_records(history, code)
+    if not all_subject_records:
         raise HTTPException(status_code=404, detail=f"No history for subject {code}")
+    # Index-preserving: ``_subject_records`` pairs each record with its position
+    # in the FULL history list, which is how ``GET /student/result/{id}``
+    # addresses it — filtering the pairs keeps those ids correct.
+    indexed_records = [(i, r) for i, r in all_subject_records if is_grade_bearing(r)]
     records = [record for _, record in indexed_records]
+    if not records:
+        raise HTTPException(status_code=404, detail=f"No papers for subject {code}")
 
     boundary_store = GradeBoundaryStore()
     awarded = sum(r.awarded_marks for r in records)
@@ -291,7 +326,7 @@ def student_subject(
             )
         )
 
-    weaknesses = _subject_weaknesses(records)
+    weaknesses = _subject_weaknesses([record for _, record in all_subject_records])
     topic_map = [
         TopicTileDTO(
             name=area.topic,
@@ -838,10 +873,17 @@ def student_standings(
     **Structurally empty:** each subject ``rank`` — cross-student ranking needs a
     cohort the single-student store cannot provide — and the leaderboard boards,
     which are omitted entirely (no peer data source).
+
+    The two counts that say *papers* count papers (``is_paper``, origin only —
+    a paper with an unreadable grade is still a paper the student sat);
+    ``streakDays`` counts **all** activity, quizzes included, because a quiz is
+    a day the student showed up and the whole point of a streak is to say so
+    (``docs/quiz-model.md`` §5).
     """
     history = history_store.load(auth.user_id)
+    papers = [record for record in history.records if is_paper(record)]
     by_code: dict[str, int] = {}
-    for record in history.records:
+    for record in papers:
         by_code[record.metadata.subject_code] = by_code.get(record.metadata.subject_code, 0) + 1
 
     palette: list[VizColor] = ["ok", "t1", "t2", "accent", "warn"]
@@ -859,7 +901,7 @@ def student_standings(
     streak_days = len({r.recorded_at[:10] for r in history.records})
     return StandingsDTO(
         subjectRanks=subject_ranks,
-        paperCount=len(history.records),
+        paperCount=len(papers),
         streakDays=streak_days,
     )
 

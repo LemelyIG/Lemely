@@ -728,3 +728,29 @@ on `QuizTakeQuestionRow`, not by omitting fields at the DTO layer.
 refactor, review-queue integration, the `_recompute_attempt_totals` quiz guard, T-10. Also
 still open: the eight unfiltered web-layer grade/percentage sites chunk G handed to F,
 which must be filtered in the same commit that first writes a quiz attempt.
+
+## 2026-08-06 — P3.5 chunk F1 (quiz marking core + the grade-bearing web-layer filter)
+
+**Did.** F1: `AttemptRepository._persist` extracted as the single writer behind
+`persist_correction` and the new `persist_quiz_correction`; `QuizMarkingService`
+(`lemely/db/quiz_marking_repo.py`) adapting quiz questions through the pure
+`quiz_question_to_scheme_question` into the *existing* `correct_paper`; background marking
+on submit; the mandated `_recompute_attempt_totals` quiz guard. Discharged chunk G's
+handed prerequisite in the same commit — every web-layer grade/percentage site now filters
+(D3.9). 1703 tests (1699 passed / 4 live-only skips), 88.48% cov (from 88.35%), all 12
+gates green, `alembic check` clean.
+
+**Learned.** The §5 grade-bearing/topic-bearing split is two predicates short at the web
+layer: three surfaces report a *count* that says "papers", and `is_grade_bearing` drops a
+real paper whose grade failed to parse from a count that has nothing to do with grades.
+Hence `is_paper` (origin only) beside it — chunk G had hit the same edge from the other
+direction in `grade_distribution` and solved it locally. Also: the new tests passing first
+try was not evidence they worked; reverting the three routers and confirming 16 of 18 fail
+was.
+
+**Watch.** A quiz-only student now reports `grade=""` on three teacher DTOs and 404s on
+`GET /student/subject/{code}`. Both are deliberate (D3.9) and both need the *frontend* to
+render them as "no paper yet" rather than as an error — that lands in P3.7/P3.8, and is
+the one place this filter can still look like a bug.
+
+**Next.** F2 — T-10 teacher class-results endpoints, then P3.6 (parent portal backend).
