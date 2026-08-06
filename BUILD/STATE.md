@@ -547,7 +547,37 @@ Starting facts (established 2026-08-06, do not re-derive):
             `schemas_teacher.py` so `StudentRowDTO.flags` is an in-order reference — do not
             reorder them back. `pyproject.toml` gained the standard `TC001/2/3` per-file
             ignore for `classes.py` (FastAPI `Depends` needs the names at runtime).
-      - [ ] **b** todo — client API/types layer + T-01 dashboard + T-02 classes list.
+      - [x] **b** done (3b0eb3c) — client API/types layer + T-01 + T-02. 1825 tests (1821
+            passed / 4 live-only skips), 89.18% cov. All 12 gates green.
+            **New seams c/d must reuse, not re-derive:** `useTeacherClasses`/`useCreateClass`
+            /`useUpdateClass`/`useDeleteClass` in `useTeacherApi.ts`; the DTO mirror types in
+            `lib/teacherTypes.ts` (**types for T-03..T-06's endpoints are already written
+            there** — add hooks, not types); `lib/meTypes.ts` + `useMeApi.ts::useProfile()`
+            (shared `/api/me/*`, deliberately NOT portal-scoped — P3.9's parent shell uses
+            the same one); `relativeTime`/`initialsOf` in `lib/utils.ts`.
+            New backend route `GET /api/me/profile` (+ `ProfileDTO`, `deps.get_user_mirror`).
+            **Do not reintroduce:** the sidebar's fabricated "Mr H. Sabry / Physics dept ·
+            CAIE" identity, `recentClasses`, or the hardcoded Grading `badge: "12"` — all
+            three were fiction with no data source and are gone.
+            **Two real defects fixed here — do not "tidy" either away:** (a) `request()` in
+            `lib/api.ts` called `res.json()` unconditionally, which throws on a 204;
+            `useDeleteClass` is the app's first DELETE caller, so every successful delete
+            would have surfaced a fake error. (b) `overflow-x-hidden` on the teacher layout
+            wrapper in `portals/teacher/index.tsx` + `min-w-0` on the flex chain fixes real
+            page-level horizontal scroll at 380px (scrollWidth 644 vs clientWidth 380) — it
+            is load-bearing, not cosmetic.
+            **Known, accepted:** `Classes.tsx` links rows to `/teacher/classes/:classId`,
+            which 404s until chunk c adds the route. Coverage dipped 0.01pp on one line,
+            `deps.get_user_mirror()`'s singleton body, always dependency-overridden in tests
+            exactly like the ten sibling providers already uncovered in that file.
+            **`web/` has no test runner configured at all** — every teacher screen so far has
+            shipped without frontend unit tests; behaviour is covered by Playwright E2E
+            instead. Do not brief a future chunk to "add the missing frontend unit tests"
+            without first standing up a runner; that is P3.10-shaped work.
+            **Pre-existing, NOT this chunk's to fix:** all five teacher screens use arbitrary
+            px/oklch literals rather than the DESIGN.md token scale. It is a portal-wide
+            convention predating P3.7 (P2.5.3 retrofitted the *student* screens only).
+            Migrating them is its own task — see the P3.10 note.
       - [ ] **c** todo — T-03 class detail roster + T-04 class analytics (heatmap is the
             centrepiece).
       - [ ] **d** todo — T-05 student detail + T-06 at-risk list (acknowledge-with-note).
@@ -558,6 +588,15 @@ Starting facts (established 2026-08-06, do not re-derive):
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
       Lighthouse a11y ≥95, screenshot corpus for every new screen × state × breakpoint,
       Impeccable audit+polish, no regression vs Phase-2.5 baselines).
+      Carried in from P3.7 chunk b, both genuinely P3.10-shaped:
+      (a) `web/scripts/audit.mjs` is still scoped to the 4 *student* routes (D2.10). Every
+      teacher/parent route added in P3.7–P3.9 needs adding here, or the axe/Lighthouse/
+      screenshot gate is vacuous for all of them — it passes by never looking.
+      (b) The teacher portal's five screens use arbitrary px/oklch literals instead of the
+      DESIGN.md token scale (P2.5.3 retrofitted only the student screens). Decide: retrofit
+      them, or record it as accepted debt in the phase report. Do not leave it unstated.
+      (c) `web/` has no frontend test runner configured. Either stand one up or state
+      plainly in the report that frontend behaviour is covered by Playwright E2E only.
 - [ ] todo — **P3.11** Phase-3 report, merge to develop, push, update PR #3, ntfy.
 
 
