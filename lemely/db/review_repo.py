@@ -39,7 +39,7 @@ every ``PaperRecord``/``StudentHistory`` the student and teacher portals
 already read — sees the corrected total with no changes of its own required.
 
 **The same override also recomputes affected** :class:`~lemely.db.models.attempts.WeaknessRecord`
-**rows**, not just the attempt total. ``history_repo._to_record`` builds
+**rows**, not just the attempt total. ``history_repo.attempt_to_record`` builds
 ``PaperRecord.weak_areas`` straight from ``attempt.weakness_records``, which
 were written at persist time from the AI's marks; leaving them untouched
 after an override would mean a restored question still counts as "lost" on

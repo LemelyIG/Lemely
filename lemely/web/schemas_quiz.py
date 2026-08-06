@@ -8,6 +8,7 @@ other ``schemas_*.py`` modules. Converters live in
 from __future__ import annotations
 
 from lemely.web.schemas import ApiModel
+from lemely.web.schemas_analytics import TopicWeaknessDTO
 
 
 class QuizQuestionDTO(ApiModel):
@@ -137,6 +138,104 @@ class QuizAssignmentListDTO(ApiModel):
     assignments: list[QuizAssignmentDTO]
 
 
+class QuizCompletionDTO(ApiModel):
+    """T-10 completion against the **live** roster (§4.6 rule (c)).
+
+    ``completionRate`` is 0.0-1.0, or ``null`` for an empty roster — 0/0 is
+    not 0%, and rendering it as 0% would read as "nobody has done it" when
+    the truth is "there is nobody to do it".
+    ``offRosterSubmissionCount`` is work handed in by students who have since
+    left the class: excluded from every panel (the denominator is the live
+    roster) but reported so it does not silently vanish.
+    """
+
+    rosterSize: int
+    completedCount: int
+    completionRate: float | None
+    statusCounts: dict[str, int]
+    offRosterSubmissionCount: int
+
+
+class QuizScoreBucketDTO(ApiModel):
+    """One ten-point band of the score distribution.
+
+    Deliberately a *percentage* distribution, not a grade distribution:
+    quizzes have no grade boundaries to bucket by (§4.6 rule (b), D3.9).
+    """
+
+    lower: int
+    upper: int
+    studentCount: int
+
+
+class QuizQuestionAnalysisDTO(ApiModel):
+    """One question's class-wide performance, in the quiz's display order.
+
+    Every mark is an ``effective_marks`` sum, so a teacher's override shows
+    here exactly as it shows on the student's screen (§4.6 rule (a)).
+    ``averageMarks``/``accuracy`` are ``null`` — never 0 — when nobody has
+    been marked on the question yet.
+    """
+
+    questionRef: str
+    position: int
+    prompt: str
+    topic: str | None
+    difficulty: str
+    totalMarks: int
+    answeredCount: int
+    averageMarks: float | None
+    accuracy: float | None
+    fullMarksCount: int
+    zeroMarksCount: int
+    needsReviewCount: int
+    overriddenCount: int
+
+
+class QuizStudentResultDTO(ApiModel):
+    """One roster student's result, whether or not they have submitted.
+
+    Mark fields are ``null`` until marking lands; ``markingError`` is set when
+    marking failed, so a ``submitted``-but-unmarked row is visibly explained
+    rather than silently empty.
+    """
+
+    studentId: str
+    displayName: str
+    status: str
+    submittedAt: str | None
+    markedAt: str | None
+    awardedMarks: int | None
+    maximumMarks: int | None
+    percentage: float | None
+    confidenceBand: str | None
+    needsTeacherReview: bool
+    marksByQuestion: dict[str, int]
+    markingError: str | None
+
+
+class QuizAssignmentResultsDTO(ApiModel):
+    """Response for ``GET /api/teacher/quizzes/{quiz_id}/assignments/{id}/results`` (T-10).
+
+    Aggregated per **assignment** — one class's results — never per quiz
+    (``docs/quiz-model.md`` §1.6): a quiz assigned to two classes has two sets
+    of results, and averaging them would describe neither cohort.
+    """
+
+    assignment: QuizAssignmentDTO
+    quizTitle: str
+    subjectCode: str
+    questionCount: int
+    totalMarks: int
+    completion: QuizCompletionDTO
+    averagePercentage: float | None
+    medianPercentage: float | None
+    scoreDistribution: list[QuizScoreBucketDTO]
+    questionAnalysis: list[QuizQuestionAnalysisDTO]
+    students: list[QuizStudentResultDTO]
+    topicWeaknesses: list[TopicWeaknessDTO]
+
+
 class StudentQuizListItemDTO(ApiModel):
     """One row of ``GET /api/student/quizzes``."""
 
@@ -263,10 +362,15 @@ __all__ = [
     "GenerateQuizQuestionsResponseDTO",
     "QuizAssignmentDTO",
     "QuizAssignmentListDTO",
+    "QuizAssignmentResultsDTO",
+    "QuizCompletionDTO",
     "QuizDetailDTO",
     "QuizListDTO",
     "QuizPoolCountDTO",
+    "QuizQuestionAnalysisDTO",
     "QuizQuestionDTO",
+    "QuizScoreBucketDTO",
+    "QuizStudentResultDTO",
     "QuizSummaryDTO",
     "SaveAnswerRequestDTO",
     "SaveAnswerResponseDTO",

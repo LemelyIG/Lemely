@@ -33,6 +33,7 @@ from lemely.db.models.enums import Role
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_marking_repo import QuizMarkingService
 from lemely.db.quiz_repo import QuizService
+from lemely.db.quiz_results_repo import QuizResultsService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
 from lemely.db.seat_repo import SeatService
@@ -233,6 +234,23 @@ def get_quiz_service() -> QuizService:
     """
     return QuizService(
         get_sessionmaker(get_settings()), get_class_service(), get_question_bank_service()
+    )
+
+
+@lru_cache(maxsize=1)
+def get_quiz_results_service() -> QuizResultsService:
+    """Return the process-wide :class:`QuizResultsService` singleton (P3.5 chunk F2).
+
+    Wired with the same :class:`QuizService` and :class:`ClassService`
+    singletons every other teacher-portal route composes: T-10's ownership
+    decision *is* :meth:`~lemely.db.quiz_repo.QuizService.get_quiz`'s and its
+    roster *is* :meth:`~lemely.db.class_repo.ClassService.roster`'s, so a
+    results view can never be reachable by a caller who could not already
+    open the quiz and the class. Tests override this dependency with a
+    service built on a throwaway Postgres database.
+    """
+    return QuizResultsService(
+        get_sessionmaker(get_settings()), get_quiz_service(), get_class_service()
     )
 
 

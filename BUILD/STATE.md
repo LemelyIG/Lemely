@@ -176,7 +176,9 @@ Starting facts (established 2026-08-06, do not re-derive):
       Known test-only wart: `_use_class_service` in `tests/test_web_teacher.py` reads
       `class_service._sessionmaker` to auto-wire the ack service for 15+ pre-existing
       tests rather than changing every call site. Documented in the helper's docstring.
-- [ ] doing — **P3.5** Teacher quiz builder backend (T-09/T-10). **Design is DONE and fixed:
+- [x] done — **P3.5** Teacher quiz builder backend (T-09/T-10). All eight chunks
+      (C, A, G, B, D, E, F1, F2) landed; see each chunk line below for what it built and
+      what must not be reintroduced. **Design is DONE and fixed:
       `docs/quiz-model.md` (822 lines) + D3.6. Do not redesign — implement it.** There was no
       quiz persistence of any kind before this; the existing `/quizzes/*` routes build an
       ephemeral preview and save nothing.
@@ -366,37 +368,41 @@ Starting facts (established 2026-08-06, do not re-derive):
             All 12 gates green, `alembic check` clean, no schema change. Zero pre-existing
             past-paper tests changed — the `_persist` refactor is a proven behavioural
             no-op on that path.
-      - [ ] **F2** todo — T-10 teacher class-results endpoints. **Aggregates per
-            *assignment* (one class's results), never per quiz** (`docs/quiz-model.md`
-            §1.6). The five panels and their sources are fixed by §4.6 — do not invent a
-            sixth aggregation path:
-            | panel | source |
-            |---|---|
-            | Completion rate | `quiz_submissions.status` vs the **live** `ClassService` roster |
-            | Score distribution | `attempts.percentage` of the submissions' attempts |
-            | Per-question analysis | `question_results` grouped by `question_id` (= `question_ref`) joined to `quiz_questions` for prompt/topic/difficulty |
-            | Per-student results | `attempts` + `question_results.effective_marks` |
-            | Class-wide weaknesses | `rank_topic_weaknesses` over the same `WeaknessRecord` rows T-04 already reads |
-            Non-negotiables from §4.6, each of which a naive implementation gets wrong:
-            (a) per-question analysis aggregates **`effective_marks`, never
-            `awarded_marks`** — P3.4's single-accessor rule, or a teacher's own override
-            shows on the student's screen but not in the class view;
-            (b) score distribution is a **percentage** distribution, not a grade
-            distribution — there are no boundaries to bucket by, and F1 leaves
-            `attempts.grade` NULL for quizzes on purpose;
-            (c) completion rate is
-            `count(status in (submitted, marked)) / count(live roster)` — submissions are
-            created lazily, so a pre-seeded or snapshotted denominator drifts the moment a
-            student joins or leaves.
-            Reuse: `QuizService` (strictly `teacher_id`-scoped — **no `school_admin` view,
-            do not invent one**), `ClassService.roster`, and the `origin=quiz`
-            `attempts`/`question_results`/`weakness_records` rows F1 now writes. Answer
-            leakage is still excluded structurally (D3.8) — this is a teacher surface, so
-            model answers are legitimate here, but do not reach for them via a
-            student-facing DTO. Known minor carried from E: `list_assigned`/
-            `list_assignments` call `roster`/count per assignment (bounded N+1) — revisit
-            only if T-10 makes it hot.
-- [ ] todo — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
+      - [x] **F2** done — T-10 class results. `lemely/db/quiz_results_repo.py`
+            (`QuizResultsService`, 100% cov) + one route, `GET
+            /api/teacher/quizzes/{quiz_id}/assignments/{assignment_id}/results`.
+            **Per assignment, never per quiz** (§1.6). All five §4.6 panels are pure
+            projections over *one* load of that assignment's submissions and their
+            attempts, so no two panels can disagree and there is no sixth aggregation
+            path. The three §4.6 traps each have a test that fails against the naive
+            version (verified by inverting the code, not assumed): (a) per-question
+            analysis sums **`effective_marks`** — proven by flipping it to
+            `awarded_marks` and watching
+            `test_per_question_analysis_uses_effective_marks_not_awarded` fail; (b)
+            score distribution is ten **percentage** bands, top band inclusive of 100;
+            (c) the roster is re-read live on every call, so a student who joins after
+            assignment moves the denominator immediately.
+            Reused, never re-derived: ownership is `QuizService.get_quiz` (which also
+            supplies the materialized question snapshot), scope is
+            `ClassService.roster`, ranking is T-04's own `rank_topic_weaknesses`.
+            `history_repo._to_record` → **`attempt_to_record`** (made public) is the
+            single attempt→`PaperRecord` projection feeding it — a second projection
+            here would have silently dropped the `origin` round-trip chunk G added.
+            Still strictly `teacher_id`-scoped: `caller_role` reaches `ClassService`
+            only, pinned by `test_school_admin_has_no_view_into_a_quizs_results`.
+            **New decision D3.10** — §4.6 fixes the completion *denominator* as the live
+            roster but is silent on a student who submits and is then removed, where the
+            literal numerator can exceed 100%. Every panel is roster-scoped and the
+            excluded work is reported as `offRosterSubmissionCount` rather than silently
+            dropped. Do not "simplify" this away.
+            Also: `pyproject.toml` gained `TC001/2/3` per-file ignores for
+            `lemely/web/routers/quiz.py` + `schemas_quiz.py` — the same exemption every
+            other web DTO/DI module already carries (FastAPI + pydantic need those names
+            at runtime); it only fired now because the new import statement's members are
+            *all* annotation-only, which is when ruff will move a whole statement.
+            1721 tests (1717 passed / 4 live-only skips), 88.75% cov (from 88.48%).
+            All 12 gates green, `alembic check` clean, no schema change.
+- [ ] next — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
       subject detail / weaknesses (read-only), notification preferences. Parent authz: only
       own linked children.
 - [ ] todo — **P3.7** Teacher frontend T-01..T-06 (dashboard, classes list, class detail roster,

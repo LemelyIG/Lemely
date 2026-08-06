@@ -44,6 +44,7 @@ from lemely.db.quiz_repo import (
     QuizService,
     QuizValidationError,
 )
+from lemely.db.quiz_results_repo import QuizAssignmentResults, QuizResultsService
 from lemely.db.quiz_taking_repo import (
     AssignedQuizRow,
     QuizAnswerRow,
@@ -58,20 +59,27 @@ from lemely.db.quiz_taking_repo import (
 from lemely.web.deps import (
     AuthContext,
     get_quiz_marking_service,
+    get_quiz_results_service,
     get_quiz_service,
     get_quiz_taking_service,
     require_role,
 )
+from lemely.web.schemas_analytics import TopicWeaknessDTO
 from lemely.web.schemas_quiz import (
     CreateQuizAssignmentRequestDTO,
     CreateQuizRequestDTO,
     GenerateQuizQuestionsResponseDTO,
     QuizAssignmentDTO,
     QuizAssignmentListDTO,
+    QuizAssignmentResultsDTO,
+    QuizCompletionDTO,
     QuizDetailDTO,
     QuizListDTO,
     QuizPoolCountDTO,
+    QuizQuestionAnalysisDTO,
     QuizQuestionDTO,
+    QuizScoreBucketDTO,
+    QuizStudentResultDTO,
     QuizSummaryDTO,
     SaveAnswerRequestDTO,
     SaveAnswerResponseDTO,
@@ -274,6 +282,82 @@ def _assignment_to_dto(row: QuizAssignmentRow) -> QuizAssignmentDTO:
         closesAt=row.closes_at.isoformat() if row.closes_at is not None else None,
         rosterSize=row.roster_size,
         submissionCounts=dict(row.submission_counts),
+    )
+
+
+def _results_to_dto(results: QuizAssignmentResults) -> QuizAssignmentResultsDTO:
+    """Project T-10's five panels onto the wire format (§4.6).
+
+    ``TopicWeaknessDTO`` is reused verbatim from ``schemas_analytics`` rather
+    than re-declared: the class-wide weaknesses panel is the same
+    :func:`~lemely.core.class_analytics.rank_topic_weaknesses` output T-04
+    renders, so the frontend renders it with the same component.
+    """
+    completion = results.completion
+    return QuizAssignmentResultsDTO(
+        assignment=_assignment_to_dto(results.assignment),
+        quizTitle=results.quiz_title,
+        subjectCode=results.subject_code,
+        questionCount=results.question_count,
+        totalMarks=results.total_marks,
+        completion=QuizCompletionDTO(
+            rosterSize=completion.roster_size,
+            completedCount=completion.completed_count,
+            completionRate=completion.completion_rate,
+            statusCounts=dict(completion.status_counts),
+            offRosterSubmissionCount=completion.off_roster_submission_count,
+        ),
+        averagePercentage=results.average_percentage,
+        medianPercentage=results.median_percentage,
+        scoreDistribution=[
+            QuizScoreBucketDTO(lower=b.lower, upper=b.upper, studentCount=b.student_count)
+            for b in results.score_distribution
+        ],
+        questionAnalysis=[
+            QuizQuestionAnalysisDTO(
+                questionRef=q.question_ref,
+                position=q.position,
+                prompt=q.prompt,
+                topic=q.topic,
+                difficulty=q.difficulty,
+                totalMarks=q.total_marks,
+                answeredCount=q.answered_count,
+                averageMarks=q.average_marks,
+                accuracy=q.accuracy,
+                fullMarksCount=q.full_marks_count,
+                zeroMarksCount=q.zero_marks_count,
+                needsReviewCount=q.needs_review_count,
+                overriddenCount=q.overridden_count,
+            )
+            for q in results.question_analysis
+        ],
+        students=[
+            QuizStudentResultDTO(
+                studentId=str(s.student_id),
+                displayName=s.display_name,
+                status=s.status.value,
+                submittedAt=s.submitted_at.isoformat() if s.submitted_at is not None else None,
+                markedAt=s.marked_at.isoformat() if s.marked_at is not None else None,
+                awardedMarks=s.awarded_marks,
+                maximumMarks=s.maximum_marks,
+                percentage=s.percentage,
+                confidenceBand=(s.confidence_band.value if s.confidence_band is not None else None),
+                needsTeacherReview=s.needs_teacher_review,
+                marksByQuestion=dict(s.marks_by_question),
+                markingError=s.marking_error,
+            )
+            for s in results.students
+        ],
+        topicWeaknesses=[
+            TopicWeaknessDTO(
+                topic=w.topic,
+                lostMarks=w.lost_marks,
+                maximumMarks=w.maximum_marks,
+                accuracy=w.accuracy,
+                studentIds=w.student_ids,
+            )
+            for w in results.topic_weaknesses
+        ],
     )
 
 
@@ -645,6 +729,44 @@ def delete_quiz_assignment(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Class results (T-10, §4.6, P3.5 chunk F2).
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{quiz_id}/assignments/{assignment_id}/results",
+    response_model=QuizAssignmentResultsDTO,
+)
+def quiz_assignment_results(
+    quiz_id: str,
+    assignment_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[QuizResultsService, Depends(get_quiz_results_service)],
+) -> QuizAssignmentResultsDTO:
+    """Return T-10 class results for one **assignment** (§1.6 — never per quiz).
+
+    Five panels, all derived from one load of this assignment's submissions
+    and their attempts (§4.6): completion against the live roster, a
+    *percentage* score distribution (quizzes have no boundaries to bucket by,
+    D3.9), per-question analysis over ``effective_marks``, per-student
+    results, and the class-wide topic weaknesses T-04 already ranks.
+
+    404 when the quiz does not exist or the assignment is not on it; 403 when
+    the quiz is not the caller's — quiz ownership stays strictly
+    ``teacher_id``-scoped, with no ``school_admin`` view.
+    """
+    try:
+        results = service.assignment_results(auth.user_id, auth.role, quiz_id, assignment_id)
+    except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:
+        _raise_for(exc)
+    except (ClassNotFoundError, ClassOwnershipError) as exc:
+        _raise_for_class(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _results_to_dto(results)
 
 
 # ---------------------------------------------------------------------------

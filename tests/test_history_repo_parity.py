@@ -199,7 +199,7 @@ def test_migrate_json_history_moves_records(
 def test_origin_round_trips_through_the_db_store(pg_sessionmaker: sessionmaker[Session]) -> None:
     """A quiz record must not read back as a past-paper one.
 
-    ``_to_attempt`` writes ``attempts.origin`` and ``_to_record`` reads it
+    ``_to_attempt`` writes ``attempts.origin`` and ``attempt_to_record`` reads it
     back; if either side is dropped the record silently re-enters the
     grade-bearing analytics that ``origin`` exists to keep it out of, and
     nothing else in the system would notice.

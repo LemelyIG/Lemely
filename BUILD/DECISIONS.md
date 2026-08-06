@@ -3,6 +3,42 @@
 
 ## Phase 3
 
+### D3.10 — T-10 scopes every panel to the live roster, and *reports* the off-roster remainder (P3.5 chunk F2)
+
+`docs/quiz-model.md` §4.6 rule (c) fixes the completion denominator as the **live**
+`ClassService` roster, because submissions are created lazily and a snapshotted denominator
+drifts the moment a student joins or leaves. It does not say what the *numerator* does when
+a student submits and is then removed from the class — and that case is not hypothetical:
+`ClassService.remove_student` exists, and enrolment is mutable by design.
+
+Taken literally ("count(status in (submitted, marked))" over all submissions, divided by the
+live roster) the rate can exceed 100%: five submissions, four students. Three options were
+on the table:
+
+1. **Roster-scope the numerator only.** Simple, never exceeds 1.0, but a departed
+   student's marks vanish from the class average, the score distribution and the
+   per-question analysis with no trace — a teacher who remembers marking that work sees it
+   silently gone and has no way to tell whether it was dropped or never existed.
+2. **Include off-roster submissions everywhere.** Keeps the marks, but breaks rule (c)'s
+   denominator: the completion rate stops being a rate, and "per-student results" grows
+   rows for students the teacher can no longer open (`ClassService.roster` is also the
+   tenancy seam — a removed student is out of scope, so showing their name here would be a
+   small tenancy regression, not just a display oddity).
+3. **Chosen: scope every panel to the live roster, and surface the excluded count** as
+   `CompletionStats.off_roster_submission_count` (`offRosterSubmissionCount` on the wire).
+
+Option 3 keeps rule (c) exactly as written, keeps the tenancy seam single (nothing is read
+for a student outside `roster()`), and refuses to make a silent omission look like an
+absence — which is the same "never invent precision / never hide what you dropped"
+discipline D3.7's zero-row measurement and D3.9's `is_paper` split were decided under. The
+cost is one extra integer on the DTO and a number the frontend must actually render;
+`tests/test_quiz_results.py::test_off_roster_submission_is_excluded_but_reported` pins both
+halves (excluded from the aggregates *and* counted).
+
+Not a workaround for a missing feature: there is deliberately no "results for a student who
+left" view. If that is ever wanted it is a separate surface with its own scope decision, not
+a quiet widening of this one.
+
 ### D3.9 — Three predicates, not one: `is_paper` beside `is_grade_bearing` at the web layer (P3.5 chunk F1)
 
 `docs/quiz-model.md` §5 fixes the grade-bearing / topic-bearing split for `lemely/core/`,

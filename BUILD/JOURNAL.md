@@ -754,3 +754,33 @@ render them as "no paper yet" rather than as an error — that lands in P3.7/P3.
 the one place this filter can still look like a bug.
 
 **Next.** F2 — T-10 teacher class-results endpoints, then P3.6 (parent portal backend).
+
+## 2026-08-06 — P3.5 chunk F2 (T-10 class results): P3.5 complete
+
+**Did.** `QuizResultsService` (`lemely/db/quiz_results_repo.py`, 100% cov) plus one route,
+`GET /api/teacher/quizzes/{quiz_id}/assignments/{assignment_id}/results`. All five §4.6
+panels are pure projections over a single load of one assignment's submissions and their
+attempts — completion vs the live roster, a percentage score distribution, per-question
+analysis, per-student results, and T-04's own `rank_topic_weaknesses`. Ownership is
+`QuizService.get_quiz`, scope is `ClassService.roster`; neither is re-derived. Made
+`history_repo._to_record` public as `attempt_to_record` so the weaknesses panel reuses the
+one attempt→`PaperRecord` projection instead of writing a second. 1721 tests
+(1717 passed / 4 live-only skips), 88.75% cov. All 12 gates green, no schema change.
+
+**Learned.** §4.6 fixes the completion *denominator* as the live roster but says nothing
+about a student who submits and is then removed from the class — read literally, the
+numerator can exceed the denominator. Roster-scoping everything is right, but doing only
+that makes a teacher's marked work vanish with no trace, so the excluded count is reported
+(`offRosterSubmissionCount`, D3.10). Separately: ruff's TC001 only moves an import when
+*every* member of that statement is annotation-only, which is why a new
+`from ... import A, B` in `routers/quiz.py` tripped a rule the file's existing imports never
+had; the fix is the same per-file exemption every other web DI module already carries.
+
+**Watch.** The route's per-student panel carries `marksByQuestion` for every roster
+student — fine at class size, but it is the one payload here that grows with
+students × questions. If a school ever assigns a 40-question quiz to a 200-student cohort
+this is where to paginate first.
+
+**Next.** P3.6 — parent portal backend (P-01..P-04): linked children, child overview /
+subject detail / weaknesses read-only, notification preferences, parent-authz scoped to own
+linked children only.
