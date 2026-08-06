@@ -448,6 +448,35 @@ def test_roster_identity_falls_back_to_email_without_display_name(
     assert roster[0].display_name == f"{student}@example.com"
 
 
+def test_enrolled_class_ids_returns_every_class_the_student_joined(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The seam :class:`~lemely.db.quiz_taking_repo.QuizTakingService` uses for
+    all student-side quiz scoping (P3.5 chunk E)."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = ClassService(pg_sessionmaker)
+    cls_a = service.create_class(teacher, "Class A")
+    cls_b = service.create_class(teacher, "Class B")
+    cls_c = service.create_class(teacher, "Class C")
+    assert cls_a.join_code is not None
+    assert cls_b.join_code is not None
+    service.join_by_code(student, cls_a.join_code)
+    service.join_by_code(student, cls_b.join_code)
+
+    ids = service.enrolled_class_ids(student)
+    assert set(ids) == {cls_a.class_id, cls_b.class_id}
+    assert cls_c.class_id not in ids
+
+
+def test_enrolled_class_ids_empty_for_unenrolled_student(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = ClassService(pg_sessionmaker)
+    assert service.enrolled_class_ids(student) == []
+
+
 # ── Input validation ─────────────────────────────────────────────────────────
 
 

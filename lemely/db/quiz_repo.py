@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from lemely.core.difficulty import allocate_difficulty
 from lemely.core.history import GRADE_ORDER
@@ -58,16 +59,20 @@ from lemely.db.models.enums import (
     QuestionSource,
     QuizQuestionStatus,
     QuizStatus,
+    QuizSubmissionStatus,
 )
-from lemely.db.models.quizzes import Quiz, QuizQuestion
+from lemely.db.models.orgs import SchoolClass
+from lemely.db.models.quizzes import Quiz, QuizAssignment, QuizQuestion, QuizSubmission
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
 
     from lemely.core.difficulty import Band
     from lemely.db.class_repo import ClassService
+    from lemely.db.models.enums import Role
     from lemely.db.question_bank_repo import QuestionBankRow, QuestionBankService
 
 
@@ -179,6 +184,30 @@ class PoolCountResult:
     difficulty_estimated: bool
     """True when the matching set contains any ``inferred_from_marks`` row
     (§3.2) — the UI must then label the count as an estimate."""
+
+
+@dataclass(frozen=True, slots=True)
+class QuizAssignmentRow:
+    """A quiz handed to a class (§1.6) — the teacher-facing assignment view.
+
+    ``roster_size`` and ``submission_counts`` are computed live at read time
+    (never a frozen snapshot, per §1.7's completion-rate rule): the former via
+    :meth:`~lemely.db.class_repo.ClassService.roster`, the latter by grouping
+    this assignment's ``quiz_submissions`` rows by status. ``submission_counts``
+    always carries all four :class:`~lemely.db.models.enums.QuizSubmissionStatus`
+    keys, zero-filled — never a partial map a caller has to defensively probe.
+    """
+
+    assignment_id: uuid.UUID
+    quiz_id: uuid.UUID
+    class_id: uuid.UUID
+    class_name: str
+    assigned_by: uuid.UUID
+    assigned_at: datetime
+    due_at: datetime | None
+    closes_at: datetime | None
+    roster_size: int
+    submission_counts: dict[str, int]
 
 
 class QuizService:
@@ -508,6 +537,220 @@ class QuizService:
             difficulty_estimated=difficulty_estimated,
         )
 
+    # -- Assignments (§1.6, P3.5 chunk E) ----------------------------------------
+
+    def create_assignment(
+        self,
+        teacher_id: uuid.UUID | str,
+        caller_role: Role | str,
+        quiz_id: uuid.UUID | str,
+        class_id: uuid.UUID | str,
+        *,
+        due_at: datetime | None = None,
+        closes_at: datetime | None = None,
+    ) -> QuizAssignmentRow:
+        """Assign an owned quiz to a class. A ``draft`` quiz becomes ``assigned``.
+
+        ``caller_role`` is threaded through to :meth:`~lemely.db.class_repo.ClassService.get_class`
+        so class scope is never re-derived here — the class check reuses the
+        identical rule every other teacher-portal route already enforces
+        (D3.1). Quiz ownership itself stays strictly ``teacher_id``-scoped
+        (see module docstring), independent of ``caller_role``.
+
+        An already-``assigned`` quiz may be assigned to a *further* class
+        (§1.6: "the same quiz assigned to two classes is an obvious teacher
+        need"); ``closed``/``archived`` quizzes may not be assigned to any
+        class — the lifecycle never runs backwards.
+
+        Raises:
+            QuizNotFoundError: No quiz exists with ``quiz_id`` (404).
+            QuizOwnershipError: The quiz is not the caller's (403).
+            ClassNotFoundError: No class exists with ``class_id`` (404) —
+                propagated from :class:`~lemely.db.class_repo.ClassService`
+                unchanged, per this method's "never re-derive" rule.
+            ClassOwnershipError: The class is outside the caller's scope (403)
+                — propagated unchanged, same rule.
+            QuizValidationError: ``closes_at`` is earlier than ``due_at``
+                (422); the quiz is ``closed``/``archived`` (422); the quiz has
+                no ``included`` question (422, "assigning an empty quiz" —
+                the defect this guard exists for); or the quiz is already
+                assigned to this class (422; the unique index is the
+                backstop, not the primary path).
+        """
+        teacher_uuid = _as_uuid(teacher_id)
+        quiz_uuid = _as_uuid(quiz_id)
+        class_uuid = _as_uuid(class_id)
+        if due_at is not None and closes_at is not None and closes_at < due_at:
+            raise QuizValidationError("closesAt cannot be earlier than dueAt")
+
+        with self._sessionmaker() as session, session.begin():
+            quiz = self._load_owned(session, teacher_uuid, quiz_uuid, for_update=True)
+            if quiz.status not in (QuizStatus.draft, QuizStatus.assigned):
+                raise QuizValidationError(
+                    f"Quiz {quiz_uuid} is {quiz.status.value}; it can no longer be assigned"
+                )
+            included_count = (
+                session.scalar(
+                    select(func.count())
+                    .select_from(QuizQuestion)
+                    .where(
+                        QuizQuestion.quiz_id == quiz_uuid,
+                        QuizQuestion.status == QuizQuestionStatus.included,
+                    )
+                )
+                or 0
+            )
+            if included_count == 0:
+                raise QuizValidationError(
+                    f"Quiz {quiz_uuid} has no included questions; add at least one before assigning"
+                )
+            # Class scope: reused, never re-derived (see docstring). Checked
+            # inside the quiz's transaction so an out-of-scope class never
+            # gets as far as an assignment insert attempt.
+            self._class_service.get_class(teacher_uuid, caller_role, class_uuid)
+            duplicate = session.scalars(
+                select(QuizAssignment.id).where(
+                    QuizAssignment.quiz_id == quiz_uuid, QuizAssignment.class_id == class_uuid
+                )
+            ).first()
+            if duplicate is not None:
+                raise QuizValidationError(
+                    f"Quiz {quiz_uuid} is already assigned to class {class_uuid}"
+                )
+            assignment = QuizAssignment(
+                quiz_id=quiz_uuid,
+                class_id=class_uuid,
+                assigned_by=teacher_uuid,
+                due_at=due_at,
+                closes_at=closes_at,
+            )
+            session.add(assignment)
+            if quiz.status == QuizStatus.draft:
+                quiz.status = QuizStatus.assigned
+            try:
+                session.flush()
+            except IntegrityError as exc:
+                # Backstop only (uq_quiz_assignments): the pre-check above is
+                # the primary path (module brief).
+                raise QuizValidationError(
+                    f"Quiz {quiz_uuid} is already assigned to class {class_uuid}"
+                ) from exc
+            school_class = session.get(SchoolClass, class_uuid)
+            if school_class is None:  # pragma: no cover - get_class already loaded this row
+                raise QuizError(f"Unknown class: {class_uuid}")
+            roster_size = len(self._class_service.roster(teacher_uuid, caller_role, class_uuid))
+            return QuizAssignmentRow(
+                assignment_id=assignment.id,
+                quiz_id=quiz_uuid,
+                class_id=class_uuid,
+                class_name=school_class.name,
+                assigned_by=teacher_uuid,
+                assigned_at=assignment.assigned_at,
+                due_at=assignment.due_at,
+                closes_at=assignment.closes_at,
+                roster_size=roster_size,
+                submission_counts=_zero_submission_counts(),
+            )
+
+    def list_assignments(
+        self,
+        teacher_id: uuid.UUID | str,
+        caller_role: Role | str,
+        quiz_id: uuid.UUID | str,
+    ) -> list[QuizAssignmentRow]:
+        """Every assignment of an owned quiz, oldest first.
+
+        ``rosterSize`` is read live via :meth:`~lemely.db.class_repo.ClassService.roster`
+        on every call (§1.7: "never a frozen snapshot") — a student who joins
+        the class after assignment shows up here immediately.
+        ``submissionCounts`` is counts only (§1.6/chunk-E brief): no marks, no
+        averages, no per-student results — that aggregation is chunk F's T-10.
+
+        Raises:
+            QuizNotFoundError: No quiz exists with ``quiz_id`` (404).
+            QuizOwnershipError: The quiz is not the caller's (403).
+        """
+        teacher_uuid = _as_uuid(teacher_id)
+        quiz_uuid = _as_uuid(quiz_id)
+        with self._sessionmaker() as session:
+            self._load_owned(session, teacher_uuid, quiz_uuid)
+            assignments = session.scalars(
+                select(QuizAssignment)
+                .where(QuizAssignment.quiz_id == quiz_uuid)
+                .order_by(QuizAssignment.assigned_at)
+            ).all()
+            rows: list[QuizAssignmentRow] = []
+            for assignment in assignments:
+                school_class = session.get(SchoolClass, assignment.class_id)
+                if school_class is None:  # pragma: no cover - FK guarantees the row exists
+                    raise QuizError(f"Unknown class: {assignment.class_id}")
+                roster_size = len(
+                    self._class_service.roster(teacher_uuid, caller_role, assignment.class_id)
+                )
+                counts = _zero_submission_counts()
+                for status, count in session.execute(
+                    select(QuizSubmission.status, func.count())
+                    .where(QuizSubmission.assignment_id == assignment.id)
+                    .group_by(QuizSubmission.status)
+                ).all():
+                    counts[status.value] = int(count)
+                rows.append(
+                    QuizAssignmentRow(
+                        assignment_id=assignment.id,
+                        quiz_id=quiz_uuid,
+                        class_id=assignment.class_id,
+                        class_name=school_class.name,
+                        assigned_by=assignment.assigned_by,
+                        assigned_at=assignment.assigned_at,
+                        due_at=assignment.due_at,
+                        closes_at=assignment.closes_at,
+                        roster_size=roster_size,
+                        submission_counts=counts,
+                    )
+                )
+            return rows
+
+    def delete_assignment(
+        self,
+        teacher_id: uuid.UUID | str,
+        quiz_id: uuid.UUID | str,
+        assignment_id: uuid.UUID | str,
+    ) -> None:
+        """Unassign a quiz from a class. Refused once any student has started.
+
+        ``quiz_submissions`` cascades from ``quiz_assignments`` (§1.7), so
+        deleting an assignment with any submission whose status is not
+        ``not_started`` would silently destroy that student's answers. This
+        method refuses (422) rather than allow that; there is no override.
+
+        Raises:
+            QuizNotFoundError: No quiz exists with ``quiz_id``, or no
+                assignment exists with ``assignment_id`` on this quiz (404).
+            QuizOwnershipError: The quiz is not the caller's (403).
+            QuizValidationError: A submission for this assignment has a
+                status other than ``not_started`` (422).
+        """
+        teacher_uuid = _as_uuid(teacher_id)
+        quiz_uuid = _as_uuid(quiz_id)
+        assignment_uuid = _as_uuid(assignment_id)
+        with self._sessionmaker() as session, session.begin():
+            self._load_owned(session, teacher_uuid, quiz_uuid)
+            assignment = session.get(QuizAssignment, assignment_uuid, with_for_update=True)
+            if assignment is None or assignment.quiz_id != quiz_uuid:
+                raise QuizNotFoundError(f"Unknown assignment: {assignment_uuid}")
+            started = session.scalars(
+                select(QuizSubmission.id).where(
+                    QuizSubmission.assignment_id == assignment_uuid,
+                    QuizSubmission.status != QuizSubmissionStatus.not_started,
+                )
+            ).first()
+            if started is not None:
+                raise QuizValidationError(
+                    f"Assignment {assignment_uuid} has a student submission already in "
+                    "progress; unassigning would destroy that student's work"
+                )
+            session.delete(assignment)
+
     # -- Internals --------------------------------------------------------------
 
     def _load_owned(
@@ -552,6 +795,16 @@ class QuizService:
             builder_step=quiz.builder_step,
             question_count=int(count),
         )
+
+
+def _zero_submission_counts() -> dict[str, int]:
+    """A ``QuizSubmissionStatus`` value -> 0 map with every status present.
+
+    A freshly created assignment has no submissions at all, and a listing
+    must still report all four keys — never a partial map a caller has to
+    defensively probe (see :class:`QuizAssignmentRow`'s docstring).
+    """
+    return {status.value: 0 for status in QuizSubmissionStatus}
 
 
 def _snapshot_bank_row(
@@ -640,6 +893,7 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 __all__ = [
     "PoolCountResult",
     "QuestionGenerationResult",
+    "QuizAssignmentRow",
     "QuizDetail",
     "QuizError",
     "QuizNotFoundError",

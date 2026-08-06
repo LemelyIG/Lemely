@@ -100,6 +100,144 @@ class GenerateQuizQuestionsResponseDTO(ApiModel):
     shortfall: dict[str, int] | None = None
 
 
+class CreateQuizAssignmentRequestDTO(ApiModel):
+    """Request body for ``POST /api/teacher/quizzes/{quiz_id}/assignments``.
+
+    ``dueAt``/``closesAt`` are ISO-8601 datetime strings when supplied
+    (parsed and validated tz-aware at the router boundary, matching the
+    codebase's existing ``_parse_recorded_at``-style convention) or ``None``.
+    """
+
+    classId: str
+    dueAt: str | None = None
+    closesAt: str | None = None
+
+
+class QuizAssignmentDTO(ApiModel):
+    """One assignment of a quiz to a class (§1.6).
+
+    ``rosterSize`` and ``submissionCounts`` are read live at request time —
+    never a frozen snapshot (§1.7). ``submissionCounts`` always carries all
+    four ``QuizSubmissionStatus`` keys, zero-filled.
+    """
+
+    id: str
+    classId: str
+    className: str
+    assignedAt: str
+    dueAt: str | None
+    closesAt: str | None
+    rosterSize: int
+    submissionCounts: dict[str, int]
+
+
+class QuizAssignmentListDTO(ApiModel):
+    """Response for ``GET /api/teacher/quizzes/{quiz_id}/assignments``."""
+
+    assignments: list[QuizAssignmentDTO]
+
+
+class StudentQuizListItemDTO(ApiModel):
+    """One row of ``GET /api/student/quizzes``."""
+
+    assignmentId: str
+    quizTitle: str
+    subjectCode: str
+    className: str
+    teacherName: str
+    assignedAt: str
+    dueAt: str | None
+    closesAt: str | None
+    questionCount: int
+    timeLimitMinutes: int | None
+    submissionStatus: str
+    isOpen: bool
+    isOverdue: bool
+
+
+class StudentQuizListDTO(ApiModel):
+    """Response for ``GET /api/student/quizzes``."""
+
+    quizzes: list[StudentQuizListItemDTO]
+
+
+class StudentQuizQuestionDTO(ApiModel):
+    """One question in the take payload (S-26).
+
+    **Never** carries ``modelAnswer``, ``markSchemePoints``, or ``mcqAnswer``
+    — there is no field for any of the three anywhere on this model, by
+    construction (see ``lemely.db.quiz_taking_repo``'s module docstring).
+    """
+
+    id: str
+    questionRef: str
+    position: int
+    topic: str | None
+    difficulty: str
+    questionType: str
+    prompt: str
+    totalMarks: int
+    mcqOptions: list[str] | None
+    answerText: str | None
+    workingText: str | None
+    answeredAt: str | None
+
+
+class StudentQuizHeaderDTO(ApiModel):
+    """The take payload's header block (S-26)."""
+
+    quizTitle: str
+    subjectCode: str
+    className: str
+    teacherName: str
+    dueAt: str | None
+    closesAt: str | None
+    timeLimitMinutes: int | None
+    submissionStatus: str
+    isOpen: bool
+    isOverdue: bool
+    unansweredCount: int
+
+
+class StudentQuizTakeDTO(ApiModel):
+    """Response for ``GET /api/student/quizzes/{assignment_id}``."""
+
+    header: StudentQuizHeaderDTO
+    questions: list[StudentQuizQuestionDTO]
+
+
+class SaveAnswerRequestDTO(ApiModel):
+    """Request body for ``PUT /api/student/quizzes/{assignment_id}/answers/{question_ref}``.
+
+    Both fields default to ``None`` (omitted -> the stored value is left
+    untouched); pass ``""`` to explicitly clear a field.
+    """
+
+    answerText: str | None = None
+    workingText: str | None = None
+
+
+class SaveAnswerResponseDTO(ApiModel):
+    """Response for a single answer auto-save."""
+
+    questionRef: str
+    answerText: str | None
+    workingText: str | None
+    answeredAt: str | None
+
+
+class SubmitQuizResponseDTO(ApiModel):
+    """Response for ``POST /api/student/quizzes/{assignment_id}/submit``.
+
+    No marking has happened yet — ``submissionStatus`` is always
+    ``"submitted"`` here, never ``"marked"`` (that transition is chunk F's).
+    """
+
+    submissionStatus: str
+    answeredCount: int
+    unansweredCount: int
+
+
 class QuizPoolCountDTO(ApiModel):
     """Response for ``GET /api/teacher/quizzes/pool-count`` (§2).
 
@@ -120,13 +258,24 @@ class QuizPoolCountDTO(ApiModel):
 
 
 __all__ = [
+    "CreateQuizAssignmentRequestDTO",
     "CreateQuizRequestDTO",
     "GenerateQuizQuestionsResponseDTO",
+    "QuizAssignmentDTO",
+    "QuizAssignmentListDTO",
     "QuizDetailDTO",
     "QuizListDTO",
     "QuizPoolCountDTO",
     "QuizQuestionDTO",
     "QuizSummaryDTO",
+    "SaveAnswerRequestDTO",
+    "SaveAnswerResponseDTO",
     "SetQuizStatusRequestDTO",
+    "StudentQuizHeaderDTO",
+    "StudentQuizListDTO",
+    "StudentQuizListItemDTO",
+    "StudentQuizQuestionDTO",
+    "StudentQuizTakeDTO",
+    "SubmitQuizResponseDTO",
     "UpdateQuizDraftRequestDTO",
 ]

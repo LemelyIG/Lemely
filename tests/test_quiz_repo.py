@@ -25,6 +25,7 @@ Covers, per the chunk-D brief:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -35,7 +36,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
-from lemely.db.class_repo import ClassService
+from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError, ClassService
 from lemely.db.models import User
 from lemely.db.models.enums import (
     DifficultySource,
@@ -44,9 +45,10 @@ from lemely.db.models.enums import (
     QuestionSource,
     QuizQuestionStatus,
     QuizStatus,
+    QuizSubmissionStatus,
     Role,
 )
-from lemely.db.models.quizzes import QuestionBank
+from lemely.db.models.quizzes import QuestionBank, QuizSubmission
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_repo import (
     QuizNotFoundError,
@@ -688,3 +690,307 @@ def test_get_quiz_returns_removed_rows_too(
     assert len(detail.questions) == 1
     assert detail.questions[0].status == QuizQuestionStatus.removed
     assert detail.quiz.question_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Assignments (§1.6, P3.5 chunk E).
+# ---------------------------------------------------------------------------
+
+
+def _assignable_quiz(
+    quiz_service: QuizService, sm: sessionmaker[Session], teacher: uuid.UUID, subject_code: str
+) -> uuid.UUID:
+    """Create a draft quiz with exactly one ``included`` question, ready to assign."""
+    _seed_bank_row(sm, subject_code=subject_code, difficulty=QuestionDifficulty.standard)
+    created = quiz_service.create_quiz(teacher, subject_code, "Assignable quiz")
+    quiz_service.patch_draft(
+        teacher, created.quiz_id, pool_source=QuestionSource.generated, requested_count=1
+    )
+    quiz_service.generate_questions(teacher, created.quiz_id)
+    return created.quiz_id
+
+
+def test_create_assignment_transitions_draft_to_assigned(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Physics 10A")
+
+    row = quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+
+    assert row.class_id == cls.class_id
+    assert row.class_name == "Physics 10A"
+    assert row.roster_size == 0
+    assert row.submission_counts == {s.value: 0 for s in QuizSubmissionStatus}
+    assert quiz_service.get_quiz(teacher, quiz_id).quiz.status == QuizStatus.assigned
+
+
+def test_create_assignment_on_assigned_quiz_allows_further_class(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls_a = class_service.create_class(teacher, "Class A")
+    cls_b = class_service.create_class(teacher, "Class B")
+
+    quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls_a.class_id)
+    row = quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls_b.class_id)
+
+    assert row.class_id == cls_b.class_id
+    assert quiz_service.get_quiz(teacher, quiz_id).quiz.status == QuizStatus.assigned
+
+
+def test_create_assignment_empty_quiz_is_rejected(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    created = quiz_service.create_quiz(teacher, "0625", "Empty quiz")
+    cls = class_service.create_class(teacher, "Class")
+
+    with pytest.raises(QuizValidationError):
+        quiz_service.create_assignment(teacher, Role.teacher, created.quiz_id, cls.class_id)
+
+
+def test_create_assignment_closed_quiz_is_rejected(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    _force_status(pg_sessionmaker, quiz_id, QuizStatus.closed)
+
+    with pytest.raises(QuizValidationError):
+        quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+
+
+def test_create_assignment_archived_quiz_is_rejected(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    _force_status(pg_sessionmaker, quiz_id, QuizStatus.archived)
+
+    with pytest.raises(QuizValidationError):
+        quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+
+
+def test_create_assignment_duplicate_is_rejected(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+
+    with pytest.raises(QuizValidationError):
+        quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+
+
+def test_create_assignment_closes_before_due_is_rejected(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    now = datetime.now(UTC)
+
+    with pytest.raises(QuizValidationError):
+        quiz_service.create_assignment(
+            teacher,
+            Role.teacher,
+            quiz_id,
+            cls.class_id,
+            due_at=now + timedelta(days=2),
+            closes_at=now + timedelta(days=1),
+        )
+
+
+def test_create_assignment_another_teachers_quiz_is_ownership_error(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    owner = _seed_teacher(pg_sessionmaker)
+    intruder = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, owner, "0625")
+    cls = class_service.create_class(intruder, "Intruder's class")
+
+    with pytest.raises(QuizOwnershipError):
+        quiz_service.create_assignment(intruder, Role.teacher, quiz_id, cls.class_id)
+
+
+def test_create_assignment_out_of_scope_class_is_class_ownership_error(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    other_teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    other_cls = class_service.create_class(other_teacher, "Not my class")
+
+    with pytest.raises(ClassOwnershipError):
+        quiz_service.create_assignment(teacher, Role.teacher, quiz_id, other_cls.class_id)
+
+
+def test_create_assignment_unknown_class_is_class_not_found_error(
+    quiz_service: QuizService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+
+    with pytest.raises(ClassNotFoundError):
+        quiz_service.create_assignment(teacher, Role.teacher, quiz_id, uuid.uuid4())
+
+
+def test_list_assignments_roster_size_reflects_late_joiners(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Roster-drift: a student who joins *after* assignment appears in ``rosterSize``."""
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+
+    before = quiz_service.list_assignments(teacher, Role.teacher, quiz_id)
+    assert before[0].roster_size == 0
+
+    student = _seed_user(pg_sessionmaker, Role.student)
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+
+    after = quiz_service.list_assignments(teacher, Role.teacher, quiz_id)
+    assert after[0].roster_size == 1
+
+
+def test_list_assignments_submission_counts_grouped_by_status(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    assignment = quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+    student_a = _seed_user(pg_sessionmaker, Role.student)
+    student_b = _seed_user(pg_sessionmaker, Role.student)
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            QuizSubmission(
+                assignment_id=assignment.assignment_id,
+                student_id=student_a,
+                status=QuizSubmissionStatus.in_progress,
+            )
+        )
+        session.add(
+            QuizSubmission(
+                assignment_id=assignment.assignment_id,
+                student_id=student_b,
+                status=QuizSubmissionStatus.submitted,
+            )
+        )
+
+    rows = quiz_service.list_assignments(teacher, Role.teacher, quiz_id)
+    counts = rows[0].submission_counts
+    assert counts["in_progress"] == 1
+    assert counts["submitted"] == 1
+    assert counts["not_started"] == 0
+    assert counts["marked"] == 0
+
+
+def test_list_assignments_another_teachers_quiz_is_ownership_error(
+    quiz_service: QuizService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    owner = _seed_teacher(pg_sessionmaker)
+    intruder = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, owner, "0625")
+
+    with pytest.raises(QuizOwnershipError):
+        quiz_service.list_assignments(intruder, Role.teacher, quiz_id)
+
+
+def test_delete_assignment_happy_path(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    assignment = quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+
+    quiz_service.delete_assignment(teacher, quiz_id, assignment.assignment_id)
+
+    assert quiz_service.list_assignments(teacher, Role.teacher, quiz_id) == []
+
+
+def test_delete_assignment_refused_once_student_started(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    assignment = quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+    student = _seed_user(pg_sessionmaker, Role.student)
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            QuizSubmission(
+                assignment_id=assignment.assignment_id,
+                student_id=student,
+                status=QuizSubmissionStatus.in_progress,
+            )
+        )
+
+    with pytest.raises(QuizValidationError):
+        quiz_service.delete_assignment(teacher, quiz_id, assignment.assignment_id)
+
+    # The assignment (and its submission) must still exist afterwards.
+    remaining = quiz_service.list_assignments(teacher, Role.teacher, quiz_id)
+    assert len(remaining) == 1
+
+
+def test_delete_assignment_allowed_when_only_not_started_submissions_exist(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+    cls = class_service.create_class(teacher, "Class")
+    assignment = quiz_service.create_assignment(teacher, Role.teacher, quiz_id, cls.class_id)
+    student = _seed_user(pg_sessionmaker, Role.student)
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            QuizSubmission(
+                assignment_id=assignment.assignment_id,
+                student_id=student,
+                status=QuizSubmissionStatus.not_started,
+            )
+        )
+
+    quiz_service.delete_assignment(teacher, quiz_id, assignment.assignment_id)
+    assert quiz_service.list_assignments(teacher, Role.teacher, quiz_id) == []
+
+
+def test_delete_assignment_unknown_assignment_is_not_found(
+    quiz_service: QuizService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    teacher = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, teacher, "0625")
+
+    with pytest.raises(QuizNotFoundError):
+        quiz_service.delete_assignment(teacher, quiz_id, uuid.uuid4())
+
+
+def test_delete_assignment_another_teachers_quiz_is_ownership_error(
+    quiz_service: QuizService, class_service: ClassService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    owner = _seed_teacher(pg_sessionmaker)
+    intruder = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz(quiz_service, pg_sessionmaker, owner, "0625")
+    cls = class_service.create_class(owner, "Class")
+    assignment = quiz_service.create_assignment(owner, Role.teacher, quiz_id, cls.class_id)
+
+    with pytest.raises(QuizOwnershipError):
+        quiz_service.delete_assignment(intruder, quiz_id, assignment.assignment_id)
+
+
+def _seed_user(
+    sm: sessionmaker[Session], role: Role, *, display_name: str | None = None
+) -> uuid.UUID:
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(User(id=uid, email=f"{uid}@example.com", role=role, display_name=display_name))
+    return uid

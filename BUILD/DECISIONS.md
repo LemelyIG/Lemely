@@ -3,6 +3,50 @@
 
 ## Phase 3
 
+### D3.8 — Quiz "open" has no column: closed vs overdue, and the unassign guard (P3.5 chunk E)
+
+`docs/quiz-model.md` §1.6 gives `quiz_assignments` a `due_at` and a `closes_at` but **no
+`opens_at`**, while UI-spec S-26 lists "not yet open" as one of its four states. Rather than
+invent a column (additive-only is cheap, but a column nothing sets is worse than no column),
+chunk E resolves the three states off what exists:
+
+- **closed** = the quiz's own status is `closed`/`archived` **OR** `closes_at` has passed. A
+  closed assignment cannot be started, saved to, or submitted, and `get_take` returns it
+  read-only *without* lazily creating a submission row — otherwise merely looking at an
+  expired quiz would mint an `in_progress` row that inflates the teacher's counts forever.
+- **overdue** = `due_at` has passed and the assignment is not closed. Overdue is a **flag,
+  not a block** (UI-spec §1.4: flags are signals, not verdicts) — a late-but-not-yet-closed
+  submission is accepted and simply carries the flag. A teacher who wants a hard cutoff sets
+  `closes_at`; that is what it is for.
+- **"not yet open"** has no backing state at all: an assignment does not exist until the
+  teacher creates it, so there is nothing to be not-yet-open *of*. The UI state is reachable
+  purely from a 404. Do not add a column for this later without a product reason.
+
+**The unassign guard, stated honestly.** `quiz_submissions` cascades from
+`quiz_assignments`, so deleting an assignment would silently destroy student answers.
+`delete_assignment` refuses (422) if any submission has a status other than `not_started`.
+Because submissions are created lazily *already* `in_progress` (§1.7 — nothing ever writes
+`not_started`; it is the table default and the "no row" sentinel the DTO reports), this is in
+practice **"refuse if any submission row exists at all"**. The finer-grained wording is
+future-proofing for a state nothing currently produces — not a distinction that fires today.
+
+**Two seams, not one service.** Quiz *building* is scoped by `teacher_id` ownership; quiz
+*taking* is scoped by class **enrolment** — a different tenancy axis, so
+`QuizTakingService` (`lemely/db/quiz_taking_repo.py`) is separate from `QuizService` rather
+than a flag on every method. Its single scoping seam is the new
+`ClassService.enrolled_class_ids` (modelled on `member_school_ids`); no second
+`ClassEnrollment` query exists for that purpose. `QuizService.create_assignment` /
+`list_assignments` gained a `caller_role` parameter — needed only to call the role-scoped
+`ClassService.get_class`/`roster`; quiz ownership itself stays strictly `teacher_id`-scoped,
+with still no `school_admin`/co-teacher view (D3.6 §1.5's standing exclusion).
+
+**Answer leakage is excluded structurally, not by remembering.** `QuizTakeQuestionRow` has
+no `model_answer`, `mark_scheme_points`, or `mcq_answer` field *at all* — it is a strict
+subset of `QuizQuestionRow`, so there is nothing at the DTO layer to forget to omit. Pinned
+from both directions: a repo test asserts those attributes do not exist on the dataclass, and
+a web test asserts the response body contains neither the key names nor sentinel secret
+values seeded into the quiz.
+
 ### D3.7 — The past-paper question ingest yields zero questions, and always will (P3.5 chunk B)
 
 `docs/quiz-model.md` §2 required chunk B to begin with a measurement of how much usable

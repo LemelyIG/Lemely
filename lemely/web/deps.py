@@ -32,6 +32,7 @@ from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_repo import QuizService
+from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
@@ -235,6 +236,22 @@ def get_quiz_service() -> QuizService:
 
 
 @lru_cache(maxsize=1)
+def get_quiz_taking_service() -> QuizTakingService:
+    """Return the process-wide :class:`QuizTakingService` singleton (P3.5 chunk E).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton every other portal service composes, so student quiz scoping
+    uses the identical :meth:`~lemely.db.class_repo.ClassService.enrolled_class_ids`
+    seam every other route would (D3.1-style discipline) — never a second,
+    independently-derived notion of "which classes is this student in". The
+    clock is left at its default (real UTC now); tests override this
+    dependency with a service built on an injected fake clock and a
+    throwaway Postgres database.
+    """
+    return QuizTakingService(get_sessionmaker(get_settings()), get_class_service())
+
+
+@lru_cache(maxsize=1)
 def get_at_risk_ack_service() -> AtRiskAckService:
     """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
 
@@ -366,3 +383,4 @@ def reset_singletons() -> None:
     get_at_risk_ack_service.cache_clear()
     get_question_bank_service.cache_clear()
     get_quiz_service.cache_clear()
+    get_quiz_taking_service.cache_clear()

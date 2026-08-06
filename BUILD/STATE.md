@@ -296,10 +296,35 @@ Starting facts (established 2026-08-06, do not re-derive):
             Note: §2's illustrative pool-count numbers do not arithmetically reproduce
             `allocate_difficulty`'s real output — the prose is authoritative, the example
             numbers are not.
-      - [ ] **E** doing (next) — assignment endpoints + student take/submit (S-26) +
-            `quiz_answers`. Scope through `ClassService` as everywhere else; a student may
-            only see an assignment for a class they are enrolled in.
-      - [ ] **F** `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
+      - [x] **E** done — assignment endpoints + student take/submit (S-26) + `quiz_answers`
+            (D3.8). `lemely/db/quiz_taking_repo.py` (`QuizTakingService`, injected clock) +
+            three assignment methods on `QuizService` + `student_router`
+            (`/api/student/quizzes`, student-role gated) as a **second router in
+            `lemely/web/routers/quiz.py`** — the role gate differs from the staff triple so
+            the two cannot share one `APIRouter`. New seam
+            `ClassService.enrolled_class_ids` is the *only* student-side scoping query;
+            do not write a second `ClassEnrollment` query in F.
+            1668 tests (1664 passed / 4 live-only skips), 88.35% cov (from 88.00%).
+            All 12 gates green, `alembic check` clean, no schema change.
+            Endpoints: POST/GET `/api/teacher/quizzes/{id}/assignments`, DELETE
+            `.../assignments/{aid}`; GET `/api/student/quizzes`, GET
+            `/api/student/quizzes/{aid}`, PUT `.../answers/{question_ref}`, POST
+            `.../submit`.
+            **Read D3.8 before starting F** — it fixes: closed = quiz status terminal OR
+            `closes_at` passed (and a closed quiz is read-only, minting no submission row);
+            overdue = a flag, never a block; "not yet open" has no column and needs none;
+            and the unassign guard is in practice "refuse if any submission row exists"
+            because lazily-created rows are born `in_progress`, never `not_started`.
+            `QuizService.create_assignment`/`list_assignments` take a `caller_role` (only to
+            reach the role-scoped `ClassService.get_class`/`roster`) — quiz *ownership* is
+            still strictly `teacher_id`, still no `school_admin` view.
+            Answer leakage is excluded **structurally**: `QuizTakeQuestionRow` has no
+            `model_answer`/`mark_scheme_points`/`mcq_answer` field at all. F must not add one
+            to any student-facing row; the guard is the absent field, not a DTO omission.
+            Known minor: `list_assigned`/`list_assignments` call `roster`/count per
+            assignment (bounded N+1, tens of rows per student/quiz) — fine now, revisit only
+            if T-10 makes it hot.
+      - [ ] **F** doing (next) — `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
             refactor, review-queue integration, **the `_recompute_attempt_totals` quiz guard**
             (without it the first teacher override on a quiz invents a grade the marking path
             never wrote), T-10 endpoints. Second-highest risk — it touches the shared persist

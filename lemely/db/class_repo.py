@@ -193,6 +193,24 @@ class ClassService:
             )
             return list(session.scalars(stmt).all())
 
+    def enrolled_class_ids(self, student_id: uuid.UUID | str) -> list[uuid.UUID]:
+        """Return every class id ``student_id`` is enrolled in, deterministically ordered.
+
+        Modeled on :meth:`member_school_ids`: the single seam
+        :class:`~lemely.db.quiz_taking_repo.QuizTakingService` uses for every
+        student-side quiz scoping decision (P3.5 chunk E). Do not write a
+        second ``ClassEnrollment`` query anywhere else for that purpose — see
+        that module's docstring.
+        """
+        student_uuid = _as_uuid(student_id)
+        with self._sessionmaker() as session:
+            stmt = (
+                select(ClassEnrollment.class_id)
+                .where(ClassEnrollment.student_id == student_uuid)
+                .order_by(ClassEnrollment.class_id)
+            )
+            return list(session.scalars(stmt).all())
+
     def user_exists(self, user_id: uuid.UUID | str) -> bool:
         """Return whether any user exists with ``user_id``.
 

@@ -435,3 +435,304 @@ def test_student_role_cannot_reach_quiz_routes(
 
     resp = client.get("/api/teacher/quizzes")
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Assignments (§1.6, P3.5 chunk E).
+# ---------------------------------------------------------------------------
+
+
+def _assignable_quiz_id(
+    client: TestClient, quiz_service: QuizService, sm: sessionmaker[Session], teacher: uuid.UUID
+) -> str:
+    _seed_bank_row(sm, subject_code="0625")
+    created = quiz_service.create_quiz(teacher, "0625", "Assignable quiz")
+    quiz_service.patch_draft(
+        teacher, created.quiz_id, pool_source=QuestionSource.generated, requested_count=1
+    )
+    quiz_service.generate_questions(teacher, created.quiz_id)
+    return str(created.quiz_id)
+
+
+def test_create_assignment_route_happy_path(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+    cls = class_service.create_class(teacher, "9A")
+
+    resp = client.post(
+        f"/api/teacher/quizzes/{quiz_id}/assignments",
+        json={"classId": str(cls.class_id)},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["classId"] == str(cls.class_id)
+    assert body["className"] == "9A"
+    assert body["rosterSize"] == 0
+    assert body["submissionCounts"] == {
+        "not_started": 0,
+        "in_progress": 0,
+        "submitted": 0,
+        "marked": 0,
+    }
+    assert body["dueAt"] is None
+    assert body["closesAt"] is None
+
+    quiz_after = client.get(f"/api/teacher/quizzes/{quiz_id}").json()
+    assert quiz_after["quiz"]["status"] == "assigned"
+
+
+def test_create_assignment_route_with_due_and_closes_at(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+    cls = class_service.create_class(teacher, "9A")
+
+    resp = client.post(
+        f"/api/teacher/quizzes/{quiz_id}/assignments",
+        json={
+            "classId": str(cls.class_id),
+            "dueAt": "2026-02-01T00:00:00+00:00",
+            "closesAt": "2026-02-03T00:00:00+00:00",
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["dueAt"] == "2026-02-01T00:00:00+00:00"
+    assert body["closesAt"] == "2026-02-03T00:00:00+00:00"
+
+
+def test_create_assignment_route_closes_before_due_is_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+    cls = class_service.create_class(teacher, "9A")
+
+    resp = client.post(
+        f"/api/teacher/quizzes/{quiz_id}/assignments",
+        json={
+            "classId": str(cls.class_id),
+            "dueAt": "2026-02-03T00:00:00+00:00",
+            "closesAt": "2026-02-01T00:00:00+00:00",
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_create_assignment_route_naive_datetime_is_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+    cls = class_service.create_class(teacher, "9A")
+
+    resp = client.post(
+        f"/api/teacher/quizzes/{quiz_id}/assignments",
+        json={"classId": str(cls.class_id), "dueAt": "2026-02-03T00:00:00"},
+    )
+    assert resp.status_code == 422
+
+
+def test_create_assignment_route_empty_quiz_is_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    created = quiz_service.create_quiz(teacher, "0625", "Empty")
+    cls = class_service.create_class(teacher, "9A")
+
+    resp = client.post(
+        f"/api/teacher/quizzes/{created.quiz_id}/assignments",
+        json={"classId": str(cls.class_id)},
+    )
+    assert resp.status_code == 422
+
+
+def test_create_assignment_route_out_of_scope_class_is_403(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    other_teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+    other_cls = class_service.create_class(other_teacher, "Not mine")
+
+    resp = client.post(
+        f"/api/teacher/quizzes/{quiz_id}/assignments",
+        json={"classId": str(other_cls.class_id)},
+    )
+    assert resp.status_code == 403
+
+
+def test_create_assignment_route_another_teachers_quiz_is_403(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    owner = _seed_teacher(pg_sessionmaker)
+    intruder = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, owner)
+    cls = class_service.create_class(intruder, "Intruder's class")
+
+    _auth_as(client, intruder, Role.teacher)
+    resp = client.post(
+        f"/api/teacher/quizzes/{quiz_id}/assignments",
+        json={"classId": str(cls.class_id)},
+    )
+    assert resp.status_code == 403
+
+
+def test_list_assignments_route_shape(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+    cls = class_service.create_class(teacher, "9A")
+    quiz_service.create_assignment(teacher, Role.teacher, uuid.UUID(quiz_id), cls.class_id)
+
+    resp = client.get(f"/api/teacher/quizzes/{quiz_id}/assignments")
+    assert resp.status_code == 200
+    assignments = resp.json()["assignments"]
+    assert len(assignments) == 1
+    assert assignments[0]["classId"] == str(cls.class_id)
+    assert assignments[0]["rosterSize"] == 0
+
+
+def test_list_assignments_route_another_teachers_quiz_is_403(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    owner = _seed_teacher(pg_sessionmaker)
+    intruder = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, owner)
+
+    _auth_as(client, intruder, Role.teacher)
+    resp = client.get(f"/api/teacher/quizzes/{quiz_id}/assignments")
+    assert resp.status_code == 403
+
+
+def test_delete_assignment_route_happy_path(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+    cls = class_service.create_class(teacher, "9A")
+    assignment = quiz_service.create_assignment(
+        teacher, Role.teacher, uuid.UUID(quiz_id), cls.class_id
+    )
+
+    resp = client.delete(f"/api/teacher/quizzes/{quiz_id}/assignments/{assignment.assignment_id}")
+    assert resp.status_code == 204
+
+    remaining = client.get(f"/api/teacher/quizzes/{quiz_id}/assignments").json()
+    assert remaining["assignments"] == []
+
+
+def test_delete_assignment_route_refused_once_started(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    from lemely.db.models.enums import QuizSubmissionStatus
+    from lemely.db.models.quizzes import QuizSubmission
+
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+    cls = class_service.create_class(teacher, "9A")
+    assignment = quiz_service.create_assignment(
+        teacher, Role.teacher, uuid.UUID(quiz_id), cls.class_id
+    )
+    student = _seed_teacher(pg_sessionmaker)  # any user id works as student_id here
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            QuizSubmission(
+                assignment_id=assignment.assignment_id,
+                student_id=student,
+                status=QuizSubmissionStatus.in_progress,
+            )
+        )
+
+    resp = client.delete(f"/api/teacher/quizzes/{quiz_id}/assignments/{assignment.assignment_id}")
+    assert resp.status_code == 422
+
+
+def test_delete_assignment_route_another_teachers_quiz_is_403(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    owner = _seed_teacher(pg_sessionmaker)
+    intruder = _seed_teacher(pg_sessionmaker)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, owner)
+    cls = class_service.create_class(owner, "9A")
+    assignment = quiz_service.create_assignment(
+        owner, Role.teacher, uuid.UUID(quiz_id), cls.class_id
+    )
+
+    _auth_as(client, intruder, Role.teacher)
+    resp = client.delete(f"/api/teacher/quizzes/{quiz_id}/assignments/{assignment.assignment_id}")
+    assert resp.status_code == 403
+
+
+def test_delete_assignment_route_unknown_assignment_is_404(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+) -> None:
+    _use_quiz_service(client, quiz_service)
+    teacher = _seed_teacher(pg_sessionmaker)
+    _auth_as(client, teacher, Role.teacher)
+    quiz_id = _assignable_quiz_id(client, quiz_service, pg_sessionmaker, teacher)
+
+    resp = client.delete(f"/api/teacher/quizzes/{quiz_id}/assignments/{uuid.uuid4()}")
+    assert resp.status_code == 404

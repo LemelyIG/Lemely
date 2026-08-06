@@ -21,14 +21,17 @@ quizzes").
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError
 from lemely.db.models.enums import QuestionSource, QuizStatus, Role
 from lemely.db.quiz_repo import (
     PoolCountResult,
     QuestionGenerationResult,
+    QuizAssignmentRow,
     QuizDetail,
     QuizError,
     QuizNotFoundError,
@@ -38,16 +41,43 @@ from lemely.db.quiz_repo import (
     QuizService,
     QuizValidationError,
 )
-from lemely.web.deps import AuthContext, get_quiz_service, require_role
+from lemely.db.quiz_taking_repo import (
+    AssignedQuizRow,
+    QuizAnswerRow,
+    QuizTakeDetail,
+    QuizTakingError,
+    QuizTakingNotFoundError,
+    QuizTakingOwnershipError,
+    QuizTakingService,
+    QuizTakingValidationError,
+    SubmitResultRow,
+)
+from lemely.web.deps import (
+    AuthContext,
+    get_quiz_service,
+    get_quiz_taking_service,
+    require_role,
+)
 from lemely.web.schemas_quiz import (
+    CreateQuizAssignmentRequestDTO,
     CreateQuizRequestDTO,
     GenerateQuizQuestionsResponseDTO,
+    QuizAssignmentDTO,
+    QuizAssignmentListDTO,
     QuizDetailDTO,
     QuizListDTO,
     QuizPoolCountDTO,
     QuizQuestionDTO,
     QuizSummaryDTO,
+    SaveAnswerRequestDTO,
+    SaveAnswerResponseDTO,
     SetQuizStatusRequestDTO,
+    StudentQuizHeaderDTO,
+    StudentQuizListDTO,
+    StudentQuizListItemDTO,
+    StudentQuizQuestionDTO,
+    StudentQuizTakeDTO,
+    SubmitQuizResponseDTO,
     UpdateQuizDraftRequestDTO,
 )
 
@@ -56,6 +86,16 @@ _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
 
 router = APIRouter(
     prefix="/api/teacher/quizzes", dependencies=[Depends(require_role(*_STAFF_ROLES))]
+)
+
+#: Student-side quiz-taking routes (S-26). A second router, not a second
+#: prefix under ``router``: the role gate differs (student vs the staff
+#: triple), so the two cannot share one ``APIRouter`` without every route
+#: re-declaring its own ``dependencies=``. Registered alongside ``router`` in
+#: ``lemely.web.app`` (P3.5 chunk E brief: keeping quiz code in one file beats
+#: growing ``student.py``, already ~950 LOC before this chunk).
+student_router = APIRouter(
+    prefix="/api/student/quizzes", dependencies=[Depends(require_role(Role.student))]
 )
 
 
@@ -75,6 +115,29 @@ def _raise_for(exc: QuizError) -> NoReturn:
     raise HTTPException(status_code=409, detail=str(exc)) from exc  # pragma: no cover
 
 
+def _raise_for_class(exc: ClassNotFoundError | ClassOwnershipError) -> NoReturn:
+    """Map a class-scope failure to the matching :class:`HTTPException`.
+
+    Propagated unchanged from :meth:`~lemely.db.quiz_repo.QuizService.create_assignment`/
+    ``list_assignments`` — the same 404/403 split ``lemely.web.routers.classes``
+    already uses for these exact exceptions.
+    """
+    if isinstance(exc, ClassNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _raise_for_taking(exc: QuizTakingError) -> NoReturn:
+    """Map a :class:`QuizTakingError` subclass to the matching :class:`HTTPException`."""
+    if isinstance(exc, QuizTakingNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, QuizTakingOwnershipError):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if isinstance(exc, QuizTakingValidationError):
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    raise HTTPException(status_code=409, detail=str(exc)) from exc  # pragma: no cover
+
+
 def _parse_source(source: str | None) -> QuestionSource | None:
     if source is None:
         return None
@@ -89,6 +152,25 @@ def _parse_status(status: str) -> QuizStatus:
         return QuizStatus(status)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Unknown status: {status!r}") from exc
+
+
+def _parse_datetime(value: str | None, *, field: str) -> datetime | None:
+    """Parse an optional ISO-8601 datetime request field. Must be tz-aware.
+
+    Mirrors ``lemely.web.routers.teacher._parse_recorded_at``'s defensive
+    parse, but raises a 422 on failure (a request-body validation error)
+    rather than silently returning ``None`` (that convention is for
+    defensively reading already-persisted, trusted data).
+    """
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid {field}: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise HTTPException(status_code=422, detail=f"{field} must be timezone-aware: {value!r}")
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +252,90 @@ def _pool_count_to_dto(
         shortfall=dict(result.shortfall) if result.shortfall else None,
         difficultyEstimated=result.difficulty_estimated,
         message=_pool_count_message(source, subject_code, result.matching),
+    )
+
+
+def _assignment_to_dto(row: QuizAssignmentRow) -> QuizAssignmentDTO:
+    return QuizAssignmentDTO(
+        id=str(row.assignment_id),
+        classId=str(row.class_id),
+        className=row.class_name,
+        assignedAt=row.assigned_at.isoformat(),
+        dueAt=row.due_at.isoformat() if row.due_at is not None else None,
+        closesAt=row.closes_at.isoformat() if row.closes_at is not None else None,
+        rosterSize=row.roster_size,
+        submissionCounts=dict(row.submission_counts),
+    )
+
+
+def _student_quiz_to_dto(row: AssignedQuizRow) -> StudentQuizListItemDTO:
+    return StudentQuizListItemDTO(
+        assignmentId=str(row.assignment_id),
+        quizTitle=row.quiz_title,
+        subjectCode=row.subject_code,
+        className=row.class_name,
+        teacherName=row.teacher_name,
+        assignedAt=row.assigned_at.isoformat(),
+        dueAt=row.due_at.isoformat() if row.due_at is not None else None,
+        closesAt=row.closes_at.isoformat() if row.closes_at is not None else None,
+        questionCount=row.question_count,
+        timeLimitMinutes=row.time_limit_minutes,
+        submissionStatus=row.submission_status.value,
+        isOpen=row.is_open,
+        isOverdue=row.is_overdue,
+    )
+
+
+def _take_to_dto(detail: QuizTakeDetail) -> StudentQuizTakeDTO:
+    header = detail.header
+    return StudentQuizTakeDTO(
+        header=StudentQuizHeaderDTO(
+            quizTitle=header.quiz_title,
+            subjectCode=header.subject_code,
+            className=header.class_name,
+            teacherName=header.teacher_name,
+            dueAt=header.due_at.isoformat() if header.due_at is not None else None,
+            closesAt=header.closes_at.isoformat() if header.closes_at is not None else None,
+            timeLimitMinutes=header.time_limit_minutes,
+            submissionStatus=header.submission_status.value,
+            isOpen=header.is_open,
+            isOverdue=header.is_overdue,
+            unansweredCount=header.unanswered_count,
+        ),
+        questions=[
+            StudentQuizQuestionDTO(
+                id=str(q.id),
+                questionRef=q.question_ref,
+                position=q.position,
+                topic=q.topic,
+                difficulty=q.difficulty,
+                questionType=q.question_type,
+                prompt=q.prompt,
+                totalMarks=q.total_marks,
+                mcqOptions=list(q.mcq_options) if q.mcq_options is not None else None,
+                answerText=q.answer_text,
+                workingText=q.working_text,
+                answeredAt=q.answered_at.isoformat() if q.answered_at is not None else None,
+            )
+            for q in detail.questions
+        ],
+    )
+
+
+def _answer_to_dto(row: QuizAnswerRow) -> SaveAnswerResponseDTO:
+    return SaveAnswerResponseDTO(
+        questionRef=row.question_ref,
+        answerText=row.answer_text,
+        workingText=row.working_text,
+        answeredAt=row.answered_at.isoformat() if row.answered_at is not None else None,
+    )
+
+
+def _submit_to_dto(row: SubmitResultRow) -> SubmitQuizResponseDTO:
+    return SubmitQuizResponseDTO(
+        submissionStatus=row.submission_status.value,
+        answeredCount=row.answered_count,
+        unansweredCount=row.unanswered_count,
     )
 
 
@@ -354,4 +520,167 @@ def remove_quiz_question(
     return _quiz_to_dto(row)
 
 
-__all__ = ["router"]
+# ---------------------------------------------------------------------------
+# Assignments (§1.6, P3.5 chunk E) — teacher side.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{quiz_id}/assignments", response_model=QuizAssignmentDTO, status_code=201)
+def create_quiz_assignment(
+    quiz_id: str,
+    body: CreateQuizAssignmentRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[QuizService, Depends(get_quiz_service)],
+) -> QuizAssignmentDTO:
+    """Assign an owned quiz to a class. A ``draft`` quiz becomes ``assigned``.
+
+    Class scope is checked via ``ClassService.get_class`` and propagated
+    unchanged (404/403) — never re-derived here. 422 covers: the quiz has no
+    ``included`` question, is ``closed``/``archived``, is already assigned to
+    this class, or ``closesAt`` is earlier than ``dueAt``.
+    """
+    due_at = _parse_datetime(body.dueAt, field="dueAt")
+    closes_at = _parse_datetime(body.closesAt, field="closesAt")
+    try:
+        row = service.create_assignment(
+            auth.user_id,
+            auth.role,
+            quiz_id,
+            body.classId,
+            due_at=due_at,
+            closes_at=closes_at,
+        )
+    except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:
+        _raise_for(exc)
+    except (ClassNotFoundError, ClassOwnershipError) as exc:
+        _raise_for_class(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _assignment_to_dto(row)
+
+
+@router.get("/{quiz_id}/assignments", response_model=QuizAssignmentListDTO)
+def list_quiz_assignments(
+    quiz_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[QuizService, Depends(get_quiz_service)],
+) -> QuizAssignmentListDTO:
+    """Every assignment of an owned quiz, with live roster size and submission counts.
+
+    Counts only (§1.6/chunk-E brief) — no marks, no averages, no per-student
+    results. T-10's results aggregation is chunk F.
+    """
+    try:
+        rows = service.list_assignments(auth.user_id, auth.role, quiz_id)
+    except (QuizNotFoundError, QuizOwnershipError) as exc:
+        _raise_for(exc)
+    except (ClassNotFoundError, ClassOwnershipError) as exc:
+        _raise_for_class(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return QuizAssignmentListDTO(assignments=[_assignment_to_dto(row) for row in rows])
+
+
+@router.delete("/{quiz_id}/assignments/{assignment_id}", status_code=204)
+def delete_quiz_assignment(
+    quiz_id: str,
+    assignment_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[QuizService, Depends(get_quiz_service)],
+) -> None:
+    """Unassign a quiz from a class. Refused (422) once any student has started.
+
+    ``quiz_submissions`` cascades from ``quiz_assignments`` — unassigning
+    once a submission exists beyond ``not_started`` would silently destroy
+    that student's work.
+    """
+    try:
+        service.delete_assignment(auth.user_id, quiz_id, assignment_id)
+    except (QuizNotFoundError, QuizOwnershipError, QuizValidationError) as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Student quiz-taking (S-26, P3.5 chunk E).
+# ---------------------------------------------------------------------------
+
+
+@student_router.get("", response_model=StudentQuizListDTO)
+def list_student_quizzes(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[QuizTakingService, Depends(get_quiz_taking_service)],
+) -> StudentQuizListDTO:
+    """Assignments for classes the caller is enrolled in (``assigned``/``closed`` quizzes only)."""
+    rows = service.list_assigned(auth.user_id)
+    return StudentQuizListDTO(quizzes=[_student_quiz_to_dto(row) for row in rows])
+
+
+@student_router.get("/{assignment_id}", response_model=StudentQuizTakeDTO)
+def get_student_quiz(
+    assignment_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[QuizTakingService, Depends(get_quiz_taking_service)],
+) -> StudentQuizTakeDTO:
+    """The take payload (S-26): header + every ``included`` question, in order.
+
+    Lazily creates the ``quiz_submissions`` row on first open, only when the
+    quiz is not closed (§1.7). Never carries ``modelAnswer``,
+    ``markSchemePoints``, or ``mcqAnswer`` — see ``StudentQuizQuestionDTO``.
+    """
+    try:
+        detail = service.get_take(auth.user_id, assignment_id)
+    except (QuizTakingNotFoundError, QuizTakingOwnershipError) as exc:
+        _raise_for_taking(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _take_to_dto(detail)
+
+
+@student_router.put("/{assignment_id}/answers/{question_ref}", response_model=SaveAnswerResponseDTO)
+def save_student_quiz_answer(
+    assignment_id: str,
+    question_ref: str,
+    body: SaveAnswerRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[QuizTakingService, Depends(get_quiz_taking_service)],
+) -> SaveAnswerResponseDTO:
+    """Auto-save one answer, upserted on ``(submission, question_ref)``.
+
+    Creates the submission row if the student saves without a prior GET.
+    422 when the quiz is closed, the submission is already
+    submitted/marked, or ``question_ref`` is not an included question.
+    """
+    try:
+        row = service.save_answer(
+            auth.user_id,
+            assignment_id,
+            question_ref,
+            answer_text=body.answerText,
+            working_text=body.workingText,
+        )
+    except (QuizTakingNotFoundError, QuizTakingOwnershipError, QuizTakingValidationError) as exc:
+        _raise_for_taking(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _answer_to_dto(row)
+
+
+@student_router.post("/{assignment_id}/submit", response_model=SubmitQuizResponseDTO)
+def submit_student_quiz(
+    assignment_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[QuizTakingService, Depends(get_quiz_taking_service)],
+) -> SubmitQuizResponseDTO:
+    """Submit: ``status=submitted``. No marking happens here — that is chunk F."""
+    try:
+        result = service.submit(auth.user_id, assignment_id)
+    except (QuizTakingNotFoundError, QuizTakingOwnershipError, QuizTakingValidationError) as exc:
+        _raise_for_taking(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _submit_to_dto(result)
+
+
+__all__ = ["router", "student_router"]

@@ -708,3 +708,23 @@ Chunk F's `_recompute_attempt_totals` quiz guard and the eight unfiltered web-la
 grade/percentage sites listed under chunk G remain the two known landmines.
 
 **Next.** Chunk E — assignment endpoints, student take/submit (S-26), `quiz_answers`.
+
+## 2026-08-06 — P3.5 chunk E (assignment + take/submit)
+
+**Did.** Chunk E: three teacher assignment endpoints on `QuizService`, four student
+endpoints on a new `student_router` in `routers/quiz.py`, and `QuizTakingService`
+(`lemely/db/quiz_taking_repo.py`) scoped by enrolment via the new
+`ClassService.enrolled_class_ids`. 1668 tests (1664 passed / 4 live-only skips), 88.35%
+cov (from 88.00%), all 12 gates green, `alembic check` clean, no schema change.
+
+**Learned.** S-26's "not yet open" state has no backing column and needs none — an
+assignment does not exist until assigned, so the state is just a 404 (D3.8). The unassign
+guard reads finer than it fires: submissions are born `in_progress`, so "refuse unless
+`not_started`" is really "refuse if any row exists" — recorded honestly rather than
+claiming a distinction that never triggers. Answer leakage is excluded by *field absence*
+on `QuizTakeQuestionRow`, not by omitting fields at the DTO layer.
+
+**Next.** Chunk F — `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
+refactor, review-queue integration, the `_recompute_attempt_totals` quiz guard, T-10. Also
+still open: the eight unfiltered web-layer grade/percentage sites chunk G handed to F,
+which must be filtered in the same commit that first writes a quiz attempt.
