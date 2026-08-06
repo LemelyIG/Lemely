@@ -38,6 +38,25 @@ resolves to bit-identical boundaries — no drift). Every existing consumer of
 every ``PaperRecord``/``StudentHistory`` the student and teacher portals
 already read — sees the corrected total with no changes of its own required.
 
+**The same override also recomputes affected** :class:`~lemely.db.models.attempts.WeaknessRecord`
+**rows**, not just the attempt total. ``history_repo._to_record`` builds
+``PaperRecord.weak_areas`` straight from ``attempt.weakness_records``, which
+were written at persist time from the AI's marks; leaving them untouched
+after an override would mean a restored question still counts as "lost" on
+the student's weakness list, the T-04 class heatmap
+(``aggregate_weaknesses_from_history``), and everything downstream of it —
+the exact "corrected on one screen, stale on another" failure D3.3 already
+fixed once for "at risk". :meth:`ReviewService._recompute_weakness_records`
+re-groups every question's ``effective_marks`` with
+:func:`~lemely.core.analytics.group_weak_areas` — the identical
+topic-bucketing algorithm ``summarize_weaknesses`` used at persist time — and
+diffs the result against what is currently stored: a topic still net-losing
+marks is updated in place, a topic newly created a loss gets a fresh row, and
+a topic whose lost marks dropped to zero (e.g. the override restored it to
+full marks) is **deleted outright**, matching
+``summarize_weaknesses``/``aggregate_weaknesses_from_history``'s own rule
+that a zero-loss topic is not a weakness at all.
+
 **Dismissing an integrity flag never touches a** :class:`QuestionResult`.
 That is not a policy choice enforced by hiding a field later; it is
 structural — :meth:`ReviewService.dismiss` only ever writes to the
@@ -64,14 +83,21 @@ import structlog
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from lemely.core.analytics import DEFAULT_GRADE_BOUNDARIES, grade_for_percentage
+from lemely.core.analytics import (
+    DEFAULT_GRADE_BOUNDARIES,
+    WeakAreaInput,
+    grade_for_percentage,
+    group_weak_areas,
+)
 from lemely.core.schemas import ExamMetadata
-from lemely.db.models.attempts import Attempt, QuestionResult
+from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import SESSION_MONTH_LABELS, BoundarySource, ReviewReason, ReviewStatus
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.io.grade_boundaries import GradeBoundaryStore
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlalchemy.orm import Session, sessionmaker
 
     from lemely.db.class_repo import ClassService
@@ -299,8 +325,8 @@ class ReviewService:
         given). ``override_marks`` supplied records a teacher correction on the
         underlying :class:`~lemely.db.models.attempts.QuestionResult` — clamped
         to ``[0, maximum_marks]`` — and eagerly recomputes the attempt's total
-        (see module docstring), labelling the mark as a teacher correction and
-        attributing who/when.
+        AND its affected weakness records (see module docstring), labelling the
+        mark as a teacher correction and attributing who/when.
 
         Raises:
             ReviewNotFoundError: No item exists with ``item_id`` (404).
@@ -335,7 +361,11 @@ class ReviewService:
                 qr.overridden_by = caller_uuid
                 qr.overridden_at = now
                 session.flush()
-                self._recompute_attempt_totals(session, attempt)
+                results = session.scalars(
+                    select(QuestionResult).where(QuestionResult.attempt_id == attempt.id)
+                ).all()
+                self._recompute_attempt_totals(session, attempt, results)
+                self._recompute_weakness_records(session, attempt, results)
             item.status = ReviewStatus.resolved
             item.resolved_by = caller_uuid
             item.resolved_at = now
@@ -471,17 +501,18 @@ class ReviewService:
         )
         return item, attempt, qr
 
-    def _recompute_attempt_totals(self, session: Session, attempt: Attempt) -> None:
+    def _recompute_attempt_totals(
+        self, session: Session, attempt: Attempt, results: Sequence[QuestionResult]
+    ) -> None:
         """Recompute the attempt's stored total after an override.
 
         Sums every question's ``effective_marks`` (AI mark, or the teacher's
         override when one is recorded) and re-grades it with the same
         deterministic boundary lookup the original grade used — see module
-        docstring.
+        docstring. ``results`` is every :class:`QuestionResult` on this
+        attempt, passed in (not re-queried) so the caller can share one fetch
+        with :meth:`_recompute_weakness_records`.
         """
-        results = session.scalars(
-            select(QuestionResult).where(QuestionResult.attempt_id == attempt.id)
-        ).all()
         awarded = sum(qr.effective_marks for qr in results)
         maximum = attempt.maximum_marks
         percentage = round((awarded / maximum) * 100.0, 2) if maximum else 0.0
@@ -492,6 +523,66 @@ class ReviewService:
         attempt.grade = grade
         attempt.predicted_grade = grade
         attempt.boundary_source = boundary_source
+        session.flush()
+
+    def _recompute_weakness_records(
+        self, session: Session, attempt: Attempt, results: Sequence[QuestionResult]
+    ) -> None:
+        """Recompute this attempt's :class:`WeaknessRecord` rows after an override.
+
+        Re-groups every question's ``effective_marks`` with
+        :func:`~lemely.core.analytics.group_weak_areas` — the identical
+        topic-bucketing algorithm ``summarize_weaknesses`` used when this
+        attempt was first persisted — and diffs the fresh set against what is
+        currently stored, keyed by topic (``AttemptRepository.persist_correction``
+        never creates two rows for the same topic on one attempt, so a
+        topic-keyed diff cannot collide): an existing topic's numbers are
+        updated in place, a newly-created loss gets a fresh row, and a topic
+        whose lost marks dropped to zero is deleted outright — a restored
+        question must not leave behind a stale, zero-loss weakness row (see
+        module docstring).
+        """
+        items = [
+            WeakAreaInput(
+                question_id=qr.question_id,
+                topic=qr.topic,
+                awarded_marks=qr.effective_marks,
+                maximum_marks=qr.maximum_marks,
+            )
+            for qr in results
+        ]
+        fresh_by_topic = {area.topic: area for area in group_weak_areas(items)}
+
+        existing = session.scalars(
+            select(WeaknessRecord).where(WeaknessRecord.attempt_id == attempt.id)
+        ).all()
+        existing_by_topic = {record.topic: record for record in existing}
+
+        for topic, area in fresh_by_topic.items():
+            record = existing_by_topic.pop(topic, None)
+            if record is None:
+                session.add(
+                    WeaknessRecord(
+                        user_id=attempt.user_id,
+                        attempt_id=attempt.id,
+                        topic=area.topic,
+                        lost_marks=area.lost_marks,
+                        maximum_marks=area.maximum_marks,
+                        accuracy=area.accuracy,
+                        question_ids=list(area.question_ids),
+                    )
+                )
+            else:
+                record.lost_marks = area.lost_marks
+                record.maximum_marks = area.maximum_marks
+                record.accuracy = area.accuracy
+                record.question_ids = list(area.question_ids)
+
+        # Any topic no longer net-losing marks (e.g. the override restored it
+        # to full marks) is not a weakness at all — same rule
+        # summarize_weaknesses/aggregate_weaknesses_from_history apply.
+        for stale in existing_by_topic.values():
+            session.delete(stale)
         session.flush()
 
     def _boundaries_for(self, attempt: Attempt) -> tuple[dict[str, float], BoundarySource]:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from lemely.core.history import PaperRecord, PerformanceComparison, StudentHistory
 
 from lemely.core.schemas import (
@@ -32,20 +35,48 @@ DEFAULT_GRADE_BOUNDARIES = {
 }
 
 
-def summarize_weaknesses(correction: CorrectionResult) -> WeaknessReport:
+@dataclass(frozen=True, slots=True)
+class WeakAreaInput:
+    """One marked question, reduced to exactly what topic-grouping needs.
+
+    Deliberately not :class:`~lemely.core.schemas.CorrectedQuestion` — that
+    type carries confidence/marker-source/review-flag fields no grouping
+    logic touches, and requiring them would force callers that only have a
+    mark (e.g. a teacher's override) to fabricate values for fields that mean
+    nothing there.
+    """
+
+    question_id: str
+    topic: str | None
+    awarded_marks: int
+    maximum_marks: int
+
+
+def group_weak_areas(items: Iterable[WeakAreaInput]) -> list[WeakArea]:
+    """Group marked questions into per-topic :class:`WeakArea` rows.
+
+    The single topic-bucketing algorithm — a null ``topic`` groups under
+    ``"unknown"``, a topic with zero net lost marks is excluded entirely, and
+    the result is sorted worst-accuracy-first. Shared by
+    :func:`summarize_weaknesses` (marking-time, from AI marks) and
+    :meth:`lemely.db.review_repo.ReviewService._recompute_weakness_records`
+    (a teacher's override, from ``effective_marks``) so the two can never
+    silently compute "weak topic" differently (P3.4) — the exact failure mode
+    D3.3 already fixed once for "at risk".
+    """
     grouped: dict[str, _TopicBucket] = {}
-    for question in correction.questions:
-        lost_marks = question.maximum_marks - question.awarded_marks
-        topic = question.topic or "unknown"
+    for item in items:
+        lost_marks = item.maximum_marks - item.awarded_marks
+        topic = item.topic or "unknown"
         bucket = grouped.setdefault(
             topic,
             _TopicBucket(awarded_marks=0, lost_marks=0, maximum_marks=0, question_ids=[]),
         )
-        bucket["awarded_marks"] += question.awarded_marks
+        bucket["awarded_marks"] += item.awarded_marks
         bucket["lost_marks"] += lost_marks
-        bucket["maximum_marks"] += question.maximum_marks
+        bucket["maximum_marks"] += item.maximum_marks
         if lost_marks > 0:
-            bucket["question_ids"].append(question.question_id)
+            bucket["question_ids"].append(item.question_id)
 
     weak_areas = []
     for topic, bucket in grouped.items():
@@ -65,8 +96,21 @@ def summarize_weaknesses(correction: CorrectionResult) -> WeaknessReport:
         )
 
     weak_areas.sort(key=lambda area: (area.accuracy, area.topic))
+    return weak_areas
+
+
+def summarize_weaknesses(correction: CorrectionResult) -> WeaknessReport:
+    items = [
+        WeakAreaInput(
+            question_id=q.question_id,
+            topic=q.topic,
+            awarded_marks=q.awarded_marks,
+            maximum_marks=q.maximum_marks,
+        )
+        for q in correction.questions
+    ]
     return WeaknessReport(
-        weak_areas=weak_areas,
+        weak_areas=group_weak_areas(items),
         needs_teacher_review=correction.needs_teacher_review,
     )
 

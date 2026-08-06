@@ -31,6 +31,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from lemely.core.analytics import summarize_weaknesses
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -38,14 +39,13 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
-    WeaknessReport,
 )
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
-from lemely.db.models.attempts import Attempt, QuestionResult
+from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import Role
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import (
@@ -132,6 +132,7 @@ def _question(
     review_reason: str | None = None,
     plagiarism_flagged: bool = False,
     ai_detection_flagged: bool = False,
+    topic: str = "Waves",
 ) -> CorrectedQuestion:
     return CorrectedQuestion(
         question_id=question_id,
@@ -142,7 +143,7 @@ def _question(
         needs_teacher_review=needs_review,
         student_answer=f"answer-{question_id}",
         expected_answer=f"expected-{question_id}",
-        topic="Waves",
+        topic=topic,
         marker_source="ai",
         review_reason=review_reason,
         plagiarism_flagged=plagiarism_flagged,
@@ -165,8 +166,14 @@ def _report(questions: list[CorrectedQuestion]) -> AccuracyReport:
         needs_teacher_review=correction.needs_teacher_review,
         boundary_source="global_default",
     )
+    # Real weaknesses, computed the same way the marking pipeline does —
+    # AttemptRepository.persist_correction writes WeaknessRecord rows straight
+    # from report.weaknesses.weak_areas, so a fixture that leaves this empty
+    # would silently make every weakness-record assertion vacuous.
     return AccuracyReport(
-        correction=correction, weaknesses=WeaknessReport(weak_areas=[]), grade_prediction=prediction
+        correction=correction,
+        weaknesses=summarize_weaknesses(correction),
+        grade_prediction=prediction,
     )
 
 
@@ -449,9 +456,14 @@ def test_resolve_override_recomputes_attempt_total_everywhere(
     """The core override-consistency guarantee: overriding one question makes
     the attempt total, percentage, and grade agree on every student-facing
     read path (``DbHistoryStore``), while the AI's original mark stays
-    retrievable on the question row itself."""
+    retrievable on the question row itself. Also proves the weakness-record
+    fix: both questions share topic "Waves", so restoring question "2" to
+    full marks drops the topic's net lost marks to zero — its weakness row
+    must disappear from ``weak_areas`` entirely, not linger claiming marks the
+    teacher just restored."""
     teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
-    # Two questions, 5 marks total; question "2" is low-confidence and flagged.
+    # Two questions, same topic, 5 marks total; question "2" is low-confidence
+    # and flagged.
     attempt_id = _seed_attempt_with_review_items(
         pg_sessionmaker,
         student,
@@ -466,11 +478,15 @@ def test_resolve_override_recomputes_attempt_total_everywhere(
         if i.question_result_id is not None
     )
 
-    # Before the override: 2/5 = 40% = grade U (< 50 threshold).
+    # Before the override: 2/5 = 40% = grade U (< 50 threshold), and "Waves"
+    # is a weak area (3 marks lost of 5, from question "2").
     before = DbHistoryStore(pg_sessionmaker).load(str(student)).records[-1]
     assert before.awarded_marks == 2
     assert before.percentage == 40.0
     assert before.grade == "U"
+    before_waves = next(a for a in before.weak_areas if a.topic == "Waves")
+    assert before_waves.lost_marks == 3
+    assert before_waves.maximum_marks == 5
 
     row = review_service.resolve(
         teacher,
@@ -487,6 +503,11 @@ def test_resolve_override_recomputes_attempt_total_everywhere(
     assert after.awarded_marks == 5
     assert after.percentage == 100.0
     assert after.grade == "A"
+    # "Waves" no longer claims any lost marks — restored to full marks, it is
+    # gone from the weakness set entirely (matching how a freshly-marked,
+    # fully-correct attempt would be represented; no stale accuracy=1.0 row).
+    assert all(a.topic != "Waves" for a in after.weak_areas)
+    assert after.weak_areas == []
 
     with pg_sessionmaker() as session:
         attempt = session.get(Attempt, attempt_id)
@@ -495,6 +516,13 @@ def test_resolve_override_recomputes_attempt_total_everywhere(
         assert attempt.percentage == 100.0
         assert attempt.grade == "A"
         assert attempt.predicted_grade == "A"
+
+        # The WeaknessRecord row itself is gone, not just excluded by a
+        # zero-loss filter somewhere downstream — proof the deletion is real.
+        remaining_weakness_records = session.scalars(
+            select(WeaknessRecord).where(WeaknessRecord.attempt_id == attempt_id)
+        ).all()
+        assert remaining_weakness_records == []
 
         qr = session.scalars(
             select(QuestionResult).where(
@@ -518,6 +546,64 @@ def test_resolve_override_recomputes_attempt_total_everywhere(
         ).one()
         assert untouched.teacher_awarded_marks is None
         assert untouched.effective_marks == 2
+
+
+def test_resolve_override_updates_weakness_record_in_place_when_topic_still_weak(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """A partial restore that does not fully clear a topic's lost marks must
+    update the existing ``WeaknessRecord`` in place — not delete it, and not
+    leave it claiming the pre-override numbers."""
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    attempt_id = _seed_attempt_with_review_items(
+        pg_sessionmaker,
+        student,
+        [
+            # Overridden below: 0/3 -> 3/3.
+            _question(
+                "2a", awarded=0, maximum=3, confidence_score=0.2, needs_review=True, topic="Forces"
+            ),
+            # Same topic, untouched: still losing 1/2.
+            _question("2b", awarded=1, maximum=2, confidence_score=1.0, topic="Forces"),
+        ],
+    )
+    with pg_sessionmaker() as session:
+        before_record = session.scalars(
+            select(WeaknessRecord).where(
+                WeaknessRecord.attempt_id == attempt_id, WeaknessRecord.topic == "Forces"
+            )
+        ).one()
+        before_record_id = before_record.id
+        assert before_record.lost_marks == 4  # 3 (2a) + 1 (2b)
+        assert before_record.maximum_marks == 5
+        assert set(before_record.question_ids) == {"2a", "2b"}
+
+    with pg_sessionmaker() as session:
+        item_id = session.scalars(
+            select(ReviewQueueItem.id)
+            .join(QuestionResult, ReviewQueueItem.question_result_id == QuestionResult.id)
+            .where(ReviewQueueItem.attempt_id == attempt_id, QuestionResult.question_id == "2a")
+        ).one()
+    review_service.resolve(teacher, Role.teacher, item_id, override_marks=3)
+
+    after = DbHistoryStore(pg_sessionmaker).load(str(student)).records[-1]
+    forces = next(a for a in after.weak_areas if a.topic == "Forces")
+    assert forces.lost_marks == 1  # only "2b" still lossy
+    assert forces.maximum_marks == 5
+    assert forces.question_ids == ["2b"]  # "2a" no longer claims lost marks
+
+    with pg_sessionmaker() as session:
+        records = session.scalars(
+            select(WeaknessRecord).where(
+                WeaknessRecord.attempt_id == attempt_id, WeaknessRecord.topic == "Forces"
+            )
+        ).all()
+        # Updated in place — same row, not deleted-and-recreated.
+        assert len(records) == 1
+        assert records[0].id == before_record_id
+        assert records[0].lost_marks == 1
 
 
 def test_resolve_override_out_of_range_is_validation_error(
