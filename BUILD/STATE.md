@@ -484,8 +484,57 @@ Starting facts (established 2026-08-06, do not re-derive):
             off). Nothing anywhere reads this table to decide whether to send — including
             against the quiet-hours window. That interpretation is **P5's to write**, and
             P5 must not assume this chunk left it a helper.
-- [ ] todo — **P3.7** Teacher frontend T-01..T-06 (dashboard, classes list, class detail roster,
-      class analytics, student detail, at-risk list).
+- [ ] doing — **P3.7** Teacher frontend T-01..T-06 (dashboard, classes list, class detail roster,
+      class analytics, student detail, at-risk list). Split into four chunks, one commit each.
+
+      **Established facts (2026-08-06, do not re-derive):**
+      - Backend routes for all six screens already exist. T-01 `GET /api/teacher/overview`;
+        T-02 `GET /api/teacher/classes` (+ `POST /api/classes`, `PATCH`/`DELETE
+        /api/classes/{id}`); T-03 `GET /api/classes/{id}` and `/roster` (+ `POST
+        .../enroll`, `DELETE .../students/{sid}`); T-04 `GET /api/classes/{id}/analytics`;
+        T-05 `GET /api/teacher/students/{id}`; T-06 `GET /api/teacher/at-risk?reason=` +
+        `POST`/`DELETE /api/teacher/at-risk/{sid}/acknowledge[/{reason}]`.
+      - Frontend today: `Overview.tsx` (T-01) is the ONLY teacher screen on real data
+        (`useTeacherOverview`). `Grading`/`Review`/`MarkSchemes` are wired to the P2
+        grading-console endpoints. **`Classes.tsx` and `Quizzes.tsx` still render
+        `web/src/portals/teacher/data.ts` mock data.** So does the sidebar in
+        `portals/teacher/index.tsx`: `recentClasses` (3 fake classes), the hardcoded
+        `badge: "12"` on Grading, and the hardcoded "Mr H. Sabry / Physics dept · CAIE"
+        user block. All four are hardcoded values masquerading as features — kill them in
+        chunk b, do not carry them into a new screen.
+      - `useTeacherApi.ts` covers only the 7 P2 grading-console endpoints. Nothing for
+        classes, analytics, student detail, or at-risk exists on the client yet.
+      - `web/scripts/audit.mjs` is scoped to exactly 4 student routes (D2.10). Extending it
+        to the teacher routes is **P3.10's** job, not P3.7's — do not expand it here.
+      - **`supabase` is not on `PATH` in a non-interactive shell**, so `scripts/check.sh`
+        silently reports the stack down and SKIPS the three live UI gates. Always run it as
+        `PATH="$HOME/.local/bin:$PATH" ./scripts/check.sh` or you get 9 gates, not 12.
+        (The stack itself is up — `docker ps` shows the twelve `supabase_*_Lemely`
+        containers.)
+      - **Spec-vs-DTO gaps found before starting (D3.12).** Three T-screens name contents
+        the DTOs do not carry, so chunk a adds them additively rather than letting a screen
+        omit a spec-required column or invent one client-side:
+        T-01 "recent activity: submissions across their classes" has no field at all;
+        T-01 class summary cards want top weakness + activity level, T-02 wants last
+        activity + at-risk count, but `ClassSummaryDTO` carries neither;
+        T-03 wants papers-submitted, last-active and the at-risk **reason**, but
+        `StudentRowDTO` has only a bare `gradeAtRisk` bool.
+        **Deliberately NOT added: a class-level "average predicted grade."** T-01/T-02 both
+        ask for one, but averaging letter grades invents precision the data does not support
+        (spec §1.4). `ClassSummaryDTO.average` (mean latest percentage) is rendered and
+        labelled as exactly that. This is a knowing deviation from the spec's wording —
+        report it, do not quietly "fix" it later by inventing the mean grade.
+      - [ ] **a** todo — backend additive DTO enrichment + tests (backend-only, no `web/`
+            diff). `OverviewDTO.recentActivity`; `ClassSummaryDTO` + `atRiskCount` /
+            `lastActivityAt` / `topWeakness`; `StudentRowDTO` + `paperCount` /
+            `lastActiveAt` / `flags`. Every field derived from data the route ALREADY
+            loads — no new query, no N+1. Grade/percentage claims filter through
+            `lemely.core.history` per D3.9; quizzes carry a null grade rather than a
+            fabricated one.
+      - [ ] **b** todo — client API/types layer + T-01 dashboard + T-02 classes list.
+      - [ ] **c** todo — T-03 class detail roster + T-04 class analytics (heatmap is the
+            centrepiece).
+      - [ ] **d** todo — T-05 student detail + T-06 at-risk list (acknowledge-with-note).
 - [ ] todo — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
       builder + class results), T-12 (announcement composer).
 - [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.

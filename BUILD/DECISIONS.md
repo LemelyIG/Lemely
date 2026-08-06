@@ -3,6 +3,50 @@
 
 ## Phase 3
 
+### D3.12 — Close the T-01/T-02/T-03 spec-vs-DTO gaps with additive fields, but do not invent a class-level predicted grade (P3.7)
+
+**The decision.** Before building any teacher screen, three of them were checked against the
+DTOs that would feed them, and three gaps were found where `docs/LEMELY_UI_SPEC.md` §4.7
+names contents no field carries:
+
+- **T-01 item 4** — "Recent activity: submissions across their classes." `OverviewDTO` has
+  `stats`, `atRisk` and a structurally-empty `retention`. Nothing else.
+- **T-01 item 3 / T-02** — class summary cards want the class's top weakness and activity
+  level; the T-02 table additionally wants last activity and an at-risk count.
+  `ClassSummaryDTO` carries `id`/`label`/`studentCount`/`average`/`subjectCode`/`schoolId`/
+  `joinCode` and none of those four.
+- **T-03** — the roster table wants papers submitted, last active, and "at-risk flag **with
+  reason**" (the spec is emphatic: "Reasons must be shown, not just a red dot").
+  `StudentRowDTO` has a bare `gradeAtRisk: bool` — a red dot and nothing else.
+
+P3.7 adds these as **additive DTO fields** (chunk a), every one derived from data the route
+already loads: the overview route already holds every visible student's full history, and
+`/teacher/classes` already walks each class's roster. No new query, no N+1, no new engine —
+`assess_at_risk` (D3.3) and `lemely.core.history`'s D3.9 predicates are reused as-is.
+
+**The alternatives, and why they lose.** (a) *Omit the columns.* Ships a roster with a red
+dot and no reason — a direct violation of the spec line above and of principle §1.4
+(flags are signals with evidence, never unexplained verdicts). (b) *Derive them
+client-side.* The client would have to fetch every student's detail to compute one class's
+at-risk count — an N+1 over HTTP to recompute something the server already has in memory.
+(c) *A new endpoint per gap.* Three extra round trips on first paint for fields that fall
+out of a loop the route already runs.
+
+**What is deliberately NOT added: a class-level "average predicted grade."** T-01 and T-02
+both use that phrase. Averaging letter grades is invented precision — the ladder is ordinal,
+the gap between C and D is not the gap between A and A\*, and a "class average of B−" would
+be a number the data cannot support. `ClassSummaryDTO.average` (mean latest percentage,
+already filtered to grade-bearing records per D3.9) is rendered and **labelled as exactly
+that**. This is a knowing, reported deviation from the spec's wording in favour of its §1.4
+principle ("never invent precision"), which the authority order in MISSION §10 puts above
+the screen-contents prose. It must appear in the phase report as a deviation, not be
+quietly "corrected" by a later session inventing the mean grade.
+
+**Honest consequence.** `recentActivity` spans papers *and* quizzes, because the spec says
+"submissions", not "papers". A quiz attempt has a percentage but deliberately never a grade
+(D3.9/chunk F1), so its `grade` is null on the wire and the UI must render the absence
+rather than substitute the student's last paper grade.
+
 ### D3.11 — Parent links: the student invites, and only a phone-proven parent can be linked (P3.6)
 
 **The decision.** `parent_child_links` is created by the **student**, naming a parent by
