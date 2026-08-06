@@ -324,7 +324,11 @@ Starting facts (established 2026-08-06, do not re-derive):
             Known minor: `list_assigned`/`list_assignments` call `roster`/count per
             assignment (bounded N+1, tens of rows per student/quiz) — fine now, revisit only
             if T-10 makes it hot.
-      - [ ] **F** doing (next) — `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
+      - [ ] **F** doing — split into two commits: **F1** marking core (`_persist` refactor,
+            `persist_quiz_correction`, `_recompute_attempt_totals` quiz guard,
+            `QuizMarkingService` + the pure `quiz_question_to_scheme_question` adapter,
+            background marking on submit); **F2** T-10 class-results endpoints.
+            Full scope — `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
             refactor, review-queue integration, **the `_recompute_attempt_totals` quiz guard**
             (without it the first teacher override on a quiz invents a grade the marking path
             never wrote), T-10 endpoints. Second-highest risk — it touches the shared persist
