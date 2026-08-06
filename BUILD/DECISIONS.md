@@ -39,6 +39,16 @@ violates "never invent precision" (UI-spec §1.4). The ingest is still built, is
 idempotent on `uq_question_bank_paper_question`, and still reports rows-produced /
 rows-skipped; it simply reports 0/122 against today's corpus and skips rather than writes.
 
+**Follows from that: the past-paper ingest is built as a *survey*, not a writer.** If every
+question is skipped and the skip is structural, a persist branch behind
+`if prompt is not None:` is unreachable code that can only be "tested" by stubbing a field
+the schema does not have — dead code dressed as a feature, and a coverage hole either way.
+So chunk B ships `survey_past_paper_questions()`, which walks the parsed payloads and
+reports produced / skipped-for-no-prompt / topic coverage, with a docstring naming the
+missing stem extractor as the blocker. The real writer lands with the extractor, not before.
+`uq_question_bank_paper_question` stays in the schema — it is what will make that writer
+idempotent, and dropping and re-adding it later is pure churn.
+
 **Consequences that must be carried forward, not quietly forgotten:**
 - The `past_paper` pool count is genuinely **0 for every subject**, and T-09 (chunk D) must
   say so in the §2 words — "no past-paper questions indexed for <subject> yet; use generated
