@@ -604,3 +604,32 @@ guard it and test the guard. Chunk G must land before F, not after.
 **Next.** P3.5 chunk A (migration 0007 + ORM models), then G, then B — and B starts
 with a measurement of past-paper ingest yield before anything is persisted, because a
 genuine zero-count is an acceptable product answer but only if found early.
+
+## 2026-08-06 — P3.5 chunks A + G
+
+**Did.** Chunk A (0cedc1b): migration `0007_quiz_model` + six quiz tables + seven enums +
+`attempts.origin`, schema only. Verified on the live stack — upgrade → downgrade → upgrade
+with `alembic check` clean both ways, not just "it applied". Chunk G (60668ea): the
+grade-bearing/topic-bearing split from `docs/quiz-model.md` §5, landed as one predicate
+before any quiz attempt can exist. 1519 tests / 87.48% cov, all 12 gates green.
+
+**Learned.** Three things worth not re-deriving. (1) The test counts recorded for
+P3.1–P3.4b were guesses — `pytest -q` here emits no `N passed` summary line, so the real
+count comes from counting progress characters; it was 1485 at chunk A, not 826. Method is
+now written into STATE. (2) Bumping `HISTORY_SCHEMA_VERSION` is not free: because
+`StudentHistory.schema_version` defaults to the *current* version, a pre-versioning file
+silently relabelled itself v2 and stopped being detectable as old. The loader already
+resolved absent-means-1 for its own guard and then threw that away at `model_validate`.
+(3) `is_grade_bearing` bundles origin AND grade-validity, so applying it naively to
+`grade_distribution` was not the no-op it looked like — it turns "latest paper unreadable →
+no standing to report" into "fall back to the older, better grade".
+
+**Watch.** The §5 table only covers `lemely/core/`. Eight web-layer sites
+(`classes.py:125,187`, `teacher.py:1090,1300-1301,1541`, `student.py:144-193,263,280`)
+derive a grade or percentage claim straight off `history.records` and are still unfiltered
+— harmless until F, live corruption the moment F writes the first quiz attempt. The exact
+list is in STATE as a chunk-F prerequisite.
+
+**Next.** Chunk B — the riskiest. Start with the measurement (rows produced / skipped for
+missing prompt text / topic coverage) and report it before persisting anything; a genuine
+zero-count is an acceptable answer, a late-discovered one is not.
