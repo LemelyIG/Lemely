@@ -28,7 +28,7 @@ from lemely.core.difficulty import Band
 from lemely.core.generation import GeneratedQuestion
 from lemely.db.base import Base
 from lemely.db.models import import_all_models
-from lemely.db.models.enums import QuestionDifficulty
+from lemely.db.models.enums import NotificationType, QuestionDifficulty
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -59,6 +59,7 @@ EXPECTED_TABLES = {
     "announcements",
     "notifications",
     "at_risk_acknowledgements",
+    "notification_preferences",
     "xp_events",
     "streaks",
     "question_bank",
@@ -136,6 +137,31 @@ def test_attempt_origin_enum_matches_paper_origin_vocabulary() -> None:
     from lemely.db.models.enums import AttemptOrigin
 
     assert {member.value for member in AttemptOrigin} == set(get_args(PaperOrigin))
+
+
+def test_notification_type_enum_matches_preference_columns() -> None:
+    """Pin ``NotificationType`` against ``notification_preferences``' boolean columns.
+
+    P3.6 chunk B (G-12): one explicit ``NOT NULL BOOLEAN`` column per
+    :class:`NotificationType` member, deliberately not a JSONB blob or a
+    row-per-type table — this is what makes that guarantee real rather than
+    aspirational. Mirrors P3.5 chunk A's
+    ``test_question_difficulty_enum_matches_band_vocabulary`` three-way
+    pattern (here two-way: enum vs. columns). A member added to one side
+    only would either 500 on write (column missing) or leave a column no
+    enum value ever populates — this test is what makes that impossible to
+    ship unnoticed.
+    """
+    table = Base.metadata.tables["notification_preferences"]
+    non_toggle_columns = {
+        "user_id",
+        "quiet_hours_start",
+        "quiet_hours_end",
+        "created_at",
+        "updated_at",
+    }
+    toggle_columns = {c.name for c in table.columns} - non_toggle_columns
+    assert toggle_columns == {member.value for member in NotificationType}
 
 
 # ---------------------------------------------------------------------------

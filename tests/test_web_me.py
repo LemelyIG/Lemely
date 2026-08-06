@@ -1,0 +1,407 @@
+"""Route tests for ``/api/me/notification-preferences`` (P3.6 chunk B, G-12).
+
+Self-contained (mirrors ``tests/test_web_quiz.py``) — a throwaway Postgres DB
+per test, skipped cleanly when unreachable. Available to every authenticated
+role (not gated by ``require_role``), so this file's authz matrix is the
+inverse of the role-scoped portal routers': every role reaches both routes,
+and only ``atRiskAlert``'s visibility/settability differs by role (teacher
+and parent only, per G-12). Proves:
+
+* GET for a caller with no stored row reads as all-defaults.
+* PUT then GET round-trips, and a partial PUT leaves other fields untouched.
+* ``atRiskAlert`` is null on a student's/school_admin's/platform_admin's GET,
+  and a PUT from one of those roles that supplies it (true or false) is 422;
+  a teacher's and a parent's PUT setting it succeeds.
+* Quiet hours: both-set round-trips; one-set-without-the-other is 422.
+* Every route 401s with no bearer token, mirroring
+  ``tests/test_web_quiz.py::test_unauthenticated_call_is_401``.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import TYPE_CHECKING
+
+import pytest
+import sqlalchemy as sa
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
+
+from lemely.db.base import Base
+from lemely.db.models import User
+from lemely.db.models.enums import Role
+from lemely.db.notification_prefs_repo import NotificationPreferencesService
+from lemely.runtime.config import DatabaseSettings
+from lemely.web import create_app
+from lemely.web.deps import AuthContext, get_auth_context, get_notification_prefs_service
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+# ---------------------------------------------------------------------------
+# Fixtures.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def client() -> Iterator[TestClient]:
+    app = create_app()
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _server_reachable(url: str) -> bool:
+    server_url = make_url(url).set(database="postgres")
+    engine = create_engine(server_url)
+    try:
+        with engine.connect():
+            return True
+    except OperationalError:
+        return False
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    base_url = DatabaseSettings().url
+    if not _server_reachable(base_url):
+        pytest.skip("local Postgres not reachable")
+
+    server_url = make_url(base_url).set(database="postgres")
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_test_{uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    engine = create_engine(make_url(base_url).set(database=dbname))
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def prefs_service(pg_sessionmaker: sessionmaker[Session]) -> NotificationPreferencesService:
+    return NotificationPreferencesService(pg_sessionmaker)
+
+
+def _seed_user(sm: sessionmaker[Session], role: Role) -> uuid.UUID:
+    """Insert a real ``users`` row — ``notification_preferences.user_id`` FKs to it,
+    so any test that actually writes a preferences row (not just reads the
+    all-defaults value) needs a real user to satisfy the constraint."""
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(User(id=uid, email=f"{uid}@example.com", role=role))
+    return uid
+
+
+def _use_prefs_service(client: TestClient, service: NotificationPreferencesService) -> None:
+    client.app.dependency_overrides[get_notification_prefs_service] = lambda: service  # type: ignore[union-attr]
+
+
+def _auth_as(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(user_id), role=role.value
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET: defaults, no auto-create, atRiskAlert visibility.
+# ---------------------------------------------------------------------------
+
+
+def test_get_defaults_for_a_caller_with_no_stored_row(
+    client: TestClient, prefs_service: NotificationPreferencesService
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), Role.student)
+
+    resp = client.get("/api/me/notification-preferences")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["gradeReady"] is True
+    assert body["announcement"] is True
+    assert body["streakWarning"] is True
+    assert body["studyPlanReminder"] is True
+    assert body["quietHoursStart"] is None
+    assert body["quietHoursEnd"] is None
+
+
+@pytest.mark.parametrize("role", [Role.student, Role.school_admin, Role.platform_admin])
+def test_at_risk_alert_is_null_on_a_non_teacher_non_parent_get(
+    client: TestClient, prefs_service: NotificationPreferencesService, role: Role
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), role)
+
+    resp = client.get("/api/me/notification-preferences")
+
+    assert resp.status_code == 200
+    assert resp.json()["atRiskAlert"] is None
+
+
+@pytest.mark.parametrize("role", [Role.teacher, Role.parent])
+def test_at_risk_alert_is_present_on_a_teacher_or_parent_get(
+    client: TestClient, prefs_service: NotificationPreferencesService, role: Role
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), role)
+
+    resp = client.get("/api/me/notification-preferences")
+
+    assert resp.status_code == 200
+    assert resp.json()["atRiskAlert"] is True
+
+
+# ---------------------------------------------------------------------------
+# PUT then GET: round trip, partial update.
+# ---------------------------------------------------------------------------
+
+
+def test_put_then_get_round_trips(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.teacher)
+
+    put_resp = client.put(
+        "/api/me/notification-preferences",
+        json={
+            "gradeReady": False,
+            "announcement": False,
+            "atRiskAlert": False,
+            "quietHoursStart": "22:00:00",
+            "quietHoursEnd": "07:00:00",
+        },
+    )
+    assert put_resp.status_code == 200
+    put_body = put_resp.json()
+    assert put_body["gradeReady"] is False
+    assert put_body["announcement"] is False
+    assert put_body["atRiskAlert"] is False
+    assert put_body["quietHoursStart"] == "22:00:00"
+    assert put_body["quietHoursEnd"] == "07:00:00"
+    # Unmentioned fields land at their documented default on first write.
+    assert put_body["streakWarning"] is True
+    assert put_body["studyPlanReminder"] is True
+
+    get_resp = client.get("/api/me/notification-preferences")
+    assert get_resp.status_code == 200
+    assert get_resp.json() == put_body
+
+
+def test_partial_put_leaves_other_fields_untouched(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.teacher)
+
+    client.put(
+        "/api/me/notification-preferences",
+        json={"gradeReady": False, "announcement": False, "atRiskAlert": False},
+    )
+    second = client.put("/api/me/notification-preferences", json={"gradeReady": True})
+
+    assert second.status_code == 200
+    body = second.json()
+    assert body["gradeReady"] is True
+    # Untouched by the second PUT — must still reflect the first.
+    assert body["announcement"] is False
+    assert body["atRiskAlert"] is False
+    assert body["streakWarning"] is True
+    assert body["studyPlanReminder"] is True
+
+
+def test_put_empty_body_leaves_every_field_untouched(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.teacher)
+
+    client.put("/api/me/notification-preferences", json={"streakWarning": False})
+    second = client.put("/api/me/notification-preferences", json={})
+
+    assert second.status_code == 200
+    assert second.json()["streakWarning"] is False
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["gradeReady", "announcement", "streakWarning", "studyPlanReminder"],
+)
+def test_put_explicit_null_on_a_toggle_is_422_not_a_silent_reset(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+    field: str,
+) -> None:
+    """An explicit ``null`` on a toggle is invalid input, not "clear this field".
+
+    Every toggle column is ``NOT NULL``, so there is no state a ``null``
+    could mean. The DTO types them ``bool | None`` purely so
+    ``model_fields_set`` can tell *omitted* from *sent*; the route must
+    therefore reject a sent ``null`` rather than coerce it to the default,
+    which would silently re-enable a notification the user had turned off.
+    The quiet-hours pair is the deliberate exception — there ``null`` really
+    does clear the bound.
+    """
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.student)
+    assert client.put("/api/me/notification-preferences", json={field: False}).status_code == 200
+
+    resp = client.put("/api/me/notification-preferences", json={field: None})
+
+    assert resp.status_code == 422
+    # The rejected write left the stored value alone.
+    assert client.get("/api/me/notification-preferences").json()[field] is False
+
+
+# ---------------------------------------------------------------------------
+# atRiskAlert: role gating on PUT.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("role", [Role.student, Role.school_admin, Role.platform_admin])
+def test_put_at_risk_alert_from_a_disallowed_role_is_422(
+    client: TestClient, prefs_service: NotificationPreferencesService, role: Role
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), role)
+
+    resp = client.put("/api/me/notification-preferences", json={"atRiskAlert": True})
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("role", [Role.teacher, Role.parent])
+def test_put_at_risk_alert_from_teacher_or_parent_succeeds(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+    role: Role,
+) -> None:
+    user = _seed_user(pg_sessionmaker, role)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, role)
+
+    resp = client.put("/api/me/notification-preferences", json={"atRiskAlert": False})
+
+    assert resp.status_code == 200
+    assert resp.json()["atRiskAlert"] is False
+
+
+def test_put_at_risk_alert_disallowed_role_does_not_change_other_fields(
+    client: TestClient, prefs_service: NotificationPreferencesService
+) -> None:
+    user = uuid.uuid4()
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.student)
+
+    rejected = client.put(
+        "/api/me/notification-preferences",
+        json={"gradeReady": False, "atRiskAlert": True},
+    )
+    assert rejected.status_code == 422
+
+    # The whole request must have been rejected, not applied partially.
+    get_resp = client.get("/api/me/notification-preferences")
+    assert get_resp.json()["gradeReady"] is True
+
+
+# ---------------------------------------------------------------------------
+# Quiet hours: pair validation on PUT.
+# ---------------------------------------------------------------------------
+
+
+def test_quiet_hours_both_set_round_trips(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.student)
+
+    resp = client.put(
+        "/api/me/notification-preferences",
+        json={"quietHoursStart": "21:30:00", "quietHoursEnd": "06:15:00"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["quietHoursStart"] == "21:30:00"
+    assert body["quietHoursEnd"] == "06:15:00"
+
+
+def test_quiet_hours_start_without_end_is_422(
+    client: TestClient, prefs_service: NotificationPreferencesService
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), Role.student)
+
+    resp = client.put("/api/me/notification-preferences", json={"quietHoursStart": "21:30:00"})
+
+    assert resp.status_code == 422
+
+
+def test_quiet_hours_end_without_start_is_422(
+    client: TestClient, prefs_service: NotificationPreferencesService
+) -> None:
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, uuid.uuid4(), Role.student)
+
+    resp = client.put("/api/me/notification-preferences", json={"quietHoursEnd": "06:15:00"})
+
+    assert resp.status_code == 422
+
+
+def test_clearing_only_one_bound_of_an_existing_pair_is_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    prefs_service: NotificationPreferencesService,
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_prefs_service(client, prefs_service)
+    _auth_as(client, user, Role.student)
+    client.put(
+        "/api/me/notification-preferences",
+        json={"quietHoursStart": "21:30:00", "quietHoursEnd": "06:15:00"},
+    )
+
+    resp = client.put("/api/me/notification-preferences", json={"quietHoursStart": None})
+
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Unauthenticated: 401 on both routes.
+# ---------------------------------------------------------------------------
+
+
+def test_unauthenticated_get_is_401(client: TestClient) -> None:
+    resp = client.get("/api/me/notification-preferences")
+    assert resp.status_code == 401
+
+
+def test_unauthenticated_put_is_401(client: TestClient) -> None:
+    resp = client.put("/api/me/notification-preferences", json={"gradeReady": False})
+    assert resp.status_code == 401

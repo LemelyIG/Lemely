@@ -30,6 +30,7 @@ from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
+from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_marking_repo import QuizMarkingService
@@ -314,6 +315,18 @@ def get_parent_link_service() -> ParentLinkService:
     return ParentLinkService(get_sessionmaker(get_settings()))
 
 
+@lru_cache(maxsize=1)
+def get_notification_prefs_service() -> NotificationPreferencesService:
+    """Return the process-wide :class:`NotificationPreferencesService` singleton (P3.6 chunk B).
+
+    Wired with the DB session factory alone — mirrors :func:`get_parent_link_service`:
+    preference lookups need no account-creation seam or composed service.
+    Tests override this dependency with a service built on a throwaway
+    Postgres database.
+    """
+    return NotificationPreferencesService(get_sessionmaker(get_settings()))
+
+
 @dataclass(frozen=True, slots=True)
 class AuthContext:
     """The authenticated caller, resolved from a validated bearer token.
@@ -429,6 +442,7 @@ def reset_singletons() -> None:
     get_seat_service.cache_clear()
     get_class_service.cache_clear()
     get_parent_link_service.cache_clear()
+    get_notification_prefs_service.cache_clear()
     get_review_service.cache_clear()
     get_at_risk_ack_service.cache_clear()
     get_question_bank_service.cache_clear()

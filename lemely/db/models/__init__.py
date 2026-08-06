@@ -41,7 +41,13 @@ from lemely.db.models.enums import (
     UploadStatus,
     XpSource,
 )
-from lemely.db.models.ops import Announcement, AtRiskAcknowledgement, Notification, ReviewQueueItem
+from lemely.db.models.ops import (
+    Announcement,
+    AtRiskAcknowledgement,
+    Notification,
+    NotificationPreference,
+    ReviewQueueItem,
+)
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat
 from lemely.db.models.quizzes import (
     QuestionBank,
@@ -92,6 +98,7 @@ __all__ = [
     "MarkerSource",
     "MembershipRole",
     "Notification",
+    "NotificationPreference",
     "NotificationType",
     "Paper",
     "ParentChildLink",

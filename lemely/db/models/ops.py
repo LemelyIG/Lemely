@@ -7,7 +7,7 @@ acknowledgements tables.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, time
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -224,4 +224,72 @@ class AtRiskAcknowledgement(TimestampMixin, Base):
     note: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 
 
-__all__ = ["Announcement", "AtRiskAcknowledgement", "Notification", "ReviewQueueItem"]
+class NotificationPreference(TimestampMixin, Base):
+    """Per-user notification toggle + quiet-hours settings (G-12, P3.6 chunk B).
+
+    One row per user, keyed directly on ``user_id`` — no synthetic ``id``,
+    unlike :class:`~lemely.db.models.engagement.Streak` (also one-row-per-user)
+    which carries both; a preferences row has no reason to be addressed by
+    anything other than the user it belongs to.
+
+    **One explicit ``NOT NULL BOOLEAN DEFAULT true`` column per**
+    :class:`NotificationType` **member**, not a JSONB blob and not a
+    row-per-type table: this keeps every toggle typed, and the day a sixth
+    notification type is added, the migration that adds its column is where
+    someone has to make an explicit, reviewed decision about its default —
+    a JSONB key would just silently default to "off" (missing key) with no
+    migration at all. ``tests/test_db_schema.py``'s
+    ``test_notification_type_enum_matches_preference_columns`` pins the two
+    vocabularies together (P3.5 chunk A's three-way-pin pattern) so they can
+    never drift apart.
+
+    **Absent row reads as all-defaults and is never auto-created on read** —
+    see :meth:`~lemely.db.notification_prefs_repo.NotificationPreferencesService.get`,
+    which returns the defaults value directly rather than materialising a
+    row; a GET must not have a write side effect.
+
+    ``quiet_hours_start``/``quiet_hours_end`` are both nullable :class:`sa.Time`
+    (time-of-day, no date/timezone component); both null means "no quiet
+    hours configured". :class:`~lemely.db.notification_prefs_repo.NotificationPreferencesService`
+    enforces "both or neither" — a window with only one bound set is not a
+    representable state.
+
+    **This table stores a preference, it does not deliver anything.** No
+    query anywhere reads this table to decide whether to actually send/queue
+    a notification, including against the quiet-hours window — that
+    interpretation belongs to P5, which owns notification delivery end to
+    end. G-12 also lists a "weekly summary" toggle; it has no corresponding
+    :class:`NotificationType` member and nothing in this codebase emits that
+    notification, so it is deliberately NOT a column here — inventing one
+    would be a toggle with no backing preference to toggle. Deferred to P5.
+    """
+
+    __tablename__ = "notification_preferences"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    grade_ready: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
+    announcement: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.true())
+    streak_warning: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
+    study_plan_reminder: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
+    at_risk_alert: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.true()
+    )
+    quiet_hours_start: Mapped[time | None] = mapped_column(sa.Time(), nullable=True)
+    quiet_hours_end: Mapped[time | None] = mapped_column(sa.Time(), nullable=True)
+
+
+__all__ = [
+    "Announcement",
+    "AtRiskAcknowledgement",
+    "Notification",
+    "NotificationPreference",
+    "ReviewQueueItem",
+]
