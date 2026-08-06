@@ -171,9 +171,37 @@ Starting facts (established 2026-08-06, do not re-derive):
       Known test-only wart: `_use_class_service` in `tests/test_web_teacher.py` reads
       `class_service._sessionmaker` to auto-wire the ack service for 15+ pre-existing
       tests rather than changing every call site. Documented in the helper's docstring.
-- [ ] doing — **P3.5** Teacher quiz builder backend (T-09/T-10). Difficulty targeting by expected
-      grade, material selection, pool from past-paper/generated questions, assign to class,
-      auto-mark, results feed analytics.
+- [ ] doing — **P3.5** Teacher quiz builder backend (T-09/T-10). **Design is DONE and fixed:
+      `docs/quiz-model.md` (822 lines) + D3.6. Do not redesign — implement it.** There was no
+      quiz persistence of any kind before this; the existing `/quizzes/*` routes build an
+      ephemeral preview and save nothing.
+      Build in this order (D3.6 / `docs/quiz-model.md` §6), one commit per chunk:
+      - [ ] **C** `lemely/core/difficulty.py` — pure: `DIFFICULTY_MIX`, `difficulty_mix`,
+            `allocate_difficulty` (largest-remainder), `infer_difficulty`. Low risk. The mix
+            is an unbacked product judgement and its docstring must say so.
+      - [ ] **A** migration `0007_quiz_model` + ORM models + enums + `attempts.origin`.
+            Schema only, no behaviour. Additive-only (D1.2/D1.3).
+      - [ ] **G** `PaperRecord.origin` + `is_grade_bearing`, wired into the nine consumers
+            listed in `docs/quiz-model.md` §5. A behavioural no-op today — **must land
+            before F**, after which it becomes a data-corruption fix.
+      - [ ] **B** `question_bank` repo + visibility predicate + past-paper ingest from
+            `mark_schemes.parsed_payload` + import of on-disk `GeneratedQuiz` files.
+            **Highest risk; gates T-09's live-count promise. Start with a measurement**
+            (rows produced / skipped for missing prompt text / topic coverage) and report it
+            before persisting anything. A genuine zero-count is an acceptable answer.
+      - [ ] **D** quiz CRUD + draft PATCH + pool-count endpoint + question selection;
+            `/quizzes/pools` moves off disk onto the bank (closes the process-global
+            every-teacher-sees-every-question leak). All scoped through `ClassService`.
+      - [ ] **E** assignment endpoints + student take/submit (S-26) + `quiz_answers`.
+      - [ ] **F** `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
+            refactor, review-queue integration, **the `_recompute_attempt_totals` quiz guard**
+            (without it the first teacher override on a quiz invents a grade the marking path
+            never wrote), T-10 endpoints. Second-highest risk — it touches the shared persist
+            path and `ReviewService`, which past-paper marking depends on; any change in the
+            existing past-paper regression suite is a defect in the refactor, not acceptable
+            fallout.
+      Also: `ExamMetadata` forces a synthetic paper_number/variant/session for the marking
+      call — **never persist those**; copying `persist_correction` gets this wrong by default.
 - [ ] todo — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
       subject detail / weaknesses (read-only), notification preferences. Parent authz: only
       own linked children.

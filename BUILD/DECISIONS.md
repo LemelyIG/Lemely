@@ -3,6 +3,53 @@
 
 ## Phase 3
 
+### D3.6 — Quiz model: a real question bank, a difficulty *mix* (not a band), and one marking road
+
+Full design in **`docs/quiz-model.md`** (822 lines — schema table-by-table, the mapping
+functions, the marking sequence, rejected alternatives). Recorded here is what a future
+session must not re-litigate:
+
+- **A queryable `question_bank` table is required, and is in scope.** T-09 step 4 promises
+  a *live count* of matching questions; no arrangement of on-disk JSON answers a count
+  query. Today's `_existing_questions()` disk scan is additionally a tenancy hole — a
+  process-global path, so every teacher sees every other teacher's generated questions.
+  Past-paper rows are ingested from `mark_schemes.parsed_payload`. **Honest degradation,
+  chosen deliberately:** until ingest has run for a subject, that pool's count is genuinely
+  0 and T-09 says so in words. We do not fake a pool.
+- **Difficulty targeting is a *mix*, not a single band.** `lemely/core/difficulty.py`
+  (pure): `DIFFICULTY_MIX` maps a target grade to proportions across
+  foundation/standard/challenge, and `allocate_difficulty(grade, count)` does the
+  largest-remainder rounding, so the count endpoint and the builder cannot disagree. A
+  single-band quiz discriminates nothing *within* a grade. **The mix has no empirical
+  backing — it is a product judgement, must say so in its docstring, and must never be
+  called "calibrated" in the UI** (spec §1.4: never invent precision). Past-paper questions
+  carry no difficulty label at all; they get `infer_difficulty(marks, question_type)`,
+  recorded as `difficulty_source=inferred_from_marks` and surfaced to teachers as
+  "estimated from mark allocation". Gemini labelling rejected on cost.
+- **One marking road, not two.** Quiz questions are adapted into core `Question`s and run
+  through the *existing* `correct_paper` (deterministic MCQ + `AICorrector`, with its
+  existing confidence escalation and `REVIEW_CONFIDENCE_THRESHOLD`), and persist as
+  ordinary `Attempt`/`QuestionResult`/`WeaknessRecord` rows tagged `origin='quiz'` via a
+  shared `_persist` both writers call. So T-10 and the class weakness analytics read what
+  they already read, low-confidence quiz answers land in the same P3.4 review queue, and
+  T-11's custom mark scheme enters the same call with no adapter. A parallel quiz-results
+  aggregation path is exactly the divergence D3.3/D3.4/D3.5 each had to fix once.
+- **Four risks the architect flagged, each of which must be honoured by the build:**
+  1. Chunk B (past-paper ingest) gates T-09's core promise and must *begin with a
+     measurement* — rows produced, rows skipped for missing prompt text, topic coverage —
+     before anything is persisted. A poor yield is an acceptable answer; discovering it in
+     chunk D is not.
+  2. `ReviewService._recompute_attempt_totals` (shipped in P3.4) assigns `grade` and
+     `boundary_source` unconditionally. Left unguarded, **the first teacher override on a
+     quiz invents a grade the marking path deliberately never wrote.** Needs an explicit
+     guard and its own test.
+  3. The `is_grade_bearing` split (chunk G) must land *before* quiz marking. It is a no-op
+     today; after the first quiz attempt it becomes a data-corruption fix.
+  4. `ExamMetadata` forces a synthetic paper_number/variant/session for the marking call.
+     Those must never be persisted — an implementer copying `persist_correction` will get
+     this wrong by default.
+- **Sequence: C → A → G → B → D → E → F** (see `docs/quiz-model.md` §6 for the table).
+
 ### D3.5 — Acknowledging an at-risk flag: evidence-scoped, per-teacher, never suppressed from the API
 
 - **What:** the UI spec's T-06 line "Dismiss/acknowledge a flag with a note" is the last
