@@ -237,14 +237,45 @@ Starting facts (established 2026-08-06, do not re-derive):
             (at-risk row grade), and `student.py:144-193` (`_momentum`), `:263`, `:280`.
             `analytics.aggregate_weaknesses_from_history` and `classes.py:173` are
             topic-bearing and correctly take all records — do not filter those.
-      - [ ] **B** doing — `question_bank` repo + visibility predicate + past-paper ingest from
-            `mark_schemes.parsed_payload` + import of on-disk `GeneratedQuiz` files.
-            **Highest risk; gates T-09's live-count promise. Start with a measurement**
-            (rows produced / skipped for missing prompt text / topic coverage) and report it
-            before persisting anything. A genuine zero-count is an acceptable answer.
-      - [ ] **D** quiz CRUD + draft PATCH + pool-count endpoint + question selection;
-            `/quizzes/pools` moves off disk onto the bank (closes the process-global
-            every-teacher-sees-every-question leak). All scoped through `ClassService`.
+      - [x] **B** done (82cafb9) — `lemely/db/question_bank_repo.py` +
+            `lemely question-bank {survey-past-papers,import-generated}`. 1537 tests
+            (1533 passed / 4 live-only skips), 87.83% cov (from 87.48%), repo file at 100%.
+            All 12 gates green, `alembic check` clean, no schema change.
+            **The mandated measurement came back zero, and that is the finding (D3.7).**
+            122 leaf questions across the entire 4-mark-scheme corpus, **0 with prompt text,
+            0 with a topic hint** — because `loose_schemas.Question` has no question-stem
+            field at all: a mark scheme holds marking points, the stem lives in the question
+            paper, which this codebase only ever consumes as a scanned student submission.
+            `mark_schemes` holds 0 rows and `outputs/questions/` does not exist, so both
+            ingest paths yield 0 today. **Do not re-run this measurement or treat it as a
+            parsing bug** — corpus growth cannot change it.
+            Consequently the past-paper ingest ships as `survey_past_paper_questions()`,
+            a reporting function with no write path (an unreachable persist branch would be
+            dead code testable only by stubbing a field the schema lacks).
+            `uq_question_bank_paper_question` stays — it is what makes the real writer
+            idempotent when the stem extractor arrives (P4's natural home, now a
+            prerequisite of its "questions from the past-paper corpus" work, not an
+            assumption).
+            Shipped: `visible_bank_filter` (three tiers; degrades to shared-only, never to
+            everything and never to always-false) and `QuestionBankService.count_by_band` /
+            `.select_questions` sharing one `_filters()` so §1.3's count-40-build-12
+            divergence is structurally excluded; `import_generated_quiz_files` (malformed
+            file reported and skipped, never fatal).
+            One design-doc correction: §2's "GeneratedQuestion maps field-for-field" cannot
+            hold — `GeneratedQuestion` has no `question_type` and the column is NOT NULL. It
+            is a documented default (`explanation`), not an inferred type; safe because
+            `correction`/`correction_ai` branch only on MCQ vs non-MCQ and generated
+            questions are never MCQ.
+      - [ ] **D** doing (next) — quiz CRUD + draft PATCH + pool-count endpoint + question
+            selection; `/quizzes/pools` moves off disk onto the bank (closes the
+            process-global every-teacher-sees-every-question leak). All scoped through
+            `ClassService`. Build on chunk B's `visible_bank_filter` / `count_by_band` /
+            `select_questions` — do not write a second WHERE clause for the bank.
+            **The bank ships empty**, so T-09's live count reads 0 until a teacher
+            generates questions; per D3.7 the UI must say "no past-paper questions indexed
+            for <subject> yet; use generated questions" in those words, never a
+            plausible-looking number. `/quizzes/generate` writing bank rows is now the
+            *only* thing that fills the bank — that makes it load-bearing, not optional.
       - [ ] **E** assignment endpoints + student take/submit (S-26) + `quiz_answers`.
       - [ ] **F** `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
             refactor, review-queue integration, **the `_recompute_attempt_totals` quiz guard**

@@ -633,3 +633,45 @@ list is in STATE as a chunk-F prerequisite.
 **Next.** Chunk B — the riskiest. Start with the measurement (rows produced / skipped for
 missing prompt text / topic coverage) and report it before persisting anything; a genuine
 zero-count is an acceptable answer, a late-discovered one is not.
+
+## 2026-08-06 — P3.5 chunk B: the measurement came back zero, and that is the answer
+
+**Did.** Ran the mandated chunk-B measurement before writing any persistence, and it
+settled the chunk's scope: 122 leaf questions across the entire 4-mark-scheme corpus,
+**0 with prompt text, 0 with a topic hint**. Recorded as D3.7 and committed on its own
+(0184701) before implementing, so the finding survives a session death independently of
+the code. Then shipped `lemely/db/question_bank_repo.py` (82cafb9): `visible_bank_filter`,
+`QuestionBankService.count_by_band`/`.select_questions` over one shared `_filters()`,
+`import_generated_quiz_files`, `survey_past_paper_questions`, and a `lemely question-bank`
+CLI. 1537 tests (1533 passed / 4 live-only skips), 87.83% cov, repo file 100%, all 12
+gates green, `alembic check` clean.
+
+**Learned.** The zero is structural, not a data-quality gap, and that distinction changed
+what got built. `loose_schemas.Question` has no question-stem field *at all* — not an
+unpopulated one, an absent one — because a CAIE mark scheme document contains marking
+points and the stem lives in the question paper, which this codebase only ever consumes as
+a scanned student submission. `lemely/io/integrity.py:113` had already recorded the same
+fact in a comment and worked around it. So no corpus growth or re-parse changes the number,
+and the design's "create the row with `is_active = false`" was written for a *sometimes*-
+missing stem: here the row can never become live, and `prompt` is NOT NULL, so persisting
+would have meant inventing a placeholder into the exact column a teacher reads. The ingest
+therefore ships as a survey with no write path — an unreachable persist branch is dead code
+testable only by stubbing a field the schema lacks.
+
+Two smaller ones. §2's "GeneratedQuestion maps field-for-field" cannot hold —
+`GeneratedQuestion` has no `question_type` and the column is NOT NULL; it is a documented
+default (`explanation`), safe only because marking branches on MCQ vs non-MCQ and generated
+questions are never MCQ. And my first pass at the survey's zero-yield message asserted the
+structural finding even when it had scanned nothing — a report claiming a conclusion it did
+not reach. Split into two messages.
+
+**Watch.** The bank ships **empty**, both paths at 0. That makes chunk D's
+`/quizzes/generate`-writes-bank-rows the *only* thing that fills it — load-bearing, not
+optional — and T-09's live count honestly reads 0 until a teacher generates questions.
+Making past papers a real question source needs a question-paper stem extractor: out of
+Phase-3 scope, and now a prerequisite of P4's "questions from the ingested past-paper
+corpus" rather than an assumption it can make.
+
+**Next.** Chunk D — quiz CRUD, draft PATCH, pool-count endpoint, question selection, and
+`/quizzes/pools` off disk onto the bank. Build on chunk B's predicate; do not write a
+second WHERE clause for the bank.
