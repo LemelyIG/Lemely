@@ -207,10 +207,37 @@ Starting facts (established 2026-08-06, do not re-derive):
             `core.difficulty.Band` and `GeneratedQuestion.difficulty`'s Literal by a
             three-way vocabulary test, so a fourth band cannot be invented on one side only.
             All 12 gates green.
-      - [ ] **G** doing — `PaperRecord.origin` + `is_grade_bearing`, wired into the nine consumers
-            listed in `docs/quiz-model.md` §5. A behavioural no-op today — **must land
-            before F**, after which it becomes a data-corruption fix.
-      - [ ] **B** `question_bank` repo + visibility predicate + past-paper ingest from
+      - [x] **G** done — `PaperRecord.origin` (`PaperOrigin` literal, defaulted `past_paper`) +
+            `is_grade_bearing`, wired into all nine `docs/quiz-model.md` §5 consumers, plus
+            `HISTORY_SCHEMA_VERSION` 1→2 and `origin` round-tripping through `DbHistoryStore`
+            in **both** directions (`_to_attempt` as well as `_to_record` — writing only the
+            read side would have let a quiz record load back as a past paper).
+            `GRADE_ORDER` moved `at_risk` → `history` so the schema module could reach it
+            without importing the rules engine; all four importers repointed, no re-export
+            shim (mypy strict rejects implicit re-export anyway). Verified behavioural no-op:
+            every pre-existing test green, unchanged.
+            **Two real defects found and fixed while wiring, neither in the design doc:**
+            (a) `StudentHistory.schema_version` defaults to `HISTORY_SCHEMA_VERSION`, so after
+            the bump a *pre-versioning* file (no key) loaded claiming to be v2 — destroying the
+            "detect an older file" signal the field exists for. `HistoryStore.load` now feeds
+            its already-resolved absent-means-1 version back into `model_validate`.
+            (b) `grade_distribution` would have silently changed behaviour today: filtering
+            straight on `is_grade_bearing` makes a student whose *latest* paper has a malformed
+            grade fall back to their older, likely better grade instead of being skipped.
+            Kept as "latest paper, skipped if its grade is unreadable" — no current standing to
+            report beats overstating it. 1519 tests (1515 passed / 4 live-only skips), 87.48%
+            cov (from 87.46%). All 12 gates green.
+            **Prerequisite handed to F — the §5 table only covers `lemely/core/`.** These
+            web-layer consumers derive a grade/percentage claim straight off `history.records`
+            and are still unfiltered; they are behaviourally fine until the first quiz attempt
+            exists and become live corruption the moment F lands, so F must filter them in the
+            same commit that starts writing quiz attempts:
+            `classes.py:125` (`_average_for`), `classes.py:187`, `teacher.py:1090`,
+            `teacher.py:1300-1301` (`predictedGrade`/`latestPercentage`), `teacher.py:1541`
+            (at-risk row grade), and `student.py:144-193` (`_momentum`), `:263`, `:280`.
+            `analytics.aggregate_weaknesses_from_history` and `classes.py:173` are
+            topic-bearing and correctly take all records — do not filter those.
+      - [ ] **B** doing (next) — `question_bank` repo + visibility predicate + past-paper ingest from
             `mark_schemes.parsed_payload` + import of on-disk `GeneratedQuiz` files.
             **Highest risk; gates T-09's live-count promise. Start with a measurement**
             (rows produced / skipped for missing prompt text / topic coverage) and report it

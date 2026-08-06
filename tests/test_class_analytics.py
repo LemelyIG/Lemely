@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from lemely.core.at_risk import GRADE_ORDER
 from lemely.core.class_analytics import (
     cohort_trend,
     engagement_stats,
@@ -19,7 +18,7 @@ from lemely.core.class_analytics import (
     rank_topic_weaknesses,
     topic_student_heatmap,
 )
-from lemely.core.history import PaperRecord, StudentHistory
+from lemely.core.history import GRADE_ORDER, PaperOrigin, PaperRecord, StudentHistory
 from lemely.core.schemas import ExamMetadata, WeakArea
 
 _NOW = datetime(2026, 8, 6, 12, 0, 0, tzinfo=UTC)
@@ -53,6 +52,7 @@ def _record(
     recorded_at: str | None = None,
     metadata: ExamMetadata | None = None,
     maximum_marks: int = 80,
+    origin: PaperOrigin = "past_paper",
 ) -> PaperRecord:
     return PaperRecord(
         student_id=student_id,
@@ -63,6 +63,32 @@ def _record(
         grade=grade,
         weak_areas=weak_areas or [],
         recorded_at=recorded_at if recorded_at is not None else _NOW.isoformat(),
+        origin=origin,
+    )
+
+
+def _quiz(
+    student_id: str,
+    percentage: float,
+    *,
+    weak_areas: list[WeakArea] | None = None,
+    recorded_at: str | None = None,
+) -> PaperRecord:
+    """A quiz record as the P3.5 marking path will write it (docs/quiz-model.md §5).
+
+    ``grade=""`` is not incidental — a quiz has no grade boundaries, so the
+    marking path never writes one. The helper exists so the quiz-exclusion
+    tests below cannot accidentally pass by constructing a quiz that looks
+    like a paper.
+    """
+    return _record(
+        student_id,
+        percentage,
+        grade="",
+        weak_areas=weak_areas,
+        recorded_at=recorded_at,
+        maximum_marks=10,
+        origin="quiz",
     )
 
 
@@ -344,3 +370,105 @@ def test_engagement_stats_unparseable_timestamp_excluded_from_median_not_never_a
     assert stats.never_active_count == 0
     assert stats.median_days_since_last_submission is None
     assert stats.submissions_last_7_days == 0
+
+
+# ---------------------------------------------------------------------------
+# P3.5 chunk G — grade-bearing vs topic-bearing (docs/quiz-model.md §5)
+#
+# Quiz attempts must feed topic analytics ("results feed analytics", MISSION
+# §4) and must not feed grade or paper-comparison analytics. Each test below
+# pins one row of that table, so a regression names the exact guarantee lost
+# rather than "analytics changed".
+# ---------------------------------------------------------------------------
+
+
+def test_grade_distribution_ignores_quiz_attempts() -> None:
+    """A quiz has no grade, so it cannot move a grade bucket.
+
+    Alice's only paper graded a B. Adding a later quiz must leave her counted
+    on B — not moved to an empty-string bucket, and not dropped entirely
+    because "her latest record has no grade".
+    """
+    history = _history(
+        "alice",
+        _record("alice", 72.0, grade="B", recorded_at="2026-01-01T00:00:00+00:00"),
+        _quiz("alice", 40.0, recorded_at="2026-02-01T00:00:00+00:00"),
+    )
+    counts = {bucket.grade: bucket.count for bucket in grade_distribution([history])}
+    assert counts["B"] == 1
+    assert sum(counts.values()) == 1
+
+
+def test_grade_distribution_quiz_only_student_has_no_grade_bucket() -> None:
+    """A student who has only ever done quizzes has no grade to report — and
+    is counted nowhere rather than being assigned a default or a zero."""
+    history = _history("alice", _quiz("alice", 90.0))
+    counts = {bucket.grade: bucket.count for bucket in grade_distribution([history])}
+    assert sum(counts.values()) == 0
+
+
+def test_cohort_trend_ignores_quiz_attempts() -> None:
+    """A quiz percentage is not on the same scale as a paper percentage.
+
+    A 40% quiz between two 70% papers must not create a third trend point or
+    drag the cohort mean down — the series must be identical to the one the
+    two papers alone produce.
+    """
+    papers_only = _history(
+        "alice",
+        _record("alice", 70.0, recorded_at="2026-01-01T00:00:00+00:00"),
+        _record("alice", 70.0, recorded_at="2026-03-01T00:00:00+00:00"),
+    )
+    with_quiz = _history(
+        "alice",
+        _record("alice", 70.0, recorded_at="2026-01-01T00:00:00+00:00"),
+        _quiz("alice", 40.0, recorded_at="2026-02-01T00:00:00+00:00"),
+        _record("alice", 70.0, recorded_at="2026-03-01T00:00:00+00:00"),
+    )
+    assert cohort_trend([with_quiz]) == cohort_trend([papers_only])
+    assert [p.mean_percentage for p in cohort_trend([with_quiz])] == [70.0, 70.0]
+
+
+def test_per_paper_comparison_ignores_quiz_attempts() -> None:
+    """A quiz carries synthetic paper metadata (§4.3) that is never persisted.
+
+    Grouping on it would invent a paper row that does not exist. Only the real
+    paper may appear.
+    """
+    history = _history(
+        "alice",
+        _record("alice", 70.0, metadata=_meta("0580", 2, 1)),
+        _quiz("alice", 40.0),
+    )
+    comparisons = per_paper_comparison([history])
+    assert [c.paper_id for c in comparisons] == ["0580/21"]
+    assert comparisons[0].attempt_count == 1
+
+
+def test_rank_topic_weaknesses_includes_quiz_attempts() -> None:
+    """A weakness is a weakness whatever revealed it — quizzes feed topic
+    analytics, which is the whole point of assigning them."""
+    history = _history("alice", _quiz("alice", 40.0, weak_areas=[_area("Vectors", 6, 10)]))
+    ranked = rank_topic_weaknesses([history])
+    assert [(w.topic, w.lost_marks) for w in ranked] == [("Vectors", 6)]
+
+
+def test_topic_student_heatmap_includes_quiz_attempts() -> None:
+    """The heatmap is topic-bearing, so a quiz-only student still gets a real
+    accuracy cell rather than the ``None`` that means "no data"."""
+    history = _history("alice", _quiz("alice", 40.0, weak_areas=[_area("Vectors", 6, 10)]))
+    ranked = rank_topic_weaknesses([history])
+    cells = topic_student_heatmap([history], ranked)
+    assert [(c.topic, c.student_id, c.accuracy) for c in cells] == [("Vectors", "alice", 0.4)]
+
+
+def test_engagement_stats_counts_quiz_attempts_as_activity() -> None:
+    """A quiz is activity. A student who did a quiz yesterday is active and is
+    not "never active", however long since their last full paper."""
+    history = _history(
+        "alice", _quiz("alice", 40.0, recorded_at=(_NOW - timedelta(days=1)).isoformat())
+    )
+    stats = engagement_stats([history], now=_NOW)
+    assert stats.never_active_count == 0
+    assert stats.submissions_last_7_days == 1
+    assert stats.active_students_last_7_days == 1

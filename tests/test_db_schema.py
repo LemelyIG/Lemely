@@ -122,6 +122,22 @@ def test_question_difficulty_enum_matches_band_vocabulary() -> None:
     assert band_values == literal_values == enum_values == {"foundation", "standard", "challenge"}
 
 
+def test_attempt_origin_enum_matches_paper_origin_vocabulary() -> None:
+    """Pin the ``attemptorigin`` Postgres enum against ``PaperOrigin`` (§5).
+
+    ``DbHistoryStore`` converts between the two by value in both directions
+    (``AttemptOrigin(record.origin)`` on write, ``attempt.origin.value`` on
+    read), and the read side is a ``cast`` — so mypy cannot catch a drift here.
+    A member added to one side only would raise ``ValueError`` on write, or
+    silently produce a ``PaperRecord`` whose ``origin`` is outside its own
+    ``Literal`` on read. This test is what makes that cast safe.
+    """
+    from lemely.core.history import PaperOrigin
+    from lemely.db.models.enums import AttemptOrigin
+
+    assert {member.value for member in AttemptOrigin} == set(get_args(PaperOrigin))
+
+
 # ---------------------------------------------------------------------------
 # Integration layer — real Postgres, skipped when unreachable
 # ---------------------------------------------------------------------------

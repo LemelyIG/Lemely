@@ -26,7 +26,7 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from lemely.core.at_risk import GRADE_ORDER
+from lemely.core.history import GRADE_ORDER
 
 #: The three difficulty bands a question can carry. Deliberately identical to
 #: ``GeneratedQuestion.difficulty`` (``lemely/core/generation.py``) and to the

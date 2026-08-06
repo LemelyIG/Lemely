@@ -22,7 +22,7 @@ core stays ignorant of the DB layer (import-linter's layering contract).
   assert an accuracy value from what is persisted," never a fabricated 0% or
   100%.
 * Grade distribution buckets are always drawn from the full
-  :data:`~lemely.core.at_risk.GRADE_ORDER` ladder (including zero counts) so a
+  :data:`~lemely.core.history.GRADE_ORDER` ladder (including zero counts) so a
   class with nobody on a grade still renders that bucket, rather than a
   frontend having to infer "no bar" from a missing key.
 * The trend series never interpolates a value for a gap where nobody
@@ -35,7 +35,7 @@ from datetime import datetime
 from statistics import median
 from typing import TYPE_CHECKING
 
-from lemely.core.at_risk import GRADE_ORDER
+from lemely.core.history import GRADE_ORDER, is_grade_bearing
 from lemely.core.schemas import StrictModel
 
 if TYPE_CHECKING:
@@ -199,7 +199,7 @@ def topic_student_heatmap(
 def grade_distribution(histories: list[StudentHistory]) -> list[GradeDistributionBucket]:
     """Count students by latest recorded grade over the full grade ladder.
 
-    Every rung of :data:`~lemely.core.at_risk.GRADE_ORDER` is present, zero
+    Every rung of :data:`~lemely.core.history.GRADE_ORDER` is present, zero
     counts included, so a frontend never has to infer "nobody on a B" from a
     missing key. A student with no records contributes to no bucket (they
     have no grade yet); a latest grade that is not on the ladder (malformed
@@ -209,11 +209,15 @@ def grade_distribution(histories: list[StudentHistory]) -> list[GradeDistributio
     """
     counts: dict[str, int] = dict.fromkeys(GRADE_ORDER, 0)
     for history in histories:
-        if not history.records:
-            continue
-        grade = history.records[-1].grade
-        if grade in counts:
-            counts[grade] += 1
+        # Quiz attempts carry no grade, so they cannot be anyone's "latest
+        # grade" (docs/quiz-model.md §5). The malformed-grade case is then
+        # checked on that latest paper *without* falling back to an older one:
+        # a student whose most recent paper has an unreadable grade has no
+        # current standing to report, and reporting their previous, likely
+        # better grade instead would overstate where they are now.
+        papers = [r for r in history.records if r.origin == "past_paper"]
+        if papers and is_grade_bearing(papers[-1]):
+            counts[papers[-1].grade] += 1
     return [GradeDistributionBucket(grade=g, count=counts[g]) for g in GRADE_ORDER]
 
 
@@ -228,13 +232,22 @@ def cohort_trend(histories: list[StudentHistory]) -> list[TrendPoint]:
     before that timestamp, of that student's *most recent* percentage as of
     that point — a running cohort average, never an interpolated guess for a
     student who has not submitted yet. Returns ``[]`` for an empty cohort.
+
+    Grade-bearing records only (``docs/quiz-model.md`` §5): a quiz percentage
+    is not on the same scale as a paper percentage, so mixing them would move
+    the cohort line for reasons that have nothing to do with the cohort's
+    performance on papers.
     """
-    timestamps = sorted({record.recorded_at for history in histories for record in history.records})
+    graded = {
+        history.student_id: [r for r in history.records if is_grade_bearing(r)]
+        for history in histories
+    }
+    timestamps = sorted({r.recorded_at for records in graded.values() for r in records})
     points: list[TrendPoint] = []
     for timestamp in timestamps:
         latest_by_student: dict[str, float] = {}
         for history in histories:
-            eligible = [r for r in history.records if r.recorded_at <= timestamp]
+            eligible = [r for r in graded[history.student_id] if r.recorded_at <= timestamp]
             if eligible:
                 latest_by_student[history.student_id] = max(
                     eligible, key=lambda r: r.recorded_at
@@ -259,12 +272,20 @@ def per_paper_comparison(histories: list[StudentHistory]) -> list[PaperCompariso
     ``attempt_count`` counts every attempt (a student who resat a paper counts
     twice); ``student_count`` counts distinct students. Sorted by subject code
     then paper number then variant for a stable, deterministic ordering.
+
+    Grade-bearing records only (``docs/quiz-model.md`` §5). This one is not
+    merely a scale mismatch: a quiz has no paper identity at all, and the
+    marking path hands it a *synthetic* paper number and variant (§4.3) that
+    are never persisted. Grouping on those would invent a paper row that does
+    not exist and pool unrelated quizzes under it.
     """
     pcts: dict[tuple[str, int, int], list[float]] = {}
     students: dict[tuple[str, int, int], set[str]] = {}
 
     for history in histories:
         for record in history.records:
+            if not is_grade_bearing(record):
+                continue
             key = (
                 record.metadata.subject_code,
                 record.metadata.paper_number,

@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from lemely.core.history import HISTORY_SCHEMA_VERSION, PaperRecord, StudentHistory
+from lemely.core.history import (
+    HISTORY_SCHEMA_VERSION,
+    PaperRecord,
+    StudentHistory,
+    is_grade_bearing,
+)
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.errors import ParseError
@@ -148,3 +153,28 @@ class TestHistoryStore:
         history = store.load("alice")
         assert history.schema_version == 1
         assert history.records == []
+
+    def test_v1_file_with_records_loads_with_records_defaulted_to_past_paper(
+        self, tmp_path: Path
+    ) -> None:
+        """The 1 -> 2 bump (P3.5 chunk G, ``PaperRecord.origin``) is additive.
+
+        A file written before ``origin`` existed must still load, and every
+        record in it must read back as a past-paper attempt — anything else
+        would retroactively drop real papers out of the grade-bearing
+        analytics that ``origin`` gates (``docs/quiz-model.md`` §5). The file
+        is built by dumping a record and *deleting* the key, so this cannot
+        drift into asserting on a field the fixture quietly supplied.
+        """
+        store = HistoryStore(tmp_path / "history")
+        record = json.loads(_make_record("alice").model_dump_json())
+        del record["origin"]
+        (tmp_path / "history" / "alice.json").write_text(
+            json.dumps({"schema_version": 1, "student_id": "alice", "records": [record]}),
+            encoding="utf-8",
+        )
+
+        history = store.load("alice")
+        assert history.schema_version == 1
+        assert [r.origin for r in history.records] == ["past_paper"]
+        assert is_grade_bearing(history.records[0])

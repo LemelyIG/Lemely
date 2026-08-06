@@ -34,7 +34,6 @@ from lemely.core.analytics import (
     compare_performance,
 )
 from lemely.core.at_risk import (
-    GRADE_ORDER,
     AtRiskFlag,
     AtRiskReason,
     BelowTargetEvidence,
@@ -45,6 +44,7 @@ from lemely.core.at_risk import (
 )
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
 from lemely.core.history import (
+    GRADE_ORDER,
     HistoryStoreProtocol,
     PaperRecord,
     StudentHistory,

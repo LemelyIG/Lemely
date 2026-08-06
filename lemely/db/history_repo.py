@@ -27,7 +27,7 @@ from sqlalchemy import select
 from lemely.core.history import PaperRecord, StudentHistory
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.models.attempts import Attempt, WeaknessRecord
-from lemely.db.models.enums import SESSION_MONTH_LABELS, SessionMonth
+from lemely.db.models.enums import SESSION_MONTH_LABELS, AttemptOrigin, SessionMonth
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -105,6 +105,11 @@ class DbHistoryStore:
             percentage=record.percentage,
             grade=record.grade,
             recorded_at=_parse_recorded_at(record.recorded_at),
+            # Round-trip parity with ``_to_record``: without this a quiz record
+            # written through this store would silently read back as a
+            # past-paper one and re-enter the grade-bearing analytics that
+            # ``origin`` exists to keep it out of.
+            origin=AttemptOrigin(record.origin),
         )
         attempt.weakness_records = [
             WeaknessRecord(
@@ -181,6 +186,11 @@ def _to_record(student_id: str, attempt: Attempt) -> PaperRecord:
         grade=attempt.grade or "",
         weak_areas=weak_areas,
         recorded_at=attempt.recorded_at.isoformat(),
+        # Carried straight through from the column, never re-derived from the
+        # shape of the row: the store keeps loading *all* origins, and it is
+        # the consumer's `is_grade_bearing` check that decides what each one
+        # may back (docs/quiz-model.md §5).
+        origin=attempt.origin.value,
     )
 
 

@@ -19,7 +19,7 @@ from lemely.core.at_risk import (
     assess_at_risk,
     flag_fingerprint,
 )
-from lemely.core.history import PaperRecord, StudentHistory
+from lemely.core.history import PaperOrigin, PaperRecord, StudentHistory
 from lemely.core.schemas import ExamMetadata
 
 _NOW = datetime(2026, 8, 6, 12, 0, 0, tzinfo=UTC)
@@ -40,6 +40,7 @@ def _record(
     *,
     grade: str = "B",
     recorded_at: str | None = None,
+    origin: PaperOrigin = "past_paper",
 ) -> PaperRecord:
     return PaperRecord(
         student_id="alice",
@@ -50,7 +51,13 @@ def _record(
         grade=grade,
         weak_areas=[],
         recorded_at=recorded_at if recorded_at is not None else _NOW.isoformat(),
+        origin=origin,
     )
+
+
+def _quiz(percentage: float, *, recorded_at: str | None = None) -> PaperRecord:
+    """A quiz record as the P3.5 marking path will write it: no grade at all."""
+    return _record(percentage, grade="", recorded_at=recorded_at, origin="quiz")
 
 
 def _history(*records: PaperRecord) -> StudentHistory:
@@ -379,3 +386,97 @@ class TestFlagFingerprint:
         assert reasons == {AtRiskReason.DECLINING_TREND, AtRiskReason.INACTIVE}
         fingerprints = {f.reason: flag_fingerprint(f) for f in result.flags}
         assert fingerprints[AtRiskReason.DECLINING_TREND] != fingerprints[AtRiskReason.INACTIVE]
+
+
+# ---------------------------------------------------------------------------
+# P3.5 chunk G — grade-bearing vs topic-bearing (docs/quiz-model.md §5)
+#
+# Rules 1 and 2 are grade-bearing and must ignore quiz attempts; rule 3
+# (inactivity) is not — a quiz is activity.
+# ---------------------------------------------------------------------------
+
+
+class TestQuizAttemptsAreNotGradeBearing:
+    def test_declining_trend_ignores_quizzes_interleaved_between_papers(self) -> None:
+        """Quizzes must not manufacture a decline out of three flat papers.
+
+        The three papers here are flat at 70%. If quizzes counted, the last
+        three records would read 70 -> 40 -> 30 and fire a decline that never
+        happened on any paper.
+        """
+        history = _history(
+            _record(70.0, recorded_at="2026-01-01T00:00:00+00:00"),
+            _record(70.0, recorded_at="2026-02-01T00:00:00+00:00"),
+            _record(70.0, recorded_at="2026-03-01T00:00:00+00:00"),
+            _quiz(40.0, recorded_at="2026-04-01T00:00:00+00:00"),
+            _quiz(30.0, recorded_at="2026-05-01T00:00:00+00:00"),
+        )
+        result = assess_at_risk(history, now=_NOW)
+        assert AtRiskReason.DECLINING_TREND not in {f.reason for f in result.flags}
+
+    def test_declining_trend_ignores_a_quiz_that_would_hide_a_real_decline(self) -> None:
+        """The exclusion must also work in the direction that *keeps* a flag.
+
+        Three papers genuinely declining 80 -> 70 -> 60 must still fire even
+        with a high-scoring quiz inside the window, which would otherwise break
+        the strictly-decreasing check and silently hide a real decline.
+        """
+        history = _history(
+            _record(80.0, recorded_at="2026-01-01T00:00:00+00:00"),
+            _quiz(100.0, recorded_at="2026-01-15T00:00:00+00:00"),
+            _record(70.0, recorded_at="2026-02-01T00:00:00+00:00"),
+            _record(60.0, recorded_at="2026-03-01T00:00:00+00:00"),
+        )
+        result = assess_at_risk(history, now=_NOW)
+        flag = next(f for f in result.flags if f.reason == AtRiskReason.DECLINING_TREND)
+        assert isinstance(flag.evidence, DecliningTrendEvidence)
+        assert flag.evidence.percentages == [80.0, 70.0, 60.0]
+
+    def test_declining_trend_does_not_fire_from_quizzes_alone(self) -> None:
+        """Three quizzes are not three papers: with no grade-bearing records
+        the window is too short to assert anything."""
+        history = _history(_quiz(90.0), _quiz(60.0), _quiz(30.0))
+        result = assess_at_risk(history, now=_NOW)
+        assert AtRiskReason.DECLINING_TREND not in {f.reason for f in result.flags}
+
+    def test_below_target_reads_the_latest_paper_grade_not_a_later_quiz(self) -> None:
+        """A quiz carries no grade, so it can never be the "latest grade" this
+        rule compares against a target — the last real paper's D still counts."""
+        history = _history(
+            _record(35.0, grade="D", recorded_at="2026-01-01T00:00:00+00:00"),
+            _quiz(80.0, recorded_at="2026-02-01T00:00:00+00:00"),
+        )
+        result = assess_at_risk(history, now=_NOW, target_grade="B")
+        assert result.target_rule_status == TargetRuleStatus.FIRED
+        flag = next(f for f in result.flags if f.reason == AtRiskReason.BELOW_TARGET)
+        assert isinstance(flag.evidence, BelowTargetEvidence)
+        assert flag.evidence.predicted_grade == "D"
+
+    def test_below_target_not_fired_when_only_quizzes_exist(self) -> None:
+        """A quiz-only student has no predicted grade at all. The rule is still
+        evaluable (a target was supplied) but has nothing to measure."""
+        result = assess_at_risk(_history(_quiz(20.0)), now=_NOW, target_grade="A")
+        assert result.target_rule_status == TargetRuleStatus.NOT_FIRED
+        assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
+
+    def test_inactivity_counts_a_quiz_as_activity(self) -> None:
+        """Rule 3 is not grade-bearing. A student whose last full paper was
+        months ago but who did a quiz yesterday is active, not inactive."""
+        history = _history(
+            _record(70.0, recorded_at=(_NOW - timedelta(days=90)).isoformat()),
+            _quiz(80.0, recorded_at=(_NOW - timedelta(days=1)).isoformat()),
+        )
+        result = assess_at_risk(history, now=_NOW)
+        assert AtRiskReason.INACTIVE not in {f.reason for f in result.flags}
+
+    def test_inactivity_still_fires_when_the_quiz_is_also_stale(self) -> None:
+        """The inclusion must not become a blanket exemption: a student whose
+        most recent activity of *any* kind is 90 days old is still inactive."""
+        history = _history(
+            _record(70.0, recorded_at=(_NOW - timedelta(days=120)).isoformat()),
+            _quiz(80.0, recorded_at=(_NOW - timedelta(days=90)).isoformat()),
+        )
+        result = assess_at_risk(history, now=_NOW)
+        flag = next(f for f in result.flags if f.reason == AtRiskReason.INACTIVE)
+        assert isinstance(flag.evidence, InactivityEvidence)
+        assert flag.evidence.days_inactive == 90

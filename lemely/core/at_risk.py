@@ -28,15 +28,20 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from lemely.core.history import GRADE_ORDER, is_grade_bearing
 from lemely.core.schemas import StrictModel
 
 if TYPE_CHECKING:
     from lemely.core.history import PaperRecord, StudentHistory
 
-# The single source of truth for the grade ladder, best to worst. Aliased (not
-# re-literalised) by ``lemely.web.routers.teacher._GRADE_ORDER`` — same
-# anti-drift discipline D2.2 applied to ``REVIEW_CONFIDENCE_THRESHOLD``.
-GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
+# ``GRADE_ORDER`` — the single source of truth for the grade ladder, best to
+# worst — lived here until P3.5 chunk G and now lives in ``lemely.core.history``
+# beside the ``is_grade_bearing`` predicate that needs it, so that a schema
+# module never has to import this rules engine. Every other caller
+# (``class_analytics``, ``difficulty``, ``web.routers.teacher``) was moved to
+# import it from there too rather than through a re-export shim here: one name,
+# one import path, nothing to drift — the D2.2 discipline applied to
+# ``REVIEW_CONFIDENCE_THRESHOLD``.
 
 # Rule 1 — declining trend.
 _TREND_WINDOW = 3
@@ -218,10 +223,17 @@ def flag_fingerprint(flag: AtRiskFlag) -> str:
 
 
 def _check_declining_trend(history: StudentHistory) -> AtRiskFlag | None:
-    """Rule 1: last 3 papers strictly decreasing with a >= 5pp total drop."""
-    if len(history.records) < _TREND_WINDOW:
+    """Rule 1: last 3 past papers strictly decreasing with a >= 5pp total drop.
+
+    Grade-bearing records only (``docs/quiz-model.md`` §5): a quiz percentage
+    is not comparable to a paper percentage, so letting quizzes into this
+    window would manufacture and erase "declining" trends out of the ordinary
+    interleaving of quizzes and papers rather than measuring anything real.
+    """
+    records = [r for r in history.records if is_grade_bearing(r)]
+    if len(records) < _TREND_WINDOW:
         return None
-    window = history.records[-_TREND_WINDOW:]
+    window = records[-_TREND_WINDOW:]
     percentages = [r.percentage for r in window]
     strictly_decreasing = all(
         percentages[i] > percentages[i + 1] for i in range(len(percentages) - 1)
@@ -249,10 +261,15 @@ def _check_below_target(history: StudentHistory, target_grade: str) -> AtRiskFla
     rather than raising — a malformed grade string should not crash the
     dashboard, and D3.3 only defines "not evaluable" for the missing-target
     case, so an unrecognised grade is treated as "not fired", not a third state.
+
+    Grade-bearing records only (``docs/quiz-model.md`` §5) — a quiz carries no
+    grade at all, so it can never be the "latest grade" this rule compares
+    against a target.
     """
-    if not history.records:
+    records = [r for r in history.records if is_grade_bearing(r)]
+    if not records:
         return None
-    predicted_grade = history.records[-1].grade
+    predicted_grade = records[-1].grade
     if target_grade not in GRADE_ORDER or predicted_grade not in GRADE_ORDER:
         return None
     positions_below = GRADE_ORDER.index(predicted_grade) - GRADE_ORDER.index(target_grade)
