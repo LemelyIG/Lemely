@@ -23,6 +23,7 @@ the signal itself rather than an unexplained badge (spec §1.4).
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -159,6 +160,61 @@ def assess_at_risk(
         flags=flags,
         target_rule_status=target_status,
     )
+
+
+def flag_fingerprint(flag: AtRiskFlag) -> str:
+    """Deterministic identity for the *evidence* behind a fired flag (D3.5).
+
+    Flags are recomputed on every request (module docstring) rather than
+    stored, so an acknowledgement cannot reference a flag id — it must
+    reference the evidence that raised the flag instead, and re-fire the
+    moment that evidence changes. This is the single function every caller
+    (:mod:`lemely.db.at_risk_repo`) uses to decide whether a stored
+    acknowledgement still covers the *current* flag, so the two can never
+    independently drift on what counts as "the same evidence".
+
+    Deliberately built from only the *stable* part of each evidence type —
+    the field(s) that do not change merely because time passed or the
+    assessment was recomputed with a later ``now``:
+
+    * ``declining_trend`` -> the three percentages themselves. Any change to
+      the window (a new paper landing, or an old one dropping out of it)
+      changes at least one percentage, so a genuinely new decline always
+      gets a fresh fingerprint.
+    * ``below_target`` -> the ``(target_grade, predicted_grade)`` pair, not
+      ``positions_below`` (a pure function of the pair, so including it would
+      be redundant, not additional information).
+    * ``inactive`` -> ``last_active_at`` **only**, never ``days_inactive``.
+      ``days_inactive`` is ``(now - last_active).days`` — it increments every
+      calendar day the student stays inactive, so fingerprinting on it would
+      change the identity of an unresolved flag daily and silently un-
+      acknowledge it every 24 hours (exactly the bug D3.5 exists to prevent).
+      ``last_active_at`` only changes when the student actually submits a new
+      paper, which is the only event that should count as "new evidence".
+
+    Uses :mod:`hashlib` rather than the builtin ``hash()``: CPython salts
+    ``str``/``bytes`` hashes per-process (``PYTHONHASHSEED``) for DoS
+    hardening, so ``hash()`` of the same string differs across worker
+    processes/restarts — useless as a value stored in and compared against a
+    database row written by a different process. ``sha256`` of a canonical,
+    versioned string is stable across processes, restarts, and Python
+    versions by construction.
+
+    Raises:
+        TypeError: ``flag.evidence`` is not one of the three known evidence
+            types (defensive; the ``AtRiskFlag`` union is exhaustive today).
+    """
+    evidence = flag.evidence
+    if isinstance(evidence, DecliningTrendEvidence):
+        stable = "|".join(f"{p:.4f}" for p in evidence.percentages)
+    elif isinstance(evidence, BelowTargetEvidence):
+        stable = f"{evidence.target_grade}>{evidence.predicted_grade}"
+    elif isinstance(evidence, InactivityEvidence):
+        stable = evidence.last_active_at
+    else:
+        raise TypeError(f"Unhandled AtRiskFlag evidence type: {type(evidence)!r}")
+    canonical = f"v1:{flag.reason.value}:{stable}"
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _check_declining_trend(history: StudentHistory) -> AtRiskFlag | None:

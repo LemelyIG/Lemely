@@ -17,6 +17,7 @@ from lemely.core.at_risk import (
     InactivityEvidence,
     TargetRuleStatus,
     assess_at_risk,
+    flag_fingerprint,
 )
 from lemely.core.history import PaperRecord, StudentHistory
 from lemely.core.schemas import ExamMetadata
@@ -269,3 +270,112 @@ class TestCombination:
         result = assess_at_risk(history, now=_NOW, target_grade="A")
         assert result.flags == []
         assert result.is_at_risk is False
+
+
+# ---------------------------------------------------------------------------
+# flag_fingerprint (D3.5) — evidence-scoped acknowledgement identity.
+# ---------------------------------------------------------------------------
+
+
+class TestFlagFingerprint:
+    def test_stable_across_calls(self) -> None:
+        """Same flag, called twice (even in a fresh process-like re-derivation),
+        yields the same fingerprint — this is what lets a stored ack still
+        match on the next request."""
+        history = _history(_record(72.0), _record(65.0), _record(58.0))
+        flag = assess_at_risk(history, now=_NOW).flags[0]
+        assert flag_fingerprint(flag) == flag_fingerprint(flag)
+        # And re-deriving from an independently-rebuilt equal flag (not the
+        # same Python object) still matches.
+        flag_again = assess_at_risk(history, now=_NOW).flags[0]
+        assert flag_fingerprint(flag) == flag_fingerprint(flag_again)
+
+    def test_not_python_hash_salted(self) -> None:
+        """A regression guard against ever swapping back to builtin ``hash()``:
+        the fingerprint must not equal the (per-process-salted) ``hash()`` of
+        any obvious representation, and must be a stable hex digest."""
+        history = _history(_record(72.0), _record(65.0), _record(58.0))
+        flag = assess_at_risk(history, now=_NOW).flags[0]
+        fingerprint = flag_fingerprint(flag)
+        assert isinstance(fingerprint, str)
+        # sha256 hex digest: 64 lowercase hex characters.
+        assert len(fingerprint) == 64
+        assert all(c in "0123456789abcdef" for c in fingerprint)
+
+    def test_inactivity_fingerprint_unchanged_as_days_inactive_grows(self) -> None:
+        """The key regression (D3.5): the same student, assessed a day later,
+        has a *larger* ``days_inactive`` but the *same* ``last_active_at`` —
+        the fingerprint must not change, or an acknowledged inactivity flag
+        would silently re-raise every 24 hours."""
+        last_active = (_NOW - timedelta(days=14)).isoformat()
+        history = _history(_record(90.0, recorded_at=last_active))
+
+        today = assess_at_risk(history, now=_NOW)
+        tomorrow = assess_at_risk(history, now=_NOW + timedelta(days=1))
+        later = assess_at_risk(history, now=_NOW + timedelta(days=30))
+
+        today_flag = next(f for f in today.flags if f.reason == AtRiskReason.INACTIVE)
+        tomorrow_flag = next(f for f in tomorrow.flags if f.reason == AtRiskReason.INACTIVE)
+        later_flag = next(f for f in later.flags if f.reason == AtRiskReason.INACTIVE)
+
+        # Sanity: days_inactive really did grow (evidence differs on the field
+        # we deliberately exclude), yet last_active_at stayed put.
+        assert isinstance(today_flag.evidence, InactivityEvidence)
+        assert isinstance(tomorrow_flag.evidence, InactivityEvidence)
+        assert isinstance(later_flag.evidence, InactivityEvidence)
+        assert today_flag.evidence.days_inactive < tomorrow_flag.evidence.days_inactive
+        assert today_flag.evidence.days_inactive < later_flag.evidence.days_inactive
+        assert today_flag.evidence.last_active_at == tomorrow_flag.evidence.last_active_at
+        assert today_flag.evidence.last_active_at == later_flag.evidence.last_active_at
+
+        assert flag_fingerprint(today_flag) == flag_fingerprint(tomorrow_flag)
+        assert flag_fingerprint(today_flag) == flag_fingerprint(later_flag)
+
+    def test_declining_trend_fingerprint_changes_with_new_evidence(self) -> None:
+        """The re-raise regression: a further decline changes the percentage
+        window, so the fingerprint of the new flag must differ from the old
+        one — an acknowledgement of the old evidence must not cover it."""
+        before = _history(_record(72.0), _record(65.0), _record(58.0))
+        before_flag = next(
+            f
+            for f in assess_at_risk(before, now=_NOW).flags
+            if f.reason == AtRiskReason.DECLINING_TREND
+        )
+
+        # A further-declined paper lands: window shifts to 65 -> 58 -> 50.
+        after = _history(_record(72.0), _record(65.0), _record(58.0), _record(50.0))
+        after_flag = next(
+            f
+            for f in assess_at_risk(after, now=_NOW).flags
+            if f.reason == AtRiskReason.DECLINING_TREND
+        )
+
+        assert flag_fingerprint(before_flag) != flag_fingerprint(after_flag)
+
+    def test_below_target_fingerprint_from_target_predicted_pair(self) -> None:
+        """Two flags carrying the same target/predicted pair fingerprint
+        identically regardless of any other field; a different pair differs."""
+        same_a = assess_at_risk(_history(_record(60.0, grade="C")), now=_NOW, target_grade="A")
+        same_b = assess_at_risk(
+            _history(_record(60.0, grade="C")), now=_NOW + timedelta(days=5), target_grade="A"
+        )
+        different = assess_at_risk(_history(_record(40.0, grade="D")), now=_NOW, target_grade="A")
+
+        flag_a = next(f for f in same_a.flags if f.reason == AtRiskReason.BELOW_TARGET)
+        flag_b = next(f for f in same_b.flags if f.reason == AtRiskReason.BELOW_TARGET)
+        flag_c = next(f for f in different.flags if f.reason == AtRiskReason.BELOW_TARGET)
+
+        assert flag_fingerprint(flag_a) == flag_fingerprint(flag_b)
+        assert flag_fingerprint(flag_a) != flag_fingerprint(flag_c)
+
+    def test_different_reasons_never_collide(self) -> None:
+        """A declining-trend flag and an inactivity flag on the same history
+        must never share a fingerprint — the reason is part of the canonical
+        string precisely so acks stay scoped per-reason (the composite key)."""
+        stale = (_NOW - timedelta(days=20)).isoformat()
+        history = _history(_record(72.0), _record(65.0), _record(58.0, recorded_at=stale))
+        result = assess_at_risk(history, now=_NOW)
+        reasons = {f.reason for f in result.flags}
+        assert reasons == {AtRiskReason.DECLINING_TREND, AtRiskReason.INACTIVE}
+        fingerprints = {f.reason: flag_fingerprint(f) for f in result.flags}
+        assert fingerprints[AtRiskReason.DECLINING_TREND] != fingerprints[AtRiskReason.INACTIVE]

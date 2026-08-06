@@ -55,6 +55,7 @@ EXPECTED_TABLES = {
     "review_queue",
     "announcements",
     "notifications",
+    "at_risk_acknowledgements",
     "xp_events",
     "streaks",
 }

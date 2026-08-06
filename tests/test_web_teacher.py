@@ -10,6 +10,7 @@ national benchmarks) are asserted empty/None.
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -33,6 +34,7 @@ from lemely.core.schemas import (
     WeakArea,
     WeaknessReport,
 )
+from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.models import User
@@ -43,6 +45,7 @@ from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
+    get_at_risk_ack_service,
     get_auth_context,
     get_class_service,
     get_gemini_client,
@@ -154,6 +157,13 @@ def class_service(pg_sessionmaker: sessionmaker[Session]) -> ClassService:
     return ClassService(pg_sessionmaker)
 
 
+@pytest.fixture
+def ack_service(
+    pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> AtRiskAckService:
+    return AtRiskAckService(pg_sessionmaker, class_service)
+
+
 def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None = None) -> uuid.UUID:
     uid = uuid.uuid4()
     with sm.begin() as session:
@@ -162,8 +172,21 @@ def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None =
 
 
 def _use_class_service(client: TestClient, class_service: ClassService) -> None:
-    """Override ``get_class_service`` on ``client`` for a real-tenancy test."""
+    """Override ``get_class_service`` on ``client`` for a real-tenancy test.
+
+    Also wires ``get_at_risk_ack_service`` to an :class:`AtRiskAckService`
+    bound to the *same* throwaway Postgres database/``ClassService`` (P3.4b) —
+    every at-risk-serving route (overview, student detail, at-risk list) now
+    depends on it too, since D3.5 requires each to populate the acknowledged
+    state. Reaching into ``class_service``'s private sessionmaker keeps every
+    existing call site of this helper working unchanged rather than needing a
+    second override call threaded through 15+ pre-existing tests.
+    """
     client.app.dependency_overrides[get_class_service] = lambda: class_service  # type: ignore[union-attr]
+    client.app.dependency_overrides[get_at_risk_ack_service] = lambda: AtRiskAckService(
+        class_service._sessionmaker,
+        class_service,
+    )
 
 
 def _auth_as(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
@@ -1126,3 +1149,410 @@ def test_at_risk_list_platform_admin_sees_none(
     _use_class_service(client, class_service)
     _auth_as(client, admin_id, Role.platform_admin)
     assert client.get("/api/teacher/at-risk").json()["students"] == []
+
+
+# ---------------------------------------------------------------------------
+# Acknowledge / un-acknowledge an at-risk flag — T-06 (P3.4b, D3.5).
+# ---------------------------------------------------------------------------
+
+
+def _declining_student(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+    join_code: str,
+    display_name: str,
+) -> uuid.UUID:
+    """Seed a student enrolled via ``join_code`` with a firing declining-trend flag."""
+    student = _join_student(pg_sessionmaker, class_service, join_code, display_name)
+    _seed_history_record(history_store, str(student), percentage=72.0, grade="B")
+    _seed_history_record(history_store, str(student), percentage=65.0, grade="C")
+    _seed_history_record(history_store, str(student), percentage=58.0, grade="D")
+    return student
+
+
+def test_acknowledge_at_risk_flag_happy_path(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """Acknowledging a currently-firing flag tags it with who/when/note."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _declining_student(pg_sessionmaker, class_service, history_store, cls.join_code, "Ziad")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.post(
+        f"/api/teacher/at-risk/{ziad}/acknowledge",
+        json={"reason": "declining_trend", "note": "spoke to parents"},
+    )
+    assert resp.status_code == 200
+    flag = resp.json()
+    assert flag["reason"] == "declining_trend"
+    assert flag["acknowledged"] is not None
+    assert flag["acknowledged"]["acknowledgedBy"] == str(teacher_id)
+    assert flag["acknowledged"]["note"] == "spoke to parents"
+    assert flag["acknowledged"]["acknowledgedAt"]
+
+    # And it reads back acknowledged on the list too — never a second,
+    # independently-derived acknowledged state (D3.5's "how to apply").
+    body = client.get("/api/teacher/at-risk").json()
+    ziad_row = next(s for s in body["students"] if s["displayName"] == "Ziad")
+    ziad_flag = next(f for f in ziad_row["flags"] if f["reason"] == "declining_trend")
+    assert ziad_flag["acknowledged"] is not None
+    assert ziad_flag["acknowledged"]["note"] == "spoke to parents"
+
+
+def test_acknowledge_flag_not_removed_from_response(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """D3.5: acknowledging tags a flag, it never disappears from the unfiltered list."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _declining_student(pg_sessionmaker, class_service, history_store, cls.join_code, "Ziad")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    client.post(f"/api/teacher/at-risk/{ziad}/acknowledge", json={"reason": "declining_trend"})
+
+    body = client.get("/api/teacher/at-risk").json()
+    assert any(s["displayName"] == "Ziad" for s in body["students"])
+    body_overview = client.get("/api/teacher/overview").json()
+    assert any(s["name"] == "Ziad" for s in body_overview["atRisk"])
+
+
+def test_acknowledge_reason_not_firing_is_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """You cannot acknowledge a signal that was never raised (D3.5)."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    # Healthy, improving student: no flags fire at all.
+    amelia = _join_student(pg_sessionmaker, class_service, cls.join_code, "Amelia")
+    _seed_history_record(history_store, str(amelia), percentage=80.0, grade="A")
+    _seed_history_record(history_store, str(amelia), percentage=90.0, grade="A")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.post(
+        f"/api/teacher/at-risk/{amelia}/acknowledge", json={"reason": "declining_trend"}
+    )
+    assert resp.status_code == 422
+
+
+def test_acknowledge_unrecognised_reason_is_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _declining_student(pg_sessionmaker, class_service, history_store, cls.join_code, "Ziad")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.post(
+        f"/api/teacher/at-risk/{ziad}/acknowledge", json={"reason": "not_a_real_reason"}
+    )
+    assert resp.status_code == 422
+
+
+def test_acknowledge_out_of_scope_student_is_403(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """Teacher A cannot acknowledge a flag for teacher B's student (D3.5 tenancy)."""
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    class_b = class_service.create_class(teacher_b, "B's class")
+    assert class_b.join_code is not None
+    student_b = _declining_student(
+        pg_sessionmaker, class_service, history_store, class_b.join_code, "B's Student"
+    )
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_a, Role.teacher)
+    resp = client.post(
+        f"/api/teacher/at-risk/{student_b}/acknowledge", json={"reason": "declining_trend"}
+    )
+    assert resp.status_code == 403
+
+    # And teacher B's own view of the flag is untouched — still unacknowledged.
+    _auth_as(client, teacher_b, Role.teacher)
+    body = client.get("/api/teacher/at-risk").json()
+    row = next(s for s in body["students"] if s["displayName"] == "B's Student")
+    flag = next(f for f in row["flags"] if f["reason"] == "declining_trend")
+    assert flag["acknowledged"] is None
+
+
+def test_acknowledge_unknown_student_id_is_404(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.post(
+        f"/api/teacher/at-risk/{uuid.uuid4()}/acknowledge", json={"reason": "declining_trend"}
+    )
+    assert resp.status_code == 404
+
+
+def test_unacknowledge_removes_tag(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _declining_student(pg_sessionmaker, class_service, history_store, cls.join_code, "Ziad")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    client.post(f"/api/teacher/at-risk/{ziad}/acknowledge", json={"reason": "declining_trend"})
+
+    resp = client.delete(f"/api/teacher/at-risk/{ziad}/acknowledge/declining_trend")
+    assert resp.status_code == 204
+
+    body = client.get("/api/teacher/at-risk").json()
+    row = next(s for s in body["students"] if s["displayName"] == "Ziad")
+    flag = next(f for f in row["flags"] if f["reason"] == "declining_trend")
+    assert flag["acknowledged"] is None
+
+
+def test_unacknowledge_idempotent_when_never_acknowledged(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _declining_student(pg_sessionmaker, class_service, history_store, cls.join_code, "Ziad")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.delete(f"/api/teacher/at-risk/{ziad}/acknowledge/declining_trend")
+    assert resp.status_code == 204
+
+
+def test_unacknowledge_out_of_scope_student_is_403(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    class_b = class_service.create_class(teacher_b, "B's class")
+    assert class_b.join_code is not None
+    student_b = _declining_student(
+        pg_sessionmaker, class_service, history_store, class_b.join_code, "B's Student"
+    )
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_a, Role.teacher)
+    resp = client.delete(f"/api/teacher/at-risk/{student_b}/acknowledge/declining_trend")
+    assert resp.status_code == 403
+
+
+def test_at_risk_list_acknowledged_filter(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """``?acknowledged=true|false`` filters; omitted returns both (P3.4b)."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    acked = _declining_student(
+        pg_sessionmaker, class_service, history_store, cls.join_code, "Acked"
+    )
+    _declining_student(pg_sessionmaker, class_service, history_store, cls.join_code, "Unacked")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    client.post(f"/api/teacher/at-risk/{acked}/acknowledge", json={"reason": "declining_trend"})
+
+    both = client.get("/api/teacher/at-risk").json()
+    assert {s["displayName"] for s in both["students"]} == {"Acked", "Unacked"}
+
+    only_acked = client.get("/api/teacher/at-risk?acknowledged=true").json()
+    assert {s["displayName"] for s in only_acked["students"]} == {"Acked"}
+
+    only_unacked = client.get("/api/teacher/at-risk?acknowledged=false").json()
+    assert {s["displayName"] for s in only_unacked["students"]} == {"Unacked"}
+
+
+def test_acknowledgement_consistent_across_overview_detail_and_list(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """The same flag reports the same acknowledged state on T-01, T-05, T-06 (D3.5)."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _declining_student(pg_sessionmaker, class_service, history_store, cls.join_code, "Ziad")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    client.post(
+        f"/api/teacher/at-risk/{ziad}/acknowledge",
+        json={"reason": "declining_trend", "note": "watching closely"},
+    )
+
+    overview = client.get("/api/teacher/overview").json()
+    overview_flag = next(
+        f
+        for s in overview["atRisk"]
+        if s["name"] == "Ziad"
+        for f in s["flags"]
+        if f["reason"] == "declining_trend"
+    )
+    detail = client.get(f"/api/teacher/students/{ziad}").json()
+    detail_flag = next(f for f in detail["atRiskFlags"] if f["reason"] == "declining_trend")
+    at_risk_list = client.get("/api/teacher/at-risk").json()
+    list_flag = next(
+        f
+        for s in at_risk_list["students"]
+        if s["displayName"] == "Ziad"
+        for f in s["flags"]
+        if f["reason"] == "declining_trend"
+    )
+
+    for flag in (overview_flag, detail_flag, list_flag):
+        assert flag["acknowledged"] is not None
+        assert flag["acknowledged"]["note"] == "watching closely"
+        assert flag["acknowledged"]["acknowledgedBy"] == str(teacher_id)
+
+
+def test_acknowledged_flag_reraises_unacknowledged_on_further_decline(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """The key D3.5 regression: acknowledge a declining-trend flag, then add a
+    further-declined paper — the flag must come back unacknowledged. This is
+    the whole point of evidence-scoping: a student who declines *further*
+    after being acknowledged is a genuinely new signal."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _declining_student(pg_sessionmaker, class_service, history_store, cls.join_code, "Ziad")
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    resp = client.post(
+        f"/api/teacher/at-risk/{ziad}/acknowledge", json={"reason": "declining_trend"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["acknowledged"] is not None
+
+    # Confirm it reads acknowledged before the new evidence lands.
+    before = client.get("/api/teacher/at-risk").json()
+    before_flag = next(
+        f
+        for s in before["students"]
+        if s["displayName"] == "Ziad"
+        for f in s["flags"]
+        if f["reason"] == "declining_trend"
+    )
+    assert before_flag["acknowledged"] is not None
+
+    # A further decline: window shifts from 72->65->58 to 65->58->50.
+    _seed_history_record(history_store, str(ziad), percentage=50.0, grade="D")
+
+    after = client.get("/api/teacher/at-risk").json()
+    after_flag = next(
+        f
+        for s in after["students"]
+        if s["displayName"] == "Ziad"
+        for f in s["flags"]
+        if f["reason"] == "declining_trend"
+    )
+    assert after_flag["acknowledged"] is None
+    # New evidence: the flag itself still fires (still at risk), just unacked.
+    assert after_flag["evidence"]["percentages"] == [65.0, 58.0, 50.0]
+
+
+def test_acknowledgement_is_per_teacher_not_global(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """D3.5's per-teacher rule, pinned through the API and not just the service.
+
+    Two teachers who *both* legitimately see the same student — so this is
+    about acknowledgement scoping, not tenancy (which
+    ``test_acknowledge_out_of_scope_student_is_403`` already covers). Teacher
+    A acknowledging must not blind teacher B, who carries their own
+    responsibility for that student; B must still see the flag, and see it as
+    unacknowledged, with no trace of A's note.
+    """
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    class_a = class_service.create_class(teacher_a, "Physics 10A")
+    class_b = class_service.create_class(teacher_b, "Physics 10B")
+    assert class_a.join_code is not None
+    assert class_b.join_code is not None
+    ziad = _declining_student(
+        pg_sessionmaker, class_service, history_store, class_a.join_code, "Ziad"
+    )
+    # The same student also sits in teacher B's class.
+    class_service.join_by_code(ziad, class_b.join_code)
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_a, Role.teacher)
+    resp = client.post(
+        f"/api/teacher/at-risk/{ziad}/acknowledge",
+        json={"reason": "declining_trend", "note": "spoke to his mother"},
+    )
+    assert resp.status_code == 200
+
+    def _flag(payload: dict) -> dict:  # type: ignore[type-arg]
+        return next(
+            f
+            for s in payload["students"]
+            if s["displayName"] == "Ziad"
+            for f in s["flags"]
+            if f["reason"] == "declining_trend"
+        )
+
+    a_flag = _flag(client.get("/api/teacher/at-risk").json())
+    assert a_flag["acknowledged"] is not None
+    assert a_flag["acknowledged"]["note"] == "spoke to his mother"
+
+    _auth_as(client, teacher_b, Role.teacher)
+    b_payload = client.get("/api/teacher/at-risk").json()
+    b_flag = _flag(b_payload)
+    # Still surfaced to B, and still unacknowledged for B.
+    assert b_flag["acknowledged"] is None
+    assert "spoke to his mother" not in json.dumps(b_payload)
+
+    # B's own filter agrees: the flag is unacknowledged from where B stands.
+    unacked = client.get("/api/teacher/at-risk?acknowledged=false").json()
+    assert any(s["displayName"] == "Ziad" for s in unacked["students"])
+    acked = client.get("/api/teacher/at-risk?acknowledged=true").json()
+    assert all(s["displayName"] != "Ziad" for s in acked["students"])

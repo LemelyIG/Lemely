@@ -24,6 +24,7 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
+from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
@@ -203,6 +204,20 @@ def get_review_service() -> ReviewService:
     return ReviewService(get_sessionmaker(get_settings()), get_class_service())
 
 
+@lru_cache(maxsize=1)
+def get_at_risk_ack_service() -> AtRiskAckService:
+    """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton every other student-scoped teacher service uses, so
+    acknowledgement tenancy composes the identical ``list_classes``/``roster``
+    calls (D3.1) — never a second, independently-derived notion of "the
+    caller's students". Tests override this dependency with a service built
+    on a throwaway Postgres database.
+    """
+    return AtRiskAckService(get_sessionmaker(get_settings()), get_class_service())
+
+
 @dataclass(frozen=True, slots=True)
 class AuthContext:
     """The authenticated caller, resolved from a validated bearer token.
@@ -318,3 +333,4 @@ def reset_singletons() -> None:
     get_seat_service.cache_clear()
     get_class_service.cache_clear()
     get_review_service.cache_clear()
+    get_at_risk_ack_service.cache_clear()

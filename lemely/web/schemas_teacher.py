@@ -327,6 +327,30 @@ class ClassDetailDTO(ApiModel):
     joinCode: str | None = None
 
 
+class AtRiskAcknowledgementDTO(ApiModel):
+    """Who/when/note for a flag a teacher has acknowledged (D3.5, T-06).
+
+    Present on an :class:`AtRiskFlagDTO` only when a stored acknowledgement
+    exists **and** its evidence fingerprint still matches the flag currently
+    firing (:func:`lemely.core.at_risk.flag_fingerprint`) — an acknowledgement
+    whose evidence has moved on (a further decline, a fresh submission ending
+    an inactivity streak) is not surfaced here; the flag instead renders with
+    ``acknowledged: null``, exactly as if it had never been acked, so a
+    teacher is never shown reassurance the evidence no longer supports (D3.5:
+    "never a permanent mute").
+
+    ``acknowledgedBy`` is the acknowledging teacher's id, not a resolved
+    display name — mirrors ``ReviewItemDetailDTO.overriddenBy``/``resolvedBy``,
+    the established convention for "who" fields on this wire format.
+    Teacher-facing only: this DTO is never populated on any student/parent
+    surface (D3.5 — acknowledgements are never student/parent-visible).
+    """
+
+    acknowledgedBy: str
+    acknowledgedAt: str
+    note: str | None = None
+
+
 class AtRiskFlagDTO(ApiModel):
     """One fired D3.3 at-risk rule, mirroring ``lemely.core.at_risk.AtRiskFlag``.
 
@@ -337,11 +361,21 @@ class AtRiskFlagDTO(ApiModel):
     (``percentages``, or ``targetGrade``/``predictedGrade``/``positionsBelow``,
     or ``daysInactive``/``lastActiveAt``) as a plain dict — deliberately not a
     typed union on the wire, since no frontend consumes this yet (P3.7/P3.8).
+
+    ``acknowledged`` (added P3.4b/D3.5) is populated through one shared
+    helper (``lemely.web.routers.teacher._at_risk_flag_dto``) on every
+    teacher-facing surface that renders a flag — T-01's overview, T-05's
+    student detail, T-06's at-risk list — so the same flag never reads
+    acknowledged on one screen and unacknowledged on another (the exact
+    divergence D3.3/D3.4 each had to fix once already for "at risk" and
+    "weaknesses"). Additive field, defaults to ``None`` so older callers
+    still deserialise.
     """
 
     reason: str
     summary: str
     evidence: dict[str, float | int | str | list[float]]
+    acknowledged: AtRiskAcknowledgementDTO | None = None
 
 
 class AtRiskStudentDTO(ApiModel):
@@ -376,7 +410,23 @@ class OverviewDTO(ApiModel):
     retention: list[int] = Field(default_factory=list)
 
 
+class AcknowledgeAtRiskRequestDTO(ApiModel):
+    """Body for ``POST /api/teacher/at-risk/{student_id}/acknowledge`` (T-06).
+
+    ``reason`` must name a rule (``lemely.core.at_risk.AtRiskReason`` value)
+    currently firing for this student — acknowledging a rule that is not
+    presently raised for them is rejected (422): there is no flag to
+    acknowledge, so nothing here would correspond to anything the teacher
+    could have seen. ``note`` is optional and teacher-facing only (D3.5).
+    """
+
+    reason: str
+    note: str | None = None
+
+
 __all__ = [
+    "AcknowledgeAtRiskRequestDTO",
+    "AtRiskAcknowledgementDTO",
     "AtRiskStudentDTO",
     "BatchTabDTO",
     "ClassDetailDTO",

@@ -34,7 +34,7 @@ from lemely.db.models.enums import (
     UploadStatus,
     XpSource,
 )
-from lemely.db.models.ops import Announcement, Notification, ReviewQueueItem
+from lemely.db.models.ops import Announcement, AtRiskAcknowledgement, Notification, ReviewQueueItem
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat
 from lemely.db.models.users import Device, ParentChildLink, User
 
@@ -62,6 +62,7 @@ __all__ = [
     "SESSION_MONTH_LABELS",
     # Models
     "Announcement",
+    "AtRiskAcknowledgement",
     "Attempt",
     # Enums and mixins
     "BoundarySource",

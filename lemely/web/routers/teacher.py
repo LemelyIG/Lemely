@@ -36,10 +36,12 @@ from lemely.core.analytics import (
 from lemely.core.at_risk import (
     GRADE_ORDER,
     AtRiskFlag,
+    AtRiskReason,
     BelowTargetEvidence,
     DecliningTrendEvidence,
     InactivityEvidence,
     assess_at_risk,
+    flag_fingerprint,
 )
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
 from lemely.core.history import (
@@ -55,6 +57,11 @@ from lemely.core.schemas import (
     ExamMetadata,
     WeaknessReport,
 )
+from lemely.db.at_risk_repo import (
+    AtRiskAcknowledgementRow,
+    AtRiskAckOwnershipError,
+    AtRiskAckService,
+)
 from lemely.db.class_repo import ClassService, RosterEntry
 from lemely.db.models.enums import Role
 from lemely.db.review_repo import ReviewService
@@ -66,6 +73,7 @@ from lemely.runtime.config import Settings
 from lemely.runtime.events import EventType, bus
 from lemely.web.deps import (
     AuthContext,
+    get_at_risk_ack_service,
     get_class_service,
     get_gemini_client,
     get_history_store,
@@ -89,6 +97,8 @@ from lemely.web.schemas_analytics import (
     SubjectPredictionDTO,
 )
 from lemely.web.schemas_teacher import (
+    AcknowledgeAtRiskRequestDTO,
+    AtRiskAcknowledgementDTO,
     AtRiskFlagDTO,
     AtRiskStudentDTO,
     BatchTabDTO,
@@ -1010,6 +1020,33 @@ def _visible_students(service: ClassService, auth: AuthContext) -> dict[str, Ros
     return visible
 
 
+def _acknowledgement_index(
+    ack_service: AtRiskAckService,
+    auth: AuthContext,
+    *,
+    student_ids: list[str] | None = None,
+) -> dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow]:
+    """String-keyed index of every at-risk ack the caller has recorded (D3.5).
+
+    Loaded once per request and threaded through ``_at_risk_flag_dto`` so
+    T-01 (overview), T-05 (student detail), and T-06 (at-risk list) all read
+    the identical acknowledged/unacknowledged state for the same flag — the
+    shared-helper discipline D3.3/D3.4 already established for "at risk"
+    itself and for weaknesses, now applied to acknowledgement (D3.5's "how to
+    apply"). Keyed by ``str`` student id (not ``uuid.UUID``) because every
+    caller here already holds a plain ``str`` id (``history.student_id``,
+    ``str(entry.student_id)``) — converting at the one shared boundary
+    avoids repeating the conversion at every call site.
+
+    ``student_ids`` narrows the underlying query to a single student for T-05
+    (which only ever needs one student's acks); omitted for T-01/T-06, which
+    need every ack the caller has recorded across their whole roster in one
+    round trip (``AtRiskAckService.load_for_teacher``'s N+1-avoidance).
+    """
+    raw = ack_service.load_for_teacher(auth.user_id, student_ids=student_ids)
+    return {(str(student_id), reason): row for (student_id, reason), row in raw.items()}
+
+
 # ---------------------------------------------------------------------------
 # Overview.
 # ---------------------------------------------------------------------------
@@ -1021,6 +1058,7 @@ def teacher_overview(
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     review_service: Annotated[ReviewService, Depends(get_review_service)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
 ) -> OverviewDTO:
     """Return headline stats plus at-risk students, all from history/analytics.
 
@@ -1037,6 +1075,7 @@ def teacher_overview(
     ``retention`` (lesson-retention minutes) has no backend source and is always
     empty. At-risk students are those flagged by the D3.3 rules engine
     (declining trend / predicted below target / inactive) — see ``_at_risk``.
+    Each flag carries its acknowledged state (D3.5) via ``_acknowledgement_index``.
     """
     try:
         visible = _visible_students(service, auth)
@@ -1050,7 +1089,8 @@ def teacher_overview(
 
     average = _mean([r.percentage for r in latest])
     needs_review = _count_review_items(review_service, auth)
-    at_risk_students = _at_risk(histories, now=datetime.now(UTC))
+    acks = _acknowledgement_index(ack_service, auth)
+    at_risk_students = _at_risk(histories, now=datetime.now(UTC), acks=acks)
 
     stats = [
         StatCardDTO(
@@ -1110,7 +1150,10 @@ def _count_review_items(review_service: ReviewService, auth: AuthContext) -> int
 
 
 def _at_risk(
-    histories: list[tuple[StudentHistory, str]], *, now: datetime
+    histories: list[tuple[StudentHistory, str]],
+    *,
+    now: datetime,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
 ) -> list[AtRiskStudentDTO]:
     """Identify at-risk students via the D3.3 rules engine.
 
@@ -1126,6 +1169,10 @@ def _at_risk(
     production; that is an honest, recorded limitation, not a bug. Supersedes
     the old "grade in {D,E,U} or any negative delta" heuristic, which matched
     none of the three specified rules and carried no reason label.
+
+    ``acks`` (D3.5, P3.4b) is the caller's :func:`_acknowledgement_index`,
+    threaded through to :func:`_at_risk_flag_dto` so this route reports the
+    identical acknowledged state T-05/T-06 do for the same flag.
     """
     at_risk: list[AtRiskStudentDTO] = []
     for history, display_name in histories:
@@ -1142,20 +1189,50 @@ def _at_risk(
                 grade=latest.grade,
                 delta=_student_delta(history),
                 weakTopic=weakest.topic if weakest is not None else None,
-                flags=[_at_risk_flag_dto(flag) for flag in assessment.flags],
+                flags=[
+                    _at_risk_flag_dto(flag, student_id=history.student_id, acks=acks)
+                    for flag in assessment.flags
+                ],
             )
         )
     return at_risk
 
 
-def _at_risk_flag_dto(flag: AtRiskFlag) -> AtRiskFlagDTO:
+def _at_risk_flag_dto(
+    flag: AtRiskFlag,
+    *,
+    student_id: str,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
+) -> AtRiskFlagDTO:
     """Convert a core ``AtRiskFlag`` to its wire DTO.
 
     Core evidence models are snake_case (D2.2-style domain naming); this
     module's DTOs are camelCase throughout (mirrors the frontend TS types), so
     the evidence dict keys are translated explicitly rather than passed through
     ``model_dump()`` verbatim.
+
+    **The single point that populates ``acknowledged`` (D3.5, P3.4b).** Every
+    teacher-facing caller (the overview, student detail, the at-risk list)
+    must route through here rather than checking ``acks`` itself — that is
+    exactly the shared-helper discipline D3.5's "how to apply" note demands,
+    and the reason this function takes ``student_id``/``acks`` instead of
+    staying a pure ``AtRiskFlag -> AtRiskFlagDTO`` converter: bolting the ack
+    lookup onto three call sites independently is precisely how "at risk" and
+    "weaknesses" each drifted once before (D3.3/D3.4). A flag reads
+    acknowledged only when a stored ack exists for
+    ``(student_id, flag.reason)`` **and** its ``evidence_fingerprint`` still
+    equals :func:`~lemely.core.at_risk.flag_fingerprint` of *this* flag — an
+    ack whose evidence has moved on is silently treated as absent, never
+    surfaced as stale reassurance.
     """
+    ack = acks.get((student_id, flag.reason))
+    acknowledged: AtRiskAcknowledgementDTO | None = None
+    if ack is not None and ack.evidence_fingerprint == flag_fingerprint(flag):
+        acknowledged = AtRiskAcknowledgementDTO(
+            acknowledgedBy=str(ack.acknowledged_by),
+            acknowledgedAt=ack.acknowledged_at.isoformat(),
+            note=ack.note,
+        )
     evidence = flag.evidence
     payload: dict[str, float | int | str | list[float]]
     if isinstance(evidence, DecliningTrendEvidence):
@@ -1173,7 +1250,12 @@ def _at_risk_flag_dto(flag: AtRiskFlag) -> AtRiskFlagDTO:
         }
     else:
         raise TypeError(f"Unhandled AtRiskFlag evidence type: {type(evidence)!r}")
-    return AtRiskFlagDTO(reason=flag.reason.value, summary=flag.summary, evidence=payload)
+    return AtRiskFlagDTO(
+        reason=flag.reason.value,
+        summary=flag.summary,
+        evidence=payload,
+        acknowledged=acknowledged,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1260,7 +1342,11 @@ def _student_engagement_dto(history: StudentHistory, *, now: datetime) -> Studen
 
 
 def _student_detail_dto(
-    entry: RosterEntry, history: StudentHistory, *, now: datetime
+    entry: RosterEntry,
+    history: StudentHistory,
+    *,
+    now: datetime,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
 ) -> StudentDetailDTO:
     """Build the T-05 student-detail DTO from one student's real history.
 
@@ -1268,11 +1354,14 @@ def _student_detail_dto(
     ``assess_at_risk``/``_at_risk_flag_dto`` (at-risk status — never a second,
     re-implemented translation), and this module's own subject/attempt/
     engagement helpers. Integrity signals are deliberately absent: see the
-    route docstring.
+    route docstring. ``acks`` (D3.5, P3.4b) threads the caller's
+    :func:`_acknowledgement_index` through to ``_at_risk_flag_dto`` so this
+    screen reports the identical acknowledged state T-01/T-06 do.
     """
     assessment = assess_at_risk(history, now=now)
+    student_id = str(entry.student_id)
     return StudentDetailDTO(
-        studentId=str(entry.student_id),
+        studentId=student_id,
         displayName=entry.display_name,
         subjects=_subject_predictions(history),
         attempts=[_attempt_dto(r) for r in reversed(history.records)],
@@ -1291,7 +1380,9 @@ def _student_detail_dto(
             for r in history.records
         ],
         isAtRisk=assessment.is_at_risk,
-        atRiskFlags=[_at_risk_flag_dto(flag) for flag in assessment.flags],
+        atRiskFlags=[
+            _at_risk_flag_dto(flag, student_id=student_id, acks=acks) for flag in assessment.flags
+        ],
         engagement=_student_engagement_dto(history, now=now),
     )
 
@@ -1302,13 +1393,15 @@ def teacher_student_detail(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
 ) -> StudentDetailDTO:
     """Return T-05's full student detail for one student (P3.3).
 
     Subjects and predicted grades, full attempt history, weakness list with
     evidence, this student's own trend series, at-risk status with reasons and
     evidence (reusing ``assess_at_risk``/``_at_risk_flag_dto``), and
-    activity/engagement.
+    activity/engagement. Each at-risk flag's acknowledged state (D3.5,
+    P3.4b) is populated identically to T-01/T-06.
 
     **Authz is the whole point of this route.** A teacher/school_admin may see
     a student ONLY if that student is enrolled in one of the caller's own
@@ -1344,7 +1437,8 @@ def teacher_student_detail(
     entry = visible.get(student_id)
     if entry is not None:
         history = history_store.load(student_id)
-        return _student_detail_dto(entry, history, now=datetime.now(UTC))
+        acks = _acknowledgement_index(ack_service, auth, student_ids=[student_id])
+        return _student_detail_dto(entry, history, now=datetime.now(UTC), acks=acks)
     try:
         exists = service.user_exists(student_id)
     except ValueError as exc:
@@ -1388,7 +1482,9 @@ def teacher_at_risk_list(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
     reason: str | None = None,
+    acknowledged: bool | None = None,
 ) -> AtRiskListDTO:
     """Return every flagged student across the caller's own classes (T-06).
 
@@ -1400,20 +1496,27 @@ def teacher_at_risk_list(
     yields no matches, never a 500. Sorted by severity — see
     ``_at_risk_severity_key`` for the exact, documented definition.
 
-    Deliberately NOT built here: dismissing/acknowledging a flag with a note
-    (T-06's other listed action) is a mutation with no backing table yet —
-    out of scope for this read-only analytics phase.
+    ``acknowledged`` (P3.4b/D3.5) filters to students carrying at least one
+    flag whose acknowledged state (see ``_at_risk_flag_dto``) matches; a
+    student flagged by both an acknowledged and an unacknowledged reason
+    passes either filter, and — mirroring ``reason``'s existing
+    entry-vs-flag granularity — the ``flags`` list on a matching entry still
+    carries *every* flag for that student, not just the matching one (D3.5:
+    an acknowledged flag is never removed from a response, only tagged).
+    Omitting the parameter returns both states, unfiltered.
     """
     try:
         rows = service.list_classes(auth.user_id, auth.role)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     now = datetime.now(UTC)
+    acks = _acknowledgement_index(ack_service, auth)
     entries: list[AtRiskListEntryDTO] = []
     for row in rows:
         roster = service.roster(auth.user_id, auth.role, row.class_id)
         for roster_entry in roster:
-            history = history_store.load(str(roster_entry.student_id))
+            student_id = str(roster_entry.student_id)
+            history = history_store.load(student_id)
             if not history.records:
                 continue
             assessment = assess_at_risk(history, now=now)
@@ -1421,15 +1524,162 @@ def teacher_at_risk_list(
                 continue
             if reason is not None and reason not in {f.reason.value for f in assessment.flags}:
                 continue
+            flags_dto = [
+                _at_risk_flag_dto(flag, student_id=student_id, acks=acks)
+                for flag in assessment.flags
+            ]
+            if acknowledged is not None and not any(
+                (f.acknowledged is not None) == acknowledged for f in flags_dto
+            ):
+                continue
             entries.append(
                 AtRiskListEntryDTO(
-                    studentId=str(roster_entry.student_id),
+                    studentId=student_id,
                     displayName=roster_entry.display_name,
                     classId=str(row.class_id),
                     className=row.name,
                     grade=history.records[-1].grade,
-                    flags=[_at_risk_flag_dto(flag) for flag in assessment.flags],
+                    flags=flags_dto,
                 )
             )
     entries.sort(key=_at_risk_severity_key)
     return AtRiskListDTO(students=entries)
+
+
+# ---------------------------------------------------------------------------
+# Acknowledge / un-acknowledge an at-risk flag — T-06 (P3.4b, D3.5).
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/teacher/at-risk/{student_id}/acknowledge",
+    response_model=AtRiskFlagDTO,
+)
+def acknowledge_at_risk_flag(
+    student_id: str,
+    body: AcknowledgeAtRiskRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+) -> AtRiskFlagDTO:
+    """Acknowledge one currently-firing at-risk flag with an optional note (T-06).
+
+    Upserts: acknowledging a reason already acknowledged just refreshes the
+    note and re-pins the evidence fingerprint to whatever is firing right now
+    (harmless — it is already firing, by construction of this route, so the
+    fingerprint cannot change under it in the same request).
+
+    Authz mirrors ``teacher_student_detail``: a student outside the union of
+    the caller's own classes is a 403; an id matching no user anywhere is a
+    404; a malformed (non-UUID) id is a clean 422 (see that route's docstring
+    for the full 403-vs-404 rationale, which applies identically here).
+
+    **Rejects acknowledging a reason that is not currently firing (422).**
+    Flags are derived, not stored (D3.3) — there is no persistent flag to
+    "acknowledge" unless ``assess_at_risk`` is, right now, actually raising
+    ``body.reason`` for this student. This also rejects an unrecognised
+    ``reason`` string (not one of ``AtRiskReason``'s values) with the same
+    422, since by definition it cannot be firing.
+    """
+    try:
+        visible = _visible_students(service, auth)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    entry = visible.get(student_id)
+    if entry is None:
+        try:
+            exists = service.user_exists(student_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"Unknown student: {student_id}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Student {student_id} is not in any of the caller's classes",
+        )
+
+    try:
+        reason_enum = AtRiskReason(body.reason)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"Unknown at-risk reason: {body.reason!r}"
+        ) from exc
+
+    history = history_store.load(student_id)
+    assessment = assess_at_risk(history, now=datetime.now(UTC))
+    flag = next((f for f in assessment.flags if f.reason == reason_enum), None)
+    if flag is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Reason {reason_enum.value!r} is not currently firing for this student",
+        )
+
+    fingerprint = flag_fingerprint(flag)
+    try:
+        ack_service.acknowledge(
+            auth.user_id,
+            auth.role,
+            student_id,
+            reason_enum,
+            fingerprint,
+            note=body.note,
+        )
+    except AtRiskAckOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    acks = _acknowledgement_index(ack_service, auth, student_ids=[student_id])
+    return _at_risk_flag_dto(flag, student_id=student_id, acks=acks)
+
+
+@router.delete(
+    "/teacher/at-risk/{student_id}/acknowledge/{reason}",
+    status_code=204,
+)
+def unacknowledge_at_risk_flag(
+    student_id: str,
+    reason: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+) -> None:
+    """Remove an acknowledgement (T-06). Idempotent.
+
+    A flag with no stored acknowledgement (or an already-unacknowledged one)
+    still returns 204. Authz mirrors ``acknowledge_at_risk_flag``: a student outside the
+    caller's classes is a 403. Does not require the reason to currently be
+    firing (unlike the POST) — un-acknowledging is always safe to attempt,
+    even for a reason that has since stopped firing entirely (e.g. the
+    student is no longer inactive); there is nothing left to protect by
+    rejecting it.
+    """
+    try:
+        visible = _visible_students(service, auth)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    entry = visible.get(student_id)
+    if entry is None:
+        try:
+            exists = service.user_exists(student_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"Unknown student: {student_id}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Student {student_id} is not in any of the caller's classes",
+        )
+
+    try:
+        reason_enum = AtRiskReason(reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Unknown at-risk reason: {reason!r}") from exc
+
+    try:
+        ack_service.unacknowledge(auth.user_id, auth.role, student_id, reason_enum)
+    except AtRiskAckOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
