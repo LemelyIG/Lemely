@@ -798,3 +798,18 @@ linked children only.
   the total, is what caught it.
 - Next: chunk b — notification preferences (migration 0008, `GET/PUT
   /api/me/notification-preferences`), then P3.7 teacher frontend.
+
+## 2026-08-06 — P3.6 chunk b (notification preferences) — P3.6 DONE
+- Did: migration 0008 + `notification_preferences` (explicit boolean column per
+  `NotificationType`, enum↔column vocabulary pin), `NotificationPreferencesService`, and
+  `GET/PUT /api/me/notification-preferences` for any authenticated role. Committed 622a692.
+  P3.6 complete; 1805 tests / 89.16% cov, all 12 gates green.
+- Learned: the chunk-b subagent stalled waiting on a background run — the *same* failure
+  mode STATE.md already recorded for P3.1/P3.2, and it happened despite an explicit
+  "foreground, never backgrounded" instruction in the brief. Treat the brief line as
+  insufficient: plan on finishing the gate run and the last coverage gaps yourself.
+- Learned: per-file coverage is the useful signal, not the total. Both chunks came back
+  with the total up and a new router 4-6 points short, hiding untested behaviour each time.
+- Next: P3.7 — teacher frontend T-01..T-06. First frontend task since P2.5, so the standing
+  UI gate (QUALITY-BAR, axe, Lighthouse, screenshot corpus, Impeccable) applies in full,
+  and `LEMELY_REPORT_DIR` must name the phase when re-baselining (D3.2).

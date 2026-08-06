@@ -402,7 +402,7 @@ Starting facts (established 2026-08-06, do not re-derive):
             *all* annotation-only, which is when ruff will move a whole statement.
             1721 tests (1717 passed / 4 live-only skips), 88.75% cov (from 88.48%).
             All 12 gates green, `alembic check` clean, no schema change.
-- [ ] doing — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
+- [x] done — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
       subject detail / weaknesses (read-only), notification preferences. Parent authz: only
       own linked children.
       **Design fixed 2026-08-06 (D3.11) — implement it, do not redesign.** Established facts,
@@ -460,7 +460,7 @@ Starting facts (established 2026-08-06, do not re-derive):
             explanation — the API returns a plain empty list and deliberately carries no
             copy. The link flow the UI must present is D3.11's: the parent OTP-logs-in
             **first**, then the student invites them by phone.
-      - [ ] **b** — notification preferences (G-12). Additive migration 0008 +
+      - [x] **b** done (622a692) — notification preferences (G-12). Additive migration 0008 +
             `notification_preferences` (one row per user, one explicit NOT NULL boolean
             column per `NotificationType`, defaulting true, + nullable
             `quiet_hours_start`/`quiet_hours_end`). A vocabulary test pins every
@@ -471,6 +471,19 @@ Starting facts (established 2026-08-06, do not re-derive):
             teacher/parent-only per the spec: filtered out of a student's response and a
             422 on PUT. G-12's "weekly summary" toggle has no `NotificationType` and is
             NOT invented here — deferred to P5, which owns notification delivery.
+            **Shipped:** `NotificationPreferencesService` (99%), `lemely/web/routers/me.py`
+            (100%), `schemas_me.py` (100%). Migration verified on the live stack:
+            `upgrade → check → downgrade -1 → upgrade → check`, clean both directions.
+            1805 tests (1801 passed / 4 live-only skips), 89.16% cov (from 89.04%).
+            All 12 gates green.
+            **Do not reintroduce these shapes:** a GET must never materialise a row
+            (absent = `DEFAULTS`, returned without a write); `set()`'s `UNSET` sentinel
+            exists because `None` legitimately *clears* a quiet-hours bound and so cannot
+            also mean "omitted"; an explicit `null` on a toggle is a 422, not a silent
+            reset to the default (which would re-enable a notification the user turned
+            off). Nothing anywhere reads this table to decide whether to send — including
+            against the quiet-hours window. That interpretation is **P5's to write**, and
+            P5 must not assume this chunk left it a helper.
 - [ ] todo — **P3.7** Teacher frontend T-01..T-06 (dashboard, classes list, class detail roster,
       class analytics, student detail, at-risk list).
 - [ ] todo — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
