@@ -266,17 +266,39 @@ Starting facts (established 2026-08-06, do not re-derive):
             is a documented default (`explanation`), not an inferred type; safe because
             `correction`/`correction_ai` branch only on MCQ vs non-MCQ and generated
             questions are never MCQ.
-      - [ ] **D** doing — quiz CRUD + draft PATCH + pool-count endpoint + question
-            selection; `/quizzes/pools` moves off disk onto the bank (closes the
-            process-global every-teacher-sees-every-question leak). All scoped through
-            `ClassService`. Build on chunk B's `visible_bank_filter` / `count_by_band` /
-            `select_questions` — do not write a second WHERE clause for the bank.
-            **The bank ships empty**, so T-09's live count reads 0 until a teacher
-            generates questions; per D3.7 the UI must say "no past-paper questions indexed
-            for <subject> yet; use generated questions" in those words, never a
-            plausible-looking number. `/quizzes/generate` writing bank rows is now the
-            *only* thing that fills the bank — that makes it load-bearing, not optional.
-      - [ ] **E** assignment endpoints + student take/submit (S-26) + `quiz_answers`.
+      - [x] **D** done (d19c32d) — `lemely/db/quiz_repo.py` (`QuizService`),
+            `lemely/web/routers/quiz.py` (prefix `/api/teacher/quizzes`),
+            `lemely/web/schemas_quiz.py`. 1595 tests (1591 passed / 4 live-only skips),
+            88.00% cov (from 87.83%). All 12 gates green, `alembic check` clean, no schema
+            change. Quiz CRUD + draft PATCH (row created at step 1, every later field
+            nullable), the `draft→assigned→closed→archived` lifecycle with no backwards
+            transition and no question edits on a non-draft, `quiz_questions` materialized
+            by **copying** text (`question_bank_id` is provenance only, §1.5) with stable
+            never-renumbered `question_ref` and removed-not-deleted rows, and
+            `GET /api/teacher/quizzes/pool-count` deriving `byBand` from the same
+            `allocate_difficulty` the builder uses. All bank reads go through chunk B's
+            `visible_bank_filter`/`count_by_band`/`select_questions` — do not add a second
+            WHERE clause for the bank in E or F.
+            Also added: `ClassService.member_school_ids` (any membership role, for the
+            school visibility tier) and `QuestionBankService.has_inferred_difficulty` /
+            `generated_questions_to_bank_rows`.
+            **Two defects found while wiring, both now pinned by tests — do not
+            reintroduce either shape in E/F:** (a) moving only the *write* side off disk
+            left `_existing_questions` reading a directory nothing writes, i.e. a reuse
+            path that always returned nothing while its docstring claimed a working pool;
+            it now reads the bank. (b) That then made `/quizzes/generate` re-insert every
+            reused question on each call, inflating the pool count — generated rows have
+            no `paper_id`, so `uq_question_bank_paper_question` does not cover them, and
+            the write path must filter. `_build_quiz` returns `(quiz, reused_prompts)`.
+            Out of scope, deliberately, and **not** to be quietly inferred later: no
+            `school_admin`/co-teacher view into a quiz (`QuizService` is scoped strictly
+            by `teacher_id`); nothing in the design supports one.
+            Note: §2's illustrative pool-count numbers do not arithmetically reproduce
+            `allocate_difficulty`'s real output — the prose is authoritative, the example
+            numbers are not.
+      - [ ] **E** doing (next) — assignment endpoints + student take/submit (S-26) +
+            `quiz_answers`. Scope through `ClassService` as everywhere else; a student may
+            only see an assignment for a class they are enrolled in.
       - [ ] **F** `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
             refactor, review-queue integration, **the `_recompute_attempt_totals` quiz guard**
             (without it the first teacher override on a quiz invents a grade the marking path

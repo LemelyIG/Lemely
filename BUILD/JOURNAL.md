@@ -675,3 +675,36 @@ corpus" rather than an assumption it can make.
 **Next.** Chunk D — quiz CRUD, draft PATCH, pool-count endpoint, question selection, and
 `/quizzes/pools` off disk onto the bank. Build on chunk B's predicate; do not write a
 second WHERE clause for the bank.
+
+## 2026-08-06 (cont.) — P3.5 chunk D: quiz CRUD, and two defects that only appear once the disk path dies
+
+**Did.** Shipped chunk D (d19c32d): `QuizService`, the `/api/teacher/quizzes` router, quiz
+DTOs, the `pool-count` endpoint, and question selection — with `/quizzes/pools` and the
+preview/generate reuse pool both moved off the process-global `output_dir/questions` scan
+onto the bank behind `visible_bank_filter`. 1595 tests (1591 passed / 4 live-only skips),
+88.00% cov, all 12 gates green, `alembic check` clean, no schema change.
+
+**Learned.** The interesting part was not the CRUD, it was the second-order effect of
+chunk B's decision. Moving `/quizzes/generate`'s *write* off disk silently orphaned the
+*read*: `_existing_questions` kept scanning a directory that nothing writes any more, so
+the reuse-before-calling-Gemini optimization would have returned nothing forever — every
+preview re-generating against the $8 ceiling, the no-key degraded path returning an empty
+quiz, and a docstring still describing a working pool. Nothing fails when this happens;
+the tests that covered it seeded the disk themselves and kept passing, which is precisely
+why they kept passing. Pointing the reuse at the bank then produced defect two: the write
+path re-inserted every question it had just read, so each generate doubled the pool. The
+partial unique index that makes the past-paper ingest idempotent does not cover generated
+rows (no `paper_id`), so this had to be enforced in the write path — `_build_quiz` now
+returns `(quiz, reused_prompts)` and only fresh questions are persisted.
+
+Both defects share a shape worth remembering: a test that constructs the state it asserts
+on (writing the pool file it then reads) proves the code path works, not that anything
+still reaches it. When a data source moves, the tests that seeded the old source are the
+last place the old source still exists.
+
+**Watch.** The bank is still empty on a fresh install and `/quizzes/generate` is the only
+thing that fills it, so every pool count a teacher sees before generating is honestly 0.
+Chunk F's `_recompute_attempt_totals` quiz guard and the eight unfiltered web-layer
+grade/percentage sites listed under chunk G remain the two known landmines.
+
+**Next.** Chunk E — assignment endpoints, student take/submit (S-26), `quiz_answers`.
