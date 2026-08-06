@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { cn, relativeTime } from "@/lib/utils"
+import { cn, initialsOf, relativeTime } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { Avatar } from "../components/Avatar"
 import { useTeacherOverview, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
@@ -53,13 +53,6 @@ const ORIGIN_LABEL: Record<RecentActivity["origin"], string> = {
   past_paper: "Past paper",
   quiz: "Quiz",
   custom_paper: "Custom paper",
-}
-
-function initialsOf(name: string): string {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
 }
 
 export function Overview() {

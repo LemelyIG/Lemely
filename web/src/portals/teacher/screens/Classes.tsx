@@ -244,7 +244,19 @@ export function Classes() {
           action={{ label: "Create a class", onClick: () => setShowCreate(true) }}
         />
       ) : (
-        <div className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0">
+        <div
+          className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0"
+          // `tabIndex`/`role`/`aria-label` are required, not decorative: a
+          // horizontally scrollable container no keyboard user can reach or
+          // scroll is axe's serious `scrollable-region-focusable`. Chunk c hit
+          // exactly this on the roster/heatmap/paper tables; this table has the
+          // same shape and only escapes the finding today because it happens
+          // not to overflow at the tested viewport and data size — latent, not
+          // safe. Do not strip these as "unnecessary ARIA".
+          tabIndex={0}
+          role="region"
+          aria-label="Your classes, scrollable horizontally"
+        >
           <table className="w-full text-[13px] border-collapse">
             <caption className="sr-only">Your classes, sortable by every column</caption>
             <thead>

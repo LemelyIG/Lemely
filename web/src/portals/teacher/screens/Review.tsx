@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { cn } from "@/lib/utils"
+import { cn, initialsOf } from "@/lib/utils"
 import { Avatar } from "../components/Avatar"
 import { ApiError } from "@/lib/api"
 import { useGradingQueue, usePaperDetail } from "@/lib/hooks/useTeacherApi"
@@ -44,13 +44,6 @@ import type { QueueRow } from "@/lib/teacherTypes"
 
 function confidencePercent(confidence: number | null): number | null {
   return confidence == null ? null : Math.round(confidence * 100)
-}
-
-function initialsOf(name: string): string {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
 }
 
 export function Review() {

@@ -7,13 +7,17 @@ import {
 } from "@tanstack/react-query"
 import { request, streamActivity } from "@/lib/api"
 import type {
+  ClassAnalytics,
+  ClassDetail,
   ClassList,
   ClassSummary,
   CreateClassRequest,
+  EnrollStudentRequest,
   GradingQueue,
   Overview,
   PaperDetail,
   PaperList,
+  RosterEntry,
   SchemeList,
   SchemeRow,
   TeacherPipelineFrame,
@@ -31,11 +35,12 @@ import type {
  *
  * Scope: the 7 grading-console endpoints wired in P2.8 (overview, papers
  * list/detail, grading queue, schemes list/upload, paper
- * upload/extract/grade) plus the P3.7 chunk B class-list surface
- * (`GET /teacher/classes`, `POST/PATCH/DELETE /classes/{id}` — T-01/T-02).
- * The class-detail/roster/analytics endpoints (`GET /classes/{id}`,
- * `/roster`, `/analytics`) and AI-quiz endpoints are out of scope — chunks
- * c/d own T-03..T-06.
+ * upload/extract/grade), the P3.7 chunk B class-list surface
+ * (`GET /teacher/classes`, `POST/PATCH/DELETE /classes/{id}` — T-01/T-02),
+ * and — added chunk c — `GET /classes/{id}` (T-03), `/enroll` +
+ * `/students/{id}` (roster mutations), and `GET /classes/{id}/analytics`
+ * (T-04). AI-quiz endpoints and T-05/T-06 (`GET /teacher/students/{id}`,
+ * `GET /teacher/at-risk`) remain out of scope — chunk d owns those.
  */
 
 export function useTeacherOverview(): UseQueryResult<Overview, Error> {
@@ -95,6 +100,69 @@ export function useDeleteClass(): UseMutationResult<void, Error, string> {
     mutationFn: (classId: string) =>
       request<void>(`/classes/${classId}`, { method: "DELETE" }),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+    },
+  })
+}
+
+/** `GET /classes/{classId}` (T-03: mastery/distribution/roster + the header fields). */
+export function useClassDetail(classId: string | undefined): UseQueryResult<ClassDetail, Error> {
+  return useQuery({
+    queryKey: ["teacher", "class", classId],
+    queryFn: () => request<ClassDetail>(`/classes/${classId}`),
+    enabled: !!classId,
+  })
+}
+
+/** `GET /classes/{classId}/analytics` (T-04: heatmap/topic weaknesses/trend/etc). */
+export function useClassAnalytics(classId: string | undefined): UseQueryResult<ClassAnalytics, Error> {
+  return useQuery({
+    queryKey: ["teacher", "class", classId, "analytics"],
+    queryFn: () => request<ClassAnalytics>(`/classes/${classId}/analytics`),
+    enabled: !!classId,
+  })
+}
+
+/**
+ * `POST /classes/{classId}/enroll` — direct-add an existing, seated student
+ * (T-03 "Add students"). 409s when the class has no `schoolId` or the
+ * student holds no seat there (`ClassHasNoSchoolError`/`StudentNotSeatedError`
+ * in `lemely/db/class_repo.py`) — the screen gates the form on `schoolId`
+ * being present so it never invites a guaranteed-409 action, but a stale
+ * client state can still hit this, so the mutation error still renders.
+ * Invalidates both this class's detail and the classes list (student count
+ * changed).
+ */
+export function useEnrollStudent(
+  classId: string | undefined,
+): UseMutationResult<RosterEntry, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (studentId: string) =>
+      request<RosterEntry>(`/classes/${classId}/enroll`, {
+        method: "POST",
+        body: JSON.stringify({ studentId } satisfies EnrollStudentRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+    },
+  })
+}
+
+/**
+ * `DELETE /classes/{classId}/students/{studentId}` (T-03 roster removal).
+ * Idempotent on the backend; invalidates the same two queries as enroll.
+ */
+export function useRemoveStudent(
+  classId: string | undefined,
+): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (studentId: string) =>
+      request<void>(`/classes/${classId}/students/${studentId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
       queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
     },
   })

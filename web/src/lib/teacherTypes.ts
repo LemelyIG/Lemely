@@ -8,11 +8,17 @@
  *
  * Scope: the 7 grading-console endpoints wired in P2.8 (overview, papers
  * list/detail, grading queue, schemes list/upload, paper upload/extract/
- * grade) plus the P3.7 chunk B class-list surface (`GET /teacher/classes`,
- * `POST/PATCH/DELETE /classes/{id}` — T-01/T-02). The AI-quiz DTOs and the
- * T-03..T-06 shapes (`ClassDetailDTO`, `StudentRowDTO`, `StudentDetailDTO`,
- * `ClassAnalyticsDTO`, `AtRiskListDTO`, `QuizPreviewDTO`, etc.) are out of
- * scope for this module and intentionally omitted — chunks c/d own them.
+ * grade), the P3.7 chunk B class-list surface (`GET /teacher/classes`,
+ * `POST/PATCH/DELETE /classes/{id}` — T-01/T-02), and — added chunk c —
+ * `ClassDetailDTO`/`StudentRowDTO`/`MasteryRowDTO`/`DistributionBarDTO` (T-03)
+ * and the T-04 `ClassAnalyticsDTO` family (`TopicWeaknessDTO`,
+ * `HeatmapCellDTO`, `GradeDistributionBucketDTO`, `TrendPointDTO`,
+ * `PaperComparisonDTO`, `EngagementStatsDTO`). Chunk b's STATE.md entry
+ * claimed these T-03/T-04 mirror types already existed here ("add hooks, not
+ * types") — they did not; this module's own header comment said the
+ * opposite ("chunks c/d own them"). Chunk c adds them now; see the phase
+ * report for the discrepancy. `StudentDetailDTO`/`AtRiskListDTO`/quiz DTOs
+ * remain chunk d's / P3.8's to add.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/teacher/data.ts` (the mock shapes these DTOs were modeled
@@ -277,6 +283,164 @@ export interface CreateClassRequest {
 export interface UpdateClassRequest {
   name?: string | null
   subjectCode?: string | null
+}
+
+// ── Class detail / roster (T-03) ────────────────────────────────────────────
+
+/**
+ * Per-topic accuracy across the class's aggregate weaknesses (mirrors
+ * `MasteryRowDTO`). `national` is always `null` — no benchmark source exists
+ * (never render a "vs national average" comparison from it).
+ */
+export interface MasteryRow {
+  topic: string
+  value: number
+  national: number | null
+  below: boolean
+}
+
+/** A grade-distribution bar (mirrors `DistributionBarDTO`). */
+export interface DistributionBar {
+  grade: string
+  count: number
+}
+
+/**
+ * A class roster row (mirrors `StudentRowDTO`, T-03). `grade` is the
+ * student's latest recorded grade — render with `GradeBadge basis="predicted"`,
+ * matching T-05's `SubjectPredictionDTO.predictedGrade`, the same domain
+ * notion. `gradeAtRisk` (grade in D/E/U right now) and `flags` (the D3.3
+ * trend/target/inactivity engine) are deliberately different signals — do
+ * not conflate them or render one as the other (D3.3): a steady, active
+ * D-grade student carries `gradeAtRisk: true` but no `flags`; an inactive
+ * A-grade student carries `flags` but `gradeAtRisk: false`. `delta` is the
+ * only trend datum this row carries — a single scalar, not a series, so it
+ * cannot honestly feed `TrendSparkline` (which needs a real multi-point
+ * series; faking one from one number would draw a shape the data doesn't
+ * support).
+ */
+export interface StudentRow {
+  name: string
+  grade: string
+  mark: string
+  delta: number | null
+  weakTopic: string | null
+  gradeAtRisk: boolean
+  studentId: string
+  paperCount: number | null
+  lastActiveAt: string | null
+  flags: AtRiskFlag[]
+}
+
+/**
+ * Response for `GET /classes/{classId}` (mirrors `ClassDetailDTO`, T-03).
+ * `mastery`/`distribution` are real, roster-scoped data but are deliberately
+ * NOT rendered on T-03 — they are a differently-derived per-topic accuracy /
+ * grade-count computation than T-04's `ClassAnalyticsDTO` (`gradeDistribution`,
+ * `topicWeaknesses`/`heatmap`), and showing both on different screens risks
+ * the exact "same label, two numbers" divergence D3.3/D3.4/D3.5 each had to
+ * fix once already. `stats` (class average / student count / at-risk count)
+ * is rendered as the T-03 header strip; the per-topic/per-grade panels stay
+ * T-04's alone.
+ */
+export interface ClassDetail {
+  id: string
+  label: string
+  stats: StatCard[]
+  mastery: MasteryRow[]
+  distribution: DistributionBar[]
+  students: StudentRow[]
+  subjectCode: string | null
+  schoolId: string | null
+  joinCode: string | null
+  atRiskCount: number | null
+  lastActivityAt: string | null
+  topWeakness: string | null
+}
+
+/** One enrolled student's identity (mirrors `RosterEntryDTO`). */
+export interface RosterEntry {
+  studentId: string
+  displayName: string
+}
+
+/** Body for `POST /classes/{classId}/enroll` (mirrors `EnrollStudentRequestDTO`). */
+export interface EnrollStudentRequest {
+  studentId: string
+}
+
+// ── Class analytics (T-04) ──────────────────────────────────────────────────
+
+/**
+ * One topic ranked by class-wide marks lost, most-lost-first (mirrors
+ * `TopicWeaknessDTO`). `studentIds` backs "click a weakness -> the students
+ * affected" without a second round trip.
+ */
+export interface TopicWeakness {
+  topic: string
+  lostMarks: number
+  maximumMarks: number
+  accuracy: number
+  studentIds: string[]
+}
+
+/**
+ * One (topic, student) heatmap cell (mirrors `HeatmapCellDTO`). `accuracy` is
+ * `null` when the student has no persisted weak-area entry for this topic —
+ * this is NOT the same as a 0% score (a student who never attempted the
+ * topic vs. one who attempted and lost every mark look identical in what's
+ * persisted, per the core module's honesty note) and must render as a
+ * distinct "no data" cell, never as 0%.
+ */
+export interface HeatmapCell {
+  topic: string
+  studentId: string
+  accuracy: number | null
+}
+
+/** Count of students on one grade, full ladder incl. zero counts (mirrors `GradeDistributionBucketDTO`). */
+export interface GradeDistributionBucket {
+  grade: string
+  count: number
+}
+
+/** One point in the cohort mean-percentage-over-time series (mirrors `TrendPointDTO`). */
+export interface TrendPoint {
+  timestamp: string
+  label: string
+  meanPercentage: number
+  sampleSize: number
+}
+
+/** Cohort stats for one paper identity (mirrors `PaperComparisonDTO`). */
+export interface PaperComparison {
+  paperId: string
+  subjectCode: string
+  paperNumber: number
+  paperVariant: number
+  meanPercentage: number
+  attemptCount: number
+  studentCount: number
+}
+
+/** Submission-activity stats (mirrors `EngagementStatsDTO`). */
+export interface EngagementStats {
+  submissionsLast7Days: number
+  submissionsLast30Days: number
+  activeStudentsLast7Days: number
+  activeStudentsLast30Days: number
+  neverActiveCount: number
+  medianDaysSinceLastSubmission: number | null
+}
+
+/** Response for `GET /classes/{classId}/analytics` (mirrors `ClassAnalyticsDTO`, T-04). */
+export interface ClassAnalytics {
+  topicWeaknesses: TopicWeakness[]
+  heatmap: HeatmapCell[]
+  gradeDistribution: GradeDistributionBucket[]
+  trend: TrendPoint[]
+  paperComparison: PaperComparison[]
+  engagement: EngagementStats
 }
 
 // ── POST /papers/{id}/extract, /grade SSE frames ─────────────────────────

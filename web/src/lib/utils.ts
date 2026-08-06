@@ -25,3 +25,19 @@ export function relativeTime(iso: string): string {
   if (months < 12) return `${months}mo ago`
   return `${Math.floor(months / 12)}y ago`
 }
+
+/**
+ * First letter of each word in a display name, for an avatar's initials
+ * ("Yassin Diab" -> "YD"). Was duplicated identically in
+ * `portals/teacher/screens/Overview.tsx` and `Review.tsx` (both had their own
+ * private copy despite STATE.md/several chunk notes claiming it already
+ * lived here) — moved here in P3.7 chunk c so a third near-identical copy
+ * wasn't added for the T-03/T-04 screens; the two existing call sites now
+ * import this instead of defining it locally.
+ */
+export function initialsOf(name: string): string {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+}

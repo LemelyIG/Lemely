@@ -16,6 +16,9 @@ import { Overview } from "./screens/Overview"
 import { Grading } from "./screens/Grading"
 import { Review } from "./screens/Review"
 import { Classes } from "./screens/Classes"
+import { ClassDetailLayout } from "./screens/ClassDetail"
+import { ClassRoster } from "./screens/ClassRoster"
+import { ClassAnalytics } from "./screens/ClassAnalytics"
 import { MarkSchemes } from "./screens/MarkSchemes"
 import { Quizzes } from "./screens/Quizzes"
 
@@ -210,6 +213,14 @@ export const teacherRoute: RouteObject = {
     { path: "grading", element: <Grading /> },
     { path: "review", element: <Review /> },
     { path: "classes", element: <Classes /> },
+    {
+      path: "classes/:classId",
+      element: <ClassDetailLayout />,
+      children: [
+        { index: true, element: <ClassRoster /> },
+        { path: "analytics", element: <ClassAnalytics /> },
+      ],
+    },
     { path: "schemes", element: <MarkSchemes /> },
     { path: "quizzes", element: <Quizzes /> },
   ],

@@ -551,8 +551,11 @@ Starting facts (established 2026-08-06, do not re-derive):
             passed / 4 live-only skips), 89.18% cov. All 12 gates green.
             **New seams c/d must reuse, not re-derive:** `useTeacherClasses`/`useCreateClass`
             /`useUpdateClass`/`useDeleteClass` in `useTeacherApi.ts`; the DTO mirror types in
-            `lib/teacherTypes.ts` (**types for T-03..T-06's endpoints are already written
-            there** — add hooks, not types); `lib/meTypes.ts` + `useMeApi.ts::useProfile()`
+            `lib/teacherTypes.ts` (~~types for T-03..T-06's endpoints are already written
+            there~~ — **wrong, corrected in chunk c**: chunk b added only the T-01/T-02
+            shapes and its module header said so explicitly. Chunk c added the T-03/T-04
+            types; **T-05/T-06's are still missing and chunk d must write them**);
+            `lib/meTypes.ts` + `useMeApi.ts::useProfile()`
             (shared `/api/me/*`, deliberately NOT portal-scoped — P3.9's parent shell uses
             the same one); `relativeTime`/`initialsOf` in `lib/utils.ts`.
             New backend route `GET /api/me/profile` (+ `ProfileDTO`, `deps.get_user_mirror`).
