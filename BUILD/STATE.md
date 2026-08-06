@@ -433,7 +433,7 @@ Starting facts (established 2026-08-06, do not re-derive):
         exist until P4's onboarding questionnaire (P-02's "predicted vs target" ships with
         target `null`, exactly as at-risk rule 2 is *not evaluable* — D3.3); P-04's "what the
         child is doing about it" has no data source beyond the existing study plan.
-      - [ ] **a** — scoping seam + read surface. `lemely/db/parent_repo.py`
+      - [x] **a** done (3ee592c) — scoping seam + read surface. `lemely/db/parent_repo.py`
             (`ParentLinkService`: `linked_children`, `get_child`, `link`, `unlink` — the ONE
             `parent_child_links` query; every parent route scopes through it, no second
             query anywhere), `lemely/web/schemas_parent.py`, `lemely/web/routers/parent.py`
@@ -443,6 +443,23 @@ Starting facts (established 2026-08-06, do not re-derive):
             `GET /api/parent/children/{child_id}/subjects/{code}` (P-03),
             `GET /api/parent/children/{child_id}/weaknesses` (P-04). Unlinked child = 403,
             unknown user = 404, non-UUID = 422 (matches `teacher_student_detail`).
+            **Shipped:** `ParentLinkService` (100% cov) + `lemely/web/routers/parent.py`
+            (97%) + `schemas_parent.py`, the three student link routes, and one new
+            `ClassService.student_classes()` (the only "a student's classes, with names"
+            query — do not write a second). 1768 tests (1764 passed / 4 live-only skips),
+            89.04% cov (from 88.75%). All 12 gates green, `alembic check` clean, no schema
+            change.
+            **Facts established here, do not re-derive:** `is_grade_bearing` is *defined* as
+            past-paper origin AND `grade in GRADE_ORDER`, so any "grade not on the ladder"
+            guard downstream of `grade_bearing()` is unreachable from a route — keep such
+            guards as preconditions, cover them with direct unit tests, do not invent an
+            HTTP test that cannot fire. `assess_at_risk` can never emit `BelowTargetEvidence`
+            until P4 (D3.3), so its converter branch is likewise unit-tested directly rather
+            than by seeding a fake target.
+            **Handed to P3.9 (frontend):** P-01's empty state must render the "how to link"
+            explanation — the API returns a plain empty list and deliberately carries no
+            copy. The link flow the UI must present is D3.11's: the parent OTP-logs-in
+            **first**, then the student invites them by phone.
       - [ ] **b** — notification preferences (G-12). Additive migration 0008 +
             `notification_preferences` (one row per user, one explicit NOT NULL boolean
             column per `NotificationType`, defaulting true, + nullable

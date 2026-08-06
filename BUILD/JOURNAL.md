@@ -784,3 +784,17 @@ this is where to paginate first.
 **Next.** P3.6 — parent portal backend (P-01..P-04): linked children, child overview /
 subject detail / weaknesses read-only, notification preferences, parent-authz scoped to own
 linked children only.
+
+## 2026-08-06 — P3.6 chunk a (parent portal read surface)
+- Did: fixed the P3.6 design as D3.11 (student invites a parent by phone; only an
+  already-OTP-authenticated parent can be linked, so a student-supplied string is never an
+  account-creation primitive), then built `ParentLinkService` + the four P-01..P-04 read
+  routes + the three student link routes. Committed 3ee592c.
+- Learned: `is_grade_bearing` already implies `grade in GRADE_ORDER`, so off-ladder guards
+  downstream of `grade_bearing()` cannot fire from a route — cover them as preconditions,
+  not with a fictional HTTP test. Same shape for `BelowTargetEvidence`: unreachable until P4.
+- Learned: the subagent's work was correct but left `routers/parent.py` at 80% — the at-risk
+  panel and the empty-child state were both unpinned. Verifying coverage per-file, not just
+  the total, is what caught it.
+- Next: chunk b — notification preferences (migration 0008, `GET/PUT
+  /api/me/notification-preferences`), then P3.7 teacher frontend.
