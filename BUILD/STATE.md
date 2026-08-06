@@ -402,9 +402,58 @@ Starting facts (established 2026-08-06, do not re-derive):
             *all* annotation-only, which is when ruff will move a whole statement.
             1721 tests (1717 passed / 4 live-only skips), 88.75% cov (from 88.48%).
             All 12 gates green, `alembic check` clean, no schema change.
-- [ ] next — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
+- [ ] doing — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
       subject detail / weaknesses (read-only), notification preferences. Parent authz: only
       own linked children.
+      **Design fixed 2026-08-06 (D3.11) — implement it, do not redesign.** Established facts,
+      do not re-derive:
+      - `parent_child_links` already exists (`lemely/db/models/users.py:63`, unique
+        (parent_id, child_id), no status column) — a link row IS the grant, there is no
+        pending state and none is being added.
+      - `AuthService.verify_otp` (`lemely/auth/service.py:228`) **auto-creates** a
+        `role=parent` user on first OTP verify, keyed by phone, with a
+        `_phone_placeholder_email` placeholder. So a parent user row exists only after that
+        parent has proven control of the phone.
+      - **Linking direction (D3.11): the student invites, by phone, and only an
+        already-OTP-authenticated parent can be linked.** `POST /api/student/parent-links`
+        {phone} links to the existing `role=parent` user with that phone; if none exists it
+        is a clean 404 telling the student the parent must log in first. This deliberately
+        does NOT mint a user from a student-supplied phone — that would be an
+        account-creation spam vector and would let one typo hand a stranger a child's
+        grades. `DELETE /api/student/parent-links/{parent_id}` revokes; `GET` lists. The
+        student owns the consent on both ends. No new schema, no new enum.
+      - Reuse, never re-derive: `history_store.load(child_id)`,
+        `lemely.core.history.{grade_bearing,is_grade_bearing,is_paper,latest_grade_bearing}`
+        (every grade/percentage/paper claim filters — D3.9), `lemely.core.at_risk.assess_at_risk`
+        (the only at-risk engine), `lemely.core.analytics.aggregate_weaknesses_from_history`
+        (topic-bearing: takes ALL records, unfiltered), `GradeBoundaryStore().resolve()` for
+        boundary distance, `lemely.io.det.profiles.get_profile(code).name` for the plain
+        subject name (empty string for an unknown code → fall back to the code, never invent).
+      - **Honest gaps that must be reported as absent, never faked:** target grade does not
+        exist until P4's onboarding questionnaire (P-02's "predicted vs target" ships with
+        target `null`, exactly as at-risk rule 2 is *not evaluable* — D3.3); P-04's "what the
+        child is doing about it" has no data source beyond the existing study plan.
+      - [ ] **a** — scoping seam + read surface. `lemely/db/parent_repo.py`
+            (`ParentLinkService`: `linked_children`, `get_child`, `link`, `unlink` — the ONE
+            `parent_child_links` query; every parent route scopes through it, no second
+            query anywhere), `lemely/web/schemas_parent.py`, `lemely/web/routers/parent.py`
+            (prefix `/api/parent`, gated `require_role(Role.parent)`), plus the three
+            student-side link routes above. Routes: `GET /api/parent/children` (P-01),
+            `GET /api/parent/children/{child_id}` (P-02),
+            `GET /api/parent/children/{child_id}/subjects/{code}` (P-03),
+            `GET /api/parent/children/{child_id}/weaknesses` (P-04). Unlinked child = 403,
+            unknown user = 404, non-UUID = 422 (matches `teacher_student_detail`).
+      - [ ] **b** — notification preferences (G-12). Additive migration 0008 +
+            `notification_preferences` (one row per user, one explicit NOT NULL boolean
+            column per `NotificationType`, defaulting true, + nullable
+            `quiet_hours_start`/`quiet_hours_end`). A vocabulary test pins every
+            `NotificationType` member to a column so the two cannot drift (the chunk-A
+            three-way-pin pattern). Absent row = all defaults. Routes
+            `GET/PUT /api/me/notification-preferences` for **any** authenticated role, not
+            parent-only — same work, and P5 owns the delivery side. `at_risk_alert` is
+            teacher/parent-only per the spec: filtered out of a student's response and a
+            422 on PUT. G-12's "weekly summary" toggle has no `NotificationType` and is
+            NOT invented here — deferred to P5, which owns notification delivery.
 - [ ] todo — **P3.7** Teacher frontend T-01..T-06 (dashboard, classes list, class detail roster,
       class analytics, student detail, at-risk list).
 - [ ] todo — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz

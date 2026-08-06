@@ -3,6 +3,46 @@
 
 ## Phase 3
 
+### D3.11 — Parent links: the student invites, and only a phone-proven parent can be linked (P3.6)
+
+**The decision.** `parent_child_links` is created by the **student**, naming a parent by
+phone number, and the link succeeds only if a `role=parent` user with that phone **already
+exists** — i.e. that parent has already completed a phone-OTP verification. If no such user
+exists the student gets a clean 404 ("ask them to log in first, then invite again"), never a
+created account. `DELETE /api/student/parent-links/{parent_id}` revokes. There is no pending
+state and no approval step.
+
+**Why.** `AuthService.verify_otp` already mints a `role=parent` user on first verify, keyed
+by phone. The tempting shortcut — let the student's invite mint that user too — turns a
+student-supplied string into an account-creation primitive: a bored student could mass-create
+parent rows for arbitrary phone numbers, and a single typo would hand a stranger read access
+to a child's grades the moment they happened to log in with that number. Requiring the parent
+to have proven control of the phone first costs one ordering step (which P-01's empty state
+already has to explain anyway, per the UI spec) and removes the vector entirely. The student
+is the right initiator because the data being shared is *theirs*; consent on the parent side
+is inherent in choosing to authenticate. Revocation keeps it reversible, which is the
+MISSION §1 tie-breaker.
+
+**Alternatives rejected.** (a) *Parent requests, student approves* — matches G-11's "pending
+parent-link request" chip, but needs an additive status column, a second route pair, and a
+notification to be useful; deferred, not precluded (the columns stay addable). (b) *Link via
+the school* — the UI spec names it, but no school-side child-registry surface exists yet and
+inventing one is Phase-4-shaped speculative work. (c) *Student-generated link code* — a third
+code vocabulary beside `classes.join_code` for no gain over a phone number the parent must
+already own.
+
+**Scope note.** Linking is not named in MISSION §4's parent bullet or the P3.6 task line.
+It is included because without it no `parent_child_links` row can be created outside a seed
+script, which would make the entire portal untestable end-to-end in P3.10 and unusable in
+production — a read surface with no way to grant it is not a delivered feature.
+
+**Two things this decision refuses to fake.** P-02 asks for predicted grade *against target
+grade*: no target-grade column exists until P4's onboarding questionnaire, so `target` ships
+`null` and the UI must say "no target set" — the same *not evaluable* honesty D3.3 applied to
+at-risk rule 2, not a defaulted target that would make every child look on track. P-04's
+"what the child is doing about it" has no data source beyond the existing study plan, so it
+reports the plan or nothing.
+
 ### D3.10 — T-10 scopes every panel to the live roster, and *reports* the off-roster remainder (P3.5 chunk F2)
 
 `docs/quiz-model.md` §4.6 rule (c) fixes the completion denominator as the **live**
