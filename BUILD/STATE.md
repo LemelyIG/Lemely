@@ -581,8 +581,29 @@ Starting facts (established 2026-08-06, do not re-derive):
             px/oklch literals rather than the DESIGN.md token scale. It is a portal-wide
             convention predating P3.7 (P2.5.3 retrofitted the *student* screens only).
             Migrating them is its own task — see the P3.10 note.
-      - [ ] **c** todo — T-03 class detail roster + T-04 class analytics (heatmap is the
-            centrepiece).
+      - [x] **c** done (e789dc7) — T-03 roster + T-04 analytics. New:
+            `screens/ClassDetail.tsx` (shared shell: header, join code, stat strip, tabs),
+            `ClassRoster.tsx`, `ClassAnalytics.tsx`; routes `/teacher/classes/:classId`
+            and `.../analytics`. 1825 tests / 89.18% cov (both unchanged — zero backend
+            files touched). All 12 gates green.
+            **Do not "tidy" any of these:** (a) `ClassDetailDTO.mastery`/`distribution` are
+            populated but deliberately UNRENDERED on T-03 — they are a second,
+            differently-derived version of what T-04 shows authoritatively, and rendering
+            both recreates the "same label, two numbers" divergence D3.3/D3.4/D3.5 each had
+            to fix once. (b) `StudentRow.mark`/`grade` are latest-paper values shown under
+            "Latest mark"/"Predicted grade"; do not restore the spec's literal "average"
+            wording without re-deriving why it was changed. (c) The three scroll regions'
+            `tabIndex`/`role="region"`/`aria-label` fix a real serious axe finding
+            (`scrollable-region-focusable`). (d) Links to `/teacher/students/:studentId`
+            (roster names, weakness drill-down) 404 until chunk d — expected, do not
+            "fix" by deleting the links.
+            **Fixed here beyond scope:** `initialsOf` was duplicated verbatim in
+            `Overview.tsx` + `Review.tsx` → now in `lib/utils.ts`, both repointed; the same
+            latent `scrollable-region-focusable` on chunk b's `Classes.tsx` table; and two
+            **raw NUL bytes** in `ClassAnalytics.tsx` (a Map composite-key separator written
+            as literal 0x00, which made git/grep treat the file as binary) → now `backslash-u-0000`
+            escapes. Watch for that last shape recurring — it passes typecheck and build
+            silently.
       - [ ] **d** todo — T-05 student detail + T-06 at-risk list (acknowledge-with-note).
 - [ ] todo — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
       builder + class results), T-12 (announcement composer).
