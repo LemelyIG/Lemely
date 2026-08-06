@@ -366,13 +366,36 @@ Starting facts (established 2026-08-06, do not re-derive):
             All 12 gates green, `alembic check` clean, no schema change. Zero pre-existing
             past-paper tests changed — the `_persist` refactor is a proven behavioural
             no-op on that path.
-      - [ ] **F2** todo — T-10 teacher class-results endpoints (quiz results per class:
-            per-student scores, per-question breakdown, cohort weak topics). Read D3.6
-            §4.6 + D3.8 first. Reuse: `QuizService` (strictly `teacher_id`-scoped, no
-            `school_admin` view — do not invent one), `ClassService.roster`, and the
-            `attempts`/`question_results` rows F1 now writes (`origin=quiz`). Known minor
-            carried from E: `list_assigned`/`list_assignments` call `roster`/count per
-            assignment (bounded N+1) — revisit only if T-10 makes it hot.
+      - [ ] **F2** todo — T-10 teacher class-results endpoints. **Aggregates per
+            *assignment* (one class's results), never per quiz** (`docs/quiz-model.md`
+            §1.6). The five panels and their sources are fixed by §4.6 — do not invent a
+            sixth aggregation path:
+            | panel | source |
+            |---|---|
+            | Completion rate | `quiz_submissions.status` vs the **live** `ClassService` roster |
+            | Score distribution | `attempts.percentage` of the submissions' attempts |
+            | Per-question analysis | `question_results` grouped by `question_id` (= `question_ref`) joined to `quiz_questions` for prompt/topic/difficulty |
+            | Per-student results | `attempts` + `question_results.effective_marks` |
+            | Class-wide weaknesses | `rank_topic_weaknesses` over the same `WeaknessRecord` rows T-04 already reads |
+            Non-negotiables from §4.6, each of which a naive implementation gets wrong:
+            (a) per-question analysis aggregates **`effective_marks`, never
+            `awarded_marks`** — P3.4's single-accessor rule, or a teacher's own override
+            shows on the student's screen but not in the class view;
+            (b) score distribution is a **percentage** distribution, not a grade
+            distribution — there are no boundaries to bucket by, and F1 leaves
+            `attempts.grade` NULL for quizzes on purpose;
+            (c) completion rate is
+            `count(status in (submitted, marked)) / count(live roster)` — submissions are
+            created lazily, so a pre-seeded or snapshotted denominator drifts the moment a
+            student joins or leaves.
+            Reuse: `QuizService` (strictly `teacher_id`-scoped — **no `school_admin` view,
+            do not invent one**), `ClassService.roster`, and the `origin=quiz`
+            `attempts`/`question_results`/`weakness_records` rows F1 now writes. Answer
+            leakage is still excluded structurally (D3.8) — this is a teacher surface, so
+            model answers are legitimate here, but do not reach for them via a
+            student-facing DTO. Known minor carried from E: `list_assigned`/
+            `list_assignments` call `roster`/count per assignment (bounded N+1) — revisit
+            only if T-10 makes it hot.
 - [ ] todo — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
       subject detail / weaknesses (read-only), notification preferences. Parent authz: only
       own linked children.
