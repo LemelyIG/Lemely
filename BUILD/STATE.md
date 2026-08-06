@@ -156,12 +156,22 @@ Starting facts (established 2026-08-06, do not re-derive):
       `analytics.group_weak_areas`, extracted so marking-time and override-time run
       identical topic-bucketing. 794 tests (790 passed / 4 live-only skips) / 87.15% cov.
       All 12 gates green.
-- [ ] doing — **P3.4b** At-risk flag acknowledge-with-a-note (T-06), the second item P3.3
-      handed to P3.4. Design is fixed in **D3.5**: flags are derived not stored, so the ack
-      is keyed `(teacher, student, reason)` and scoped to an evidence fingerprint computed in
-      `lemely.core.at_risk`, so new evidence re-raises an acknowledged flag; acknowledged
-      flags stay in the API tagged `acknowledged`, never removed. Backend + tests.
-- [ ] todo — **P3.5** Teacher quiz builder backend (T-09/T-10). Difficulty targeting by expected
+- [x] done — **P3.4b** At-risk flag acknowledge-with-a-note (T-06, D3.5) — the second item
+      P3.3 handed to P3.4. `at_risk.flag_fingerprint()` (pure) canonicalises the *stable*
+      part of each evidence type — notably `last_active_at` only, never `days_inactive`,
+      which would un-acknowledge an unresolved flag every 24h. New table
+      `at_risk_acknowledgements` (additive migration 0006) unique on
+      (teacher, student, reason), served by `AtRiskAckService` (`lemely/db/at_risk_repo.py`,
+      bulk load, no N+1). Acks are per-teacher and evidence-scoped, so further decline
+      re-raises the flag unacknowledged; acknowledged flags are tagged, never removed
+      (`?acknowledged=` is a caller filter). `_at_risk_flag_dto` is the single population
+      point across T-01/T-05/T-06. Routes: POST/DELETE
+      `/api/teacher/at-risk/{student_id}/acknowledge[/{reason}]`. 826 tests (822 passed /
+      4 live-only skips) / 87.18% cov. All 12 gates green, `alembic check` clean.
+      Known test-only wart: `_use_class_service` in `tests/test_web_teacher.py` reads
+      `class_service._sessionmaker` to auto-wire the ack service for 15+ pre-existing
+      tests rather than changing every call site. Documented in the helper's docstring.
+- [ ] doing — **P3.5** Teacher quiz builder backend (T-09/T-10). Difficulty targeting by expected
       grade, material selection, pool from past-paper/generated questions, assign to class,
       auto-mark, results feed analytics.
 - [ ] todo — **P3.6** Parent portal backend (P-01..P-04). Linked children, child overview /
