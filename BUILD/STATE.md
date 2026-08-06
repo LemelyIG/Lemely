@@ -237,7 +237,7 @@ Starting facts (established 2026-08-06, do not re-derive):
             (at-risk row grade), and `student.py:144-193` (`_momentum`), `:263`, `:280`.
             `analytics.aggregate_weaknesses_from_history` and `classes.py:173` are
             topic-bearing and correctly take all records — do not filter those.
-      - [ ] **B** doing (next) — `question_bank` repo + visibility predicate + past-paper ingest from
+      - [ ] **B** doing — `question_bank` repo + visibility predicate + past-paper ingest from
             `mark_schemes.parsed_payload` + import of on-disk `GeneratedQuiz` files.
             **Highest risk; gates T-09's live-count promise. Start with a measurement**
             (rows produced / skipped for missing prompt text / topic coverage) and report it

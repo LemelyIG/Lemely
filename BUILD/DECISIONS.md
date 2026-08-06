@@ -3,6 +3,59 @@
 
 ## Phase 3
 
+### D3.7 — The past-paper question ingest yields zero questions, and always will (P3.5 chunk B)
+
+`docs/quiz-model.md` §2 required chunk B to begin with a measurement of how much usable
+question text comes out of the parsed mark schemes, and predicted "expect a non-trivial
+fraction" to be skipped for a missing prompt. **The measured fraction is 100%, and the
+cause is structural, not a data-quality gap.**
+
+Measurement over the entire parsed corpus (4 mark schemes — 0580_s23_ms_22, 0606_s23_ms_12,
+0625_m20_ms_12, 0625_s20_ms_31 — the only parsed mark schemes that exist; the `mark_schemes`
+table in the live stack holds **0 rows**):
+
+| | leaf questions | with prompt text | with `topic_hint` | with `question_command` |
+|---|---|---|---|---|
+| all four papers | **122** | **0** | **0** | 1 |
+
+Inferred difficulty bands would be foundation 70 / standard 45 / challenge 7, so
+`infer_difficulty` works fine — there is simply nothing to attach it to.
+
+**Why it can never improve by re-parsing.** `lemely.core.loose_schemas.Question` has no
+question-stem field *at all* — not an unpopulated one, an absent one. That is correct
+modelling: a CAIE mark scheme document contains marking points, not the question text; the
+stem lives in the question paper (`qp_*.pdf`), which this codebase only ever consumes as a
+student's scanned submission and never parses into structure. `lemely/io/integrity.py:113`
+already records the same fact in a comment ("the mark-scheme model has no verbatim
+question-stem") and works around it with a best-effort proxy. So no amount of re-ingesting,
+re-parsing, or corpus growth changes this number: **mark schemes are not a question source.**
+
+**Decision — do not persist prompt-less questions**, departing from §2's "create the row with
+`is_active = false`". §2 prescribed that for a *sometimes*-missing stem, where a dormant row
+becomes live once the text arrives. Here the row can never become live from this source, and
+`question_bank.prompt` is `NOT NULL` — so persisting 122 rows would require inventing a
+placeholder prompt, which is fabricating content into the exact column a teacher reads. That
+violates "never invent precision" (UI-spec §1.4). The ingest is still built, is still
+idempotent on `uq_question_bank_paper_question`, and still reports rows-produced /
+rows-skipped; it simply reports 0/122 against today's corpus and skips rather than writes.
+
+**Consequences that must be carried forward, not quietly forgotten:**
+- The `past_paper` pool count is genuinely **0 for every subject**, and T-09 (chunk D) must
+  say so in the §2 words — "no past-paper questions indexed for <subject> yet; use generated
+  questions" — never a plausible-looking number.
+- The on-disk `GeneratedQuiz` import is likewise **0 rows today**: `outputs/questions/` does
+  not exist, so there are no files to import. The importer is still built, because chunk D
+  moves `/quizzes/pools` off that directory and onto the bank.
+- **Therefore the bank ships empty, and the only path that fills it is `/quizzes/generate`
+  writing bank rows (chunk D).** T-09's live count is honest but will read 0 until a teacher
+  generates questions. This is the §2 "honest degraded behaviour" outcome, reached in full,
+  and it must appear in the Phase-3 report and DELIVERY.md rather than being presented as a
+  populated question bank.
+- Making past papers a real question source requires parsing question papers into structured
+  stems — a new extractor, not a fix. That is out of Phase-3 scope; it is the natural home of
+  P4's "questions from the ingested past-paper corpus" work, which now inherits it as a
+  prerequisite rather than an assumption.
+
 ### D3.6 — Quiz model: a real question bank, a difficulty *mix* (not a band), and one marking road
 
 Full design in **`docs/quiz-model.md`** (822 lines — schema table-by-table, the mapping
