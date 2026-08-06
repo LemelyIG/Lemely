@@ -12,6 +12,7 @@ from fastapi import FastAPI
 
 from lemely.runtime.budget_notify import register_budget_ntfy
 from lemely.web.routers import (
+    announcements,
     auth,
     classes,
     me,
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(school.router)
     app.include_router(parent.router)
     app.include_router(me.router)
+    app.include_router(announcements.router)
     return app
 
 

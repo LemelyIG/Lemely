@@ -24,6 +24,7 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
+from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService
@@ -328,6 +329,20 @@ def get_notification_prefs_service() -> NotificationPreferencesService:
 
 
 @lru_cache(maxsize=1)
+def get_announcement_service() -> AnnouncementService:
+    """Return the process-wide :class:`AnnouncementService` singleton (P3.8 chunk a).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton every other class-scoped teacher service composes, so
+    announcement tenancy (which classes/schools a caller may target) can
+    never diverge from what the rest of the teacher portal already enforces
+    (D3.1). Tests override this dependency with a service built on a
+    throwaway Postgres database.
+    """
+    return AnnouncementService(get_sessionmaker(get_settings()), get_class_service())
+
+
+@lru_cache(maxsize=1)
 def get_user_mirror() -> UserMirror:
     """Return the process-wide :class:`UserMirror` singleton (P3.7 chunk B).
 
@@ -466,3 +481,4 @@ def reset_singletons() -> None:
     get_quiz_service.cache_clear()
     get_quiz_taking_service.cache_clear()
     get_quiz_marking_service.cache_clear()
+    get_announcement_service.cache_clear()
