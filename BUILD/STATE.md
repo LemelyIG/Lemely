@@ -610,10 +610,16 @@ Starting facts (established 2026-08-06, do not re-derive):
             added to the sidebar). Closes the T-03/T-04 404s chunk c documented as
             expected. `lib/teacherTypes.ts` gained the `StudentDetailDTO`/`AtRiskListDTO`
             families; `useTeacherApi.ts` gained `useStudentDetail`/`useAtRiskList`/
-            `useAcknowledgeAtRisk`/`useUnacknowledgeAtRisk`. 1825 tests (1821 passed / 4
-            live-only skips), 89.18% cov (both unchanged — the one backend touch was a
-            bugfix with no behavioural surface change, see below). All 12 gates green,
-            `alembic check` clean, no migration.
+            `useAcknowledgeAtRisk`/`useUnacknowledgeAtRisk`. 1826 tests (1822 passed / 4
+            live-only skips), 89.18% cov. All 12 gates green, `alembic check` clean, no
+            migration.
+            **The enum bugfix below ships with a standing structural guard** added in
+            review: `test_every_enum_column_binds_its_value_not_its_member_name`
+            (`tests/test_db_schema.py`, metadata layer, no DB needed) asserts every
+            `sa.Enum` column either satisfies `name == value` or passes `values_callable`.
+            Verified by inversion — it fails against the unfixed declaration. **This is the
+            only thing standing between the build and a silent repeat of D3.13; do not
+            delete it as a "trivial metadata assertion".**
             **T-05 integrity signals confirmed absent, not stubbed** — `StudentDetailDTO`
             carries no such field (verified against `schemas_analytics.py` and the
             router's own docstring, D3.4); nothing renders in that panel's place, per the
@@ -653,13 +659,15 @@ Starting facts (established 2026-08-06, do not re-derive):
             `lemely/db/models/ops.py`; no migration needed (the real DB type already had
             the correct values), `alembic check` stays clean (its default comparator
             doesn't diff enum labels either way — this is exactly why the bug was
-            invisible to that gate too). **This is a real, standing gap in every gate this
+            invisible to that gate too). **This was a real, standing gap in every gate this
             build relies on**: neither `pytest` nor `alembic check` can catch a
-            Python-enum-binding/DB-enum-value mismatch on any native enum column; the only
-            thing that caught it was a Playwright run against the real Alembic-migrated
-            local stack exercising the actual mutation. A future phase auditing enum
-            columns should check every `sa.Enum(SomePythonEnum, ...)` call for this exact
-            shape, not just `AtRiskReason`.
+            Python-enum-binding/DB-enum-value mismatch on a native enum column, and a
+            `create_all()`-based fixture actively hides it; the only thing that caught it
+            was a Playwright run against the real Alembic-migrated stack exercising the
+            actual mutation. **Now closed structurally** by the metadata test noted above
+            (all 25 enums audited: `AtRiskReason` was the only unsafe one) and recorded as
+            **D3.13**. Treat "unit tests pass against a `create_all()` schema" as no
+            evidence at all that a column works against the migrated database.
             **Second, smaller defect found and fixed in this chunk's own new code**:
             `AttemptDTO.paperId` (`_paper_id` in `teacher.py`) is documented as a "human
             paper identity" (`subjectCode/paperNumber+Variant`), not a unique id — a

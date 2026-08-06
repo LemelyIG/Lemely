@@ -813,3 +813,33 @@ linked children only.
 - Next: P3.7 — teacher frontend T-01..T-06. First frontend task since P2.5, so the standing
   UI gate (QUALITY-BAR, axe, Lighthouse, screenshot corpus, Impeccable) applies in full,
   and `LEMELY_REPORT_DIR` must name the phase when re-baselining (D3.2).
+
+## 2026-08-06 — P3.7 complete: all six teacher screens on real data
+- Did: P3.7 in four chunks. (a) Additive DTO enrichment after auditing all six T-screens
+  against the DTOs meant to feed them — three gaps found before a line of UI was written
+  (T-01 had no recent-activity field, T-01/T-02 no per-class weakness/activity/at-risk,
+  T-03 only a bare at-risk bool where the spec demands the reason). (b) client API layer +
+  T-01/T-02 + `GET /api/me/profile`. (c) T-03 roster + T-04 analytics. (d) T-05 student
+  detail + T-06 at-risk list. Commits c95c52f, 3b0eb3c, e789dc7, 15738f4. 1826 tests /
+  89.18% cov, 12/12 gates green throughout. D3.12 and D3.13 recorded.
+- Learned, the big one: **all twelve gates were green while every at-risk acknowledge call
+  500'd on any real stack.** `sa.Enum(AtRiskReason, ...)` bound the member `.name` while
+  migration 0006's Postgres type holds the lowercase `.value`s. `pytest` missed it because
+  the test schema comes from `create_all()`, deriving the enum DDL from the same buggy
+  declaration — self-consistently wrong. `alembic check` missed it because its comparator
+  doesn't diff enum labels. Only a live E2E write caught it. Closed with a structural
+  metadata test over all 25 enums (D3.13). **A green suite over a `create_all()` schema is
+  not evidence the column works against the migrated DB.**
+- Learned: reviewing the subagent diff rather than the subagent report keeps paying. Chunk
+  a had inlined a mean, leaving a D3.9 regression test guarding a function no route called;
+  chunk c shipped two raw NUL bytes that made git treat a source file as binary while
+  typecheck and build passed silently. Neither appeared in either agent's own report.
+- Learned: `supabase` is not on PATH in a non-interactive shell, so `scripts/check.sh`
+  silently decides the stack is down and skips three of the twelve gates. Always
+  `PATH="$HOME/.local/bin:$PATH" ./scripts/check.sh`. Earlier "12 gates green" claims in
+  this build may have been 9.
+- Next: P3.8 — T-07/T-08 (review queue + remark), T-09/T-10 (quiz builder + class results),
+  T-12 (announcement composer). The quiz backend is fully built (P3.5 chunks A-F2); this is
+  the UI over it. Note P3.10 now carries three inherited items: the audit runner still only
+  sees the 4 student routes (so the UI gate is vacuous for every teacher screen), the
+  teacher portal's token-literal debt, and the absent frontend test runner.
