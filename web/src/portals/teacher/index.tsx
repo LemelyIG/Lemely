@@ -133,7 +133,7 @@ function UserBlock() {
 
   if (isPending || isError || !data) {
     return (
-      <div className="flex items-center gap-[11px] px-1 text-[12px] text-t3">
+      <div className="flex items-center gap-[11px] px-1 text-xs text-t3">
         {isPending ? "Loading…" : "Signed in"}
       </div>
     )
@@ -154,7 +154,7 @@ function UserBlock() {
 
   return (
     <div className="flex items-center gap-[11px] px-1">
-      <div className="w-8 h-8 rounded-full bg-accent-subtle text-[oklch(0.45_0.10_68)] flex items-center justify-center text-[12px] font-semibold flex-none">
+      <div className="w-8 h-8 rounded-full bg-accent-subtle text-[oklch(0.45_0.10_68)] flex items-center justify-center text-xs font-semibold flex-none">
         {initials}
       </div>
       <div className="leading-[1.25] min-w-0">
