@@ -4,6 +4,7 @@ import {
   SquaresFour,
   FileText,
   ChartBar,
+  Warning,
   Books,
   Sparkle,
   type Icon,
@@ -19,6 +20,8 @@ import { Classes } from "./screens/Classes"
 import { ClassDetailLayout } from "./screens/ClassDetail"
 import { ClassRoster } from "./screens/ClassRoster"
 import { ClassAnalytics } from "./screens/ClassAnalytics"
+import { StudentDetail } from "./screens/StudentDetail"
+import { AtRiskList } from "./screens/AtRiskList"
 import { MarkSchemes } from "./screens/MarkSchemes"
 import { Quizzes } from "./screens/Quizzes"
 
@@ -26,6 +29,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
   grading: FileText,
   classes: ChartBar,
+  atRisk: Warning,
   schemes: Books,
   quizzes: Sparkle,
 }
@@ -221,6 +225,8 @@ export const teacherRoute: RouteObject = {
         { path: "analytics", element: <ClassAnalytics /> },
       ],
     },
+    { path: "students/:studentId", element: <StudentDetail /> },
+    { path: "at-risk", element: <AtRiskList /> },
     { path: "schemes", element: <MarkSchemes /> },
     { path: "quizzes", element: <Quizzes /> },
   ],

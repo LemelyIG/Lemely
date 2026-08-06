@@ -484,7 +484,7 @@ Starting facts (established 2026-08-06, do not re-derive):
             off). Nothing anywhere reads this table to decide whether to send — including
             against the quiet-hours window. That interpretation is **P5's to write**, and
             P5 must not assume this chunk left it a helper.
-- [ ] doing — **P3.7** Teacher frontend T-01..T-06 (dashboard, classes list, class detail roster,
+- [x] done — **P3.7** Teacher frontend T-01..T-06 (dashboard, classes list, class detail roster,
       class analytics, student detail, at-risk list). Split into four chunks, one commit each.
 
       **Established facts (2026-08-06, do not re-derive):**
@@ -604,7 +604,90 @@ Starting facts (established 2026-08-06, do not re-derive):
             as literal 0x00, which made git/grep treat the file as binary) → now `backslash-u-0000`
             escapes. Watch for that last shape recurring — it passes typecheck and build
             silently.
-      - [ ] **d** todo — T-05 student detail + T-06 at-risk list (acknowledge-with-note).
+      - [x] **d** done — T-05 student detail + T-06 at-risk list. New:
+            `screens/StudentDetail.tsx` (route `/teacher/students/:studentId`, drill-down
+            only, no nav entry) and `screens/AtRiskList.tsx` (route `/teacher/at-risk`,
+            added to the sidebar). Closes the T-03/T-04 404s chunk c documented as
+            expected. `lib/teacherTypes.ts` gained the `StudentDetailDTO`/`AtRiskListDTO`
+            families; `useTeacherApi.ts` gained `useStudentDetail`/`useAtRiskList`/
+            `useAcknowledgeAtRisk`/`useUnacknowledgeAtRisk`. 1825 tests (1821 passed / 4
+            live-only skips), 89.18% cov (both unchanged — the one backend touch was a
+            bugfix with no behavioural surface change, see below). All 12 gates green,
+            `alembic check` clean, no migration.
+            **T-05 integrity signals confirmed absent, not stubbed** — `StudentDetailDTO`
+            carries no such field (verified against `schemas_analytics.py` and the
+            router's own docstring, D3.4); nothing renders in that panel's place, per the
+            brief. "Open any attempt"/"assign practice" render visibly disabled with a
+            "Coming soon" tag (T-08/P4); "contact route if configured" has no config
+            source anywhere and is omitted entirely, same treatment as the integrity gap.
+            **T-06 severity is the backend's own order, not a client invention** —
+            `_at_risk_severity_key` (`teacher.py`) already sorts the response (flag count
+            desc, then worst grade first); the screen's re-sortable "Severity" column
+            mirrors that exact two-key definition client-side (documented inline) so
+            sorting by Name/Class/Grade and back to Severity doesn't lose it. `below_target`
+            is deliberately absent from the reason filter (D3.3: not evaluable until P4).
+            Acknowledge is worded "Acknowledge"/"Undo", never "Dismiss"/"Mute", with an
+            inline note form whose copy says plainly it "stays visible and reappears... never
+            a permanent mute" (D3.5); `acknowledgedBy` is never rendered (every ack visible
+            to a caller is provably their own — `_acknowledgement_index` scopes
+            `load_for_teacher(auth.user_id, ...)` — and there is no display-name source to
+            resolve it against honestly, so the id is simply not shown rather than shown as
+            if it were a person).
+            **Real defect found and fixed, discovered only by running against the live
+            Alembic-migrated stack (not by `pytest`, which never catches this class of
+            bug — see below): `AtRiskAcknowledgement.reason`'s `sa.Enum(AtRiskReason, ...)`
+            had no `values_callable`, so SQLAlchemy bound acknowledge/unacknowledge queries
+            using the enum's `.name` (`"DECLINING_TREND"`) while the real migrated Postgres
+            type only accepts the `.value`s migration 0006 actually created
+            (`"declining_trend"`, lowercase) — every acknowledge call 500'd
+            (`DataError: invalid input value for enum atriskreason`) against any real
+            stack. Every other native enum in this package sidesteps the same SQLAlchemy
+            default by using lowercase member names equal to their values
+            (`low_confidence = "low_confidence"`); `AtRiskReason` is the one enum reused
+            directly from `lemely.core` with ordinary SCREAMING_SNAKE_CASE members, so it
+            alone needed `values_callable` spelled out. `tests/test_at_risk_repo.py` (826
+            tests green since P3.4b) never caught it because its Postgres schema comes
+            from `Base.metadata.create_all()`, which derives the enum's DDL from this same
+            class using the same default — self-consistently wrong against itself. Fixed
+            with `values_callable=lambda enum_cls: [e.value for e in enum_cls]` in
+            `lemely/db/models/ops.py`; no migration needed (the real DB type already had
+            the correct values), `alembic check` stays clean (its default comparator
+            doesn't diff enum labels either way — this is exactly why the bug was
+            invisible to that gate too). **This is a real, standing gap in every gate this
+            build relies on**: neither `pytest` nor `alembic check` can catch a
+            Python-enum-binding/DB-enum-value mismatch on any native enum column; the only
+            thing that caught it was a Playwright run against the real Alembic-migrated
+            local stack exercising the actual mutation. A future phase auditing enum
+            columns should check every `sa.Enum(SomePythonEnum, ...)` call for this exact
+            shape, not just `AtRiskReason`.
+            **Second, smaller defect found and fixed in this chunk's own new code**:
+            `AttemptDTO.paperId` (`_paper_id` in `teacher.py`) is documented as a "human
+            paper identity" (`subjectCode/paperNumber+Variant`), not a unique id — a
+            student who resits the same paper produces multiple attempt rows sharing one
+            `paperId`. Using it alone as the attempt-history table's React `key` produced a
+            real duplicate-key console error against seeded multi-attempt data;
+            `` `${paperId}-${recordedAt}` `` disambiguates. **Also fixed**: T-06's "Latest
+            grade" column initially rendered `basis="achieved"`; `AtRiskListEntryDTO.grade`
+            is the same "latest recorded grade" value `StudentRowDTO.grade` (T-03) and
+            `SubjectPredictionDTO.predictedGrade` (T-05) already render `basis="predicted"`
+            for — corrected for consistency (same value must not read differently on two
+            screens). `request()` in `lib/api.ts` previously discarded every backend error's
+            real `detail` message in favour of a generic `"422 Unprocessable Entity"`-style
+            status line — silently, across every existing screen's `error.message` render,
+            not just this chunk's. Now parses the JSON body's `detail` when present,
+            falling back to the status text otherwise; this is what makes T-06's mandated
+            "handle the 422 as a real error state" show the actual reason rather than a
+            meaningless generic string.
+            Verified end-to-end against the real local stack (teacher minted via
+            `AuthService.signup` directly, since self-service signup is student-only):
+            populated + empty states at 380/768/1440 for both screens, zero
+            serious/critical axe violations, no page-level horizontal scroll at 380px, the
+            reason filter as a real server-side query param, and the acknowledge round
+            trip (acknowledge with a note → flag stays listed and tagged, never
+            disappears → persists across reload → undo reverts to unacknowledged, still
+            never disappears). Throwaway spec + seed script deleted after verification, per
+            brief.
+            **P3.7 is now done — all six teacher screens (T-01..T-06) on real data.**
 - [ ] todo — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
       builder + class results), T-12 (announcement composer).
 - [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.

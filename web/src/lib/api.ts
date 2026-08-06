@@ -45,7 +45,34 @@ export async function request<T>(
       headers: { ...authHeaders(init?.body instanceof FormData), ...init?.headers },
       ...init,
     })
-    if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`)
+    if (!res.ok) {
+      // FastAPI's default exception handler responds `{"detail": "..."}` for
+      // every `HTTPException` this backend raises — a 422's "Reason X is not
+      // currently firing for this student" (T-06 acknowledge) or a 403's
+      // real tenancy message, for example. This was previously discarded
+      // entirely in favour of the generic `"422 Unprocessable Entity"`
+      // status text, which every screen's `error.message` render (Overview,
+      // Classes, ClassRoster, MarkSchemes, ...) then surfaced verbatim —
+      // real backend detail thrown away, not just here. Falls back to the
+      // status text when the body isn't JSON or carries no `detail` string
+      // (e.g. a 204, or a non-FastAPI failure upstream).
+      let message = `${res.status} ${res.statusText}`
+      try {
+        const body: unknown = await res.clone().json()
+        if (
+          body &&
+          typeof body === "object" &&
+          "detail" in body &&
+          typeof (body as { detail: unknown }).detail === "string" &&
+          (body as { detail: string }).detail.length > 0
+        ) {
+          message = (body as { detail: string }).detail
+        }
+      } catch {
+        // Body wasn't JSON (or empty) — keep the generic status text.
+      }
+      throw new ApiError(res.status, message)
+    }
     // A 204 (e.g. `DELETE /classes/{id}`) has no body — `res.json()` would
     // throw on the empty string. `T` is `void` at every such call site.
     if (res.status === 204) return undefined as T

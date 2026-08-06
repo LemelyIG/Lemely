@@ -164,6 +164,54 @@ def test_notification_type_enum_matches_preference_columns() -> None:
     assert toggle_columns == {member.value for member in NotificationType}
 
 
+def test_every_enum_column_binds_its_value_not_its_member_name() -> None:
+    """Every ``sa.Enum`` column must send ``.value`` to Postgres, not ``.name``.
+
+    This is the invariant behind D3.13, and it is worth a standing test
+    because the bug it prevents is invisible to every other gate we run.
+
+    SQLAlchemy's default enum binding converts a Python enum member to its DB
+    string using ``.name``, **not** ``.value``. Every enum mirrored in
+    ``lemely/db/models/enums.py`` is declared with lowercase member names
+    equal to their values (``low_confidence = "low_confidence"``), so the
+    default binding happens to be correct — a load-bearing convention nobody
+    had written down. ``AtRiskReason`` (``lemely/core/at_risk.py``) is reused
+    straight from ``lemely.core`` instead of being mirrored under that
+    convention and uses ordinary ``SCREAMING_SNAKE_CASE`` members, so
+    ``at_risk_acknowledgements.reason`` bound ``"DECLINING_TREND"`` while
+    migration 0006's real Postgres type only accepts ``"declining_trend"``.
+    Result: every acknowledge/unacknowledge call 500'd on a migrated stack
+    while all twelve gates stayed green.
+
+    Neither ``pytest`` nor ``alembic check`` could see it. ``alembic check``'s
+    comparator does not diff enum labels, and a ``create_all()``-based test
+    fixture derives the type's DDL from the same buggy declaration — so the
+    test database accepted the wrong string and the suite was
+    self-consistently wrong. Only a real E2E write against the migrated
+    schema surfaced it.
+
+    So the rule is checked structurally instead: a column is safe if its enum
+    already satisfies ``name == value``, or if it explicitly passes
+    ``values_callable``. Anything else is the D3.13 bug waiting to happen.
+    """
+    import_all_models()
+    unsafe = [
+        f"{table.name}.{column.name} ({column.type.enum_class.__name__})"
+        for table in Base.metadata.tables.values()
+        for column in table.columns
+        if isinstance(column.type, sa.Enum)
+        and column.type.enum_class is not None
+        and column.type.values_callable is None
+        and not all(member.name == member.value for member in column.type.enum_class)
+    ]
+    assert unsafe == [], (
+        "These enum columns bind the member NAME to Postgres but their enum's "
+        "name differs from its value, so every write fails against the "
+        "migrated schema (D3.13). Give each one "
+        "values_callable=lambda enum_cls: [e.value for e in enum_cls]: " + ", ".join(unsafe)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Integration layer — real Postgres, skipped when unreachable
 # ---------------------------------------------------------------------------

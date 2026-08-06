@@ -212,7 +212,37 @@ class AtRiskAcknowledgement(TimestampMixin, Base):
         nullable=False,
     )
     reason: Mapped[AtRiskReason] = mapped_column(
-        sa.Enum(AtRiskReason, name="atriskreason"),
+        # `values_callable` is load-bearing, not decoration (P3.7 chunk d
+        # defect found by a real E2E run, not by `pytest`). Every *other*
+        # native-enum column in this package (`ReviewReason`,
+        # `NotificationType`, `Role`, ...) is deliberately declared with
+        # lowercase member names equal to their values
+        # (`low_confidence = "low_confidence"`) specifically so
+        # SQLAlchemy's default enum binding — which converts a Python enum
+        # instance to its DB value using `.name`, not `.value`, unless told
+        # otherwise — happens to produce the right string anyway.
+        # `AtRiskReason` (`lemely/core/at_risk.py`) is the one enum reused
+        # directly from `lemely.core` rather than mirrored in this module's
+        # own lowercase-name convention, and it uses ordinary
+        # SCREAMING_SNAKE_CASE members (`DECLINING_TREND = "declining_trend"`)
+        # — so without `values_callable`, every acknowledge/unacknowledge
+        # query binds `"DECLINING_TREND"`, which the migration's real
+        # Postgres enum (`0006_at_risk_acknowledgements`, literal lowercase
+        # labels) rejects with `DataError: invalid input value for enum
+        # atriskreason`. `tests/test_at_risk_repo.py` never caught this
+        # because its Postgres schema comes from `Base.metadata.create_all()`
+        # (see that test module), which derives the enum's DDL labels from
+        # this same class using the same (buggy) default — self-consistently
+        # wrong, so every unit test passed while every real,
+        # Alembic-migrated stack 500'd on every acknowledge call. This does
+        # not need a migration: the real DB enum type already holds the
+        # correct lowercase labels (migration 0006); only the Python-side
+        # bind/read conversion was wrong.
+        sa.Enum(
+            AtRiskReason,
+            name="atriskreason",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
         nullable=False,
     )
     # The evidence identity this ack covers — see class docstring. Always the

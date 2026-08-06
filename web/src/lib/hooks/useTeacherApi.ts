@@ -7,6 +7,9 @@ import {
 } from "@tanstack/react-query"
 import { request, streamActivity } from "@/lib/api"
 import type {
+  AcknowledgeAtRiskRequest,
+  AtRiskFlag,
+  AtRiskList,
   ClassAnalytics,
   ClassDetail,
   ClassList,
@@ -20,6 +23,7 @@ import type {
   RosterEntry,
   SchemeList,
   SchemeRow,
+  StudentDetail,
   TeacherPipelineFrame,
   UpdateClassRequest,
   UploadResponse,
@@ -37,10 +41,11 @@ import type {
  * list/detail, grading queue, schemes list/upload, paper
  * upload/extract/grade), the P3.7 chunk B class-list surface
  * (`GET /teacher/classes`, `POST/PATCH/DELETE /classes/{id}` — T-01/T-02),
- * and — added chunk c — `GET /classes/{id}` (T-03), `/enroll` +
- * `/students/{id}` (roster mutations), and `GET /classes/{id}/analytics`
- * (T-04). AI-quiz endpoints and T-05/T-06 (`GET /teacher/students/{id}`,
- * `GET /teacher/at-risk`) remain out of scope — chunk d owns those.
+ * chunk c's `GET /classes/{id}` (T-03), `/enroll` + `/students/{id}` (roster
+ * mutations), `GET /classes/{id}/analytics` (T-04), and — added chunk d —
+ * `GET /teacher/students/{id}` (T-05) and `GET /teacher/at-risk` +
+ * POST/DELETE `.../acknowledge[/{reason}]` (T-06). AI-quiz endpoints remain
+ * out of scope (P3.8).
  */
 
 export function useTeacherOverview(): UseQueryResult<Overview, Error> {
@@ -164,6 +169,98 @@ export function useRemoveStudent(
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
       queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+    },
+  })
+}
+
+// ── Student detail, teacher view (T-05) ─────────────────────────────────────
+
+/** `GET /teacher/students/{studentId}` (T-05: full student detail). */
+export function useStudentDetail(
+  studentId: string | undefined,
+): UseQueryResult<StudentDetail, Error> {
+  return useQuery({
+    queryKey: ["teacher", "student", studentId],
+    queryFn: () => request<StudentDetail>(`/teacher/students/${studentId}`),
+    enabled: !!studentId,
+  })
+}
+
+// ── At-risk list (T-06) ──────────────────────────────────────────────────────
+
+/**
+ * `GET /teacher/at-risk?reason=&acknowledged=` (T-06). Both are server-side
+ * filters, never applied client-side against an unfiltered fetch. `reason`
+ * is an `AtRiskReason` value; `acknowledged` is D3.5's caller-side filter —
+ * omitting it (the default) returns every flag regardless of acknowledged
+ * state, because D3.5 is explicit that acknowledged flags are never hidden
+ * by default, only on request.
+ */
+export function useAtRiskList(params?: {
+  reason?: string
+  acknowledged?: boolean
+}): UseQueryResult<AtRiskList, Error> {
+  const reason = params?.reason
+  const acknowledged = params?.acknowledged
+  const query = new URLSearchParams()
+  if (reason) query.set("reason", reason)
+  if (acknowledged !== undefined) query.set("acknowledged", String(acknowledged))
+  const qs = query.toString()
+  return useQuery({
+    queryKey: ["teacher", "at-risk", reason ?? null, acknowledged ?? null],
+    queryFn: () => request<AtRiskList>(`/teacher/at-risk${qs ? `?${qs}` : ""}`),
+  })
+}
+
+/**
+ * `POST /teacher/at-risk/{studentId}/acknowledge` (T-06). Acknowledging is
+ * never a dismissal (D3.5): the flag stays in every list that reads it,
+ * tagged rather than removed, and a further decline re-raises it
+ * unacknowledged. The backend 422s if `reason` isn't currently firing for
+ * this student — a real race is possible (the list was fetched, then the
+ * evidence changed before the teacher clicked), so callers must render that
+ * error, not assume success. Invalidates every surface that renders a flag
+ * for this student — T-06's list, T-05's own detail, and T-01's overview all
+ * read acknowledged state through the same shared backend helper, so a stale
+ * cache on any of them would show three different answers for one flag.
+ */
+export function useAcknowledgeAtRisk(
+  studentId: string,
+): UseMutationResult<AtRiskFlag, Error, AcknowledgeAtRiskRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: AcknowledgeAtRiskRequest) =>
+      request<AtRiskFlag>(`/teacher/at-risk/${studentId}/acknowledge`, {
+        method: "POST",
+        body: JSON.stringify(body satisfies AcknowledgeAtRiskRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "at-risk"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "student", studentId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] })
+    },
+  })
+}
+
+/**
+ * `DELETE /teacher/at-risk/{studentId}/acknowledge/{reason}` (T-06). Reverts
+ * an acknowledgement — idempotent on the backend, so this never itself reads
+ * as a mute either direction. Same invalidation set as
+ * `useAcknowledgeAtRisk`.
+ */
+export function useUnacknowledgeAtRisk(
+  studentId: string,
+): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (reason: string) =>
+      request<void>(`/teacher/at-risk/${studentId}/acknowledge/${reason}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "at-risk"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "student", studentId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] })
     },
   })
 }

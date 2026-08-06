@@ -17,8 +17,11 @@
  * claimed these T-03/T-04 mirror types already existed here ("add hooks, not
  * types") — they did not; this module's own header comment said the
  * opposite ("chunks c/d own them"). Chunk c adds them now; see the phase
- * report for the discrepancy. `StudentDetailDTO`/`AtRiskListDTO`/quiz DTOs
- * remain chunk d's / P3.8's to add.
+ * report for the discrepancy. Chunk d adds the T-05 `StudentDetailDTO`
+ * family (`SubjectPredictionDTO`, `AttemptDTO`, `StudentWeaknessDTO`,
+ * `StudentTrendPointDTO`, `StudentEngagementDTO`) and the T-06
+ * `AtRiskListDTO` family (`AtRiskListEntryDTO`) + `AcknowledgeAtRiskRequestDTO`.
+ * Quiz DTOs remain P3.8's to add.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/teacher/data.ts` (the mock shapes these DTOs were modeled
@@ -441,6 +444,133 @@ export interface ClassAnalytics {
   trend: TrendPoint[]
   paperComparison: PaperComparison[]
   engagement: EngagementStats
+}
+
+// ── Student detail, teacher view (T-05) ─────────────────────────────────────
+
+/**
+ * One subject's predicted grade for this student (mirrors `SubjectPredictionDTO`).
+ * `predictedGrade` is the student's latest recorded grade for the subject —
+ * the same domain notion of "predicted grade" `lemely.core.at_risk` already
+ * uses for its below-target rule (`history.records[-1].grade`), not a second,
+ * differently-computed forecast — render with `GradeBadge basis="predicted"`,
+ * matching `StudentRow.grade`'s convention on T-03.
+ */
+export interface SubjectPrediction {
+  subjectCode: string
+  predictedGrade: string
+  latestPercentage: number
+  paperCount: number
+}
+
+/** One recorded paper attempt, newest first (mirrors `AttemptDTO`). Quiz
+ * attempts are excluded — grade-bearing (past-paper) records only, per
+ * D3.9; see the router's `_student_detail_dto` docstring. */
+export interface Attempt {
+  paperId: string
+  subjectCode: string
+  paperNumber: number
+  paperVariant: number
+  awardedMarks: number
+  maximumMarks: number
+  percentage: number
+  grade: string
+  recordedAt: string
+}
+
+/** One weak topic with its evidence (mirrors `StudentWeaknessDTO`).
+ * Deliberately unfiltered by origin (quiz or paper) — a weakness is a
+ * weakness whatever revealed it (unlike `attempts`/`trend`). */
+export interface StudentWeakness {
+  topic: string
+  lostMarks: number
+  maximumMarks: number
+  accuracy: number
+  questionIds: string[]
+}
+
+/** One point in this student's own percentage-over-time series (mirrors
+ * `StudentTrendPointDTO`) — grade-bearing attempts only, chronological. */
+export interface StudentTrendPoint {
+  recordedAt: string
+  percentage: number
+}
+
+/** This student's own activity stats (mirrors `StudentEngagementDTO`). */
+export interface StudentEngagement {
+  totalPapers: number
+  lastActiveAt: string | null
+  daysSinceLastSubmission: number | null
+}
+
+/**
+ * Response for `GET /teacher/students/{studentId}` (mirrors `StudentDetailDTO`,
+ * T-05). `atRiskFlags` is populated through the same `_at_risk_flag_dto`
+ * helper T-01/T-06 use, so `acknowledged` reads identically everywhere a flag
+ * for this student appears (D3.5).
+ *
+ * **This DTO carries no integrity-signal field at all** — not an
+ * always-empty stub, an absent field. A persisted history record has only
+ * totals/weak-areas/metadata, never the per-question answers the
+ * plagiarism/AI-content checks need (those run only in the live, in-process
+ * `/papers/{id}/grade` flow — see the router's `teacher_student_detail`
+ * docstring, D3.4). Do not render a panel for it and do not add a field here
+ * to make one possible; that is a backend change out of this screen's scope.
+ */
+export interface StudentDetail {
+  studentId: string
+  displayName: string
+  subjects: SubjectPrediction[]
+  attempts: Attempt[]
+  weaknesses: StudentWeakness[]
+  trend: StudentTrendPoint[]
+  isAtRisk: boolean
+  atRiskFlags: AtRiskFlag[]
+  engagement: StudentEngagement
+}
+
+// ── At-risk list (T-06) ──────────────────────────────────────────────────────
+
+/**
+ * One flagged student across the caller's classes (mirrors
+ * `AtRiskListEntryDTO`). `grade` is the student's latest *paper* grade
+ * (matching the overview's at-risk rows exactly) and is `""` when the
+ * student has only quiz activity — render as an honest absence, never a
+ * placeholder grade.
+ */
+export interface AtRiskListEntry {
+  studentId: string
+  displayName: string
+  classId: string
+  className: string
+  grade: string
+  flags: AtRiskFlag[]
+}
+
+/**
+ * Response for `GET /teacher/at-risk` (mirrors `AtRiskListDTO`, T-06).
+ * **Already sorted server-side by severity** before this ever reaches the
+ * client — `_at_risk_severity_key` in `lemely/web/routers/teacher.py`: flag
+ * count descending, then worst (furthest-down-`GRADE_ORDER`) grade first.
+ * The screen mirrors this identical two-key ordering client-side only so its
+ * "Severity" column stays re-sortable after a teacher sorts by something
+ * else and clicks back — it is a UI convention matching the backend's own
+ * documented definition, never an invented numeric score presented as
+ * engine output.
+ */
+export interface AtRiskList {
+  students: AtRiskListEntry[]
+}
+
+/**
+ * Body for `POST /teacher/at-risk/{studentId}/acknowledge` (mirrors
+ * `AcknowledgeAtRiskRequestDTO`, T-06). `reason` must name a rule currently
+ * firing for this student — the backend 422s otherwise (D3.5); `note` is
+ * optional and teacher-facing only, never shown to the student/parent.
+ */
+export interface AcknowledgeAtRiskRequest {
+  reason: string
+  note?: string | null
 }
 
 // ── POST /papers/{id}/extract, /grade SSE frames ─────────────────────────

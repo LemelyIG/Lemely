@@ -3,6 +3,41 @@
 
 ## Phase 3
 
+### D3.13 — A whole class of DB bug that neither `pytest` nor `alembic check` can see (P3.7 chunk d)
+
+**What happened.** Every `POST`/`DELETE /api/teacher/at-risk/{id}/acknowledge` call 500'd against
+any real, Alembic-migrated stack, and the entire 12-gate suite was green throughout.
+
+`AtRiskAcknowledgement.reason` was declared `sa.Enum(AtRiskReason, name="atriskreason")`.
+SQLAlchemy's default enum binding converts a Python enum member to its DB string using
+**`.name`, not `.value`**. Migration `0006` creates the Postgres type with the lowercase
+*values* (`declining_trend`, `below_target`, `inactive`), so every query bound
+`"DECLINING_TREND"` and Postgres answered `DataError: invalid input value for enum
+atriskreason`.
+
+**Why 25 other enum columns are fine, and why that is exactly the trap.** Every enum mirrored
+in `lemely/db/models/enums.py` is declared with lowercase member names equal to their values
+(`low_confidence = "low_confidence"`), so `.name == .value` and the default binding *happens*
+to be right. `AtRiskReason` (`lemely/core/at_risk.py`) is the one DB-backed enum reused
+straight from `lemely.core` rather than mirrored under that convention, and it uses ordinary
+`SCREAMING_SNAKE_CASE` members. Verified by enumerating all 25: it is the only DB-column enum
+whose `.name != .value`. The convention was load-bearing safety nobody had written down.
+
+**Why every gate missed it.** `tests/test_at_risk_repo.py` builds its schema with
+`Base.metadata.create_all()`, which derives the enum's DDL labels from *the same buggy
+declaration* — so the test database's type accepted `DECLINING_TREND` and the tests were
+self-consistently wrong. `alembic check`'s comparator does not diff enum labels either, so the
+drift between the model and migration `0006` was invisible to it too. Only a real E2E run
+against the migrated stack could surface this, and T-06 was the first screen to exercise the
+write path.
+
+**The standing rule this leaves.** For any `sa.Enum(SomePythonEnum, ...)` column, either the
+enum's member names must equal its values, or the column must pass
+`values_callable=lambda enum_cls: [e.value for e in enum_cls]`. Neither `pytest` nor
+`alembic check` will tell you; a `create_all()`-based test fixture actively hides it. Treat
+"the unit tests pass against a `create_all()` schema" as **no evidence at all** that a column
+works against the migrated database.
+
 ### D3.12 — Close the T-01/T-02/T-03 spec-vs-DTO gaps with additive fields, but do not invent a class-level predicted grade (P3.7)
 
 **The decision.** Before building any teacher screen, three of them were checked against the

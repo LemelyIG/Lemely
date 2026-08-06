@@ -25,7 +25,7 @@ export interface NavItem {
   to: string
   label: string
   /** Which phosphor icon renders in the sidebar. */
-  icon: "overview" | "grading" | "classes" | "schemes" | "quizzes"
+  icon: "overview" | "grading" | "classes" | "atRisk" | "schemes" | "quizzes"
   /** Index route match (Overview lives at /teacher). */
   end?: boolean
 }
@@ -34,6 +34,7 @@ export const navItems: NavItem[] = [
   { to: "/teacher", label: "Overview", icon: "overview", end: true },
   { to: "/teacher/grading", label: "Grading", icon: "grading" },
   { to: "/teacher/classes", label: "Classes", icon: "classes" },
+  { to: "/teacher/at-risk", label: "At-risk students", icon: "atRisk" },
   { to: "/teacher/schemes", label: "Mark schemes", icon: "schemes" },
   { to: "/teacher/quizzes", label: "AI quizzes", icon: "quizzes" },
 ]
