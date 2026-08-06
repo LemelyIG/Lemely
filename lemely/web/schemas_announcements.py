@@ -28,12 +28,18 @@ class AnnouncementCreateRequestDTO(ApiModel):
 
     ``classIds`` fans out to one row per class (D3.14 §3: "one row per
     selected class, all written in one request and reported back as a
-    group"). ``schoolWide`` additionally (or instead) creates one further row
-    with ``schoolId`` set and no class — restricted to ``school_admin``
-    (a teacher requesting it gets a 403). At least one of
-    ``classIds``/``schoolWide`` must be given, and ``schoolId`` is required
-    whenever ``schoolWide`` is ``true``. ``publishAt`` is an optional ISO 8601
-    timestamp; omitted (or ``null``) means "publish immediately".
+    group"). ``schoolWide`` instead creates a single row with ``schoolId``
+    set and no class — restricted to ``school_admin`` (a teacher requesting
+    it gets a 403).
+
+    **Exactly one of ``classIds``/``schoolWide`` must be given** — neither is
+    a 422, and so is *both*, because the two audiences overlap and a combined
+    request would deliver twice to a student enrolled in a class of that
+    school. See ``lemely.db.announcement_repo``'s module docstring; the rule
+    is enforced in the service, so this DTO does not restate it as a
+    validator. ``schoolId`` is required whenever ``schoolWide`` is ``true``.
+    ``publishAt`` is an optional ISO 8601 timestamp; omitted (or ``null``)
+    means "publish immediately".
     """
 
     title: str

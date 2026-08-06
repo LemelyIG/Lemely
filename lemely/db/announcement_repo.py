@@ -17,6 +17,16 @@ post is validated with
 seams rather than re-querying ``classes``/``school_memberships`` here is what
 keeps "may this caller touch this class/school" defined in exactly one place.
 
+**The audience is exclusive: specific classes OR the whole school, never
+both** (UI-spec T-12 offers them as alternatives: "class, several classes, or
+whole school"). Requesting both is a 422, not a union. This is enforced here
+rather than left to the composer UI because the two overlap: a student
+enrolled in class X of school S is in *both* audiences, so a combined request
+would hand Phase 5 — which owns delivery and has not been written yet — two
+rows resolving to one recipient, i.e. a duplicate notification whose cause
+would be invisible from the delivery side. Cheaper to make unrepresentable
+now than to detect there.
+
 **Fan-out is all-or-nothing (D3.14 §3).** ``create`` validates *every*
 targeted class id (and, for a school-wide post, the target school) before
 writing a single row. A teacher who owns nine of the ten classes they
@@ -24,7 +34,7 @@ targeted gets a 403 and **none** of the nine legitimate rows are written —
 partial fan-out on an authorization failure would silently under-deliver an
 announcement the caller believes went out in full. The actual inserts then
 happen in one transaction: one row per class id (``class_id`` set,
-``school_id`` NULL), plus, for a school-wide post, one further row
+``school_id`` NULL), or, for a school-wide post, a single row
 (``school_id`` set, ``class_id`` NULL) — the existing nullable-FK shape
 :class:`~lemely.db.models.ops.Announcement` already has (no join table, no
 schema change, per D1.2/D1.3's additive-only rule).
@@ -148,8 +158,9 @@ class AnnouncementService:
 
         Raises:
             AnnouncementValidationError: Neither ``class_ids`` nor
-                ``school_wide`` was given (422), or ``school_wide`` was given
-                without a ``school_id`` (422).
+                ``school_wide`` was given (422); **both** were given (422 —
+                see module docstring); or ``school_wide`` was given without a
+                ``school_id`` (422).
             AnnouncementOwnershipError: The caller does not own one of the
                 targeted classes (403); or ``school_wide`` was requested by a
                 caller whose role is not ``school_admin``, or for a school
@@ -164,6 +175,10 @@ class AnnouncementService:
         if not class_uuids and not school_wide:
             raise AnnouncementValidationError(
                 "An announcement must target at least one class or the whole school"
+            )
+        if class_uuids and school_wide:
+            raise AnnouncementValidationError(
+                "An announcement targets either specific classes or the whole school, not both"
             )
 
         school_uuid: uuid.UUID | None = None

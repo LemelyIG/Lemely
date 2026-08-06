@@ -296,6 +296,36 @@ def test_school_wide_without_school_id_is_a_validation_error(
         service.create(admin, Role.school_admin, title="Hi", body="Body", school_wide=True)
 
 
+def test_targeting_classes_and_the_whole_school_at_once_is_a_validation_error(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    service: AnnouncementService,
+) -> None:
+    """The audience is exclusive — classes OR school-wide, never both.
+
+    A student enrolled in a class of that school sits in both audiences, so a
+    combined request would hand Phase 5's (unwritten) delivery layer two rows
+    resolving to one recipient. Rejected here so it is unrepresentable rather
+    than detected downstream. See ``announcement_repo``'s module docstring.
+    """
+    admin = _seed_user(pg_sessionmaker, Role.school_admin)
+    school = _seed_school(pg_sessionmaker, admin_id=admin)
+    cls = class_service.create_class(admin, "Physics 10A", school_id=school)
+
+    with pytest.raises(AnnouncementValidationError):
+        service.create(
+            admin,
+            Role.school_admin,
+            title="Hi",
+            body="Body",
+            class_ids=[cls.class_id],
+            school_wide=True,
+            school_id=school,
+        )
+
+    assert _announcement_count(pg_sessionmaker) == 0
+
+
 def test_no_target_at_all_is_a_validation_error(
     pg_sessionmaker: sessionmaker[Session],
     service: AnnouncementService,
