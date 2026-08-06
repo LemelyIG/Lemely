@@ -575,3 +575,32 @@
   foreground.
 - Next: **P3.3** teacher analytics (per-class/per-student, ranked weakness topics for the
   T-04 heatmap, grade distribution, trend series). Branch pushed at 82d60dd.
+
+## 2026-08-06 — P3.4 closed out, P3.4b shipped, P3.5 designed and started
+
+**Did.** Committed the in-flight P3.4 follow-up (a teacher override recomputed the
+attempt total but left weakness records at the AI's values, so a restored question
+still read as a weakness on the student's list and the T-04 heatmap — now both run
+one extracted `group_weak_areas`). Shipped **P3.4b**, the last open P3.4 item:
+at-risk flag acknowledgement (T-06, D3.5). Commissioned and recorded the **P3.5
+design** (`docs/quiz-model.md`, D3.6) and built its chunk C, `lemely/core/difficulty.py`.
+
+**Learned.** Two things worth not re-deriving. (1) At-risk flags are *derived per
+request*, never stored, so "dismiss this flag" has no row to point at — the ack has to
+reference the evidence instead, which is what makes it re-raise when the student
+declines further rather than becoming a permanent mute. Fingerprinting on
+`last_active_at` and not `days_inactive` is load-bearing: the latter increments daily
+and would silently un-acknowledge every inactivity flag overnight. (2) There is no quiz
+persistence in this codebase at all — the existing `/quizzes/*` routes build an
+ephemeral preview and save nothing — and T-09's promised *live count* of matching
+questions cannot be served from on-disk JSON, so a real `question_bank` table is
+unavoidable rather than a nice-to-have. Today's disk-scan pool is also a tenancy hole.
+
+**Watch.** D3.6 risk 2 is the sharp one: P3.4's `_recompute_attempt_totals` assigns
+`grade`/`boundary_source` unconditionally, so the first teacher override on a quiz
+attempt would invent a grade the marking path deliberately never wrote. Chunk F must
+guard it and test the guard. Chunk G must land before F, not after.
+
+**Next.** P3.5 chunk A (migration 0007 + ORM models), then G, then B — and B starts
+with a measurement of past-paper ingest yield before anything is persisted, because a
+genuine zero-count is an acceptable product answer but only if found early.

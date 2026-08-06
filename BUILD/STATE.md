@@ -176,9 +176,15 @@ Starting facts (established 2026-08-06, do not re-derive):
       quiz persistence of any kind before this; the existing `/quizzes/*` routes build an
       ephemeral preview and save nothing.
       Build in this order (D3.6 / `docs/quiz-model.md` §6), one commit per chunk:
-      - [ ] **C** `lemely/core/difficulty.py` — pure: `DIFFICULTY_MIX`, `difficulty_mix`,
-            `allocate_difficulty` (largest-remainder), `infer_difficulty`. Low risk. The mix
-            is an unbacked product judgement and its docstring must say so.
+      - [x] **C** done (e1cfa34) — `lemely/core/difficulty.py`, 100% covered, total 87.25%.
+            `Band = Literal["foundation","standard","challenge"]` agrees with
+            `GeneratedQuestion.difficulty` (pinned by a test). Fallback mix
+            `(0.20, 0.60, 0.20)` for `None`/unrecognised grade. `infer_difficulty`:
+            multi_step/levels_based/indicative_content → challenge regardless of marks;
+            else mcq or marks<=1 → foundation, marks<=3 → standard, else challenge.
+            Ties beyond the spec's "toward standard" rule break by fixed priority
+            standard > foundation > challenge. Import-time table/GRADE_ORDER check is a
+            real `raise`, not an `assert` (`python -O` strips asserts).
       - [ ] **A** migration `0007_quiz_model` + ORM models + enums + `attempts.origin`.
             Schema only, no behaviour. Additive-only (D1.2/D1.3).
       - [ ] **G** `PaperRecord.origin` + `is_grade_bearing`, wired into the nine consumers
