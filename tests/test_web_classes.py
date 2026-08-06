@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
+from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.models import School, SchoolMembership, Seat, User
@@ -37,6 +38,7 @@ from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
+    get_at_risk_ack_service,
     get_auth_context,
     get_class_service,
     get_history_store,
@@ -118,6 +120,14 @@ def client(
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_history_store] = lambda: history_store
     app.dependency_overrides[get_class_service] = lambda: class_service
+    # ``GET /api/classes/{id}`` now also depends on ``AtRiskAckService`` (P3.7
+    # chunk a — the roster rows carry ``flags`` with acknowledgement state,
+    # D3.5), so it needs a real ack service bound to the *same* throwaway
+    # Postgres database as ``class_service`` (mirrors
+    # ``tests/test_web_teacher.py``'s ``_use_class_service`` helper).
+    app.dependency_overrides[get_at_risk_ack_service] = lambda: AtRiskAckService(
+        class_service._sessionmaker, class_service
+    )
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -671,6 +681,161 @@ def test_at_risk_card_counts_an_inactive_student(
     body = client.get(f"/api/classes/{cls.class_id}").json()
     assert _at_risk_card(body) == "1"
     assert body["students"][0]["gradeAtRisk"] is False
+    # ``atRiskCount`` (P3.7 chunk a) must agree with the "At risk" stat card —
+    # both read the one D3.3 engine, never a second heuristic.
+    assert body["atRiskCount"] == 1
+
+
+# ---------------------------------------------------------------------------
+# ClassSummaryDTO/ClassDetailDTO enrichment — atRiskCount/lastActivityAt/
+# topWeakness (P3.7 chunk a, D3.12).
+# ---------------------------------------------------------------------------
+
+
+def test_list_classes_summary_carries_at_risk_count_weakness_and_last_activity(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """``GET /api/teacher/classes`` reports the three new class-card fields."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    steady = _seed_user(pg_sessionmaker, Role.student, display_name="Steady")
+    vanished = _seed_user(pg_sessionmaker, Role.student, display_name="Vanished")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(steady, cls.join_code)
+    class_service.join_by_code(vanished, cls.join_code)
+    _seed_history(history_store, steady, percentage=90.0, grade="A", days_ago=1)
+    _seed_history(history_store, vanished, percentage=88.0, grade="A", days_ago=30)  # inactive
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    classes = client.get("/api/teacher/classes").json()["classes"]
+    assert len(classes) == 1
+    summary = classes[0]
+    assert summary["atRiskCount"] == 1  # only the inactive student
+    assert summary["topWeakness"] == "Thermal physics"  # the only topic seeded
+    assert summary["lastActivityAt"] is not None  # Steady's record, 1 day ago
+
+
+def test_list_classes_summary_empty_class_reports_null_and_zero(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    """A class with no enrolled students gets honest nulls/zero, never a placeholder."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    class_service.create_class(teacher, "Empty class")
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    summary = client.get("/api/teacher/classes").json()["classes"][0]
+    assert summary["atRiskCount"] == 0
+    assert summary["topWeakness"] is None
+    assert summary["lastActivityAt"] is None
+    assert summary["average"] is None
+
+
+def test_class_detail_empty_class_reports_null_and_zero(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], class_service: ClassService
+) -> None:
+    """The detail DTO's mirrored fields are equally honest for an empty class."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Empty class")
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    body = client.get(f"/api/classes/{cls.class_id}").json()
+    assert body["atRiskCount"] == 0
+    assert body["topWeakness"] is None
+    assert body["lastActivityAt"] is None
+    assert body["students"] == []
+
+
+def test_class_detail_student_with_no_history_reports_zero_paper_count(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """An enrolled student with zero history never appears with fabricated numbers.
+
+    (They simply do not appear on the roster at all — ``_student_row`` returns
+    ``None`` for empty history, an existing contract this does not change —
+    but a classmate *with* history must report a real, non-fabricated
+    ``paperCount``/``lastActiveAt``/``flags``.)
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    has_history = _seed_user(pg_sessionmaker, Role.student, display_name="Has History")
+    no_history = _seed_user(pg_sessionmaker, Role.student, display_name="No History")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(has_history, cls.join_code)
+    class_service.join_by_code(no_history, cls.join_code)
+    _seed_history(history_store, has_history, percentage=80.0, grade="B", days_ago=1)
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    body = client.get(f"/api/classes/{cls.class_id}").json()
+    assert len(body["students"]) == 1
+    row = body["students"][0]
+    assert row["name"] == "Has History"
+    assert row["paperCount"] == 1
+    assert row["lastActiveAt"] is not None
+    assert row["flags"] == []
+
+
+def test_class_summary_and_detail_new_fields_scope_to_each_teachers_own_classes(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """Two teachers with disjoint classes: the NEW fields never cross the boundary.
+
+    This is the precise regression named in P3.7 chunk a's brief — at-risk
+    counts, top weaknesses, and last-activity timestamps are all computed
+    from a roster load, and a roster load scoped to the wrong teacher would
+    leak exactly like the D3.4 leak this mirrors.
+    """
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    student_a = _seed_user(pg_sessionmaker, Role.student, display_name="Student A")
+    student_b = _seed_user(pg_sessionmaker, Role.student, display_name="Student B")
+    class_a = class_service.create_class(teacher_a, "A's class")
+    class_b = class_service.create_class(teacher_b, "B's class")
+    assert class_a.join_code is not None
+    assert class_b.join_code is not None
+    class_service.join_by_code(student_a, class_a.join_code)
+    class_service.join_by_code(student_b, class_b.join_code)
+    # Student A is inactive (at-risk); student B is active. Different topics
+    # so ``topWeakness`` is distinguishable per class too.
+    _seed_history(history_store, student_a, percentage=88.0, grade="A", days_ago=30)
+    _seed_history(history_store, student_b, percentage=90.0, grade="A", days_ago=1)
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher_a), role=Role.teacher.value
+    )
+    summary_a = client.get("/api/teacher/classes").json()["classes"][0]
+    detail_a = client.get(f"/api/classes/{class_a.class_id}").json()
+    assert summary_a["atRiskCount"] == 1
+    assert detail_a["atRiskCount"] == 1
+    assert {s["name"] for s in detail_a["students"]} == {"Student A"}
+    # Teacher A must not be able to reach class B's detail at all (403), and
+    # teacher A's own class list must contain no trace of student B.
+    assert client.get(f"/api/classes/{class_b.class_id}").status_code == 403
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher_b), role=Role.teacher.value
+    )
+    summary_b = client.get("/api/teacher/classes").json()["classes"][0]
+    detail_b = client.get(f"/api/classes/{class_b.class_id}").json()
+    assert summary_b["atRiskCount"] == 0
+    assert detail_b["atRiskCount"] == 0
+    assert {s["name"] for s in detail_b["students"]} == {"Student B"}
 
 
 # ---------------------------------------------------------------------------

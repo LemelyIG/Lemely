@@ -36,8 +36,10 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi.testclient import TestClient
 
+from lemely.core.at_risk import AtRiskReason, assess_at_risk, flag_fingerprint
 from lemely.core.history import PaperRecord, StudentHistory
 from lemely.core.schemas import ExamMetadata, WeakArea
+from lemely.db.at_risk_repo import AtRiskAcknowledgementRow
 from lemely.db.class_repo import RosterEntry
 from lemely.io.history_store import HistoryStore
 from lemely.web import create_app
@@ -154,7 +156,13 @@ def _history(*records: PaperRecord) -> StudentHistory:
 
 def test_student_row_grade_and_mark_come_from_the_latest_paper_not_the_latest_quiz() -> None:
     """A quiz appended after a paper must not become the roster row's grade."""
-    row = _student_row(_history(_paper(), _quiz()), display_name="Maya", student_id=STUDENT_ID)
+    row = _student_row(
+        _history(_paper(), _quiz()),
+        display_name="Maya",
+        student_id=STUDENT_ID,
+        now=NOW,
+        acks={},
+    )
 
     assert row is not None
     assert row.grade == "B"
@@ -170,18 +178,102 @@ def test_student_row_survives_a_quiz_only_history_with_an_empty_grade() -> None:
     "no grade" value ``DbHistoryStore`` already produces for an attempt whose
     grade column is NULL, so this is not a new state for the frontend.
     """
-    row = _student_row(_history(_quiz()), display_name="Maya", student_id=STUDENT_ID)
+    row = _student_row(
+        _history(_quiz()), display_name="Maya", student_id=STUDENT_ID, now=NOW, acks={}
+    )
 
     assert row is not None
     assert row.grade == ""
     assert row.mark == ""
     assert row.weakTopic is None
     assert row.gradeAtRisk is False
+    # The quiz is not a paper (D3.9's ``is_paper``), but it IS activity.
+    assert row.paperCount == 0
+    assert row.lastActiveAt == _quiz().recorded_at
 
 
 def test_student_row_is_still_none_for_a_student_with_no_records_at_all() -> None:
     """The pre-existing empty-history contract is unchanged by the filter."""
-    assert _student_row(_history(), display_name="Maya", student_id=STUDENT_ID) is None
+    assert (
+        _student_row(_history(), display_name="Maya", student_id=STUDENT_ID, now=NOW, acks={})
+        is None
+    )
+
+
+def test_student_row_paper_count_uses_is_paper_not_is_grade_bearing() -> None:
+    """``paperCount`` counts papers (origin only), not grade-bearing records (D3.9).
+
+    A past paper whose grade came back unreadable is still a paper the
+    student sat; filtering on ``is_grade_bearing`` instead would make
+    ``paperCount`` silently disagree with the paper the roster row's own
+    ``grade``/``mark`` fields are built from. Two real papers plus one quiz:
+    ``paperCount`` must read 2, not 1 (which is what an
+    ``is_grade_bearing``-filtered count would report once the unreadable
+    grade is dropped) and not 3 (which is what an unfiltered count, counting
+    the quiz too, would report).
+    """
+    unreadable = _record(
+        origin="past_paper",
+        grade="",  # came back unreadable — still a paper that was sat
+        percentage=50.0,
+        recorded_at="2026-08-03T10:00:00+00:00",
+    )
+    history = _history(_paper(), unreadable, _quiz())
+
+    row = _student_row(history, display_name="Maya", student_id=STUDENT_ID, now=NOW, acks={})
+
+    assert row is not None
+    assert row.paperCount == 2
+
+
+def test_student_row_last_active_at_is_unfiltered_by_origin() -> None:
+    """``lastActiveAt`` sees the quiz too — a quiz is activity (D3.9)."""
+    history = _history(_paper(), _quiz())
+
+    row = _student_row(history, display_name="Maya", student_id=STUDENT_ID, now=NOW, acks={})
+
+    assert row is not None
+    assert row.lastActiveAt == _quiz().recorded_at
+
+
+def test_student_row_flags_carry_reason_and_acknowledgement_state() -> None:
+    """``flags`` is populated through the shared ``_at_risk_flag_dto`` (D3.5/D3.3).
+
+    A declining trend over three papers must appear as a flag with its
+    reason, and an acknowledgement recorded against the same evidence
+    fingerprint must be reflected here exactly as it would be on the
+    overview/at-risk list (never a second, independently-computed flag
+    conversion).
+    """
+    history = _history(
+        _paper(percentage=72.0, grade="B", recorded_at="2026-08-01T10:00:00+00:00"),
+        _paper(percentage=65.0, grade="C", recorded_at="2026-08-02T10:00:00+00:00"),
+        _paper(percentage=58.0, grade="D", recorded_at="2026-08-03T10:00:00+00:00"),
+    )
+
+    row = _student_row(history, display_name="Maya", student_id=STUDENT_ID, now=NOW, acks={})
+    assert row is not None
+    assert len(row.flags) == 1
+    assert row.flags[0].reason == "declining_trend"
+    assert row.flags[0].acknowledged is None
+
+    flag = assess_at_risk(history, now=NOW).flags[0]
+    acks = {
+        (STUDENT_ID, AtRiskReason.DECLINING_TREND): AtRiskAcknowledgementRow(
+            student_id=uuid.UUID(STUDENT_ID),
+            reason=AtRiskReason.DECLINING_TREND,
+            evidence_fingerprint=flag_fingerprint(flag),
+            note="Spoke to student",
+            acknowledged_by=uuid.uuid4(),
+            acknowledged_at=NOW,
+        )
+    }
+    acked_row = _student_row(
+        history, display_name="Maya", student_id=STUDENT_ID, now=NOW, acks=acks
+    )
+    assert acked_row is not None
+    assert acked_row.flags[0].acknowledged is not None
+    assert acked_row.flags[0].acknowledged.note == "Spoke to student"
 
 
 def test_student_delta_ignores_a_quiz_masquerading_as_paper_one_variant_one() -> None:
@@ -277,7 +369,7 @@ def test_class_average_uses_each_student_latest_paper_never_their_latest_quiz(
     store.append(STUDENT_ID, _paper(percentage=80.0, grade="B"))
     store.append(STUDENT_ID, _quiz(percentage=40.0))
 
-    assert _average_for([STUDENT_ID], store) == pytest.approx(80.0)
+    assert _average_for([store.load(STUDENT_ID)]) == pytest.approx(80.0)
 
 
 def test_class_average_skips_a_quiz_only_student_rather_than_scoring_them(
@@ -289,14 +381,14 @@ def test_class_average_skips_a_quiz_only_student_rather_than_scoring_them(
     store.append(STUDENT_ID, _paper(percentage=80.0, grade="B"))
     store.append(other, _quiz(percentage=40.0))
 
-    assert _average_for([STUDENT_ID, other], store) == pytest.approx(80.0)
+    assert _average_for([store.load(STUDENT_ID), store.load(other)]) == pytest.approx(80.0)
 
 
 def test_class_average_is_none_when_nobody_has_sat_a_paper(tmp_path: Path) -> None:
     store = HistoryStore(tmp_path / "history")
     store.append(STUDENT_ID, _quiz())
 
-    assert _average_for([STUDENT_ID], store) is None
+    assert _average_for([store.load(STUDENT_ID)]) is None
 
 
 # ---------------------------------------------------------------------------

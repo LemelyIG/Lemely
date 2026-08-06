@@ -20,6 +20,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from lemely.core.history import PaperOrigin
 from lemely.web.schemas import ApiModel, QuestionResultDTO, WeakAreaDTO
 
 PaperKind = Literal["graded", "review", "processing", "queued"]
@@ -259,74 +260,6 @@ class DistributionBarDTO(ApiModel):
     count: int
 
 
-class StudentRowDTO(ApiModel):
-    """A class roster row.
-
-    Data-backed: ``name`` (the student's real ``display_name``, falling back to
-    ``email`` — D3.1; previously this carried the raw history-key student id),
-    ``studentId`` (the real user id, added D3.1 so the frontend can link
-    through to student detail without parsing it out of ``name``), ``grade``,
-    ``mark`` (awarded/max of latest paper), ``delta`` (percentage change vs.
-    prior same paper, ``None`` when no prior), ``weakTopic`` (weakest area of
-    the latest paper). ``gradeAtRisk`` is computed from ``grade``.
-    """
-
-    name: str
-    grade: str
-    mark: str
-    delta: float | None = None
-    weakTopic: str | None = None
-    gradeAtRisk: bool = False
-    studentId: str = ""
-
-
-class ClassSummaryDTO(ApiModel):
-    """One class in ``GET /api/teacher/classes``.
-
-    Data-backed: ``id``, ``label`` (the class name), ``studentCount``,
-    ``average`` (mean latest percentage across enrolled students with
-    history). ``subjectCode``/``schoolId``/``joinCode`` are the real class
-    model's remaining fields, added D3.1 (optional so older callers keep
-    working).
-    """
-
-    id: str
-    label: str
-    studentCount: int
-    average: float | None = None
-    subjectCode: str | None = None
-    schoolId: str | None = None
-    joinCode: str | None = None
-
-
-class ClassListDTO(ApiModel):
-    """Response for ``GET /api/teacher/classes``."""
-
-    classes: list[ClassSummaryDTO] = Field(default_factory=list)
-
-
-class ClassDetailDTO(ApiModel):
-    """Response for ``GET /api/classes/{id}``.
-
-    Data-backed: ``stats``, ``mastery`` (per-topic accuracy), ``distribution``
-    (grade counts), ``students`` (roster) — all computed over the class's real
-    enrolled roster (D3.1), not every student in the store. Fields the mock
-    shows without a backend source (bubble predictions, hours-saved
-    narratives) are omitted. ``subjectCode``/``schoolId``/``joinCode`` are the
-    real class model's remaining fields, added D3.1.
-    """
-
-    id: str
-    label: str
-    stats: list[StatCardDTO] = Field(default_factory=list)
-    mastery: list[MasteryRowDTO] = Field(default_factory=list)
-    distribution: list[DistributionBarDTO] = Field(default_factory=list)
-    students: list[StudentRowDTO] = Field(default_factory=list)
-    subjectCode: str | None = None
-    schoolId: str | None = None
-    joinCode: str | None = None
-
-
 class AtRiskAcknowledgementDTO(ApiModel):
     """Who/when/note for a flag a teacher has acknowledged (D3.5, T-06).
 
@@ -378,6 +311,124 @@ class AtRiskFlagDTO(ApiModel):
     acknowledged: AtRiskAcknowledgementDTO | None = None
 
 
+class StudentRowDTO(ApiModel):
+    """A class roster row.
+
+    Data-backed: ``name`` (the student's real ``display_name``, falling back to
+    ``email`` — D3.1; previously this carried the raw history-key student id),
+    ``studentId`` (the real user id, added D3.1 so the frontend can link
+    through to student detail without parsing it out of ``name``), ``grade``,
+    ``mark`` (awarded/max of latest paper), ``delta`` (percentage change vs.
+    prior same paper, ``None`` when no prior), ``weakTopic`` (weakest area of
+    the latest paper). ``gradeAtRisk`` is computed from ``grade``.
+
+    ``paperCount``/``lastActiveAt``/``flags`` (added P3.7 chunk a, D3.12)
+    close the T-03 roster gap — the spec is emphatic that the at-risk
+    *reason* must be shown, not just a red dot. ``paperCount`` counts
+    :func:`~lemely.core.history.is_paper` records (origin only): it says
+    "papers", so a past paper whose grade came back unreadable still counts,
+    but a quiz never does — using ``is_grade_bearing`` here would make this
+    number silently disagree with the papers actually on this student's
+    record (D3.9). ``lastActiveAt`` is unfiltered by origin (a quiz is
+    activity too), matching the same predicate ``streakDays``/
+    ``daysSinceLastSubmission`` already use. ``flags`` is the real D3.3
+    output, routed through the single ``lemely.web.routers.teacher.
+    _at_risk_flag_dto`` converter so acknowledgement state (D3.5) reads
+    identically to T-01/T-05/T-06 — never a second flag→DTO conversion.
+    ``gradeAtRisk`` stays for backward compatibility; ``flags`` is the
+    reason-bearing field a roster should actually render. All three default
+    so an older client still deserialises.
+    """
+
+    name: str
+    grade: str
+    mark: str
+    delta: float | None = None
+    weakTopic: str | None = None
+    gradeAtRisk: bool = False
+    studentId: str = ""
+    paperCount: int | None = None
+    lastActiveAt: str | None = None
+    flags: list[AtRiskFlagDTO] = Field(default_factory=list)
+
+
+class ClassSummaryDTO(ApiModel):
+    """One class in ``GET /api/teacher/classes``.
+
+    Data-backed: ``id``, ``label`` (the class name), ``studentCount``,
+    ``average`` (mean latest percentage across enrolled students with
+    history). ``subjectCode``/``schoolId``/``joinCode`` are the real class
+    model's remaining fields, added D3.1 (optional so older callers keep
+    working).
+
+    ``atRiskCount``/``lastActivityAt``/``topWeakness`` (added P3.7 chunk a,
+    D3.12) close the T-01 class-summary-card and T-02 table gaps.
+    ``atRiskCount`` is the number of this class's roster with >=1 fired D3.3
+    flag — the one at-risk engine (``lemely.core.at_risk.assess_at_risk``),
+    never a second heuristic. ``topWeakness`` is the class's highest-lost-
+    marks topic from the same ranker T-04's analytics screen uses
+    (``lemely.core.class_analytics.rank_topic_weaknesses``) — topic
+    aggregation is deliberately unfiltered by origin (D3.9), so a quiz's
+    evidence counts here even when it cannot back a grade claim.
+    ``lastActivityAt`` is the most recent ``recorded_at`` across the whole
+    roster, any origin (a quiz is activity too). An empty class, or one with
+    no history at all, reports ``0``/``None`` — never a fabricated
+    placeholder. Deliberately NOT added: a class-level average *predicted
+    grade* — averaging letter grades invents precision the data does not
+    support (D3.12); ``average`` (mean latest percentage) is the honest
+    substitute and is labelled as exactly that. Additive, defaults so an
+    older client still deserialises.
+    """
+
+    id: str
+    label: str
+    studentCount: int
+    average: float | None = None
+    subjectCode: str | None = None
+    schoolId: str | None = None
+    joinCode: str | None = None
+    atRiskCount: int | None = None
+    lastActivityAt: str | None = None
+    topWeakness: str | None = None
+
+
+class ClassListDTO(ApiModel):
+    """Response for ``GET /api/teacher/classes``."""
+
+    classes: list[ClassSummaryDTO] = Field(default_factory=list)
+
+
+class ClassDetailDTO(ApiModel):
+    """Response for ``GET /api/classes/{id}``.
+
+    Data-backed: ``stats``, ``mastery`` (per-topic accuracy), ``distribution``
+    (grade counts), ``students`` (roster) — all computed over the class's real
+    enrolled roster (D3.1), not every student in the store. Fields the mock
+    shows without a backend source (bubble predictions, hours-saved
+    narratives) are omitted. ``subjectCode``/``schoolId``/``joinCode`` are the
+    real class model's remaining fields, added D3.1.
+
+    ``atRiskCount``/``lastActivityAt``/``topWeakness`` (added P3.7 chunk a,
+    D3.12) mirror :class:`ClassSummaryDTO`'s fields of the same name — the
+    T-03 header can render them without a second fetch of the classes list.
+    Computed from the exact same roster histories this DTO's other fields
+    already fold over, not a second load.
+    """
+
+    id: str
+    label: str
+    stats: list[StatCardDTO] = Field(default_factory=list)
+    mastery: list[MasteryRowDTO] = Field(default_factory=list)
+    distribution: list[DistributionBarDTO] = Field(default_factory=list)
+    students: list[StudentRowDTO] = Field(default_factory=list)
+    subjectCode: str | None = None
+    schoolId: str | None = None
+    joinCode: str | None = None
+    atRiskCount: int | None = None
+    lastActivityAt: str | None = None
+    topWeakness: str | None = None
+
+
 class AtRiskStudentDTO(ApiModel):
     """An at-risk student on the overview.
 
@@ -396,18 +447,45 @@ class AtRiskStudentDTO(ApiModel):
     flags: list[AtRiskFlagDTO] = Field(default_factory=list)
 
 
+class RecentActivityDTO(ApiModel):
+    """One recent submission across the teacher's classes (T-01 item 4, D3.12).
+
+    Derived from the ``histories`` list ``teacher_overview`` already loads for
+    ``stats``/``atRisk`` — no new query. Spans papers *and* quizzes because
+    the spec says "submissions", not "papers"; a quiz attempt deliberately
+    has no grade (D3.9), so ``grade`` is populated only when the record is
+    ``lemely.core.history.is_grade_bearing`` — never the student's last
+    *paper* grade substituted in for a quiz row. ``studentName`` is the real
+    roster ``display_name`` already in scope, never the raw student uuid.
+    Sorted most-recent-first and capped at the 8 most recent records across
+    every visible student (a dashboard tile, not a full history browser).
+    """
+
+    studentId: str
+    studentName: str
+    subjectCode: str
+    percentage: float
+    grade: str | None = None
+    recordedAt: str
+    origin: PaperOrigin
+
+
 class OverviewDTO(ApiModel):
     """Response for ``GET /api/teacher/overview``.
 
     Data-backed: ``stats`` (from history/analytics) and ``atRisk`` (students on a
     falling trajectory). ``retention`` is *structurally-empty* — lesson-retention
     minutes have no backend source, so the list is always empty rather than
-    reproducing the mock's bar heights.
+    reproducing the mock's bar heights. ``recentActivity`` (added P3.7 chunk
+    a, D3.12) is T-01 item 4, "submissions across their classes" — see
+    :class:`RecentActivityDTO`. Additive, defaults to empty so an older
+    client still deserialises.
     """
 
     stats: list[StatCardDTO] = Field(default_factory=list)
     atRisk: list[AtRiskStudentDTO] = Field(default_factory=list)
     retention: list[int] = Field(default_factory=list)
+    recentActivity: list[RecentActivityDTO] = Field(default_factory=list)
 
 
 class AcknowledgeAtRiskRequestDTO(ApiModel):
@@ -449,6 +527,7 @@ __all__ = [
     "QuizPreviewDTO",
     "QuizTopicDTO",
     "QuizTopicsDTO",
+    "RecentActivityDTO",
     "SchemeListDTO",
     "SchemeRowDTO",
     "SchemeStatus",

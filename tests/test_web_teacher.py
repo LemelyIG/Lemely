@@ -23,7 +23,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from lemely.core.history import PaperRecord, now_iso
+from lemely.core.history import PaperRecord, StudentHistory, now_iso
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -321,6 +321,7 @@ def _seed_history_record(
     grade: str,
     topic: str = "Thermal physics",
     recorded_at: str | None = None,
+    origin: str = "past_paper",
 ) -> None:
     """Append one PaperRecord. ``recorded_at`` defaults to *now* (not stale).
 
@@ -328,6 +329,10 @@ def _seed_history_record(
     treats >=14-days-since-last-paper as its own inactivity rule — a hardcoded
     old date would silently make every seeded student inactive under real
     wall-clock time. Callers testing that rule pass ``recorded_at`` explicitly.
+
+    ``origin`` (added P3.7 chunk a) lets a caller seed a ``quiz`` record —
+    the marking path always writes ``grade=""`` for one (D3.9), so a caller
+    testing the quiz-has-no-grade case should also pass ``grade=""``.
     """
     store.append(
         student_id,
@@ -348,6 +353,7 @@ def _seed_history_record(
                 )
             ],
             recorded_at=recorded_at if recorded_at is not None else now_iso(),
+            origin=origin,  # type: ignore[arg-type]
         ),
     )
 
@@ -1110,6 +1116,160 @@ def test_overview_malformed_caller_id_is_422(
         user_id="not-a-uuid", role=Role.teacher.value
     )
     assert client.get("/api/teacher/overview").status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Recent activity — T-01 item 4 (P3.7 chunk a, D3.12).
+# ---------------------------------------------------------------------------
+
+_STUDENT_ID = "3f6c1b0e-6f5e-4b0a-9f3e-2c1d0a7b8e91"
+
+
+def test_overview_recent_activity_spans_papers_and_quizzes(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """``recentActivity`` includes both a past paper and a quiz, newest first."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher_id, "Physics 10A")
+    assert cls.join_code is not None
+    ziad = _join_student(pg_sessionmaker, class_service, cls.join_code, "Ziad")
+    _seed_history_record(
+        history_store,
+        str(ziad),
+        percentage=80.0,
+        grade="B",
+        recorded_at="2026-08-01T10:00:00+00:00",
+    )
+    _seed_history_record(
+        history_store,
+        str(ziad),
+        percentage=40.0,
+        grade="",
+        origin="quiz",
+        recorded_at="2026-08-02T10:00:00+00:00",
+    )
+
+    _use_class_service(client, class_service)
+    _auth_as(client, teacher_id, Role.teacher)
+    body = client.get("/api/teacher/overview").json()
+    activity = body["recentActivity"]
+    assert len(activity) == 2
+    # Newest first: the quiz (Aug 2) before the paper (Aug 1).
+    assert activity[0]["origin"] == "quiz"
+    assert activity[0]["studentName"] == "Ziad"
+    assert activity[0]["studentId"] == str(ziad)
+    assert activity[0]["percentage"] == 40.0
+    assert activity[1]["origin"] == "past_paper"
+    assert activity[1]["grade"] == "B"
+
+
+def test_overview_recent_activity_quiz_grade_is_null_not_last_paper_grade() -> None:
+    """A quiz's ``grade`` must be ``None``, never the student's last *paper* grade.
+
+    This is the exact mistake D3.9 exists to prevent: a quiz has no grade,
+    and substituting the student's most recent paper grade would misattribute
+    someone else's evidence (a different assessment, a different date) to
+    this submission.
+    """
+    from lemely.web.routers.teacher import _recent_activity
+
+    history = StudentHistory(
+        student_id=_STUDENT_ID,
+        records=[
+            PaperRecord(
+                student_id=_STUDENT_ID,
+                metadata=_metadata(),
+                awarded_marks=64,
+                maximum_marks=80,
+                percentage=80.0,
+                grade="B",
+                weak_areas=[],
+                recorded_at="2026-08-01T10:00:00+00:00",
+                origin="past_paper",
+            ),
+            PaperRecord(
+                student_id=_STUDENT_ID,
+                metadata=_metadata(),
+                awarded_marks=4,
+                maximum_marks=10,
+                percentage=40.0,
+                grade="",
+                weak_areas=[],
+                recorded_at="2026-08-02T10:00:00+00:00",
+                origin="quiz",
+            ),
+        ],
+    )
+
+    activity = _recent_activity([(history, "Ziad")])
+
+    assert len(activity) == 2
+    quiz_entry = next(a for a in activity if a.origin == "quiz")
+    assert quiz_entry.grade is None
+    paper_entry = next(a for a in activity if a.origin == "past_paper")
+    assert paper_entry.grade == "B"
+
+
+def test_overview_recent_activity_is_capped_and_sorted_newest_first() -> None:
+    """More than the cap: only the ``limit`` newest records survive, in order."""
+    from lemely.web.routers.teacher import _recent_activity
+
+    records = [
+        PaperRecord(
+            student_id=_STUDENT_ID,
+            metadata=_metadata(),
+            awarded_marks=i,
+            maximum_marks=10,
+            percentage=float(i * 10),
+            grade="B",
+            weak_areas=[],
+            recorded_at=f"2026-08-{i:02d}T10:00:00+00:00",
+            origin="past_paper",
+        )
+        for i in range(1, 11)
+    ]
+    history = StudentHistory(student_id=_STUDENT_ID, records=records)
+
+    activity = _recent_activity([(history, "Ziad")], limit=8)
+
+    assert len(activity) == 8
+    assert [a.recordedAt for a in activity] == sorted(
+        (r.recorded_at for r in records), reverse=True
+    )[:8]
+
+
+def test_overview_recent_activity_scopes_to_each_teachers_own_classes(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    history_store: HistoryStore,
+) -> None:
+    """Two teachers with disjoint classes: neither's recent activity leaks to the other."""
+    teacher_a = _seed_user(pg_sessionmaker, Role.teacher)
+    teacher_b = _seed_user(pg_sessionmaker, Role.teacher)
+    class_a = class_service.create_class(teacher_a, "A's class")
+    class_b = class_service.create_class(teacher_b, "B's class")
+    assert class_a.join_code is not None
+    assert class_b.join_code is not None
+    student_a = _join_student(pg_sessionmaker, class_service, class_a.join_code, "Student A")
+    student_b = _join_student(pg_sessionmaker, class_service, class_b.join_code, "Student B")
+    _seed_history_record(history_store, str(student_a), percentage=80.0, grade="B")
+    _seed_history_record(history_store, str(student_b), percentage=90.0, grade="A")
+
+    _use_class_service(client, class_service)
+
+    _auth_as(client, teacher_a, Role.teacher)
+    body_a = client.get("/api/teacher/overview").json()
+    names_a = {a["studentName"] for a in body_a["recentActivity"]}
+    assert names_a == {"Student A"}
+
+    _auth_as(client, teacher_b, Role.teacher)
+    body_b = client.get("/api/teacher/overview").json()
+    names_b = {a["studentName"] for a in body_b["recentActivity"]}
+    assert names_b == {"Student B"}
 
 
 # ---------------------------------------------------------------------------

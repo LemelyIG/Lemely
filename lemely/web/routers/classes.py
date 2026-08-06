@@ -31,7 +31,7 @@ from typing import Annotated, NoReturn
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.core.analytics import aggregate_weaknesses_from_history
-from lemely.core.at_risk import assess_at_risk
+from lemely.core.at_risk import AtRiskReason, assess_at_risk
 from lemely.core.class_analytics import (
     EngagementStats,
     cohort_trend,
@@ -42,6 +42,7 @@ from lemely.core.class_analytics import (
     topic_student_heatmap,
 )
 from lemely.core.history import HistoryStoreProtocol, StudentHistory, latest_grade_bearing
+from lemely.db.at_risk_repo import AtRiskAcknowledgementRow, AtRiskAckService
 from lemely.db.class_repo import (
     ClassError,
     ClassHasNoSchoolError,
@@ -53,9 +54,16 @@ from lemely.db.class_repo import (
     StudentNotSeatedError,
 )
 from lemely.db.models.enums import Role
-from lemely.web.deps import AuthContext, get_class_service, get_history_store, require_role
+from lemely.web.deps import (
+    AuthContext,
+    get_at_risk_ack_service,
+    get_class_service,
+    get_history_store,
+    require_role,
+)
 from lemely.web.routers.teacher import (
     _GRADE_ORDER,
+    _acknowledgement_index,
     _mean,
     _student_row,
 )
@@ -119,28 +127,69 @@ def _raise_for(exc: ClassError) -> NoReturn:
 # ---------------------------------------------------------------------------
 
 
-def _average_for(student_ids: list[str], history_store: HistoryStoreProtocol) -> float | None:
-    """Mean latest *paper* percentage across ``student_ids`` with recorded history.
+def _average_for(histories: list[StudentHistory]) -> float | None:
+    """Mean latest *paper* percentage across ``histories``, skipping the empty ones.
 
     Grade-bearing records only (``docs/quiz-model.md`` §5): a quiz percentage
     is not comparable to a paper percentage, so averaging the two would make a
     class mean move for a reason no teacher could account for. A student with
     only quiz activity contributes nothing here rather than contributing a
     number that means something else.
+
+    Takes already-loaded histories rather than ``(student_ids, history_store)``
+    (changed in P3.7 chunk a): its two callers below each need every roster
+    history in hand anyway for ``atRiskCount``/``topWeakness``/
+    ``lastActivityAt``, so the old signature would have re-read every student's
+    history a second time per request. Keeping this a real shared function
+    rather than inlining the two lines matters — ``test_web_quiz_origin_
+    filtering.py`` pins the D3.9 filter here, and that regression guard is only
+    worth anything while the production path actually runs it.
     """
     latest_pcts = [
         record.percentage
-        for sid in student_ids
-        if (record := latest_grade_bearing(history_store.load(sid).records)) is not None
+        for history in histories
+        if (record := latest_grade_bearing(history.records)) is not None
     ]
     return _mean(latest_pcts)
 
 
+def _latest_activity(histories: list[StudentHistory]) -> str | None:
+    """Most recent ``recorded_at`` across every history, any origin (D3.9).
+
+    Each ``StudentHistory.records`` list is already ``recorded_at``-ordered
+    (``DbHistoryStore``'s query and ``HistoryStore.append`` both preserve
+    chronological order), so a student's own latest activity is simply their
+    last record — mirrors ``ChildActivityDTO.lastActiveAt``'s
+    ``history.records[-1].recorded_at`` convention. ISO-8601 UTC strings
+    compare correctly as plain strings, the same convention
+    ``lemely.core.class_analytics.cohort_trend`` already relies on, so no
+    per-record parsing is needed to find the max across students.
+    """
+    return max(
+        (history.records[-1].recorded_at for history in histories if history.records),
+        default=None,
+    )
+
+
 def _class_row_to_summary(
-    row: ClassRow, roster: list[RosterEntry], history_store: HistoryStoreProtocol
+    row: ClassRow, roster: list[RosterEntry], history_store: HistoryStoreProtocol, *, now: datetime
 ) -> ClassSummaryDTO:
-    """Convert a :class:`ClassRow` + its roster into the wire summary DTO."""
-    average = _average_for([str(entry.student_id) for entry in roster], history_store)
+    """Convert a :class:`ClassRow` + its roster into the wire summary DTO.
+
+    ``atRiskCount``/``lastActivityAt``/``topWeakness`` (D3.12/P3.7 chunk a)
+    are derived from one roster-history load here — the same loop
+    ``average`` already needed, not a second pass over the roster or a
+    second round of history reads. ``atRiskCount`` reuses the one D3.3 rules
+    engine (``assess_at_risk``); ``topWeakness`` reuses T-04's own ranker
+    (``rank_topic_weaknesses``) rather than a third topic aggregation; the
+    mean stays in ``_average_for`` so the D3.9 grade-bearing filter has
+    exactly one implementation and its regression tests keep guarding the
+    path this route actually takes.
+    """
+    histories = [history_store.load(str(entry.student_id)) for entry in roster]
+    average = _average_for(histories)
+    at_risk_count = sum(1 for h in histories if assess_at_risk(h, now=now).flags)
+    ranked = rank_topic_weaknesses(histories)
     return ClassSummaryDTO(
         id=str(row.class_id),
         label=row.name,
@@ -149,11 +198,19 @@ def _class_row_to_summary(
         subjectCode=row.subject_code,
         schoolId=str(row.school_id) if row.school_id is not None else None,
         joinCode=row.join_code,
+        atRiskCount=at_risk_count,
+        lastActivityAt=_latest_activity(histories),
+        topWeakness=ranked[0].topic if ranked else None,
     )
 
 
 def _class_row_to_detail(
-    row: ClassRow, roster: list[RosterEntry], history_store: HistoryStoreProtocol
+    row: ClassRow,
+    roster: list[RosterEntry],
+    history_store: HistoryStoreProtocol,
+    *,
+    now: datetime,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
 ) -> ClassDetailDTO:
     """Build the full class-detail DTO from real roster data (D3.1).
 
@@ -162,6 +219,16 @@ def _class_row_to_detail(
     grade; the roster is one row per enrolled student. National benchmarks and
     hours-saved narratives have no backend source and are omitted / left
     ``None``.
+
+    ``atRiskCount``/``lastActivityAt``/``topWeakness`` (D3.12/P3.7 chunk a)
+    mirror :class:`ClassSummaryDTO`'s fields of the same name, computed from
+    the exact same ``histories`` this function already loads for mastery/
+    distribution/the roster rows — no second load. ``now``/``acks`` are
+    threaded through to ``_student_row`` so each roster row's ``flags``
+    reads acknowledgement state (D3.5) identically to every other
+    at-risk-serving surface, and so the "At risk" stat card and this row's
+    per-student flags are evaluated against the same instant rather than a
+    fresh ``datetime.now(UTC)`` per student (the previous shape here).
     """
     histories = [(entry, history_store.load(str(entry.student_id))) for entry in roster]
     # Grade distribution and the class mean below are grade/percentage claims,
@@ -179,7 +246,11 @@ def _class_row_to_detail(
         for entry, history in histories
         if (
             student_row := _student_row(
-                history, display_name=entry.display_name, student_id=str(entry.student_id)
+                history,
+                display_name=entry.display_name,
+                student_id=str(entry.student_id),
+                now=now,
+                acks=acks,
             )
         )
         is not None
@@ -207,9 +278,8 @@ def _class_row_to_detail(
     # teacher would have no way to resolve. The per-row ``gradeAtRisk`` badge
     # (via ``_student_row``) is deliberately still the grade test — it is a
     # differently-named, differently-meaning signal.
-    at_risk = sum(
-        1 for _, history in histories if assess_at_risk(history, now=datetime.now(UTC)).flags
-    )
+    at_risk = sum(1 for _, history in histories if assess_at_risk(history, now=now).flags)
+    ranked = rank_topic_weaknesses([history for _, history in histories])
     stats = [
         StatCardDTO(
             key="Class average",
@@ -237,6 +307,9 @@ def _class_row_to_detail(
         subjectCode=row.subject_code,
         schoolId=str(row.school_id) if row.school_id is not None else None,
         joinCode=row.join_code,
+        atRiskCount=at_risk,
+        lastActivityAt=_latest_activity([history for _, history in histories]),
+        topWeakness=ranked[0].topic if ranked else None,
     )
 
 
@@ -331,10 +404,11 @@ def list_classes(
         rows = service.list_classes(auth.user_id, auth.role)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    now = datetime.now(UTC)
     summaries = []
     for row in rows:
         roster = service.roster(auth.user_id, auth.role, row.class_id)
-        summaries.append(_class_row_to_summary(row, roster, history_store))
+        summaries.append(_class_row_to_summary(row, roster, history_store, now=now))
     return ClassListDTO(classes=summaries)
 
 
@@ -344,6 +418,7 @@ def get_class(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
 ) -> ClassDetailDTO:
     """Return mastery, grade distribution, and the roster for one class.
 
@@ -351,6 +426,11 @@ def get_class(
     anywhere is a 404. A malformed (non-UUID) id is a clean 422, never a 500.
     The 403/404 split is a class-existence oracle by construction — an
     accepted trade, documented in full on ``teacher_student_detail``.
+
+    ``ack_service`` (D3.5, added alongside the roster's per-student ``flags``
+    in P3.7 chunk a) is narrowed to this class's own roster via
+    ``_acknowledgement_index(..., student_ids=...)`` — a single round trip
+    for the whole class, not one per student.
     """
     try:
         row = service.get_class(auth.user_id, auth.role, class_id)
@@ -359,7 +439,11 @@ def get_class(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _class_row_to_detail(row, roster, history_store)
+    now = datetime.now(UTC)
+    acks = _acknowledgement_index(
+        ack_service, auth, student_ids=[str(entry.student_id) for entry in roster]
+    )
+    return _class_row_to_detail(row, roster, history_store, now=now, acks=acks)
 
 
 @router.get("/classes/{class_id}/analytics", response_model=ClassAnalyticsDTO)
@@ -423,7 +507,7 @@ def create_class(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ClassError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _class_row_to_summary(row, [], history_store)
+    return _class_row_to_summary(row, [], history_store, now=datetime.now(UTC))
 
 
 @router.patch("/classes/{class_id}", response_model=ClassSummaryDTO)
@@ -444,7 +528,7 @@ def update_class(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _class_row_to_summary(row, roster, history_store)
+    return _class_row_to_summary(row, roster, history_store, now=datetime.now(UTC))
 
 
 @router.delete("/classes/{class_id}", status_code=204)

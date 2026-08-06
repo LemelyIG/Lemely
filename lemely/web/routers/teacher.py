@@ -50,6 +50,7 @@ from lemely.core.history import (
     PaperRecord,
     StudentHistory,
     grade_bearing,
+    is_grade_bearing,
     is_paper,
     latest_grade_bearing,
     now_iso,
@@ -130,6 +131,7 @@ from lemely.web.schemas_teacher import (
     QuizPreviewDTO,
     QuizTopicDTO,
     QuizTopicsDTO,
+    RecentActivityDTO,
     SchemeListDTO,
     SchemeRowDTO,
     StatCardDTO,
@@ -1113,7 +1115,12 @@ def quiz_generate(
 
 
 def _student_row(
-    history: StudentHistory, *, display_name: str, student_id: str
+    history: StudentHistory,
+    *,
+    display_name: str,
+    student_id: str,
+    now: datetime,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
 ) -> StudentRowDTO | None:
     """Build a roster row from a student's history, or ``None`` if empty.
 
@@ -1130,6 +1137,17 @@ def _student_row(
     paper grade yet. ``grade=""`` is the same "no grade" value
     ``DbHistoryStore`` already produces for an attempt with a NULL grade, so
     this introduces no new state for the frontend to handle.
+
+    ``paperCount`` (added P3.7 chunk a, D3.12) counts :func:`is_paper`
+    records — origin only, deliberately narrower than the grade-bearing
+    filter above: it says "papers", so a past paper whose grade came back
+    unreadable still counts, but a quiz never does (D3.9). ``lastActiveAt``
+    is unfiltered by origin — a quiz is activity too, matching the
+    inactivity rule sitting beside it. ``flags`` runs the D3.3 engine
+    (``assess_at_risk``) and converts every fired flag through the single
+    ``_at_risk_flag_dto`` helper (``now``/``acks`` threaded in for exactly
+    that), so this roster's acknowledged state can never drift from T-01/
+    T-05/T-06's reading of the same flag.
     """
     if not history.records:
         return None
@@ -1139,6 +1157,7 @@ def _student_row(
         if latest is not None
         else None
     )
+    assessment = assess_at_risk(history, now=now)
     return StudentRowDTO(
         name=display_name,
         studentId=student_id,
@@ -1147,6 +1166,11 @@ def _student_row(
         delta=_student_delta(history),
         weakTopic=weakest.topic if weakest is not None else None,
         gradeAtRisk=latest is not None and latest.grade in _AT_RISK_GRADES,
+        paperCount=sum(1 for record in history.records if is_paper(record)),
+        lastActiveAt=history.records[-1].recorded_at,
+        flags=[
+            _at_risk_flag_dto(flag, student_id=student_id, acks=acks) for flag in assessment.flags
+        ],
     )
 
 
@@ -1251,6 +1275,7 @@ def teacher_overview(
     needs_review = _count_review_items(review_service, auth)
     acks = _acknowledgement_index(ack_service, auth)
     at_risk_students = _at_risk(histories, now=datetime.now(UTC), acks=acks)
+    recent_activity = _recent_activity(histories)
 
     stats = [
         StatCardDTO(
@@ -1285,7 +1310,49 @@ def teacher_overview(
             valueTone="err" if at_risk_students else "t1",
         ),
     ]
-    return OverviewDTO(stats=stats, atRisk=at_risk_students, retention=[])
+    return OverviewDTO(
+        stats=stats, atRisk=at_risk_students, retention=[], recentActivity=recent_activity
+    )
+
+
+_RECENT_ACTIVITY_LIMIT = 8
+
+
+def _recent_activity(
+    histories: list[tuple[StudentHistory, str]], *, limit: int = _RECENT_ACTIVITY_LIMIT
+) -> list[RecentActivityDTO]:
+    """Flatten every visible student's records into one recency-sorted feed.
+
+    T-01 item 4 ("submissions across their classes", D3.12) — spans papers
+    *and* quizzes because the spec says "submissions", not "papers". Built
+    from the exact ``histories`` list ``teacher_overview`` already loaded for
+    ``stats``/``atRisk`` above; no new query. ``grade`` reads
+    ``is_grade_bearing`` per record — a quiz has no grade and reports
+    ``None`` here rather than the student's last *paper* grade, which would
+    misattribute someone else's evidence to this submission (the exact
+    mistake D3.9 exists to prevent). Sorted most-recent-first (``recorded_at``
+    strings compare correctly as ISO-8601 UTC — the same convention
+    ``lemely.core.class_analytics.cohort_trend`` already relies on) and
+    capped at ``limit`` (a dashboard tile, not a full history browser).
+    """
+    entries = [
+        (record, history.student_id, display_name)
+        for history, display_name in histories
+        for record in history.records
+    ]
+    entries.sort(key=lambda item: item[0].recorded_at, reverse=True)
+    return [
+        RecentActivityDTO(
+            studentId=student_id,
+            studentName=display_name,
+            subjectCode=record.metadata.subject_code,
+            percentage=record.percentage,
+            grade=record.grade if is_grade_bearing(record) else None,
+            recordedAt=record.recorded_at,
+            origin=record.origin,
+        )
+        for record, student_id, display_name in entries[:limit]
+    ]
 
 
 def _count_review_items(review_service: ReviewService, auth: AuthContext) -> int:
