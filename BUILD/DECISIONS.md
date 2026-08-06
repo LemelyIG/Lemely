@@ -3,6 +3,47 @@
 
 ## Phase 3
 
+### D3.5 — Acknowledging an at-risk flag: evidence-scoped, per-teacher, never suppressed from the API
+
+- **What:** the UI spec's T-06 line "Dismiss/acknowledge a flag with a note" is the last
+  piece of P3.4's scope, and STATE recorded it as "needs a backing table (none exists)".
+  It does — but the shape is not obvious, because **at-risk flags are derived, not
+  stored**: `assess_at_risk` recomputes them from history on every request, so there is
+  no flag row to mark dismissed. Decided design:
+  - New table `at_risk_acknowledgements` keyed `(teacher_id, student_id, reason)` unique,
+    carrying `evidence_fingerprint`, an optional teacher-facing `note`, and who/when.
+  - **Acknowledgement is scoped to the evidence it was made against.** A flag renders as
+    acknowledged only when a stored ack exists *and* its fingerprint equals the current
+    flag's fingerprint. New evidence re-raises the flag. `flag_fingerprint()` lives in
+    `lemely.core.at_risk` (pure, single-sourced) and is deliberately built from the
+    *stable* part of each evidence type: the percentage series for declining-trend, the
+    target/predicted pair for below-target, and **`last_active_at` only** for inactivity —
+    never `days_inactive`, which increments every day and would re-raise an acknowledged
+    inactivity flag every 24 hours.
+  - **Acknowledged flags are still returned by the API**, tagged with `acknowledged`
+    (by/at/note); hiding them is a client-side filter (`?acknowledged=` on T-06).
+  - **Per-teacher, not global**: teacher A acknowledging must not blind teacher B, who
+    carries their own responsibility for that student. That is what the composite key
+    encodes.
+  - The ack note is **teacher-facing and never student-visible** — unlike the T-08
+    override note, which is explicitly a note *to* the student.
+- **Why:** spec §1.4 says flags are signals, not verdicts. A dismissal that deleted the
+  signal from the API would convert the teacher's "I've seen this" into "this never
+  happened", destroying the evidence the next teacher (or the same teacher next term)
+  needs. Evidence-scoping is the difference between "acknowledged" and "permanently
+  muted": a student who declines *further* after a teacher acknowledged the decline is a
+  genuinely new signal and must surface again.
+- **Alternatives rejected:** (a) permanent ack per (teacher, student, reason) — silently
+  hides re-fires, the failure mode above; (b) time-boxed snooze — arbitrary duration with
+  no relationship to whether anything actually changed; (c) materialising flags into rows
+  so an ack can reference a flag id — a large write path and a cache-invalidation problem
+  in exchange for nothing the fingerprint does not already give us.
+- **How to apply:** anything added later that renders an at-risk flag for a teacher
+  (T-01 overview, T-05 student detail, T-06 list) must populate `acknowledged` through
+  the same shared helper. A flag that reads acknowledged on one screen and unacknowledged
+  on another is the exact divergence D3.3 fixed for "at risk" itself and D3.4's
+  weakness-record follow-up fixed for weaknesses.
+
 ### D3.4 — Teacher analytics: the last cross-tenant leak, and calling the 403/404 oracle what it is
 
 - **What:** P3.3 built `lemely/core/class_analytics.py` (pure, injected-clock cohort

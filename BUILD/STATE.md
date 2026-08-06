@@ -141,15 +141,26 @@ Starting facts (established 2026-08-06, do not re-derive):
       (live-only) / 87% cov, up from 711 and 86.11%. All 12 gates green.
       Honest gaps: heatmap no-data cells are `None` not 0%; T-05 integrity signals omitted
       (no per-question data persisted); T-06 flag-dismissal deferred to P3.4.
-- [ ] doing — **P3.4** Review queue override-and-annotate (T-08). Accept / adjust marks with
-      method+accuracy breakdown / note to student; overrides recorded as teacher corrections
-      that supersede the AI mark on the student's result; integrity-flag dismissal leaves no
-      student-visible record. Backend + tests.
-      Two items P3.3 handed to this task: (a) `_count_review_papers()` in `teacher.py`
-      counts the *whole* in-process `papers_store` with no owner filter — every teacher sees
-      a global "Need your eyes" count; the P2-legacy store has no owner column, so this is a
-      store change not a query change. (b) T-06's dismiss/acknowledge-a-flag-with-a-note
-      action needs a backing table (none exists).
+- [x] done — **P3.4** Review queue override-and-annotate (T-07/T-08). Migration 0005 adds
+      teacher-override columns to `question_results` without touching the AI's own
+      `awarded_marks`; `ReviewService` (`lemely/db/review_repo.py`) serves queue list/filter,
+      detail, resolve (accept-or-override with method+accuracy breakdown + note to student),
+      integrity-flag dismiss (structurally never writes to a `QuestionResult`, so no
+      student-visible record can survive), and bulk-approve — all through the same
+      `ClassService` roster tenancy. Routes in `lemely/web/routers/review.py`. Handed item
+      (a) fixed in the same commit: `/api/teacher/overview`'s "Need your eyes" now counts the
+      caller's own open review items, not the whole global `papers_store`.
+      **Follow-up (9159947):** an override recomputed the attempt total but left
+      `weakness_records` at the AI's values, so a question a teacher restored still counted
+      as "lost" on the student's weakness list and the T-04 heatmap. Now recomputed through
+      `analytics.group_weak_areas`, extracted so marking-time and override-time run
+      identical topic-bucketing. 794 tests (790 passed / 4 live-only skips) / 87.15% cov.
+      All 12 gates green.
+- [ ] doing — **P3.4b** At-risk flag acknowledge-with-a-note (T-06), the second item P3.3
+      handed to P3.4. Design is fixed in **D3.5**: flags are derived not stored, so the ack
+      is keyed `(teacher, student, reason)` and scoped to an evidence fingerprint computed in
+      `lemely.core.at_risk`, so new evidence re-raises an acknowledged flag; acknowledged
+      flags stay in the API tagged `acknowledged`, never removed. Backend + tests.
 - [ ] todo — **P3.5** Teacher quiz builder backend (T-09/T-10). Difficulty targeting by expected
       grade, material selection, pool from past-paper/generated questions, assign to class,
       auto-mark, results feed analytics.
