@@ -1,7 +1,15 @@
 /*
  * Teacher portal stub data, ported 1:1 from the Claude Design mock's
  * renderVals() (design/project/Lemely Teacher.dc.html). Real names and numbers
- * are preserved. Screens render from this file; no live fetch in this run.
+ * are preserved. `Quizzes.tsx` (T-09, not yet built against a backend —
+ * P3.8) is the only screen still rendering from this file.
+ *
+ * P3.7 chunk B moved Overview/Classes onto real data and deleted the mock
+ * arrays only they consumed: `recentClasses` (sidebar), `classStats`/
+ * `mastery`/`distribution`/`bubble`/`students` (the old Classes.tsx, which
+ * actually rendered T-03/T-04 one-class analytics content, not a T-02
+ * classes list) — none of it is a Quizzes.tsx dependency, so nothing here
+ * was left behind for a screen this chunk doesn't own.
  *
  * Colour semantics map to the shared token layer:
  *   accent (amber), ok (green), err (red / needs-review), t1/t2/t3 (text).
@@ -18,29 +26,16 @@ export interface NavItem {
   label: string
   /** Which phosphor icon renders in the sidebar. */
   icon: "overview" | "grading" | "classes" | "schemes" | "quizzes"
-  /** Red count badge (Grading only in the mock). */
-  badge?: string
   /** Index route match (Overview lives at /teacher). */
   end?: boolean
 }
 
 export const navItems: NavItem[] = [
   { to: "/teacher", label: "Overview", icon: "overview", end: true },
-  { to: "/teacher/grading", label: "Grading", icon: "grading", badge: "12" },
+  { to: "/teacher/grading", label: "Grading", icon: "grading" },
   { to: "/teacher/classes", label: "Classes", icon: "classes" },
   { to: "/teacher/schemes", label: "Mark schemes", icon: "schemes" },
   { to: "/teacher/quizzes", label: "AI quizzes", icon: "quizzes" },
-]
-
-export interface RecentClass {
-  label: string
-  active: boolean
-}
-
-export const recentClasses: RecentClass[] = [
-  { label: "Y11 · Physics", active: true },
-  { label: "Y10 · Physics", active: false },
-  { label: "Y11 · Chemistry", active: false },
 ]
 
 /* ── Shared stat card ────────────────────────────────────────────────────── */
@@ -55,129 +50,6 @@ export interface StatCard {
   /** Semantic colour of the footnote. */
   footTone?: "t2" | "ok" | "err"
 }
-
-/* ── Classes ─────────────────────────────────────────────────────────────── */
-
-export const classStats: StatCard[] = [
-  { k: "Class average", v: "74", unit: "%", foot: "+5.2 since May", valueTone: "t1", footTone: "ok" },
-  { k: "Predicted A / A*", v: "11", unit: "of 24", foot: "46% of the group", valueTone: "t1", footTone: "t2" },
-  { k: "At risk", v: "3", unit: "students", foot: "below D", valueTone: "err", footTone: "err" },
-  { k: "Hours saved", v: "38", unit: "this month", foot: "auto-graded", valueTone: "t1", footTone: "t2" },
-]
-
-export interface MasteryRow {
-  topic: string
-  val: number
-  nat: number
-  /** Below the national average -> render red instead of amber. */
-  below: boolean
-}
-
-export const mastery: MasteryRow[] = [
-  ["Kinematics", 88, 84],
-  ["Forces", 82, 80],
-  ["Waves", 71, 74],
-  ["Electricity", 76, 75],
-  ["Atomic physics", 64, 70],
-  ["Thermal physics", 58, 73],
-].map(([topic, val, nat]) => ({
-  topic: topic as string,
-  val: val as number,
-  nat: nat as number,
-  below: (val as number) < (nat as number),
-}))
-
-export type DistributionTone = "ok" | "accent" | "b" | "err" | "muted"
-
-export interface DistributionBar {
-  g: Grade
-  n: number
-  /** 0-100 height percentage. */
-  h: number
-  tone: DistributionTone
-}
-
-const DIST: [Grade, number][] = [
-  ["A*", 4],
-  ["A", 7],
-  ["B", 6],
-  ["C", 4],
-  ["D", 2],
-  ["E", 1],
-  ["U", 0],
-]
-
-export const distribution: DistributionBar[] = DIST.map(([g, n]) => ({
-  g,
-  n,
-  h: Math.max(2, (n / 7) * 100),
-  tone:
-    g === "A*"
-      ? "ok"
-      : g === "A"
-        ? "accent"
-        : g === "B"
-          ? "b"
-          : g === "E"
-            ? "err"
-            : "muted",
-}))
-
-export interface BubbleStudent {
-  name: string
-  to: Grade
-}
-
-export const bubble: BubbleStudent[] = [
-  { name: "Jonas A", to: "A" },
-  { name: "Yuki T", to: "A" },
-  { name: "Lina H", to: "A*" },
-]
-
-export interface StudentRow {
-  name: string
-  initials: string
-  grade: Grade
-  mark: string
-  delta: string
-  weak: string
-  /** Falling delta -> red, otherwise green. */
-  deltaDown: boolean
-  /** D / E grades render the grade in red. */
-  gradeAtRisk: boolean
-}
-
-function student(
-  name: string,
-  grade: Grade,
-  mark: string,
-  delta: string,
-  weak: string,
-): StudentRow {
-  return {
-    name,
-    grade,
-    mark,
-    delta,
-    weak,
-    initials: name
-      .split(" ")
-      .map((w) => w[0])
-      .join(""),
-    deltaDown: delta.charAt(0) === "-",
-    gradeAtRisk: grade === "D" || grade === "E",
-  }
-}
-
-export const students: StudentRow[] = [
-  student("Amelia Chen", "A*", "71/80", "+4", "Atomic physics"),
-  student("Priya Shah", "A", "68/80", "+2", "Waves"),
-  student("Yuki Tanaka", "A", "64/80", "+6", "Thermal physics"),
-  student("Jonas Akinyi", "B", "58/80", "-1", "Moments"),
-  student("Lina Hassan", "B", "56/80", "+3", "Thermal physics"),
-  student("Daniel Park", "C", "49/80", "-5", "Radioactivity"),
-  student("Ziad Rafik", "D", "38/80", "-13", "Thermal physics"),
-]
 
 /* ── AI quizzes ──────────────────────────────────────────────────────────── */
 

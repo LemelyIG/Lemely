@@ -36,7 +36,12 @@ from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
-from lemely.web.deps import AuthContext, get_auth_context, get_notification_prefs_service
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_notification_prefs_service,
+    get_user_mirror,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -93,18 +98,49 @@ def prefs_service(pg_sessionmaker: sessionmaker[Session]) -> NotificationPrefere
     return NotificationPreferencesService(pg_sessionmaker)
 
 
-def _seed_user(sm: sessionmaker[Session], role: Role) -> uuid.UUID:
+def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None = None) -> uuid.UUID:
     """Insert a real ``users`` row — ``notification_preferences.user_id`` FKs to it,
     so any test that actually writes a preferences row (not just reads the
-    all-defaults value) needs a real user to satisfy the constraint."""
+    all-defaults value) needs a real user to satisfy the constraint.
+
+    ``display_name`` defaults to ``None`` (unset by every pre-existing caller
+    of this helper) so the profile tests can seed the nullable-name case
+    without touching any other test in this file.
+    """
     uid = uuid.uuid4()
     with sm.begin() as session:
-        session.add(User(id=uid, email=f"{uid}@example.com", role=role))
+        session.add(User(id=uid, email=f"{uid}@example.com", role=role, display_name=display_name))
     return uid
 
 
 def _use_prefs_service(client: TestClient, service: NotificationPreferencesService) -> None:
     client.app.dependency_overrides[get_notification_prefs_service] = lambda: service  # type: ignore[union-attr]
+
+
+class _SessionUserMirror:
+    """Minimal ``UserMirror`` reading through a throwaway-DB sessionmaker.
+
+    Mirrors ``DbUserMirror.get_by_id`` (``lemely/auth/mirror.py``) exactly,
+    but bound to ``pg_sessionmaker`` directly rather than to ``Settings`` —
+    the same shape every other test-local repo double in this file's sibling
+    tests (``ClassService(sm)`` etc.) uses to avoid touching the process-wide
+    database in tests. Only ``get_by_id`` is implemented — the only method
+    ``get_profile`` calls.
+    """
+
+    def __init__(self, sm: sessionmaker[Session]) -> None:
+        self._sm = sm
+
+    def get_by_id(self, user_id: uuid.UUID) -> User | None:
+        with self._sm() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                session.expunge(user)
+            return user
+
+
+def _use_user_mirror(client: TestClient, sm: sessionmaker[Session]) -> None:
+    client.app.dependency_overrides[get_user_mirror] = lambda: _SessionUserMirror(sm)  # type: ignore[union-attr]
 
 
 def _auth_as(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
@@ -390,6 +426,79 @@ def test_clearing_only_one_bound_of_an_existing_pair_is_422(
     resp = client.put("/api/me/notification-preferences", json={"quietHoursStart": None})
 
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /api/me/profile (P3.7 chunk B) — real identity, never a fabricated one.
+# ---------------------------------------------------------------------------
+
+
+def test_profile_returns_the_real_display_name_email_and_role(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher, display_name="Nour El-Sayed")
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["displayName"] == "Nour El-Sayed"
+    assert body["email"] == f"{user}@example.com"
+    assert body["role"] == "teacher"
+
+
+def test_profile_display_name_is_null_when_unset_not_fabricated(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A user who never set a display name gets ``null``, never a made-up one.
+
+    ``User.display_name`` is nullable; the route must pass that absence
+    through honestly rather than substituting the email or a placeholder —
+    the caller (the teacher-portal sidebar) decides how to render it.
+    """
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    assert resp.json()["displayName"] is None
+
+
+@pytest.mark.parametrize(
+    "role", [Role.student, Role.parent, Role.school_admin, Role.platform_admin]
+)
+def test_profile_is_reachable_by_every_role(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], role: Role
+) -> None:
+    """Unlike the role-scoped portal routers, ``/api/me`` reaches every role (G-12's pattern)."""
+    user = _seed_user(pg_sessionmaker, role)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, role)
+
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    assert resp.json()["role"] == role.value
+
+
+def test_profile_for_a_token_with_no_mirrored_row_is_404_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, uuid.uuid4(), Role.teacher)
+
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 404
+
+
+def test_unauthenticated_profile_get_is_401(client: TestClient) -> None:
+    resp = client.get("/api/me/profile")
+    assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------

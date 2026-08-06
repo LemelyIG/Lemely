@@ -1,6 +1,15 @@
-import { useMutation, useQuery, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from "@tanstack/react-query"
 import { request, streamActivity } from "@/lib/api"
 import type {
+  ClassList,
+  ClassSummary,
+  CreateClassRequest,
   GradingQueue,
   Overview,
   PaperDetail,
@@ -8,27 +17,86 @@ import type {
   SchemeList,
   SchemeRow,
   TeacherPipelineFrame,
+  UpdateClassRequest,
   UploadResponse,
 } from "@/lib/teacherTypes"
 
 /*
- * React-query hooks + plain async helpers wrapping the teacher-portal
- * grading-console API (`lemely/web/routers/teacher.py`). Follows
+ * React-query hooks + plain async helpers wrapping the teacher-portal API
+ * (`lemely/web/routers/teacher.py`, `lemely/web/routers/classes.py`). Follows
  * `useStudentApi.ts`'s conventions: one hook per endpoint, no `fallback`
  * passed to `request()` — a real backend/auth failure must surface as a
  * query/mutation error the screen can render, never silently resolve to
  * empty data.
  *
- * Scope: only the 7 endpoints wired in this step (overview, papers
+ * Scope: the 7 grading-console endpoints wired in P2.8 (overview, papers
  * list/detail, grading queue, schemes list/upload, paper
- * upload/extract/grade). Classes and AI-quiz endpoints
- * (`/teacher/classes`, `/classes/{id}`, `/quizzes/*`) are out of scope.
+ * upload/extract/grade) plus the P3.7 chunk B class-list surface
+ * (`GET /teacher/classes`, `POST/PATCH/DELETE /classes/{id}` — T-01/T-02).
+ * The class-detail/roster/analytics endpoints (`GET /classes/{id}`,
+ * `/roster`, `/analytics`) and AI-quiz endpoints are out of scope — chunks
+ * c/d own T-03..T-06.
  */
 
 export function useTeacherOverview(): UseQueryResult<Overview, Error> {
   return useQuery({
     queryKey: ["teacher", "overview"],
     queryFn: () => request<Overview>("/teacher/overview"),
+  })
+}
+
+// ── Classes (T-01 class cards, T-02 classes list) ───────────────────────────
+
+export function useTeacherClasses(): UseQueryResult<ClassList, Error> {
+  return useQuery({
+    queryKey: ["teacher", "classes"],
+    queryFn: () => request<ClassList>("/teacher/classes"),
+  })
+}
+
+/** `POST /classes` (T-02 create-class action). Invalidates the classes list. */
+export function useCreateClass(): UseMutationResult<ClassSummary, Error, CreateClassRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateClassRequest) =>
+      request<ClassSummary>("/classes", {
+        method: "POST",
+        body: JSON.stringify(body satisfies CreateClassRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+    },
+  })
+}
+
+/** `PATCH /classes/{classId}` (rename / change subject). Invalidates the classes list. */
+export function useUpdateClass(): UseMutationResult<
+  ClassSummary,
+  Error,
+  { classId: string; body: UpdateClassRequest }
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ classId, body }) =>
+      request<ClassSummary>(`/classes/${classId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body satisfies UpdateClassRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+    },
+  })
+}
+
+/** `DELETE /classes/{classId}`. Invalidates the classes list. */
+export function useDeleteClass(): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (classId: string) =>
+      request<void>(`/classes/${classId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+    },
   })
 }
 

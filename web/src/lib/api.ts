@@ -46,6 +46,9 @@ export async function request<T>(
       ...init,
     })
     if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`)
+    // A 204 (e.g. `DELETE /classes/{id}`) has no body — `res.json()` would
+    // throw on the empty string. `T` is `void` at every such call site.
+    if (res.status === 204) return undefined as T
     return (await res.json()) as T
   } catch (err) {
     if (fallback !== undefined) return fallback

@@ -11,18 +11,29 @@ notification.
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from lemely.auth.mirror import UserMirror
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import (
     UNSET,
     NotificationPreferencesRow,
     NotificationPreferencesService,
 )
-from lemely.web.deps import AuthContext, get_auth_context, get_notification_prefs_service
-from lemely.web.schemas_me import NotificationPreferencesDTO, NotificationPreferencesUpdateDTO
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_notification_prefs_service,
+    get_user_mirror,
+)
+from lemely.web.schemas_me import (
+    NotificationPreferencesDTO,
+    NotificationPreferencesUpdateDTO,
+    ProfileDTO,
+)
 
 router = APIRouter(prefix="/api/me")
 
@@ -133,6 +144,44 @@ def put_notification_preferences(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _to_dto(row, role=auth.role)
+
+
+@router.get("/profile", response_model=ProfileDTO)
+def get_profile(
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+) -> ProfileDTO:
+    """Return the authenticated caller's real identity (P3.7 chunk B).
+
+    Backs the teacher-portal sidebar, which previously hardcoded a name and
+    department ("Mr H. Sabry / Physics dept · CAIE") with no data source at
+    all. Gated only by ``get_auth_context`` (any authenticated role), same as
+    ``get_notification_preferences`` — the lookup is identical whichever role
+    the caller has. Identity is always ``auth.user_id`` (the token ``sub``),
+    never a caller-supplied id (D1.6).
+
+    ``displayName`` is read from the mirrored ``public.users`` row, not the
+    token's ``email`` claim — the token claim can be stale or absent, and a
+    display name has no token claim at all. It is returned exactly as stored,
+    including ``None`` (:attr:`~lemely.db.models.users.User.display_name` is
+    nullable): the caller renders that absence honestly rather than the route
+    inventing a fallback name.
+
+    A malformed (non-UUID) ``user_id`` is a clean 422 — should not occur
+    against a real token, but the mirror lookup requires a real
+    :class:`uuid.UUID`, not the bare string ``AuthContext.user_id`` carries.
+    A user id that decodes but matches no mirrored row (should not occur for
+    a token that validated against the same mirror) is a 404 rather than a
+    500 or a fabricated profile.
+    """
+    try:
+        user_id = uuid.UUID(auth.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Malformed user id.") from exc
+    user = mirror.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="No profile found for this account.")
+    return ProfileDTO(displayName=user.display_name, email=user.email, role=user.role.value)
 
 
 __all__ = ["router"]

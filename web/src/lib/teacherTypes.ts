@@ -6,11 +6,13 @@
  * class name with its `DTO` suffix stripped (e.g. `SchemeRowDTO` ->
  * `SchemeRow`).
  *
- * Scope: only the DTOs reachable from the 7 grading-console endpoints wired
- * in this step (overview, papers list/detail, grading queue, schemes
- * list/upload, paper upload/extract/grade). The Classes and AI-quiz DTOs in
- * `schemas_teacher.py` (`ClassSummaryDTO`, `QuizPreviewDTO`, etc.) are out of
- * scope and intentionally omitted.
+ * Scope: the 7 grading-console endpoints wired in P2.8 (overview, papers
+ * list/detail, grading queue, schemes list/upload, paper upload/extract/
+ * grade) plus the P3.7 chunk B class-list surface (`GET /teacher/classes`,
+ * `POST/PATCH/DELETE /classes/{id}` — T-01/T-02). The AI-quiz DTOs and the
+ * T-03..T-06 shapes (`ClassDetailDTO`, `StudentRowDTO`, `StudentDetailDTO`,
+ * `ClassAnalyticsDTO`, `AtRiskListDTO`, `QuizPreviewDTO`, etc.) are out of
+ * scope for this module and intentionally omitted — chunks c/d own them.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/teacher/data.ts` (the mock shapes these DTOs were modeled
@@ -159,25 +161,122 @@ export interface SchemeList {
   stats: StatCard[]
 }
 
+// ── At-risk flags (shared by the overview, class summaries, and — from
+// P3.7 chunk c/d onward — the roster, student detail, and at-risk list) ───
+
+/**
+ * Who/when/note for a flag a teacher has acknowledged (mirrors
+ * `AtRiskAcknowledgementDTO`, D3.5, T-06). Present on an `AtRiskFlag` only
+ * when a stored acknowledgement's evidence fingerprint still matches the
+ * flag currently firing — an acknowledgement whose evidence has moved on
+ * renders as `acknowledged: null`, exactly as if it had never been acked
+ * (D3.5: "never a permanent mute"). `acknowledgedBy` is the acknowledging
+ * teacher's id, not a resolved display name.
+ */
+export interface AtRiskAcknowledgement {
+  acknowledgedBy: string
+  acknowledgedAt: string
+  note: string | null
+}
+
+/**
+ * One fired D3.3 at-risk rule (mirrors `AtRiskFlagDTO`). `summary` is the
+ * human-readable sentence the UI renders directly (spec §1.4: "reasons must
+ * be shown, not just a red dot") — never re-derive a reason string from
+ * `reason`/`evidence` client-side. `evidence` is that rule's structured
+ * numbers, deliberately untyped on the wire (no frontend consumes it yet).
+ */
+export interface AtRiskFlag {
+  reason: string
+  summary: string
+  evidence: Record<string, number | string | number[]>
+  acknowledged: AtRiskAcknowledgement | null
+}
+
 // ── Overview ──────────────────────────────────────────────────────────────
 
-/** An at-risk student on the overview (mirrors `AtRiskStudentDTO`). */
+/**
+ * An at-risk student on the overview (mirrors `AtRiskStudentDTO`). `flags`
+ * is the real reason-labelled D3.3 output — every student in this list has
+ * at least one flag.
+ */
 export interface AtRiskStudent {
   name: string
   grade: string
   delta: number | null
   weakTopic: string | null
+  flags: AtRiskFlag[]
+}
+
+/**
+ * One recent submission across the teacher's classes (mirrors
+ * `RecentActivityDTO`, T-01 item 4, D3.12). Spans papers *and* quizzes; a
+ * quiz attempt has no grade by design (D3.9) — `grade` is `null` for those
+ * rows and must render as an honest absence, never the student's last paper
+ * grade substituted in.
+ */
+export interface RecentActivity {
+  studentId: string
+  studentName: string
+  subjectCode: string
+  percentage: number
+  grade: string | null
+  recordedAt: string
+  origin: "past_paper" | "quiz" | "custom_paper"
 }
 
 /**
  * Response for `GET /teacher/overview` (mirrors `OverviewDTO`). `retention`
  * (lesson-retention minutes) is structurally-empty — always `[]` — since no
- * backend source exists for it.
+ * backend source exists for it; never render a chart fed by it.
  */
 export interface Overview {
   stats: StatCard[]
   atRisk: AtRiskStudent[]
   retention: number[]
+  recentActivity: RecentActivity[]
+}
+
+// ── Classes ───────────────────────────────────────────────────────────────
+
+/**
+ * One class in `GET /teacher/classes` (mirrors `ClassSummaryDTO`). `average`
+ * is the mean *latest percentage* across the roster — label it exactly that
+ * ("Average mark", "%"); deliberately NOT a class-level average predicted
+ * grade (D3.12 — averaging letter grades invents precision the data does
+ * not support). `atRiskCount`/`lastActivityAt`/`topWeakness` close the T-01
+ * card / T-02 table gaps the spec names with no field to back them (D3.12);
+ * an empty or history-less class reports `0`/`null`, never a placeholder.
+ */
+export interface ClassSummary {
+  id: string
+  label: string
+  studentCount: number
+  average: number | null
+  subjectCode: string | null
+  schoolId: string | null
+  joinCode: string | null
+  atRiskCount: number | null
+  lastActivityAt: string | null
+  topWeakness: string | null
+}
+
+/** Response for `GET /teacher/classes` (mirrors `ClassListDTO`). */
+export interface ClassList {
+  classes: ClassSummary[]
+}
+
+/** Body for `POST /classes` (mirrors `CreateClassRequestDTO`). */
+export interface CreateClassRequest {
+  name: string
+  subjectCode?: string | null
+  schoolId?: string | null
+}
+
+/** Body for `PATCH /classes/{classId}` (mirrors `UpdateClassRequestDTO`). Both fields optional. */
+export interface UpdateClassRequest {
+  name?: string | null
+  subjectCode?: string | null
 }
 
 // ── POST /papers/{id}/extract, /grade SSE frames ─────────────────────────

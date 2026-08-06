@@ -32,6 +32,25 @@ class NotificationPreferencesDTO(ApiModel):
     quietHoursEnd: time | None = None
 
 
+class ProfileDTO(ApiModel):
+    """Response for ``GET /api/me/profile`` (P3.7 chunk B).
+
+    Backs the teacher-portal sidebar identity block, which previously
+    hardcoded a name and department no field anywhere supplies. Every field
+    is real: ``displayName``/``email`` mirror :class:`~lemely.db.models.users.User`
+    one-for-one (never a token claim, which may be stale or absent);
+    ``role`` is the platform role the caller's token already carries.
+    ``displayName`` is nullable — :attr:`User.display_name` is nullable in
+    the schema (a user who never set one) — and the caller must render that
+    absence honestly (e.g. the email's local part, or the role), never a
+    fabricated name.
+    """
+
+    displayName: str | None = None
+    email: str
+    role: str
+
+
 class NotificationPreferencesUpdateDTO(ApiModel):
     """Body for ``PUT /api/me/notification-preferences``. Every field is optional.
 
@@ -52,4 +71,4 @@ class NotificationPreferencesUpdateDTO(ApiModel):
     quietHoursEnd: time | None = None
 
 
-__all__ = ["NotificationPreferencesDTO", "NotificationPreferencesUpdateDTO"]
+__all__ = ["NotificationPreferencesDTO", "NotificationPreferencesUpdateDTO", "ProfileDTO"]

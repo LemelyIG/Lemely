@@ -19,7 +19,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from lemely.auth.gotrue import HttpGoTrueBackend
-from lemely.auth.mirror import DbUserMirror
+from lemely.auth.mirror import DbUserMirror, UserMirror
 from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
@@ -327,6 +327,22 @@ def get_notification_prefs_service() -> NotificationPreferencesService:
     return NotificationPreferencesService(get_sessionmaker(get_settings()))
 
 
+@lru_cache(maxsize=1)
+def get_user_mirror() -> UserMirror:
+    """Return the process-wide :class:`UserMirror` singleton (P3.7 chunk B).
+
+    Backs ``GET /api/me/profile``.
+
+    The same :class:`DbUserMirror` :func:`get_auth_service` already wires into
+    :class:`~lemely.auth.service.AuthService` — a standalone dependency here so
+    a route that only needs a plain user lookup (real ``display_name``/
+    ``email``/``role``, never a caller-supplied claim) doesn't have to pull in
+    the whole auth service. Tests override this dependency with a mirror bound
+    to a throwaway Postgres database.
+    """
+    return DbUserMirror(get_settings())
+
+
 @dataclass(frozen=True, slots=True)
 class AuthContext:
     """The authenticated caller, resolved from a validated bearer token.
@@ -443,6 +459,7 @@ def reset_singletons() -> None:
     get_class_service.cache_clear()
     get_parent_link_service.cache_clear()
     get_notification_prefs_service.cache_clear()
+    get_user_mirror.cache_clear()
     get_review_service.cache_clear()
     get_at_risk_ack_service.cache_clear()
     get_question_bank_service.cache_clear()
