@@ -524,13 +524,29 @@ Starting facts (established 2026-08-06, do not re-derive):
         (spec §1.4). `ClassSummaryDTO.average` (mean latest percentage) is rendered and
         labelled as exactly that. This is a knowing deviation from the spec's wording —
         report it, do not quietly "fix" it later by inventing the mean grade.
-      - [ ] **a** todo — backend additive DTO enrichment + tests (backend-only, no `web/`
-            diff). `OverviewDTO.recentActivity`; `ClassSummaryDTO` + `atRiskCount` /
-            `lastActivityAt` / `topWeakness`; `StudentRowDTO` + `paperCount` /
-            `lastActiveAt` / `flags`. Every field derived from data the route ALREADY
-            loads — no new query, no N+1. Grade/percentage claims filter through
-            `lemely.core.history` per D3.9; quizzes carry a null grade rather than a
-            fabricated one.
+      - [x] **a** done (c95c52f) — backend additive DTO enrichment. All three gaps closed
+            from data the routes already load (no new query): `OverviewDTO.recentActivity`
+            (+ `RecentActivityDTO`, cap 8, `_RECENT_ACTIVITY_LIMIT`); `ClassSummaryDTO`
+            **and** `ClassDetailDTO` + `atRiskCount`/`lastActivityAt`/`topWeakness`;
+            `StudentRowDTO` + `paperCount`/`lastActiveAt`/`flags`. 1817 tests (1813 passed
+            / 4 live-only skips), 89.19% cov (from 89.16%). All 12 gates green, `alembic
+            check` clean, no schema change.
+            **Signature changes chunks b–d must not trip over:** `_student_row` now takes
+            required kwargs `now` + `acks`; `_class_row_to_summary`/`_class_row_to_detail`
+            take `now` (and detail takes `acks`); **`_average_for` now takes
+            `list[StudentHistory]`, not `(student_ids, history_store)`**.
+            **Do not reintroduce these shapes:** (a) `datetime.now(UTC)` called per student
+            inside a roster loop — the "At risk" card and that roster's per-row flags then
+            evaluate against different instants; one hoisted `now` per request. (b)
+            Inlining the class mean in `_class_row_to_summary` instead of calling
+            `_average_for` — that leaves `_average_for` called only by its own tests, i.e.
+            a D3.9 regression guard protecting no production path (this was caught in
+            review of the chunk, not by the gates). (c) A second `_at_risk_flag_dto`-shaped
+            converter for the roster's `flags`.
+            `AtRiskAcknowledgementDTO`/`AtRiskFlagDTO` moved earlier in
+            `schemas_teacher.py` so `StudentRowDTO.flags` is an in-order reference — do not
+            reorder them back. `pyproject.toml` gained the standard `TC001/2/3` per-file
+            ignore for `classes.py` (FastAPI `Depends` needs the names at runtime).
       - [ ] **b** todo — client API/types layer + T-01 dashboard + T-02 classes list.
       - [ ] **c** todo — T-03 class detail roster + T-04 class analytics (heatmap is the
             centrepiece).
