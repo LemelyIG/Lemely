@@ -3,6 +3,48 @@
 
 ## Phase 3
 
+### D3.14 — P3.8's three spec-vs-reality gaps: what T-08 and T-12 can honestly show
+
+**Context.** P3.8 builds the last five teacher screens. Three things the UI spec asks for
+have no data behind them, and each has a tempting fake.
+
+**1. T-08's "student's actual scan crop, side by side with the mark scheme extract."**
+Neither is persisted. `QuestionResult` stores the *transcription* of what the student wrote
+and the ids of the mark-scheme points the marker matched — not pixels, and not the scheme
+text. `ReviewItemDetailDTO`'s docstring already recorded this at P3.4; P3.8 is where it
+becomes visible, because this is the screen that was supposed to show them.
+**Decision: render `studentAnswer` (labelled as Lemely's transcription, not as the scan),
+`expectedAnswer`, and `matchedPointIds`, and state plainly on the screen that the original
+scan crop is not stored.** Rejected: a placeholder image frame (implies a missing asset
+rather than an absent capability), and reconstructing a "mark scheme extract" from the
+matched point ids (that is inventing precision — UI-spec §1.4 — since the ids are
+identifiers, not the scheme's prose). The teacher is deciding whether the AI misread a
+student; telling them they are looking at a transcription rather than the paper is
+load-bearing information, not a caveat to bury.
+
+**2. T-12's "optional attachment."** No attachment column on `announcements`, no storage
+wiring for anything but student paper uploads. **Decision: omit the control entirely**,
+the same treatment T-05's absent integrity signals and "contact route if configured" got in
+P3.7 chunk d. Rejected: a visibly-disabled upload button — "Coming soon" was right for T-08
+"assign practice" because that feature is scheduled (P4); an attachment is not scheduled
+anywhere, so the tag would be a promise nobody has made.
+
+**3. T-12's audience selector wants "several classes"; `announcements.class_id` is a single
+nullable FK.** Additive-only (D1.2/D1.3) means no join table without a strong reason.
+**Decision: one row per selected class, all written in one request and reported back as a
+group.** A whole-school announcement is the existing `school_id`-set/`class_id`-NULL shape.
+Rejected: an `announcement_audiences` join table (a new table to model a fan-out that the
+existing row shape already expresses); rejected: a comma-joined `class_id` string (unindexable,
+breaks the FK). Consequence to accept, not hide: editing or deleting a multi-class
+announcement acts per class row.
+
+**4. Nothing delivers these to students.** There is no student announcement surface, no
+notification send path, and `notification_preferences` (P3.6 chunk b) is written but never
+read. MISSION §4 puts announcement delivery and the student calendar in **Phase 5**.
+**P3.8 ships compose/list/delete only, and the phase report must say students cannot see
+them yet** rather than letting a working composer imply a working feature. The composer's
+mandated "preview of how it appears to a student" is honest — it is explicitly a preview.
+
 ### D3.13 — A whole class of DB bug that neither `pytest` nor `alembic check` can see (P3.7 chunk d)
 
 **What happened.** Every `POST`/`DELETE /api/teacher/at-risk/{id}/acknowledge` call 500'd against

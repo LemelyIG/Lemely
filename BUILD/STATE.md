@@ -696,8 +696,55 @@ Starting facts (established 2026-08-06, do not re-derive):
             never disappears). Throwaway spec + seed script deleted after verification, per
             brief.
             **P3.7 is now done — all six teacher screens (T-01..T-06) on real data.**
-- [ ] todo — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
-      builder + class results), T-12 (announcement composer).
+- [ ] doing — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
+      builder + class results), T-12 (announcement composer). Four chunks, one commit each.
+
+      **Established facts (2026-08-06, do not re-derive):**
+      - **T-07/T-08 backend is complete** (P3.4, `lemely/web/routers/review.py`, prefix
+        `/api/teacher/review`): `GET ""`, `GET /{item_id}`, `POST /bulk-approve`,
+        `POST /{item_id}/resolve`, `POST /{item_id}/dismiss`. DTOs in
+        `lemely/web/schemas_review.py`.
+      - **T-09/T-10 backend is complete** (P3.5 chunks D/E/F2, `lemely/web/routers/quiz.py`,
+        prefix `/api/teacher/quizzes`): POST/GET `""`, `GET /pool-count`, `GET|PATCH /{id}`,
+        `POST /{id}/status`, `POST /{id}/questions/generate`, `DELETE
+        /{id}/questions/{question_ref}`, POST/GET `/{id}/assignments`, `DELETE
+        /{id}/assignments/{aid}`, `GET /{id}/assignments/{aid}/results`. DTOs in
+        `lemely/web/schemas_quiz.py`.
+      - **T-12 has NO backend at all.** The `announcements` table exists from Phase 1
+        (`lemely/db/models/ops.py:75` — `author_id`, nullable `school_id`, nullable
+        `class_id`, `title`, `body`, nullable `publish_at`) but nothing reads or writes it
+        and there are no routes. Chunk a builds them. **No migration needed.**
+      - **Two spec-vs-reality gaps that must be reported, never faked (D3.14):**
+        (i) T-08 mandates "the student's actual scan crop side by side with the mark scheme
+        extract". **Neither is persisted** — `ReviewItemDetailDTO`'s own docstring already
+        records this; `studentAnswer` (what Lemely transcribed) + `matchedPointIds` +
+        `expectedAnswer` are the honest substitutes. Do not render a placeholder image or
+        invent a mark-scheme excerpt.
+        (ii) T-12 wants "optional attachment" — there is no attachment column and no
+        storage wiring. Omit it entirely (same treatment as T-05's absent integrity
+        signals and "contact route"), do not stub a disabled upload control.
+      - **Nothing delivers an announcement to a student.** There is no student-facing
+        announcement surface and no notification send path — MISSION §4 puts both in Phase 5
+        (which also owns `notification_preferences`, written but never read — P3.6 chunk b).
+        P3.8 ships compose/list/delete only; the phase report must say students cannot see
+        these yet.
+      - `Review.tsx` today is wired to the **P2 grading-console** endpoints, not to P3.4's
+        real review queue — chunk b replaces it. `Quizzes.tsx` still renders
+        `portals/teacher/data.ts` mock data — chunk c replaces it, and `data.ts` should be
+        gone by the end of chunk c.
+      - Reuse, never re-derive: `useTeacherApi.ts` hooks + `lib/teacherTypes.ts` DTO mirrors
+        + `lib/api.ts::request()` (which now surfaces the backend's real `detail` — P3.7d),
+        `relativeTime`/`initialsOf` in `lib/utils.ts`, `ClassService` for every tenancy
+        question (`list_classes`, `get_class`, `roster`, `member_school_ids`).
+      - **`supabase` is not on `PATH` non-interactively** — always run
+        `PATH="$HOME/.local/bin:$PATH" ./scripts/check.sh` or you silently get 9 gates, not 12.
+      - `pytest -q` prints no `N passed` line; count progress characters (see the P3.1–P3.4b
+        note above). Baseline entering P3.8: **1826 tests / 89.18% cov, all 12 gates green.**
+      - [ ] **a** todo — announcements backend (T-12 prerequisite). `AnnouncementService`
+            + `lemely/web/routers/announcements.py` + `schemas_announcements.py`.
+      - [ ] **b** todo — T-07 review queue + T-08 remark screens (replaces `Review.tsx`).
+      - [ ] **c** todo — T-09 quiz builder stepped flow (replaces mock `Quizzes.tsx`).
+      - [ ] **d** todo — T-10 quiz results + T-12 announcement composer screen.
 - [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
 - [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
