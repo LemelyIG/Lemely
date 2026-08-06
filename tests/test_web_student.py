@@ -12,13 +12,20 @@ where it is mocked — no network calls anywhere in this module.
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 from pydantic import SecretStr
@@ -26,13 +33,18 @@ from pydantic import SecretStr
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.core.study import StudyPlan, StudySession
+from lemely.db.base import Base
+from lemely.db.models import User
+from lemely.db.models.enums import Role
+from lemely.db.parent_repo import ParentLinkService
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import Settings, load_settings
+from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_history_store,
+    get_parent_link_service,
     get_settings,
 )
 
@@ -598,3 +610,175 @@ def test_onboarding_builds_profile_from_sliders() -> None:
     # Only subject sliders (with a code) become subjects / confidences.
     assert body["subjects"] == ["0625", "0620"]
     assert body["confidenceBySubject"] == {"0625": 0.72, "0620": 0.34}
+
+
+# ── Parent links (invite/list/revoke, D3.11/P3.6a) ──────────────────────────
+#
+# Postgres-backed (mirrors ``tests/test_web_classes.py``'s ``student_join_by_code``
+# tests): the parent-link routes need real ``users`` rows, so ``STUDENT_ID = "maya"``
+# (the file's default, string-keyed history fixture) cannot stand in as the
+# caller here. Self-contained rather than shared via conftest, matching every
+# other ``test_web_*.py`` file's ``pg_sessionmaker`` duplication convention.
+
+
+def _server_reachable(url: str) -> bool:
+    server_url = make_url(url).set(database="postgres")
+    engine = create_engine(server_url)
+    try:
+        with engine.connect():
+            return True
+    except OperationalError:
+        return False
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    base_url = DatabaseSettings().url
+    if not _server_reachable(base_url):
+        pytest.skip("local Postgres not reachable")
+
+    server_url = make_url(base_url).set(database="postgres")
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_test_{uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    engine = create_engine(make_url(base_url).set(database=dbname))
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def parent_link_service(pg_sessionmaker: sessionmaker[Session]) -> ParentLinkService:
+    return ParentLinkService(pg_sessionmaker)
+
+
+@pytest.fixture
+def parent_links_client(parent_link_service: ParentLinkService) -> Iterator[TestClient]:
+    app = create_app()
+    app.dependency_overrides[get_parent_link_service] = lambda: parent_link_service
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _seed_pg_user(
+    sm: sessionmaker[Session],
+    role: Role,
+    *,
+    display_name: str | None = None,
+    phone: str | None = None,
+) -> uuid.UUID:
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            User(
+                id=uid,
+                email=f"{uid}@example.com",
+                role=role,
+                display_name=display_name,
+                phone=phone,
+            )
+        )
+    return uid
+
+
+def _auth_as_pg(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(user_id), role=role.value
+    )
+
+
+def test_student_lists_no_parents_when_none_linked(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    assert parent_links_client.get("/api/student/parent-links").json() == {"parents": []}
+
+
+def test_student_links_a_parent_by_phone_then_lists_it(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    parent = _seed_pg_user(pg_sessionmaker, Role.parent, display_name="Mum", phone="+15551230000")
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.post("/api/student/parent-links", json={"phone": "+15551230000"})
+    assert resp.status_code == 200
+    assert resp.json() == {"parentId": str(parent), "displayName": "Mum", "phone": "+15551230000"}
+
+    listing = parent_links_client.get("/api/student/parent-links").json()
+    assert listing["parents"] == [
+        {"parentId": str(parent), "displayName": "Mum", "phone": "+15551230000"}
+    ]
+
+
+def test_student_link_unknown_phone_is_a_clean_404(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """No existing ``role=parent`` account for this phone — never auto-created (D3.11)."""
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.post("/api/student/parent-links", json={"phone": "+15559999999"})
+    assert resp.status_code == 404
+
+
+def test_student_link_is_idempotent_over_http(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _seed_pg_user(pg_sessionmaker, Role.parent, phone="+15550001234")
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    first = parent_links_client.post("/api/student/parent-links", json={"phone": "+15550001234"})
+    second = parent_links_client.post("/api/student/parent-links", json={"phone": "+15550001234"})
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert len(parent_links_client.get("/api/student/parent-links").json()["parents"]) == 1
+
+
+def test_student_unlink_then_list_shows_the_parent_gone(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    parent = _seed_pg_user(pg_sessionmaker, Role.parent, phone="+15550005678")
+    _auth_as_pg(parent_links_client, student, Role.student)
+    parent_links_client.post("/api/student/parent-links", json={"phone": "+15550005678"})
+
+    resp = parent_links_client.delete(f"/api/student/parent-links/{parent}")
+
+    assert resp.status_code == 204
+    assert parent_links_client.get("/api/student/parent-links").json() == {"parents": []}
+
+
+def test_student_unlink_absent_link_is_a_silent_no_op(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.delete(f"/api/student/parent-links/{uuid.uuid4()}")
+
+    assert resp.status_code == 204
+
+
+def test_student_unlink_malformed_parent_id_is_422(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.delete("/api/student/parent-links/not-a-uuid")
+
+    assert resp.status_code == 422

@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
-from lemely.db.models import ClassEnrollment, SchoolClass, SchoolMembership, Seat, User
+from lemely.db.models import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat, User
 from lemely.db.models.enums import MembershipRole, Role, SeatStatus
 
 if TYPE_CHECKING:
@@ -90,6 +90,22 @@ class RosterEntry:
 
     student_id: uuid.UUID
     display_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class StudentClassRow:
+    """One class a student is enrolled in, with its name and school (P3.6).
+
+    Unlike :class:`RosterEntry` (a class's students), this is a student's
+    classes — the direction :meth:`~ClassService.student_classes` serves.
+    ``school_name`` is ``None`` for an independent teacher's class (no
+    ``school_id``), never a fabricated placeholder.
+    """
+
+    class_id: uuid.UUID
+    name: str
+    subject_code: str | None
+    school_name: str | None
 
 
 class ClassService:
@@ -210,6 +226,38 @@ class ClassService:
                 .order_by(ClassEnrollment.class_id)
             )
             return list(session.scalars(stmt).all())
+
+    def student_classes(self, student_id: uuid.UUID | str) -> list[StudentClassRow]:
+        """Return every class ``student_id`` is enrolled in, with names (P3.6).
+
+        Unlike :meth:`enrolled_class_ids` (ids only, the seam
+        :class:`~lemely.db.quiz_taking_repo.QuizTakingService` uses for
+        student quiz scoping), this joins :class:`SchoolClass` — and
+        :class:`~lemely.db.models.orgs.School`, when the class has a
+        ``school_id`` — so a caller can render "which classes, with names"
+        without a second, independently-derived roster query. Both the
+        parent-portal home (P-01) and child-overview (P-02) screens call this
+        one method; do not write a second ``ClassEnrollment`` query anywhere
+        else for that purpose.
+        """
+        student_uuid = _as_uuid(student_id)
+        with self._sessionmaker() as session:
+            stmt = (
+                select(SchoolClass, School.name)
+                .join(ClassEnrollment, ClassEnrollment.class_id == SchoolClass.id)
+                .outerjoin(School, School.id == SchoolClass.school_id)
+                .where(ClassEnrollment.student_id == student_uuid)
+                .order_by(SchoolClass.name)
+            )
+            return [
+                StudentClassRow(
+                    class_id=cls.id,
+                    name=cls.name,
+                    subject_code=cls.subject_code,
+                    school_name=school_name,
+                )
+                for cls, school_name in session.execute(stmt).all()
+            ]
 
     def user_exists(self, user_id: uuid.UUID | str) -> bool:
         """Return whether any user exists with ``user_id``.
@@ -549,5 +597,6 @@ __all__ = [
     "ClassService",
     "JoinCodeError",
     "RosterEntry",
+    "StudentClassRow",
     "StudentNotSeatedError",
 ]

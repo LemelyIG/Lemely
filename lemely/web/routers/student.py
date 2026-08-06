@@ -44,6 +44,7 @@ from lemely.core.study_plan import build_study_plan
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.models.enums import Role, UploadStatus
+from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
@@ -58,6 +59,7 @@ from lemely.web.deps import (
     get_class_service,
     get_gemini_client,
     get_history_store,
+    get_parent_link_service,
     get_settings,
     get_storage_backend,
     get_student_upload_repo,
@@ -65,6 +67,7 @@ from lemely.web.deps import (
 )
 from lemely.web.schemas import question_to_dto
 from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
+from lemely.web.schemas_parent import LinkedParentDTO, LinkParentRequestDTO, ParentLinkListDTO
 from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
@@ -972,3 +975,70 @@ def student_join_class(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return JoinClassResponseDTO(classId=str(row.class_id), className=row.name)
+
+
+# ── Parent links (invite/list/revoke) ───────────────────────────────────────
+
+
+@router.get("/student/parent-links", response_model=ParentLinkListDTO)
+def student_list_parent_links(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> ParentLinkListDTO:
+    """Return every parent linked to the authenticated student.
+
+    Identity is always the authenticated caller (``auth.user_id``), never a
+    caller-supplied id (D1.6's IDOR discipline, matching ``student_join_class``).
+    """
+    parents = service.list_parents(auth.user_id)
+    return ParentLinkListDTO(
+        parents=[
+            LinkedParentDTO(parentId=str(p.parent_id), displayName=p.display_name, phone=p.phone)
+            for p in parents
+        ]
+    )
+
+
+@router.post("/student/parent-links", response_model=LinkedParentDTO)
+def student_link_parent(
+    payload: LinkParentRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> LinkedParentDTO:
+    """Invite an existing parent (by phone) to link to the authenticated student.
+
+    Resolves ``phone`` to an *existing* ``role=parent`` user only (D3.11) —
+    this never creates an account from a student-supplied phone (a stranger's
+    mistyped or spoofed number could otherwise be handed this student's
+    grades). No matching parent account is a clean 404: the parent must
+    OTP-login at least once (which auto-creates their ``role=parent`` user,
+    ``AuthService.verify_otp``) before this student can invite them again.
+    Idempotent: inviting an already-linked parent again is a no-op success,
+    not an error.
+    """
+    try:
+        parent = service.link(auth.user_id, payload.phone)
+    except ParentUserNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return LinkedParentDTO(
+        parentId=str(parent.parent_id), displayName=parent.display_name, phone=parent.phone
+    )
+
+
+@router.delete("/student/parent-links/{parent_id}", status_code=204)
+def student_unlink_parent(
+    parent_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> None:
+    """Revoke a parent's link to the authenticated student. Idempotent.
+
+    Revoking a link that does not exist (already revoked, or never granted)
+    is a silent no-op, not an error — mirrors ``ClassService.remove_student``.
+    """
+    try:
+        service.unlink(auth.user_id, parent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -477,6 +477,42 @@ def test_enrolled_class_ids_empty_for_unenrolled_student(
     assert service.enrolled_class_ids(student) == []
 
 
+def test_student_classes_returns_names_and_school(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """P3.6: the "which classes, with names" seam P-01/P-02 both call."""
+    admin = _seed_user(pg_sessionmaker, Role.school_admin)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student)
+    school = _seed_school(pg_sessionmaker, admin_id=admin, teacher_id=teacher)
+    service = ClassService(pg_sessionmaker)
+    school_cls = service.create_class(teacher, "Physics 10A", subject_code="0625", school_id=school)
+    independent_cls = service.create_class(teacher, "Maths Club", subject_code="0580")
+    other_cls = service.create_class(teacher, "Not Joined")
+    assert school_cls.join_code is not None
+    assert independent_cls.join_code is not None
+    service.join_by_code(student, school_cls.join_code)
+    service.join_by_code(student, independent_cls.join_code)
+
+    rows = service.student_classes(student)
+
+    by_name = {r.name: r for r in rows}
+    assert set(by_name) == {"Physics 10A", "Maths Club"}
+    assert by_name["Physics 10A"].subject_code == "0625"
+    assert by_name["Physics 10A"].school_name == "Test School"
+    assert by_name["Maths Club"].subject_code == "0580"
+    assert by_name["Maths Club"].school_name is None
+    assert other_cls.class_id not in {r.class_id for r in rows}
+
+
+def test_student_classes_empty_for_unenrolled_student(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = ClassService(pg_sessionmaker)
+    assert service.student_classes(student) == []
+
+
 # ── Input validation ─────────────────────────────────────────────────────────
 
 
