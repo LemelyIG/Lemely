@@ -71,6 +71,26 @@ def summarize_weaknesses(correction: CorrectionResult) -> WeaknessReport:
     )
 
 
+def grade_for_percentage(percentage: float, boundaries: dict[str, float]) -> str:
+    """Return the best grade whose threshold ``percentage`` clears, else ``"U"``.
+
+    The single grade-ladder-threshold algorithm, shared by :func:`predict_grade`
+    (marking-time prediction) and
+    :func:`lemely.db.review_repo.ReviewService`'s override recompute — so a
+    teacher's overridden total is graded by the *identical* algorithm the AI
+    mark was originally graded by, never a second, subtly different ladder
+    walk (P3.4).
+    """
+    for candidate, threshold in sorted(
+        boundaries.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    ):
+        if percentage >= threshold:
+            return candidate
+    return "U"
+
+
 def predict_grade(
     correction: CorrectionResult,
     boundaries: dict[str, float] | None = None,
@@ -82,15 +102,7 @@ def predict_grade(
         if correction.maximum_marks
         else 0.0
     )
-    grade = "U"
-    for candidate, threshold in sorted(
-        active_boundaries.items(),
-        key=lambda item: item[1],
-        reverse=True,
-    ):
-        if percentage >= threshold:
-            grade = candidate
-            break
+    grade = grade_for_percentage(percentage, active_boundaries)
 
     return GradePrediction(
         awarded_marks=correction.awarded_marks,

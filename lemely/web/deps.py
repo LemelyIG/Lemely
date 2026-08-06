@@ -29,6 +29,7 @@ from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
+from lemely.db.review_repo import ReviewService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.upload_repo import StudentUploadRepository
@@ -188,6 +189,20 @@ def get_class_service() -> ClassService:
     return ClassService(get_sessionmaker(get_settings()))
 
 
+@lru_cache(maxsize=1)
+def get_review_service() -> ReviewService:
+    """Return the process-wide :class:`ReviewService` singleton (P3.4).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton the class routes use, so review-queue tenancy composes the
+    identical ``list_classes``/``roster`` calls every other student-scoped
+    teacher route relies on (D3.1) — never a second, independently-derived
+    notion of "the caller's students". Tests override this dependency with a
+    service built on a throwaway Postgres database.
+    """
+    return ReviewService(get_sessionmaker(get_settings()), get_class_service())
+
+
 @dataclass(frozen=True, slots=True)
 class AuthContext:
     """The authenticated caller, resolved from a validated bearer token.
@@ -302,3 +317,4 @@ def reset_singletons() -> None:
     get_auth_service.cache_clear()
     get_seat_service.cache_clear()
     get_class_service.cache_clear()
+    get_review_service.cache_clear()

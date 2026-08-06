@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from lemely.runtime.budget_notify import register_budget_ntfy
-from lemely.web.routers import auth, classes, meta, school, student, teacher
+from lemely.web.routers import auth, classes, meta, review, school, student, teacher
 
 
 def create_app() -> FastAPI:
@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(teacher.router)
     app.include_router(classes.router)
+    app.include_router(review.router)
     app.include_router(student.router)
     app.include_router(school.router)
     return app

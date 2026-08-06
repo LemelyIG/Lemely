@@ -57,6 +57,7 @@ from lemely.core.schemas import (
 )
 from lemely.db.class_repo import ClassService, RosterEntry
 from lemely.db.models.enums import Role
+from lemely.db.review_repo import ReviewService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_metadata import ScanMetadataExtractor
@@ -68,6 +69,7 @@ from lemely.web.deps import (
     get_class_service,
     get_gemini_client,
     get_history_store,
+    get_review_service,
     get_settings,
     require_role,
 )
@@ -1018,6 +1020,7 @@ def teacher_overview(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    review_service: Annotated[ReviewService, Depends(get_review_service)],
 ) -> OverviewDTO:
     """Return headline stats plus at-risk students, all from history/analytics.
 
@@ -1046,7 +1049,7 @@ def teacher_overview(
     latest = [history.records[-1] for history, _ in histories if history.records]
 
     average = _mean([r.percentage for r in latest])
-    needs_review = _count_review_papers()
+    needs_review = _count_review_items(review_service, auth)
     at_risk_students = _at_risk(histories, now=datetime.now(UTC))
 
     stats = [
@@ -1058,7 +1061,7 @@ def teacher_overview(
         StatCardDTO(
             key="Need your eyes",
             value=str(needs_review),
-            unit="papers",
+            unit="items",
             valueTone="err" if needs_review else "t1",
             footTone="err" if needs_review else "t2",
         ),
@@ -1078,13 +1081,32 @@ def teacher_overview(
     return OverviewDTO(stats=stats, atRisk=at_risk_students, retention=[])
 
 
-def _count_review_papers() -> int:
-    """Count stored papers currently flagged for teacher review."""
-    return sum(
-        1
-        for e in papers_store.all()
-        if e.report is not None and e.report.correction.needs_teacher_review
-    )
+def _count_review_items(review_service: ReviewService, auth: AuthContext) -> int:
+    """Count OPEN review-queue items scoped to the caller's own students (P3.4).
+
+    Previously counted the entire in-process ``papers_store`` with no owner
+    filter at all — every teacher saw a global count including every other
+    teacher's flagged papers (the inherited P3.3 finding this closes). Now
+    sourced from the real, properly-scoped, DB-backed review queue via
+    ``ReviewService.list_queue`` (the same tenancy every other stat on this
+    route uses).
+
+    **This changes the stat's granularity**, not just its scoping: the old
+    count was per-*paper* (a paper with three flagged questions counted once);
+    this one is per-*review-queue-item*, i.e. per flagged question per reason
+    (that same paper can contribute 2-3+ rows — ``persist_correction`` writes
+    one row per (question, reason) pair, so a question flagged for both low
+    confidence and plagiarism contributes two rows). "Need your eyes" now
+    literally means "how many items are waiting in your review queue" (T-07's
+    own framing), which is arguably the more actionable number for a teacher
+    about to open that screen — but it is a real behaviour change from the
+    old paper-count semantics, called out here rather than silently swapped.
+
+    ``auth.user_id`` is already validated as a UUID by ``_visible_students``
+    above (which runs, and raises its 422, before this is called) — no
+    redundant validation here.
+    """
+    return len(review_service.list_queue(auth.user_id, auth.role))
 
 
 def _at_risk(
