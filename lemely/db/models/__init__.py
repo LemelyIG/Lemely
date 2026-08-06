@@ -17,13 +17,20 @@ from lemely.db.models.billing import PlanTier, Subscription
 from lemely.db.models.engagement import Streak, XpEvent
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
+    AttemptOrigin,
     BoundarySource,
     ConfidenceBand,
+    DifficultySource,
     ExamBoard,
     MarkerSource,
     MembershipRole,
     NotificationType,
     PlanInterval,
+    QuestionDifficulty,
+    QuestionSource,
+    QuizQuestionStatus,
+    QuizStatus,
+    QuizSubmissionStatus,
     ReviewReason,
     ReviewStatus,
     Role,
@@ -36,6 +43,14 @@ from lemely.db.models.enums import (
 )
 from lemely.db.models.ops import Announcement, AtRiskAcknowledgement, Notification, ReviewQueueItem
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat
+from lemely.db.models.quizzes import (
+    QuestionBank,
+    Quiz,
+    QuizAnswer,
+    QuizAssignment,
+    QuizQuestion,
+    QuizSubmission,
+)
 from lemely.db.models.users import Device, ParentChildLink, User
 
 
@@ -54,6 +69,7 @@ def import_all_models() -> None:
         engagement,
         ops,
         orgs,
+        quizzes,
         users,
     )
 
@@ -65,10 +81,12 @@ __all__ = [
     "AtRiskAcknowledgement",
     "Attempt",
     # Enums and mixins
+    "AttemptOrigin",
     "BoundarySource",
     "ClassEnrollment",
     "ConfidenceBand",
     "Device",
+    "DifficultySource",
     "ExamBoard",
     "MarkScheme",
     "MarkerSource",
@@ -79,7 +97,18 @@ __all__ = [
     "ParentChildLink",
     "PlanInterval",
     "PlanTier",
+    "QuestionBank",
+    "QuestionDifficulty",
     "QuestionResult",
+    "QuestionSource",
+    "Quiz",
+    "QuizAnswer",
+    "QuizAssignment",
+    "QuizQuestion",
+    "QuizQuestionStatus",
+    "QuizStatus",
+    "QuizSubmission",
+    "QuizSubmissionStatus",
     "ReviewQueueItem",
     "ReviewReason",
     "ReviewStatus",

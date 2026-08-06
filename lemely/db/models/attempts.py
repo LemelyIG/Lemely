@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lemely.db.base import Base
 from lemely.db.models.enums import (
+    AttemptOrigin,
     BoundarySource,
     ConfidenceBand,
     MarkerSource,
@@ -53,7 +54,10 @@ class Attempt(TimestampMixin, Base):
     """A marked attempt at a specific exam paper by a student."""
 
     __tablename__ = "attempts"
-    __table_args__ = (sa.Index("ix_attempts_user_id_recorded_at", "user_id", "recorded_at"),)
+    __table_args__ = (
+        sa.Index("ix_attempts_user_id_recorded_at", "user_id", "recorded_at"),
+        sa.Index("ix_attempts_user_id_origin", "user_id", "origin"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -100,6 +104,21 @@ class Attempt(TimestampMixin, Base):
         sa.Boolean, nullable=False, server_default=sa.false()
     )
     recorded_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    origin: Mapped[AttemptOrigin] = mapped_column(
+        sa.Enum(AttemptOrigin, name="attemptorigin"),
+        nullable=False,
+        server_default=sa.text("'past_paper'::attemptorigin"),
+    )
+    """What kind of assessment produced this attempt (P3.5, migration
+    ``0007_quiz_model``). Every pre-existing row is a past-paper attempt, so
+    the default needs no backfill. For ``origin = quiz``, ``grade``,
+    ``predicted_grade``, ``boundary_source``, ``paper_id``, ``paper_number``,
+    ``paper_variant``, ``session_month`` and ``session_year`` are all NULL —
+    a ten-question quiz has no grade boundaries, and giving it one would
+    invent precision and silently corrupt every grade-bearing consumer of
+    student history (``docs/quiz-model.md`` §1.2). This column is schema
+    only in chunk A; nothing here yet reads it (chunk G wires it up).
+    """
 
     upload: Mapped[Upload | None] = relationship("Upload", back_populates="attempts")
     question_results: Mapped[list[QuestionResult]] = relationship(

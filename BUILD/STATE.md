@@ -89,6 +89,11 @@ Starting facts (established 2026-08-06, do not re-derive):
   `_student_delta`/`_AT_RISK_GRADES` helpers.
 - The UI gates write to gitignored `reports/.scratch` (D3.2). Never commit anything under
   `reports/phase-2/` or `reports/phase-2.5/`; re-baseline explicitly with `LEMELY_REPORT_DIR`.
+- **Test-count numbers in the P3.1–P3.4b lines above are undercounts — ignore them, do not try
+  to reconcile.** `pytest -q` in this repo emits no `N passed` summary line (a reporter plugin
+  eats it), so earlier sessions guessed. Real counts come from the progress characters:
+  `pytest -q --tb=short > /tmp/p.log` then count `.`/`s`/`F` in the `^[.sFEx]+ +\[ NN%\]` lines.
+  Measured at chunk A: **1485 tests, 1481 passed, 4 skipped (live-only), 0 failed, 87.46% cov.**
 - Both P3.1 and P3.2 subagents stalled waiting on background runs instead of reporting.
   Brief future agents to run `./scripts/check.sh` in the **foreground**, and verify their
   work yourself regardless (MISSION §5).
@@ -185,9 +190,24 @@ Starting facts (established 2026-08-06, do not re-derive):
             Ties beyond the spec's "toward standard" rule break by fixed priority
             standard > foundation > challenge. Import-time table/GRADE_ORDER check is a
             real `raise`, not an `assert` (`python -O` strips asserts).
-      - [ ] **A** migration `0007_quiz_model` + ORM models + enums + `attempts.origin`.
-            Schema only, no behaviour. Additive-only (D1.2/D1.3).
-      - [ ] **G** `PaperRecord.origin` + `is_grade_bearing`, wired into the nine consumers
+      - [x] **A** done — migration `0007_quiz_model` + `lemely/db/models/quizzes.py` (6 tables:
+            `question_bank`, `quizzes`, `quiz_questions`, `quiz_assignments`, `quiz_submissions`,
+            `quiz_answers`) + 7 new enums + `attempts.origin`. Schema only, zero behaviour —
+            nothing reads or writes these tables yet. Additive-only (D1.2/D1.3): `attempts.origin`
+            carries `server_default 'past_paper'` so no backfill is needed, proven by a test that
+            inserts an Attempt *without* the column and reads the default back.
+            Migration creates its 7 enum types explicitly with `checkfirst=True` before any column
+            references them and drops them in `downgrade` (autogenerate omits both); `examboard` is
+            reused with `create_type=False` since 0002 owns it. Verified against the live stack:
+            `alembic upgrade head` → `downgrade -1` → `upgrade head` all clean, `alembic check`
+            reports no drift in either direction. `uq_question_bank_paper_question` is a *partial*
+            unique index (`WHERE paper_id IS NOT NULL`) so the chunk-B past-paper ingest is
+            idempotent while generated/teacher-upload rows (paper_id NULL) never collide — pinned
+            by a test that asserts both halves. `QuestionDifficulty` is pinned equal to
+            `core.difficulty.Band` and `GeneratedQuestion.difficulty`'s Literal by a
+            three-way vocabulary test, so a fourth band cannot be invented on one side only.
+            All 12 gates green.
+      - [ ] **G** doing — `PaperRecord.origin` + `is_grade_bearing`, wired into the nine consumers
             listed in `docs/quiz-model.md` §5. A behavioural no-op today — **must land
             before F**, after which it becomes a data-corruption fix.
       - [ ] **B** `question_bank` repo + visibility predicate + past-paper ingest from

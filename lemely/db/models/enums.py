@@ -165,6 +165,85 @@ class XpSource(enum.Enum):
     study_session_completed = "study_session_completed"
 
 
+class QuizStatus(enum.Enum):
+    """Lifecycle state of a teacher-built quiz (P3.5, ``docs/quiz-model.md`` §1.1).
+
+    ``draft -> assigned -> closed -> archived``, plus ``draft -> archived``
+    (an abandoned draft). No transition ever goes backwards: an assigned quiz
+    whose questions a teacher wants to change is duplicated into a new draft
+    rather than edited in place, so a live quiz never changes under students
+    mid-attempt (§1.4).
+    """
+
+    draft = "draft"
+    assigned = "assigned"
+    closed = "closed"
+    archived = "archived"
+
+
+class QuizQuestionStatus(enum.Enum):
+    """Whether a materialized :class:`quiz_questions` row is live or curated out."""
+
+    included = "included"
+    removed = "removed"  # curated out in step 5; row is kept (§1.5)
+
+
+class QuizSubmissionStatus(enum.Enum):
+    """Lifecycle state of a student's attempt at an assigned quiz."""
+
+    not_started = "not_started"
+    in_progress = "in_progress"
+    submitted = "submitted"
+    marked = "marked"
+
+
+class QuestionSource(enum.Enum):
+    """Provenance of a :class:`question_bank` row."""
+
+    past_paper = "past_paper"
+    generated = "generated"
+    teacher_upload = "teacher_upload"
+
+
+class QuestionDifficulty(enum.Enum):
+    """Difficulty band of a question.
+
+    Deliberately identical to :data:`lemely.core.difficulty.Band` and to
+    ``GeneratedQuestion.difficulty``'s ``Literal`` — one vocabulary, pinned by
+    ``tests/test_db_schema.py``'s vocabulary-agreement test so the three can
+    never drift apart. A generated question's band is stored verbatim, never
+    re-derived (``docs/quiz-model.md`` §1.1).
+    """
+
+    foundation = "foundation"
+    standard = "standard"
+    challenge = "challenge"
+
+
+class DifficultySource(enum.Enum):
+    """How a :class:`question_bank` row's ``difficulty`` was determined."""
+
+    declared_by_generator = "declared_by_generator"
+    inferred_from_marks = "inferred_from_marks"
+    teacher_set = "teacher_set"
+
+
+class AttemptOrigin(enum.Enum):
+    """What kind of assessment produced an :class:`Attempt` row.
+
+    Quiz marks are written as ``Attempt`` rows but carry no grade boundaries
+    (a ten-question quiz has no grade claim to make); this column is what
+    lets grade-bearing consumers (``grade_distribution``, ``cohort_trend``,
+    ``at_risk._check_below_target``, ...) exclude quiz attempts in exactly
+    one place rather than re-deriving "is this grade-bearing" per consumer
+    (``docs/quiz-model.md`` §1.2).
+    """
+
+    past_paper = "past_paper"
+    quiz = "quiz"
+    custom_paper = "custom_paper"  # T-11, marked through the same path
+
+
 # ---------------------------------------------------------------------------
 # Shared ORM mixins
 # ---------------------------------------------------------------------------
@@ -197,13 +276,20 @@ class TimestampMixin:
 
 __all__ = [
     "SESSION_MONTH_LABELS",
+    "AttemptOrigin",
     "BoundarySource",
     "ConfidenceBand",
+    "DifficultySource",
     "ExamBoard",
     "MarkerSource",
     "MembershipRole",
     "NotificationType",
     "PlanInterval",
+    "QuestionDifficulty",
+    "QuestionSource",
+    "QuizQuestionStatus",
+    "QuizStatus",
+    "QuizSubmissionStatus",
     "ReviewReason",
     "ReviewStatus",
     "Role",
