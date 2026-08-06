@@ -740,8 +740,29 @@ Starting facts (established 2026-08-06, do not re-derive):
         `PATH="$HOME/.local/bin:$PATH" ./scripts/check.sh` or you silently get 9 gates, not 12.
       - `pytest -q` prints no `N passed` line; count progress characters (see the P3.1–P3.4b
         note above). Baseline entering P3.8: **1826 tests / 89.18% cov, all 12 gates green.**
-      - [ ] **a** todo — announcements backend (T-12 prerequisite). `AnnouncementService`
-            + `lemely/web/routers/announcements.py` + `schemas_announcements.py`.
+      - [x] **a** done (4db0a5d + 9c9c0bb) — announcements backend (T-12 prerequisite).
+            `lemely/db/announcement_repo.py` (`AnnouncementService`),
+            `lemely/web/routers/announcements.py` (prefix `/api/teacher/announcements`,
+            gated `teacher`+`school_admin`), `schemas_announcements.py`,
+            `deps.get_announcement_service()`. Routes: `POST ""`, `GET ""` (author-scoped,
+            newest first), `DELETE /{id}` (204). 1863 tests (1859 passed / 4 live-only
+            skips), 89.34% cov (from 89.18%). All 12 gates green, `alembic check` clean,
+            **no migration** — the Phase-1 table was already the right shape.
+            **Chunk d must not re-derive these:** tenancy is 100% delegated to
+            `ClassService` (`get_class` per class id, `member_school_ids` for school-wide) —
+            this module runs no `classes`/`school_memberships` query of its own, do not add
+            one. Fan-out is **all-or-nothing**: every target is validated before any row is
+            written, so a teacher owning 9 of 10 targeted classes gets a 403 and *zero*
+            rows, never a partial send. `create()` takes an explicit `school_id` (a
+            school_admin can administer several schools, so `school_wide=True` alone does
+            not say which) validated against `member_school_ids`.
+            **Follow-up 9c9c0bb (found in verification, not by the gates):** the service
+            accepted `class_ids` *and* `school_wide` together and wrote `len+1` rows. The
+            audiences overlap, so that hands Phase 5's unwritten delivery layer two rows for
+            one recipient. Now a 422 — the audience is exclusive, enforced in the service so
+            the composer UI cannot bypass it. Do not "restore" the union.
+            `publish_at` is **stored but never read** — no scheduler exists; delivery is
+            Phase 5's. No attachment field anywhere (D3.14 §2).
       - [ ] **b** todo — T-07 review queue + T-08 remark screens (replaces `Review.tsx`).
       - [ ] **c** todo — T-09 quiz builder stepped flow (replaces mock `Quizzes.tsx`).
       - [ ] **d** todo — T-10 quiz results + T-12 announcement composer screen.
