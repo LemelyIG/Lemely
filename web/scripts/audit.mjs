@@ -1035,6 +1035,30 @@ async function main() {
   let routes = []
   try {
     browser = await puppeteer.launch({ headless: true })
+    // Chromium dying mid-run is NOT a route failure, and must never be
+    // reported as one. When the browser process goes away, every remaining
+    // route throws a CDP protocol error ("Session closed", "detached
+    // Frame", "Target closed") and the run's output reads as a dozen
+    // simultaneous product defects — which is exactly how two P3.10 e2a
+    // verification runs were first misread. Capture the real exit
+    // code/signal here (a SIGKILL means the OS killed it, i.e. memory; a
+    // SIGSEGV/SIGABRT means Chromium crashed) so the run diagnoses itself,
+    // and abort the walk at the first sign rather than accumulating
+    // phantom failures. Same class of finding as the `reuseExistingServer`
+    // one recorded in BUILD/STATE.md: a gate whose failure mode is
+    // undiagnostic is barely better than no gate.
+    let browserExit = null
+    browser.process()?.once("exit", (code, signal) => {
+      browserExit = { code, signal }
+    })
+    const browserDeath = (context) =>
+      new Error(
+        `Chromium died mid-run (${browserExit ? `exit code ${browserExit.code}, signal ${browserExit.signal}` : "still connected per the process handle — see the underlying error"}) ${context}. ` +
+          "This is a harness/environment failure, not a route defect: every route after this " +
+          "point would report a spurious CDP protocol error. Re-run; if it recurs, check " +
+          "memory pressure (free -m) while the audit runs.",
+      )
+
     const page = await browser.newPage()
     watchConsole(page, consoleErrors)
 
@@ -1210,11 +1234,25 @@ async function main() {
     // actually unauthenticated, and it also removes the registry's implicit
     // dependency on route ordering for the authenticated roles.
     routes = buildRouteRegistry(seed)
+    // The student journey above is finished with this page, and it is the
+    // heaviest one in the run (a real upload + a full marking pass). Closing
+    // it frees its renderer before the registry walk opens five more
+    // contexts, rather than holding ~22 routes' worth of extra memory for
+    // nothing.
+    await page.close()
+
     const sessionsSeen = new Map()
-    for (const route of routes) {
-      const sessionKey = route.session
-        ? `${route.session.role}:${route.session.userId}`
-        : "unauth"
+    // Each session's context is closed after the LAST route that uses it,
+    // for the same reason: peak memory is what kills a long run, and a
+    // context whose routes are all done is pure overhead.
+    const lastRouteIndexBySession = new Map()
+    const sessionKeyOf = (route) =>
+      route.session ? `${route.session.role}:${route.session.userId}` : "unauth"
+    routes.forEach((route, i) => lastRouteIndexBySession.set(sessionKeyOf(route), i))
+
+    for (const [routeIndex, route] of routes.entries()) {
+      if (!browser.connected) throw browserDeath(`before ${route.screenId} ${route.path}`)
+      const sessionKey = sessionKeyOf(route)
       let routePage = sessionsSeen.get(sessionKey)
       if (!routePage) {
         const context = await browser.createBrowserContext()
@@ -1238,8 +1276,14 @@ async function main() {
           responsiveViolations,
         })
       } catch (err) {
+        if (!browser.connected) throw browserDeath(`during ${route.screenId} ${route.path}`)
         log(`!! ${route.screenId} ${route.path} FAILED: ${err?.message ?? err}`)
         routeFailures.push({ screenId: route.screenId, path: route.path, error: String(err?.message ?? err) })
+      }
+
+      if (lastRouteIndexBySession.get(sessionKey) === routeIndex && browser.connected) {
+        await routePage.browserContext().close().catch(() => {})
+        sessionsSeen.delete(sessionKey)
       }
     }
   } finally {
