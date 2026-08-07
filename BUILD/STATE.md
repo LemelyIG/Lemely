@@ -1391,6 +1391,24 @@ Starting facts (established 2026-08-06, do not re-derive):
               a stubbed payload; `low-confidence`/`teacher-corrected` ← real seeded rows;
               `loading` ← request interception with a delay; `error` ← interception → 500;
               `offline` ← CDP offline emulation.
+            **Harness defect found 2026-08-07 while verifying e1 — real, and not e1's
+            fault. `web/playwright.config.ts` sets `reuseExistingServer: !process.env.CI`,
+            i.e. TRUE for every local run, which makes the build's most expensive gate
+            unsound in three distinct ways:**
+            (i) a leftover `scripts/e2e_server.py` from an earlier run is silently reused.
+            If that one was started *without* the Supabase keys, every signup 400s with
+            `"Supabase service-role key is not configured"` — which reads as a product
+            failure and cost a full diagnostic cycle here.
+            (ii) worse and untested-for: a stale server runs **stale code**, so the gate
+            can report PASS against source that is no longer on disk. Nothing detects this.
+            (iii) two gate runs at once share port 8000, and whichever finishes first tears
+            the server down under the other, producing an ECONNREFUSED cascade that looks
+            like 8 real test failures. That is exactly what happened here — the orchestrator
+            ran `check.sh` while a subagent was also running it. **Do not run gates
+            concurrently with a subagent that runs gates**; that is an orchestration rule,
+            not a harness bug, but (i) and (ii) are harness bugs and should be fixed (fail
+            fast in `check.sh` when port 8000 is already listening, rather than reusing it).
+            Backend gates were unaffected and all green throughout.
             - [ ] **e1** todo — seed extension (`scripts/seed_e2e.py`): a review-queue item
                   (low-confidence question result), a quiz + assignment + student submission,
                   and genuinely-empty accounts (teacher with no classes, parent with no
