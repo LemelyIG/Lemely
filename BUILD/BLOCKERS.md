@@ -250,9 +250,10 @@ plus retries), cumulative **$0.138 / $8.00**.
 
 ## B3 — Every *correct* MCQ answer is flagged as plagiarism (live product defect)
 
-**Raised:** 2026-08-07 · **Status:** OPEN · **Severity: high** — it corrupts the
-core correction loop for one of the two paper types, and it gets worse the
-better the student does.
+**Raised:** 2026-08-07 · **Status:** **RESOLVED 2026-08-07** — see the
+resolution at the end of this section. · **Severity: high** — it corrupted the
+core correction loop for one of the two paper types, and got worse the better
+the student did.
 
 Found by the P3.10 chunk-e1 subagent while building the seeded quiz submission,
 and **independently re-verified by the orchestrator** rather than taken on
@@ -313,5 +314,38 @@ should still be checkable). Pin it with a test that a correct MCQ answer is
 **Do not "fix" this by raising `plagiarism_threshold`.** Nothing above 1.0 is
 reachable, and lowering the sensitivity of a real check to silence a
 type-confusion bug is the same class of act B2 rules out.
+
+### RESOLVED — 2026-08-07, by the type guard, and it covers AI-detection too
+
+`apply_integrity_checks` now resolves each corrected question back to its
+mark-scheme question **once**, at the top of the loop, and skips *both*
+integrity checks when `question.type == QuestionType.MCQ`. The lookup already
+existed inside the AI-detection branch; it was hoisted rather than duplicated.
+
+Three decisions inside the fix, each pinned by its own test:
+
+1. **The guard is on question type, not answer length.** A one-character
+   *free-text* answer is a genuinely different case and stays checkable —
+   `test_short_free_text_answer_is_still_checked`.
+2. **A question absent from the scheme is still checked.** It cannot be
+   classified as MCQ, so it must not be exempted by default; the failure mode
+   of an over-broad exemption is silently disabling a real check —
+   `test_question_absent_from_the_scheme_is_still_checked`.
+3. **AI-detection is skipped for MCQ as well, which is wider than this
+   blocker's stated fix.** Same type confusion (nobody "AI-generates" the
+   letter C), plus a budget argument that matters against the hard $8 cap:
+   with `ai_detection_enabled=True`, the INBOX accuracy fixture's 40-question
+   MCQ paper would have made 40 Gemini calls to classify 40 single letters.
+   `test_mcq_never_costs_an_ai_detection_call`.
+
+**Verified by inversion, not assumed** — with the guard forced to `False` the
+three MCQ tests fail (`[True, True] == [False, False]` on the whole-paper case)
+and pass with it restored. `plagiarism_threshold` was not touched, no golden
+fixture changed, and marks are still never modified by either check.
+
+**This clears the INBOX accuracy-fixture task's stated contamination:** paper
+22's 34 correct answers no longer generate 34 false plagiarism flags, so the
+confidence distribution that directive item 3 asks for will measure the marking
+rather than this defect.
 
 ---

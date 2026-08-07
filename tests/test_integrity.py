@@ -140,6 +140,46 @@ def _mark_scheme() -> MarkScheme:
     )
 
 
+def _mcq_mark_scheme() -> MarkScheme:
+    """Two multiple-choice questions — the shape ``correct_mcq_answers`` marks."""
+    return MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 2,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2023,
+                "paper_type": "mcq",
+                "maximum_mark": 2,
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "C"},
+                {"id": "2", "marks": 1, "type": "mcq", "mcq_answer": "A"},
+            ],
+        }
+    )
+
+
+def _mcq_question(**overrides: object) -> CorrectedQuestion:
+    """A *correct* MCQ answer: student and expected are the same single letter."""
+    fields: dict[str, object] = {
+        "question_id": "1",
+        "awarded_marks": 1,
+        "maximum_marks": 1,
+        "confidence": ConfidenceBand.HIGH,
+        "confidence_score": 1.0,
+        "needs_teacher_review": False,
+        "student_answer": "C",
+        "expected_answer": "C",
+        "marker_source": "deterministic",
+    }
+    fields.update(overrides)
+    return CorrectedQuestion.model_validate(fields)
+
+
 def _question(**overrides: object) -> CorrectedQuestion:
     fields: dict[str, object] = {
         "question_id": "1",
@@ -297,3 +337,84 @@ class TestApplyIntegrityChecks:
         q = result.questions[0]
         assert q.plagiarism_flagged is False
         assert q.needs_teacher_review is False
+
+
+class TestIntegrityChecksSkipMcqQuestions:
+    """B3 — you cannot plagiarise a multiple-choice letter.
+
+    Before the fix, ``SequenceMatcher('C', 'C').ratio()`` was 1.0, so every
+    *correct* MCQ answer was flagged and pushed into the teacher-review queue
+    while every wrong one came back clean — a 40/40 paper produced 40 flags and
+    a 0/40 paper produced none. Each test here fails against the unguarded
+    version.
+    """
+
+    def test_correct_mcq_answer_is_not_flagged_as_plagiarism(self) -> None:
+        correction = CorrectionResult(metadata=_metadata(), questions=[_mcq_question()])
+        result = apply_integrity_checks(
+            correction,
+            _mcq_mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        q = result.questions[0]
+        assert q.plagiarism_flagged is False
+        assert q.needs_teacher_review is False
+        assert q.review_reason is None
+
+    def test_a_whole_correct_mcq_paper_produces_no_flags(self) -> None:
+        # The inverted-incentive case stated in B3: every answer right.
+        correction = CorrectionResult(
+            metadata=_metadata(),
+            questions=[
+                _mcq_question(),
+                _mcq_question(question_id="2", student_answer="A", expected_answer="A"),
+            ],
+        )
+        result = apply_integrity_checks(
+            correction,
+            _mcq_mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        assert [q.plagiarism_flagged for q in result.questions] == [False, False]
+        assert result.needs_teacher_review is False
+
+    def test_mcq_never_costs_an_ai_detection_call(self) -> None:
+        # Budget as well as correctness: AI-authorship of one letter is
+        # meaningless, and a 40-question paper would be 40 Gemini calls.
+        mock_client = MagicMock()
+        correction = CorrectionResult(metadata=_metadata(), questions=[_mcq_question()])
+        result = apply_integrity_checks(
+            correction,
+            _mcq_mark_scheme(),
+            gemini_client=mock_client,
+            settings=IntegritySettings(ai_detection_enabled=True),
+        )
+        mock_client.generate_structured.assert_not_called()
+        assert result.questions[0].ai_detection_flagged is False
+
+    def test_short_free_text_answer_is_still_checked(self) -> None:
+        # The guard is on question type, not answer length — a one-character
+        # free-text answer stays checkable.
+        question = _question(student_answer="g", expected_answer="g")
+        correction = CorrectionResult(metadata=_metadata(), questions=[question])
+        result = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        assert result.questions[0].plagiarism_flagged is True
+
+    def test_question_absent_from_the_scheme_is_still_checked(self) -> None:
+        # Unknown type cannot be classified as MCQ, so it must not be exempted.
+        question = _question(question_id="99")
+        correction = CorrectionResult(metadata=_metadata(), questions=[question])
+        result = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        assert result.questions[0].plagiarism_flagged is True

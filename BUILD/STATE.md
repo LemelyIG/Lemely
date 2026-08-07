@@ -1436,17 +1436,76 @@ Starting facts (established 2026-08-06, do not re-derive):
                   expected and they should re-invoke, never wait-loop.**
                   **It found B3 (see BLOCKERS.md) — a real, live product defect**, which is
                   worth more than the chunk itself.
-            - [ ] **e1** todo — seed extension (`scripts/seed_e2e.py`): a review-queue item
-                  (low-confidence question result), a quiz + assignment + student submission,
-                  and genuinely-empty accounts (teacher with no classes, parent with no
-                  linked child). Unlocks T-08/T-10 and every `empty` capture. Update
-                  `tests/test_seed_e2e.py`; verify against the live stack; extend the
-                  documented JSON contract additively.
-            - [ ] **e2** todo — `audit.mjs`: per-route `states[]` mechanism, T-08/T-10 added
+            - [ ] **e2** doing — `audit.mjs`: per-route `states[]` mechanism, T-08/T-10 added
                   to the registry, full capture re-baselined into `reports/phase-3/` +
                   contact sheet, and `scripts/compare_screens.mjs` (sharp) reporting
                   added/removed/changed vs the Phase-2.5 baselines. The compare is an
                   explicit phase act, not a per-run `check.sh` gate.
+
+                  **Split into e2a/e2b (2026-08-07) — the harness change and the
+                  re-baseline are separable and one audit run is ~11 minutes, so a
+                  checkpoint between them is worth more than a single commit.**
+                  Established facts for both, do not re-derive:
+                  - `audit.mjs` shape: `buildRouteRegistry(seed)` (line ~408) returns
+                    flat route objects consumed by `visitRoute()` (~375), which does
+                    3 breakpoints of `shoot(page, screenId, route.state ?? "default", bp)`
+                    then one axe + one Lighthouse at 1440. `main()` (~613) drives the
+                    4 non-registry routes inline (G-04 login default/error/loading,
+                    S-10, S-15/S-17, S-06) — G-04 already proves the interception
+                    pattern for `loading` and `error`; reuse it, do not invent a second.
+                    Sessions are per-`role:userId` **incognito contexts** (do not
+                    collapse), and `generateContactSheet()` (~938) already rebuilds from
+                    whatever is on disk, so it needs no change.
+                  - Summary rows are keyed by `route.slug`; a multi-state route must
+                    emit a **distinct slug per audited state** or `_summary.json` rows
+                    collide and `check_ui_gates.py` silently checks the wrong one.
+                  - Seed keys e1 added, and what each unlocks: `reviewItem.itemId` →
+                    T-08 `/teacher/review/:itemId`; `quiz.quizId`/`assignmentId` →
+                    T-09-detail `/teacher/quizzes/:quizId` and T-10
+                    `.../assignments/:aid/results`; `emptyTeacher`/`emptyParent` are
+                    **real accounts with no data** → honest `empty` captures, never a
+                    stubbed payload.
+                  - Loaded-only ready predicates (the P3.10b rule: never wait on text
+                    the sidebar nav or an `sr-only` pending `h1` also renders — and here
+                    also never on text the **error** state renders): T-08 → `"← Back to
+                    queue"` (the error state's button is `"Back to queue"`, no arrow);
+                    T-09-detail → `"← All quizzes"` (error state says `"Back to
+                    quizzes"`); T-10 → the completion line (`"on the current roster"` /
+                    `"No students on the roster yet"`), not `"Back to quizzes"`.
+                  - Baselines to compare against: `reports/phase-2.5/screens/` — only
+                    **6 screen ids / 39 PNGs** (G-04, S-06, S-10, S-14, S-15, S-17), so
+                    the overwhelming majority of a Phase-3 corpus is legitimately
+                    *added*, not *changed*. `reports/phase-3/` does not exist yet and is
+                    NOT gitignored (only `reports/.scratch/` is).
+                  - `sharp` is already a `web/` devDependency — no new package.
+              - [ ] **e2a** todo — harness only, verified into `reports/.scratch`.
+                    (i) `states[]` on a registry route: each entry `{state, slug, setup?,
+                    ready?, teardown?}`, defaulting to today's single implicit
+                    `"default"` so every existing entry keeps working unchanged.
+                    (ii) Add T-08, T-09-detail and T-10 to the registry from the e1 seed
+                    keys — this is the phase's largest acceptance hole (three screens
+                    with **zero** audit coverage today).
+                    (iii) Add the honest non-default states: `empty` (via the
+                    `emptyTeacher`/`emptyParent` sessions — a second incognito context,
+                    same mechanism), `loading` + `error` (request interception, the G-04
+                    pattern), `offline` (CDP). Capture `low-confidence`/
+                    `teacher-corrected` from the **real seeded review item**, never a
+                    stub.
+                    **Decide and record explicitly: axe on every state, Lighthouse on
+                    `default` only.** axe is ~1s and empty/error states are exactly where
+                    violations hide (chunk b's `page-has-heading-one` finding was an
+                    empty screen); Lighthouse is ~30s and its scores are a property of
+                    the route, not the state. State the tradeoff in the report — do not
+                    let it read as "every state fully audited".
+              - [ ] **e2b** todo — `scripts/compare_screens.mjs` (sharp: decode both PNGs
+                    to raw pixels, compare dimensions then per-pixel with a stated
+                    threshold) emitting added/removed/changed vs
+                    `reports/phase-2.5/screens/`, plus the real re-baseline run
+                    (`LEMELY_REPORT_DIR=reports/phase-3`) and its contact sheet, both
+                    committed. **The compare is an explicit phase act, not a `check.sh`
+                    gate** — a per-run gate would re-fail on every intended change. An
+                    unintended diff is a blocker; an intended one is re-baselined with a
+                    note in the phase report (MISSION §11).
             - [ ] **e3** todo — the item-(c) decision: stand up Vitest (the Vite-native
                   runner; no framework drift), move `check-design-tokens.mjs`'s invariants
                   in verbatim per chunk c's own note, and cover `lib/utils.ts`
@@ -1477,6 +1536,33 @@ Starting facts (established 2026-08-06, do not re-derive):
       still outside `audit.mjs`'s four student routes; the gate passes by never looking.
       P3.9 added six routes (`/login/parent`, `/parent`, `/parent/children/:id`,
       `.../subjects/:code`, `.../weaknesses`, `/student/parents`).
+- [x] done — **P3.10-B3** MCQ integrity guard (D3.19). `apply_integrity_checks` resolved each
+      corrected question to its mark-scheme question once at the top of the loop and now skips
+      **both** the plagiarism and AI-detection checks when `question.type == QuestionType.MCQ`.
+      Before this, `SequenceMatcher('C','C').ratio()` = 1.0 made every *correct* MCQ answer a
+      plagiarism flag and a review-queue item while every wrong one stayed clean — the signal
+      was exactly inverted. 5 new tests in `tests/test_integrity.py` (21 in the file).
+      **Do not narrow the guard to answer length** (a one-char *free-text* answer must stay
+      checkable) and **do not exempt a question missing from the scheme** — both are pinned by
+      tests that pass either way on purpose, as guards against a future over-broad exemption.
+      AI-detection is exempted too, which is wider than B3 asked: same type confusion, plus
+      40 Gemini calls per MCQ paper against the $8 cap once P4 turns the setting on.
+      Clears the contamination B3 flagged on the accuracy-fixture task below.
+      **Caught at commit time by the orchestrator, not by the chunk that wrote the fix: the
+      fix was left uncommitted with `pytest` RED.** `tests/test_student_correct.py::
+      test_upload_then_correct_persists_attempt` asserted **2** review-queue rows, and its
+      own comment spelled out the defect as if it were the specification — "q1's
+      deterministic MCQ answer ('A') is verbatim-identical to the expected answer ('A'), so
+      the (now-wired) advisory plagiarism checker also flags it → a second, independent
+      row." That is B3, written down as an expectation. The end-to-end persistence test was
+      **pinning the bug**, which is why B3 survived from P2.4 to P3.10 with a green suite.
+      Corrected to 1 row (`low_confidence` only) with the history recorded inline, per
+      MISSION §5's "if the test is genuinely wrong, document why".
+      **Lesson, generalisable: a test comment that explains *why* a surprising assertion is
+      correct is where a defect hides.** The other 20+ `plagiarism_flagged` assertions in
+      the suite construct the flag directly on a `CorrectedQuestion` and never route through
+      `apply_integrity_checks`, so they were unaffected — only the one test that exercised
+      the real path had encoded the false positive.
 - [ ] todo — **INBOX-2026-08-07-ACC** Real past-paper accuracy fixtures — **B1 IS RESOLVED
       (2026-08-07); this task is live again.** The human installed the `paperscraper` skill
       (`.claude/skills/paperscraper/SKILL.md`, an external tool at `/home/sico/PaperScraper`

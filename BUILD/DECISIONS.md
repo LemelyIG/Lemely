@@ -3,6 +3,70 @@
 
 ## Phase 3
 
+### D3.19 — B3's MCQ integrity guard is on question *type*, and it exempts AI-detection too
+
+**Context.** B3 (`BUILD/BLOCKERS.md`): `apply_integrity_checks` ran the plagiarism
+similarity check on any question with both a student answer and an expected answer.
+For an MCQ both are the same single letter, so `SequenceMatcher.ratio()` is exactly
+1.0 on every *correct* answer and 0.0 on every wrong one. A 40/40 paper produced 40
+plagiarism flags and 40 review-queue items; a 0/40 paper produced none. Found by the
+P3.10 chunk-e1 subagent, re-verified independently before acting.
+
+**Decision, and the three sub-choices that were not forced by the blocker.**
+
+1. **Guard on `question.type == QuestionType.MCQ`, not on answer length.** Length is
+   the tempting proxy — it needs no mark-scheme lookup — but it would exempt a
+   one-character *free-text* answer, which is a genuinely checkable case. The
+   mark-scheme lookup already existed inside the AI-detection branch; it was hoisted
+   to the top of the loop, so the type is now resolved once and shared, not twice.
+2. **A question absent from the mark scheme keeps being checked.** It cannot be
+   classified, and the two failure directions are not symmetric: wrongly exempting
+   silently disables a real integrity check, wrongly checking produces a visible
+   advisory flag a teacher can dismiss. Default to checking.
+3. **AI-detection is skipped for MCQ as well** — wider than B3's stated fix, and
+   deliberate. The same type confusion applies (single-letter authorship is not a
+   meaningful question), and there is a budget argument the correctness one does not
+   carry: with `ai_detection_enabled=True` the INBOX accuracy fixture's 40-question
+   MCQ paper would spend 40 Gemini calls classifying 40 letters against a hard $8
+   cap. `ai_detection_enabled` defaults to False, so this changes no current
+   behaviour — it removes a live foot-gun before P4 turns the setting on.
+
+**Rejected:** raising `plagiarism_threshold`. Nothing above 1.0 is reachable, and
+desensitising a real check to hide a type-confusion bug is the same class of act B2
+explicitly ruled out for `mark_reconcile_tolerance`.
+
+**Verified by inversion, not assumed.** Forcing the guard to `False` fails the three
+MCQ tests (including `[True, True] == [False, False]` on the whole-correct-paper
+case); restoring it passes all 21 in `tests/test_integrity.py`. The two
+"still checked" tests deliberately pass either way — they are regression guards
+against a future over-broad exemption, not evidence for this fix.
+
+**One pre-existing test was pinning the defect, and that is the real lesson here.**
+`tests/test_integrity.py` passing is not the whole story: the fix was left uncommitted
+with the *suite* red. `tests/test_student_correct.py::
+test_upload_then_correct_persists_attempt` — the end-to-end upload→correct→persist
+test, i.e. the one place the real path was exercised — asserted **2** review-queue
+rows, and its comment justified the second one in the defect's own terms ("q1's
+deterministic MCQ answer ('A') is verbatim-identical to the expected answer ('A'), so
+the … plagiarism checker also flags it"). B3 shipped in P2.4 and survived to P3.10
+behind a green suite *because* that assertion had been written to match the observed
+output. Corrected to 1 row (`low_confidence`), with the history kept inline so it is
+not silently re-flipped; MISSION §5's "if the test is genuinely wrong, document why"
+is the governing rule, and this is the genuine case, not a convenience.
+
+The other 20+ `plagiarism_flagged` assertions across `test_web_review.py`,
+`test_review_repo.py`, `test_attempt_repo.py` and `test_web_app.py` set the flag
+directly on a `CorrectedQuestion` and never call `apply_integrity_checks`, so none of
+them constrained the fix — a fact worth knowing before anyone reads "23 tests mention
+plagiarism" as coverage of this behaviour. **Generalisable:** a test comment that
+works hard to explain why a surprising assertion is correct is a good place to look
+for a defect.
+
+**Consequence for the INBOX accuracy task.** Its paper 22 (`0625_s23_qp_22`, MCQ,
+ground truth 34/40) would have generated 34 false plagiarism flags, so the
+confidence distribution directive item 3 asks for would have been measuring this
+defect. That contamination is now gone; the task can report on the marking itself.
+
 ### D3.18 — The token retrofit: the inherited premise was wrong, D2.9's workaround was half-applied, and the type scale had a hole (P3.10 chunk c)
 
 **Context.** P3.7 chunk b handed forward carried item (b): "the teacher portal's five
