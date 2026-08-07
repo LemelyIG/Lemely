@@ -3,6 +3,48 @@
 
 ## Phase 3
 
+### D3.15 — T-09's six steps do not map 1:1 onto the quiz data model, and two of the spec's step-1 fields belong to the assignment (P3.8 chunk c)
+
+**Context.** UI-spec §T-09 specifies a six-step flow whose step 1 is "basics — title,
+subject, class, due date, optional time limit". The quiz data model
+(`docs/quiz-model.md` §1.4/§1.6, built in P3.5 and fixed by D3.6) has **no `class_id`,
+`due_at` or `closes_at` column on `quizzes`** — all three live on `quiz_assignments`,
+because §1.6's whole point is that one quiz can be assigned to several classes with
+different due dates. So the spec's step 1 asks the builder to collect two fields the
+draft row cannot store.
+
+**Decision.** Collect `class` + `due date` (+ `closes at`) at **step 6 (assign)**, where
+they become a real `quiz_assignments` row, not at step 1. Step 1 collects
+title + subject code + optional time limit — exactly the fields the draft row has.
+The other five steps map 1:1: 2 → `included_topics`, 3 → `target_grade`,
+4 → `pool_source` + `GET /pool-count`, 5 → `POST /questions/generate` +
+`DELETE /questions/{ref}`, 6 → `POST /assignments`.
+
+**Why not the alternatives.**
+- *Collect class/due at step 1 and hold them in client state until step 6.* "Draft saving
+  throughout" is a named T-09 state; a teacher who fills step 1, leaves, and resumes would
+  silently lose two of the four fields they entered — the draft would be visibly
+  lying about what it saved. Worse than moving the fields.
+- *Add `class_id`/`due_at` columns to `quizzes`.* Directly contradicts §1.6 and D3.6, and
+  would create a second, conflicting answer to "when is this quiz due" for a quiz assigned
+  to two classes. The schema is right; the spec's step-1 list was written before it.
+
+**Two related calls made in the same chunk.**
+1. **Topic source for step 2 is free-text entry plus suggestions from the teacher's own
+   classes** (`ClassSummary.topWeakness`, already fetched for step 6's class picker and
+   already roster-scoped). Deliberately **not** `GET /api/quizzes/topics` — that P2-era
+   route folds *every student in the history store* into one aggregate, i.e. it is the
+   same cross-tenant enumeration P3.3 removed from `/api/teacher/overview`. Wiring a new
+   screen to it would reintroduce the leak on a different surface.
+2. **The mock's "Predicted class average" panel is deleted, not ported.** It is invented
+   precision (UI-spec §1.4) with no data source: nothing predicts a class's score on an
+   unwritten quiz. Same treatment as D3.12's refused class-level average predicted grade.
+
+**Consequence to report, not to paper over.** Because `question_bank` ships empty (D3.7),
+a first-time teacher's step 4 count is genuinely 0 for `past_paper` and step 5 generates
+nothing. The builder renders the backend's own `message`/`shortfall` verbatim and names
+which constraint to loosen; it never shows a plausible number and never invents questions.
+
 ### D3.14 — P3.8's three spec-vs-reality gaps: what T-08 and T-12 can honestly show
 
 **Context.** P3.8 builds the last five teacher screens. Three things the UI spec asks for

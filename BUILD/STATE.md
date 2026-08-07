@@ -824,7 +824,17 @@ Starting facts (established 2026-08-06, do not re-derive):
             rejects it as an extra input. And `./scripts/check.sh` needs
             `source .venv/bin/activate` as well as the `PATH` fix, or all five backend gates
             report "command not found" as FAIL.
-      - [ ] **c** todo — T-09 quiz builder stepped flow (replaces mock `Quizzes.tsx`).
+      - [ ] **doing** **c** — T-09 quiz builder stepped flow (replaces mock `Quizzes.tsx`).
+            **Design fixed before starting (D3.15) — implement it, do not redesign.**
+            Step→field map: 1 title/subjectCode/timeLimit (`POST ""` then `PATCH`), 2
+            `includedTopics`, 3 `targetGrade`, 4 `poolSource` + `GET /pool-count`, 5
+            `POST /{id}/questions/generate` + `DELETE /{id}/questions/{ref}`, 6
+            `POST /{id}/assignments` (class + dueAt + closesAt live HERE, not step 1 —
+            `quizzes` has no such columns; D3.15). `create_assignment` already flips
+            `draft→assigned` itself, so the UI must NOT also `POST /{id}/status`.
+            Topics: free text + suggestions from `ClassSummary.topWeakness`; never
+            `GET /api/quizzes/topics` (global cross-tenant aggregate). Delete the mock's
+            "Predicted class average" — invented precision, no data source.
       - [ ] **d** todo — T-10 quiz results + T-12 announcement composer screen.
 - [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
 - [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
