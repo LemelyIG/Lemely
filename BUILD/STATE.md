@@ -1042,16 +1042,29 @@ Starting facts (established 2026-08-06, do not re-derive):
             interleaved into a declining run stops the flag firing (cost one debug cycle).
             The 30s OTP resend cooldown means a seed script and the test that follows it
             cannot both request a challenge for the same phone without a wait.
-      - [ ] **c** todo — P-03 child subject detail + P-04 child weaknesses. Routes to add to
-            `parentRoute`: `children/:childId/subjects/:code` and
-            `children/:childId/weaknesses` — **both are already linked from P-02 and 404
-            today** (expected, same pattern as P3.7 c/d; do not "fix" by deleting the links).
-            `useChildSubject`/`useChildWeaknesses` and the `SubjectDetail`/`ChildWeaknesses`
-            types are already written in `lib/hooks/useParentApi.ts` + `lib/parentTypes.ts`.
-            P-04 must report the spec's "what the child is doing about it" as **absent** —
-            `ChildWeaknessesDTO` carries no such field and D3.11 refused to fake it.
-            P-03's `boundaryDistance` is nullable (already on A*, or no boundary row): omit
-            the panel entirely, never render "0 marks from".
+      - [x] **c** done (26a390f) — P-03 subject detail + P-04 weaknesses, closing chunk b's
+            two expected 404s. New `screens/SubjectDetail.tsx` + `screens/Weaknesses.tsx`,
+            routes `children/:childId/subjects/:code` and `children/:childId/weaknesses`.
+            **Zero backend files touched: 1866 tests / 89.34% cov, unchanged.** All 12
+            gates green.
+            **Do not reintroduce / do not "tidy" away:**
+            (a) `boundaryDistance` null omits the whole panel. Never render "0 marks from" —
+            null means the distance was never computed (top grade, or no threshold for the
+            next grade up), not that the distance is zero.
+            (b) P-04 renders the backend's ranking and never re-sorts —
+            `ChildWeaknessesDTO` documents worst-accuracy-first as its own contract.
+            (c) P-04's closing note names the absent "what the child is doing about it"
+            signal. Do not replace it with a "sessions planned: 0" stat (D3.11) — a zero
+            there reads as an accusation the data does not make.
+            (d) P-03's basis sentence has singular/plural branches; both were verified.
+            Verified on the live stack (throwaway seeds + specs, deleted): 2/2 green — the
+            P-02→P-03→P-04 walk asserting the ranking, the absent-signal note present and
+            "sessions planned" absent; plus a **separately seeded child with a reachable
+            boundary** proving the populated "4 more marks for a C" panel. Both the null and
+            populated boundary paths are covered. Zero serious/critical axe, zero console
+            errors at 380/768/1440.
+            **Fact worth not re-deriving:** `SubjectPaperDTO.marks`/`RecentPaperDTO.marks`
+            are `"63/80"` — no spaces around the slash (cost one test iteration).
       - [ ] **d** todo — student-side parent-link management (the only way a link is
             created in production — D3.11's scope note). Backend exists:
             `GET|POST /api/student/parent-links`, `DELETE .../{parent_id}`; the
