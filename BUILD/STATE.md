@@ -1478,8 +1478,24 @@ Starting facts (established 2026-08-06, do not re-derive):
                     *added*, not *changed*. `reports/phase-3/` does not exist yet and is
                     NOT gitignored (only `reports/.scratch/` is).
                   - `sharp` is already a `web/` devDependency — no new package.
-              - [ ] **e2a** doing (started 2026-08-07; **built, verification run in flight
-                    2026-08-07 session 2**) — harness only, verified into `reports/.scratch`.
+              - [x] **e2a** done (2026-08-07 session 8, verified by run **v9**) — harness
+                    only, verified into `reports/.scratch`.
+                    **v9's result, the run e2a's `done` depended on: a full clean walk.**
+                    26 routes (22 declarative + 4 D2.10-era inline), **zero unreachable**,
+                    **zero axe violations at ANY severity** across all **34** audited
+                    states (up from v8's 31 — T-08's three extra states are the
+                    difference), Lighthouse accessibility **100** on every route bar
+                    `teacher-review`'s 96, **0** console errors, **0** horizontal-scroll
+                    violations. Performance floor 67 (`teacher-quiz-detail`).
+                    Corpus in `reports/.scratch/screens/`: **99 PNGs / 21 screen ids**,
+                    with the non-default states e2a exists to capture — T-08
+                    `low-confidence`/`teacher-corrected`/`loading`/`error`, T-09-detail
+                    and T-10 `loading`/`error`, T-01 `empty`/`offline`, P-01 `empty`,
+                    G-04 `loading`/`error`.
+                    **All 13 gates green, 0 skipped** (`./scripts/check.sh`, one clean
+                    uncontended detached run, ports 8000/4173 verified free first).
+                    Backend counts necessarily **unchanged at 1892 tests / 89.35% cov** —
+                    the diff is `web/` + `BUILD/` only, zero `lemely/` files touched.
                     Session-2 resume note: the harness was found **written but uncommitted**
                     (a prior session died before committing) and is now checkpointed at
                     `ad50d74` as a `wip:` commit — `audit.mjs` +434/−51 (the `states[]`
@@ -1676,8 +1692,15 @@ Starting facts (established 2026-08-06, do not re-derive):
                     holding a second time. Fixed in the same commit with the sr-only-h1
                     shape `ReviewItem.tsx`/`QuizBuilder.tsx` already use, and by
                     promoting the parent empty state's `h2` to the `h1` it actually is.
-                    Run **v9** launched detached from `2f140e7` → `/tmp/audit_v9.log`;
-                    that is the run e2a's `done` depends on.
+                    Run **v9** (detached, from `2f140e7` → `/tmp/audit_v9.log`) came back
+                    fully clean — see the `e2a done` line above for the numbers.
+                    **Process lesson worth one line, since it cost two false alarms
+                    here:** `pgrep -f "scripts/audit.mjs"` matches *your own shell* when
+                    the pattern appears in the command line you are running, so a
+                    wait-loop built on it reports "STILL RUNNING" forever after the
+                    process is gone. Check the log's own final line (a clean run ends at
+                    `Contact sheet: …`; a failed one prints `FAILED:` after it) and
+                    whether ports 8000/4173 are free.
 
                     (i) `states[]` on a registry route: each entry `{state, slug, setup?,
                     ready?, teardown?}`, defaulting to today's single implicit
