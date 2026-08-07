@@ -1101,10 +1101,95 @@ Starting facts (established 2026-08-06, do not re-derive):
             `useProfile()` already exists and is the fix. Carried to P3.10.
             **P3.9 is now done — G-05 and P-01..P-04 are all on real data, and the link
             that makes them reachable exists.**
-- [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
+- [ ] doing — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
       Lighthouse a11y ≥95, screenshot corpus for every new screen × state × breakpoint,
       Impeccable audit+polish, no regression vs Phase-2.5 baselines).
+
+      **Five-chunk split (2026-08-07), one commit each. Established facts, do not re-derive:**
+      - Baseline at chunk-a start: working tree clean at `fadab58`, all 12 gates green,
+        1868 tests (1864 passed / 4 live-only skips) / 89.35% cov. Supabase stack UP
+        (`supabase status` OK; `supabase_imgproxy_Lemely`/`supabase_pooler_Lemely` are
+        stopped and that is normal — the other twelve containers are what matter).
+        `node -v` = **v26.6.0**, so `npx impeccable detect` (needs 24+) is fine.
+      - **Always run gates as `./scripts/check.sh`** — it already exports
+        `$HOME/.local/bin` onto PATH itself (line 28), so the P3.7-era warning about
+        `PATH=... ./scripts/check.sh` is obsolete; the 12-vs-9 gate split is fixed.
+      - Full route inventory (from `web/src/App.tsx` + the three `portals/*/index.tsx`).
+        In Phase-3 scope for the gate — **19 routes, of which `audit.mjs` covers 4**:
+        covered today `/login`, `/student`, `/student/correct`, `/student/result/:paperId`;
+        MISSING `/login/parent`, `/parent`, `/parent/children/:childId`,
+        `.../subjects/:code`, `.../weaknesses`, `/student/parents`, `/teacher`,
+        `/teacher/classes`, `/teacher/classes/:classId`, `.../analytics`,
+        `/teacher/students/:studentId`, `/teacher/at-risk`, `/teacher/review`,
+        `/teacher/review/:itemId`, `/teacher/quizzes`, `/teacher/quizzes/:quizId`,
+        `/teacher/quizzes/:quizId/assignments/:assignmentId/results`,
+        `/teacher/announcements`, `/teacher/grading`, `/teacher/schemes`.
+        Out of Phase-3 scope (P4/P5 screens still on mock data — do NOT add them to the
+        gate, that would be gating unbuilt work): `/student/subject/:code` is real but
+        P2's, `/student/plan`, `/student/board`, `/student/onboard`, `/student/landing`,
+        `/student/directions`.
+      - `web/scripts/audit.mjs` is a **linear 506-line script**, not a route table: it
+        hardcodes one student journey inline. Chunk b converts it to a declarative
+        registry; that restructure is the work, not an afterthought.
+      - Every screen verification in P3.7–P3.9 used a *throwaway* seed script deleted
+        afterwards. Chunk a makes that permanent and shared — Phase 6's acceptance
+        ("seeded demo accounts for all 5 roles") needs it anyway.
+      - [x] **a** done — shared multi-role seed fixture `scripts/seed_e2e.py` (478 LOC) +
+            `tests/test_seed_e2e.py` (25 hermetic unit tests over the pure parts). The one
+            seeding path for both harnesses; all 5 roles, emitting the documented JSON
+            contract on stdout (progress goes to stderr, so stdout stays machine-readable)
+            and optionally to `--json-out`. 1892 tests (1888 passed / 4 live-only skips),
+            89.35% cov (unchanged — the new tests cover `scripts/`, which is outside the
+            measured package). All 12 gates green, no migration, zero `lemely/` files
+            touched.
+            **Verified against the live stack, not asserted** — the whole point of this
+            chunk. Ran the seed, then queried the *real* API with the seeded tokens:
+            `GET /api/teacher/at-risk` reproduces exactly `declining→[declining_trend]`,
+            `inactive→[inactive]`, `control→[]`, `correctedPaper→[]`, and
+            `GET /api/parent/children` returns exactly the one linked child. Backend for
+            that check is `scripts/e2e_server.py` on port 8000 (**not**
+            `uvicorn lemely.web.app:app` — there is no module-level `app` attribute; that
+            costs a cycle to rediscover).
+            **`ensure_supabase_env()` added here (the script's only non-obvious part):**
+            `LEMELY_SUPABASE__SERVICE_ROLE_KEY`/`__ANON_KEY` are per-stack secrets that
+            live in neither `lemely.toml` nor `.env`, so running the seed bare died on
+            `AuthError: Supabase service-role key is not configured` — which reads as a
+            broken script, not "export two variables". It now resolves them from
+            `supabase status -o json` exactly as `web/scripts/audit.mjs::resolveSupabaseEnv`
+            already does, via `shutil.which("supabase", path=~/.local/bin:$PATH)`. An
+            already-exported value always wins. Verified by running with both vars
+            explicitly unset. **Do not "simplify" this to a bare `["supabase", ...]`** —
+            that is ruff S607, and the `which` lookup is also what makes the missing-CLI
+            case a clear message instead of an `OSError`.
+            **Ruff trap worth one line:** a comment beginning with the four letters `noqa`
+            is parsed by ruff as a *blanket* directive (RUF100 "unused blanket noqa"), even
+            when it is plain prose explaining an adjacent real `# noqa: S603`. Word such
+            comments to start some other way.
+            Scenario facts already encoded as module constants — do not fork them:
+            declining is 3 same-subject papers 82→68→55 (rule 1 reads the last three
+            grade-bearing records across ALL subjects, so a second subject interleaved
+            stops the flag firing, per P3.9b); inactive is one paper ≥14 days old; control
+            is a recent improving run that must stay unflagged. Rule 2 (predicted ≥2 below
+            target) is **not exercised and not faked** — no target-grade column until P4
+            (D3.3). Every attempt is `origin=past_paper` (D3.9). Per-run `runTag`
+            namespaces every email + the parent phone, so reruns never collide and there
+            is deliberately no teardown. One OTP challenge is requested per run and the
+            token it yields is returned — a consumer must reuse it rather than starting a
+            second challenge for the same phone (30s cooldown).
+      - [ ] **b** doing — expand `audit.mjs` to the full 19-route registry, then FIX
+            everything it newly finds. Known-in-advance: `text-t3` at 10-13px measures
+            4.36:1 (under AA 4.5:1) and is used for caption text on nearly every teacher
+            screen; icon-only `button-name` on the parent shell below 640px. Decide the
+            `--t3` token change vs per-screen retrofit here.
+      - [ ] **c** todo — token retrofit of the teacher + parent portals onto the DESIGN.md
+            scale (item (b) below), plus the student-sidebar `useProfile()` fix (item (d)).
+      - [ ] **d** todo — Playwright E2E per role + at-risk flags asserted against chunk a's
+            seeded scenarios (the phase's named acceptance criterion).
+      - [ ] **e** todo — screenshot corpus for every new screen × state × breakpoint
+            re-baselined into `reports/phase-3/`, contact sheet, regression check against
+            the Phase-2.5 baselines, and the item-(c) frontend-runner decision.
+
       Carried in from P3.7 chunk b, both genuinely P3.10-shaped:
       (a) `web/scripts/audit.mjs` is still scoped to the 4 *student* routes (D2.10). Every
       teacher/parent route added in P3.7–P3.9 needs adding here, or the axe/Lighthouse/

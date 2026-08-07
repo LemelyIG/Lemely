@@ -25,7 +25,13 @@
 # then commit the diff with a note in the phase report (MISSION §11).
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-export PATH="$HOME/.local/bin:$PATH"
+# .venv/bin first so the backend gates run against the project's pinned tools
+# even from a shell that never sourced the venv. Without it every backend gate
+# reports "command not found" and FAILS — loud, but only if you read the log;
+# the far worse variant is a *different* ruff/mypy on PATH silently gating the
+# build against the wrong versions. $HOME/.local/bin carries `supabase`, which
+# this sandbox's non-interactive shells otherwise lack (P3.7).
+export PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
