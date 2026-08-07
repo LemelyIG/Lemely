@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
@@ -62,6 +62,14 @@ export function Login() {
         <Button type="submit" variant="ink" size="lg" disabled={login.isPending}>
           {login.isPending ? "Signing in…" : "Sign in"}
         </Button>
+        {/* UI spec §G-04: "Parent → G-05 (parents authenticate by phone)".
+            Parents have no password to type here — this is the only way in. */}
+        <p className="text-body-md text-t2">
+          Are you a parent?{" "}
+          <Link to="/login/parent" className="text-accent hover:underline">
+            Sign in with your phone
+          </Link>
+        </p>
       </form>
     </main>
   )

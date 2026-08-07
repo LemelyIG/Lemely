@@ -459,6 +459,48 @@
   --err-bg: var(--md-error-container);
 }
 
+/* ── Parent portal (muted rose) ─────────────────────────────────────────────
+ * The third and last accent role in the palette. Student holds --md-primary
+ * and teacher holds --md-tertiary, so parent takes --md-secondary: distinct at
+ * a glance without inventing a brand value DESIGN.md does not carry.
+ *
+ * Neutrals deliberately match the *student* scope (softer --md-outline-variant
+ * border, lighter surface-2) rather than the teacher's denser archival set.
+ * UI spec §4.8: a parent has "no interest in learning an interface" and the
+ * whole portal is four read-only screens — this is the low-density surface of
+ * the three, not the triage console.
+ */
+[data-portal="parent"] {
+  --bg: var(--md-background);
+  --surface: var(--md-surface-container-lowest);
+  --surface-2: var(--md-surface-container);
+  --border: var(--md-outline-variant);
+
+  --ink: var(--md-inverse-surface);
+  --ink-hover: var(--md-on-surface);
+
+  --accent: var(--md-secondary);
+  --accent-hover: var(--md-on-secondary-fixed-variant);
+  --accent-subtle: var(--md-secondary-fixed);
+  --accent-on: var(--md-on-secondary);
+
+  --secondary: var(--md-tertiary);
+  --secondary-hover: var(--md-on-tertiary-fixed-variant);
+  --secondary-subtle: var(--md-tertiary-fixed);
+  --secondary-on: var(--md-on-tertiary);
+
+  --t1: var(--md-on-surface);
+  --t2: var(--md-on-surface-variant);
+  --t3: color-mix(in srgb, var(--md-outline) 65%, var(--md-on-surface-variant) 35%);
+
+  --ok: var(--md-tertiary);
+  --ok-bg: var(--md-tertiary-fixed);
+  --warn: var(--amber-base);
+  --warn-bg: var(--amber-subtle);
+  --err: var(--md-error);
+  --err-bg: var(--md-error-container);
+}
+
 * {
   box-sizing: border-box;
 }

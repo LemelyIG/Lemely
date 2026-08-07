@@ -7,13 +7,24 @@ import { useAuth } from "./AuthContext"
  * element (not each screen) so the whole subtree is gated in one place:
  *   - no session              -> /login
  *   - session, wrong role     -> the portal that does match the session's role
- * `allowedRoles` lists which roles may render this subtree; everything else
- * (parent/school_admin/platform_admin today) resolves to /teacher, the
- * closest existing surface until Phase 3 gives them dedicated portals.
+ * `allowedRoles` lists which roles may render this subtree.
  */
 
+/**
+ * The portal a role belongs in. `parent` resolves to its own portal as of
+ * P3.9 — it previously fell through to `/teacher`, which meant a parent
+ * completing the OTP flow landed in the teacher console (every screen there
+ * then 403'd, since `/api/teacher/*` is gated `teacher`+`school_admin`).
+ *
+ * `school_admin` and `platform_admin` still resolve to `/teacher`, which is
+ * deliberate and not the same bug: they hold the teacher-router roles, so the
+ * screens there genuinely serve them. Their dedicated surfaces (K-01, X-01)
+ * are Phase-5/6 work.
+ */
 export function portalPathForRole(role: string): string {
-  return role === "student" ? "/student" : "/teacher"
+  if (role === "student") return "/student"
+  if (role === "parent") return "/parent"
+  return "/teacher"
 }
 
 export function RequireAuth({
