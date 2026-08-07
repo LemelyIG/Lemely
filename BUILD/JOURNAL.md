@@ -843,3 +843,28 @@ linked children only.
   the UI over it. Note P3.10 now carries three inherited items: the audit runner still only
   sees the 4 student routes (so the UI gate is vacuous for every teacher screen), the
   teacher portal's token-literal debt, and the absent frontend test runner.
+
+## 2026-08-07 — P3.8 chunk b: T-07 review queue + T-08 remark on real data
+- Did: resumed a session that died mid-chunk with the work written but unverified. Reviewed
+  the diff rather than trusting it, ran the gates, re-seeded and re-ran the throwaway live
+  verification myself (20/20), independently checked the mutations in Postgres, deleted the
+  throwaway files, committed 51425cd. Zero backend files touched — 1863 tests / 89.34% cov
+  unchanged from chunk a.
+- Learned: **a throwaway spec left in `web/e2e/` is picked up by `scripts/check.sh`'s
+  Playwright gate.** The first gate run came back `FAILED (2): ruff-check playwright-e2e`,
+  and both failures were the throwaway files, not the diff — ruff on the seed script's
+  hardcoded test password, Playwright on seed rows the *previous* session's mutating tests
+  had already consumed. The committed suite alone was 8/8 green. A verification artifact
+  that lives inside a gate's glob is not neutral; keep it outside or delete it before the
+  gate run.
+- Learned: `./scripts/check.sh` needs `source .venv/bin/activate` as well as the known
+  `PATH="$HOME/.local/bin:$PATH"` fix. Without the venv all five backend gates report
+  "command not found" — as FAIL, not SKIP, so it looks like a real regression. The PATH
+  quirk was already in STATE.md; the venv half was not.
+- Learned: the P3.7d/D3.13 lesson paid off again as *process* rather than as a bug. Green
+  Playwright asserted navigation happened; only the direct Postgres query showed what
+  actually persisted — override writes `teacher_awarded_marks` and leaves the AI's
+  `awarded_marks` alone, dismiss writes nothing to the `QuestionResult` at all. Worth the
+  five minutes every time a chunk mutates rows.
+- Next: P3.8 chunk c — T-09 quiz builder stepped flow, replacing the mock `Quizzes.tsx`;
+  `portals/teacher/data.ts` should be gone by the end of it.

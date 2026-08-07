@@ -763,7 +763,67 @@ Starting facts (established 2026-08-06, do not re-derive):
             the composer UI cannot bypass it. Do not "restore" the union.
             `publish_at` is **stored but never read** — no scheduler exists; delivery is
             Phase 5's. No attachment field anywhere (D3.14 §2).
-      - [ ] **b** todo — T-07 review queue + T-08 remark screens (replaces `Review.tsx`).
+      - [x] **b** done (51425cd) — T-07 review queue + T-08 remark. `Review.tsx` rewritten
+            (was the P2 grading console's paper-level `GET /grading/queue`) + new
+            `screens/ReviewItem.tsx` at `/teacher/review/:itemId` + new C-14 `Checkbox`
+            (`components/ui/checkbox.tsx`, catalogued). Removed `useGradingQueue`/`QueueRow`/
+            `GradingQueue` — the replaced screen was their only consumer. **Zero backend files
+            touched: 1863 tests / 89.34% cov, unchanged from chunk a.** All 12 gates green.
+            **Do not reintroduce / do not "tidy" away:**
+            (a) T-07's three filters live in the URL (`useSearchParams`), not component state —
+            that is what lets T-08 carry the same querystring through so "next item" walks the
+            *filtered* batch and "back to queue" restores the filters. All three are real
+            server-side params; never re-filter an unfiltered fetch client-side.
+            (b) The list is rendered in the server's own oldest-first order and never re-sorted
+            client-side — `ReviewService.list_queue` already orders by `created_at` asc, and
+            that IS the "prioritised list" the spec asks for.
+            (c) Bulk-approve renders `skipped` from a `snapshotRef` of the rows taken at
+            trigger time, because success invalidates and refetches the queue — by the time the
+            banner renders the skipped rows may be gone from `queueQuery.data`.
+            (d) A filter change clears the selection (a selection made under one filter must not
+            get bulk-approved once the visible set changes underneath it).
+            **Two judgment calls, documented in-file, neither spec-mandated — decide
+            deliberately before changing either:** integrity items (`plagiarism_flag`/
+            `ai_detection_flag`) get **dismiss only** on T-08, accept/adjust-marks renders for
+            every other reason (the backend's `resolve` has no reason restriction, so without
+            this an integrity flag could be closed via an anonymous multi-select, bypassing the
+            "signal, not verdict" framing); and `manual` is excluded from the reason filter
+            because nothing in the pipeline ever writes a `manual` row — same call
+            `AtRiskList.tsx` documents for `below_target` (D3.3).
+            **D3.14 §1 honoured literally:** T-08 states plainly that the scan image and the
+            mark scheme's wording are not stored, and renders the honest substitutes
+            (transcription labelled "not the scan", expected answer, matched point
+            *identifiers* as bare chips). No placeholder image, no scheme prose reconstructed
+            from point ids. The "note to the student" textarea appears **only** in the
+            adjust-marks form — that is the only path where `note` becomes
+            `QuestionResult.teacherNote`; on accept-as-is it is an internal resolution note.
+            Neither path claims the student is notified (no delivery path exists).
+            **New spec-vs-backend gap for the phase report:** T-07's spec names a fourth reason
+            category, "student disputed the transcription". There is no `ReviewReason` value and
+            no creation path for it anywhere. `manual` is a generic unused catch-all, not a
+            dispute flow; labelling it "student disputed" would invent a meaning the backend
+            does not assert. Reported, not faked, not built (no backend change was authorized).
+            **Verified against the live Alembic-migrated stack** (throwaway seed + spec, deleted
+            after use — do not look for them): 20/20 green across populated / filtered-empty /
+            error at 380/768/1440, both T-08 panels, and every mutating flow, each asserting
+            zero serious/critical axe violations, zero console errors, no horizontal scroll.
+            **Independent Postgres check of the mutations** (the P3.7d/D3.13 lesson — a green UI
+            is not evidence of a correct write): an override persists `teacher_awarded_marks`
+            while leaving the AI's own `awarded_marks` untouched and recomputes the attempt
+            total (2→4, 40%→80%); a dismiss writes **nothing at all** to the `QuestionResult`;
+            accept-as-is closes the row with marks unchanged.
+            Known, honest: no real `skipped` entry occurred in verification (nothing raced), so
+            the skip-rendering path is exercised by code review and the DTO contract, not by an
+            observed skip.
+            **Environment note that cost real time — do not re-derive:** a throwaway spec placed
+            in `web/e2e/` is picked up by `scripts/check.sh`'s Playwright gate, so a stale one
+            fails the gate for reasons unrelated to the diff. Seeding directly against the stack
+            needs `LEMELY_SUPABASE__SERVICE_ROLE_KEY`/`__ANON_KEY` exported from
+            `supabase status -o env` (`playwright.config.ts` does this itself, standalone
+            scripts do not); do **not** also export `LEMELY_AUTH__JWT_SECRET` — `Settings`
+            rejects it as an extra input. And `./scripts/check.sh` needs
+            `source .venv/bin/activate` as well as the `PATH` fix, or all five backend gates
+            report "command not found" as FAIL.
       - [ ] **c** todo — T-09 quiz builder stepped flow (replaces mock `Quizzes.tsx`).
       - [ ] **d** todo — T-10 quiz results + T-12 announcement composer screen.
 - [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
