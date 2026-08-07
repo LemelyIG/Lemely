@@ -1101,10 +1101,30 @@ Starting facts (established 2026-08-06, do not re-derive):
             `useProfile()` already exists and is the fix. Carried to P3.10.
             **P3.9 is now done — G-05 and P-01..P-04 are all on real data, and the link
             that makes them reachable exists.**
-- [ ] doing — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
+- [x] done — **P3.10** (all five chunks a–e landed; last commit 0f33752). Acceptance: Playwright
+      E2E per role, at-risk flags verified against
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
       Lighthouse a11y ≥95, screenshot corpus for every new screen × state × breakpoint,
       Impeccable audit+polish, no regression vs Phase-2.5 baselines).
+
+      **Outcome (2026-08-07) — carry these into the P3.11 report, do not let them read as
+      a clean pass:** all 13 gates green / 0 skipped; corpus `reports/phase-3/` = 131 PNGs
+      over 27 screen ids / 26 routes / 34 audited states, zero axe violations at any
+      severity, 0 console errors, 0 horizontal-scroll violations; compare verdict 39
+      changed / 0 removed / 92 added with all 39 verified intended (e2b).
+      Honest limitations: (i) Lighthouse a11y is 100 everywhere **except**
+      `teacher-review` at 96 (still ≥95); (ii) MISSION §11's performance ≥80 floor is
+      met on student routes (floor 82) but **teacher routes floor at 67**
+      (`teacher-quiz-detail`) — that floor never covered them, so this is unmeasured
+      debt being reported, not a passed gate; (iii) axe runs on every state but
+      **Lighthouse only on `default`** (deliberate, e2a — axe is ~1s and empty/error
+      states are where violations hide; Lighthouse is ~30s and scores a route, not a
+      state); (iv) `web/e2e/` + `playwright.config.ts` are in no tsconfig `include`, so
+      the Playwright specs have never been typechecked (D3.20).
+      All five carried items are closed: (a)/(e) audit.mjs route scope → chunk b's
+      declarative registry; (b) teacher-portal token literals → chunk c's retrofit
+      (+ D3.18); (c) no frontend test runner → e3's Vitest (D3.20); (d) the student
+      sidebar's hardcoded "Maya Rahman" identity → removed, now `useProfile()`.
 
       **Five-chunk split (2026-08-07), one commit each. Established facts, do not re-derive:**
       - Baseline at chunk-a start: working tree clean at `fadab58`, all 12 gates green,
@@ -1362,7 +1382,8 @@ Starting facts (established 2026-08-06, do not re-derive):
             with `"Good afternoon,"` — hardcoded, not time-aware. Cosmetic, but the same
             "hardcoded value masquerading as a feature" class P3.7b and P3.10c each removed
             once. Not fixed here (would be a product change inside a test chunk).
-      - [ ] **e** doing — screenshot corpus for every new screen × state × breakpoint
+      - [x] **e** done (e1 705ad68 + e2a d02cb99 + e2b 3abe1fe + e3 0f33752) — screenshot
+            corpus for every new screen × state × breakpoint
             re-baselined into `reports/phase-3/`, contact sheet, regression check against
             the Phase-2.5 baselines, and the item-(c) frontend-runner decision.
 
