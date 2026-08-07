@@ -1322,18 +1322,46 @@ Starting facts (established 2026-08-06, do not re-derive):
             are **dead** (every `<Avatar>` renders `neutral`; the `tone="warn"` hits
             belong to `Chip`) — documented in-file, not pruned, since deleting unused
             public variants is a simplification pass.
-      - [ ] **d** doing (started 2026-08-07) — Playwright E2E per role + at-risk flags asserted
-            against chunk a's seeded scenarios (the phase's named acceptance criterion).
-            Plan: a `globalSetup` runs `scripts/seed_e2e.py` **once** per Playwright run and
-            writes the contract to `<LEMELY_REPORT_DIR>/e2e-seed.json`; specs read it (module
-            state is not shared across Playwright worker processes, so a cached promise is not
-            enough). Session injection mirrors `audit.mjs::injectSession` (`localStorage`
-            `lemely.session`). New specs: teacher journey (T-01..T-06), at-risk assertions
-            (API + T-06 UI, both against `expectedAtRiskReasons`), parent journey (real OTP UI
-            login on a *fresh* phone — the seeded phone's challenge is already spent and the
-            cooldown is 30s — plus P-01..P-04 on the seeded parent), student journey on seeded
-            data, and a cross-role RBAC spec. `correct-paper.spec.ts` (the P2.10 core loop)
-            stays as-is.
+      - [x] **d** done (92056dc) — Playwright E2E per role + at-risk flags asserted against
+            chunk a's seeded scenarios (the phase's **named acceptance criterion**). Five new
+            specs; the suite is now **18 tests, 18 passed**. Zero `lemely/` files touched:
+            1892 tests (1888 passed / 4 live-only skips), 89.35% cov — both **unchanged**, as
+            they must be. **All 13 gates green, 0 skipped.**
+            **Seeding is a Playwright `globalSetup`** (`web/e2e/global-setup.ts`) running
+            chunk a's `scripts/seed_e2e.py` once per run into
+            `<reportDir()>/e2e-seed.json`; specs read it back via `readSeed()`
+            (`web/e2e/seed.ts`, which also carries `injectSession`, mirroring
+            `audit.mjs::injectSession`). **This cannot be a cached promise in a helper** —
+            Playwright forks a worker process per test file even at `workers: 1`, so module
+            state is not shared and such a helper would silently re-seed per file instead of
+            memoizing. Do not "simplify" it back.
+            **Verified by inversion, not assumed:** expecting the `control` student to be
+            present fails *both* the API assertion and the T-06 assertion — the control
+            student really is absent from both, so the at-risk assertions are load-bearing
+            rather than vacuously true.
+            **Do not reintroduce / do not "tidy" away:**
+            (a) The parent OTP spec uses a **fresh, never-challenged phone**. The seeded
+            parent's own number already spent its one challenge inside the seed script and
+            the 30s resend cooldown makes a second request a real 429 — this is not a flake
+            to race, and reusing the seeded number would make the spec time-dependent.
+            (b) `rbac.spec.ts`'s school_admin case asserts the teacher's own token **does**
+            see the class. Without that second half, an empty result proves nothing — a
+            broken route or a broken seed would pass just as well.
+            (c) `watchConsole` now lives in `e2e/console-errors.ts` (extracted from
+            `screenshots.spec.ts`, its only copy) — a sixth inline copy is how the
+            `initialsOf`/`downloadCsv` duplication started.
+            (d) The teacher journey logs in through the **real UI**; session injection is for
+            the other roles' routes only.
+            Known, honest: `_student_delta`'s "Trend" column reads "No prior paper" for the
+            declining student and the spec asserts exactly that — `compare_performance`
+            matches on subject_code + paper_number, and the seed's three attempts are paper
+            numbers 1/2/3, so there is no same-paper prior. The 27pp decline is a separate,
+            real signal asserted through the at-risk flag's own evidence sentence.
+            **Noticed, NOT this chunk's to fix (carried to the phase report):** the teacher
+            Overview greets `"Good morning."` unconditionally, as the student Overview does
+            with `"Good afternoon,"` — hardcoded, not time-aware. Cosmetic, but the same
+            "hardcoded value masquerading as a feature" class P3.7b and P3.10c each removed
+            once. Not fixed here (would be a product change inside a test chunk).
       - [ ] **e** todo — screenshot corpus for every new screen × state × breakpoint
             re-baselined into `reports/phase-3/`, contact sheet, regression check against
             the Phase-2.5 baselines, and the item-(c) frontend-runner decision.
@@ -1363,6 +1391,20 @@ Starting facts (established 2026-08-06, do not re-derive):
       still outside `audit.mjs`'s four student routes; the gate passes by never looking.
       P3.9 added six routes (`/login/parent`, `/parent`, `/parent/children/:id`,
       `.../subjects/:code`, `.../weaknesses`, `/student/parents`).
+- [ ] **blocked** — **INBOX-2026-08-07** Real past-paper accuracy fixtures (two genuine solved
+      0625 scripts, ground truth 34/40 and 66/80). **Blocked on the human by the directive's
+      own item 6:** the matching official mark schemes (`0625_s23_ms_22`, `0625_w24_ms_41`)
+      are not in the repo and **no code path can obtain them** — `resolve_mark_scheme`
+      (`lemely/web/routers/student.py:588`) reads only a sibling `mark_scheme.pdf` or a parsed
+      JSON in `outputs/schemes/` (which is empty); Phase 2's scraper fetches *grade boundaries*,
+      not schemes. Blocks the MCQ paper too — `correct_mcq_answers` is deterministic but still
+      needs the official answer key. Full detail, including what I deliberately did **not** do
+      (no reconstructed scheme, no back-derived per-question marks, no mirror scrape, $0.00
+      spent), in `BUILD/BLOCKERS.md` **B1**. Unblocks the moment the two scheme PDFs land in
+      `Sources/Physics/MarkingSchemes/`. The fixtures are gitignored meanwhile (real student
+      handwriting; reversible in one line, unlike committing it).
+      **Do not start this task until B1 is resolved, and do not resolve it by inventing a
+      scheme.**
 - [ ] todo — **P3.11** Phase-3 report, merge to develop, push, update PR #3, ntfy.
 
 

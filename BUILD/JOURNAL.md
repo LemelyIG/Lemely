@@ -1009,3 +1009,26 @@ linked children only.
   acceptance criterion. Chunk e then owns the screenshot corpus + re-baselining, and
   must decide the frontend-runner question (if a runner lands, fold
   `check-design-tokens.mjs`'s two checks into it verbatim).
+
+## 2026-08-07 — P3.10 chunk d + a blocking INBOX directive
+
+- **Did:** P3.10 chunk d — the phase's named acceptance criterion. Five Playwright
+  specs (18 tests, all green): per-role journeys (teacher T-01..T-06, parent G-05 via
+  the real OTP UI + P-01..P-04, student), at-risk flags asserted against chunk a's
+  seeded `expectedAtRiskReasons` at both the API and T-06 layers including the D3.5
+  acknowledge/undo round trip, and a cross-role RBAC denial matrix. Seeding moved to a
+  Playwright `globalSetup`. All 13 gates green, 0 skipped; 1892 tests / 89.35% cov
+  unchanged (zero `lemely/` files touched).
+- **Learned:** Playwright forks a worker process per test file even at `workers: 1`, so
+  a "seed once, cache the promise" helper silently re-seeds per file — `globalSetup`
+  plus a file on disk is the only thing every worker can read back. Also: proving a
+  green suite is worth anything needs inversion — expecting the control student to be
+  flagged fails both layers, which is what makes the at-risk assertions load-bearing.
+- **Blocked:** a mid-session INBOX directive added two real solved 0625 scripts for
+  end-to-end accuracy testing. Its own item 6 fires — the matching official mark
+  schemes are absent and no code path can fetch them (`resolve_mark_scheme` is
+  sibling-PDF or local-JSON only; `outputs/schemes/` is empty). Raised as BLOCKERS.md
+  B1, ntfy'd, $0.00 spent, nothing reconstructed.
+- **Next:** P3.10 chunk e (screenshot corpus re-baselined into `reports/phase-3/`,
+  contact sheet, regression check vs the Phase-2.5 baselines, frontend-runner decision),
+  then P3.11.

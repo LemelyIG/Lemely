@@ -70,3 +70,12 @@ BUILD/STOP
 # baselines live in reports/phase-N/ and are only written when a re-baseline is
 # explicitly requested via LEMELY_REPORT_DIR (see web/e2e/report-dir.ts).
 reports/.scratch/
+
+# Real solved student scripts used as accuracy fixtures (BUILD/INBOX.md
+# 2026-08-07). Genuine handwriting = personal data, and the test that consumes
+# them is blocked on the matching official mark schemes anyway (BLOCKERS.md B1),
+# so they stay out of history until the human says otherwise — un-ignoring is
+# one line; un-committing binary personal data is a history rewrite. This
+# doubles as INBOX item 7's "dataset/export exclusion list" entry: these are
+# test fixtures only, never served, never bundled.
+tests/fixtures/real-papers/
