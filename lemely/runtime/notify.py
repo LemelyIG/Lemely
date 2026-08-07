@@ -1,4 +1,4 @@
-"""ntfy.sh push delivery for Lemely runtime notifications.
+"""ntfy push delivery for Lemely runtime notifications.
 
 Used to surface budget-guard events (Gemini spend warnings / ceiling breach)
 during unattended runs. Delivery is best-effort: the topic is read from the
@@ -17,12 +17,12 @@ import urllib.request
 
 import structlog
 
-_NTFY_BASE = "https://ntfy.sh"
+_NTFY_BASE = "http://home-server.tail5bf1d5.ts.net"
 _TIMEOUT_SECONDS = 5.0
 
 
 def post_ntfy(message: str, *, title: str = "Lemely", priority: str | None = None) -> bool:
-    """Post a message to the configured ntfy.sh topic.
+    """Post a message to the configured ntfy topic.
 
     The topic is read from the ``LEMELY_NTFY_TOPIC`` environment variable. When
     unset (or empty) this is a no-op that returns ``False`` — ntfy is opt-in.

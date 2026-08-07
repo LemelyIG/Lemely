@@ -9,7 +9,7 @@ set -u
 REPO="/home/sico/Lemely"
 NTFY_TOPIC="lemely-ErBPK7TIRGD1sQP5"
 CTRL_TOPIC="lemely-ctl-9QmZR4vXpL2wDA7t"   # you PUBLISH here to steer the run
-NTFY_URL="https://ntfy.sh"
+NTFY_URL="http://home-server.tail5bf1d5.ts.net"
 REPO_URL="https://github.com/LemelyIG/Lemely"
 
 MODEL="opus"                    # orchestrator model — Opus for everything
@@ -24,7 +24,7 @@ HEARTBEAT_SECS=600              # 10 min progress ping (updates in place)
 STALL_BEATS=3                   # beats with no commit + no state change = stall
 WATCHDOG_MINUTES=35             # dead-man's switch horizon, refreshed each beat
 DIGEST_SECS=$((24 * 3600))      # daily digest cadence
-ATTACH_MAX_BYTES=1900000        # stay under ntfy.sh's 2MB attachment cap
+ATTACH_MAX_BYTES=1900000        # stay under ntfy's 2MB attachment cap
 MAX_NEW_SHOTS=3                 # newest screenshots to push per run
 
 LOGDIR="$REPO/BUILD/logs"

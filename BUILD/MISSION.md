@@ -303,7 +303,7 @@ stalling. Full usage rules are in §10.
   one-line heartbeat. Use the JSON publish endpoint so you get markdown, tags,
   priority, and a click-through in one request:
   ```
-  curl -s ntfy.sh -d '{
+  curl -s http://home-server.tail5bf1d5.ts.net/ -d '{
     "topic": "lemely-ErBPK7TIRGD1sQP5",
     "title": "<short title>",
     "message": "<markdown message, e.g. **Phase 2** complete: ...>",
@@ -337,7 +337,7 @@ stalling. Full usage rules are in §10.
   `moneybag` (budget), `tada` (build complete). When a notification concerns a
   specific artifact (a phase report, a failing test log), attach it instead of
   just describing it — PUT the file with a `Filename` header to
-  `ntfy.sh/lemely-ErBPK7TIRGD1sQP5` (truncate to under 2MB; tail is usually
+  `http://home-server.tail5bf1d5.ts.net/lemely-ErBPK7TIRGD1sQP5` (truncate to under 2MB; tail is usually
   what matters). The supervisor script (`supervisor.sh`) already applies this
   same format to its own crash/limit/complete notifications, including
   deduplication: it suppresses a repeat notification for a failure with the
