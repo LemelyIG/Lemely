@@ -1432,7 +1432,46 @@ Starting facts (established 2026-08-06, do not re-derive):
       still outside `audit.mjs`'s four student routes; the gate passes by never looking.
       P3.9 added six routes (`/login/parent`, `/parent`, `/parent/children/:id`,
       `.../subjects/:code`, `.../weaknesses`, `/student/parents`).
-- [ ] **blocked** — **INBOX-2026-08-07** Real past-paper accuracy fixtures (two genuine solved
+- [ ] todo — **INBOX-2026-08-07-ACC** Real past-paper accuracy fixtures — **B1 IS RESOLVED
+      (2026-08-07); this task is live again.** The human installed the `paperscraper` skill
+      (`.claude/skills/paperscraper/SKILL.md`, an external tool at `/home/sico/PaperScraper`
+      with its own venv — never add it to Lemely's `pyproject.toml` or `.venv`), which is the
+      "authorise fetching from a named source" unblock route B1 asked for.
+
+      **Established 2026-08-07, do not re-derive or re-fetch:**
+      - Both official schemes are now at `Sources/Physics/MarkingSchemes/0625_s23_ms_22.pdf`
+        and `0625_w24_ms_41.pdf`. `Sources/` is gitignored (`.gitignore:45`) so they are NOT
+        committed — which is also what the skill's copyright rule requires. Verified via the
+        scraper catalogue (`/home/sico/PaperScraper/papers/index.db`), not the exit code:
+        `done|72` for 0625 `ms` 2023–24, **zero** `status='failed'` rows anywhere.
+      - **Parsing them split, and the split is the finding:**
+        `0625_s23_ms_22` (MCQ) — deterministic parser gets only 12 of 40 marks (an MCQ scheme
+        is an answer-key table, not a marking-point tree), but the **Gemini fallback parses it
+        correctly**: 40 questions, each with `mcq_answer`, `maximum_mark` 40. **Already parsed
+        and cached at `outputs/schemes/0625_s23_ms_22.json` — do not pay for it again.** Note
+        its metadata has `variant`/`session`/`year` = `None` (only `subject_code` 0625 +
+        `paper_number` 2), which may matter to `resolve_mark_scheme`'s metadata matching.
+        `0625_w24_ms_41` (theory) — **fails under BOTH parsers, identically, at 83 vs a stated
+        maximum of 80**. Raised as **B2** in `BUILD/BLOCKERS.md`; delegated to a debugger agent
+        2026-08-07. Do NOT resolve it by raising `mark_reconcile_tolerance` (see B2).
+      - Marking paper 22 needs **no Gemini for the marking step** — `correct_mcq_answers` is
+        deterministic; only answer extraction (vision) is a live call.
+      - Gemini spend on this: $0.080, cumulative **$0.138/$8.00**.
+
+      **Remaining work (the directive's 8 items, `BUILD/INBOX.md`):** the end-to-end test
+      (real ingest→OCR→mark→grade, not a mocked stub), a stated+justified total tolerance,
+      MAE / signed error direction / confidence distribution in a report under `reports/`,
+      the per-question JSON + rendered annotation overlay artefact, papers 22 and 41 kept as
+      **separate** cases and never averaged, the export/dataset exclusion list (item 7), and
+      item 8's rule: if accuracy misses the bar, leave the test **red** — do not loosen the
+      tolerance, do not skip it — record the gap in DECISIONS.md and ntfy priority high.
+      Design constraint not in the directive: the live run must not fire on every `pytest`
+      (that would burn the cap continuously), so it belongs with the existing 4 live-only
+      skips, with results cached to disk so the committed report is reproducible.
+      **Paper 22 can proceed now. Paper 41 waits on B2** — and if B2 does not resolve, report
+      paper 41 as blocked, never as passed or quietly skipped.
+
+- [x] superseded — **INBOX-2026-08-07** Real past-paper accuracy fixtures (two genuine solved
       0625 scripts, ground truth 34/40 and 66/80). **Blocked on the human by the directive's
       own item 6:** the matching official mark schemes (`0625_s23_ms_22`, `0625_w24_ms_41`)
       are not in the repo and **no code path can obtain them** — `resolve_mark_scheme`
