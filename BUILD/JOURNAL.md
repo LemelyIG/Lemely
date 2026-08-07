@@ -1032,3 +1032,36 @@ linked children only.
 - **Next:** P3.10 chunk e (screenshot corpus re-baselined into `reports/phase-3/`,
   contact sheet, regression check vs the Phase-2.5 baselines, frontend-runner decision),
   then P3.11.
+
+## 2026-08-07 — B1/B2 resolved, B3 raised, P3.10 e1 landed
+
+**Did.** Resolved B1 using the `paperscraper` skill the human installed mid-run —
+fetched both official 0625 mark schemes, verified via the scraper's catalogue
+rather than its exit code, kept them gitignored per the skill's copyright rule.
+Delegated and verified two subagent tasks: P3.10 chunk e1 (seed a review item, a
+marked quiz, and genuinely-empty accounts — unblocking T-08/T-10, which had zero
+audit coverage) and B2 (the `w24_ms_41` 83-vs-80 parse failure). Committed both,
+plus the skill itself. All 13 gates green on a clean run.
+
+**Learned.** Three things worth not re-paying for. (1) My B2 hypothesis was
+wrong in a specific, instructive way: I assumed the *reconciliation rule* was
+wrong about alternative marks; it was two *extraction* defects (−9 dropped
+table, +12 compensatory C-marks) masking each other down to +3. The small
+discrepancy made it look like a rounding-tolerance concern, which is exactly why
+raising the tolerance would have been so tempting and so wrong. (2) A cached
+`.json` sibling is NOT evidence its PDF parses today — I recorded `s20_ms_31` as
+passing on that inference and it had been failing at 38/80. (3) The E2E gate is
+unsound under `reuseExistingServer: true`: concurrent runs kill each other's
+server (three false FAILs this session, mis-attributed by two subagents), and
+worse, a stale server runs stale code, so the gate can PASS against source no
+longer on disk.
+
+**Also.** B3 raised and independently re-verified: every *correct* MCQ answer is
+flagged as plagiarism, because both sides of the similarity check are the same
+single letter, so the ratio is 1.000 against a 0.85 threshold. A 40/40 paper
+generates 40 flags; a 0/40 paper none. It shipped in P2.4 and directly poisons
+the accuracy fixture (paper 22 is MCQ, 34/40).
+
+**Next.** Fix B3 before reporting any accuracy numbers. Then P3.10 e2 (screenshot
+states + regression compare), e3 (frontend runner), then the accuracy fixture
+work itself — both schemes are now available.
