@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared multi-role seed fixture for E2E/audit harnesses (P3.10 chunk a).
+"""Shared multi-role seed fixture for E2E/audit harnesses (P3.10 chunks a/e1).
 
 Seeds the **live local Supabase stack** (real GoTrue + real Postgres, wired
 through the exact same singletons ``lemely.web.deps`` hands the FastAPI app —
@@ -34,10 +34,47 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
 * a **school_admin**, minted directly via :meth:`AuthService.signup` (self-
   service signup is student-only; teacher/school_admin only ever come from a
   direct service call — this is what P3.7 chunk d did).
+* (P3.10 chunk e1) a **review-queue item** (T-08): the ``inactive`` student's
+  own single attempt is persisted deliberately LOW-confidence instead of
+  HIGH — same score/date/subject as always, so at-risk rule 2 and every
+  Playwright-pinned roster number are untouched — which makes
+  :meth:`~lemely.db.attempt_repo.AttemptRepository._persist`'s real fan-out
+  queue it for review, through the same single writer every attempt in this
+  script goes through. Never a hand-inserted ``review_queue`` row.
+* (P3.10 chunk e1) a **quiz** (T-09/T-10): 5 MCQ ``question_bank`` rows
+  (:func:`build_quiz_bank_questions`, D3.7's empty-bank workaround), built
+  into a quiz, assigned to the seeded class, and submitted — every answer
+  deliberately wrong (:func:`wrong_mcq_answer`; see its docstring for the
+  plagiarism-false-positive defect this sidesteps) — by the ``control``
+  student, then marked through :class:`~lemely.db.quiz_marking_repo.QuizMarkingService`'s
+  real, unmodified path. All-MCQ means :func:`~lemely.core.correction.correct_paper`
+  takes its deterministic branch and never touches Gemini — see "Zero Gemini
+  calls" below.
+* (P3.10 chunk e1) two **genuinely empty** accounts for the ``empty``-state
+  screenshot captures: a second teacher with no classes at all, and a second
+  parent (its own OTP challenge, on a phone namespaced to avoid the linked
+  parent's own 30s cooldown — see :func:`build_empty_parent_phone`) never
+  linked to any child.
 
-Every attempt is persisted as ``origin=past_paper`` (D3.9): every grade/
-percentage/paper claim in this codebase filters on grade-bearing origin, so a
-quiz attempt would silently fail to back any of these scenarios.
+Every scenario/corrected-paper attempt is persisted as ``origin=past_paper``
+(D3.9): every grade/percentage/paper claim in this codebase filters on
+grade-bearing origin, so a quiz attempt would silently fail to back any of
+these scenarios. The seeded quiz submission is the one deliberate exception —
+it is ``origin=quiz`` by construction (via ``persist_quiz_correction``) and is
+excluded from those same claims, which is exactly why it is attached to the
+``control`` student rather than a new roster entry: it cannot change a single
+number ``teacher-journey.spec.ts`` already pins (3 students, 69% average
+mark, 2 at-risk).
+
+**Zero Gemini calls, by construction.** Every seeded question is MCQ, so
+:func:`~lemely.core.correction.correct_paper` never builds an ``AICorrector``
+call, and the default :class:`~lemely.runtime.config.IntegritySettings`
+(``ai_detection_enabled=False``) means ``apply_integrity_checks`` never
+constructs an ``AIContentDetector`` either — the Gemini client's lazy
+``_client`` property is never touched, so no API key is required and no
+request reaches the network. Verified against the live stack's real cost
+ledger before/after a seed run, not merely asserted (see the P3.10 chunk e1
+report).
 
 Idempotent-friendly: every email and the parent phone number are namespaced
 under a per-run ``runTag`` (default: 12 random hex chars), so repeated runs
@@ -45,11 +82,12 @@ never collide. Reruns do not delete previous runs' rows — there is no
 teardown here, by design (this is a seed script, not a fixture cleaner).
 
 The OTP resend cooldown (``otp_min_resend_seconds``, default 30s) is
-per-phone. This script requests exactly one challenge for the parent's phone
-and returns the access token that verifying it already produced — a
-consumer (Playwright, ``audit.mjs``) must reuse that token rather than
-starting a second OTP challenge for the same phone, or it will hit the
-cooldown.
+per-phone. This script requests exactly one challenge per phone (the linked
+parent's, and separately the empty parent's — see
+:func:`build_empty_parent_phone`) and returns the access token that verifying
+it already produced — a consumer (Playwright, ``audit.mjs``) must reuse that
+token rather than starting a second OTP challenge for the same phone, or it
+will hit the cooldown.
 
 Output contract
 ----------------
@@ -75,13 +113,25 @@ path::
                             "correctedPaperId": "<attempt uuid>"}
       },
       "parent": {"userId": "...", "phone": "+20...", "accessToken": "...",
-                 "linkedStudent": "declining"}
+                 "linkedStudent": "declining"},
+      "reviewItem": {"itemId": "<review_queue.id>", "attemptId": "<attempt uuid>",
+                     "studentKey": "inactive"},
+      "quiz": {"quizId": "...", "assignmentId": "...", "submissionId": "...",
+               "submittedBy": "control", "status": "marked"},
+      "emptyTeacher": {"userId": "...", "email": "...", "password": "...",
+                        "displayName": "...", "accessToken": "..."},
+      "emptyParent": {"userId": "...", "phone": "+20...", "accessToken": "..."}
     }
 
 ``expectedAtRiskReasons`` values are :class:`~lemely.core.at_risk.AtRiskReason`
 string values — later chunks assert ``GET /api/teacher/at-risk`` (or
 ``assess_at_risk`` directly) reproduces exactly these reasons per student, and
 nothing for ``control``/``correctedPaper``.
+
+``reviewItem``/``quiz``/``emptyTeacher``/``emptyParent`` (P3.10 chunk e1) are
+purely additive — every key documented above them is unchanged since chunk a.
+``quiz.status`` is ``"marked"`` on a successful run; see :func:`seed`'s
+marking-failure branch for the (not expected, never faked) alternative.
 
 Usage::
 
@@ -118,11 +168,18 @@ from lemely.core.schemas import (
     GradePrediction,
     WeaknessReport,
 )
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import (
+    DifficultySource,
+    QuestionSource,
+    QuizQuestionStatus,
+    Role,
+)
+from lemely.db.question_bank_repo import NewBankQuestion
 from lemely.web import deps
 
 if TYPE_CHECKING:
     from lemely.auth.service import AuthResult
+    from lemely.core.difficulty import Band
 
 # ---------------------------------------------------------------------------
 # Scenario constants — the single source of truth for both the real seed and
@@ -154,6 +211,40 @@ CORRECTED_SCORE: tuple[float, str] = (88.0, "A")
 CORRECTED_DAYS_AGO = 1
 
 EMAIL_DOMAIN = "e2e.lemely.local"
+
+# ---------------------------------------------------------------------------
+# P3.10 chunk e1 additions: a review-queue item (T-08), a quiz + assignment +
+# marked submission (T-09/T-10), and two genuinely-empty accounts. See this
+# module's docstring for the full contract these additions extend.
+# ---------------------------------------------------------------------------
+
+#: Below `lemely.core.schemas.REVIEW_CONFIDENCE_THRESHOLD` (0.90) — the ONE
+#: thing that makes `AttemptRepository._persist`'s real fan-out queue this
+#: question for review (`qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD`),
+#: never a hand-inserted `review_queue` row. Deliberately reused on the
+#: `inactive` student's own single attempt (same score/date/subject as
+#: `INACTIVE_SCORE`/`inactive_recorded_at`) rather than a new attempt or a new
+#: student: `assess_at_risk` never reads confidence at all, so this cannot
+#: change `expectedAtRiskReasons`, and the Playwright suite's hardcoded roster
+#: numbers (teacher-journey.spec.ts: 3 students, 69% average, 2 at-risk) never
+#: see a 4th enrolled student or a 4th grade-bearing attempt.
+REVIEW_ITEM_CONFIDENCE_SCORE = 0.55
+
+#: `allocate_difficulty(None, 5)` (`lemely.core.difficulty`) for an untargeted
+#: quiz, worked out by hand: the balanced (0.2, 0.6, 0.2) mix * 5 questions =
+#: (1.0, 3.0, 1.0) exactly, no remainder to break a tie over. If either of
+#: these two constants changes, re-derive the allocation by hand again —
+#: `generate_questions` treats a supply/allocation mismatch as an honest
+#: shortfall, not an error, so a drift here would silently materialize fewer
+#: than 5 questions rather than raising.
+QUIZ_REQUESTED_COUNT = 5
+QUIZ_BANK_BANDS: list[Band] = ["foundation", "standard", "standard", "standard", "challenge"]
+#: One MCQ answer letter per bank row above, distinct only so a human
+#: skimming the seeded bank can tell the rows apart — never read by the
+#: allocator or the marker.
+QUIZ_BANK_ANSWERS: list[str] = ["A", "B", "C", "D", "A"]
+
+_MCQ_LETTERS: tuple[str, ...] = ("A", "B", "C", "D")
 
 
 # ---------------------------------------------------------------------------
@@ -244,15 +335,33 @@ def _exam_metadata(paper_number: int) -> ExamMetadata:
     )
 
 
-def accuracy_report_for_score(score: tuple[float, str], *, paper_number: int) -> AccuracyReport:
+def accuracy_report_for_score(
+    score: tuple[float, str],
+    *,
+    paper_number: int,
+    confidence: ConfidenceBand = ConfidenceBand.HIGH,
+    confidence_score: float = 0.95,
+    needs_teacher_review: bool = False,
+) -> AccuracyReport:
     """Build a minimal, valid :class:`AccuracyReport` carrying ``score``.
 
-    One HIGH-confidence question whose marks approximate the target
-    percentage, wrapped in a :class:`GradePrediction` that carries the exact
-    ``(percentage, grade)`` pair — :meth:`AttemptRepository.persist_correction`
-    stores ``prediction.percentage``/``prediction.grade`` verbatim onto the
+    One question whose marks approximate the target percentage, wrapped in a
+    :class:`GradePrediction` that carries the exact ``(percentage, grade)``
+    pair — :meth:`AttemptRepository.persist_correction` stores
+    ``prediction.percentage``/``prediction.grade`` verbatim onto the
     ``Attempt`` row, so this is the only pair that actually matters for
     at-risk assessment.
+
+    ``confidence``/``confidence_score``/``needs_teacher_review`` default to
+    the HIGH-confidence, review-suppressing shape every original scenario
+    attempt needs (a seed attempt must never accidentally land in the review
+    queue — see ``TestAccuracyReportForScore.test_never_needs_teacher_review``).
+    P3.10 chunk e1 overrides them exactly once, for the ``inactive`` student's
+    own attempt, to produce T-08's one *genuine* low-confidence review-queue
+    row through :class:`~lemely.db.attempt_repo.AttemptRepository`'s real
+    fan-out (never a hand-inserted ``review_queue`` row) — see
+    ``REVIEW_ITEM_CONFIDENCE_SCORE``'s docstring for why the score/date/subject
+    stay untouched.
     """
     percentage, grade = score
     awarded = round(percentage)
@@ -261,9 +370,14 @@ def accuracy_report_for_score(score: tuple[float, str], *, paper_number: int) ->
         question_id="1",
         awarded_marks=awarded,
         maximum_marks=maximum,
-        confidence=ConfidenceBand.HIGH,
-        confidence_score=0.95,
-        needs_teacher_review=False,
+        confidence=confidence,
+        confidence_score=confidence_score,
+        needs_teacher_review=needs_teacher_review,
+        review_reason=(
+            f"confidence {confidence_score:.2f} below review threshold"
+            if needs_teacher_review
+            else None
+        ),
         student_answer="seeded",
         expected_answer="seeded",
         topic="Seed topic",
@@ -276,11 +390,97 @@ def accuracy_report_for_score(score: tuple[float, str], *, paper_number: int) ->
         maximum_marks=maximum,
         percentage=percentage,
         grade=grade,
-        confidence=ConfidenceBand.HIGH,
-        needs_teacher_review=False,
+        confidence=confidence,
+        needs_teacher_review=needs_teacher_review,
         boundary_source="subject_default",
     )
     return AccuracyReport(correction=correction, weaknesses=weaknesses, grade_prediction=prediction)
+
+
+def build_empty_parent_phone(run_tag: str) -> str:
+    """A second, distinct phone for the genuinely-empty parent account.
+
+    **The trap this avoids:** :func:`build_phone` only reads a string's
+    *first 10 characters* (then pads/truncates to a national number). The
+    default ``run_tag`` is a 12-hex-char string, so a same-tag *suffix*
+    (``f"{run_tag}-empty"``) would leave those first 10 characters completely
+    unchanged and produce a phone number IDENTICAL to :func:`build_phone`'s —
+    silently colliding with the linked parent's own number and tripping the
+    30s per-phone OTP resend cooldown (module docstring) on this run's second
+    :meth:`~lemely.auth.service.AuthService.request_otp` call. Prefixing
+    instead of suffixing changes the leading characters and sidesteps this
+    for any ``run_tag`` (default or custom, any length).
+    """
+    return build_phone(f"empty-{run_tag}")
+
+
+def build_quiz_bank_questions(teacher_id: uuid.UUID) -> list[NewBankQuestion]:
+    """The quiz's ``question_bank`` rows: generated/teacher-authored, ``paper_id=None``.
+
+    D3.7's empty-bank trap: mark schemes carry marking points but no question
+    stems, and no stem extractor exists, so ``POST /questions/generate`` has
+    nothing to draw from for this seed. Seeding ``question_bank`` rows
+    directly (through :meth:`~lemely.db.question_bank_repo.QuestionBankService.add_questions`
+    — never a raw INSERT) is the intended path for exactly this reason: these
+    rows carry no ``paper_id``, which the partial unique index
+    ``uq_question_bank_paper_question`` deliberately does not cover.
+
+    ``owner_id=teacher_id`` is what makes these rows visible to
+    :meth:`~lemely.db.question_bank_repo.QuestionBankService.select_questions`
+    for exactly this seed run's teacher (``question_bank_repo.visible_bank_filter``)
+    — never the platform-shared pool, so one run's rows can never be selected
+    into another run's quiz.
+
+    One row per ``(band, answer)`` pair in ``QUIZ_BANK_BANDS``/``QUIZ_BANK_ANSWERS``
+    — exactly the ``{foundation: 1, standard: 3, challenge: 1}`` supply
+    ``QUIZ_REQUESTED_COUNT``'s allocation needs (see that constant's
+    docstring); every row is MCQ so :func:`~lemely.core.correction.correct_paper`
+    takes its deterministic path and never touches Gemini (module docstring's
+    hard cost constraint).
+    """
+    return [
+        NewBankQuestion(
+            subject_code=SUBJECT_CODE,
+            source=QuestionSource.generated,
+            difficulty=band,
+            difficulty_source=DifficultySource.declared_by_generator,
+            question_type="mcq",
+            prompt=f"Seed MCQ question {i + 1} ({band})",
+            total_marks=1,
+            owner_id=teacher_id,
+            topic="Seed quiz topic",
+            mark_scheme_points=[],
+            mcq_options=["Option A", "Option B", "Option C", "Option D"],
+            mcq_answer=answer,
+            created_by=teacher_id,
+        )
+        for i, (band, answer) in enumerate(zip(QUIZ_BANK_BANDS, QUIZ_BANK_ANSWERS, strict=True))
+    ]
+
+
+def wrong_mcq_answer(correct: str) -> str:
+    """Any MCQ letter other than ``correct`` — deterministic, first mismatch in ``ABCD``.
+
+    Used to build the seeded quiz submission's answers. **Deliberately never
+    correct:** a *correct* MCQ answer's ``student_answer`` is, by
+    construction, character-identical to the mark scheme's
+    ``expected_answer`` (both are the same one-letter string) —
+    ``lemely.io.integrity.apply_integrity_checks``'s plagiarism check (on by
+    default, ``IntegritySettings.plagiarism_enabled``) runs
+    ``difflib.SequenceMatcher.ratio()`` over exactly that pair and scores an
+    identical string 1.0, comfortably over its 0.85 threshold — so every
+    correctly-answered MCQ question in every quiz submission is, today, a
+    false-positive plagiarism flag (verified directly against
+    ``PlagiarismChecker`` — a real defect, not a seed artifact; see the P3.10
+    chunk e1 report). Answering every question wrong sidesteps it: this seed
+    must not paper over a defect with a hand-picked "safe" score, and must not
+    trip it either, so the submission is a genuine (if unflattering) 0/N —
+    still `QuizMarkingService.mark_submission`'s real, unmodified path.
+    """
+    for letter in _MCQ_LETTERS:
+        if letter != correct:
+            return letter
+    raise AssertionError("unreachable: _MCQ_LETTERS always has an alternative")
 
 
 def build_result_payload(
@@ -292,12 +492,18 @@ def build_result_payload(
     class_row: dict[str, Any],
     students: dict[str, dict[str, Any]],
     parent: dict[str, Any],
+    review_item: dict[str, Any],
+    quiz: dict[str, Any],
+    empty_teacher: dict[str, Any],
+    empty_parent: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the documented output contract from already-computed pieces.
 
     Pure — no I/O, so the exact JSON shape is pinned by a unit test that
     feeds fake ids/tokens and asserts the nesting, independent of ever
-    touching Postgres or GoTrue.
+    touching Postgres or GoTrue. ``reviewItem``/``quiz``/``emptyTeacher``/
+    ``emptyParent`` are additive (P3.10 chunk e1) — every key present since
+    chunk a is unchanged.
     """
     return {
         "runTag": run_tag,
@@ -307,6 +513,10 @@ def build_result_payload(
         "class": class_row,
         "students": students,
         "parent": parent,
+        "reviewItem": review_item,
+        "quiz": quiz,
+        "emptyTeacher": empty_teacher,
+        "emptyParent": empty_parent,
     }
 
 
@@ -427,6 +637,12 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     class_service = deps.get_class_service()
     parent_link_service = deps.get_parent_link_service()
     auth_service = deps.get_auth_service()
+    attempt_repo = deps.get_attempt_repo()
+    review_service = deps.get_review_service()
+    question_bank_service = deps.get_question_bank_service()
+    quiz_service = deps.get_quiz_service()
+    quiz_taking_service = deps.get_quiz_taking_service()
+    quiz_marking_service = deps.get_quiz_marking_service()
 
     teacher = _signup_account("teacher", Role.teacher, run_tag)
     school_admin = _signup_account("admin", Role.school_admin, run_tag)
@@ -435,6 +651,21 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     inactive = _signup_account("inactive", Role.student, run_tag)
     control = _signup_account("control", Role.student, run_tag)
     corrected = _signup_account("corrected", Role.student, run_tag)
+
+    _log("Signing up the empty teacher (no classes) and empty parent (no linked children)")
+    empty_teacher = _signup_account("empty-teacher", Role.teacher, run_tag)
+    empty_parent_phone = build_empty_parent_phone(run_tag)
+    _log(f"Requesting one OTP challenge for the empty parent's phone {empty_parent_phone}")
+    empty_dev_code = auth_service.request_otp(empty_parent_phone)
+    if empty_dev_code is None:
+        raise RuntimeError(
+            "AuthService.request_otp returned no code for the empty parent — the "
+            "configured SMS provider delivers out of band, so this script cannot "
+            "recover it to verify."
+        )
+    empty_parent_result = auth_service.verify_otp(empty_parent_phone, empty_dev_code)
+    # Deliberately no ParentLinkService.link call — this account must stay
+    # genuinely childless for the `empty` parent-portal screenshot capture.
 
     _log("Creating class and enrolling the at-risk roster")
     class_row = class_service.create_class(
@@ -447,8 +678,22 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     _log("Persisting the declining-trend run (single subject, 3 papers)")
     _persist_attempts(declining["userId"], DECLINING_SCORES, declining_recorded_ats(now))
 
-    _log("Persisting the >=14-day-inactive attempt")
-    _persist_attempts(inactive["userId"], [INACTIVE_SCORE], [inactive_recorded_at(now)])
+    _log(
+        "Persisting the >=14-day-inactive attempt (deliberately LOW-confidence: T-08's "
+        "real review-queue item, same score/date as always)"
+    )
+    inactive_report = accuracy_report_for_score(
+        INACTIVE_SCORE,
+        paper_number=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=REVIEW_ITEM_CONFIDENCE_SCORE,
+        needs_teacher_review=True,
+    )
+    inactive_attempt_id = attempt_repo.persist_correction(
+        user_id=inactive["userId"],
+        report=inactive_report,
+        recorded_at=inactive_recorded_at(now).isoformat(),
+    )
 
     _log("Persisting the healthy control's improving run")
     _persist_attempts(control["userId"], CONTROL_SCORES, control_recorded_ats(now))
@@ -469,6 +714,74 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     parent_result = auth_service.verify_otp(parent_phone, dev_code)
     _log(f"Linking parent {parent_result.user_id} to the declining student")
     parent_link_service.link(student_id=uuid.UUID(declining["userId"]), phone=parent_phone)
+
+    _log("Locating the review-queue row the inactive attempt's fan-out created (T-08)")
+    review_rows = review_service.list_queue(
+        uuid.UUID(teacher["userId"]),
+        Role.teacher,
+        class_id=class_row.class_id,
+        reason="low_confidence",
+    )
+    review_rows = [r for r in review_rows if r.attempt_id == inactive_attempt_id]
+    if len(review_rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly 1 low_confidence review-queue row for attempt "
+            f"{inactive_attempt_id}, found {len(review_rows)} — REVIEW_ITEM_CONFIDENCE_SCORE "
+            "may no longer be below REVIEW_CONFIDENCE_THRESHOLD."
+        )
+    review_item_row = review_rows[0]
+
+    _log("Seeding the quiz's question bank (generated rows, paper_id=None — D3.7)")
+    teacher_uuid = uuid.UUID(teacher["userId"])
+    question_bank_service.add_questions(build_quiz_bank_questions(teacher_uuid))
+
+    _log("Building and assigning the quiz")
+    quiz_row = quiz_service.create_quiz(teacher_uuid, SUBJECT_CODE, f"P3.10 Seed Quiz {run_tag}")
+    quiz_service.patch_draft(
+        teacher_uuid,
+        quiz_row.quiz_id,
+        pool_source=QuestionSource.generated,
+        requested_count=QUIZ_REQUESTED_COUNT,
+        builder_step=4,
+    )
+    generation = quiz_service.generate_questions(teacher_uuid, quiz_row.quiz_id)
+    if generation.shortfall:
+        raise RuntimeError(
+            f"Quiz question-bank shortfall {generation.shortfall} — QUIZ_BANK_BANDS/"
+            f"QUIZ_REQUESTED_COUNT have drifted from allocate_difficulty(None, "
+            f"{QUIZ_REQUESTED_COUNT})'s split; re-derive both together."
+        )
+    assignment_row = quiz_service.create_assignment(
+        teacher_uuid, Role.teacher, quiz_row.quiz_id, class_row.class_id
+    )
+
+    _log(
+        "Submitting the quiz as the control student, every answer deliberately wrong "
+        "(see wrong_mcq_answer's docstring), then marking it — MCQ-only: zero Gemini calls"
+    )
+    control_uuid = uuid.UUID(control["userId"])
+    quiz_taking_service.get_take(control_uuid, assignment_row.assignment_id)
+    quiz_detail = quiz_service.get_quiz(teacher_uuid, quiz_row.quiz_id)
+    included_questions = [
+        q for q in quiz_detail.questions if q.status == QuizQuestionStatus.included
+    ]
+    for q in included_questions:
+        # Every seeded row is MCQ (build_quiz_bank_questions), so this always holds.
+        assert q.mcq_answer is not None  # noqa: S101
+        quiz_taking_service.save_answer(
+            control_uuid,
+            assignment_row.assignment_id,
+            q.question_ref,
+            answer_text=wrong_mcq_answer(q.mcq_answer),
+        )
+    submit_result = quiz_taking_service.submit(control_uuid, assignment_row.assignment_id)
+    mark_result = quiz_marking_service.mark_submission(submit_result.submission_id)
+    if mark_result.status.value != "marked":
+        _log(
+            f"WARNING: quiz submission {submit_result.submission_id} did not mark "
+            f"(status={mark_result.status.value}, error={mark_result.marking_error!r}) — "
+            "T-10 will see an unmarked submission; not faked as marked."
+        )
 
     students = {
         "declining": {
@@ -500,6 +813,23 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "name": class_row.name,
         "joinCode": class_row.join_code,
     }
+    review_item = {
+        "itemId": str(review_item_row.item_id),
+        "attemptId": str(review_item_row.attempt_id),
+        "studentKey": "inactive",
+    }
+    quiz = {
+        "quizId": str(quiz_row.quiz_id),
+        "assignmentId": str(assignment_row.assignment_id),
+        "submissionId": str(submit_result.submission_id),
+        "submittedBy": "control",
+        "status": mark_result.status.value,
+    }
+    empty_parent_dict = {
+        "userId": str(empty_parent_result.user_id),
+        "phone": empty_parent_phone,
+        "accessToken": empty_parent_result.access_token,
+    }
 
     _log("Seeding complete")
     return build_result_payload(
@@ -510,6 +840,10 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         class_row=class_dict,
         students=students,
         parent=parent,
+        review_item=review_item,
+        quiz=quiz,
+        empty_teacher=empty_teacher,
+        empty_parent=empty_parent_dict,
     )
 
 
