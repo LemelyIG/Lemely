@@ -9,7 +9,7 @@ set -u
 REPO="/home/sico/Lemely"
 NTFY_TOPIC="lemely-ErBPK7TIRGD1sQP5"
 CTRL_TOPIC="lemely-ctl-9QmZR4vXpL2wDA7t"   # you PUBLISH here to steer the run
-NTFY_URL="http://home-server.tail5bf1d5.ts.net"
+NTFY_URL="http://home-server"
 REPO_URL="https://github.com/LemelyIG/Lemely"
 
 MODEL="opus"                    # orchestrator model — Opus for everything

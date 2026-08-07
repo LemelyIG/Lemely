@@ -17,7 +17,7 @@ import urllib.request
 
 import structlog
 
-_NTFY_BASE = "http://home-server.tail5bf1d5.ts.net"
+_NTFY_BASE = "http://home-server"
 _TIMEOUT_SECONDS = 5.0
 
 
