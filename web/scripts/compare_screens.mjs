@@ -264,6 +264,18 @@ async function main() {
 
   if (args.json) {
     const jsonPath = path.resolve(repoRoot, args.json)
+    // Every path here resolves against the repo root, so a caller who passes a
+    // `web/`-relative `../reports/...` (the natural mistake when running this
+    // from `web/`, where every other npm script lives) escapes the repo and
+    // writes to its parent. That happened once and left a stray file outside
+    // the working tree; MISSION §5 says never touch anything outside the repo,
+    // so refuse rather than create the directory.
+    if (jsonPath !== repoRoot && !jsonPath.startsWith(repoRoot + path.sep)) {
+      throw new Error(
+        `--json ${args.json} resolves to ${jsonPath}, outside the repo at ` +
+          `${repoRoot}. Paths are repo-relative regardless of your cwd — drop the "../".`,
+      )
+    }
     await fs.mkdir(path.dirname(jsonPath), { recursive: true })
     await fs.writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`)
     console.log(`[compare] wrote ${path.relative(repoRoot, jsonPath)}`)

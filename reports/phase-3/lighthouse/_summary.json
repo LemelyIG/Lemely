@@ -1,0 +1,218 @@
+[
+  {
+    "slug": "login",
+    "scores": {
+      "performance": 87,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "student-correct",
+    "scores": {
+      "performance": 83,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "student-result",
+    "scores": {
+      "performance": 85,
+      "accessibility": 100,
+      "best-practices": 96,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "student-overview",
+    "scores": {
+      "performance": 82,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "parent-login",
+    "scores": {
+      "performance": 82,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-overview",
+    "scores": {
+      "performance": 84,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-classes",
+    "scores": {
+      "performance": 81,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-class-roster",
+    "scores": {
+      "performance": 74,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-class-analytics",
+    "scores": {
+      "performance": 73,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-student-detail",
+    "scores": {
+      "performance": 83,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-at-risk",
+    "scores": {
+      "performance": 77,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-review",
+    "scores": {
+      "performance": 79,
+      "accessibility": 96,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-review-detail",
+    "scores": {
+      "performance": 81,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-quizzes",
+    "scores": {
+      "performance": 81,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-quiz-detail",
+    "scores": {
+      "performance": 67,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-quiz-results",
+    "scores": {
+      "performance": 84,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-announcements",
+    "scores": {
+      "performance": 84,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-grading",
+    "scores": {
+      "performance": 81,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "teacher-schemes",
+    "scores": {
+      "performance": 79,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "parent-children",
+    "scores": {
+      "performance": 86,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "parent-child-overview",
+    "scores": {
+      "performance": 83,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "parent-subject-detail",
+    "scores": {
+      "performance": 85,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "parent-weaknesses",
+    "scores": {
+      "performance": 86,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "slug": "student-parents",
+    "scores": {
+      "performance": 82,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  }
+]
