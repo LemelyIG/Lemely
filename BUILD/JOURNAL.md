@@ -1065,3 +1065,29 @@ the accuracy fixture (paper 22 is MCQ, 34/40).
 **Next.** Fix B3 before reporting any accuracy numbers. Then P3.10 e2 (screenshot
 states + regression compare), e3 (frontend runner), then the accuracy fixture
 work itself — both schemes are now available.
+
+## 2026-08-07 — P3.11: Phase 3 closed, reported, merged, PR #3 updated
+
+**Did.** Committed the accuracy work the previous session left staged-but-uncommitted
+(the recurring failure mode of this build — the work was finished, the commit was not).
+Then P3.11: verified all 13 gates green with 0 skipped in the foreground, measured
+1939 tests / 1933 passed / 6 skipped / 89.42% cov, wrote `reports/phase-3/REPORT.md`,
+merged to `develop` (49d9750, no-ff, signed), pushed, and updated PR #3 to "Phases 0–3".
+
+**Learned.** Two things worth not re-deriving. (i) PR #3's body had **never** carried a
+Phase-2.5 section, despite that phase's own STATE line claiming the PR was updated — a
+claim nobody had checked for two phases. Added it alongside the Phase-3 section. (ii)
+STATE.md had grown to 1983 lines; MISSION §8b's prune-on-report rule had not been applied
+to Phase 3 as its chunks landed. Pruned to 150 lines with the forward-looking facts
+(P4 prerequisites, environment quirks) kept and everything else pointed at the report,
+DECISIONS.md, and git history.
+
+**Worried about.** The `teacher-quiz-detail` Lighthouse performance score of 67. It is
+honestly reported as debt outside MISSION §11's student-route floor, but Phase 4 adds
+more teacher-adjacent surface on top of it, so the number will get worse before anyone
+looks at it.
+
+**Next.** Phase 4 — content generation + study plans. Its two hard prerequisites were
+established by Phase 3, not left open: the question-stem extractor (D3.7 — the bank is
+empty and corpus growth cannot change that) and the target-grade column (D3.3 — at-risk
+rule 2 cannot fire without it).
