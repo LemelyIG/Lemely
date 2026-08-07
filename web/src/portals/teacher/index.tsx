@@ -25,6 +25,7 @@ import { StudentDetail } from "./screens/StudentDetail"
 import { AtRiskList } from "./screens/AtRiskList"
 import { MarkSchemes } from "./screens/MarkSchemes"
 import { Quizzes } from "./screens/Quizzes"
+import { QuizBuilder } from "./screens/QuizBuilder"
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -231,5 +232,6 @@ export const teacherRoute: RouteObject = {
     { path: "at-risk", element: <AtRiskList /> },
     { path: "schemes", element: <MarkSchemes /> },
     { path: "quizzes", element: <Quizzes /> },
+    { path: "quizzes/:quizId", element: <QuizBuilder /> },
   ],
 }

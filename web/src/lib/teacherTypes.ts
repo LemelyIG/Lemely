@@ -27,7 +27,15 @@
  * `QueueRow`/`GradingQueue` (mirrors of the old `GET /grading/queue` DTOs) —
  * only the old `Review.tsx`, now replaced by the real T-07/T-08, consumed
  * them; `Grading.tsx` (the P2 console) uses `PaperList`/`PaperDetail`
- * instead. Quiz DTOs remain a later P3.8 chunk's to add.
+ * instead. P3.8 chunk c adds the T-09 quiz-builder family
+ * (`lemely/web/schemas_quiz.py`, `GET`/`POST /api/teacher/quizzes/*`):
+ * `QuizQuestion`, `QuizSummary`, `QuizList`, `QuizDetail`,
+ * `CreateQuizRequest`, `UpdateQuizDraftRequest`, `SetQuizStatusRequest`,
+ * `GenerateQuizQuestionsResponse`, `CreateQuizAssignmentRequest`,
+ * `QuizAssignment`, `QuizAssignmentList`, `QuizPoolCount`. Deliberately
+ * excludes the T-10 results family (`QuizAssignmentResultsDTO` and its
+ * nested DTOs) — that is a later phase's screen to build. Announcement
+ * endpoints remain a later P3.8 chunk's to add.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/teacher/data.ts` (the mock shapes these DTOs were modeled
@@ -707,6 +715,196 @@ export interface BulkApproveSkip {
 export interface BulkApproveResponse {
   approved: string[]
   skipped: BulkApproveSkip[]
+}
+
+// ── Quiz builder (T-09) ──────────────────────────────────────────────────
+
+/**
+ * One materialized quiz question — the frozen snapshot (mirrors
+ * `QuizQuestionDTO`, `docs/quiz-model.md` §1.5). The question **text is
+ * copied, not referenced** — `questionBankId` is provenance only, so a bank
+ * row edited/deactivated later never changes what a student already
+ * answered. `status` is `"included"` or `"removed"` — removed rows are kept,
+ * not deleted, and still appear here (the curation audit trail): render
+ * included ones as the quiz, removed ones only in a separate "removed"
+ * list, never silently drop them from existence and never present them as
+ * part of the live quiz either. `difficulty` is a `Band` value
+ * (`"foundation"` / `"standard"` / `"challenge"`) — a plain string on the
+ * wire like every other enum-backed field in this file.
+ */
+export interface QuizQuestion {
+  id: string
+  questionBankId: string | null
+  questionRef: string
+  position: number
+  status: string
+  replacedById: string | null
+  topic: string | null
+  difficulty: string
+  questionType: string
+  prompt: string
+  modelAnswer: string | null
+  markSchemePoints: string[]
+  mcqOptions: string[] | null
+  mcqAnswer: string | null
+  totalMarks: number
+}
+
+/**
+ * One quiz, draft or otherwise — the builder's resumable state (mirrors
+ * `QuizSummaryDTO`, §1.4). `status` is one of `"draft"` / `"assigned"` /
+ * `"closed"` / `"archived"`; the lifecycle never runs backwards, and every
+ * field above is only PATCHable while `status === "draft"` (a non-draft
+ * quiz opens read-only — editing it while students may be mid-attempt is
+ * exactly what the backend 422s). `targetGrade` is a `Grade` member (see
+ * `lib/types.ts`) or `null` while step 3 is untargeted — validated at the
+ * API boundary, not re-validated client-side. `poolSource` is one of
+ * `"past_paper"` / `"generated"` / `"teacher_upload"`, or `null` while step 4
+ * is undecided. **`subjectCode` has no corresponding `UpdateQuizDraftRequest`
+ * field — it is fixed at creation** (`CreateQuizRequest`, entered on the
+ * quiz-list screen, not in the builder) and the builder's step 1 must render
+ * it read-only, never as an editable input the PATCH would silently ignore.
+ * `builderStep` (1-6) is advisory only — it drives where a resumed draft
+ * reopens, never an authorization check (the server enforces every guard
+ * above independent of it).
+ */
+export interface QuizSummary {
+  id: string
+  subjectCode: string
+  title: string
+  status: string
+  targetGrade: string | null
+  includedTopics: string[]
+  poolSource: string | null
+  requestedCount: number | null
+  timeLimitMinutes: number | null
+  builderStep: number
+  questionCount: number
+}
+
+/** Response for `GET /teacher/quizzes` (mirrors `QuizListDTO`). The
+ * caller's owned quizzes, newest first. */
+export interface QuizList {
+  quizzes: QuizSummary[]
+}
+
+/** Response for `GET /teacher/quizzes/{quizId}` (mirrors `QuizDetailDTO`) —
+ * one owned quiz plus every materialized question row (included and
+ * removed). */
+export interface QuizDetail {
+  quiz: QuizSummary
+  questions: QuizQuestion[]
+}
+
+/**
+ * Body for `POST /teacher/quizzes` (mirrors `CreateQuizRequestDTO`) —
+ * step 1's two required fields, collected on the quiz-list screen before
+ * the builder ever opens (D3.15). Class/due-date/closes-at are deliberately
+ * NOT collected here or anywhere in step 1: `quizzes` has no such columns —
+ * they belong to step 6's `quiz_assignments` row.
+ */
+export interface CreateQuizRequest {
+  subjectCode: string
+  title: string
+}
+
+/**
+ * Body for `PATCH /teacher/quizzes/{quizId}` (mirrors
+ * `UpdateQuizDraftRequestDTO`) — every field optional; an omitted field (or
+ * an explicit `null`, per the DTO's own docstring — there is no separate
+ * "clear this field" sentinel here, unlike `SaveAnswerRequestDTO`) leaves
+ * the stored value untouched. 422 when the quiz is not currently a draft.
+ */
+export interface UpdateQuizDraftRequest {
+  title?: string | null
+  targetGrade?: string | null
+  includedTopics?: string[] | null
+  poolSource?: string | null
+  requestedCount?: number | null
+  timeLimitMinutes?: number | null
+  builderStep?: number | null
+}
+
+/** Body for `POST /teacher/quizzes/{quizId}/status` (mirrors
+ * `SetQuizStatusRequestDTO`) — one of `"draft"` / `"assigned"` / `"closed"` /
+ * `"archived"`, never backwards. **Not** used to move a quiz from `draft` to
+ * `assigned` — `create_assignment` already does that transition itself; this
+ * endpoint is only for closing/archiving. */
+export interface SetQuizStatusRequest {
+  status: string
+}
+
+/**
+ * Response for `POST /teacher/quizzes/{quizId}/questions/generate` (mirrors
+ * `GenerateQuizQuestionsResponseDTO`). **Additive** — calling again after
+ * raising `requestedCount` tops the set up, never replaces it, so `created`
+ * may legitimately be `[]` when the quiz already has its requested count.
+ * `shortfall` is `null` when nothing is short, or a band -> deficit map
+ * naming which constraint to loosen — render verbatim, never rounded or
+ * padded into a plausible-looking count.
+ */
+export interface GenerateQuizQuestionsResponse {
+  created: QuizQuestion[]
+  shortfall: Record<string, number> | null
+}
+
+/**
+ * Body for `POST /teacher/quizzes/{quizId}/assignments` (mirrors
+ * `CreateQuizAssignmentRequestDTO`) — step 6. `dueAt`/`closesAt` are
+ * ISO-8601 tz-aware datetime strings (the router 422s a naive one) or
+ * omitted. The backend 422s assigning a quiz with zero `included`
+ * questions, a `closesAt` earlier than `dueAt`, or the same class twice —
+ * every case must render as a real error, not be silently swallowed.
+ */
+export interface CreateQuizAssignmentRequest {
+  classId: string
+  dueAt?: string | null
+  closesAt?: string | null
+}
+
+/**
+ * One assignment of a quiz to a class (mirrors `QuizAssignmentDTO`, §1.6).
+ * `rosterSize`/`submissionCounts` are read live at request time, never a
+ * frozen snapshot. **Creating this already transitions a `draft` quiz to
+ * `assigned` server-side — the caller must never also call
+ * `SetQuizStatusRequest` afterwards.**
+ */
+export interface QuizAssignment {
+  id: string
+  classId: string
+  className: string
+  assignedAt: string
+  dueAt: string | null
+  closesAt: string | null
+  rosterSize: number
+  submissionCounts: Record<string, number>
+}
+
+/** Response for `GET /teacher/quizzes/{quizId}/assignments` (mirrors
+ * `QuizAssignmentListDTO`). */
+export interface QuizAssignmentList {
+  assignments: QuizAssignment[]
+}
+
+/**
+ * Response for `GET /teacher/quizzes/pool-count` (mirrors `QuizPoolCountDTO`,
+ * §2, T-09 steps 3/4). `byBand` is exactly the allocation the builder itself
+ * will produce for `(targetGrade, requestedCount)` — safe to render as "the
+ * real mix", never a hardcoded table. `shortfall` is `null` when nothing is
+ * short, or a band -> deficit map. `message` carries the exact
+ * honest-degradation wording (D3.7) when `source="past_paper"` matches zero
+ * rows for the subject — render it verbatim, never invent a caption in its
+ * place. **`question_bank` ships empty (D3.7)**, so a first-time teacher's
+ * `past_paper` count is genuinely 0 for every subject — this is the expected
+ * first-run state this screen must render plainly, not a bug to hide.
+ */
+export interface QuizPoolCount {
+  matching: number
+  requested: number
+  byBand: Record<string, number>
+  shortfall: Record<string, number> | null
+  difficultyEstimated: boolean
+  message: string | null
 }
 
 // ── POST /papers/{id}/extract, /grade SSE frames ─────────────────────────

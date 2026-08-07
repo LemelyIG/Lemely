@@ -16,11 +16,20 @@ import type {
   ClassList,
   ClassSummary,
   CreateClassRequest,
+  CreateQuizAssignmentRequest,
+  CreateQuizRequest,
   DismissReviewRequest,
   EnrollStudentRequest,
+  GenerateQuizQuestionsResponse,
   Overview,
   PaperDetail,
   PaperList,
+  QuizAssignment,
+  QuizAssignmentList,
+  QuizDetail,
+  QuizList,
+  QuizPoolCount,
+  QuizSummary,
   ResolveReviewRequest,
   ReviewItemDetail,
   ReviewQueueItem,
@@ -28,9 +37,11 @@ import type {
   RosterEntry,
   SchemeList,
   SchemeRow,
+  SetQuizStatusRequest,
   StudentDetail,
   TeacherPipelineFrame,
   UpdateClassRequest,
+  UpdateQuizDraftRequest,
   UploadResponse,
 } from "@/lib/teacherTypes"
 
@@ -54,7 +65,13 @@ import type {
  * removes `useGradingQueue` (`GET /grading/queue`) — its only consumer was
  * the old mock-era `Review.tsx`, now replaced by the real T-07/T-08 screens;
  * `Grading.tsx` (the P2 console this chunk leaves untouched) never used it.
- * Quiz/announcement endpoints remain a later P3.8 chunk's to add.
+ * P3.8 chunk c adds `/api/teacher/quizzes/*` (T-09,
+ * `lemely/web/routers/quiz.py`'s `router`, not `student_router` — the
+ * student quiz-taking endpoints have no teacher-side consumer). Every quiz
+ * mutation invalidates both this quiz's own detail query and the quizzes
+ * list, matching the fan-out `useResolveReviewItem` already established for
+ * "a write here can change what several other queries show". Announcement
+ * endpoints remain a later P3.8 chunk's to add.
  */
 
 export function useTeacherOverview(): UseQueryResult<Overview, Error> {
@@ -384,6 +401,238 @@ export function useDismissReviewItem(
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
+    },
+  })
+}
+
+// ── Quiz builder (T-09) ──────────────────────────────────────────────────
+
+/** `GET /teacher/quizzes` (the quiz-list screen). Owned quizzes, newest first. */
+export function useTeacherQuizzes(): UseQueryResult<QuizList, Error> {
+  return useQuery({
+    queryKey: ["teacher", "quizzes"],
+    queryFn: () => request<QuizList>("/teacher/quizzes"),
+  })
+}
+
+/** `POST /teacher/quizzes` (step 1, collected on the quiz-list screen's
+ * "New quiz" form — see `CreateQuizRequest`'s doc for why `subjectCode`
+ * lives here and nowhere else). Invalidates the quizzes list. */
+export function useCreateQuiz(): UseMutationResult<QuizSummary, Error, CreateQuizRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateQuizRequest) =>
+      request<QuizSummary>("/teacher/quizzes", {
+        method: "POST",
+        body: JSON.stringify(body satisfies CreateQuizRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quizzes"] })
+    },
+  })
+}
+
+/** `GET /teacher/quizzes/{quizId}` — the builder's single fetch (quiz +
+ * every materialized question, included and removed). */
+export function useQuizDetail(quizId: string | undefined): UseQueryResult<QuizDetail, Error> {
+  return useQuery({
+    queryKey: ["teacher", "quiz", quizId],
+    queryFn: () => request<QuizDetail>(`/teacher/quizzes/${quizId}`),
+    enabled: !!quizId,
+  })
+}
+
+/**
+ * `GET /teacher/quizzes/pool-count` (T-09 steps 3/4's live count). Query
+ * params are real **snake_case** on the wire (`subject_code`,
+ * `requested_count`, `target_grade`, `topics`, `source`) — not a typo to
+ * "fix" to camelCase. `topics` is repeated once per value
+ * (`URLSearchParams.append`), matching FastAPI's `list[str] | None` param.
+ * Step 3 calls this with only `subjectCode`/`targetGrade` set (to read
+ * `byBand`, which depends on nothing else) using whatever `requestedCount`
+ * the quiz already has (0 before step 4 is ever visited — `allocate_difficulty`
+ * defines an all-zero mix for a non-positive count, which the screen must
+ * label as "choose a question count in the next step", not render as a
+ * shortfall). Step 4 calls it again with `source` set for the real
+ * `matching` count.
+ */
+export function useQuizPoolCount(params: {
+  subjectCode: string | undefined
+  requestedCount: number
+  targetGrade?: string | null
+  topics?: string[]
+  source?: string | null
+}): UseQueryResult<QuizPoolCount, Error> {
+  const { subjectCode, requestedCount, targetGrade, topics, source } = params
+  const topicsKey = topics && topics.length > 0 ? topics.join("") : null
+  const query = new URLSearchParams()
+  if (subjectCode) query.set("subject_code", subjectCode)
+  query.set("requested_count", String(requestedCount))
+  if (targetGrade) query.set("target_grade", targetGrade)
+  if (source) query.set("source", source)
+  for (const topic of topics ?? []) query.append("topics", topic)
+  return useQuery({
+    queryKey: [
+      "teacher",
+      "quiz-pool-count",
+      subjectCode ?? null,
+      requestedCount,
+      targetGrade ?? null,
+      topicsKey,
+      source ?? null,
+    ],
+    queryFn: () => request<QuizPoolCount>(`/teacher/quizzes/pool-count?${query.toString()}`),
+    enabled: !!subjectCode,
+  })
+}
+
+/**
+ * `PATCH /teacher/quizzes/{quizId}` (steps 1-4's "Save & continue", and
+ * every step-navigation click — see `QuizBuilder.tsx`'s module doc for why
+ * every navigation carries a `builderStep` PATCH). 422 when the quiz is not
+ * a draft; the screen must never fire this for a non-draft quiz. Invalidates
+ * this quiz's detail and the quizzes list (title/status/counts shown there
+ * can all change).
+ */
+export function usePatchQuizDraft(
+  quizId: string | undefined,
+): UseMutationResult<QuizSummary, Error, UpdateQuizDraftRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: UpdateQuizDraftRequest) =>
+      request<QuizSummary>(`/teacher/quizzes/${quizId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body satisfies UpdateQuizDraftRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quiz", quizId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quizzes"] })
+    },
+  })
+}
+
+/** `POST /teacher/quizzes/{quizId}/status` — closing/archiving only (never
+ * draft->assigned, which `useCreateQuizAssignment` already does server-side).
+ * Not currently wired to any control on this screen (T-09's step map has no
+ * close/archive action — see the phase report) but exported for when a
+ * results screen needs it. Same invalidation as `usePatchQuizDraft`. */
+export function useSetQuizStatus(
+  quizId: string | undefined,
+): UseMutationResult<QuizSummary, Error, SetQuizStatusRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: SetQuizStatusRequest) =>
+      request<QuizSummary>(`/teacher/quizzes/${quizId}/status`, {
+        method: "POST",
+        body: JSON.stringify(body satisfies SetQuizStatusRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quiz", quizId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quizzes"] })
+    },
+  })
+}
+
+/** `POST /teacher/quizzes/{quizId}/questions/generate` (step 5). Additive —
+ * `data.created` may be `[]` when the quiz already has its requested count;
+ * `data.shortfall` must render verbatim, same honesty rule as pool-count.
+ * Invalidates this quiz's detail (question list/count changed) and the
+ * quizzes list (`questionCount` shown there). */
+export function useGenerateQuizQuestions(
+  quizId: string | undefined,
+): UseMutationResult<GenerateQuizQuestionsResponse, Error, void> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      request<GenerateQuizQuestionsResponse>(`/teacher/quizzes/${quizId}/questions/generate`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quiz", quizId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quizzes"] })
+    },
+  })
+}
+
+/** `DELETE /teacher/quizzes/{quizId}/questions/{questionRef}` (step 5's
+ * per-question remove). Curates the question out (`status="removed"`) —
+ * never deletes the row. Same invalidation as `useGenerateQuizQuestions`. */
+export function useRemoveQuizQuestion(
+  quizId: string | undefined,
+): UseMutationResult<QuizSummary, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (questionRef: string) =>
+      request<QuizSummary>(`/teacher/quizzes/${quizId}/questions/${questionRef}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quiz", quizId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quizzes"] })
+    },
+  })
+}
+
+/** `GET /teacher/quizzes/{quizId}/assignments` (step 6's list — also what a
+ * non-draft quiz renders read-only). `rosterSize`/`submissionCounts` are
+ * live, never a frozen snapshot. */
+export function useQuizAssignments(
+  quizId: string | undefined,
+): UseQueryResult<QuizAssignmentList, Error> {
+  return useQuery({
+    queryKey: ["teacher", "quiz", quizId, "assignments"],
+    queryFn: () => request<QuizAssignmentList>(`/teacher/quizzes/${quizId}/assignments`),
+    enabled: !!quizId,
+  })
+}
+
+/**
+ * `POST /teacher/quizzes/{quizId}/assignments` (step 6). **Already
+ * transitions a `draft` quiz to `assigned` server-side** — the caller must
+ * never also call `useSetQuizStatus` after this succeeds. 422s (rendered via
+ * the mutation's own error, never pre-empted by a client-side guess beyond
+ * "does this quiz have any included questions yet") cover: zero included
+ * questions, `closesAt` earlier than `dueAt`, or the same class twice.
+ * Invalidates this quiz's assignments and detail (status/questionCount can
+ * change) and the quizzes list.
+ */
+export function useCreateQuizAssignment(
+  quizId: string | undefined,
+): UseMutationResult<QuizAssignment, Error, CreateQuizAssignmentRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateQuizAssignmentRequest) =>
+      request<QuizAssignment>(`/teacher/quizzes/${quizId}/assignments`, {
+        method: "POST",
+        body: JSON.stringify(body satisfies CreateQuizAssignmentRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quiz", quizId, "assignments"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quiz", quizId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quizzes"] })
+    },
+  })
+}
+
+/** `DELETE /teacher/quizzes/{quizId}/assignments/{assignmentId}` (step 6's
+ * "Remove" — undoing an accidental assignment). Refused (422) once any
+ * student has a submission beyond `not_started`; that error must render,
+ * never be assumed to always succeed (mirrors `useRemoveStudent`'s
+ * disposition — attempt, then surface a real backend refusal). Has no quiz
+ * draft/status gate of its own, so this stays offered even once the quiz is
+ * `assigned` — only the submission state can refuse it. Invalidates this
+ * quiz's assignments list. */
+export function useDeleteQuizAssignment(
+  quizId: string | undefined,
+): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (assignmentId: string) =>
+      request<void>(`/teacher/quizzes/${quizId}/assignments/${assignmentId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "quiz", quizId, "assignments"] })
     },
   })
 }
