@@ -1,6 +1,64 @@
 # Decisions log
 (orchestrator records every non-trivial decision here: what, why, alternatives)
 
+## Phase 4
+
+### D4.1 — The question-stem extractor closes D3.7, and the honest yield is about a third of the corpus (P4.1)
+
+**Context.** D3.7 established that `question_bank` ships empty for a *structural*
+reason, not a corpus-size one: a CAIE mark scheme carries marking points but no
+question **stem**, the stem lives in the question paper, and no question-paper
+extractor existed. Phase 4's placement test (S-04) and practice generator (S-20)
+are both meaningless against an empty bank, so this was the first task of the phase.
+
+**Decisions.**
+
+1. **Deterministic, zero-Gemini extraction.** `lemely/io/det/question_papers.py`
+   uses pdfplumber only, mirroring the existing `lemely/io/det/` mark-scheme parser's
+   structure and config conventions. Rejected the obvious alternative (Gemini vision
+   per question) on budget grounds that are not close: the hard cap is $8.00 with
+   $0.1586 spent, and per-question LLM extraction over 312 papers would exhaust it
+   many times over. A deterministic path also re-runs free, which matters because
+   ingestion will be re-run every time the extractor improves.
+
+2. **A stem that depends on an unextractable figure is not banked.** 651 of the 2090
+   leaves examined in the 0625 corpus were excluded on this rule. This is the
+   expensive decision and it is deliberate: text-extracting "Which diagram shows the
+   rod in equilibrium?" and banking it without the four diagrams produces a question
+   no student can answer, which is inventing precision (UI spec §1.4). The ingest
+   reports every exclusion **by reason** rather than reporting a yield.
+
+3. **No marking points, no bank row.** The bank feeds a marking engine, so a stem
+   with no matching mark-scheme entry cannot be marked and is skipped, not banked
+   with an empty scheme.
+
+4. **Topic stays `NULL` here.** Deriving a topic from the extractor would be a guess;
+   classification is P4.2 and is done against a real syllabus taxonomy.
+
+**Measured yield over the real 0625 corpus** (orchestrator-run, not taken from the
+subagent's report): 72 papers → 2090 leaves → **298 banked** (206 MCQ, 92 theory),
+651 figure-excluded, re-ingest idempotent. So roughly a third of the corpus is
+bankable today, and the report says so rather than rounding it up.
+
+**The binding upstream constraint, worth not re-deriving.** Only **32 of 72** 0625
+mark schemes parse deterministically at strict tolerance (`--on-error continue`
+reports 40 failures, mostly `mark_total_mismatch`). Since a stem needs its scheme to
+be bank-eligible, **mark-scheme parse coverage — not stem extraction — is what caps
+the bank size.** Improving the det mark-scheme parser is the highest-leverage way to
+grow the bank; B2's two fixes are precedent that these failures are real extraction
+defects, not a tolerance to relax.
+
+**Verification found four defects the subagent's own tests missed**, all in the
+*content* rather than the structure, and all found only by reading the banked rows
+back out of Postgres: Adobe Symbol-font characters arriving as U+E000–F8FF private-use
+garbage (Δ, × unreadable) in 16 prompts / 34 mark-point sets / 17 option sets; `© UCLES`
+page footers bleeding into 30 stems; 3 diagram-only MCQ questions banked with empty
+option strings (the `has_figure` guard checked the stem but not the *options*); and
+flattened superscripts turning `1.3 × 10⁷ m/s` into `1.3 × 107 m/s`, which does not
+look broken and silently asks a different question. **How to apply:** structural tests
+passing over synthetic PDFs says nothing about extraction fidelity on real documents —
+read the persisted rows back and grep them for corruption before believing a yield.
+
 ## Phase 3
 
 ### D3.21 — Real past-paper accuracy: both totals land inside tolerance, and the MCQ paper is the worrying one (INBOX-2026-08-07-ACC)
