@@ -1868,7 +1868,7 @@ Starting facts (established 2026-08-06, do not re-derive):
       the suite construct the flag directly on a `CorrectedQuestion` and never route through
       `apply_integrity_checks`, so they were unaffected — only the one test that exercised
       the real path had encoded the false positive.
-- [ ] todo — **INBOX-2026-08-07-ACC** Real past-paper accuracy fixtures — **B1 IS RESOLVED
+- [ ] doing — **INBOX-2026-08-07-ACC** Real past-paper accuracy fixtures — **B1 IS RESOLVED
       (2026-08-07); this task is live again.** The human installed the `paperscraper` skill
       (`.claude/skills/paperscraper/SKILL.md`, an external tool at `/home/sico/PaperScraper`
       with its own venv — never add it to Lemely's `pyproject.toml` or `.venv`), which is the
@@ -1902,6 +1902,19 @@ Starting facts (established 2026-08-06, do not re-derive):
       - Marking paper 22 needs **no Gemini for the marking step** — `correct_mcq_answers` is
         deterministic; only answer extraction (vision) is a live call.
       - Gemini spend on this: $0.080, cumulative **$0.138/$8.00**.
+      - **`GEMINI_API_KEY` is in `/home/sico/Lemely/.env` and is NOT exported into a
+        non-interactive shell.** Load it with `set -a && . ./.env && set +a` (then
+        `lemely doctor` reports `gemini_reachable: models.list() ok`). Without this any
+        live-call work fails looking like a missing-key blocker when the key is right
+        there. Costs a cycle to rediscover every session — do not re-derive.
+      - Decisions fixed before any result was seen, so they cannot be tuned to the
+        outcome: **tolerance is ±10% of each paper's maximum** (±4 on 40, ±8 on 80),
+        justified by adjacent CAIE boundaries sitting ~6–10% of max apart, so an error
+        inside the band risks at most one grade band; the two papers are reported
+        **separately, never averaged**; the live run is gated on `LEMELY_LIVE_ACCURACY=1`
+        and cached to disk; the per-question JSON and the annotation overlay are personal
+        data of a minor and are gitignored, while a **numbers-only** `REPORT.md`
+        (no transcribed answers, no imagery) is committed.
 
       **Remaining work (the directive's 8 items, `BUILD/INBOX.md`):** the end-to-end test
       (real ingest→OCR→mark→grade, not a mocked stub), a stated+justified total tolerance,
