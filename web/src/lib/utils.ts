@@ -41,3 +41,33 @@ export function initialsOf(name: string): string {
     .map((w) => w[0])
     .join("")
 }
+
+/** RFC 4180 quoting: a cell containing a quote, comma or newline is wrapped
+ * in quotes with its own quotes doubled. */
+function escapeCsvCell(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+}
+
+/**
+ * Serialize `rows` as CSV and hand it to the browser as a download.
+ *
+ * Extracted from `ClassAnalytics.tsx`'s private heatmap exporter in P3.8
+ * chunk d, when T-10 needed the same escape-and-download mechanics — the
+ * `initialsOf` lesson from P3.7 chunk c (a helper copied into a second screen
+ * is a helper that will be copied into a third, and the copies drift). Each
+ * screen still builds its own `rows`; only the escaping and the Blob/anchor
+ * dance are shared.
+ *
+ * `filename` is slugified, so callers pass a human label ("Y11 Physics —
+ * quiz 3") rather than pre-sanitising it themselves.
+ */
+export function downloadCsv(filename: string, rows: string[][]): void {
+  const csv = rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n")
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `${filename.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}

@@ -4,9 +4,10 @@ import { DownloadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { ErrorState, EmptyState } from "@/components/ui/state-views"
 import { TrendSparkline } from "@/components/ui/trend-sparkline"
-import { WeaknessChip, type WeaknessSeverity } from "@/components/ui/weakness-chip"
+import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { gradeBand } from "@/components/ui/grade-badge"
-import { cn } from "@/lib/utils"
+import { cn, downloadCsv } from "@/lib/utils"
+import { accuracyTone, TONE_CLASS, TONE_TO_SEVERITY } from "@/lib/severity"
 import { useClassAnalytics } from "@/lib/hooks/useTeacherApi"
 import type { HeatmapCell, TopicWeakness } from "@/lib/teacherTypes"
 import { useClassDetailContext } from "./ClassDetail"
@@ -47,38 +48,11 @@ import { useClassDetailContext } from "./ClassDetail"
  * click and isn't attempted here).
  */
 
-type Tone = "ok" | "warn" | "err"
-
-/** One shared accuracy->tone mapping for both the heatmap cells and the
- * ranked-topic `WeaknessChip` severities below it, so the same number never
- * reads as a different tone in two places on the same screen. */
-function accuracyTone(accuracy: number): Tone {
-  if (accuracy >= 0.75) return "ok"
-  if (accuracy >= 0.5) return "warn"
-  return "err"
-}
-
-const TONE_TO_SEVERITY: Record<Tone, WeaknessSeverity> = {
-  ok: "minor",
-  warn: "moderate",
-  err: "significant",
-}
-
-const CELL_TONE_CLASS: Record<Tone, string> = {
-  ok: "bg-ok-bg text-ok",
-  warn: "bg-warn-bg text-warn",
-  err: "bg-err-bg text-err",
-}
-
 const GRADE_BAND_BG: Record<string, string> = {
   top: "bg-grade-top",
   mid: "bg-grade-mid",
   borderline: "bg-grade-borderline",
   fail: "bg-grade-fail",
-}
-
-function escapeCsvCell(value: string): string {
-  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
 }
 
 function downloadHeatmapCsv(
@@ -95,14 +69,7 @@ function downloadHeatmapCsv(
       return acc == null ? "No data" : `${Math.round(acc * 100)}%`
     }),
   ])
-  const csv = [header, ...rows].map((row) => row.map(escapeCsvCell).join(",")).join("\n")
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement("a")
-  a.href = url
-  a.download = `${classLabel.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-heatmap.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  downloadCsv(`${classLabel}-heatmap`, [header, ...rows])
 }
 
 function HeatmapCellView({ cell }: { cell: HeatmapCell | undefined }) {
@@ -127,7 +94,7 @@ function HeatmapCellView({ cell }: { cell: HeatmapCell | undefined }) {
       <div
         className={cn(
           "w-11 h-8 flex items-center justify-center rounded font-mono text-[11px] font-medium",
-          CELL_TONE_CLASS[tone],
+          TONE_CLASS[tone],
         )}
         title={`${pct}% accuracy`}
       >

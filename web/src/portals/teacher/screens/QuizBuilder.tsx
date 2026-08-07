@@ -928,6 +928,14 @@ function StepAssign({
                   <span className="text-[12px] text-t2">Due {new Date(a.dueAt).toLocaleString()}</span>
                 ) : null}
                 <span className="flex-1" />
+                {/* T-09's exit to T-10. Results are per assignment, so the
+                    link carries this assignment's id, not just the quiz's. */}
+                <Link
+                  to={`/teacher/quizzes/${quizId}/assignments/${a.id}/results`}
+                  className="text-[12.5px] text-t1 hover:underline"
+                >
+                  View results →
+                </Link>
                 <Button
                   size="sm"
                   variant="ghost"

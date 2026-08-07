@@ -907,6 +907,159 @@ export interface QuizPoolCount {
   message: string | null
 }
 
+// ── T-10 quiz results ────────────────────────────────────────────────────
+// Mirrors `lemely/web/schemas_quiz.py`'s results family. Every panel below is
+// a projection over ONE server-side load of the assignment's submissions
+// (`QuizResultsService`, §4.6), so no two can disagree — never re-derive one
+// of these numbers client-side from another.
+
+/**
+ * Completion against the **live** roster (mirrors `QuizCompletionDTO`).
+ * `completionRate` is `null` for an empty roster, not 0 — 0/0 is not 0%, and
+ * rendering it as 0% would read as "nobody has done it" when the truth is
+ * "there is nobody to do it". `offRosterSubmissionCount` is work handed in by
+ * students who have since left the class: excluded from every panel because
+ * the denominator is the live roster, but reported rather than silently
+ * dropped (D3.10). **Do not "simplify" it away or fold it into the counts.**
+ */
+export interface QuizCompletion {
+  rosterSize: number
+  completedCount: number
+  completionRate: number | null
+  statusCounts: Record<string, number>
+  offRosterSubmissionCount: number
+}
+
+/**
+ * One ten-point band of the score distribution (mirrors `QuizScoreBucketDTO`).
+ * Deliberately a **percentage** distribution, not a grade one: a quiz has no
+ * grade boundaries to bucket by (§4.6 rule (b), D3.9). The top band is
+ * inclusive of 100.
+ */
+export interface QuizScoreBucket {
+  lower: number
+  upper: number
+  studentCount: number
+}
+
+/**
+ * One question's class-wide performance (mirrors `QuizQuestionAnalysisDTO`),
+ * in the quiz's display order. Every mark is an `effective_marks` sum, so a
+ * teacher's override reads here exactly as it reads on the student's screen
+ * (§4.6 rule (a)). `averageMarks`/`accuracy` are `null` — never 0 — when
+ * nobody has been marked on the question yet; render that as "not yet
+ * answered", never as 0%.
+ */
+export interface QuizQuestionAnalysis {
+  questionRef: string
+  position: number
+  prompt: string
+  topic: string | null
+  difficulty: string
+  totalMarks: number
+  answeredCount: number
+  averageMarks: number | null
+  accuracy: number | null
+  fullMarksCount: number
+  zeroMarksCount: number
+  needsReviewCount: number
+  overriddenCount: number
+}
+
+/**
+ * One roster student's result (mirrors `QuizStudentResultDTO`), present
+ * whether or not they submitted. Mark fields are `null` until marking lands;
+ * `markingError` is set when marking failed, so a `submitted`-but-unmarked row
+ * is visibly explained rather than silently empty — render it, do not treat a
+ * null mark as a zero.
+ */
+export interface QuizStudentResult {
+  studentId: string
+  displayName: string
+  status: string
+  submittedAt: string | null
+  markedAt: string | null
+  awardedMarks: number | null
+  maximumMarks: number | null
+  percentage: number | null
+  confidenceBand: string | null
+  needsTeacherReview: boolean
+  marksByQuestion: Record<string, number>
+  markingError: string | null
+}
+
+/**
+ * Response for
+ * `GET /teacher/quizzes/{quizId}/assignments/{assignmentId}/results`
+ * (mirrors `QuizAssignmentResultsDTO`). Aggregated per **assignment** — one
+ * class — never per quiz (§1.6): a quiz assigned to two classes has two sets
+ * of results, and averaging them would describe neither cohort.
+ */
+export interface QuizAssignmentResults {
+  assignment: QuizAssignment
+  quizTitle: string
+  subjectCode: string
+  questionCount: number
+  totalMarks: number
+  completion: QuizCompletion
+  averagePercentage: number | null
+  medianPercentage: number | null
+  scoreDistribution: QuizScoreBucket[]
+  questionAnalysis: QuizQuestionAnalysis[]
+  students: QuizStudentResult[]
+  topicWeaknesses: TopicWeakness[]
+}
+
+// ── T-12 announcements ───────────────────────────────────────────────────
+// Mirrors `lemely/web/schemas_announcements.py` (P3.8 chunk a).
+
+/**
+ * Body for `POST /teacher/announcements`. **Exactly one of `classIds` /
+ * `schoolWide` may be given** — neither is a 422 and so is *both*, because the
+ * two audiences overlap and a combined request would deliver twice to a
+ * student enrolled in a class of that school. The rule lives in the service,
+ * so the composer must not offer a UI state that sends both. `schoolId` is
+ * required whenever `schoolWide` is true (a school_admin can administer
+ * several schools, so the flag alone does not say which).
+ *
+ * `publishAt` is **stored but never read** — no scheduler exists and delivery
+ * is Phase 5's. Label it honestly; never imply it will fire.
+ */
+export interface AnnouncementCreateRequest {
+  title: string
+  body: string
+  classIds?: string[]
+  schoolWide?: boolean
+  schoolId?: string | null
+  publishAt?: string | null
+}
+
+/** One announcement row, exactly as stored (mirrors `AnnouncementDTO`) — no
+ * derived or enriched fields, so `classId`/`schoolId` are raw ids the client
+ * must resolve against its own class list to name. */
+export interface Announcement {
+  announcementId: string
+  authorId: string
+  schoolId: string | null
+  classId: string | null
+  title: string
+  body: string
+  publishAt: string | null
+  createdAt: string
+}
+
+/** Response for `POST /teacher/announcements` — every row the fan-out created.
+ * Fan-out is **all-or-nothing**: a teacher owning 9 of 10 targeted classes
+ * gets a 403 and zero rows, never a partial send. */
+export interface AnnouncementCreateResponse {
+  announcements: Announcement[]
+}
+
+/** Response for `GET /teacher/announcements` (author-scoped, newest first). */
+export interface AnnouncementList {
+  announcements: Announcement[]
+}
+
 // ── POST /papers/{id}/extract, /grade SSE frames ─────────────────────────
 
 /**

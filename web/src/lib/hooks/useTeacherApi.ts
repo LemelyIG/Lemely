@@ -8,6 +8,9 @@ import {
 import { request, streamActivity } from "@/lib/api"
 import type {
   AcknowledgeAtRiskRequest,
+  AnnouncementCreateRequest,
+  AnnouncementCreateResponse,
+  AnnouncementList,
   AtRiskFlag,
   AtRiskList,
   BulkApproveResponse,
@@ -26,6 +29,7 @@ import type {
   PaperList,
   QuizAssignment,
   QuizAssignmentList,
+  QuizAssignmentResults,
   QuizDetail,
   QuizList,
   QuizPoolCount,
@@ -513,9 +517,10 @@ export function usePatchQuizDraft(
 
 /** `POST /teacher/quizzes/{quizId}/status` — closing/archiving only (never
  * draft->assigned, which `useCreateQuizAssignment` already does server-side).
- * Not currently wired to any control on this screen (T-09's step map has no
- * close/archive action — see the phase report) but exported for when a
- * results screen needs it. Same invalidation as `usePatchQuizDraft`. */
+ * Consumed by T-10's results screen (`QuizResults.tsx`), deliberately not by
+ * T-09's builder: closing is a decision a teacher makes once they can see the
+ * class has finished, which is information only the results screen has. Same
+ * invalidation as `usePatchQuizDraft`. */
 export function useSetQuizStatus(
   quizId: string | undefined,
 ): UseMutationResult<QuizSummary, Error, SetQuizStatusRequest> {
@@ -633,6 +638,74 @@ export function useDeleteQuizAssignment(
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["teacher", "quiz", quizId, "assignments"] })
+    },
+  })
+}
+
+/**
+ * `GET /teacher/quizzes/{quizId}/assignments/{assignmentId}/results` (T-10).
+ *
+ * **Per assignment, never per quiz** (§1.6) — a quiz assigned to two classes
+ * has two sets of results and averaging them would describe neither cohort.
+ * Every panel in the response is a projection over one server-side load, so
+ * the screen renders them as given and never re-derives one from another.
+ */
+export function useQuizResults(
+  quizId: string | undefined,
+  assignmentId: string | undefined,
+): UseQueryResult<QuizAssignmentResults, Error> {
+  return useQuery({
+    queryKey: ["teacher", "quiz", quizId, "assignments", assignmentId, "results"],
+    queryFn: () =>
+      request<QuizAssignmentResults>(
+        `/teacher/quizzes/${quizId}/assignments/${assignmentId}/results`,
+      ),
+    enabled: !!quizId && !!assignmentId,
+  })
+}
+
+/** `GET /teacher/announcements` (T-12) — author-scoped, newest first. */
+export function useAnnouncements(): UseQueryResult<AnnouncementList, Error> {
+  return useQuery({
+    queryKey: ["teacher", "announcements"],
+    queryFn: () => request<AnnouncementList>("/teacher/announcements"),
+  })
+}
+
+/**
+ * `POST /teacher/announcements` (T-12). Fan-out is **all-or-nothing** — a
+ * teacher owning 9 of 10 targeted classes gets a 403 and zero rows — so the
+ * composer surfaces the error rather than reporting a partial send. Sending
+ * both `classIds` and `schoolWide` is a 422 by design (the audiences overlap);
+ * the composer's audience control is exclusive so that state is unreachable.
+ */
+export function useCreateAnnouncement(): UseMutationResult<
+  AnnouncementCreateResponse,
+  Error,
+  AnnouncementCreateRequest
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: AnnouncementCreateRequest) =>
+      request<AnnouncementCreateResponse>("/teacher/announcements", {
+        method: "POST",
+        body: JSON.stringify(body satisfies AnnouncementCreateRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "announcements"] })
+    },
+  })
+}
+
+/** `DELETE /teacher/announcements/{announcementId}` (T-12) — 204, so
+ * `request()` must not try to parse a body (fixed in P3.7 chunk b). */
+export function useDeleteAnnouncement(): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (announcementId: string) =>
+      request<void>(`/teacher/announcements/${announcementId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "announcements"] })
     },
   })
 }

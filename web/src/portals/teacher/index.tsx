@@ -7,6 +7,7 @@ import {
   Warning,
   Books,
   Sparkle,
+  Megaphone,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -26,6 +27,8 @@ import { AtRiskList } from "./screens/AtRiskList"
 import { MarkSchemes } from "./screens/MarkSchemes"
 import { Quizzes } from "./screens/Quizzes"
 import { QuizBuilder } from "./screens/QuizBuilder"
+import { QuizResults } from "./screens/QuizResults"
+import { Announcements } from "./screens/Announcements"
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -34,6 +37,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   atRisk: Warning,
   schemes: Books,
   quizzes: Sparkle,
+  announcements: Megaphone,
 }
 
 function SidebarNavItem({ item }: { item: NavItem }) {
@@ -233,5 +237,12 @@ export const teacherRoute: RouteObject = {
     { path: "schemes", element: <MarkSchemes /> },
     { path: "quizzes", element: <Quizzes /> },
     { path: "quizzes/:quizId", element: <QuizBuilder /> },
+    // T-10 is per assignment, never per quiz (§1.6) — the route shape is the
+    // first place that has to say so.
+    {
+      path: "quizzes/:quizId/assignments/:assignmentId/results",
+      element: <QuizResults />,
+    },
+    { path: "announcements", element: <Announcements /> },
   ],
 }
