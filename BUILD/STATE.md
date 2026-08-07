@@ -137,9 +137,20 @@ the quiz take/submit/auto-mark path (`quiz_taking_repo`/`quiz_marking_repo`), `c
 screen. The placement test and practice sets are quiz-shaped: reuse that engine, do not fork it.
 
 ### Task checklist
-- [ ] doing — **P4.1** Question-stem extractor: parse question-paper PDFs into `question_bank`
-      rows (`source=past_paper`) with topic + difficulty. Closes the D3.7 prerequisite. The
-      bank must stop being empty before P4.4/P4.5 mean anything.
+- [ ] doing — **P4.1** Question-stem extractor (D4.1). **Structurally done and verified; four
+      content defects out for fix.** `lemely/io/det/question_papers.py` (deterministic, zero
+      Gemini) + `lemely/io/question_papers.py` pairing/writer + `lemely question-bank
+      ingest-question-papers`. Checkpointed at `4c58c15`.
+      **Orchestrator-measured yield (0625): 72 papers → 2090 leaves → 298 banked** (206 MCQ,
+      92 theory), 651 figure-excluded, re-ingest idempotent. Bank is no longer empty — D3.7 closed.
+      Open defects sent back to the implementer: PUA symbol-font glyphs (16 prompts / 34
+      mark-point sets / 17 option sets), `© UCLES` footer leakage (30 prompts), diagram-only MCQ
+      options banked empty (3 rows), flattened superscripts (4 prompts), and a silent
+      no-op on a nonexistent `--schemes-dir`. Re-measure with `/tmp/p41_quality.py`.
+      **Corpus expanded** via paperscraper: 312 qp + 312 ms across 0580/0606/0625, 0 failures.
+      **Ceiling worth knowing:** only 32/72 0625 mark schemes parse deterministically, and a
+      stem needs its scheme to be bankable — mark-scheme parse coverage, not stem extraction,
+      is what caps bank size.
 - [ ] todo — **P4.2** Syllabus topic taxonomy + classification of bank questions (0580/0606/0625).
 - [ ] todo — **P4.3** Student profile + onboarding data model (migration 0009): grade level,
       school, external lessons, weekly study hours, per-subject enrolment with **target grade**,
