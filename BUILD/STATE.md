@@ -1177,13 +1177,72 @@ Starting facts (established 2026-08-06, do not re-derive):
             is deliberately no teardown. One OTP challenge is requested per run and the
             token it yields is returned — a consumer must reuse it rather than starting a
             second challenge for the same phone (30s cooldown).
-      - [ ] **b** doing — expand `audit.mjs` to the full 19-route registry, then FIX
-            everything it newly finds. Known-in-advance: `text-t3` at 10-13px measures
-            4.36:1 (under AA 4.5:1) and is used for caption text on nearly every teacher
-            screen; icon-only `button-name` on the parent shell below 640px. Decide the
-            `--t3` token change vs per-screen retrofit here.
+      - [x] **b** done — `audit.mjs` rebuilt from a linear 4-route journey into a
+            declarative **21-route** `ROUTE_REGISTRY` (D3.17), plus every defect it
+            newly found. 1892 tests (1888 passed / 4 live-only skips), 89.35% cov
+            (unchanged — zero `lemely/` files touched). All 12 gates green, 0 skipped.
+            **Final measurement, all 21 routes: zero axe violations at ANY severity**
+            (not just zero serious/critical), Lighthouse accessibility **100** on every
+            route, performance floor 86 (`/login`), **0** console errors, **0**
+            horizontal-scroll violations.
+            `check_ui_gates.py` now also gates console errors and horizontal scroll,
+            and treats a *missing* summary file as "not checked" (a failure), never as
+            "clean".
+            **Five real defects found and fixed — three of them in product code that
+            every previous gate run had passed over:**
+            (a) `--t3` was below AA at 4.48:1 against `--md-surface-container-highest`;
+            mix moved `outline 65/35` → `35/65` (#76615e → #67534f), a token fix, not a
+            per-screen retrofit. **The 4.36:1 figure P3.8c reported was never
+            root-caused** and `index.css`'s claim that axe measures glyph
+            rasterization was wrong — corrected in-file and in D3.17, not explained
+            away.
+            (b) `/student/result/:paperId` overflowed 380px by 10px: the student header
+            is one non-wrapping flex row whose fixed items summed to 391px. Crumb now
+            `min-w-0 truncate`, padding tightens below 640px, streak pill hides there
+            (same treatment the search affordance already had at 1080px).
+            (c) `/teacher/grading` and `/teacher/schemes` had **no `<h1>` at all**
+            (`page-has-heading-one`) — found *only* because this chunk stopped
+            excluding them.
+            (d) `/login/parent` was unreachable in-harness: `localStorage` is
+            per-origin, so the student journey's session made `LoginRoute` redirect it
+            away. Each session key now gets its own **incognito browser context**.
+            (e) 13 `SecurityError` page errors were the harness's own —
+            `evaluateOnNewDocument` fired on the `about:blank` Lighthouse navigates
+            through. The injection now skips opaque origins explicitly (not a bare
+            try/catch, which would also hide a real storage failure).
+            **Do not reintroduce / do not "tidy" away:**
+            (i) A route that cannot be reached is collected and the run **continues**,
+            failing non-zero at the end. Fail-fast costs one ~11-minute run per broken
+            route; this pass found T-02's wrong readiness predicate (`"Create class"`
+            is the submit button *inside* the create form — the loaded view shows
+            `"+ New class"`) and defect (e) together.
+            (ii) The exclusion rule is now "the seed cannot reach the route at all",
+            **not** "no populated fixture". `/teacher/grading` + `/teacher/schemes` are
+            audited empty — which is exactly how (c) surfaced. Only
+            `/teacher/review/:itemId` and `/teacher/quizzes/:quizId` (+ results) remain
+            out (seed creates no review item and no quiz, so both 404). P4/P5 mock-data
+            screens stay out deliberately.
+            (iii) `checkNoHorizontalScroll` names the offending elements, widest
+            overhang first, and only walks the DOM once a violation is known. Defect
+            (b) was pinpointed to `<button>"Correct a paper" w=138 left=253` in one
+            run; without it the report is "something is 10px too wide".
+            Ready-predicate rule worth not re-deriving: never wait on text the sidebar
+            nav or an `sr-only` pending-state `h1` also renders — wait on a
+            **loaded-only** eyebrow (`"Grading console"`, `"Library"`,
+            `"Flagged by trajectory"`, `"core recurring task"`).
+            Left alone deliberately: `index.css:663`'s 6px radius is off the DESIGN.md
+            scale (impeccable hook), pre-existing and untouched by this diff; and the
+            student header's `"24 day streak"` is still hardcoded — same fiction class
+            as carried item (d), which is chunk c's.
       - [ ] **c** todo — token retrofit of the teacher + parent portals onto the DESIGN.md
             scale (item (b) below), plus the student-sidebar `useProfile()` fix (item (d)).
+            Chunk b established the safety net this can lean on: all 21 routes are now
+            audited, so a retrofit that breaks contrast, adds overflow or drops a
+            heading will be caught by `./scripts/check.sh` rather than by hand. Also in
+            scope, found by chunk b and deliberately left: the student header's
+            hardcoded `"24 day streak"` (`portals/student/index.tsx`) and the
+            non-functional `<span>`-as-search-box beside it are the same fabricated-UI
+            class as item (d)'s `studentName`/`studentMeta`.
       - [ ] **d** todo — Playwright E2E per role + at-risk flags asserted against chunk a's
             seeded scenarios (the phase's named acceptance criterion).
       - [ ] **e** todo — screenshot corpus for every new screen × state × breakpoint

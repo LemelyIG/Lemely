@@ -287,9 +287,12 @@ export function Grading() {
           <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t3">
             Grading console
           </div>
-          <div className="font-serif text-[34px] leading-[1.1] mt-1.5">
+          {/* A real h1, not a styled div: axe's `page-has-heading-one` fired
+              on this route the moment P3.10 chunk b added it to the audit
+              registry, and QUALITY-BAR.md requires one h1 per page. */}
+          <h1 className="font-serif text-[34px] leading-[1.1] mt-1.5">
             Grading {papers.length} paper{papers.length === 1 ? "" : "s"}
-          </div>
+          </h1>
         </div>
         <div className="flex-1" />
         <Button variant="ink" onClick={() => navigate("/teacher/review")}>

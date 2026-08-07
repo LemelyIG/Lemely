@@ -951,3 +951,30 @@ linked children only.
 - Next: P3.10 — acceptance. Extend `audit.mjs` past the four student routes (the
   gate is vacuous for ~15 teacher/parent routes), decide the `text-t3` contrast fix,
   and run the standing UI gate properly.
+
+## 2026-08-07 (later) — P3.10 chunk b, the UI gate stops being vacuous
+
+- Did: rebuilt `web/scripts/audit.mjs` from a 506-line linear 4-route journey into a
+  declarative 21-route registry (D3.17), promoted console-errors and horizontal-scroll
+  to real gates in `check_ui_gates.py`, and fixed everything the expanded gate found.
+  Final: 21 routes, **zero axe violations at any severity**, Lighthouse a11y 100 on
+  every route, 0 console errors, 0 responsive violations. 1892 tests / 89.35% cov,
+  all 12 gates green with 0 skipped.
+- Learned: the gate really was passing by never looking. Three of the five defects were
+  in product code no previous run had ever loaded — `/teacher/grading` and
+  `/teacher/schemes` have no `<h1>` at all, and `/student/result` overflowed 380px by
+  10px because the student header is one non-wrapping flex row whose fixed items sum to
+  391px. The other two were harness defects that would have made the new gates lie.
+- Learned: "no populated fixture" is not a reason to leave a route out of an audit. Both
+  h1 findings came from screens audited in their genuinely *empty* state.
+- Learned: hand-calculated WCAG luminance and axe cannot disagree given the same two
+  colours. P3.8c's 4.36:1 `text-t3` reading is below the ratio against every base
+  surface token, so axe was sampling a darker composited background — never
+  root-caused, and `index.css`'s claim that axe accounts for glyph rasterization was
+  simply false. Corrected rather than carried.
+- Learned: collecting route failures instead of failing fast turned three ~11-minute
+  debug cycles into one. A responsive gate that names the offending element turned a
+  fourth into zero.
+- Next: P3.10 chunk c — token retrofit of the teacher + parent portals onto the
+  DESIGN.md scale, plus the student-sidebar `useProfile()` fix. Chunk b's 21-route
+  registry is the safety net that makes that retrofit checkable.

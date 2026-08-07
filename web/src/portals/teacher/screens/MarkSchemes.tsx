@@ -77,9 +77,12 @@ export function MarkSchemes() {
           <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t3">
             Library · {schemes.length} scheme{schemes.length === 1 ? "" : "s"}
           </div>
-          <div className="font-serif text-[34px] leading-[1.1] mt-1.5">
+          {/* A real h1, not a styled div — same `page-has-heading-one`
+              violation as Grading.tsx, surfaced by the same chunk-b
+              registry expansion. */}
+          <h1 className="font-serif text-[34px] leading-[1.1] mt-1.5">
             Mark schemes
-          </div>
+          </h1>
         </div>
         <div className="flex-1" />
         <input

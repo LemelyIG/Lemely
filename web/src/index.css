@@ -61,15 +61,41 @@
  *                       feeds. P2.5.8: the original 80/20 mix (#7e6865)
  *                       measured 4.45:1 by axe against `--surface-2`
  *                       (#fceae6, the darkest surface t3 actually sits on —
- *                       subject-card captions/nav labels), just under AA.
- *                       DESIGN.md has no separate "muted tertiary" hex to
- *                       adopt verbatim, so the mix ratio was renudged to
- *                       65/35 (#76615e, still zero invented hex — same two
- *                       DESIGN.md-literal tokens) — 4.95:1 against
- *                       surface-2, 5.48:1 against bg, 5.75:1 against
- *                       surface, comfortable margin over 4.5:1 everywhere
- *                       it's actually composited, and still visibly the
- *                       most muted of t1/t2/t3 (t2 alone is 8.07:1+).
+ *                       subject-card captions/nav labels), just under AA, so
+ *                       it was renudged to 65/35 (#76615e) — 4.95:1 by hand-
+ *                       calculated WCAG relative luminance.
+ *                       That 65/35 value was still not safe. Two independent
+ *                       findings, both in P3.10 chunk b:
+ *                       (1) It is only 4.48:1 against
+ *                       `--md-surface-container-highest` (#f1dfdb) — under AA
+ *                       on a token that exists and is used, so the P2.5.8
+ *                       nudge fixed one surface and left another failing.
+ *                       (2) P3.8 chunk c reported axe measuring `text-t3`
+ *                       caption text at **4.36:1** on a teacher screen. That
+ *                       is below the ratio against *every* base surface token
+ *                       (4.48 to 5.77:1), so whatever axe sampled was
+ *                       composited over something darker than any of them —
+ *                       a chip/hover/overlay background, not `--surface`.
+ *                       The exact element was not root-caused before the
+ *                       token was changed; that is recorded as-is rather than
+ *                       explained away (axe computes contrast from computed
+ *                       colours, so hand-calculated WCAG luminance and axe
+ *                       agree given the same two colours — a divergence means
+ *                       the *background* differed, never the maths).
+ *                       So the mix was renudged to 35/65 (#67534f, still zero
+ *                       invented hex — same two DESIGN.md-literal tokens,
+ *                       just weighted the other way) for margin against the
+ *                       unknown darker background too: 7.17:1 on
+ *                       container-lowest, 6.84:1 on `--bg`, 6.47:1 on
+ *                       container-low, 6.17:1 on container (student/parent
+ *                       `--surface-2`), 5.84:1 on container-high (teacher
+ *                       `--surface-2`), 5.58:1 on container-highest — every
+ *                       base surface now clears AA by >=1.08, up from a
+ *                       worst case of -0.02. Verified by the 21-route
+ *                       `audit.mjs` gate (P3.10 chunk b) reporting zero
+ *                       serious/critical axe violations across all of them,
+ *                       not by hand alone — and `text-t3` is still visibly
+ *                       the most muted of t1/t2/t3 (t2 alone is 8.07:1+).
  *   --ok / --ok-bg (student) = tertiary / tertiary-fixed (teal reads as
  *                       "success" — DESIGN.md's frontmatter has no separate
  *                       success role, and Material's tertiary conventionally
@@ -417,7 +443,7 @@
 
   --t1: var(--md-on-surface);
   --t2: var(--md-on-surface-variant);
-  --t3: color-mix(in srgb, var(--md-outline) 65%, var(--md-on-surface-variant) 35%);
+  --t3: color-mix(in srgb, var(--md-outline) 35%, var(--md-on-surface-variant) 65%);
 
   --ok: var(--md-tertiary);
   --ok-bg: var(--md-tertiary-fixed);
@@ -449,7 +475,7 @@
 
   --t1: var(--md-on-surface);
   --t2: var(--md-on-surface-variant);
-  --t3: color-mix(in srgb, var(--md-outline) 65%, var(--md-on-surface-variant) 35%);
+  --t3: color-mix(in srgb, var(--md-outline) 35%, var(--md-on-surface-variant) 65%);
 
   --ok: var(--md-on-tertiary-fixed-variant);
   --ok-bg: var(--md-tertiary-fixed-dim);
@@ -491,7 +517,7 @@
 
   --t1: var(--md-on-surface);
   --t2: var(--md-on-surface-variant);
-  --t3: color-mix(in srgb, var(--md-outline) 65%, var(--md-on-surface-variant) 35%);
+  --t3: color-mix(in srgb, var(--md-outline) 35%, var(--md-on-surface-variant) 65%);
 
   --ok: var(--md-tertiary);
   --ok-bg: var(--md-tertiary-fixed);

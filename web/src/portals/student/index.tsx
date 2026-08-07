@@ -119,8 +119,18 @@ function Header() {
   const navigate = useNavigate()
   const crumb = resolveCrumb(location.pathname)
   return (
-    <header className="lm-head flex items-center gap-[18px] px-[34px] py-4 border-b border-border bg-[oklch(0.97_0.007_40/0.82)] backdrop-blur-[10px] sticky top-0 z-20">
-      <div className="font-mono text-[11.5px] text-t2">{crumb}</div>
+    // Responsive sizing here is load-bearing, not cosmetic: this row's fixed
+    // items (34px padding either side, the streak pill, the 138px CTA and two
+    // 18px gaps) summed to 391px, so /student/result overflowed a 380px
+    // viewport by 10px — a real QUALITY-BAR "no horizontal scroll from 320px
+    // up" failure, found by P3.10 chunk b's responsive gate once it covered
+    // this route. The crumb must be able to shrink (`min-w-0 truncate`; it
+    // renders "Home / Result <uuid>", the longest string on the row), the
+    // padding tightens below 640px, and the streak pill hides there — the
+    // same treatment the search affordance already gets below 1080px, and
+    // the streak is shown again on the dashboard itself.
+    <header className="lm-head flex items-center gap-[18px] px-4 min-[640px]:px-[34px] py-4 border-b border-border bg-[oklch(0.97_0.007_40/0.82)] backdrop-blur-[10px] sticky top-0 z-20">
+      <div className="font-mono text-[11.5px] text-t2 min-w-0 truncate">{crumb}</div>
       <div className="flex-1" />
       <div className="hidden min-[1080px]:flex items-center gap-2 bg-surface border border-border rounded-[9px] px-3 py-[7px] w-[280px]">
         <MagnifyingGlass size={13} className="text-t3" weight="bold" />
@@ -128,7 +138,7 @@ function Header() {
           Search papers, topics, students
         </span>
       </div>
-      <div className="flex items-center gap-[7px] border border-border bg-surface rounded-[9px] px-[11px] py-[7px]">
+      <div className="hidden min-[640px]:flex items-center gap-[7px] border border-border bg-surface rounded-[9px] px-[11px] py-[7px]">
         <span className="text-[12.5px] font-semibold font-mono">24</span>
         <span className="text-[11.5px] text-t2">day streak</span>
       </div>

@@ -3,6 +3,77 @@
 
 ## Phase 3
 
+### D3.17 — The UI gate stops being a 4-route gate: a 21-route registry, real console/responsive gates, and an unreachable route is a failure (P3.10 chunk b)
+
+**Context.** D2.10 fixed `web/scripts/audit.mjs` at exactly four student routes, and
+`audit.mjs` was a 506-line linear journey rather than a route table, so every screen
+built in P3.7–P3.9 sat outside the axe/Lighthouse/screenshot gate. That gate therefore
+passed by never looking — evidenced three separate times (P3.8c's `text-t3` contrast
+finding, and two serious axe violations P3.9 could only find by hand).
+
+**The decisions.**
+
+1. **`ROUTE_REGISTRY` is a declarative table of 21 routes**, replacing the hardcoded
+   journey. The four D2.10 routes stay in `runStudentMainJourney()` because they are
+   genuinely a stateful sequence (sign up → log in → upload a real scan → get a real
+   `paperId`); the other 17 are data, visited by one generic `visitRoute()`.
+
+2. **Exclusion criterion changed from "no *populated* fixture" to "the seed cannot
+   reach the route at all."** An empty state is a state, and it is exactly where a
+   violation hides — `/teacher/grading` and `/teacher/schemes` are audited empty, and
+   that is precisely how their missing `<h1>` was found. Only
+   `/teacher/review/:itemId` and `/teacher/quizzes/:quizId` (+ its results route)
+   remain out: the seed creates no review item and no quiz, so both would 404 rather
+   than render anything. The P4/P5 mock-data screens stay out deliberately — gating
+   unbuilt work is not coverage.
+
+3. **Authenticated routes inject a real seeded session rather than re-driving four
+   login UIs**, and **each session key gets its own incognito browser context, not
+   just its own page.** `localStorage` is per-origin: sharing one context made
+   `/login/parent` redirect to `/student` (correctly — `LoginRoute` navigates an
+   authenticated visitor away from every login route), so the "unauthenticated" route
+   was not unauthenticated. Isolated contexts are what make the registry independent
+   of route ordering.
+
+4. **A registry route that cannot be reached fails the gate, and the run continues.**
+   One dead route must not hide the other twenty; failures are collected and the run
+   exits non-zero at the end. This is strictly stricter, never more permissive — a
+   failed route contributes no axe/Lighthouse row, and `check_ui_gates.py` can only
+   check rows that exist, so without this a broken route would have read as silence.
+
+5. **Console errors and horizontal scroll are now real gates**, not numbers a human
+   reads: `check_ui_gates.py` reads `console-errors.json` and
+   `responsive-summary.json`, and treats a *missing* file as "not checked" (a
+   failure), never as "clean". A responsive violation now also names the offending
+   elements, widest-overhang first — the difference between a fixable report and
+   "something on this page is 10px too wide".
+
+6. **`--t3` is fixed at the token, not per-screen.** The mix moved from
+   `outline 65% / on-surface-variant 35%` (#76615e) to `35% / 65%` (#67534f). A
+   per-screen retrofit would have to be repeated on every future screen that reaches
+   for caption text; one token change fixes every screen at once, and `--t3` is still
+   visibly the most muted of the three text tokens.
+
+**The honest part of (6).** P3.8c reported axe measuring `text-t3` at **4.36:1**. That
+is below the hand-calculated ratio against *every* base surface token (4.48–5.77:1),
+so whatever axe sampled was composited over a background darker than any of them — a
+chip, hover or overlay background, not `--surface`. **The exact element was never
+root-caused**, and the earlier claim in `index.css` that the gap was axe accounting for
+glyph rasterization was simply wrong (axe computes contrast from computed colours; the
+same two colours always give the same ratio, so a divergence means the background
+differed, never the maths). The comment has been corrected to say so. What *is*
+independently established is that the old value failed AA at 4.48:1 against
+`--md-surface-container-highest` regardless, and that the new value clears AA by at
+least 1.08 on all six surface tokens.
+
+**Alternatives rejected.** (a) *Per-screen `text-t3` → `text-t2` retrofit* — fixes the
+screens that exist and none of the ones P4/P5 will add. (b) *Fail fast on the first
+unreachable route* — costs one ~11-minute run per broken route; the aggregate report
+found T-02's wrong readiness predicate and the console-error artifact in a single pass.
+(c) *Swallowing the `about:blank` `SecurityError` in a bare try/catch* — that would
+also silence a genuine storage failure on a real origin; the injection skips opaque
+origins explicitly instead.
+
 ### D3.16 — G-05's developer OTP affordance is gated on the *provider's* capability, not on an environment string (P3.9 chunk a)
 
 **Context.** `docs/LEMELY_UI_SPEC.md` §G-05 mandates a "clearly-marked developer
