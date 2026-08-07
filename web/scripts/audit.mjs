@@ -581,10 +581,60 @@ async function resolveReviewItemViaAdjustForm(page, url) {
   await gotoReady(page, url, (p) => waitForText(p, "← Back to queue"))
   await clickButtonByText(page, "Adjust marks instead")
   const marksInput = await page.waitForSelector('input[type="number"]', { timeout: 15_000 })
-  await marksInput.click({ clickCount: 3 })
+
+  // Clear before typing, and PROVE the field holds what we meant. A
+  // `click({ clickCount: 3 })` does NOT select the contents of an
+  // `input[type=number]` in headless Chromium, so the original
+  // triple-click-then-type *appended*: the seeded item's 75 became "750".
+  // That is above the question's `max`, so the browser's own constraint
+  // validation refused to submit the form — no request, no visible error —
+  // and the run died 15s later waiting for a panel that could never appear.
+  // Ctrl+A does select inside a number input.
+  await marksInput.click()
+  await page.keyboard.down("Control")
+  await page.keyboard.press("KeyA")
+  await page.keyboard.up("Control")
   await marksInput.type("0")
+  const typed = await marksInput.evaluate((el) => el.value)
+  if (typed !== "0") {
+    throw new Error(
+      `T-08 marks field holds ${JSON.stringify(typed)}, expected "0" — clear-before-type ` +
+        `failed, so the form would be refused as out of range rather than saved`,
+    )
+  }
+
   await clickButtonByText(page, "^save correction$")
-  await waitForText(page, "Teacher correction on record")
+
+  // Wait for the mutation's actual outcome rather than for one hoped-for
+  // string. A successful resolve calls ReviewItem.tsx's `goNext`, which — with
+  // no later item in the queue — navigates to /teacher/review, so the override
+  // panel never renders on *this* page even on success. And a refusal (server
+  // error, or the client-side range check) leaves the page in place, which as a
+  // bare `waitForText` was indistinguishable from a slow save. Reporting the
+  // refusal text is what turns the next failure of this kind into one line.
+  const itemPath = new URL(url).pathname
+  const outcomeHandle = await page.waitForFunction(
+    (path) => {
+      if (window.location.pathname !== path) return "navigated"
+      const text = document.body.innerText
+      if (/Teacher correction on record/i.test(text)) return "panel"
+      const refusal =
+        text.match(/Couldn't save:[^\n]*/i) ?? text.match(/Enter a whole number of marks[^\n]*/i)
+      return refusal ? refusal[0] : null
+    },
+    { timeout: 15_000 },
+    itemPath,
+  )
+  const outcome = await outcomeHandle.jsonValue()
+  if (outcome !== "navigated" && outcome !== "panel") {
+    throw new Error(`T-08 "Save correction" was refused: ${outcome}`)
+  }
+
+  // Come back to the item so the state this route is here to capture is the
+  // one on screen. `visitRoute` re-navigates per breakpoint anyway; this makes
+  // the setup self-verifying — if the override did not persist, it fails here
+  // rather than silently screenshotting an un-corrected item as "corrected".
+  await gotoReady(page, url, (p) => waitForText(p, "Teacher correction on record"))
 }
 
 /** Generic runner for one `ROUTE_REGISTRY` entry: for each of its `states`

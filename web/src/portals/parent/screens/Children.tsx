@@ -107,7 +107,11 @@ function NoChildrenLinked() {
   return (
     <div className="mx-auto flex max-w-140 flex-col gap-5 rounded-md border border-border bg-surface p-6">
       <div className="flex flex-col gap-2">
-        <h2 className="text-display-md text-t1">You're signed in — one step to go</h2>
+        {/* `h1`, not `h2`: in this state it IS the page's heading, and there is
+            no other one on the screen — so as an `h2` the empty state shipped
+            with no level-one heading at all (axe `page-has-heading-one`, found
+            by P3.10 chunk e2a's per-state pass). Visually identical. */}
+        <h1 className="text-display-md text-t1">You're signed in — one step to go</h1>
         <p className="text-body-md text-t2">
           Nobody has shared their results with you yet. Your child adds you from their own
           Lemely account, so they stay in control of who sees their marks.

@@ -351,17 +351,33 @@ export function QuizResults() {
   const setStatus = useSetQuizStatus(quizId)
   const [confirmingClose, setConfirmingClose] = useState(false)
 
+  // The sr-only `h1` on both pre-data states is the same shape ReviewItem.tsx
+  // and QuizBuilder.tsx already use: `ErrorState` renders its heading as plain
+  // text (the non-heading empty/error gap carried since the Phase-2.5 report
+  // §8), so without it these two states ship with no level-one heading at all.
+  // Found by P3.10 chunk e2a's per-state axe pass — the states the audit could
+  // not see before this chunk.
   if (resultsQuery.isPending) {
-    return <div className="text-dense text-t2 p-1">Loading results…</div>
+    return (
+      <div className="flex flex-col gap-6 min-w-0">
+        <h1 className="sr-only">Quiz results</h1>
+        <div role="status" className="text-dense text-t2 p-1">
+          Loading results…
+        </div>
+      </div>
+    )
   }
   if (resultsQuery.isError) {
     return (
-      <ErrorState
-        heading="Couldn't load these results"
-        body={resultsQuery.error.message}
-        action={{ label: "Retry", onClick: () => resultsQuery.refetch() }}
-        secondaryAction={{ label: "Back to quizzes", onClick: () => history.back() }}
-      />
+      <div className="flex flex-col gap-6 min-w-0">
+        <h1 className="sr-only">Quiz results</h1>
+        <ErrorState
+          heading="Couldn't load these results"
+          body={resultsQuery.error.message}
+          action={{ label: "Retry", onClick: () => resultsQuery.refetch() }}
+          secondaryAction={{ label: "Back to quizzes", onClick: () => history.back() }}
+        />
+      </div>
     )
   }
 
