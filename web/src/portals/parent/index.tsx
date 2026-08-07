@@ -5,6 +5,8 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { useChildren } from "@/lib/hooks/useParentApi"
 import { Children } from "./screens/Children"
 import { ChildOverview } from "./screens/ChildOverview"
+import { SubjectDetail } from "./screens/SubjectDetail"
+import { Weaknesses } from "./screens/Weaknesses"
 
 /*
  * Parent portal shell.
@@ -122,5 +124,7 @@ export const parentRoute: RouteObject = {
   children: [
     { index: true, element: <Children /> },
     { path: "children/:childId", element: <ChildOverview /> },
+    { path: "children/:childId/subjects/:code", element: <SubjectDetail /> },
+    { path: "children/:childId/weaknesses", element: <Weaknesses /> },
   ],
 }
