@@ -130,8 +130,8 @@ theory paper.
 
 ## B2 — `0625_w24_ms_41` fails mark-total reconciliation under both parsers
 
-**Raised:** 2026-08-07 · **Status:** OPEN (not blocking the MCQ half of the
-INBOX directive; blocks the theory half)
+**Raised:** 2026-08-07 · **Status:** **RESOLVED 2026-08-07** — two real
+extraction defects, both fixed. See the resolution at the end of this section.
 
 Parsing the two schemes B1 delivered gave a **split result**:
 
@@ -174,6 +174,74 @@ for alternative marking points properly — a real product improvement, since
 this will recur on every theory scheme — or (b) establish that the extraction
 genuinely mis-reads three specific marking points and fix that. Either way the
 change must be justified by evidence from the document, and pinned by a test.
+
+### RESOLVED — 2026-08-07. It was (b), twice over, and the hypothesis was wrong
+
+**The reconciliation rule was correct all along; the tree it was checking was
+wrong.** `maximum_mark=80` parses correctly from the cover page — (c) ruled out.
+`reconcile.py` was not touched, and `mark_reconcile_tolerance` stays 0.
+
+The "+3" was **two independent defects partially masking each other** (−9 and
++12), which is exactly why the surplus looked small enough to be a rounding
+concern:
+
+**Bug 1 — a whole question silently dropped** (`lemely/io/det/tables.py`).
+`select_tables()` kept only the *first* pdfplumber table per page, assuming a
+second table must be an embedded grid (e.g. a truth table). On printed page 9 of
+`0625_w24_ms_41.pdf`, pdfplumber returns **two** table objects — Question 1 and
+Question 2 — so Question 2's six leaf marking points (9 marks) were thrown away
+entirely. Fixed by keeping every table that individually passes
+`qualifies_as_mark_scheme_table`, which is the real filter against grids.
+
+**Bug 2 — compensatory C-marks summed as additive** (`lemely/io/det/rows.py`).
+The document's own Generic Marking Principles (printed page 7) define a **C
+mark** as "Compensatory mark which may be scored when the final answer (A) mark
+for a question has not been awarded" — a structural OR that CAIE writes with no
+"OR"/"EITHER" token at all, just a C-row under an A-row. The parser's
+OR-handling only fired on literal tokens, so it added these on top of the A
+mark, across 12 parts. Fixed by tracking whether an A-type point has been
+recorded for the current leaf and marking a following C-type point
+`is_alternative=True` — reusing the existing alternative machinery, triggered
+structurally via `math_mark_type` rather than by text. B marks (independent per
+the same legend) and M-then-A sequences (method then genuinely additive
+accuracy marks) are deliberately untouched.
+
+So the original hypothesis — "alternative/OR marking points, so the
+reconciliation rule is wrong" — was **half right about the cause and wrong about
+the fix location**: alternatives were indeed being double-counted, but the right
+place to model that is the parse, not the check.
+
+**Verified by the orchestrator independently of the subagent's report**, by
+running the real CLI (`lemely parse-mark-schemes`) over the whole directory:
+`0625_w24_ms_41` now parses and writes its JSON, which only happens when
+`reconcile.check` passes at tolerance 0 — i.e. it reconciles to exactly 80/80.
+
+| Scheme | Before | After |
+|---|---|---|
+| `0625_m20_ms_12` (MCQ) | OK 40/40 | OK 40/40 — no leaf changed |
+| `0625_m21_ms_62` | OK 40/40 | OK 40/40 — no leaf changed |
+| `0625_s20_ms_31` (theory) | **fail 38 vs 80** | **OK 80/80** — incidental fix, same two-tables-per-page pattern |
+| `0625_w24_ms_41` (theory) | **fail 83 vs 80** | **OK 80/80** |
+| `0625_s19_ms_43` (theory) | fail 46 vs 80 | fail 82 vs 80 — improved, still failing, out of scope, no regression |
+| `0625_s23_ms_22` (MCQ) | fail 12 vs 40 | fail 12 vs 40 — unchanged; MCQ answer-key tables are a separate limitation, and the Gemini fallback already handles it |
+
+**Correction to this file's own earlier claim.** The B1 note above stated that
+`m20` and `s20` were the two schemes that "currently parse deterministically",
+inferred from which files had committed `.json` siblings. That inference was
+wrong: a git-stash-verified baseline shows `s20` was *failing* at 38/80 before
+this fix. Having a cached `.json` sibling is not evidence that a PDF parses
+today.
+
+Pinned by 7 new tests in `tests/test_parsers_det.py`, including an end-to-end
+synthetic-PDF reproduction of both bugs together asserting a clean reconcile.
+
+**Out of scope, found and deliberately not fixed:** the recovered Question 11 in
+`s20_ms_31` has an unlabeled sub-part whose Q-number cell is blank in the source
+PDF, so its 2 marks land under `11(a)(ii)` instead of their own leaf. The total
+is unaffected (hence invisible to `reconcile.check`), but the leaf is
+mislabeled. Separate pre-existing defect; recorded here so it is not lost.
+
+---
 
 **Spend so far on this line of work:** $0.080 (three `mark_scheme` Gemini calls
 plus retries), cumulative **$0.138 / $8.00**.

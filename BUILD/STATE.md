@@ -1409,15 +1409,22 @@ Starting facts (established 2026-08-06, do not re-derive):
             not a harness bug, but (i) and (ii) are harness bugs and should be fixed (fail
             fast in `check.sh` when port 8000 is already listening, rather than reusing it).
             Backend gates were unaffected and all green throughout.
-            - [~] **e1** BUILT, verification pending — seed extension is written and in the
-                  working tree (`scripts/seed_e2e.py` +383, `tests/test_seed_e2e.py` +220,
-                  **uncommitted**). Contract gained `reviewItem`, `quiz`, `emptyTeacher`,
-                  `emptyParent` — all additive. **Verified by the orchestrator, not taken on
-                  trust: 11/13 gates green** (ruff-check, ruff-format, mypy, import-linter,
-                  pytest, web-typecheck, web-lint, web-build, design-tokens,
-                  impeccable-detect, plus puppeteer-audit and ui-thresholds on a later run).
-                  Only `playwright-e2e` is unverified, and its failures were the port-8000
-                  contention artifact described above, **not** e1's changes.
+            **Confirmed 2026-08-07: a single clean uncontended run is 13/13 PASS, exit 0.**
+            Three separate runs had reported `playwright-e2e` FAIL — every one of those was
+            this artifact, and two different subagents independently mis-attributed it (one
+            to "a pre-existing timing flake in the screenshot harness"). **A `playwright-e2e`
+            failure is not evidence of a defect until it reproduces on a run with nothing
+            else touching port 8000.** Fixing (i)/(ii) is worth a task of its own.
+            - [x] **e1** done (705ad68) — seed extension. Contract gained `reviewItem`,
+                  `quiz`, `emptyTeacher`, `emptyParent` — all additive, no existing key
+                  changed. The review item comes from the real review-queue fan-out through
+                  `AttemptRepository._persist` (not a hand-inserted `review_queue` row), and
+                  the quiz goes through `QuizService`/`QuizTakingService`/`QuizMarkingService`
+                  unmodified. The empty teacher/parent are real accounts with genuinely no
+                  data, never a stubbed empty payload — so chunk e2's `empty` captures are
+                  honest. **Unblocks T-08 and T-10, which had zero audit coverage.**
+                  **All 13 gates green on a clean uncontended run** (verified by the
+                  orchestrator, not taken on trust).
                   **Zero Gemini by construction, and the construction is the good part:**
                   every seeded quiz question is MCQ, so `correct_paper` takes its
                   deterministic branch and never builds an `AICorrector`. Ledger moved
@@ -1489,9 +1496,18 @@ Starting facts (established 2026-08-06, do not re-derive):
         and cached at `outputs/schemes/0625_s23_ms_22.json` — do not pay for it again.** Note
         its metadata has `variant`/`session`/`year` = `None` (only `subject_code` 0625 +
         `paper_number` 2), which may matter to `resolve_mark_scheme`'s metadata matching.
-        `0625_w24_ms_41` (theory) — **fails under BOTH parsers, identically, at 83 vs a stated
-        maximum of 80**. Raised as **B2** in `BUILD/BLOCKERS.md`; delegated to a debugger agent
-        2026-08-07. Do NOT resolve it by raising `mark_reconcile_tolerance` (see B2).
+        `0625_w24_ms_41` (theory) — was failing at 83 vs 80 under both parsers (**B2**).
+        **RESOLVED 2026-08-07: two real extraction defects, both now fixed** — see B2 in
+        `BUILD/BLOCKERS.md`. `tables.py::select_tables` dropped every table after the first
+        on a page (losing all of Question 2, −9 marks), and `rows.py` summed CAIE
+        *compensatory* C-marks as additive on top of the A-mark they replace (+12), across
+        12 parts; the two masked each other down to +3. `reconcile.py` was correct and is
+        untouched; `mark_reconcile_tolerance` stays 0. **w24 now reconciles 80/80, and
+        `s20_ms_31` was incidentally repaired (was failing 38/80 — a `.json` sibling in the
+        repo is NOT evidence a PDF parses today).** `s19_ms_43` still fails (82/80, improved
+        from 46/80) — out of scope, no regression. 7 new tests in `tests/test_parsers_det.py`.
+        So **both papers' schemes are now available**: w24 deterministically, s23 via the
+        cached Gemini parse.
       - Marking paper 22 needs **no Gemini for the marking step** — `correct_mcq_answers` is
         deterministic; only answer extraction (vision) is a live call.
       - Gemini spend on this: $0.080, cumulative **$0.138/$8.00**.
