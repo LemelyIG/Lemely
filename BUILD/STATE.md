@@ -1972,7 +1972,12 @@ Starting facts (established 2026-08-06, do not re-derive):
       handwriting; reversible in one line, unlike committing it).
       **Do not start this task until B1 is resolved, and do not resolve it by inventing a
       scheme.**
-- [ ] todo — **P3.11** Phase-3 report, merge to develop, push, update PR #3, ntfy.
+- [ ] doing — **P3.11** Phase-3 report, merge to develop, push, update PR #3, ntfy.
+      Verified at task start (2026-08-07, branch `feature/phase-3-teacher-parent` @ 4c3e799):
+      **all 13 gates green, 0 skipped** (`./scripts/check.sh`, foreground); **1939 tests
+      (1933 passed / 6 skipped) / 89.42% cov** — the 6 skips are the 4 pre-existing
+      live-Supabase-key ones plus the 2 new live-billed accuracy cases. Baseline to compare
+      against is develop @ Phase 2.5: 609 passed / 85.54%.
 
 
 ## Session journal
