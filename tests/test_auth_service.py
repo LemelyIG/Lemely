@@ -117,6 +117,41 @@ def test_parent_otp_flow_mints_self_signed_token(caplog: pytest.LogCaptureFixtur
     assert mirror.rows[result.user_id].phone == phone
 
 
+class _DeliveringSmsProvider:
+    """Stands in for a real SMS gateway: it *does* deliver out of band."""
+
+    delivers_out_of_band = True
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send_code(self, phone: str, code: str) -> None:
+        self.sent.append((phone, code))
+
+
+def test_request_otp_returns_the_code_only_for_a_non_delivering_provider() -> None:
+    """D3.16: the §G-05 dev affordance is gated on the provider, not an env string.
+
+    The mock logs but delivers nothing, so the API is the only way to obtain the
+    code and ``request_otp`` hands it back. Swap in a provider that really
+    delivers and the same call returns ``None`` — no live code crosses the wire.
+    """
+    clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
+    service, _, _ = _service(clock)
+    phone = "+201117778889"
+
+    mock_code = service.request_otp(phone)
+    assert mock_code is not None
+    # It is the real challenge, not a decorative string: it verifies.
+    assert service.verify_otp(phone, mock_code).role is Role.parent
+
+    real_provider = _DeliveringSmsProvider()
+    service._sms = real_provider
+    assert service.request_otp("+201110001112") is None
+    # ...and the provider still received it — only the *return* is withheld.
+    assert real_provider.sent and len(real_provider.sent[-1][1]) > 0
+
+
 def test_otp_verify_wrong_code_raises() -> None:
     clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
     service, _, _ = _service(clock)

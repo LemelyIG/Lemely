@@ -68,9 +68,19 @@ class TokenResponseDTO(ApiModel):
 
 
 class OtpRequestResponseDTO(ApiModel):
-    """Acknowledgement that an OTP was issued (never carries the code)."""
+    """Acknowledgement that an OTP was issued.
+
+    ``devCode`` is the §G-05 developer affordance (D3.16) and is populated **only**
+    when the configured :class:`~lemely.auth.sms.SmsProvider` reports
+    ``delivers_out_of_band = False`` — i.e. when nothing reached the handset and
+    this response is the only way to obtain the code. With a real SMS gateway
+    configured it is always ``None`` and no live code crosses the wire. It is a
+    capability gate, not an environment check; the UI must render it in an
+    explicitly-labelled developer panel, never as ordinary product copy.
+    """
 
     status: Literal["sent"] = "sent"
+    devCode: str | None = None
 
 
 __all__ = [

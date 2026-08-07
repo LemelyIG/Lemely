@@ -130,6 +130,26 @@ def test_otp_request_and_verify(context: tuple[TestClient, AuthService, Settings
     assert claims.phone == phone
 
 
+def test_otp_request_surfaces_the_dev_code_for_the_offline_mock_provider(
+    context: tuple[TestClient, AuthService, Settings],
+) -> None:
+    """§G-05's developer affordance, end to end over the wire (D3.16).
+
+    The whole point is that the flow is testable without an SMS provider, so the
+    assertion is not "a field is present" but "the field's value logs a parent in".
+    """
+    client, _, _ = context
+    phone = "+201234533333"
+    resp = client.post("/api/auth/otp/request", json={"phone": phone})
+    assert resp.status_code == 200, resp.text
+    dev_code = resp.json()["devCode"]
+    assert dev_code, "the offline mock provider is the only source of the code"
+
+    verify = client.post("/api/auth/otp/verify", json={"phone": phone, "code": dev_code})
+    assert verify.status_code == 200, verify.text
+    assert verify.json()["role"] == "parent"
+
+
 def test_otp_verify_wrong_code_returns_401(
     context: tuple[TestClient, AuthService, Settings],
 ) -> None:

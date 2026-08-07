@@ -40,4 +40,11 @@ export interface TokenResponse {
 
 export interface OtpRequestResponse {
   status: "sent"
+  /**
+   * §G-05's developer affordance (D3.16). Non-null **only** when the configured
+   * SMS provider does not deliver out of band (the offline mock) — with a real
+   * gateway the backend always sends null. Render it in an explicitly-labelled
+   * developer panel, never as ordinary product copy.
+   */
+  devCode: string | null
 }
