@@ -7,7 +7,8 @@ One section per blocker. Never delete a section — resolved ones get a
 
 ## B1 — Real past-paper accuracy fixtures: the official mark schemes are not present
 
-**Raised:** 2026-08-07 · **Status:** BLOCKED (waiting on the human)
+**Raised:** 2026-08-07 · **Status:** **RESOLVED 2026-08-07** — see the resolution
+note at the end of this section.
 **Source:** `BUILD/INBOX.md`, "Real past-paper accuracy fixtures" — item **6**
 explicitly anticipated this case and prescribed this exact response.
 
@@ -82,5 +83,99 @@ the accuracy-harness machinery from P2.3 is what the new test will hang off.
 Estimated Gemini cost for the two live runs is small against the remaining
 $7.94, but I will run it through the existing `estimate-cost` machinery first
 (MISSION §8) rather than guess before spending.
+
+### RESOLVED — 2026-08-07, by unblock route 3 ("authorise fetching, and say from where")
+
+The human resolved this while the build was running, by **installing the
+`paperscraper` skill** (`.claude/skills/paperscraper/SKILL.md`, 14:21). The
+skill drives an external tool at `/home/sico/PaperScraper` (its own venv;
+Lemely's dependency graph deliberately untouched) whose stated remit is
+"bulk-download CAIE past papers, **mark schemes**, examiner reports and
+historical grade boundaries **for Lemely's corpus**", with its own copyright
+and politeness rules. Installing a named-source scheme fetcher into a project
+whose one open blocker is "these mark schemes cannot be obtained" is unblock
+route 3 above — authorisation, naming the source.
+
+**Attribution correction, recorded because the first draft of this note got it
+wrong:** an earlier version claimed the human had also re-opened the INBOX
+directive from `- [x]` to `- []` at 14:26. That edit was made by the **P3.10
+chunk-e1 subagent**, outside its brief, and it reverted the edit when
+challenged. The INBOX item's own history is intact. The only human signal here
+is the skill install — which is sufficient on its own, but the record should
+not credit the human with an act they did not perform.
+
+Both schemes are now present at the paths this blocker asked for:
+
+| File | Bytes | Catalogue status |
+|---|---|---|
+| `Sources/Physics/MarkingSchemes/0625_s23_ms_22.pdf` | 112,812 | `done` |
+| `Sources/Physics/MarkingSchemes/0625_w24_ms_41.pdf` | 247,702 | `done` |
+
+Verified per the skill's own rules rather than by exit code: the catalogue
+(`/home/sico/PaperScraper/papers/index.db`) reports `done|72` for 0625 `ms`
+2023–24 and **zero** `status='failed'` rows anywhere; both files start with the
+`%PDF-` magic bytes. `Sources/` is gitignored (`.gitignore:45`), so neither PDF
+is committed — which is also what the skill's §11 copyright rule requires.
+
+**Do not re-fetch these.** The scraper resumes from disk presence, and the
+copies in `Sources/` are hand-placed (the skill warns hand-placed files in the
+scraper's *own* output tree defeat resume — that does not apply here, since
+`Sources/` is not the scraper's output tree).
+
+**This unblocks the MCQ paper only.** Parsing the two schemes surfaced a
+genuine, separate problem — recorded below as **B2** — that still blocks the
+theory paper.
+
+---
+
+## B2 — `0625_w24_ms_41` fails mark-total reconciliation under both parsers
+
+**Raised:** 2026-08-07 · **Status:** OPEN (not blocking the MCQ half of the
+INBOX directive; blocks the theory half)
+
+Parsing the two schemes B1 delivered gave a **split result**:
+
+| Scheme | Deterministic parser | Gemini fallback | Outcome |
+|---|---|---|---|
+| `0625_s23_ms_22` (MCQ, P2 V2) | fail — computed 12 vs max 40 | **parsed OK** | usable |
+| `0625_w24_ms_41` (theory, method marks) | fail — computed 83 vs max 80 | **fail — computed 83 vs max 80** | **unusable** |
+
+`lemely/io/det/reconcile.py::check` sums every leaf question's marks and raises
+`ParseError` when the total differs from the paper's stated `maximum_mark` by
+more than `mark_reconcile_tolerance` (**default 0, strict**). For w24 P41 the
+sum overshoots by 3 — *identically* under both parsers, which is the
+informative part: two independent extraction paths agreeing on 83 is evidence
+that 83 is really what the document's marking points sum to, and therefore that
+the **reconciliation rule** is what is wrong for this class of scheme, not the
+extraction.
+
+The likely cause (**not yet confirmed — do not treat as established**) is
+alternative/OR marking points in a theory scheme: a question offering two
+routes to the same mark contributes both to a naive leaf sum, so the sum
+legitimately exceeds the maximum. The MCQ scheme's deterministic failure has a
+different and more obvious cause — an MCQ scheme is an answer-key table, not a
+marking-point tree, so the deterministic state machine finds almost nothing
+(12 of 40).
+
+### What must NOT be done to resolve this
+
+**Do not raise `mark_reconcile_tolerance` to 3 to make it pass.** That is a
+config knob, so it is a one-line "fix" and therefore exactly the tempting
+wrong move: it would silence a real signal across *every* scheme the product
+ever parses, to unblock one fixture. It is the same class of act as loosening
+an accuracy tolerance, which the INBOX directive's item 8 forbids outright.
+Equally: do not hand-edit the parsed JSON, and do not reconstruct the scheme.
+
+### What would resolve it honestly
+
+Diagnose which of the 83 marks is the surplus 3, by inspecting the actual parse
+against the actual PDF. Then either (a) fix the reconciliation rule to account
+for alternative marking points properly — a real product improvement, since
+this will recur on every theory scheme — or (b) establish that the extraction
+genuinely mis-reads three specific marking points and fix that. Either way the
+change must be justified by evidence from the document, and pinned by a test.
+
+**Spend so far on this line of work:** $0.080 (three `mark_scheme` Gemini calls
+plus retries), cumulative **$0.138 / $8.00**.
 
 ---
