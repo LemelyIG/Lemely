@@ -994,11 +994,70 @@ Starting facts (established 2026-08-06, do not re-derive):
             `null` as "a real provider is configured" (hide the panel entirely),
             never as an error. Do not add an env check on the client to decide
             whether to show it — the backend already made that decision.
-      - [ ] **b** todo — parent portal shell + role-routing split + `[data-portal="parent"]`
-            tokens + G-05 screen + P-01 children list.
-      - [ ] **c** todo — P-02 child overview + P-03 subject detail + P-04 weaknesses.
+      - [x] **b** done (b20a9c6) — parent portal shell + role split + G-05 + P-01 + **P-02**.
+            **The split changed from the original plan:** P-02 moved into b because P-01's
+            spec-mandated single-child skip redirects straight to it — shipping P-01 without
+            it would have made the default parent journey land on a 404. c is now P-03 + P-04.
+            New: `[data-portal="parent"]` scope in `index.css` (accent `--md-secondary`, the
+            third accent role already in the palette), `portals/parent/index.tsx` (shell +
+            `parentRoute`), `screens/Children.tsx`, `screens/ChildOverview.tsx`,
+            `portals/auth/ParentLogin.tsx` (route `/login/parent`), `lib/parentTypes.ts`,
+            `lib/hooks/useParentApi.ts`. **Zero backend files touched: 1866 tests / 89.34%
+            cov, unchanged.** All 12 gates green.
+            **Real defect fixed, not carried:** `App.tsx` had `"parent"` in `TEACHER_ROLES`
+            and `portalPathForRole` returned `/teacher` for every non-student, so a parent
+            completing OTP landed in the teacher console where every panel 403s.
+            `school_admin`/`platform_admin` still resolve there deliberately — they hold
+            those roles; K-01/X-01 are later phases.
+            **Do not reintroduce / do not "tidy" away:**
+            (a) `statusLine` is rendered **verbatim** from the backend. Reassembling it
+            client-side from `subjects` would be a second source for the same claim.
+            (b) P-02's at-risk copy is rephrased from the flag's **structured evidence**,
+            not from `summary` (which says "14pp drop" — jargon to a parent). Unknown
+            reasons fall back to `summary`; `below_target` deliberately has no hand-written
+            parent copy because it cannot fire until P4 (D3.3).
+            (c) `target` renders as "no target grade set yet", never defaulted or
+            back-derived from `predictedGrade`.
+            (d) `predictedGrade` renders `basis="predicted"` — same value, same reading as
+            T-03/T-05/T-06 (P3.7 chunk d had to correct exactly this once).
+            (e) The child switcher hides at one child and on the list itself; both the
+            switcher and the sign-out button carry an `aria-label` that is **never hidden**
+            — their visible text is `hidden sm:inline`, and without it axe reports a real
+            serious `button-name`/unlabelled-control violation below 640px. Found in
+            verification, not by the gates.
+            (f) G-05's "no account found" and separate "expired code" states are
+            **unreachable by construction** (D3.11 auto-create; one 401 carrying a real
+            detail) and are documented as absent rather than stubbed.
+            Verified end-to-end against the live stack (throwaway seed + specs, deleted —
+            do not look for them): 3/3 green over empty state / single-child skip /
+            two-child list + switcher, each asserting zero serious/critical axe, zero
+            console errors, no horizontal scroll at 380/768/1440. Independent Postgres
+            check: both phones minted `role=parent` rows, the linked parent holds exactly
+            two children.
+            **Seeding facts chunk c/d should not re-derive:** `WeakArea` requires
+            `question_ids`; `ExamMetadata` lives in `lemely.core.schemas`, NOT
+            `lemely.io.det.schemas`; `ParentLinkService.link(student_id, phone)` is
+            student-initiated by phone; and at-risk **rule 1 reads the last three
+            grade-bearing records across ALL subjects**, so a second subject's paper
+            interleaved into a declining run stops the flag firing (cost one debug cycle).
+            The 30s OTP resend cooldown means a seed script and the test that follows it
+            cannot both request a challenge for the same phone without a wait.
+      - [ ] **c** todo — P-03 child subject detail + P-04 child weaknesses. Routes to add to
+            `parentRoute`: `children/:childId/subjects/:code` and
+            `children/:childId/weaknesses` — **both are already linked from P-02 and 404
+            today** (expected, same pattern as P3.7 c/d; do not "fix" by deleting the links).
+            `useChildSubject`/`useChildWeaknesses` and the `SubjectDetail`/`ChildWeaknesses`
+            types are already written in `lib/hooks/useParentApi.ts` + `lib/parentTypes.ts`.
+            P-04 must report the spec's "what the child is doing about it" as **absent** —
+            `ChildWeaknessesDTO` carries no such field and D3.11 refused to fake it.
+            P-03's `boundaryDistance` is nullable (already on A*, or no boundary row): omit
+            the panel entirely, never render "0 marks from".
       - [ ] **d** todo — student-side parent-link management (the only way a link is
-            created in production — D3.11's scope note).
+            created in production — D3.11's scope note). Backend exists:
+            `GET|POST /api/student/parent-links`, `DELETE .../{parent_id}`; the
+            `LinkedParent`/`ParentLinkList` mirrors are already in `lib/parentTypes.ts`.
+            A 404 on POST means "that parent has not signed in yet" — surface that as the
+            real, actionable message, not a generic failure.
 - [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
       Lighthouse a11y ≥95, screenshot corpus for every new screen × state × breakpoint,
