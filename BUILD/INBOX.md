@@ -106,3 +106,40 @@ Send items from your phone by publishing to the control topic, or locally with
       un-committing binary personal data is a history rewrite. Say the word and
       I will commit them — the repo is private and `Sources/Physics/Solved/*.pdf`
       already sets the precedent.
+      → **Superseded 2026-08-07 — B1 and B2 both resolved, the directive is now
+      DELIVERED in full.** You installed the `paperscraper` skill, which was the
+      "authorise fetching from a named source" unblock B1 asked for; both official
+      schemes now sit at `Sources/Physics/MarkingSchemes/` (gitignored, per the skill's
+      copyright rule). Parsing them split: `0625_s23_ms_22` is an MCQ answer-key table
+      the deterministic parser can only get 12/40 out of, but the Gemini fallback parses
+      it correctly (cached at `outputs/schemes/`); `0625_w24_ms_41` was reconciling 83/80
+      until **two real extraction defects** were found and fixed (`tables.py` dropped
+      every table after the first on a page, −9 marks; `rows.py` summed CAIE
+      *compensatory* C-marks additively on top of the A-mark they replace, +12 — they
+      masked each other down to +3). It now reconciles 80/80, and `s20_ms_31` was
+      incidentally repaired. A third defect fell out on the way (B3): the plagiarism
+      check was flagging every *correct* MCQ answer, which would have produced 34 false
+      flags on paper 22 alone and poisoned the confidence distribution item 3 asks for.
+      **Results — both papers within the stated ±10%-of-max tolerance, fixed before any
+      result was seen, reported separately and never averaged:** paper 22 predicted
+      **37 vs 34** (+3, tol ±4); paper 41 predicted **63 vs 66** (−3, tol ±8). Full
+      numbers-only report at `reports/accuracy-real/REPORT.md`; decision record D3.21.
+      **The thing worth your attention is not the error size but which paper flagged
+      itself.** Paper 41 (AI marking) put 20 of 80 marks at medium confidence and
+      returned `grade_confidence: low` — a teacher gets pointed at the right quarter of
+      the script. Paper 22 (MCQ) returned **all 40 marks at confidence 1.0, band high,
+      zero review flags — and was still 3 marks wrong.** MCQ marking is deterministic
+      string comparison against the official key, so no marking-judgement error is
+      possible there: all 3 marks of error are *vision/transcription* error, and the
+      confidence number is measuring the marker while the mistake happened in the
+      extractor. Confidently wrong, invisible to every gate this build runs. Not patched
+      unattended — it changes the marking contract; recorded for DELIVERY.md.
+      Items 2 and 4 honoured: no per-question ground truth was fabricated or
+      back-derived, and the per-question JSON + rendered annotation overlay exist locally
+      for your spot-check (a correct total made of cancelling errors is a failure, and
+      the total alone cannot tell you which you have). Item 7: `reports/accuracy-real/*/`
+      and `tests/fixtures/real-papers/` are gitignored — a minor's handwriting and scan
+      imagery stay out of git; only the numbers-only REPORT.md is committed. Gemini spend
+      $0.021 this run, cumulative **$0.1586 / $8.00**.
+      **Your judgment call from the earlier note still stands open:** the fixture PDFs
+      remain gitignored rather than committed. Say the word and I will commit them.

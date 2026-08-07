@@ -87,3 +87,12 @@ reports/**/e2e-seed.json
 # doubles as INBOX item 7's "dataset/export exclusion list" entry: these are
 # test fixtures only, never served, never bundled.
 tests/fixtures/real-papers/
+
+# Real-past-paper accuracy artefacts (INBOX-2026-08-07-ACC). raw_run.json and
+# per_question.json carry the student's transcribed handwriting; annotation_
+# overlay.pdf renders the actual scan pages — both are personal data of a
+# minor. run_summary.json is numbers-only (predicted/truth totals, error,
+# confidence distribution) but is regenerable cache, not worth tracking
+# either. Only reports/accuracy-real/REPORT.md is committed (numbers-only,
+# no transcribed text, no imagery) — directive items 3, 4, 7.
+reports/accuracy-real/*/

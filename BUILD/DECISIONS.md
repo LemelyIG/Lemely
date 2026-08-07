@@ -3,6 +3,71 @@
 
 ## Phase 3
 
+### D3.21 — Real past-paper accuracy: both totals land inside tolerance, and the MCQ paper is the worrying one (INBOX-2026-08-07-ACC)
+
+**Context.** The human's INBOX directive supplied two genuine solved CAIE 0625
+scripts (`0625_s23_qp_22`, 34/40, MCQ; `0625_w24_qp_41`, 66/80, theory with
+method marks) and asked for a real end-to-end accuracy measurement — ingest →
+OCR → mark → grade, no mocked Gemini, no reconstructed scheme. B1 (missing
+official mark schemes) and B2 (the w24 scheme reconciling 83/80) were both
+resolved first; nothing here was measured against a scheme this build invented.
+
+**Decisions, all fixed before any result was seen so none can be tuned to the
+outcome.**
+
+1. **Tolerance is ±10% of each paper's own maximum** (±4 on 40, ±8 on 80),
+   implemented in `lemely/accuracy/real_papers.py::tolerance_marks`. Justified
+   by adjacent CAIE boundaries on these papers sitting ~6–10% of max apart: an
+   error inside the band risks at most one grade band.
+2. **The two papers are reported separately and never averaged** (directive
+   item 5). Their signed errors are +3 and −3; averaging them would manufacture
+   a "no systematic bias" claim out of two unrelated failures in opposite
+   directions. `test_fixtures_are_declared_as_two_separate_cases` pins the
+   shape structurally.
+3. **The live run is gated on `LEMELY_LIVE_ACCURACY=1` plus a resolvable Gemini
+   key**, and caches to `run_summary.json` so re-runs replay for $0 and the
+   committed report stays reproducible. A bare `pytest` never bills the cap.
+4. **Confidence distribution is weighted by marks, not by question count** — a
+   1-mark MCQ marked high and an 8-mark method question marked low are not the
+   same quantity of confidence.
+5. **Only a numbers-only `REPORT.md` is committed.** `per_question.json`,
+   `raw_run.json` and `annotation_overlay.pdf` carry a minor's transcribed
+   handwriting and scan imagery; `reports/accuracy-real/*/` is gitignored,
+   extending the judgment already applied to the fixture PDFs. That gitignore
+   entry doubles as directive item 7's dataset/export exclusion list.
+
+**Result.** Both papers are within tolerance, so the tests are green honestly —
+nothing was loosened. Paper 22: predicted 37 vs 34, signed +3. Paper 41:
+predicted 63 vs 66, signed −3.
+
+**The finding that matters is not the error size — it is which paper flagged
+itself.** Paper 41 (AI marking) assigned medium confidence to 20 of its 80
+marks and returned paper-level `grade_confidence: low`; a teacher is pointed at
+the right quarter of the script. Paper 22 (MCQ) returned **all 40 marks at
+confidence 1.0 / band high and zero review flags** — and was still 3 marks
+wrong. MCQ marking is deterministic string comparison against the official key,
+so *no marking-judgement error is possible on that path*: all 3 marks of error
+are vision/transcription error, and the confidence signal is measuring the
+marker while the mistake happened in the extractor. The system was maximally
+confident precisely where it had no basis to be. That is a direct violation of
+the "visible confidence" principle (UI spec §1.4) in the failure direction that
+matters, and it is invisible to every gate this build currently runs.
+
+**Not fixed here, deliberately.** Propagating extraction confidence into the
+per-question confidence on the deterministic MCQ path is a change to the
+marking contract; it is recorded as a known limitation for DELIVERY.md rather
+than patched unattended at the end of Phase 3.
+
+**Also honest about what the totals cannot show.** Ground truth is the paper
+total only. A correct-looking total can be two cancelling errors, and nothing
+in this exercise can distinguish that case — which is why the per-question JSON
+and rendered annotation overlay exist as the human's local spot-check route.
+No per-question ground truth was fabricated or back-derived from the pipeline's
+own output (directive item 2).
+
+**Cost.** $0.021 for this run (2 vision extractions + 43 correction calls);
+cumulative Gemini spend **$0.1586 / $8.00**.
+
 ### D3.20 — `web/` gets Vitest, in Node, with no component-rendering stack (P3.10 chunk e3)
 
 **Context.** MISSION §6 gate 3 requires "frontend unit tests green". For the whole

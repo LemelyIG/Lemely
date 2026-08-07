@@ -2,8 +2,8 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 3
-last_updated: 2026-08-06T00:00:00Z
-gemini_spend_usd: 0.0580
+last_updated: 2026-08-07T00:00:00Z
+gemini_spend_usd: 0.1586
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
@@ -1870,7 +1870,7 @@ Starting facts (established 2026-08-06, do not re-derive):
       the suite construct the flag directly on a `CorrectedQuestion` and never route through
       `apply_integrity_checks`, so they were unaffected — only the one test that exercised
       the real path had encoded the false positive.
-- [ ] doing — **INBOX-2026-08-07-ACC** Real past-paper accuracy fixtures — **B1 IS RESOLVED
+- [x] done — **INBOX-2026-08-07-ACC** Real past-paper accuracy fixtures — **B1 IS RESOLVED
       (2026-08-07); this task is live again.** The human installed the `paperscraper` skill
       (`.claude/skills/paperscraper/SKILL.md`, an external tool at `/home/sico/PaperScraper`
       with its own venv — never add it to Lemely's `pyproject.toml` or `.venv`), which is the
@@ -1930,6 +1930,33 @@ Starting facts (established 2026-08-06, do not re-derive):
       skips, with results cached to disk so the committed report is reproducible.
       **Paper 22 can proceed now. Paper 41 waits on B2** — and if B2 does not resolve, report
       paper 41 as blocked, never as passed or quietly skipped.
+
+      **DELIVERED 2026-08-07 (D3.21). All 8 directive items honoured; nothing loosened.**
+      Shipped: `lemely/accuracy/real_papers.py` (pure measurement — signed/absolute error,
+      MAE, marks-weighted confidence distribution, review-flagged marks; no I/O, no Gemini),
+      `scripts/run_real_paper_accuracy.py` (real ingest→OCR→mark→grade, caches
+      `run_summary.json` so re-runs replay for $0), `tests/test_accuracy_real_papers.py`
+      (hermetic units always-run + 2 live-gated E2E cases behind `LEMELY_LIVE_ACCURACY=1`
+      **plus** a resolvable key — a bare `pytest` can never bill the cap), and the
+      numbers-only `reports/accuracy-real/REPORT.md`.
+      **Results, both within the ±10%-of-max tolerance fixed before any result was seen,
+      reported separately and never averaged (item 5):** paper 22 **37 vs 34** (+3, tol ±4);
+      paper 41 **63 vs 66** (−3, tol ±8). Gemini $0.021 this run, cumulative **$0.1586/$8.00**.
+      **The finding, and it must reach DELIVERY.md:** paper 41 (AI marking) flagged 20/80
+      marks medium and returned `grade_confidence: low`; paper 22 (MCQ) returned **all 40
+      marks at confidence 1.0 / band high with zero review flags and was still 3 marks
+      wrong**. MCQ marking is deterministic string comparison against the official key, so
+      no marking-judgement error is possible there — all 3 marks are *vision/transcription*
+      error, i.e. the confidence number measures the marker while the mistake happened in
+      the extractor. Confidently wrong, invisible to every gate this build runs.
+      **Deliberately NOT fixed here** (it changes the marking contract; do not patch it as a
+      drive-by at phase end): propagating extraction confidence into per-question confidence
+      on the deterministic MCQ path.
+      Item 7 / personal data: `reports/accuracy-real/*/` gitignored alongside
+      `tests/fixtures/real-papers/` — only the numbers-only REPORT.md is committed; the
+      per-question JSON and rendered annotation overlay stay local as the human's
+      spot-check route for cancelling errors (item 4). No per-question ground truth was
+      fabricated or back-derived (item 2).
 
 - [x] superseded — **INBOX-2026-08-07** Real past-paper accuracy fixtures (two genuine solved
       0625 scripts, ground truth 34/40 and 66/80). **Blocked on the human by the directive's
