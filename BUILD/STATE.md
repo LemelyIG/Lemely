@@ -944,7 +944,50 @@ Starting facts (established 2026-08-06, do not re-derive):
             `QuizResultsService`'s own tests (100% cov, P3.5 chunk F2); what this pass
             proves is the rendering and the route, not the marking pipeline.
             **P3.8 is now done — T-07..T-10 and T-12 are all on real data.**
-- [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
+- [ ] doing — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
+      Four chunks, one commit each.
+
+      **Established facts (2026-08-07, do not re-derive):**
+      - **Parent backend is complete** (P3.6, `lemely/web/routers/parent.py`, prefix
+        `/api/parent`, gated `require_role(Role.parent)`): `GET /children` (P-01),
+        `GET /children/{child_id}` (P-02), `GET /children/{child_id}/subjects/{code}`
+        (P-03), `GET /children/{child_id}/weaknesses` (P-04). DTOs in
+        `lemely/web/schemas_parent.py` — read that file for the authoritative field
+        docs, every field carries a provenance note. Student-side link routes:
+        `GET|POST /api/student/parent-links`, `DELETE /api/student/parent-links/{pid}`.
+      - **OTP backend is complete** (P1.4): `POST /auth/otp/request` (`{phone}` →
+        `{status:"sent"}`, **429 inside the resend cooldown**), `POST /auth/otp/verify`
+        (`{phone, code, deviceId}` → `TokenResponseDTO`, 401 on wrong/expired).
+        `AuthContext.tsx` **already exposes `requestOtp`/`verifyOtp` mutations** — they
+        have no consumer yet. Do not write a second OTP client.
+      - **`verify_otp` auto-creates the `role=parent` user** (D3.11), so G-05's spec
+        state *"no account found for this number"* is **unreachable by construction** —
+        every verified phone gets an account. Its honest equivalent is P-01's
+        no-children-linked empty state. Report that, do not fake an error path.
+      - **Real defect to fix in chunk b, not carry:** `App.tsx`'s `TEACHER_ROLES`
+        includes `"parent"` and `portalPathForRole` (`lib/auth/RequireAuth.tsx`) returns
+        `/teacher` for every non-student — so a parent logging in **lands in the teacher
+        portal today**. The comment there already names it as a Phase-3 placeholder.
+      - `index.css` scopes tokens by `[data-portal="student"|"teacher"]` (lines ~399/431).
+        A parent scope must be added there; never hardcode a colour outside it.
+      - Reuse, never re-derive: `lib/api.ts::request()` (surfaces the backend's real
+        `detail` — P3.7d), `relativeTime`/`initialsOf`/`downloadCsv` in `lib/utils.ts`,
+        `lib/severity.ts`, `useMeApi.ts::useProfile()` (shared `/api/me/*`, deliberately
+        NOT portal-scoped — the parent shell uses this same one), and the C-1..C-15
+        component library in `components/ui/`.
+      - **`supabase` is not on `PATH` non-interactively** and the venv must be active —
+        always run `source .venv/bin/activate && PATH="$HOME/.local/bin:$PATH"
+        ./scripts/check.sh` or you silently get 9 gates, not 12 (or 5 spurious FAILs).
+      - `pytest -q` prints no `N passed` line; count progress characters. Baseline
+        entering P3.9: **1863 tests / 89.34% cov, all 12 gates green.**
+      - A throwaway Playwright spec left in `web/e2e/` is picked up by `check.sh` — delete
+        verification specs after use.
+      - [ ] **a** todo — backend: G-05's mandated developer OTP affordance (D3.16).
+      - [ ] **b** todo — parent portal shell + role-routing split + `[data-portal="parent"]`
+            tokens + G-05 screen + P-01 children list.
+      - [ ] **c** todo — P-02 child overview + P-03 subject detail + P-04 weaknesses.
+      - [ ] **d** todo — student-side parent-link management (the only way a link is
+            created in production — D3.11's scope note).
 - [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
       Lighthouse a11y ≥95, screenshot corpus for every new screen × state × breakpoint,

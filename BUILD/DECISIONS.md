@@ -3,6 +3,44 @@
 
 ## Phase 3
 
+### D3.16 — G-05's developer OTP affordance is gated on the *provider's* capability, not on an environment string (P3.9 chunk a)
+
+**Context.** `docs/LEMELY_UI_SPEC.md` §G-05 mandates a "clearly-marked developer
+affordance that shows the code on screen in non-production environments, so this is
+testable without a real SMS provider." Today the code exists only in a log line
+(`MockSmsProvider.send_code`), and `OtpRequestResponseDTO`'s docstring records a
+deliberate prior decision that the acknowledgement "never carries the code" —
+`AuthService.request_otp` returns `None` on purpose. Satisfying the spec means
+reversing that, so the reversal has to be narrower than the guarantee it replaces.
+
+**The decision.** `SmsProvider` gains a `delivers_out_of_band: bool` capability.
+`MockSmsProvider` sets it **False** (it logs; nothing reaches the parent's handset).
+A real gateway sets it True. `AuthService.request_otp` returns `str | None` — the code
+**iff `not provider.delivers_out_of_band`** — and the route surfaces it as
+`OtpRequestResponseDTO.devCode`, which the UI renders in an explicitly-labelled
+developer panel. There is no settings flag and no environment check anywhere in the
+path.
+
+**Why the capability and not an env var.** "Is this production?" is a string a
+misconfiguration can get wrong while the system keeps working; "does this provider
+actually deliver the code to the user by another channel?" is a property of the code
+that is running. Gated on the capability, the only way to leak a live OTP over the API
+is to ship a provider that both fails to deliver and claims it does — at which point
+the OTP is unusable anyway. Gated on an env var, one wrong deploy value leaks every
+live code. This is the same structural-exclusion shape D3.8 used for answer leakage
+(the guard is the absent capability, not a remembered conditional).
+
+**Alternatives rejected.** (a) *A dev-only route that reads the last issued code* —
+a second, separately-gated surface whose whole purpose is to disclose a secret; strictly
+more attack surface than a field on the response that already exists. (b) *Leave it in
+the log and have the UI say "check the server console"* — does not satisfy the spec's
+"shows the code on screen", and makes the Playwright OTP flow in P3.10 depend on
+scraping backend logs. (c) *A settings boolean* — see above.
+
+**What this does not change.** The code is still never returned when a real provider is
+configured, the resend cooldown (429) and attempt counter are untouched, and nothing
+about `verify_otp` changes.
+
 ### D3.15 — T-09's six steps do not map 1:1 onto the quiz data model, and two of the spec's step-1 fields belong to the assignment (P3.8 chunk c)
 
 **Context.** UI-spec §T-09 specifies a six-step flow whose step 1 is "basics — title,
