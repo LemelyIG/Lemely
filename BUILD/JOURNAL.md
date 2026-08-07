@@ -1091,3 +1091,34 @@ looks at it.
 established by Phase 3, not left open: the question-stem extractor (D3.7 — the bank is
 empty and corpus growth cannot change that) and the target-grade column (D3.3 — at-risk
 rule 2 cannot fire without it).
+
+## 2026-08-08 — P4.1 landed, P4.2 done (topic taxonomy)
+
+**Did.** Committed the P4.1 quality fixes that were sitting staged and ungated from
+the previous session (symbol recovery, corrupt-leaf exclusion, the conftest guard that
+stops the test suite making billed Gemini calls) after verifying all 13 gates green —
+1999431. Then P4.2 end to end: syllabus taxonomy, deterministic classifier, loader,
+bank backfill, CLI, 27 new tests — a05db60, D4.4.
+
+**Learned.**
+- *Don't author reference data from memory when the source is fetchable.* First instinct
+  was to write the CAIE topic lists from knowledge. CAIE renumbers topics between
+  syllabus cycles, so that would have put invented precision at the root of the phase.
+  The three syllabus PDFs were one curl away from a domain Phase 2 already scrapes.
+- *Calibrate on the real corpus before tuning thresholds.* Two defects only the real
+  273 rows could show: hyphens never matched at all (`double-insulated` vs `double
+  insulated`), and `mcq_options` — already in the DB, unused — carried coverage from
+  78.8% to 89.4% on its own. No synthetic fixture would have surfaced either.
+- *Writing the tests found two scoring bugs.* A same-parent subtopic tie was being
+  resolved by file order and reported as a finding; and an *uncontested* single strong
+  hit was banded the same as a contested one. Both fixed in the code, not the test.
+- *The honest yield is 77.3%, not 89.7%.* Scoring places 245/273 but only 211 get
+  written. There is no confidence column on `question_bank.topic`, so a low-confidence
+  label is indistinguishable downstream from a certain one — and the low band contained
+  real nonsense (radioactivity labelled "Electrical quantities").
+
+**Next.** P4.3 — student profile + onboarding data model (migration 0009), which also
+activates target grades and closes at-risk rule 2 (D3.3). Carry into P4.4: the marking
+side still has **no** topics (`topic_hint` is None on all 637 questions in all 33 parsed
+0625 schemes), so practice-targets-weakness does not join up until that fill is done at
+the db/io boundary. D4.4 §6.
