@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-07T00:00:00Z
+last_updated: 2026-08-07T12:00:00Z
 gemini_spend_usd: 0.1586
 
 ## Rules for maintaining this file
@@ -123,10 +123,46 @@ assume:
       (D3.1–D3.21), `BUILD/BLOCKERS.md` (B1–B3), or this file's git history.
 - [x] done — **P3.11** Phase-3 report, merge to develop, push, update PR #3, ntfy.
 
-## Phase 4 — Content generation + study plans — NOT STARTED
-See MISSION §4. Read the Phase-3 limitations above before planning: the question-stem
+## Phase 4 — Content generation + study plans — IN PROGRESS (started 2026-08-07)
+Branch: `feature/phase-4-content-study-plans`. See MISSION §4 + UI spec §4.2 (S-01..S-05),
+§4.5 (S-20..S-25). Read the Phase-3 limitations above before planning: the question-stem
 extractor and the target-grade column are both P4 prerequisites that P3 established, not
 open questions.
+
+**What Phase 3 already left that P4 composes rather than rebuilds:** `QuestionBank` +
+`QuestionBankService` (`lemely/db/question_bank_repo.py`, incl. `survey_past_paper_questions`),
+the quiz take/submit/auto-mark path (`quiz_taking_repo`/`quiz_marking_repo`), `core/difficulty.py`,
+`core/generation.py` (`GeneratedQuestion`), `io/question_generation.py`, `core/study_plan.py`
+(a naive proportional scheduler) + `io/study_plan_ai.py` narration, and the `StudyPlan.tsx`
+screen. The placement test and practice sets are quiz-shaped: reuse that engine, do not fork it.
+
+### Task checklist
+- [ ] doing — **P4.1** Question-stem extractor: parse question-paper PDFs into `question_bank`
+      rows (`source=past_paper`) with topic + difficulty. Closes the D3.7 prerequisite. The
+      bank must stop being empty before P4.4/P4.5 mean anything.
+- [ ] todo — **P4.2** Syllabus topic taxonomy + classification of bank questions (0580/0606/0625).
+- [ ] todo — **P4.3** Student profile + onboarding data model (migration 0009): grade level,
+      school, external lessons, weekly study hours, per-subject enrolment with **target grade**,
+      papers, confidence sliders. Activating target grades also closes at-risk rule 2 (D3.3) —
+      wire it into the at-risk engine and the T-06 reason filter in the same task.
+- [ ] todo — **P4.4** Placement test backend: ~15-min per-subject assembly from the bank across
+      topics, serve/resume/submit, mark through the existing engine, initialise weakness profile.
+- [ ] todo — **P4.5** Practice generator backend: topic/difficulty/count/source filtering,
+      persisted practice sets, "not enough questions" honesty path, export/print payload.
+- [ ] todo — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
+      weakness, SM-2-style spaced repetition, review sessions.
+- [ ] todo — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +
+      rolling performance; weekly regeneration; concrete sessions (topic, activity type,
+      duration); completion + XP hook (XP itself is P5 — leave a seam, do not build it).
+- [ ] todo — **P4.8** Frontend S-01..S-05 (onboarding steps + placement in-progress/results).
+- [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
+- [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
+      current placeholder `StudyPlan.tsx`.
+- [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
+      targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
+      breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
+      assumed** (MISSION §4 names this explicitly).
+- [ ] todo — **P4.12** Phase-4 report, merge to develop, push, update PR #3, ntfy.
 
 ### Environment facts worth not re-deriving (cost real work to find)
 - Run gates as `./scripts/check.sh` in the **foreground** — it exports `$HOME/.local/bin`
