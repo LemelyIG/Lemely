@@ -1322,8 +1322,18 @@ Starting facts (established 2026-08-06, do not re-derive):
             are **dead** (every `<Avatar>` renders `neutral`; the `tone="warn"` hits
             belong to `Chip`) — documented in-file, not pruned, since deleting unused
             public variants is a simplification pass.
-      - [ ] **d** todo — Playwright E2E per role + at-risk flags asserted against chunk a's
-            seeded scenarios (the phase's named acceptance criterion).
+      - [ ] **d** doing (started 2026-08-07) — Playwright E2E per role + at-risk flags asserted
+            against chunk a's seeded scenarios (the phase's named acceptance criterion).
+            Plan: a `globalSetup` runs `scripts/seed_e2e.py` **once** per Playwright run and
+            writes the contract to `<LEMELY_REPORT_DIR>/e2e-seed.json`; specs read it (module
+            state is not shared across Playwright worker processes, so a cached promise is not
+            enough). Session injection mirrors `audit.mjs::injectSession` (`localStorage`
+            `lemely.session`). New specs: teacher journey (T-01..T-06), at-risk assertions
+            (API + T-06 UI, both against `expectedAtRiskReasons`), parent journey (real OTP UI
+            login on a *fresh* phone — the seeded phone's challenge is already spent and the
+            cooldown is 30s — plus P-01..P-04 on the seeded parent), student journey on seeded
+            data, and a cross-role RBAC spec. `correct-paper.spec.ts` (the P2.10 core loop)
+            stays as-is.
       - [ ] **e** todo — screenshot corpus for every new screen × state × breakpoint
             re-baselined into `reports/phase-3/`, contact sheet, regression check against
             the Phase-2.5 baselines, and the item-(c) frontend-runner decision.
