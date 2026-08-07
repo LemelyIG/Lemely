@@ -1478,7 +1478,7 @@ Starting facts (established 2026-08-06, do not re-derive):
                     *added*, not *changed*. `reports/phase-3/` does not exist yet and is
                     NOT gitignored (only `reports/.scratch/` is).
                   - `sharp` is already a `web/` devDependency — no new package.
-              - [ ] **e2a** todo — harness only, verified into `reports/.scratch`.
+              - [ ] **e2a** doing (started 2026-08-07) — harness only, verified into `reports/.scratch`.
                     (i) `states[]` on a registry route: each entry `{state, slug, setup?,
                     ready?, teardown?}`, defaulting to today's single implicit
                     `"default"` so every existing entry keeps working unchanged.
