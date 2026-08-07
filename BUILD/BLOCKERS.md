@@ -179,3 +179,71 @@ change must be justified by evidence from the document, and pinned by a test.
 plus retries), cumulative **$0.138 / $8.00**.
 
 ---
+
+## B3 — Every *correct* MCQ answer is flagged as plagiarism (live product defect)
+
+**Raised:** 2026-08-07 · **Status:** OPEN · **Severity: high** — it corrupts the
+core correction loop for one of the two paper types, and it gets worse the
+better the student does.
+
+Found by the P3.10 chunk-e1 subagent while building the seeded quiz submission,
+and **independently re-verified by the orchestrator** rather than taken on
+trust (MISSION §5).
+
+### The defect
+
+`lemely/io/integrity.py::apply_integrity_checks` runs the plagiarism check on
+**any** question that has both a `student_answer` and an `expected_answer` —
+there is no question-type guard:
+
+```python
+if plagiarism_checker is not None and cq.student_answer and cq.expected_answer:
+```
+
+`PlagiarismChecker.check` scores similarity with
+`difflib.SequenceMatcher.ratio()` against a default threshold of 0.85. For an
+MCQ question both strings are **the same single letter**, so the ratio is
+exactly 1.0:
+
+```
+MCQ correct   student='C' expected='C' -> flagged=True  score=1.000
+MCQ wrong     student='A' expected='C' -> flagged=False score=0.000
+MCQ correct 2 student='B' expected='B' -> flagged=True  score=1.000
+```
+
+A flagged question sets `plagiarism_flagged`, appends a `review_reason`, and
+forces `needs_teacher_review = True`. So **every question a student gets right
+on an MCQ paper becomes a plagiarism flag and a human-review-queue item**, and
+every question they get wrong is clean. The incentive is exactly inverted: a
+40/40 paper generates 40 flags, a 0/40 paper generates none.
+
+You cannot plagiarise a multiple-choice letter. The similarity measure is
+meaningless for this question type.
+
+### Why it matters beyond the queue noise
+
+- It violates the "flags are signals, not verdicts" principle in
+  `docs/LEMELY_UI_SPEC.md` §1.4 in the way that matters most — a signal that
+  fires on every correct answer carries no information, and it accuses honest
+  students by default.
+- **It directly poisons the INBOX accuracy-fixture task.** That directive's
+  paper 22 (`0625_s23_qp_22`) is an MCQ paper the student scored **34/40** on,
+  so it would produce 34 false plagiarism flags. The confidence distribution
+  item 3 asks for would be measuring this defect as much as the marking.
+- Phase 2 shipped the integrity flags (P2.4) and its report does not record
+  this. Per MISSION §4 it is fixed as a scoped task inside the current phase —
+  Phase 2 is not reopened.
+
+### The likely fix (not yet applied)
+
+Skip the plagiarism check for MCQ questions entirely — the check is only
+meaningful on free-text answers. Guard on the question's type rather than on
+answer length (a one-character *free-text* answer is a different case and
+should still be checkable). Pin it with a test that a correct MCQ answer is
+**not** flagged, and verify the existing golden fixtures do not regress.
+
+**Do not "fix" this by raising `plagiarism_threshold`.** Nothing above 1.0 is
+reachable, and lowering the sensitivity of a real check to silence a
+type-confusion bug is the same class of act B2 rules out.
+
+---
