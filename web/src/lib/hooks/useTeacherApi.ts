@@ -10,16 +10,21 @@ import type {
   AcknowledgeAtRiskRequest,
   AtRiskFlag,
   AtRiskList,
+  BulkApproveResponse,
   ClassAnalytics,
   ClassDetail,
   ClassList,
   ClassSummary,
   CreateClassRequest,
+  DismissReviewRequest,
   EnrollStudentRequest,
-  GradingQueue,
   Overview,
   PaperDetail,
   PaperList,
+  ResolveReviewRequest,
+  ReviewItemDetail,
+  ReviewQueueItem,
+  ReviewQueueList,
   RosterEntry,
   SchemeList,
   SchemeRow,
@@ -44,8 +49,12 @@ import type {
  * chunk c's `GET /classes/{id}` (T-03), `/enroll` + `/students/{id}` (roster
  * mutations), `GET /classes/{id}/analytics` (T-04), and — added chunk d —
  * `GET /teacher/students/{id}` (T-05) and `GET /teacher/at-risk` +
- * POST/DELETE `.../acknowledge[/{reason}]` (T-06). AI-quiz endpoints remain
- * out of scope (P3.8).
+ * POST/DELETE `.../acknowledge[/{reason}]` (T-06). P3.8 chunk b adds
+ * `/api/teacher/review/*` (T-07/T-08, `lemely/web/routers/review.py`) and
+ * removes `useGradingQueue` (`GET /grading/queue`) — its only consumer was
+ * the old mock-era `Review.tsx`, now replaced by the real T-07/T-08 screens;
+ * `Grading.tsx` (the P2 console this chunk leaves untouched) never used it.
+ * Quiz/announcement endpoints remain a later P3.8 chunk's to add.
  */
 
 export function useTeacherOverview(): UseQueryResult<Overview, Error> {
@@ -265,6 +274,120 @@ export function useUnacknowledgeAtRisk(
   })
 }
 
+// ── Review queue (T-07 queue list, T-08 remark) ──────────────────────────────
+
+/**
+ * `GET /teacher/review?class_id=&reason=&min_age_hours=` (T-07). All three
+ * are real server-side filters (`ReviewService.list_queue`) — never applied
+ * client-side against an unfiltered fetch. A malformed `classId` 422s on the
+ * backend; the screen renders that as a normal query error rather than
+ * hiding it.
+ */
+export function useReviewQueue(params?: {
+  classId?: string
+  reason?: string
+  minAgeHours?: number
+}): UseQueryResult<ReviewQueueList, Error> {
+  const classId = params?.classId
+  const reason = params?.reason
+  const minAgeHours = params?.minAgeHours
+  const query = new URLSearchParams()
+  if (classId) query.set("class_id", classId)
+  if (reason) query.set("reason", reason)
+  if (minAgeHours !== undefined) query.set("min_age_hours", String(minAgeHours))
+  const qs = query.toString()
+  return useQuery({
+    queryKey: ["teacher", "review", "queue", classId ?? null, reason ?? null, minAgeHours ?? null],
+    queryFn: () => request<ReviewQueueList>(`/teacher/review${qs ? `?${qs}` : ""}`),
+  })
+}
+
+/** `GET /teacher/review/{itemId}` (T-08 full detail). 403 out-of-scope / 404
+ * unknown / 422 malformed id all surface as a normal query error. */
+export function useReviewItem(itemId: string | undefined): UseQueryResult<ReviewItemDetail, Error> {
+  return useQuery({
+    queryKey: ["teacher", "review", "item", itemId],
+    queryFn: () => request<ReviewItemDetail>(`/teacher/review/${itemId}`),
+    enabled: !!itemId,
+  })
+}
+
+/**
+ * `POST /teacher/review/bulk-approve` (T-07). Skip-and-report, not
+ * all-or-nothing (`BulkApproveResponseDTO`'s own doc) — the caller must
+ * render `data.skipped`, never assume every requested id succeeded just
+ * because the mutation didn't throw. Bulk-approve never overrides a mark
+ * (accept-as-is only), so it cannot change any attempt total/weakness record
+ * — invalidating just the review queue itself is enough, unlike `resolve`
+ * below.
+ */
+export function useBulkApproveReview(): UseMutationResult<BulkApproveResponse, Error, string[]> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (itemIds: string[]) =>
+      request<BulkApproveResponse>("/teacher/review/bulk-approve", {
+        method: "POST",
+        body: JSON.stringify({ itemIds }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
+    },
+  })
+}
+
+/**
+ * `POST /teacher/review/{itemId}/resolve` (T-08: accept as-is, or override
+ * with a marks/breakdown/note). An override recomputes the attempt's total
+ * and weakness records server-side (`ReviewService.resolve`'s docstring) —
+ * everything that reads this student's history downstream (T-03 roster, T-04
+ * class analytics/heatmap, T-05 student detail, T-06 at-risk, T-01/T-02
+ * class averages) can change, so success invalidates that whole surface, not
+ * just the review queue, using the resolved row's own `studentId`/`classId`
+ * rather than a value threaded in from the caller.
+ */
+export function useResolveReviewItem(
+  itemId: string | undefined,
+): UseMutationResult<ReviewQueueItem, Error, ResolveReviewRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: ResolveReviewRequest) =>
+      request<ReviewQueueItem>(`/teacher/review/${itemId}/resolve`, {
+        method: "POST",
+        body: JSON.stringify(body satisfies ResolveReviewRequest),
+      }),
+    onSuccess: (row) => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "student", row.studentId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "class", row.classId] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "at-risk"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] })
+    },
+  })
+}
+
+/**
+ * `POST /teacher/review/{itemId}/dismiss` (T-08: dismiss an integrity flag).
+ * Never touches the underlying `QuestionResult` (`ReviewService.dismiss`'s
+ * docstring) — no attempt total, weakness record, or grade changes, so only
+ * the review queue itself needs invalidating, unlike `resolve` above.
+ */
+export function useDismissReviewItem(
+  itemId: string | undefined,
+): UseMutationResult<ReviewQueueItem, Error, DismissReviewRequest> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: DismissReviewRequest) =>
+      request<ReviewQueueItem>(`/teacher/review/${itemId}/dismiss`, {
+        method: "POST",
+        body: JSON.stringify(body satisfies DismissReviewRequest),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
+    },
+  })
+}
+
 export function usePapers(): UseQueryResult<PaperList, Error> {
   return useQuery({
     queryKey: ["teacher", "papers"],
@@ -284,13 +407,6 @@ export function usePaperDetail(paperId: string | undefined): UseQueryResult<Pape
     queryKey: ["teacher", "paper", paperId],
     queryFn: () => request<PaperDetail>(`/papers/${paperId}`),
     enabled: !!paperId,
-  })
-}
-
-export function useGradingQueue(): UseQueryResult<GradingQueue, Error> {
-  return useQuery({
-    queryKey: ["teacher", "gradingQueue"],
-    queryFn: () => request<GradingQueue>("/grading/queue"),
   })
 }
 

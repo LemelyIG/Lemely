@@ -16,6 +16,7 @@ import { navItems, type NavItem } from "./data"
 import { Overview } from "./screens/Overview"
 import { Grading } from "./screens/Grading"
 import { Review } from "./screens/Review"
+import { ReviewItem } from "./screens/ReviewItem"
 import { Classes } from "./screens/Classes"
 import { ClassDetailLayout } from "./screens/ClassDetail"
 import { ClassRoster } from "./screens/ClassRoster"
@@ -216,6 +217,7 @@ export const teacherRoute: RouteObject = {
     { index: true, element: <Overview /> },
     { path: "grading", element: <Grading /> },
     { path: "review", element: <Review /> },
+    { path: "review/:itemId", element: <ReviewItem /> },
     { path: "classes", element: <Classes /> },
     {
       path: "classes/:classId",

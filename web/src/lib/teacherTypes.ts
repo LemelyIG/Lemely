@@ -21,7 +21,13 @@
  * family (`SubjectPredictionDTO`, `AttemptDTO`, `StudentWeaknessDTO`,
  * `StudentTrendPointDTO`, `StudentEngagementDTO`) and the T-06
  * `AtRiskListDTO` family (`AtRiskListEntryDTO`) + `AcknowledgeAtRiskRequestDTO`.
- * Quiz DTOs remain P3.8's to add.
+ * P3.8 chunk b adds the T-07/T-08 `schemas_review.py` family (`ReviewQueueItem`,
+ * `ReviewItemDetail`, `ReviewBreakdown`, `ResolveReviewRequest`,
+ * `DismissReviewRequest`, `BulkApproveRequest`/`Response`/`Skip`) and removes
+ * `QueueRow`/`GradingQueue` (mirrors of the old `GET /grading/queue` DTOs) —
+ * only the old `Review.tsx`, now replaced by the real T-07/T-08, consumed
+ * them; `Grading.tsx` (the P2 console) uses `PaperList`/`PaperDetail`
+ * instead. Quiz DTOs remain a later P3.8 chunk's to add.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/teacher/data.ts` (the mock shapes these DTOs were modeled
@@ -134,22 +140,6 @@ export interface PaperDetail {
   pipeline: PipelineStep[]
   questions: QuestionResult[]
   weakAreas: WeakArea[]
-}
-
-/** A low-confidence flagged item in the review queue (mirrors `QueueRowDTO`). */
-export interface QueueRow {
-  paperId: string
-  name: string
-  questionId: string
-  topic: string | null
-  confidence: number | null
-  awardedMarks: number
-  maxMarks: number
-}
-
-/** Response for `GET /grading/queue` (mirrors `GradingQueueDTO`). */
-export interface GradingQueue {
-  rows: QueueRow[]
 }
 
 // ── Mark schemes ──────────────────────────────────────────────────────────
@@ -571,6 +561,152 @@ export interface AtRiskList {
 export interface AcknowledgeAtRiskRequest {
   reason: string
   note?: string | null
+}
+
+// ── Review queue (T-07 queue list, T-08 remark) ─────────────────────────────
+
+/**
+ * One T-07 queue row (mirrors `ReviewQueueItemDTO`). `reason` is a
+ * `ReviewReason` value (`low_confidence` / `plagiarism_flag` /
+ * `ai_detection_flag` / `manual`) and `status` a `ReviewStatus` value
+ * (`open` / `resolved` / `dismissed`) — both plain strings on the wire, not
+ * union-typed here, matching every other enum-backed string field elsewhere
+ * in this file (e.g. `AtRiskFlag.reason`). `questionResultId`/`questionId`
+ * are `null` for a review item with no underlying `QuestionResult` (see
+ * `ReviewItemDetail`'s doc) — `aiAwardedMarks`/`maximumMarks`/
+ * `confidenceScore` are `null` in the same case. `subjectCode`/`paperNumber`/
+ * `paperVariant`/`sessionMonth`/`sessionYear` are all `null` together for a
+ * quiz-originated item (a quiz `Attempt` carries no paper identity) — render
+ * as "Quiz question", never a blank paper-identity line.
+ */
+export interface ReviewQueueItem {
+  itemId: string
+  attemptId: string
+  questionResultId: string | null
+  studentId: string
+  studentDisplayName: string
+  classId: string
+  className: string
+  subjectCode: string | null
+  paperNumber: number | null
+  paperVariant: number | null
+  sessionMonth: string | null
+  sessionYear: number | null
+  questionId: string | null
+  reason: string
+  status: string
+  createdAt: string
+  waitingHours: number
+  aiAwardedMarks: number | null
+  maximumMarks: number | null
+  confidenceScore: number | null
+}
+
+/** Response for `GET /teacher/review` (mirrors `ReviewQueueListDTO`). Already
+ * ordered oldest-first by the backend (`ReviewQueueItem.created_at` asc) —
+ * the longest-waiting item is the highest priority, so T-07 renders this
+ * order directly rather than re-sorting client-side. */
+export interface ReviewQueueList {
+  items: ReviewQueueItem[]
+}
+
+/**
+ * A teacher-supplied method/accuracy breakdown (mirrors `ReviewBreakdownDTO`).
+ * Deliberately not derived from the mark scheme's M/A/B point types — those
+ * live in the parsed scheme, not on the persisted `QuestionResult` — every
+ * field here is exactly what the teacher typed, nothing computed.
+ */
+export interface ReviewBreakdown {
+  methodMarks: number | null
+  accuracyMarks: number | null
+  otherMarks: number | null
+  notes: string | null
+}
+
+/**
+ * Response for `GET /teacher/review/{itemId}` (mirrors `ReviewItemDetailDTO`,
+ * T-08). Extends `ReviewQueueItem` with the question content, AI marking
+ * evidence, and any recorded teacher override.
+ *
+ * **`studentAnswer` is Lemely's transcription of the student's handwriting,
+ * not the scan image; `expectedAnswer`/`matchedPointIds` are the mark
+ * scheme's expected answer and the identifiers of the points the AI matched
+ * — not the scheme's prose.** Neither the original scan crop nor the mark
+ * scheme's extract text is persisted anywhere in this product (D3.14 §1,
+ * `ReviewItemDetailDTO`'s own docstring) — T-08 must label these as exactly
+ * what they are and say plainly that the scan/scheme extract don't exist,
+ * never render a placeholder image or reconstruct scheme prose from the
+ * point ids (inventing precision, UI-spec §1.4).
+ */
+export interface ReviewItemDetail extends ReviewQueueItem {
+  studentAnswer: string | null
+  expectedAnswer: string | null
+  topic: string | null
+  matchedPointIds: string[]
+  feedback: string | null
+  markerSource: string | null
+  reviewReason: string | null
+  isOverridden: boolean
+  teacherAwardedMarks: number | null
+  teacherNote: string | null
+  teacherBreakdown: ReviewBreakdown | null
+  overriddenBy: string | null
+  overriddenAt: string | null
+  resolutionNote: string | null
+  resolvedBy: string | null
+  resolvedAt: string | null
+}
+
+/**
+ * Body for `POST /teacher/review/{itemId}/resolve` (mirrors
+ * `ResolveReviewRequestDTO`). Omitting `overrideMarks` accepts the AI mark
+ * unchanged and closes the item — `note` in that path is recorded as an
+ * **internal** resolution note only. Supplying `overrideMarks` records a
+ * teacher correction on the underlying `QuestionResult`; `note` in that path
+ * becomes `teacherNote` on the corrected result — the "note to the student"
+ * the UI spec asks T-08 for. There is no notification/delivery path for
+ * either case yet (no consumer renders `teacherNote` on the student side and
+ * no push exists — see `ReviewItem.tsx`'s module doc); the copy must not
+ * claim the student is notified.
+ */
+export interface ResolveReviewRequest {
+  overrideMarks?: number | null
+  breakdown?: ReviewBreakdown | null
+  note?: string | null
+}
+
+/** Body for `POST /teacher/review/{itemId}/dismiss` (mirrors
+ * `DismissReviewRequestDTO`). Dismisses an integrity flag; `note` is an
+ * internal record only. Never touches the underlying `QuestionResult` — no
+ * student-visible record survives a dismissal (see `ReviewService.dismiss`'s
+ * docstring). Restricted server-side to `plagiarism_flag`/`ai_detection_flag`
+ * items — a 422 otherwise. */
+export interface DismissReviewRequest {
+  note?: string | null
+}
+
+/** Body for `POST /teacher/review/bulk-approve` (mirrors
+ * `BulkApproveRequestDTO`). */
+export interface BulkApproveRequest {
+  itemIds: string[]
+}
+
+/** One id bulk-approve declined to touch, and why (mirrors
+ * `BulkApproveSkipDTO`). `reason` is one of `not_found` / `forbidden` /
+ * `already_closed` — a plain machine code, not prose; the screen maps it to
+ * a human sentence. */
+export interface BulkApproveSkip {
+  itemId: string
+  reason: string
+}
+
+/** Response for `POST /teacher/review/bulk-approve` (mirrors
+ * `BulkApproveResponseDTO`). Skip-and-report, not all-or-nothing — a caller
+ * must render `skipped`, never assume every requested id succeeded because
+ * the call itself didn't throw. */
+export interface BulkApproveResponse {
+  approved: string[]
+  skipped: BulkApproveSkip[]
 }
 
 // ── POST /papers/{id}/extract, /grade SSE frames ─────────────────────────

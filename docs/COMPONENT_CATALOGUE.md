@@ -126,6 +126,16 @@ hardcoded routes.
 - `item.href` renders a plain `<a>` for now; the P2.5.3 retrofit swaps in
   `react-router`'s `NavLink` where SPA routing is needed.
 
+## C-14 — Checkbox
+`checkbox.tsx` — `Checkbox({ label, ...inputProps })` (P3.8 chunk b)
+- Not named in the UI-spec §4 C-1..C-13 list — added because T-07's
+  bulk-approve needs a real multi-select control and nothing else in the
+  library provides one.
+- Native `<input type="checkbox">` (free keyboard/AT semantics), visually
+  restyled via `appearance-none` + a `has-checked:`/`has-focus-visible:`
+  driven wrapper box — the real input stays in the accessibility tree rather
+  than being hidden behind a decorative sibling.
+
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and
   should be deleted in favor of the new ones once screens are retrofitted:
