@@ -50,6 +50,12 @@ function resolveSupabaseEnv(): Record<string, string> {
 
 const repoRoot = path.resolve(__dirname, "..")
 const supabaseEnv = resolveSupabaseEnv()
+// Exported into this process's own env (not just threaded into webServer's
+// `env` below) so `./e2e/global-setup.ts` — a bare module path Playwright
+// invokes directly, which cannot receive config-module-scoped values any
+// other way — inherits them without re-shelling out to `supabase status`
+// itself.
+Object.assign(process.env, supabaseEnv)
 
 export default defineConfig({
   testDir: "./e2e",
@@ -59,6 +65,10 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: 1,
   reporter: "list",
+  // P3.10 chunk d: seeds the shared multi-role fixture (scripts/seed_e2e.py)
+  // exactly once for the whole run — see global-setup.ts for why this can't
+  // be a cached-promise helper instead.
+  globalSetup: path.join(__dirname, "e2e/global-setup.ts"),
   use: {
     baseURL: "http://127.0.0.1:5173",
     screenshot: "only-on-failure",
