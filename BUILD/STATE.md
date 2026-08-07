@@ -176,7 +176,7 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       (P4.5) does not join up until both sides use this vocabulary.** Not done in P4.2 because
       `core.topics` cannot import the `io` loader without a layering violation; the fill belongs
       at the db/io boundary where a `CorrectionResult` is persisted. See D4.4 §6.
-- [ ] todo — **P4.3** Student profile + onboarding data model (migration 0009): grade level,
+- [ ] doing — **P4.3** Student profile + onboarding data model (migration 0009): grade level,
       school, external lessons, weekly study hours, per-subject enrolment with **target grade**,
       papers, confidence sliders. Activating target grades also closes at-risk rule 2 (D3.3) —
       wire it into the at-risk engine and the T-06 reason filter in the same task.

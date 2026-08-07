@@ -2685,3 +2685,50 @@ persisted and the loader is reachable. P4.4 owns it.
 Re-run any time with `lemely question-bank classify-topics [--subject X] [--reclassify]
 [--dry-run]`; `--reclassify` is the one to use after editing the vocabulary, and it can
 *remove* a label the new vocabulary no longer supports, not only add.
+
+---
+
+## D4.5 — Student profile + onboarding data model, and how target grades activate at-risk rule 2 (P4.3)
+
+**Four additive tables (migration 0009), not one.** D1.2/D1.3's additive-only rule holds:
+no existing column is touched.
+
+1. `student_profiles` — one row per student user (`user_id` PK/FK). The whole-person
+   facts S-02 collects: qualification level, grade level, school name, external-lessons
+   flag, weekly study hours, and `onboarding_completed_at`.
+2. `student_subject_enrolments` — one row per (student, subject). Carries the **target
+   grade** and the exam session being targeted (S-01). Unique on (`user_id`,
+   `subject_code`).
+3. `student_enrolment_papers` — the papers a student will actually sit for an enrolment
+   (0580 P2 + P4). A separate table rather than an array column so a paper is a row a
+   later phase can join practice/plan material against.
+4. `student_confidence_ratings` — one row per (enrolment, topic) self-assessment slider,
+   keyed on the **P4.2 topic label vocabulary** (`"4.3 Electric circuits"`), so the
+   questionnaire, the bank, and the weakness engine speak one language rather than three.
+
+**Everything the spec calls skippable is nullable.** S-02 says "allow *skip for now* on
+everything non-essential", and the study plan must be able to say "we do not know your
+weekly study time" rather than invent a default that then looks like an answer the
+student gave (spec §1.4). A skipped field is `NULL`, never a sentinel or a zero.
+
+**Target grades activate at-risk rule 2 — via a subject-keyed mapping, not a scalar.**
+This is the substantive design call. `assess_at_risk` took `target_grade: str | None`,
+one grade for a whole student. That is wrong now that targets are real: a target grade is
+per *subject*, and `StudentHistory` interleaves subjects. Passing a single grade would
+compare a physics paper against a maths target the moment a student enrols in two
+subjects — a false at-risk flag on a teacher's dashboard, which is the exact failure
+D3.3's tri-state was built to prevent.
+
+So the parameter becomes `targets: Mapping[str, str] | None` (subject code → grade) and
+`_check_below_target` resolves the target for the subject of the **latest grade-bearing
+record** — the same record the rule already compares. One resolution site, inside the
+pure rules engine, so the nine call sites cannot each drift their own way (the D3.5
+shared-helper discipline).
+
+**The tri-state gets sharper, not looser.** `NOT_EVALUABLE` now means either "no targets
+supplied" *or* "targets supplied but none for this student's subject". Both are honestly
+"we did not check", and neither may collapse into `NOT_FIRED`. A student who has enrolled
+in physics but set no target there is still not-evaluable, not cleared.
+
+**The T-06 reason filter gains `below_target`** (`web/src/portals/teacher/screens/AtRiskList.tsx`),
+whose omission was explicitly conditional on the rule being unfirable. It is firable now.
