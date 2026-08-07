@@ -982,7 +982,18 @@ Starting facts (established 2026-08-06, do not re-derive):
         entering P3.9: **1863 tests / 89.34% cov, all 12 gates green.**
       - A throwaway Playwright spec left in `web/e2e/` is picked up by `check.sh` — delete
         verification specs after use.
-      - [ ] **a** todo — backend: G-05's mandated developer OTP affordance (D3.16).
+      - [x] **a** done (454e334) — G-05's developer OTP affordance (D3.16).
+            `SmsProvider.delivers_out_of_band` (False on `MockSmsProvider`) gates
+            `AuthService.request_otp`'s new `str | None` return; the route surfaces it
+            as `OtpRequestResponseDTO.devCode`, mirrored in `lib/authTypes.ts`.
+            1866 tests (1862 passed / 4 live-only skips), 89.34% cov (unchanged —
+            the two new tests cover new lines proportionally). All 12 gates green,
+            no migration.
+            **Chunk b consumes this:** `POST /auth/otp/request` now returns
+            `devCode`; render it in an explicitly-labelled developer panel and treat
+            `null` as "a real provider is configured" (hide the panel entirely),
+            never as an error. Do not add an env check on the client to decide
+            whether to show it — the backend already made that decision.
       - [ ] **b** todo — parent portal shell + role-routing split + `[data-portal="parent"]`
             tokens + G-05 screen + P-01 children list.
       - [ ] **c** todo — P-02 child overview + P-03 subject detail + P-04 weaknesses.
