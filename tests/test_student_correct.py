@@ -214,7 +214,7 @@ def test_upload_then_correct_persists_attempt(
     assert '"grade"' in body
     assert "[DONE]" in body
 
-    # 3. Persistence: one attempt, two question results, review row for the blank.
+    # 3. Persistence: one attempt, two question results, one review row (the blank).
     with pg_sessionmaker() as session:
         attempts = session.scalars(select(Attempt)).all()
         assert len(attempts) == 1
@@ -226,12 +226,19 @@ def test_upload_then_correct_persists_attempt(
         assert len(results) == 2
 
         items = session.scalars(select(ReviewQueueItem)).all()
-        # The blank q2 is LOW confidence → one row. q1's deterministic MCQ
-        # answer ("A") is verbatim-identical to the expected answer ("A"), so
-        # the (now-wired) advisory plagiarism checker also flags it → a
-        # second, independent row. Neither touches awarded/maximum marks.
-        assert len(items) == 2
-        assert {item.reason.value for item in items} == {"low_confidence", "plagiarism_flag"}
+        # The blank q2 is LOW confidence → one row, and that is the only row.
+        #
+        # This assertion used to be 2, with a `plagiarism_flag` row alongside:
+        # q1's deterministic MCQ answer ("A") is verbatim-identical to the
+        # expected answer ("A"), so the advisory plagiarism checker scored it
+        # 1.0 and flagged it. That was B3 (D3.19) — a *correct* MCQ answer is
+        # always character-identical to the expected one, so the flag fired on
+        # every right answer and never on a wrong one. The old expectation
+        # pinned the defect, not the behaviour. `apply_integrity_checks` now
+        # skips both integrity checks for MCQ questions, so the false row is
+        # gone. Neither check ever touched awarded/maximum marks.
+        assert len(items) == 1
+        assert {item.reason.value for item in items} == {"low_confidence"}
 
 
 def test_correct_complete_frame_includes_full_questions(

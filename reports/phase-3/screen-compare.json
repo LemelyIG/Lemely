@@ -1,0 +1,442 @@
+{
+  "baseline": "reports/phase-2.5/screens",
+  "candidate": "reports/phase-3/screens",
+  "thresholds": {
+    "channelTolerance": 8,
+    "pixelRatioThreshold": 0.001,
+    "note": "A pixel differs when any RGB channel differs by more than 8/255; a file is 'changed' when more than 0.1% of its pixels differ. Alpha is dropped. This is not a pixel-exact comparison."
+  },
+  "counts": {
+    "baselineFiles": 39,
+    "candidateFiles": 131,
+    "added": 92,
+    "removed": 0,
+    "changed": 39,
+    "unchanged": 0
+  },
+  "added": [
+    "G-05/default--1440.png",
+    "G-05/default--380.png",
+    "G-05/default--768.png",
+    "P-01/default--1440.png",
+    "P-01/default--380.png",
+    "P-01/default--768.png",
+    "P-01/empty--1440.png",
+    "P-01/empty--380.png",
+    "P-01/empty--768.png",
+    "P-02/default--1440.png",
+    "P-02/default--380.png",
+    "P-02/default--768.png",
+    "P-03/default--1440.png",
+    "P-03/default--380.png",
+    "P-03/default--768.png",
+    "P-04/default--1440.png",
+    "P-04/default--380.png",
+    "P-04/default--768.png",
+    "S-32-provisional/default--1440.png",
+    "S-32-provisional/default--380.png",
+    "S-32-provisional/default--768.png",
+    "T-01/default--1440.png",
+    "T-01/default--380.png",
+    "T-01/default--768.png",
+    "T-01/empty--1440.png",
+    "T-01/empty--380.png",
+    "T-01/empty--768.png",
+    "T-01/offline--1440.png",
+    "T-01/offline--380.png",
+    "T-01/offline--768.png",
+    "T-02/default--1440.png",
+    "T-02/default--380.png",
+    "T-02/default--768.png",
+    "T-03/default--1440.png",
+    "T-03/default--380.png",
+    "T-03/default--768.png",
+    "T-04/default--1440.png",
+    "T-04/default--380.png",
+    "T-04/default--768.png",
+    "T-05/default--1440.png",
+    "T-05/default--380.png",
+    "T-05/default--768.png",
+    "T-06/default--1440.png",
+    "T-06/default--380.png",
+    "T-06/default--768.png",
+    "T-07/default--1440.png",
+    "T-07/default--380.png",
+    "T-07/default--768.png",
+    "T-08/error--1440.png",
+    "T-08/error--380.png",
+    "T-08/error--768.png",
+    "T-08/loading--1440.png",
+    "T-08/loading--380.png",
+    "T-08/loading--768.png",
+    "T-08/low-confidence--1440.png",
+    "T-08/low-confidence--380.png",
+    "T-08/low-confidence--768.png",
+    "T-08/teacher-corrected--1440.png",
+    "T-08/teacher-corrected--380.png",
+    "T-08/teacher-corrected--768.png",
+    "T-09-detail/default--1440.png",
+    "T-09-detail/default--380.png",
+    "T-09-detail/default--768.png",
+    "T-09-detail/error--1440.png",
+    "T-09-detail/error--380.png",
+    "T-09-detail/error--768.png",
+    "T-09-detail/loading--1440.png",
+    "T-09-detail/loading--380.png",
+    "T-09-detail/loading--768.png",
+    "T-09/default--1440.png",
+    "T-09/default--380.png",
+    "T-09/default--768.png",
+    "T-10/default--1440.png",
+    "T-10/default--380.png",
+    "T-10/default--768.png",
+    "T-10/error--1440.png",
+    "T-10/error--380.png",
+    "T-10/error--768.png",
+    "T-10/loading--1440.png",
+    "T-10/loading--380.png",
+    "T-10/loading--768.png",
+    "T-12/default--1440.png",
+    "T-12/default--380.png",
+    "T-12/default--768.png",
+    "T-13-provisional/default--1440.png",
+    "T-13-provisional/default--380.png",
+    "T-13-provisional/default--768.png",
+    "T-14-provisional/default--1440.png",
+    "T-14-provisional/default--380.png",
+    "T-14-provisional/default--768.png",
+    "p2.10-01-student-dashboard.png",
+    "p2.10-02-paper-result.png"
+  ],
+  "removed": [],
+  "changed": [
+    {
+      "file": "G-04/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 24007,
+      "totalPixels": 1296000,
+      "ratio": 0.018524
+    },
+    {
+      "file": "G-04/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 23167,
+      "totalPixels": 320720,
+      "ratio": 0.072234
+    },
+    {
+      "file": "G-04/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 24007,
+      "totalPixels": 786432,
+      "ratio": 0.030526
+    },
+    {
+      "file": "G-04/error--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 22529,
+      "totalPixels": 1296000,
+      "ratio": 0.017383
+    },
+    {
+      "file": "G-04/error--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 30178,
+      "totalPixels": 320720,
+      "ratio": 0.094095
+    },
+    {
+      "file": "G-04/error--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 22529,
+      "totalPixels": 786432,
+      "ratio": 0.028647
+    },
+    {
+      "file": "G-04/loading--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 27036,
+      "totalPixels": 1296000,
+      "ratio": 0.020861
+    },
+    {
+      "file": "G-04/loading--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 26100,
+      "totalPixels": 320720,
+      "ratio": 0.081379
+    },
+    {
+      "file": "G-04/loading--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 27037,
+      "totalPixels": 786432,
+      "ratio": 0.034379
+    },
+    {
+      "file": "S-06/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 50167,
+      "totalPixels": 1296000,
+      "ratio": 0.038709
+    },
+    {
+      "file": "S-06/default--380.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "380x859",
+      "candidate": "380x844"
+    },
+    {
+      "file": "S-06/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 15494,
+      "totalPixels": 786432,
+      "ratio": 0.019702
+    },
+    {
+      "file": "S-06/empty--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 61580,
+      "totalPixels": 1296000,
+      "ratio": 0.047515
+    },
+    {
+      "file": "S-06/empty--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 44265,
+      "totalPixels": 320720,
+      "ratio": 0.138018
+    },
+    {
+      "file": "S-06/empty--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 12733,
+      "totalPixels": 786432,
+      "ratio": 0.016191
+    },
+    {
+      "file": "S-06/error--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 37907,
+      "totalPixels": 1296000,
+      "ratio": 0.029249
+    },
+    {
+      "file": "S-06/error--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 17325,
+      "totalPixels": 320720,
+      "ratio": 0.054019
+    },
+    {
+      "file": "S-06/error--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 5504,
+      "totalPixels": 786432,
+      "ratio": 0.006999
+    },
+    {
+      "file": "S-06/loading--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 36216,
+      "totalPixels": 1296000,
+      "ratio": 0.027944
+    },
+    {
+      "file": "S-06/loading--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 10919,
+      "totalPixels": 320720,
+      "ratio": 0.034045
+    },
+    {
+      "file": "S-06/loading--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 3813,
+      "totalPixels": 786432,
+      "ratio": 0.004848
+    },
+    {
+      "file": "S-10/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 91025,
+      "totalPixels": 1296000,
+      "ratio": 0.070235
+    },
+    {
+      "file": "S-10/default--380.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "380x1260",
+      "candidate": "380x1219"
+    },
+    {
+      "file": "S-10/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 73289,
+      "totalPixels": 786432,
+      "ratio": 0.093192
+    },
+    {
+      "file": "S-10/file-selected--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 80746,
+      "totalPixels": 1296000,
+      "ratio": 0.062304
+    },
+    {
+      "file": "S-10/file-selected--380.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "380x1260",
+      "candidate": "380x1219"
+    },
+    {
+      "file": "S-10/file-selected--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 57273,
+      "totalPixels": 786432,
+      "ratio": 0.072826
+    },
+    {
+      "file": "S-14/error--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 82530,
+      "totalPixels": 1296000,
+      "ratio": 0.063681
+    },
+    {
+      "file": "S-14/error--380.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "380x1286",
+      "candidate": "380x1266"
+    },
+    {
+      "file": "S-14/error--768.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "768x1040",
+      "candidate": "768x1033"
+    },
+    {
+      "file": "S-14/marking-in-progress--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 80746,
+      "totalPixels": 1296000,
+      "ratio": 0.062304
+    },
+    {
+      "file": "S-14/marking-in-progress--380.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "380x1260",
+      "candidate": "380x1219"
+    },
+    {
+      "file": "S-14/marking-in-progress--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 51613,
+      "totalPixels": 786432,
+      "ratio": 0.065629
+    },
+    {
+      "file": "S-15/default--1440.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "1440x1077",
+      "candidate": "1440x1074"
+    },
+    {
+      "file": "S-15/default--380.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "392x1446",
+      "candidate": "380x1349"
+    },
+    {
+      "file": "S-15/default--768.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "768x1201",
+      "candidate": "768x1175"
+    },
+    {
+      "file": "S-17/expanded--1440.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "1440x1141",
+      "candidate": "1440x1107"
+    },
+    {
+      "file": "S-17/expanded--380.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "392x1511",
+      "candidate": "380x1382"
+    },
+    {
+      "file": "S-17/expanded--768.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "768x1266",
+      "candidate": "768x1208"
+    }
+  ],
+  "unchanged": []
+}

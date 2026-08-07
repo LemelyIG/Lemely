@@ -19,15 +19,26 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from lemely.auth.gotrue import HttpGoTrueBackend
-from lemely.auth.mirror import DbUserMirror
+from lemely.auth.mirror import DbUserMirror, UserMirror
 from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
+from lemely.db.announcement_repo import AnnouncementService
+from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
+from lemely.db.notification_prefs_repo import NotificationPreferencesService
+from lemely.db.parent_repo import ParentLinkService
+from lemely.db.question_bank_repo import QuestionBankService
+from lemely.db.quiz_marking_repo import QuizMarkingService
+from lemely.db.quiz_repo import QuizService
+from lemely.db.quiz_results_repo import QuizResultsService
+from lemely.db.quiz_taking_repo import QuizTakingService
+from lemely.db.review_repo import ReviewService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.upload_repo import StudentUploadRepository
@@ -175,6 +186,178 @@ def get_seat_service() -> SeatService:
     )
 
 
+@lru_cache(maxsize=1)
+def get_class_service() -> ClassService:
+    """Return the process-wide :class:`ClassService` singleton (D3.1).
+
+    Wired with the DB session factory alone — unlike :class:`SeatService`,
+    class ownership/enrolment needs no account-creation seam, so there is no
+    GoTrue dependency here at all. Tests override this dependency with a
+    service built on a throwaway Postgres database.
+    """
+    return ClassService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_review_service() -> ReviewService:
+    """Return the process-wide :class:`ReviewService` singleton (P3.4).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton the class routes use, so review-queue tenancy composes the
+    identical ``list_classes``/``roster`` calls every other student-scoped
+    teacher route relies on (D3.1) — never a second, independently-derived
+    notion of "the caller's students". Tests override this dependency with a
+    service built on a throwaway Postgres database.
+    """
+    return ReviewService(get_sessionmaker(get_settings()), get_class_service())
+
+
+@lru_cache(maxsize=1)
+def get_question_bank_service() -> QuestionBankService:
+    """Return the process-wide :class:`QuestionBankService` singleton (P3.5 chunk B).
+
+    Wired with the DB session factory alone — the bank's visibility
+    predicate takes caller/school ids as call arguments, so this service
+    needs no per-request context injected here. Tests override this
+    dependency with a service built on a throwaway Postgres database.
+    """
+    return QuestionBankService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_quiz_service() -> QuizService:
+    """Return the process-wide :class:`QuizService` singleton (P3.5 chunk D).
+
+    Wired with the DB session factory and the same :class:`ClassService`/
+    :class:`QuestionBankService` singletons every other teacher-portal
+    service composes, so quiz tenancy and bank visibility never diverge from
+    what the rest of the teacher portal already enforces (D3.1/D3.6 §1.3).
+    Tests override this dependency with a service built on a throwaway
+    Postgres database.
+    """
+    return QuizService(
+        get_sessionmaker(get_settings()), get_class_service(), get_question_bank_service()
+    )
+
+
+@lru_cache(maxsize=1)
+def get_quiz_results_service() -> QuizResultsService:
+    """Return the process-wide :class:`QuizResultsService` singleton (P3.5 chunk F2).
+
+    Wired with the same :class:`QuizService` and :class:`ClassService`
+    singletons every other teacher-portal route composes: T-10's ownership
+    decision *is* :meth:`~lemely.db.quiz_repo.QuizService.get_quiz`'s and its
+    roster *is* :meth:`~lemely.db.class_repo.ClassService.roster`'s, so a
+    results view can never be reachable by a caller who could not already
+    open the quiz and the class. Tests override this dependency with a
+    service built on a throwaway Postgres database.
+    """
+    return QuizResultsService(
+        get_sessionmaker(get_settings()), get_quiz_service(), get_class_service()
+    )
+
+
+@lru_cache(maxsize=1)
+def get_quiz_taking_service() -> QuizTakingService:
+    """Return the process-wide :class:`QuizTakingService` singleton (P3.5 chunk E).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton every other portal service composes, so student quiz scoping
+    uses the identical :meth:`~lemely.db.class_repo.ClassService.enrolled_class_ids`
+    seam every other route would (D3.1-style discipline) — never a second,
+    independently-derived notion of "which classes is this student in". The
+    clock is left at its default (real UTC now); tests override this
+    dependency with a service built on an injected fake clock and a
+    throwaway Postgres database.
+    """
+    return QuizTakingService(get_sessionmaker(get_settings()), get_class_service())
+
+
+@lru_cache(maxsize=1)
+def get_quiz_marking_service() -> QuizMarkingService:
+    """Return the process-wide :class:`QuizMarkingService` singleton (P3.5 chunk F1).
+
+    Wired with the DB session factory, the same :class:`AttemptRepository`
+    singleton the student self-mark route (``lemely.web.routers.student``)
+    persists through — so a quiz mark and a past-paper mark share the exact
+    same writer, ``docs/quiz-model.md`` §4.4 — and the process-wide
+    :class:`~lemely.io.gemini.GeminiClient`. Tests override this dependency
+    with a service built on a throwaway Postgres database and a stubbed
+    Gemini client (never a live call — the budget is hard-capped).
+    """
+    return QuizMarkingService(
+        get_sessionmaker(get_settings()), get_attempt_repo(), get_gemini_client()
+    )
+
+
+@lru_cache(maxsize=1)
+def get_at_risk_ack_service() -> AtRiskAckService:
+    """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton every other student-scoped teacher service uses, so
+    acknowledgement tenancy composes the identical ``list_classes``/``roster``
+    calls (D3.1) — never a second, independently-derived notion of "the
+    caller's students". Tests override this dependency with a service built
+    on a throwaway Postgres database.
+    """
+    return AtRiskAckService(get_sessionmaker(get_settings()), get_class_service())
+
+
+@lru_cache(maxsize=1)
+def get_parent_link_service() -> ParentLinkService:
+    """Return the process-wide :class:`ParentLinkService` singleton (P3.6 chunk A).
+
+    Wired with the DB session factory alone — mirrors :func:`get_class_service`:
+    parent-link lookups need no account-creation seam or composed service.
+    Tests override this dependency with a service built on a throwaway
+    Postgres database.
+    """
+    return ParentLinkService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_notification_prefs_service() -> NotificationPreferencesService:
+    """Return the process-wide :class:`NotificationPreferencesService` singleton (P3.6 chunk B).
+
+    Wired with the DB session factory alone — mirrors :func:`get_parent_link_service`:
+    preference lookups need no account-creation seam or composed service.
+    Tests override this dependency with a service built on a throwaway
+    Postgres database.
+    """
+    return NotificationPreferencesService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_announcement_service() -> AnnouncementService:
+    """Return the process-wide :class:`AnnouncementService` singleton (P3.8 chunk a).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton every other class-scoped teacher service composes, so
+    announcement tenancy (which classes/schools a caller may target) can
+    never diverge from what the rest of the teacher portal already enforces
+    (D3.1). Tests override this dependency with a service built on a
+    throwaway Postgres database.
+    """
+    return AnnouncementService(get_sessionmaker(get_settings()), get_class_service())
+
+
+@lru_cache(maxsize=1)
+def get_user_mirror() -> UserMirror:
+    """Return the process-wide :class:`UserMirror` singleton (P3.7 chunk B).
+
+    Backs ``GET /api/me/profile``.
+
+    The same :class:`DbUserMirror` :func:`get_auth_service` already wires into
+    :class:`~lemely.auth.service.AuthService` — a standalone dependency here so
+    a route that only needs a plain user lookup (real ``display_name``/
+    ``email``/``role``, never a caller-supplied claim) doesn't have to pull in
+    the whole auth service. Tests override this dependency with a mirror bound
+    to a throwaway Postgres database.
+    """
+    return DbUserMirror(get_settings())
+
+
 @dataclass(frozen=True, slots=True)
 class AuthContext:
     """The authenticated caller, resolved from a validated bearer token.
@@ -288,3 +471,14 @@ def reset_singletons() -> None:
     get_device_registry.cache_clear()
     get_auth_service.cache_clear()
     get_seat_service.cache_clear()
+    get_class_service.cache_clear()
+    get_parent_link_service.cache_clear()
+    get_notification_prefs_service.cache_clear()
+    get_user_mirror.cache_clear()
+    get_review_service.cache_clear()
+    get_at_risk_ack_service.cache_clear()
+    get_question_bank_service.cache_clear()
+    get_quiz_service.cache_clear()
+    get_quiz_taking_service.cache_clear()
+    get_quiz_marking_service.cache_clear()
+    get_announcement_service.cache_clear()

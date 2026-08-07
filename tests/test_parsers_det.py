@@ -29,7 +29,7 @@ from lemely.io.det.metadata import extract_metadata
 from lemely.io.det.profiles import SubjectProfile, get_profile, register_profile
 from lemely.io.det.reconcile import check as reconcile_check
 from lemely.io.det.rows import build_questions, decompose_compound_q, make_id
-from lemely.io.det.tables import qualifies_as_mark_scheme_table
+from lemely.io.det.tables import qualifies_as_mark_scheme_table, select_tables
 from lemely.runtime.config import DetParserSettings
 from lemely.runtime.errors import ParseError
 
@@ -336,6 +336,52 @@ class QualifiesAsMarkSchemeTableTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# tables.select_tables — page-level table selection
+# ---------------------------------------------------------------------------
+
+
+class SelectTablesTests(unittest.TestCase):
+    """Regression tests for B2 (0625_w24_ms_41): a physical page can hold more
+    than one independently-qualifying mark-scheme table — e.g. a short
+    question ending partway down a page immediately followed by the next
+    question's table further down the same page. ``select_tables`` used to
+    keep only the first qualifying table per page and silently drop any
+    subsequent one, which is exactly what happened to question 2 of
+    0625_w24_ms_41.pdf (confirmed against the real PDF: pdfplumber returns
+    two separate table objects for that page, one per question).
+    """
+
+    def test_keeps_multiple_qualifying_tables_on_same_page(self) -> None:
+        table_q1 = [
+            ["Question", "Answer", "Marks"],
+            ["1", "First answer", "1"],
+            [None, "continuation", "1"],
+        ]
+        table_q2 = [
+            ["Question", "Answer", "Marks"],
+            ["2", "Second answer", "1"],
+            [None, "continuation", "1"],
+        ]
+        pdf = _fake_pdf([_fake_page(tables=[table_q1, table_q2])])
+        tables = select_tables(pdf, page_start=0, max_mark=40)
+        self.assertEqual(tables, [table_q1, table_q2])
+
+    def test_still_drops_non_qualifying_second_table(self) -> None:
+        # A genuine embedded grid (no marks column, no header tokens) must
+        # still be excluded even though the one-per-page cap is gone — the
+        # qualification check, not page position, is what filters it out.
+        table_q1 = [
+            ["Question", "Answer", "Marks"],
+            ["1", "First answer", "1"],
+            [None, "continuation", "1"],
+        ]
+        grid: list[list[str | None]] = [["high", "low"], ["low", "high"]]
+        pdf = _fake_pdf([_fake_page(tables=[table_q1, grid])])
+        tables = select_tables(pdf, page_start=0, max_mark=40)
+        self.assertEqual(tables, [table_q1])
+
+
+# ---------------------------------------------------------------------------
 # rows.build_questions — theory state machine
 # ---------------------------------------------------------------------------
 
@@ -444,6 +490,86 @@ class TheoryExtractionTests(unittest.TestCase):
         pts = questions[0].answer_points
         self.assertTrue(pts[1].is_alternative)
         self.assertEqual(pts[1].point, "other method")
+
+    # -----------------------------------------------------------------------
+    # Compensatory C marks (B2 / 0625_w24_ms_41 root cause)
+    #
+    # CAIE's own Generic Marking Principles define the C mark as
+    # "Compensatory mark which may be scored when the final answer (A) mark
+    # for a question has not been awarded" (M3 acronym table). A C-type row
+    # that follows an A-type row within the same leaf question is therefore
+    # an alternative, partial-credit route to the SAME allocation as that A
+    # mark — not an additional mark on top of it — even though the source
+    # PDF carries no textual "OR"/"EITHER" marker on that row. Confirmed
+    # against the real 0625_w24_ms_41.pdf: e.g. question 1(b) is "0.28 N / cm
+    # A2" followed by a plain continuation row "k = F / x ... C1" with no OR
+    # keyword; the part is worth 2 marks total, not 3.
+    # -----------------------------------------------------------------------
+
+    def test_c_mark_after_a_mark_is_compensatory_not_additive(self) -> None:
+        # Mirrors 0625_w24_ms_41.pdf question 1(b): "0.28 N / cm  A2" then a
+        # plain continuation row "k = F / x ...  C1" (no OR keyword).
+        table: list[list[str | None]] = [
+            ["1", "0.28 N / cm", "A2"],
+            [None, "k = F / x", "C1"],
+        ]
+        questions = _run_theory(table)
+        q1 = questions[0]
+        self.assertEqual(len(q1.answer_points), 2)
+        self.assertFalse(q1.answer_points[0].is_alternative)
+        self.assertTrue(q1.answer_points[1].is_alternative)
+        self.assertEqual(q1.answer_points[1].math_mark_type, MathMarkType.C)
+        # 2, not 3: the C1 compensates for the A2, it does not add to it.
+        self.assertEqual(q1.marks, 2)
+
+    def test_multiple_c_marks_after_a_mark_all_compensatory(self) -> None:
+        # Mirrors 0625_w24_ms_41.pdf question 1(c)(ii): "3.2(0) m/s2  A3"
+        # followed by two plain C1 continuation rows (two alternative partial
+        # -credit routes). Worth 3 marks total, not 5.
+        table: list[list[str | None]] = [
+            ["1", "3.2(0) m / s2", "A3"],
+            [None, "F = ma", "C1"],
+            [None, "resultant force = 6.5 - 4.9", "C1"],
+        ]
+        questions = _run_theory(table)
+        q1 = questions[0]
+        self.assertFalse(q1.answer_points[0].is_alternative)
+        self.assertTrue(q1.answer_points[1].is_alternative)
+        self.assertTrue(q1.answer_points[2].is_alternative)
+        self.assertEqual(q1.marks, 3)
+
+    def test_c_mark_without_preceding_a_mark_stays_additive(self) -> None:
+        # A C mark only compensates for an A mark it follows within the same
+        # leaf. Without a preceding A mark there is nothing to compensate
+        # for, so it must remain an ordinary, additive point (e.g. a B mark
+        # then an independent C-coded point).
+        table: list[list[str | None]] = [
+            ["1", "some point", "B1"],
+            [None, "another point", "C1"],
+        ]
+        questions = _run_theory(table)
+        q1 = questions[0]
+        self.assertFalse(q1.answer_points[0].is_alternative)
+        self.assertFalse(q1.answer_points[1].is_alternative)
+        self.assertEqual(q1.marks, 2)
+
+    def test_b_mark_after_a_mark_stays_additive(self) -> None:
+        # Only C marks are compensatory. A B mark (independent, per GMP)
+        # following an A mark in the same leaf is a separate, additive point
+        # — mirrors 0625_w24_ms_41.pdf question 3(a): "... A2" / alternative
+        # "... C1" / then a genuinely separate "(it measures the) turning
+        # effect ... B1".
+        table: list[list[str | None]] = [
+            ["1", "force x perpendicular distance", "A2"],
+            [None, "reference to perpendicular distance", "C1"],
+            [None, "measures the turning effect", "B1"],
+        ]
+        questions = _run_theory(table)
+        q1 = questions[0]
+        self.assertFalse(q1.answer_points[0].is_alternative)  # A2
+        self.assertTrue(q1.answer_points[1].is_alternative)  # C1, compensatory
+        self.assertFalse(q1.answer_points[2].is_alternative)  # B1, additive
+        self.assertEqual(q1.marks, 3)  # A2 + B1; C1 excluded
 
     def test_guidance_column_stored_in_notes(self) -> None:
         # 4-column table: Q | Answer | Guidance | Marks
@@ -857,6 +983,56 @@ class DeterministicParserTests(unittest.TestCase):
             self.assertRaises(ParseError),
         ):
             parser(Path("0625_s19_ms_42.pdf"))
+
+    def test_theory_two_tables_one_page_plus_compensatory_c_mark_reconciles(self) -> None:
+        """End-to-end regression pin for B2 (0625_w24_ms_41.pdf).
+
+        Two independent bugs combined to make that real PDF fail mark-total
+        reconciliation (parsed 83 vs stated max 80):
+
+        1. ``select_tables`` kept only the *first* qualifying table per
+           page, so question 2's entire table — a second, independently
+           qualifying table on the same physical page as question 1's — was
+           silently dropped.
+        2. ``build_questions`` summed CAIE's compensatory C marks (see GMP
+           M3: "C mark: Compensatory mark which may be scored when the final
+           answer (A) mark ... has not been awarded") additively on top of
+           the A mark they follow, instead of treating them as an
+           alternative route to the same allocation.
+
+        This test reproduces both conditions on a minimal synthetic PDF: two
+        qualifying tables on one page (question 1 and question 2), with
+        question 1 also carrying a plain (no "OR" keyword) C1 continuation
+        row after its A2. Before the fix this raised ``ParseError`` either
+        way (question 2 missing, or the C1 double-counted); after the fix it
+        must parse cleanly to exactly the stated maximum mark.
+        """
+        cover = (
+            "Cambridge IGCSE™\nPhysics\n"
+            "0625/41 Mark Scheme October/November 2024\nMaximum Mark: 4\nPublished\n"
+        )
+        table_q1 = [
+            ["Question", "Answer", "Marks"],
+            ["1", "0.28 N / cm", "A2"],
+            [None, "k = F / x", "C1"],
+        ]
+        table_q2 = [
+            ["Question", "Answer", "Marks"],
+            ["2", "some other point", "2"],
+        ]
+        pages = [
+            _fake_page(text=cover),
+            _fake_page(),
+            _fake_page(),
+            _fake_page(tables=[table_q1, table_q2]),
+        ]
+        parser = DeterministicMarkSchemeParser()
+        with patch("pdfplumber.open", return_value=_fake_pdf(pages)):
+            result = parser(Path("0625_w24_ms_41.pdf"))
+        self.assertEqual(len(result.questions), 2)
+        self.assertEqual(result.questions[0].marks, 2)  # A2 only; C1 compensatory
+        self.assertEqual(result.questions[1].marks, 2)
+        self.assertEqual(sum(q.marks for q in result.questions), result.metadata.maximum_mark)
 
 
 # ---------------------------------------------------------------------------

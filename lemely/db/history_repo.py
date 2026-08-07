@@ -27,7 +27,7 @@ from sqlalchemy import select
 from lemely.core.history import PaperRecord, StudentHistory
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.models.attempts import Attempt, WeaknessRecord
-from lemely.db.models.enums import SESSION_MONTH_LABELS, SessionMonth
+from lemely.db.models.enums import SESSION_MONTH_LABELS, AttemptOrigin, SessionMonth
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -82,7 +82,7 @@ class DbHistoryStore:
         )
         with self._sm() as session:
             attempts = session.scalars(stmt).all()
-            records = [_to_record(student_id, a) for a in attempts]
+            records = [attempt_to_record(student_id, a) for a in attempts]
         return StudentHistory(student_id=student_id, records=records)
 
     def list_students(self) -> list[str]:
@@ -105,6 +105,11 @@ class DbHistoryStore:
             percentage=record.percentage,
             grade=record.grade,
             recorded_at=_parse_recorded_at(record.recorded_at),
+            # Round-trip parity with ``attempt_to_record``: without this a quiz record
+            # written through this store would silently read back as a
+            # past-paper one and re-enter the grade-bearing analytics that
+            # ``origin`` exists to keep it out of.
+            origin=AttemptOrigin(record.origin),
         )
         attempt.weakness_records = [
             WeaknessRecord(
@@ -150,7 +155,21 @@ def _parse_recorded_at(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def _to_record(student_id: str, attempt: Attempt) -> PaperRecord:
+def attempt_to_record(student_id: str, attempt: Attempt) -> PaperRecord:
+    """Project one loaded :class:`Attempt` (with its weakness rows) to a :class:`PaperRecord`.
+
+    Public rather than private because it is the *only* attempt →
+    ``PaperRecord`` projection in the codebase, and P3.5 chunk F2's T-10
+    class-results aggregation needs it to feed
+    :func:`~lemely.core.class_analytics.rank_topic_weaknesses` over a single
+    assignment's attempts. A second, independently-written projection there
+    would be exactly the kind of drift D1.8/D3.3 exist to prevent — the
+    ``origin`` round-trip below is precisely the detail a re-implementation
+    would drop.
+
+    ``attempt.weakness_records`` must already be loaded; this function does
+    no I/O of its own.
+    """
     # weak_areas sorted by topic for a deterministic, backend-independent order
     # (the JSON store preserved append order, which is not semantically meaningful
     # for the aggregation code that consumes these; see D1.8).
@@ -181,6 +200,11 @@ def _to_record(student_id: str, attempt: Attempt) -> PaperRecord:
         grade=attempt.grade or "",
         weak_areas=weak_areas,
         recorded_at=attempt.recorded_at.isoformat(),
+        # Carried straight through from the column, never re-derived from the
+        # shape of the row: the store keeps loading *all* origins, and it is
+        # the consumer's `is_grade_bearing` check that decides what each one
+        # may back (docs/quiz-model.md §5).
+        origin=attempt.origin.value,
     )
 
 

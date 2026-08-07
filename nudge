@@ -20,4 +20,4 @@ if [ $# -eq 0 ]; then
   [ -f "$INBOX" ] && cat "$INBOX" || echo "Inbox empty."
   exit 0
 fi
-curl -s -d "$*" "https://ntfy.sh/$CTRL_TOPIC" >/dev/null && echo "Sent: $*"
+curl -s -d "$*" "http://home-server/$CTRL_TOPIC" >/dev/null && echo "Sent: $*"

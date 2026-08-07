@@ -2,6 +2,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test"
+import { screensDir } from "./report-dir"
+import { watchConsole } from "./console-errors"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -15,7 +17,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  *
  * Kept separate from correct-paper.spec.ts / _smoke.spec.ts: this suite
  * captures a corpus rather than asserting product behaviour end to end, so
- * it can be re-run independently to regenerate reports/phase-2.5/screens/.
+ * it can be re-run independently to regenerate a phase's screens/ corpus
+ * (see report-dir.ts — set LEMELY_REPORT_DIR to re-baseline a phase).
  *
  * NOTE on the "invalid file" error trigger for S-14/error: e2e_server.py
  * unconditionally monkeypatches `student.resolve_mark_scheme` /
@@ -34,7 +37,7 @@ const SCAN_PATH = path.resolve(
   __dirname,
   "../../tests/golden/0625_m20_qp_12_mcq/scan.pdf",
 )
-const SCREENS_DIR = path.resolve(__dirname, "../../reports/phase-2.5/screens")
+const SCREENS_DIR = screensDir()
 const PASSWORD = "CorrectHorseBattery9!"
 
 const BREAKPOINTS: { width: number; height: number }[] = [
@@ -67,25 +70,6 @@ async function shoot(page: Page, screenId: string, state: string, bp: number): P
   const dir = path.join(SCREENS_DIR, screenId)
   fs.mkdirSync(dir, { recursive: true })
   await page.screenshot({ path: path.join(dir, `${state}--${bp}.png`), fullPage: true })
-}
-
-/** Collects console `error` messages and uncaught page errors so every test
- * can assert zero, per QUALITY-BAR.md's console-error gate. Excludes the
- * browser's own "Failed to load resource: ... 500/413" logging, which fires
- * for ANY non-2xx response — including the ones this suite deliberately
- * simulates to capture S-06/S-14's error states. That noise isn't a signal
- * of an app bug the way a React warning or an uncaught exception is. */
-function watchConsole(page: Page): string[] {
-  const errors: string[] = []
-  page.on("console", (msg) => {
-    if (msg.type() === "error" && !/^Failed to load resource:/.test(msg.text())) {
-      errors.push(`[console] ${msg.text()}`)
-    }
-  })
-  page.on("pageerror", (err) => {
-    errors.push(`[pageerror] ${err.message}`)
-  })
-  return errors
 }
 
 for (const bp of BREAKPOINTS) {

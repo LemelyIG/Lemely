@@ -29,13 +29,22 @@ from fastapi.responses import StreamingResponse
 # FastAPI dependency injection and the response converters resolve their
 # annotations at call time, so they cannot move into a TYPE_CHECKING block.
 from lemely.core.analytics import aggregate_weaknesses_from_history
-from lemely.core.history import HistoryStoreProtocol, PaperRecord, StudentHistory
+from lemely.core.history import (
+    HistoryStoreProtocol,
+    PaperRecord,
+    StudentHistory,
+    grade_bearing,
+    is_grade_bearing,
+    is_paper,
+)
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.core.study import StudentProfile, StudyPlan
 from lemely.core.study_plan import build_study_plan
 from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.models.enums import Role, UploadStatus
+from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
@@ -47,14 +56,18 @@ from lemely.runtime.config import Settings
 from lemely.web.deps import (
     AuthContext,
     get_attempt_repo,
+    get_class_service,
     get_gemini_client,
     get_history_store,
+    get_parent_link_service,
     get_settings,
     get_storage_backend,
     get_student_upload_repo,
     require_role,
 )
 from lemely.web.schemas import question_to_dto
+from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
+from lemely.web.schemas_parent import LinkedParentDTO, LinkParentRequestDTO, ParentLinkListDTO
 from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
@@ -144,8 +157,14 @@ def _momentum(records: list[PaperRecord]) -> MomentumDTO:
     Uses the same coordinate transform as ``web/src/portals/student/data.ts``
     (300x88 viewbox, 55-100 % band). Returns empty ``path``/``area`` when fewer
     than two papers exist (a polyline needs at least two points).
+
+    Filters to grade-bearing records itself rather than trusting each caller to
+    do it (``docs/quiz-model.md`` §5) — this is a percentage-over-time claim,
+    and one quiz scoring 40% on a hard topic would draw a dive in a line the
+    student reads as "my papers are getting worse".
     """
-    series = [r.percentage for r in records]
+    papers = grade_bearing(records)
+    series = [r.percentage for r in papers]
     if len(series) < 2:
         return MomentumDTO(path="", area="", lastX="0.0", lastY="88.0", labels=[])
 
@@ -157,7 +176,7 @@ def _momentum(records: list[PaperRecord]) -> MomentumDTO:
 
     path = " ".join(f"{'L' if i else 'M'}{mx(i):.1f} {my(v):.1f}" for i, v in enumerate(series))
     last_i = len(series) - 1
-    labels = [r.recorded_at[:7] for r in records]
+    labels = [r.recorded_at[:7] for r in papers]
     return MomentumDTO(
         path=path,
         area=f"{path} L300 88 L0 88 Z",
@@ -175,10 +194,17 @@ def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
     resolves against real boundaries. ``name``/``detail`` are neutral (history
     records carry no human subject name or teacher), so ``name`` echoes the code
     and ``detail`` reports the paper count only.
+
+    Grade-bearing records only (``docs/quiz-model.md`` §5): every number on
+    this row — the mark-weighted mean, the first-to-last delta, and a grade
+    resolved against real CAIE boundaries — is a paper claim. A quiz total
+    folded into that weighted mean would move a student's forecast grade with
+    marks the boundaries were never drawn for. A subject the student has only
+    quizzed produces no row, which is honest: they have no standing in it yet.
     """
     boundary_store = GradeBoundaryStore()
     by_code: dict[str, list[PaperRecord]] = {}
-    for record in history.records:
+    for record in grade_bearing(history.records):
         by_code.setdefault(record.metadata.subject_code, []).append(record)
 
     rows: list[SubjectRowDTO] = []
@@ -245,12 +271,27 @@ def student_subject(
     Data-backed: per-paper breakdown bars (percentage per recorded paper),
     weighted mean, predicted grade + boundary, per-topic accuracy tiles, and the
     paper-history table. 404 when the student has no papers for ``code``.
+
+    Every number here except the topic map is a paper claim, so the paper
+    surfaces read grade-bearing records only (``docs/quiz-model.md`` §5) —
+    otherwise a quiz would open a bogus "Paper 1" breakdown card (1/1 is the
+    synthetic paper identity the marking call needed) and drag the weighted
+    mean the forecast grade is resolved from. ``topicMap`` deliberately keeps
+    *all* of the subject's records, quizzes included: a weakness is a weakness
+    whatever revealed it, and a topic quiz is precisely the kind of evidence
+    that map exists to show.
     """
     history = history_store.load(auth.user_id)
-    indexed_records = _subject_records(history, code)
-    if not indexed_records:
+    all_subject_records = _subject_records(history, code)
+    if not all_subject_records:
         raise HTTPException(status_code=404, detail=f"No history for subject {code}")
+    # Index-preserving: ``_subject_records`` pairs each record with its position
+    # in the FULL history list, which is how ``GET /student/result/{id}``
+    # addresses it — filtering the pairs keeps those ids correct.
+    indexed_records = [(i, r) for i, r in all_subject_records if is_grade_bearing(r)]
     records = [record for _, record in indexed_records]
+    if not records:
+        raise HTTPException(status_code=404, detail=f"No papers for subject {code}")
 
     boundary_store = GradeBoundaryStore()
     awarded = sum(r.awarded_marks for r in records)
@@ -288,7 +329,7 @@ def student_subject(
             )
         )
 
-    weaknesses = _subject_weaknesses(records)
+    weaknesses = _subject_weaknesses([record for _, record in all_subject_records])
     topic_map = [
         TopicTileDTO(
             name=area.topic,
@@ -835,10 +876,17 @@ def student_standings(
     **Structurally empty:** each subject ``rank`` — cross-student ranking needs a
     cohort the single-student store cannot provide — and the leaderboard boards,
     which are omitted entirely (no peer data source).
+
+    The two counts that say *papers* count papers (``is_paper``, origin only —
+    a paper with an unreadable grade is still a paper the student sat);
+    ``streakDays`` counts **all** activity, quizzes included, because a quiz is
+    a day the student showed up and the whole point of a streak is to say so
+    (``docs/quiz-model.md`` §5).
     """
     history = history_store.load(auth.user_id)
+    papers = [record for record in history.records if is_paper(record)]
     by_code: dict[str, int] = {}
-    for record in history.records:
+    for record in papers:
         by_code[record.metadata.subject_code] = by_code.get(record.metadata.subject_code, 0) + 1
 
     palette: list[VizColor] = ["ok", "t1", "t2", "accent", "warn"]
@@ -856,7 +904,7 @@ def student_standings(
     streak_days = len({r.recorded_at[:10] for r in history.records})
     return StandingsDTO(
         subjectRanks=subject_ranks,
-        paperCount=len(history.records),
+        paperCount=len(papers),
         streakDays=streak_days,
     )
 
@@ -902,3 +950,95 @@ def student_onboarding(
         weeklyStudyHours=profile.weekly_study_hours,
         confidenceBySubject=profile.confidence_by_subject,
     )
+
+
+# ── Classes (join by code) ────────────────────────────────────────────────────
+
+
+@router.post("/student/classes/join", response_model=JoinClassResponseDTO)
+def student_join_class(
+    payload: JoinClassRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+) -> JoinClassResponseDTO:
+    """Self-enrol the authenticated student into a class via its join code.
+
+    Identity is always the authenticated caller (``auth.user_id``), never a
+    caller-supplied id (D1.6 — the IDOR pattern the two former ``studentId``
+    body fields were removed for). Idempotent: re-joining an already-enrolled
+    class is a no-op. An unknown code is a clean 404, never a 500.
+    """
+    try:
+        row = service.join_by_code(auth.user_id, payload.joinCode)
+    except JoinCodeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JoinClassResponseDTO(classId=str(row.class_id), className=row.name)
+
+
+# ── Parent links (invite/list/revoke) ───────────────────────────────────────
+
+
+@router.get("/student/parent-links", response_model=ParentLinkListDTO)
+def student_list_parent_links(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> ParentLinkListDTO:
+    """Return every parent linked to the authenticated student.
+
+    Identity is always the authenticated caller (``auth.user_id``), never a
+    caller-supplied id (D1.6's IDOR discipline, matching ``student_join_class``).
+    """
+    parents = service.list_parents(auth.user_id)
+    return ParentLinkListDTO(
+        parents=[
+            LinkedParentDTO(parentId=str(p.parent_id), displayName=p.display_name, phone=p.phone)
+            for p in parents
+        ]
+    )
+
+
+@router.post("/student/parent-links", response_model=LinkedParentDTO)
+def student_link_parent(
+    payload: LinkParentRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> LinkedParentDTO:
+    """Invite an existing parent (by phone) to link to the authenticated student.
+
+    Resolves ``phone`` to an *existing* ``role=parent`` user only (D3.11) —
+    this never creates an account from a student-supplied phone (a stranger's
+    mistyped or spoofed number could otherwise be handed this student's
+    grades). No matching parent account is a clean 404: the parent must
+    OTP-login at least once (which auto-creates their ``role=parent`` user,
+    ``AuthService.verify_otp``) before this student can invite them again.
+    Idempotent: inviting an already-linked parent again is a no-op success,
+    not an error.
+    """
+    try:
+        parent = service.link(auth.user_id, payload.phone)
+    except ParentUserNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return LinkedParentDTO(
+        parentId=str(parent.parent_id), displayName=parent.display_name, phone=parent.phone
+    )
+
+
+@router.delete("/student/parent-links/{parent_id}", status_code=204)
+def student_unlink_parent(
+    parent_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> None:
+    """Revoke a parent's link to the authenticated student. Idempotent.
+
+    Revoking a link that does not exist (already revoked, or never granted)
+    is a silent no-op, not an error — mirrors ``ClassService.remove_student``.
+    """
+    try:
+        service.unlink(auth.user_id, parent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

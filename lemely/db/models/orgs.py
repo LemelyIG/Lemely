@@ -111,22 +111,26 @@ class Seat(TimestampMixin, Base):
 
 
 class SchoolClass(TimestampMixin, Base):
-    """A teacher-led class within a school.
+    """A teacher-led class, optionally within a school.
 
-    Table name ``classes`` avoids the SQL reserved word ``class``.
+    Table name ``classes`` avoids the SQL reserved word ``class``. ``school_id``
+    is nullable (D3.1): a teacher may run a class independently of any school,
+    in which case the class has no seat pool and enrols students only via
+    ``join_code``.
     """
 
     __tablename__ = "classes"
+    __table_args__ = (sa.Index("ix_classes_join_code", "join_code"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=sa.text("gen_random_uuid()"),
     )
-    school_id: Mapped[uuid.UUID] = mapped_column(
+    school_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("schools.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     teacher_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -135,8 +139,14 @@ class SchoolClass(TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(sa.String, nullable=False)
     subject_code: Mapped[str | None] = mapped_column(sa.String, nullable=True)
+    # Server-generated per class by ClassService.create_class; a student
+    # self-enrols by posting this code (the only enrolment path available to an
+    # independent teacher's class, which has no seat pool). Nullable at the
+    # column level only because the constraint cannot retroactively backfill a
+    # pre-existing row; every row created through the service carries one.
+    join_code: Mapped[str | None] = mapped_column(sa.String, nullable=True, unique=True)
 
-    school: Mapped[School] = relationship("School", back_populates="classes")
+    school: Mapped[School | None] = relationship("School", back_populates="classes")
     enrollments: Mapped[list[ClassEnrollment]] = relationship(
         "ClassEnrollment", back_populates="school_class", cascade="all, delete-orphan"
     )

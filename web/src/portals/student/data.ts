@@ -63,6 +63,7 @@ export const navGroups: NavGroup[] = [
       { to: "/student/subject/0625", label: "Physics", tag: "0625" },
       { to: "/student/plan", label: "Study plan" },
       { to: "/student/board", label: "Standings" },
+      { to: "/student/parents", label: "Your parents" },
     ],
   },
   {
@@ -87,13 +88,17 @@ export const crumbs: Record<string, string> = {
   "/student/correct": "Marking / Correct a paper",
   "/student/plan": "Home / Study plan",
   "/student/board": "Home / Standings",
+  "/student/parents": "Home / Your parents",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
   "/student/directions": "Design directions",
 }
 
-export const studentName = "Maya Rahman"
-export const studentMeta = "Year 11 - Helwan Science Centre"
+// `studentName`/`studentMeta` ("Maya Rahman" / "Year 11 - Helwan Science
+// Centre") were removed in P3.10 chunk c. They were the student-side twin of
+// the fabricated teacher identity P3.7 chunk b deleted, and no field anywhere
+// in the API supplies either one. The sidebar now renders the real caller via
+// `useProfile()` — see `UserBlock` in `portals/student/index.tsx`.
 
 /* ── Paper Result (flagship) ────────────────────────────────────────────── */
 

@@ -542,3 +542,526 @@
   review-queue override-and-annotate, teacher quiz builder, parent portal with mock
   phone-OTP) plus the carried backlog items (D1.6 teacher per-tenant ownership, D1.9
   CLI/Gradio history migration) before starting task breakdown.
+
+## 2026-08-06 — P3.1, P3.1b, P3.2 (Phase 3, tasks 1–2 of 11)
+
+- Did: **P3.1** — the real class model (D3.1). `lemely/db/class_repo.py` (`ClassService`,
+  modelled on `SeatService`), migration `0004_class_model`, `lemely/web/routers/classes.py`.
+  This finally closes the tenancy hole D1.6 has carried since Phase 1: `GET
+  /api/teacher/classes` used to treat *every* student with history as one cohort keyed
+  `"all"`. Teacher → own classes; school_admin → their school's; platform_admin → none.
+  Out-of-scope access is 403 not 404, so the endpoint isn't an existence oracle.
+- Did: **P3.2** — the at-risk engine (D3.3). `lemely/core/at_risk.py`, pure, injected clock,
+  three OR'd rules each carrying reason + evidence. Replaced a heuristic that matched none
+  of MISSION's three rules.
+- Learned (the useful one): **the visual-regression gate was vacuous and had been since
+  P2.5.6.** `audit.mjs`, both Playwright specs and `check_ui_gates.py` all wrote into the
+  *committed* phase baselines, so every `check.sh` run overwrote the reference it compares
+  against — "no unintended visual regression" could never fail. It surfaced only because
+  P3.1 is backend-only and still dirtied 53 PNGs. Fixed in **P3.1b** behind
+  `LEMELY_REPORT_DIR` → gitignored `reports/.scratch`; re-baselining is now explicit and
+  names its phase. Worth remembering as a class of bug: a check that mutates its own
+  oracle always passes.
+- Learned: `classes.school_id` was `NOT NULL`, making an independent teacher's class
+  unrepresentable even though MISSION §1 requires independent teachers. Relaxed it — a
+  deliberate, recorded exception to D1.2's additive-only rule (no row invalidated, no
+  backfill, reversible).
+- Honest limitation carried forward: at-risk rule 2 (predicted ≥2 grades below target) is
+  implemented and unit-tested but **cannot fire in production** — no target-grade column
+  until P4's onboarding questionnaire. The engine reports it as *not evaluable*, never as
+  a pass. Must appear in DELIVERY.md.
+- Also: the two subagents both stalled waiting on background runs rather than reporting;
+  verified and finished both myself. Worth briefing future agents to run gates in the
+  foreground.
+- Next: **P3.3** teacher analytics (per-class/per-student, ranked weakness topics for the
+  T-04 heatmap, grade distribution, trend series). Branch pushed at 82d60dd.
+
+## 2026-08-06 — P3.4 closed out, P3.4b shipped, P3.5 designed and started
+
+**Did.** Committed the in-flight P3.4 follow-up (a teacher override recomputed the
+attempt total but left weakness records at the AI's values, so a restored question
+still read as a weakness on the student's list and the T-04 heatmap — now both run
+one extracted `group_weak_areas`). Shipped **P3.4b**, the last open P3.4 item:
+at-risk flag acknowledgement (T-06, D3.5). Commissioned and recorded the **P3.5
+design** (`docs/quiz-model.md`, D3.6) and built its chunk C, `lemely/core/difficulty.py`.
+
+**Learned.** Two things worth not re-deriving. (1) At-risk flags are *derived per
+request*, never stored, so "dismiss this flag" has no row to point at — the ack has to
+reference the evidence instead, which is what makes it re-raise when the student
+declines further rather than becoming a permanent mute. Fingerprinting on
+`last_active_at` and not `days_inactive` is load-bearing: the latter increments daily
+and would silently un-acknowledge every inactivity flag overnight. (2) There is no quiz
+persistence in this codebase at all — the existing `/quizzes/*` routes build an
+ephemeral preview and save nothing — and T-09's promised *live count* of matching
+questions cannot be served from on-disk JSON, so a real `question_bank` table is
+unavoidable rather than a nice-to-have. Today's disk-scan pool is also a tenancy hole.
+
+**Watch.** D3.6 risk 2 is the sharp one: P3.4's `_recompute_attempt_totals` assigns
+`grade`/`boundary_source` unconditionally, so the first teacher override on a quiz
+attempt would invent a grade the marking path deliberately never wrote. Chunk F must
+guard it and test the guard. Chunk G must land before F, not after.
+
+**Next.** P3.5 chunk A (migration 0007 + ORM models), then G, then B — and B starts
+with a measurement of past-paper ingest yield before anything is persisted, because a
+genuine zero-count is an acceptable product answer but only if found early.
+
+## 2026-08-06 — P3.5 chunks A + G
+
+**Did.** Chunk A (0cedc1b): migration `0007_quiz_model` + six quiz tables + seven enums +
+`attempts.origin`, schema only. Verified on the live stack — upgrade → downgrade → upgrade
+with `alembic check` clean both ways, not just "it applied". Chunk G (60668ea): the
+grade-bearing/topic-bearing split from `docs/quiz-model.md` §5, landed as one predicate
+before any quiz attempt can exist. 1519 tests / 87.48% cov, all 12 gates green.
+
+**Learned.** Three things worth not re-deriving. (1) The test counts recorded for
+P3.1–P3.4b were guesses — `pytest -q` here emits no `N passed` summary line, so the real
+count comes from counting progress characters; it was 1485 at chunk A, not 826. Method is
+now written into STATE. (2) Bumping `HISTORY_SCHEMA_VERSION` is not free: because
+`StudentHistory.schema_version` defaults to the *current* version, a pre-versioning file
+silently relabelled itself v2 and stopped being detectable as old. The loader already
+resolved absent-means-1 for its own guard and then threw that away at `model_validate`.
+(3) `is_grade_bearing` bundles origin AND grade-validity, so applying it naively to
+`grade_distribution` was not the no-op it looked like — it turns "latest paper unreadable →
+no standing to report" into "fall back to the older, better grade".
+
+**Watch.** The §5 table only covers `lemely/core/`. Eight web-layer sites
+(`classes.py:125,187`, `teacher.py:1090,1300-1301,1541`, `student.py:144-193,263,280`)
+derive a grade or percentage claim straight off `history.records` and are still unfiltered
+— harmless until F, live corruption the moment F writes the first quiz attempt. The exact
+list is in STATE as a chunk-F prerequisite.
+
+**Next.** Chunk B — the riskiest. Start with the measurement (rows produced / skipped for
+missing prompt text / topic coverage) and report it before persisting anything; a genuine
+zero-count is an acceptable answer, a late-discovered one is not.
+
+## 2026-08-06 — P3.5 chunk B: the measurement came back zero, and that is the answer
+
+**Did.** Ran the mandated chunk-B measurement before writing any persistence, and it
+settled the chunk's scope: 122 leaf questions across the entire 4-mark-scheme corpus,
+**0 with prompt text, 0 with a topic hint**. Recorded as D3.7 and committed on its own
+(0184701) before implementing, so the finding survives a session death independently of
+the code. Then shipped `lemely/db/question_bank_repo.py` (82cafb9): `visible_bank_filter`,
+`QuestionBankService.count_by_band`/`.select_questions` over one shared `_filters()`,
+`import_generated_quiz_files`, `survey_past_paper_questions`, and a `lemely question-bank`
+CLI. 1537 tests (1533 passed / 4 live-only skips), 87.83% cov, repo file 100%, all 12
+gates green, `alembic check` clean.
+
+**Learned.** The zero is structural, not a data-quality gap, and that distinction changed
+what got built. `loose_schemas.Question` has no question-stem field *at all* — not an
+unpopulated one, an absent one — because a CAIE mark scheme document contains marking
+points and the stem lives in the question paper, which this codebase only ever consumes as
+a scanned student submission. `lemely/io/integrity.py:113` had already recorded the same
+fact in a comment and worked around it. So no corpus growth or re-parse changes the number,
+and the design's "create the row with `is_active = false`" was written for a *sometimes*-
+missing stem: here the row can never become live, and `prompt` is NOT NULL, so persisting
+would have meant inventing a placeholder into the exact column a teacher reads. The ingest
+therefore ships as a survey with no write path — an unreachable persist branch is dead code
+testable only by stubbing a field the schema lacks.
+
+Two smaller ones. §2's "GeneratedQuestion maps field-for-field" cannot hold —
+`GeneratedQuestion` has no `question_type` and the column is NOT NULL; it is a documented
+default (`explanation`), safe only because marking branches on MCQ vs non-MCQ and generated
+questions are never MCQ. And my first pass at the survey's zero-yield message asserted the
+structural finding even when it had scanned nothing — a report claiming a conclusion it did
+not reach. Split into two messages.
+
+**Watch.** The bank ships **empty**, both paths at 0. That makes chunk D's
+`/quizzes/generate`-writes-bank-rows the *only* thing that fills it — load-bearing, not
+optional — and T-09's live count honestly reads 0 until a teacher generates questions.
+Making past papers a real question source needs a question-paper stem extractor: out of
+Phase-3 scope, and now a prerequisite of P4's "questions from the ingested past-paper
+corpus" rather than an assumption it can make.
+
+**Next.** Chunk D — quiz CRUD, draft PATCH, pool-count endpoint, question selection, and
+`/quizzes/pools` off disk onto the bank. Build on chunk B's predicate; do not write a
+second WHERE clause for the bank.
+
+## 2026-08-06 (cont.) — P3.5 chunk D: quiz CRUD, and two defects that only appear once the disk path dies
+
+**Did.** Shipped chunk D (d19c32d): `QuizService`, the `/api/teacher/quizzes` router, quiz
+DTOs, the `pool-count` endpoint, and question selection — with `/quizzes/pools` and the
+preview/generate reuse pool both moved off the process-global `output_dir/questions` scan
+onto the bank behind `visible_bank_filter`. 1595 tests (1591 passed / 4 live-only skips),
+88.00% cov, all 12 gates green, `alembic check` clean, no schema change.
+
+**Learned.** The interesting part was not the CRUD, it was the second-order effect of
+chunk B's decision. Moving `/quizzes/generate`'s *write* off disk silently orphaned the
+*read*: `_existing_questions` kept scanning a directory that nothing writes any more, so
+the reuse-before-calling-Gemini optimization would have returned nothing forever — every
+preview re-generating against the $8 ceiling, the no-key degraded path returning an empty
+quiz, and a docstring still describing a working pool. Nothing fails when this happens;
+the tests that covered it seeded the disk themselves and kept passing, which is precisely
+why they kept passing. Pointing the reuse at the bank then produced defect two: the write
+path re-inserted every question it had just read, so each generate doubled the pool. The
+partial unique index that makes the past-paper ingest idempotent does not cover generated
+rows (no `paper_id`), so this had to be enforced in the write path — `_build_quiz` now
+returns `(quiz, reused_prompts)` and only fresh questions are persisted.
+
+Both defects share a shape worth remembering: a test that constructs the state it asserts
+on (writing the pool file it then reads) proves the code path works, not that anything
+still reaches it. When a data source moves, the tests that seeded the old source are the
+last place the old source still exists.
+
+**Watch.** The bank is still empty on a fresh install and `/quizzes/generate` is the only
+thing that fills it, so every pool count a teacher sees before generating is honestly 0.
+Chunk F's `_recompute_attempt_totals` quiz guard and the eight unfiltered web-layer
+grade/percentage sites listed under chunk G remain the two known landmines.
+
+**Next.** Chunk E — assignment endpoints, student take/submit (S-26), `quiz_answers`.
+
+## 2026-08-06 — P3.5 chunk E (assignment + take/submit)
+
+**Did.** Chunk E: three teacher assignment endpoints on `QuizService`, four student
+endpoints on a new `student_router` in `routers/quiz.py`, and `QuizTakingService`
+(`lemely/db/quiz_taking_repo.py`) scoped by enrolment via the new
+`ClassService.enrolled_class_ids`. 1668 tests (1664 passed / 4 live-only skips), 88.35%
+cov (from 88.00%), all 12 gates green, `alembic check` clean, no schema change.
+
+**Learned.** S-26's "not yet open" state has no backing column and needs none — an
+assignment does not exist until assigned, so the state is just a 404 (D3.8). The unassign
+guard reads finer than it fires: submissions are born `in_progress`, so "refuse unless
+`not_started`" is really "refuse if any row exists" — recorded honestly rather than
+claiming a distinction that never triggers. Answer leakage is excluded by *field absence*
+on `QuizTakeQuestionRow`, not by omitting fields at the DTO layer.
+
+**Next.** Chunk F — `QuizMarkingService`, `persist_quiz_correction`, the shared `_persist`
+refactor, review-queue integration, the `_recompute_attempt_totals` quiz guard, T-10. Also
+still open: the eight unfiltered web-layer grade/percentage sites chunk G handed to F,
+which must be filtered in the same commit that first writes a quiz attempt.
+
+## 2026-08-06 — P3.5 chunk F1 (quiz marking core + the grade-bearing web-layer filter)
+
+**Did.** F1: `AttemptRepository._persist` extracted as the single writer behind
+`persist_correction` and the new `persist_quiz_correction`; `QuizMarkingService`
+(`lemely/db/quiz_marking_repo.py`) adapting quiz questions through the pure
+`quiz_question_to_scheme_question` into the *existing* `correct_paper`; background marking
+on submit; the mandated `_recompute_attempt_totals` quiz guard. Discharged chunk G's
+handed prerequisite in the same commit — every web-layer grade/percentage site now filters
+(D3.9). 1703 tests (1699 passed / 4 live-only skips), 88.48% cov (from 88.35%), all 12
+gates green, `alembic check` clean.
+
+**Learned.** The §5 grade-bearing/topic-bearing split is two predicates short at the web
+layer: three surfaces report a *count* that says "papers", and `is_grade_bearing` drops a
+real paper whose grade failed to parse from a count that has nothing to do with grades.
+Hence `is_paper` (origin only) beside it — chunk G had hit the same edge from the other
+direction in `grade_distribution` and solved it locally. Also: the new tests passing first
+try was not evidence they worked; reverting the three routers and confirming 16 of 18 fail
+was.
+
+**Watch.** A quiz-only student now reports `grade=""` on three teacher DTOs and 404s on
+`GET /student/subject/{code}`. Both are deliberate (D3.9) and both need the *frontend* to
+render them as "no paper yet" rather than as an error — that lands in P3.7/P3.8, and is
+the one place this filter can still look like a bug.
+
+**Next.** F2 — T-10 teacher class-results endpoints, then P3.6 (parent portal backend).
+
+## 2026-08-06 — P3.5 chunk F2 (T-10 class results): P3.5 complete
+
+**Did.** `QuizResultsService` (`lemely/db/quiz_results_repo.py`, 100% cov) plus one route,
+`GET /api/teacher/quizzes/{quiz_id}/assignments/{assignment_id}/results`. All five §4.6
+panels are pure projections over a single load of one assignment's submissions and their
+attempts — completion vs the live roster, a percentage score distribution, per-question
+analysis, per-student results, and T-04's own `rank_topic_weaknesses`. Ownership is
+`QuizService.get_quiz`, scope is `ClassService.roster`; neither is re-derived. Made
+`history_repo._to_record` public as `attempt_to_record` so the weaknesses panel reuses the
+one attempt→`PaperRecord` projection instead of writing a second. 1721 tests
+(1717 passed / 4 live-only skips), 88.75% cov. All 12 gates green, no schema change.
+
+**Learned.** §4.6 fixes the completion *denominator* as the live roster but says nothing
+about a student who submits and is then removed from the class — read literally, the
+numerator can exceed the denominator. Roster-scoping everything is right, but doing only
+that makes a teacher's marked work vanish with no trace, so the excluded count is reported
+(`offRosterSubmissionCount`, D3.10). Separately: ruff's TC001 only moves an import when
+*every* member of that statement is annotation-only, which is why a new
+`from ... import A, B` in `routers/quiz.py` tripped a rule the file's existing imports never
+had; the fix is the same per-file exemption every other web DI module already carries.
+
+**Watch.** The route's per-student panel carries `marksByQuestion` for every roster
+student — fine at class size, but it is the one payload here that grows with
+students × questions. If a school ever assigns a 40-question quiz to a 200-student cohort
+this is where to paginate first.
+
+**Next.** P3.6 — parent portal backend (P-01..P-04): linked children, child overview /
+subject detail / weaknesses read-only, notification preferences, parent-authz scoped to own
+linked children only.
+
+## 2026-08-06 — P3.6 chunk a (parent portal read surface)
+- Did: fixed the P3.6 design as D3.11 (student invites a parent by phone; only an
+  already-OTP-authenticated parent can be linked, so a student-supplied string is never an
+  account-creation primitive), then built `ParentLinkService` + the four P-01..P-04 read
+  routes + the three student link routes. Committed 3ee592c.
+- Learned: `is_grade_bearing` already implies `grade in GRADE_ORDER`, so off-ladder guards
+  downstream of `grade_bearing()` cannot fire from a route — cover them as preconditions,
+  not with a fictional HTTP test. Same shape for `BelowTargetEvidence`: unreachable until P4.
+- Learned: the subagent's work was correct but left `routers/parent.py` at 80% — the at-risk
+  panel and the empty-child state were both unpinned. Verifying coverage per-file, not just
+  the total, is what caught it.
+- Next: chunk b — notification preferences (migration 0008, `GET/PUT
+  /api/me/notification-preferences`), then P3.7 teacher frontend.
+
+## 2026-08-06 — P3.6 chunk b (notification preferences) — P3.6 DONE
+- Did: migration 0008 + `notification_preferences` (explicit boolean column per
+  `NotificationType`, enum↔column vocabulary pin), `NotificationPreferencesService`, and
+  `GET/PUT /api/me/notification-preferences` for any authenticated role. Committed 622a692.
+  P3.6 complete; 1805 tests / 89.16% cov, all 12 gates green.
+- Learned: the chunk-b subagent stalled waiting on a background run — the *same* failure
+  mode STATE.md already recorded for P3.1/P3.2, and it happened despite an explicit
+  "foreground, never backgrounded" instruction in the brief. Treat the brief line as
+  insufficient: plan on finishing the gate run and the last coverage gaps yourself.
+- Learned: per-file coverage is the useful signal, not the total. Both chunks came back
+  with the total up and a new router 4-6 points short, hiding untested behaviour each time.
+- Next: P3.7 — teacher frontend T-01..T-06. First frontend task since P2.5, so the standing
+  UI gate (QUALITY-BAR, axe, Lighthouse, screenshot corpus, Impeccable) applies in full,
+  and `LEMELY_REPORT_DIR` must name the phase when re-baselining (D3.2).
+
+## 2026-08-06 — P3.7 complete: all six teacher screens on real data
+- Did: P3.7 in four chunks. (a) Additive DTO enrichment after auditing all six T-screens
+  against the DTOs meant to feed them — three gaps found before a line of UI was written
+  (T-01 had no recent-activity field, T-01/T-02 no per-class weakness/activity/at-risk,
+  T-03 only a bare at-risk bool where the spec demands the reason). (b) client API layer +
+  T-01/T-02 + `GET /api/me/profile`. (c) T-03 roster + T-04 analytics. (d) T-05 student
+  detail + T-06 at-risk list. Commits c95c52f, 3b0eb3c, e789dc7, 15738f4. 1826 tests /
+  89.18% cov, 12/12 gates green throughout. D3.12 and D3.13 recorded.
+- Learned, the big one: **all twelve gates were green while every at-risk acknowledge call
+  500'd on any real stack.** `sa.Enum(AtRiskReason, ...)` bound the member `.name` while
+  migration 0006's Postgres type holds the lowercase `.value`s. `pytest` missed it because
+  the test schema comes from `create_all()`, deriving the enum DDL from the same buggy
+  declaration — self-consistently wrong. `alembic check` missed it because its comparator
+  doesn't diff enum labels. Only a live E2E write caught it. Closed with a structural
+  metadata test over all 25 enums (D3.13). **A green suite over a `create_all()` schema is
+  not evidence the column works against the migrated DB.**
+- Learned: reviewing the subagent diff rather than the subagent report keeps paying. Chunk
+  a had inlined a mean, leaving a D3.9 regression test guarding a function no route called;
+  chunk c shipped two raw NUL bytes that made git treat a source file as binary while
+  typecheck and build passed silently. Neither appeared in either agent's own report.
+- Learned: `supabase` is not on PATH in a non-interactive shell, so `scripts/check.sh`
+  silently decides the stack is down and skips three of the twelve gates. Always
+  `PATH="$HOME/.local/bin:$PATH" ./scripts/check.sh`. Earlier "12 gates green" claims in
+  this build may have been 9.
+- Next: P3.8 — T-07/T-08 (review queue + remark), T-09/T-10 (quiz builder + class results),
+  T-12 (announcement composer). The quiz backend is fully built (P3.5 chunks A-F2); this is
+  the UI over it. Note P3.10 now carries three inherited items: the audit runner still only
+  sees the 4 student routes (so the UI gate is vacuous for every teacher screen), the
+  teacher portal's token-literal debt, and the absent frontend test runner.
+
+## 2026-08-07 — P3.8 chunk b: T-07 review queue + T-08 remark on real data
+- Did: resumed a session that died mid-chunk with the work written but unverified. Reviewed
+  the diff rather than trusting it, ran the gates, re-seeded and re-ran the throwaway live
+  verification myself (20/20), independently checked the mutations in Postgres, deleted the
+  throwaway files, committed 51425cd. Zero backend files touched — 1863 tests / 89.34% cov
+  unchanged from chunk a.
+- Learned: **a throwaway spec left in `web/e2e/` is picked up by `scripts/check.sh`'s
+  Playwright gate.** The first gate run came back `FAILED (2): ruff-check playwright-e2e`,
+  and both failures were the throwaway files, not the diff — ruff on the seed script's
+  hardcoded test password, Playwright on seed rows the *previous* session's mutating tests
+  had already consumed. The committed suite alone was 8/8 green. A verification artifact
+  that lives inside a gate's glob is not neutral; keep it outside or delete it before the
+  gate run.
+- Learned: `./scripts/check.sh` needs `source .venv/bin/activate` as well as the known
+  `PATH="$HOME/.local/bin:$PATH"` fix. Without the venv all five backend gates report
+  "command not found" — as FAIL, not SKIP, so it looks like a real regression. The PATH
+  quirk was already in STATE.md; the venv half was not.
+- Learned: the P3.7d/D3.13 lesson paid off again as *process* rather than as a bug. Green
+  Playwright asserted navigation happened; only the direct Postgres query showed what
+  actually persisted — override writes `teacher_awarded_marks` and leaves the AI's
+  `awarded_marks` alone, dismiss writes nothing to the `QuestionResult` at all. Worth the
+  five minutes every time a chunk mutates rows.
+- Next: P3.8 chunk c — T-09 quiz builder stepped flow, replacing the mock `Quizzes.tsx`;
+  `portals/teacher/data.ts` should be gone by the end of it.
+
+## 2026-08-07 — P3.8 chunk c (T-09 quiz builder)
+
+- Did: resumed onto a dirty tree carrying a near-complete chunk c (QuizBuilder.tsx,
+  a new C-15 Stepper, the rewritten Quizzes.tsx, and the client hooks/types). Rather
+  than wip-committing it blind, verified it first: all 12 gates green, then committed
+  it properly (7b80532), then ran the live-stack verification the chunk still owed.
+- Did: 6/6 green against the real Alembic-migrated stack — list empty state, the full
+  six-step walk, draft-resume-at-`builderStep`, and 380/768/1440 — each asserting zero
+  serious/critical axe violations, zero console errors, no horizontal scroll. Followed
+  by the direct Postgres check: every step's field persisted, `quiz_questions` carry
+  **copied** prompt text with `question_bank_id` as provenance only (§1.5), the
+  assignment row converted the local due date to UTC correctly, and `status` reached
+  `assigned` without the UI ever posting `/status` — D3.15's claim, now evidenced.
+- Learned: the plan line "data.ts should be gone by the end of chunk c" was simply
+  wrong — `navItems` and the `StatCard` interface have two other real importers. The
+  previous session caught it and corrected the plan in the file's header rather than
+  deleting the file to satisfy a checklist. Corrected in STATE.md too.
+- Learned: `text-t3` at 10-13px measures 4.36:1, under WCAG AA's 4.5:1. This screen
+  sidesteps it with `text-t2`, but every other teacher screen still emits it — invisible
+  only because `audit.mjs` is still scoped to D2.10's four *student* routes. That makes
+  P3.10's carried item (a) a correctness fix, not housekeeping: the gate currently
+  passes by never looking.
+- Learned: seeding cost three iterations on field names alone (`ClassRow.class_id` not
+  `.id`; `QuestionBank.total_marks`/`difficulty_source` not `.marks`). Recorded in
+  STATE.md so chunk d doesn't pay for it again.
+- Next: P3.8 chunk d — T-10 quiz results + T-12 announcement composer. `useSetQuizStatus`
+  is already written and waiting for the results screen to consume it.
+
+## 2026-08-07 (later) — P3.8 chunk d, phase task done
+
+- Did: built T-10 quiz results and T-12 announcement composer, closing P3.8. Both
+  verified against the live stack (8/8, axe clean at 380/768/1440) plus the direct
+  Postgres check: the composed announcement row has the right class, `school_id`
+  NULL, `publish_at` converted local→UTC, and the delete round trip leaves zero
+  rows — a real delete, not a hidden list entry.
+- Learned: T-12's school-wide option looked like it needed a backend change (a
+  `school_admin` has no client-visible school id), and the instinct was to enrich
+  `/api/me/profile`. It didn't — the `school_admin`-gated `GET /api/school/seats`
+  from Phase 1 already returns `schoolId` + `schoolName`. Ten minutes of looking
+  beat a speculative DTO addition and a second source for the same fact.
+- Learned: `npx tsc --noEmit -p tsconfig.json` passed while `npm run build` failed
+  with three real narrowing errors — the root tsconfig is not the one the build
+  uses. Trust the build, not a hand-rolled tsc invocation, when checking types here.
+- Learned: two helpers were about to be copied into a second screen (`downloadCsv`,
+  and the accuracy→tone→severity ladder). Extracted them instead — `lib/utils.ts`
+  and the new `lib/severity.ts`. The codebase has fixed "same label, two numbers"
+  three times already (D3.3/D3.4/D3.5); the thresholds are exactly the thing that
+  must not exist twice.
+- Honest gap recorded: T-10's populated state had to be seeded directly into
+  `quiz_submissions`/`attempts`/`question_results`, because the e2e harness forces
+  `gemini_api_key = None`. The rendering and route are proven; the marking pipeline
+  is not exercised by this pass (it is covered by F2's own 100%-cov tests).
+- Next: P3.9 — parent frontend G-05 (phone+OTP login) + P-01..P-04. No parent portal
+  exists at all yet; the backend landed in P3.6.
+
+## 2026-08-07 (later still) — P3.9 complete, parent portal exists
+
+- Did: all four chunks of P3.9. Chunk a added G-05's mandated developer OTP
+  affordance (D3.16); b built the parent portal shell, phone+OTP login, P-01 and
+  P-02; c added P-03 and P-04; d added the student-side link management that makes
+  any of it reachable without a seed script. 1868 tests / 89.35% cov, 12 gates green.
+- Learned: the standing gates cannot see this work at all. Three real defects came
+  out of hand-verification and none from `./scripts/check.sh` — parents were being
+  routed into the *teacher* portal (`"parent"` was in `TEACHER_ROLES`), two
+  icon-only controls lost their accessible name below 640px, and a synthesised
+  `phone+20…@parents.lemely.local` address was being shown to students as their
+  parent's name. `audit.mjs` is still scoped to D2.10's four student routes, so
+  P3.10 item (a) is now three-times evidenced, not a tidy-up.
+- Learned: gating a secret's disclosure on a *provider capability*
+  (`delivers_out_of_band`) rather than an environment string turned out to also be
+  the thing that made the Playwright OTP flow trivial — the test reads the code off
+  the screen. The safe design and the testable design were the same design.
+- Learned: two verification specs were wrong in the same way — they assumed a clean
+  database. A previous run's link silently disabled the empty state and the
+  single-child skip under test. Per-run unique phone numbers fixed it; worth doing
+  by default for anything that asserts an empty state.
+- Honest gap recorded: the student sidebar still renders "Maya Rahman / Year 11 -
+  Helwan Science Centre" from `data.ts` — the same fiction P3.7 removed from the
+  teacher sidebar. Left alone deliberately (out of P3.9's scope), carried to P3.10.
+- Next: P3.10 — acceptance. Extend `audit.mjs` past the four student routes (the
+  gate is vacuous for ~15 teacher/parent routes), decide the `text-t3` contrast fix,
+  and run the standing UI gate properly.
+
+## 2026-08-07 (later) — P3.10 chunk b, the UI gate stops being vacuous
+
+- Did: rebuilt `web/scripts/audit.mjs` from a 506-line linear 4-route journey into a
+  declarative 21-route registry (D3.17), promoted console-errors and horizontal-scroll
+  to real gates in `check_ui_gates.py`, and fixed everything the expanded gate found.
+  Final: 21 routes, **zero axe violations at any severity**, Lighthouse a11y 100 on
+  every route, 0 console errors, 0 responsive violations. 1892 tests / 89.35% cov,
+  all 12 gates green with 0 skipped.
+- Learned: the gate really was passing by never looking. Three of the five defects were
+  in product code no previous run had ever loaded — `/teacher/grading` and
+  `/teacher/schemes` have no `<h1>` at all, and `/student/result` overflowed 380px by
+  10px because the student header is one non-wrapping flex row whose fixed items sum to
+  391px. The other two were harness defects that would have made the new gates lie.
+- Learned: "no populated fixture" is not a reason to leave a route out of an audit. Both
+  h1 findings came from screens audited in their genuinely *empty* state.
+- Learned: hand-calculated WCAG luminance and axe cannot disagree given the same two
+  colours. P3.8c's 4.36:1 `text-t3` reading is below the ratio against every base
+  surface token, so axe was sampling a darker composited background — never
+  root-caused, and `index.css`'s claim that axe accounts for glyph rasterization was
+  simply false. Corrected rather than carried.
+- Learned: collecting route failures instead of failing fast turned three ~11-minute
+  debug cycles into one. A responsive gate that names the offending element turned a
+  fourth into zero.
+- Next: P3.10 chunk c — token retrofit of the teacher + parent portals onto the
+  DESIGN.md scale, plus the student-sidebar `useProfile()` fix. Chunk b's 21-route
+  registry is the safety net that makes that retrofit checkable.
+
+## 2026-08-07 — P3.10 chunk c (token retrofit + the defect it uncovered)
+- Did: retrofitted the teacher portal, shared `components/` and the student shell onto
+  the token scale — 598 literals, zero left in all three. Added the two serif rungs
+  DESIGN.md's table implies but never writes down (its `typography:` jumps 15px → 30px,
+  which is exactly why 18 screens invented 19/20/22/24/26/34px ad hoc), size-only
+  aliases for the values that were only reachable through composite classes, and a
+  per-portal `--accent-subtle-on`. Killed the student sidebar's fake identity, a
+  non-functional search box and a hardcoded "24 day streak".
+- Learned: **measure the brief before executing it.** The inherited item said "five
+  teacher screens; P2.5.3 retrofitted the student ones". It was 18 files / 482
+  literals, the parent portal was already clean, and P2.5.3 had *not* failed — read
+  per-file rather than in aggregate, every student screen in scope then is clean. My
+  own first draft of D3.18 got that wrong and had to be corrected; an aggregate count
+  across in-scope and out-of-scope files is a misleading number.
+- Learned: **D2.9 was only half-applied and the other half was live.** The composite
+  type classes stayed in tailwind-merge's colour-collision trap —
+  `twMerge("text-display-md text-t1")` returned `"text-t1"`, dropping the type outright
+  — and five shared C-* components hit that shape. Nothing in this build could see it:
+  a dropped type class degrades to *inherited* type, so it is not a type error, lint
+  error, console error, axe violation or overflow. Renaming (D2.9's rule) treats the
+  symptom; registering the classes with twMerge fixes the cause.
+- Learned: a whole class of frontend defect is invisible to every gate we have, because
+  every gate looks for a *failure* and this one produces a plausible-looking success.
+  That is what `check-design-tokens.mjs` exists for, and why it is verified by
+  inversion rather than trusted.
+- Next: P3.10 chunk d — Playwright E2E per role, with at-risk flags asserted against
+  chunk a's seeded scenarios (`scripts/seed_e2e.py`). That is the phase's named
+  acceptance criterion. Chunk e then owns the screenshot corpus + re-baselining, and
+  must decide the frontend-runner question (if a runner lands, fold
+  `check-design-tokens.mjs`'s two checks into it verbatim).
+
+## 2026-08-07 — P3.10 chunk d + a blocking INBOX directive
+
+- **Did:** P3.10 chunk d — the phase's named acceptance criterion. Five Playwright
+  specs (18 tests, all green): per-role journeys (teacher T-01..T-06, parent G-05 via
+  the real OTP UI + P-01..P-04, student), at-risk flags asserted against chunk a's
+  seeded `expectedAtRiskReasons` at both the API and T-06 layers including the D3.5
+  acknowledge/undo round trip, and a cross-role RBAC denial matrix. Seeding moved to a
+  Playwright `globalSetup`. All 13 gates green, 0 skipped; 1892 tests / 89.35% cov
+  unchanged (zero `lemely/` files touched).
+- **Learned:** Playwright forks a worker process per test file even at `workers: 1`, so
+  a "seed once, cache the promise" helper silently re-seeds per file — `globalSetup`
+  plus a file on disk is the only thing every worker can read back. Also: proving a
+  green suite is worth anything needs inversion — expecting the control student to be
+  flagged fails both layers, which is what makes the at-risk assertions load-bearing.
+- **Blocked:** a mid-session INBOX directive added two real solved 0625 scripts for
+  end-to-end accuracy testing. Its own item 6 fires — the matching official mark
+  schemes are absent and no code path can fetch them (`resolve_mark_scheme` is
+  sibling-PDF or local-JSON only; `outputs/schemes/` is empty). Raised as BLOCKERS.md
+  B1, ntfy'd, $0.00 spent, nothing reconstructed.
+- **Next:** P3.10 chunk e (screenshot corpus re-baselined into `reports/phase-3/`,
+  contact sheet, regression check vs the Phase-2.5 baselines, frontend-runner decision),
+  then P3.11.
+
+## 2026-08-07 — B1/B2 resolved, B3 raised, P3.10 e1 landed
+
+**Did.** Resolved B1 using the `paperscraper` skill the human installed mid-run —
+fetched both official 0625 mark schemes, verified via the scraper's catalogue
+rather than its exit code, kept them gitignored per the skill's copyright rule.
+Delegated and verified two subagent tasks: P3.10 chunk e1 (seed a review item, a
+marked quiz, and genuinely-empty accounts — unblocking T-08/T-10, which had zero
+audit coverage) and B2 (the `w24_ms_41` 83-vs-80 parse failure). Committed both,
+plus the skill itself. All 13 gates green on a clean run.
+
+**Learned.** Three things worth not re-paying for. (1) My B2 hypothesis was
+wrong in a specific, instructive way: I assumed the *reconciliation rule* was
+wrong about alternative marks; it was two *extraction* defects (−9 dropped
+table, +12 compensatory C-marks) masking each other down to +3. The small
+discrepancy made it look like a rounding-tolerance concern, which is exactly why
+raising the tolerance would have been so tempting and so wrong. (2) A cached
+`.json` sibling is NOT evidence its PDF parses today — I recorded `s20_ms_31` as
+passing on that inference and it had been failing at 38/80. (3) The E2E gate is
+unsound under `reuseExistingServer: true`: concurrent runs kill each other's
+server (three false FAILs this session, mis-attributed by two subagents), and
+worse, a stale server runs stale code, so the gate can PASS against source no
+longer on disk.
+
+**Also.** B3 raised and independently re-verified: every *correct* MCQ answer is
+flagged as plagiarism, because both sides of the similarity check are the same
+single letter, so the ratio is 1.000 against a 0.85 threshold. A 40/40 paper
+generates 40 flags; a 0/40 paper none. It shipped in P2.4 and directly poisons
+the accuracy fixture (paper 22 is MCQ, 34/40).
+
+**Next.** Fix B3 before reporting any accuracy numbers. Then P3.10 e2 (screenshot
+states + regression compare), e3 (frontend runner), then the accuracy fixture
+work itself — both schemes are now available.

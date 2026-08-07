@@ -216,14 +216,20 @@ class AuthService:
             session_id=session_id,
         )
 
-    def request_otp(self, phone: str) -> None:
-        """Issue a phone-OTP challenge and deliver the code via SMS.
+    def request_otp(self, phone: str) -> str | None:
+        """Issue a phone-OTP challenge, deliver it, and return it only if nothing else will.
 
-        The code is never returned; :class:`~lemely.auth.sms.MockSmsProvider`
-        logs it for local dev.
+        Returns the code **iff the configured provider does not deliver it out of
+        band** (:attr:`~lemely.auth.sms.SmsProvider.delivers_out_of_band`) — i.e.
+        only when this API is the sole way to obtain it, which is exactly the
+        offline-mock case ``docs/LEMELY_UI_SPEC.md`` §G-05's developer affordance
+        exists for. With a real SMS gateway configured this returns ``None`` and
+        the code never crosses the wire (D3.16). The gate is the provider's own
+        capability, never an environment string.
         """
         code = self._otp_store.issue(phone)
         self._sms.send_code(phone, code)
+        return None if self._sms.delivers_out_of_band else code
 
     def verify_otp(self, phone: str, code: str, device: DeviceContext | None = None) -> AuthResult:
         """Verify an OTP and mint a self-signed parent access token.

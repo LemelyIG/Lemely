@@ -678,6 +678,97 @@ def teacher_quiz_cmd(
     _print_result(ctx, builder.build(subject, weaknesses, count=count, topics=list(topics)))
 
 
+@cli.group("question-bank")
+def question_bank_group() -> None:
+    """Question-bank survey and generated-question import (P3.5 chunk B)."""
+
+
+@question_bank_group.command("survey-past-papers")
+@click.pass_context
+def question_bank_survey_cmd(ctx: click.Context) -> None:
+    """Report how many bank-ready questions exist in the parsed mark-scheme corpus.
+
+    Reporting only: docs/quiz-model.md §2 and BUILD/DECISIONS.md D3.7 record
+    that persisting past-paper questions is blocked on a question-paper stem
+    extractor that does not exist yet, so this command never writes to the
+    question bank. It always prints the real counts, including the zeros.
+    """
+    from lemely.db.question_bank_repo import survey_past_paper_questions
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    report = survey_past_paper_questions(get_sessionmaker(settings))
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "markSchemesScanned": report.mark_schemes_scanned,
+                "parseFailures": report.parse_failures,
+                "leafQuestionsSeen": report.leaf_questions_seen,
+                "produced": report.produced,
+                "skippedNoPrompt": report.skipped_no_prompt,
+                "topicHintsPresent": report.topic_hints_present,
+                "bandDistribution": report.band_distribution,
+                "explanation": report.explanation(),
+            }
+        )
+        return
+
+    click.echo(f"Mark schemes scanned: {report.mark_schemes_scanned}")
+    if report.parse_failures:
+        click.echo(f"Parse failures (skipped, malformed payload): {report.parse_failures}")
+    click.echo(f"Leaf questions seen: {report.leaf_questions_seen}")
+    click.echo(f"Produced: {report.produced}")
+    click.echo(f"Skipped (no prompt text): {report.skipped_no_prompt}")
+    click.echo(f"Topic hints present: {report.topic_hints_present}")
+    click.echo(f"Band distribution (inferred from marks): {report.band_distribution}")
+    click.echo("")
+    click.echo(report.explanation())
+
+
+@question_bank_group.command("import-generated")
+@click.option(
+    "--questions-dir",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Directory of GeneratedQuiz JSON files (default: <output_dir>/questions).",
+)
+@click.pass_context
+def question_bank_import_generated_cmd(ctx: click.Context, questions_dir: str | None) -> None:
+    """Import on-disk GeneratedQuiz files into the question bank (one-shot).
+
+    docs/quiz-model.md §2: existing files are imported once with
+    owner_id=NULL; the disk path stays dead afterwards until a later cleanup
+    removes it. Prints real counts, including the zero when the directory
+    does not exist or holds nothing yet.
+    """
+    from lemely.db.question_bank_repo import QuestionBankService, import_generated_quiz_files
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    directory = Path(questions_dir) if questions_dir else settings.paths.output_dir / "questions"
+    service = QuestionBankService(get_sessionmaker(settings))
+    result = import_generated_quiz_files(service, directory)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "directory": str(directory),
+                "filesRead": result.files_read,
+                "rowsCreated": result.rows_created,
+                "skipped": [{"path": str(s.path), "reason": s.reason} for s in result.skipped],
+            }
+        )
+        return
+
+    click.echo(f"Directory: {directory}")
+    click.echo(f"Files read: {result.files_read}")
+    click.echo(f"Rows created: {result.rows_created}")
+    click.echo(f"Skipped (malformed): {len(result.skipped)}")
+    for s in result.skipped:
+        click.echo(f"  - {s.path}: {s.reason}")
+
+
 @cli.command("aggregate-subject")
 @click.argument(
     "correction_jsons", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False)

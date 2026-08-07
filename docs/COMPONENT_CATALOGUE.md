@@ -126,6 +126,32 @@ hardcoded routes.
 - `item.href` renders a plain `<a>` for now; the P2.5.3 retrofit swaps in
   `react-router`'s `NavLink` where SPA routing is needed.
 
+## C-14 — Checkbox
+`checkbox.tsx` — `Checkbox({ label, ...inputProps })` (P3.8 chunk b)
+- Not named in the UI-spec §4 C-1..C-13 list — added because T-07's
+  bulk-approve needs a real multi-select control and nothing else in the
+  library provides one.
+- Native `<input type="checkbox">` (free keyboard/AT semantics), visually
+  restyled via `appearance-none` + a `has-checked:`/`has-focus-visible:`
+  driven wrapper box — the real input stays in the accessibility tree rather
+  than being hidden behind a decorative sibling.
+
+## C-15 — Stepper
+`stepper.tsx` — `Stepper({ steps, current, onSelect, completed, disabled })` (P3.8 chunk c)
+- Not named in the UI-spec §4 C-1..C-13 list — added because T-09's six-step
+  quiz builder needs a real step-navigation control and nothing else in the
+  library provides one.
+- Every step is a real `<button>`, always reachable — the builder never
+  gates which step a teacher may jump to, even once a quiz is read-only
+  ("read-only" disables each step's own form controls, not navigation
+  itself — a teacher must still be able to browse what was configured).
+  `completed` renders a check mark instead of a number for a step that
+  already has a value (a hint only, never a gate). `disabled` swaps every
+  button for a plain `<span>` — not used by the quiz builder itself, kept
+  for a future flow that needs to disable navigation too.
+- `aria-current="step"` on the active step; native buttons carry full
+  keyboard/AT semantics for free.
+
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and
   should be deleted in favor of the new ones once screens are retrofitted:

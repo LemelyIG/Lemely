@@ -129,6 +129,14 @@ class HistoryStore:
             )
 
         try:
+            # Feed the *resolved* version back in rather than letting
+            # ``model_validate`` fall through to the model default, which is
+            # always the current version: a pre-versioning file would otherwise
+            # load claiming to be whatever HISTORY_SCHEMA_VERSION happens to be
+            # today, destroying the very "detect an older file" signal this
+            # field exists to carry. ``version`` is already absent-means-1 above.
+            if isinstance(data, dict):
+                data = {**data, "schema_version": version}
             return StudentHistory.model_validate(data)
         except ValidationError as exc:
             log.error("history_schema_mismatch", student_id=student_id, path=str(path))

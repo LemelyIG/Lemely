@@ -1,5 +1,12 @@
-import { useMutation, useQuery, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from "@tanstack/react-query"
 import { request, streamActivity } from "@/lib/api"
+import type { LinkedParent, ParentLinkList } from "@/lib/parentTypes"
 import type {
   CorrectRequest,
   OnboardingRequest,
@@ -59,6 +66,48 @@ export function usePostStudyPlan(): UseMutationResult<StudyPlan, Error, StudyPla
         method: "POST",
         body: JSON.stringify(body satisfies StudyPlanRequest),
       }),
+  })
+}
+
+/*
+ * Parent links (D3.11). The student is the initiator on both ends — a link row
+ * IS the grant, there is no pending state and no approval step — so all three
+ * of these live on the student side. The parent portal has no mutation for
+ * them and must not grow one.
+ *
+ * The DTO mirrors are in `lib/parentTypes.ts` beside the parent-facing ones:
+ * these are the two ends of one relationship, not two unrelated features.
+ */
+
+export function useParentLinks(): UseQueryResult<ParentLinkList, Error> {
+  return useQuery({
+    queryKey: ["student", "parent-links"],
+    queryFn: () => request<ParentLinkList>("/student/parent-links"),
+  })
+}
+
+export function useLinkParent(): UseMutationResult<LinkedParent, Error, { phone: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ phone }: { phone: string }) =>
+      request<LinkedParent>("/student/parent-links", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student", "parent-links"] })
+    },
+  })
+}
+
+export function useUnlinkParent(): UseMutationResult<void, Error, { parentId: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ parentId }: { parentId: string }) =>
+      request<void>(`/student/parent-links/${parentId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student", "parent-links"] })
+    },
   })
 }
 

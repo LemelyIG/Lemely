@@ -68,6 +68,21 @@ SCHOOL_POST_ROUTES = [
     ),
 ]
 
+# Class model surface (D3.1/P3.1). Roster/enroll/remove-student are gated to the
+# same staff triple as the rest of the teacher router (ownership is then
+# enforced inside ClassService, not tested here — see test_class_repo.py);
+# create/update/delete are further restricted per-route to teacher alone.
+_CLASS_ID = "00000000-0000-0000-0000-000000000000"
+_STUDENT_ID = "00000000-0000-0000-0000-000000000001"
+CLASS_ROSTER_GET_ROUTES = [f"/api/classes/{_CLASS_ID}/roster"]
+CLASS_CREATE_POST_ROUTES = [("/api/classes", {"name": "Physics 10A"})]
+CLASS_UPDATE_PATCH_ROUTES = [(f"/api/classes/{_CLASS_ID}", {"name": "New name"})]
+CLASS_DELETE_ROUTES = [f"/api/classes/{_CLASS_ID}"]
+CLASS_ENROLL_POST_ROUTES = [(f"/api/classes/{_CLASS_ID}/enroll", {"studentId": _STUDENT_ID})]
+CLASS_REMOVE_STUDENT_DELETE_ROUTES = [f"/api/classes/{_CLASS_ID}/students/{_STUDENT_ID}"]
+# Self-enrolment lives on the student router, keyed off auth.user_id (D1.6).
+STUDENT_JOIN_POST_ROUTES = [("/api/student/classes/join", {"joinCode": "ABC1234"})]
+
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
@@ -206,6 +221,193 @@ def test_school_post_rejects_student(
     )
     resp = _client(app).post(path, json=body)
     assert resp.status_code == 403, path
+
+
+# ── Class model surface (D3.1/P3.1) ────────────────────────────────────────────
+#
+# Ownership itself (a teacher only reaching their own classes, school_admin
+# only their own schools) is proven against real Postgres in
+# test_class_repo.py; here only the router-level role gate is exercised, so
+# these tests never touch the database (a rejection is raised by
+# ``require_role`` before ``get_class_service`` is ever resolved).
+
+
+@pytest.mark.parametrize("path", CLASS_ROSTER_GET_ROUTES)
+def test_class_roster_get_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).get(path)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize(("path", "body"), CLASS_CREATE_POST_ROUTES)
+def test_class_create_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object]
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize(("path", "body"), CLASS_UPDATE_PATCH_ROUTES)
+def test_class_update_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object]
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).patch(path, json=body)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize("path", CLASS_DELETE_ROUTES)
+def test_class_delete_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).delete(path)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize(("path", "body"), CLASS_ENROLL_POST_ROUTES)
+def test_class_enroll_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object]
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize("path", CLASS_REMOVE_STUDENT_DELETE_ROUTES)
+def test_class_remove_student_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).delete(path)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize(("path", "body"), STUDENT_JOIN_POST_ROUTES)
+def test_student_join_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object]
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize("path", CLASS_ROSTER_GET_ROUTES)
+def test_class_roster_get_rejects_student(
+    app_and_store: tuple[object, HistoryStore], path: str
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="s1", role=Role.student.value
+    )
+    resp = _client(app).get(path)
+    assert resp.status_code == 403, path
+
+
+@pytest.mark.parametrize("path", CLASS_ROSTER_GET_ROUTES)
+def test_class_roster_get_rejects_parent(
+    app_and_store: tuple[object, HistoryStore], path: str
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="p1", role=Role.parent.value
+    )
+    resp = _client(app).get(path)
+    assert resp.status_code == 403, path
+
+
+@pytest.mark.parametrize(("path", "body"), CLASS_CREATE_POST_ROUTES)
+def test_class_create_rejects_student(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object]
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="s1", role=Role.student.value
+    )
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 403, path
+
+
+@pytest.mark.parametrize("role", [Role.school_admin, Role.platform_admin])
+@pytest.mark.parametrize(("path", "body"), CLASS_CREATE_POST_ROUTES)
+def test_class_create_rejects_non_teacher_staff(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object], role: Role
+) -> None:
+    """Create is owner-scoped to teacher alone: even school_admin is 403 here."""
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda role=role: AuthContext(  # type: ignore[attr-defined]
+        user_id="u1", role=role.value
+    )
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 403, (path, role)
+
+
+@pytest.mark.parametrize("role", [Role.school_admin, Role.platform_admin, Role.student])
+@pytest.mark.parametrize(("path", "body"), CLASS_UPDATE_PATCH_ROUTES)
+def test_class_update_rejects_non_teacher(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object], role: Role
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda role=role: AuthContext(  # type: ignore[attr-defined]
+        user_id="u1", role=role.value
+    )
+    resp = _client(app).patch(path, json=body)
+    assert resp.status_code == 403, (path, role)
+
+
+@pytest.mark.parametrize("role", [Role.school_admin, Role.platform_admin, Role.student])
+@pytest.mark.parametrize("path", CLASS_DELETE_ROUTES)
+def test_class_delete_rejects_non_teacher(
+    app_and_store: tuple[object, HistoryStore], path: str, role: Role
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda role=role: AuthContext(  # type: ignore[attr-defined]
+        user_id="u1", role=role.value
+    )
+    resp = _client(app).delete(path)
+    assert resp.status_code == 403, (path, role)
+
+
+@pytest.mark.parametrize(("path", "body"), CLASS_ENROLL_POST_ROUTES)
+def test_class_enroll_rejects_student(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object]
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="s1", role=Role.student.value
+    )
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 403, path
+
+
+@pytest.mark.parametrize("path", CLASS_REMOVE_STUDENT_DELETE_ROUTES)
+def test_class_remove_student_rejects_student(
+    app_and_store: tuple[object, HistoryStore], path: str
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="s1", role=Role.student.value
+    )
+    resp = _client(app).delete(path)
+    assert resp.status_code == 403, path
+
+
+@pytest.mark.parametrize(
+    "role", [Role.teacher, Role.school_admin, Role.platform_admin, Role.parent]
+)
+@pytest.mark.parametrize(("path", "body"), STUDENT_JOIN_POST_ROUTES)
+def test_student_join_rejects_non_student(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object], role: Role
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda role=role: AuthContext(  # type: ignore[attr-defined]
+        user_id="u1", role=role.value
+    )
+    resp = _client(app).post(path, json=body)
+    assert resp.status_code == 403, (path, role)
 
 
 # ── IDOR kill: identity is the token, never the payload ───────────────────────

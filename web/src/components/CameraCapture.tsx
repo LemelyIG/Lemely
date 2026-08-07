@@ -210,9 +210,9 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
           <img
             src={page.url}
             alt={`Captured page ${i + 1}`}
-            className="w-[74px] h-[98px] object-cover rounded-[10px] border border-border"
+            className="w-[74px] h-[98px] object-cover rounded-md border border-border"
           />
-          <span className="absolute top-1 left-1 rounded-full bg-ink/70 text-accent-on text-[10px] leading-none px-1.5 py-0.5">
+          <span className="absolute top-1 left-1 rounded-full bg-ink/70 text-accent-on text-3xs leading-none px-1.5 py-0.5">
             {i + 1}
           </span>
           <button
@@ -232,9 +232,9 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
     <Card className={cn("p-[22px] flex flex-col gap-4", className)}>
       {phase === "live" ? (
         <>
-          <div className="relative w-full aspect-[3/4] max-h-[420px] bg-ink rounded-[12px] overflow-hidden flex items-center justify-center">
+          <div className="relative w-full aspect-[3/4] max-h-[420px] bg-ink rounded-md overflow-hidden flex items-center justify-center">
             {cameraError ? (
-              <div className="text-[12.5px] text-accent-on text-center px-6 leading-[1.5] text-pretty">
+              <div className="text-dense-sm text-accent-on text-center px-6 leading-[1.5] text-pretty">
                 {cameraError}
               </div>
             ) : (
@@ -247,7 +247,7 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
               />
             )}
             {starting && !cameraError ? (
-              <div className="absolute inset-0 flex items-center justify-center text-[12.5px] text-accent-on/80">
+              <div className="absolute inset-0 flex items-center justify-center text-dense-sm text-accent-on/80">
                 Starting camera...
               </div>
             ) : null}
@@ -288,16 +288,16 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
         </>
       ) : (
         <>
-          <div className="text-[13px] font-medium">
+          <div className="text-dense font-medium">
             {pages.length} page{pages.length === 1 ? "" : "s"} captured
           </div>
-          <div className="text-[12px] text-t3">
+          <div className="text-xs text-t3">
             Check every page before finishing - remove and reshoot anything
             blurry or cut off.
           </div>
           {thumbnailStrip}
           {assembleError ? (
-            <div className="text-[12.5px] text-accent leading-[1.5] text-pretty">
+            <div className="text-dense-sm text-accent leading-[1.5] text-pretty">
               {assembleError}
             </div>
           ) : null}

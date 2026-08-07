@@ -11,9 +11,27 @@
 # boot themselves; when the stack isn't up they SKIP (not FAIL) with an
 # explanation, mirroring the existing pytest DB-integration-test skip
 # pattern, rather than blocking gates that don't need it.
+#
+# Those UI gates write screenshots and axe/Lighthouse JSON to the gitignored
+# scratch dir reports/.scratch (LEMELY_REPORT_DIR's default). They deliberately
+# do NOT write into reports/phase-N/: those are the committed baselines the
+# "no unintended visual regression" gate compares against, and a gate run that
+# overwrites its own reference cannot detect a regression. To re-baseline a
+# phase — an explicit, reviewable act — name it:
+#
+#   cd web && LEMELY_REPORT_DIR=reports/phase-3 npm run test:e2e
+#   cd web && LEMELY_REPORT_DIR=reports/phase-3 npm run audit
+#
+# then commit the diff with a note in the phase report (MISSION §11).
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-export PATH="$HOME/.local/bin:$PATH"
+# .venv/bin first so the backend gates run against the project's pinned tools
+# even from a shell that never sourced the venv. Without it every backend gate
+# reports "command not found" and FAILS — loud, but only if you read the log;
+# the far worse variant is a *different* ruff/mypy on PATH silently gating the
+# build against the wrong versions. $HOME/.local/bin carries `supabase`, which
+# this sandbox's non-interactive shells otherwise lack (P3.7).
+export PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -51,6 +69,12 @@ echo "== Web =="
 run "web-typecheck" bash -c 'cd web && npm run -s typecheck'
 run "web-lint" bash -c 'cd web && npm run -s lint'
 run "web-build" bash -c 'cd web && npm run -s build'
+# Vitest (P3.10 e3, D3.20). Absorbs the former standalone `design-tokens` gate:
+# `web/scripts/check-design-tokens.mjs`'s two invariants moved into
+# `web/tests/unit/design-tokens.test.ts` verbatim, as that script's own header
+# said to do once a runner existed. MISSION §6 gate 3's "frontend unit tests
+# green" was vacuous before this — there was no runner to be green.
+run "web-test" bash -c 'cd web && npm run -s test'
 run "impeccable-detect" bash -c 'cd web && npx --yes impeccable detect src/'
 
 STACK_UP=0

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lemely.core.integrity_schemas import IntegrityFinding
+from lemely.core.loose_schemas import QuestionType
 from lemely.core.plagiarism import PlagiarismChecker
 from lemely.core.schemas import CorrectedQuestion, CorrectionResult
 from lemely.io.prompts.integrity import (
@@ -80,6 +81,16 @@ def apply_integrity_checks(
     call per question, so it is opt-in and skipped entirely (no client call)
     when disabled.
 
+    **Both checks are skipped for MCQ questions** (B3). Neither similarity nor
+    AI-authorship is a meaningful measure of a single multiple-choice letter:
+    a *correct* MCQ answer is character-identical to the expected one, so
+    ``SequenceMatcher`` scores it 1.0 and every right answer became a
+    plagiarism flag while every wrong one stayed clean — the signal inverted.
+    The guard is on the mark-scheme question's ``type``, deliberately not on
+    answer length: a one-character *free-text* answer is a different case and
+    is still checked. A question absent from the scheme cannot be classified,
+    so it is treated as free-text and still checked.
+
     Returns a freshly-constructed :class:`CorrectionResult` (not a
     ``model_copy``) so ``CorrectionResult.calculate_totals`` reruns and
     ``needs_teacher_review`` reflects any newly-flagged questions.
@@ -100,7 +111,17 @@ def apply_integrity_checks(
         reasons = cq.review_reason.split(" | ") if cq.review_reason else []
         updates: dict[str, bool | str] = {}
 
-        if plagiarism_checker is not None and cq.student_answer and cq.expected_answer:
+        question = mark_scheme.get_question_by_id(cq.question_id)
+        # An unknown question cannot be classified — treat it as free-text and
+        # keep checking it, rather than silently exempting it.
+        is_mcq = question is not None and question.type == QuestionType.MCQ
+
+        if (
+            plagiarism_checker is not None
+            and not is_mcq
+            and cq.student_answer
+            and cq.expected_answer
+        ):
             finding = plagiarism_checker.check(
                 cq.question_id, cq.student_answer, cq.expected_answer
             )
@@ -108,8 +129,7 @@ def apply_integrity_checks(
                 updates["plagiarism_flagged"] = True
                 reasons.append(f"plagiarism (score {finding.score:.2f})")
 
-        if ai_detector is not None and cq.student_answer:
-            question = mark_scheme.get_question_by_id(cq.question_id)
+        if ai_detector is not None and not is_mcq and cq.student_answer:
             # Best-effort proxy: the mark-scheme model has no verbatim question-stem
             # field, so fall back through command word / topic hint / id.
             question_text = (

@@ -21,7 +21,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from lemely.core.history import PaperRecord, StudentHistory
+from lemely.core.history import PaperRecord, StudentHistory, is_grade_bearing
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
 from lemely.db.history_repo import DbHistoryStore, migrate_json_history
@@ -189,3 +189,54 @@ def test_migrate_json_history_moves_records(
     assert results[user_id] == "migrated 2 record(s)"
     assert "skipped" in results["anonymous"]
     assert len(db_store.load(user_id).records) == 2
+
+
+# ---------------------------------------------------------------------------
+# P3.5 chunk G — attempts.origin round-trips (docs/quiz-model.md §5)
+# ---------------------------------------------------------------------------
+
+
+def test_origin_round_trips_through_the_db_store(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """A quiz record must not read back as a past-paper one.
+
+    ``_to_attempt`` writes ``attempts.origin`` and ``attempt_to_record`` reads it
+    back; if either side is dropped the record silently re-enters the
+    grade-bearing analytics that ``origin`` exists to keep it out of, and
+    nothing else in the system would notice.
+    """
+    user_id = _seed_user(pg_sessionmaker)
+    store = DbHistoryStore(pg_sessionmaker)
+
+    paper = _record(user_id, day=1, grade="B", topics=["Waves"])
+    quiz = _record(user_id, day=2, grade="", topics=["Forces"]).model_copy(
+        update={"origin": "quiz"}
+    )
+    store.append(user_id, paper)
+    store.append(user_id, quiz)
+
+    loaded = store.load(user_id)
+    assert [r.origin for r in loaded.records] == ["past_paper", "quiz"]
+    assert [is_grade_bearing(r) for r in loaded.records] == [True, False]
+
+
+def test_store_loads_every_origin_not_just_grade_bearing_ones(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The store is not where the split happens (§5).
+
+    Filtering at the store would silently starve the topic analytics that
+    quizzes are supposed to feed. ``load`` returns everything; each consumer
+    applies ``is_grade_bearing`` itself.
+    """
+    user_id = _seed_user(pg_sessionmaker)
+    store = DbHistoryStore(pg_sessionmaker)
+    for day, origin in ((1, "past_paper"), (2, "quiz"), (3, "custom_paper")):
+        store.append(
+            user_id,
+            _record(user_id, day=day, grade="B", topics=["Waves"]).model_copy(
+                update={"origin": origin}
+            ),
+        )
+
+    loaded = store.load(user_id)
+    assert [r.origin for r in loaded.records] == ["past_paper", "quiz", "custom_paper"]

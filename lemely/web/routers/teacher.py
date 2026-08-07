@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import json
 import threading
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -32,11 +34,25 @@ from lemely.core.analytics import (
     aggregate_weaknesses_from_history,
     compare_performance,
 )
+from lemely.core.at_risk import (
+    AtRiskFlag,
+    AtRiskReason,
+    BelowTargetEvidence,
+    DecliningTrendEvidence,
+    InactivityEvidence,
+    assess_at_risk,
+    flag_fingerprint,
+)
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
 from lemely.core.history import (
+    GRADE_ORDER,
     HistoryStoreProtocol,
     PaperRecord,
     StudentHistory,
+    grade_bearing,
+    is_grade_bearing,
+    is_paper,
+    latest_grade_bearing,
     now_iso,
 )
 from lemely.core.loose_schemas import MarkScheme
@@ -46,7 +62,22 @@ from lemely.core.schemas import (
     ExamMetadata,
     WeaknessReport,
 )
-from lemely.db.models.enums import Role
+from lemely.db.at_risk_repo import (
+    AtRiskAcknowledgementRow,
+    AtRiskAckOwnershipError,
+    AtRiskAckService,
+)
+from lemely.db.class_repo import ClassService, RosterEntry
+from lemely.db.models.enums import QuestionSource, Role
+from lemely.db.question_bank_repo import (
+    QuestionBankRow,
+    QuestionBankService,
+    generated_questions_to_bank_rows,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+from lemely.db.review_repo import ReviewService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_metadata import ScanMetadataExtractor
@@ -54,8 +85,13 @@ from lemely.io.teacher_quiz import TeacherQuizBuilder
 from lemely.runtime.config import Settings
 from lemely.runtime.events import EventType, bus
 from lemely.web.deps import (
+    AuthContext,
+    get_at_risk_ack_service,
+    get_class_service,
     get_gemini_client,
     get_history_store,
+    get_question_bank_service,
+    get_review_service,
     get_settings,
     require_role,
 )
@@ -64,16 +100,24 @@ from lemely.web.schemas import (
     question_to_dto,
     weak_area_to_dto,
 )
+from lemely.web.schemas_analytics import (
+    AtRiskListDTO,
+    AtRiskListEntryDTO,
+    AttemptDTO,
+    StudentDetailDTO,
+    StudentEngagementDTO,
+    StudentTrendPointDTO,
+    StudentWeaknessDTO,
+    SubjectPredictionDTO,
+)
 from lemely.web.schemas_teacher import (
+    AcknowledgeAtRiskRequestDTO,
+    AtRiskAcknowledgementDTO,
+    AtRiskFlagDTO,
     AtRiskStudentDTO,
     BatchTabDTO,
-    ClassDetailDTO,
-    ClassListDTO,
-    ClassSummaryDTO,
     DetectedFieldDTO,
-    DistributionBarDTO,
     GradingQueueDTO,
-    MasteryRowDTO,
     OverviewDTO,
     PaperDetailDTO,
     PaperKind,
@@ -87,6 +131,7 @@ from lemely.web.schemas_teacher import (
     QuizPreviewDTO,
     QuizTopicDTO,
     QuizTopicsDTO,
+    RecentActivityDTO,
     SchemeListDTO,
     SchemeRowDTO,
     StatCardDTO,
@@ -100,9 +145,10 @@ from lemely.web.upload_utils import (
 
 # Every teacher-portal route is staff-only. Gating at the router level means a
 # 401 (no/invalid token) or 403 (student/parent) is enforced uniformly and any
-# future teacher route inherits the guard by construction. Per-teacher tenancy
-# (a teacher only seeing their own classes) is deferred to when these routes move
-# off the shared interim HistoryStore onto the DB-backed class model (D1.6).
+# future teacher route inherits the guard by construction. Per-teacher row-level
+# tenancy (a teacher only seeing their own classes) landed in P3.1: the class
+# CRUD/roster/enrolment routes live in ``lemely.web.routers.classes`` on top of
+# the DB-backed class model (D3.1), not the shared interim HistoryStore.
 router = APIRouter(
     prefix="/api",
     dependencies=[Depends(require_role(Role.teacher, Role.school_admin, Role.platform_admin))],
@@ -119,8 +165,31 @@ _UPLOAD_CHUNK_BYTES = 1024 * 1024
 # definition in ``lemely.core.schemas`` (D2.2) — never re-literalise this value.
 _REVIEW_CONFIDENCE = REVIEW_CONFIDENCE_THRESHOLD
 
-_GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
+# The grade ladder, best to worst. Aliases the single domain definition in
+# ``lemely.core.at_risk`` (D3.3) — never re-literalise this value.
+_GRADE_ORDER = GRADE_ORDER
+
+# Grades that make the roster's ``gradeAtRisk`` badge / the overview's "At risk"
+# stat card light up. This is a *different, shallower* signal than the D3.3
+# at-risk *flag* engine below (``assess_at_risk``/``_at_risk``): it just means
+# "this grade is low right now", not "this student is on a declining
+# trajectory" — the two must not be conflated. Kept as its own literal set
+# because it has no analogue in ``lemely.core.at_risk``.
 _AT_RISK_GRADES = {"D", "E", "U"}
+
+# The staff triple every route needing per-caller tenancy scoping (overview,
+# student detail, at-risk list, P3.3) authenticates against. Named so the long
+# Annotated[...] signatures stay under the line-length limit, mirroring
+# ``lemely.web.routers.classes._STAFF_ROLES`` exactly (same three roles, same
+# reasoning) — not re-imported from there to avoid a classes<->teacher import
+# cycle (``classes.py`` already imports from this module).
+_STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
+
+#: Per-band ceiling on how many previously generated bank questions
+#: :func:`_existing_questions` pulls in as reuse material. A bound, not a
+#: page size: the builder only ever needs a few candidates per band, and an
+#: unbounded read would grow with a teacher's whole generation history.
+_REUSE_POOL_PER_BAND = 20
 
 
 # ---------------------------------------------------------------------------
@@ -293,11 +362,17 @@ def _student_delta(history: StudentHistory) -> float | None:
 
     Data-backed via :func:`compare_performance`; ``None`` when there is no prior
     attempt of the same subject+paper.
+
+    Paper comparison, so grade-bearing records only (``docs/quiz-model.md``
+    §5). Left unfiltered, a quiz would both stand in as "the latest paper" and
+    be matched as a prior attempt of "Paper 1/1" — the synthetic paper number
+    the marking call needed — comparing a topic quiz against a real paper.
     """
-    if not history.records:
+    records = grade_bearing(history.records)
+    if not records:
         return None
-    latest = history.records[-1]
-    prior = StudentHistory(student_id=history.student_id, records=history.records[:-1])
+    latest = records[-1]
+    prior = StudentHistory(student_id=history.student_id, records=records[:-1])
     return compare_performance(prior, latest).percentage_delta
 
 
@@ -692,52 +767,109 @@ async def upload_scheme(
 # ---------------------------------------------------------------------------
 
 
-def _existing_questions(settings: Settings) -> list[GeneratedQuestion]:
-    """Load the teacher's existing generated-question pool from disk.
+def _existing_questions(
+    bank_service: QuestionBankService,
+    caller_id: uuid.UUID,
+    school_ids: Sequence[uuid.UUID],
+    subject_code: str,
+) -> list[GeneratedQuestion]:
+    """Load the caller's reusable generated-question pool from the question bank.
 
-    Reads ``output_dir/questions/*.json`` (each a :class:`GeneratedQuiz`). Returns
-    an empty list when the pool directory is absent — the quiz builder then relies
-    purely on generation.
+    Reads the bank behind ``visible_bank_filter`` — platform-shared rows, the
+    caller's own, and their school's — rather than the old
+    ``output_dir/questions/*.json`` scan. Two reasons, both load-bearing:
+
+    * That scan was the same process-global tenancy leak ``/quizzes/pools``
+      was moved off (``docs/quiz-model.md`` §1.3): it fed *every* teacher's
+      generated questions into *every* other teacher's quiz.
+    * Since chunk D, ``/quizzes/generate`` persists to the bank instead of
+      writing those JSON files, so nothing writes that directory any more.
+      Left on disk this would have been a reuse path that silently always
+      returned nothing — every preview re-generating from scratch against
+      the Gemini budget, and the no-key degraded path returning an empty
+      quiz forever, with a docstring still claiming a working pool.
+
+    Only ``generated`` rows are reused: ``past_paper`` and ``teacher_upload``
+    rows are not this builder's material, and blending them here would let a
+    band-less ad-hoc generation quietly serve up past-paper content.
     """
-    pool_dir = settings.paths.output_dir / "questions"
-    if not pool_dir.exists():
-        return []
-    questions: list[GeneratedQuestion] = []
-    for path in sorted(pool_dir.glob("*.json")):
-        try:
-            quiz = GeneratedQuiz.model_validate_json(path.read_text(encoding="utf-8"))
-        except (ValidationError, OSError):
-            continue
-        questions.extend(quiz.questions)
-    return questions
+    rows: list[QuestionBankRow] = []
+    for band in ("foundation", "standard", "challenge"):
+        rows.extend(
+            bank_service.select_questions(
+                caller_id,
+                school_ids,
+                subject_code=subject_code,
+                band=band,
+                count=_REUSE_POOL_PER_BAND,
+                source=QuestionSource.generated,
+            )
+        )
+    return [
+        GeneratedQuestion(
+            topic=row.topic or "",
+            difficulty=row.difficulty,
+            prompt=row.prompt,
+            model_answer=row.model_answer or "",
+            mark_scheme_points=list(row.mark_scheme_points),
+            total_marks=row.total_marks,
+            source_question_ids=list(row.source_question_ids),
+        )
+        for row in rows
+    ]
 
 
 @router.get("/quizzes/pools", response_model=QuizPoolsDTO)
 def quiz_pools(
-    settings: Annotated[Settings, Depends(get_settings)],
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    class_service: Annotated[ClassService, Depends(get_class_service)],
+    bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
+    subject_code: str = "",
 ) -> QuizPoolsDTO:
-    """Return the quiz question-source pools with live counts.
+    """Return the quiz question-source pools with live counts, from the bank.
 
-    ``past`` counts existing questions carrying source ids (from parsed papers);
-    ``mine`` counts uploaded questions without source ids; ``ai`` is a generative
-    pool (count 0 until questions are generated). All counts are data-backed.
+    Moved off the process-global ``output_dir/questions`` disk scan onto
+    :class:`QuestionBankService` behind ``visible_bank_filter``
+    (``docs/quiz-model.md`` §2/§1.3): the previous scan read every teacher's
+    generated questions indiscriminately (a tenancy leak); this reads only
+    what is platform-shared, the caller's own, or their school's. ``past`` is
+    genuinely ``0`` for a subject with no indexed past-paper rows (D3.7) —
+    ``detail`` then carries the exact honest-degradation wording rather than
+    a plausible-looking zero with no explanation. ``ai`` is now real data
+    too: ``POST /quizzes/generate`` (below) is the only path that ever fills
+    it (D3.7's "the bank ships empty" consequence).
     """
-    existing = _existing_questions(settings)
-    past = sum(1 for q in existing if q.source_question_ids)
-    mine = sum(1 for q in existing if not q.source_question_ids)
+    try:
+        caller_uuid = uuid.UUID(auth.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    resolved_subject = subject_code or _infer_subject_code(history_store) or "0000"
+    school_ids = class_service.member_school_ids(caller_uuid)
+
+    def _pool_total(source: QuestionSource) -> int:
+        counts = bank_service.count_by_band(
+            caller_uuid, school_ids, subject_code=resolved_subject, source=source
+        )
+        return sum(counts.values())
+
+    past = _pool_total(QuestionSource.past_paper)
+    ai = _pool_total(QuestionSource.generated)
+    mine = _pool_total(QuestionSource.teacher_upload)
+
+    past_detail = (
+        f"No past-paper questions indexed for {resolved_subject} yet; use generated questions."
+        if past == 0
+        else "CAIE official, from parsed papers"
+    )
     return QuizPoolsDTO(
         pools=[
-            QuestionPoolDTO(
-                key="past",
-                label="Past papers",
-                detail="CAIE official, from parsed papers",
-                count=past,
-            ),
+            QuestionPoolDTO(key="past", label="Past papers", detail=past_detail, count=past),
             QuestionPoolDTO(
                 key="ai",
                 label="AI-generated",
                 detail="Stylistically matched to CAIE",
-                count=0,
+                count=ai,
             ),
             QuestionPoolDTO(
                 key="mine",
@@ -796,11 +928,14 @@ def _build_quiz(
     settings: Settings,
     history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
+    bank_service: QuestionBankService,
+    caller_id: uuid.UUID,
+    school_ids: Sequence[uuid.UUID],
     *,
     subject_code: str,
     count: int,
     topics: list[str] | None,
-) -> GeneratedQuiz:
+) -> tuple[GeneratedQuiz, set[str]]:
     """Assemble a quiz via :class:`TeacherQuizBuilder` (select-then-generate).
 
     Generation is only attempted when an API key is configured (mirroring
@@ -808,10 +943,24 @@ def _build_quiz(
     question pool alone so the endpoint degrades to a partial result instead of
     raising an unhandled 500 on the default no-key state. A runtime generation
     failure is surfaced as a clean 503, never a 500.
+
+    The reuse pool comes from the question bank scoped to ``caller_id``/
+    ``school_ids`` (see :func:`_existing_questions`), so one teacher's
+    generated questions never reach another's quiz.
+
+    Returns the quiz **and the prompts that came from the reuse pool**. The
+    caller needs the second element to avoid writing a reused question back
+    into the bank it was just read from: now that reuse reads the bank
+    rather than a directory nothing writes, an unfiltered write-back would
+    duplicate every reused question on every generate, inflating the live
+    pool count — the exact failure ``uq_question_bank_paper_question`` exists
+    to prevent on the past-paper side (§1.3), which generated rows (no
+    ``paper_id``) are not covered by.
     """
     aggregate = _aggregate_history_weaknesses(history_store)
-    existing = _existing_questions(settings)
     resolved_subject = subject_code or _infer_subject_code(history_store) or "0000"
+    existing = _existing_questions(bank_service, caller_id, school_ids, resolved_subject)
+    reused_prompts = {q.prompt for q in existing}
 
     if settings.gemini_api_key is None:
         # No generation possible: return whatever the existing pool can supply.
@@ -819,11 +968,14 @@ def _build_quiz(
             QuestionGenerator(gemini_client),
             existing_questions=existing,
         )
-        return builder.build(
-            resolved_subject,
-            WeaknessReport(weak_areas=[]),  # empty → builder skips generation
-            count=count,
-            topics=topics,
+        return (
+            builder.build(
+                resolved_subject,
+                WeaknessReport(weak_areas=[]),  # empty → builder skips generation
+                count=count,
+                topics=topics,
+            ),
+            reused_prompts,
         )
 
     builder = TeacherQuizBuilder(
@@ -831,11 +983,14 @@ def _build_quiz(
         existing_questions=existing,
     )
     try:
-        return builder.build(
-            resolved_subject,
-            aggregate,
-            count=count,
-            topics=topics,
+        return (
+            builder.build(
+                resolved_subject,
+                aggregate,
+                count=count,
+                topics=topics,
+            ),
+            reused_prompts,
         )
     except Exception as exc:  # generation failed at runtime — degrade cleanly.
         raise HTTPException(
@@ -864,18 +1019,33 @@ def _quiz_to_preview(quiz: GeneratedQuiz) -> QuizPreviewDTO:
 
 @router.post("/quizzes/preview", response_model=QuizPreviewDTO)
 def quiz_preview(
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    class_service: Annotated[ClassService, Depends(get_class_service)],
+    bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
     subject_code: str = "",
     count: int = 4,
     topics: list[str] | None = None,
 ) -> QuizPreviewDTO:
-    """Preview a quiz assembled from existing questions, topping up via generation."""
-    quiz = _build_quiz(
+    """Preview a quiz assembled from existing questions, topping up via generation.
+
+    Takes ``auth`` explicitly (the router already requires a staff role) so
+    the reuse pool can be scoped to this caller rather than read from a
+    process-global pool — see :func:`_existing_questions`.
+    """
+    try:
+        caller_uuid = uuid.UUID(auth.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    quiz, _reused = _build_quiz(
         settings,
         history_store,
         gemini_client,
+        bank_service,
+        caller_uuid,
+        class_service.member_school_ids(caller_uuid),
         subject_code=subject_code,
         count=count,
         topics=topics,
@@ -885,136 +1055,174 @@ def quiz_preview(
 
 @router.post("/quizzes/generate", response_model=QuizPreviewDTO)
 def quiz_generate(
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    class_service: Annotated[ClassService, Depends(get_class_service)],
+    bank_service: Annotated[QuestionBankService, Depends(get_question_bank_service)],
     subject_code: str = "",
     count: int = 5,
     topics: list[str] | None = None,
 ) -> QuizPreviewDTO:
-    """Generate a full quiz and persist it to the teacher's question pool on disk."""
-    quiz = _build_quiz(
+    """Generate a full quiz and persist it to the question bank.
+
+    Writes bank rows instead of a JSON file (``docs/quiz-model.md`` §2:
+    "``/quizzes/generate`` writes bank rows instead of a JSON file") —
+    ``source=generated``, ``difficulty_source=declared_by_generator``, and
+    ``owner_id=`` the generating teacher (their generation, their pool per
+    §1.3's visibility tiers), never the ``owner_id=NULL`` the one-shot
+    legacy on-disk importer uses. This is now the *only* path that ever
+    fills the bank's generated pool (D3.7 consequence): the bank ships
+    empty, and stays empty for a subject until a teacher generates here.
+    """
+    try:
+        caller_uuid = uuid.UUID(auth.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    quiz, reused_prompts = _build_quiz(
         settings,
         history_store,
         gemini_client,
+        bank_service,
+        caller_uuid,
+        class_service.member_school_ids(caller_uuid),
         subject_code=subject_code,
         count=count,
         topics=topics,
     )
-    pool_dir = settings.paths.output_dir / "questions"
-    pool_dir.mkdir(parents=True, exist_ok=True)
-    out_path = pool_dir / f"quiz_{now_iso().replace(':', '-')}.json"
-    out_path.write_text(quiz.model_dump_json(indent=2), encoding="utf-8")
+    # Only genuinely new questions are written back: a question the builder
+    # reused *from* the bank is already a row there, and re-inserting it
+    # would inflate the pool count on every generate (see :func:`_build_quiz`).
+    fresh = GeneratedQuiz(
+        subject_code=quiz.subject_code,
+        questions=[q for q in quiz.questions if q.prompt not in reused_prompts],
+    )
+    bank_service.add_questions(generated_questions_to_bank_rows(fresh, owner_id=caller_uuid))
     return _quiz_to_preview(quiz)
 
 
 # ---------------------------------------------------------------------------
 # Classes.
+#
+# The class CRUD/roster/enrolment routes themselves live in
+# ``lemely.web.routers.classes`` (P3.1, D3.1) on top of the DB-backed class
+# model. ``_student_row`` stays here because it is a roster-row *analytics*
+# helper (built from a student's history) reused by that router, alongside
+# ``_latest_records``/``_mean``/``_aggregate_history_weaknesses``/
+# ``_student_delta``/``_GRADE_ORDER``/``_AT_RISK_GRADES`` above.
 # ---------------------------------------------------------------------------
 
 
-def _student_row(history: StudentHistory) -> StudentRowDTO | None:
-    """Build a roster row from a student's history, or ``None`` if empty."""
+def _student_row(
+    history: StudentHistory,
+    *,
+    display_name: str,
+    student_id: str,
+    now: datetime,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
+) -> StudentRowDTO | None:
+    """Build a roster row from a student's history, or ``None`` if empty.
+
+    ``display_name``/``student_id`` come from the real class roster (D3.1) —
+    ``history.student_id`` is the raw user-id key used to address the history
+    store, not a human name.
+
+    The row exists for any student with *any* recorded activity, but every
+    grade/mark field on it reads the latest **grade-bearing** record
+    (``docs/quiz-model.md`` §5) — a quiz has no grade and its mark is out of a
+    quiz total, not a paper total. A student whose only activity is quizzes
+    therefore appears on the roster with an empty grade and no mark, which is
+    the honest reading: they are here, they have done work, and they have no
+    paper grade yet. ``grade=""`` is the same "no grade" value
+    ``DbHistoryStore`` already produces for an attempt with a NULL grade, so
+    this introduces no new state for the frontend to handle.
+
+    ``paperCount`` (added P3.7 chunk a, D3.12) counts :func:`is_paper`
+    records — origin only, deliberately narrower than the grade-bearing
+    filter above: it says "papers", so a past paper whose grade came back
+    unreadable still counts, but a quiz never does (D3.9). ``lastActiveAt``
+    is unfiltered by origin — a quiz is activity too, matching the
+    inactivity rule sitting beside it. ``flags`` runs the D3.3 engine
+    (``assess_at_risk``) and converts every fired flag through the single
+    ``_at_risk_flag_dto`` helper (``now``/``acks`` threaded in for exactly
+    that), so this roster's acknowledged state can never drift from T-01/
+    T-05/T-06's reading of the same flag.
+    """
     if not history.records:
         return None
-    latest = history.records[-1]
-    weakest = min(
-        latest.weak_areas,
-        key=lambda a: a.accuracy,
-        default=None,
+    latest = latest_grade_bearing(history.records)
+    weakest = (
+        min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
+        if latest is not None
+        else None
     )
+    assessment = assess_at_risk(history, now=now)
     return StudentRowDTO(
-        name=history.student_id,
-        grade=latest.grade,
-        mark=f"{latest.awarded_marks}/{latest.maximum_marks}",
+        name=display_name,
+        studentId=student_id,
+        grade=latest.grade if latest is not None else "",
+        mark=f"{latest.awarded_marks}/{latest.maximum_marks}" if latest is not None else "",
         delta=_student_delta(history),
         weakTopic=weakest.topic if weakest is not None else None,
-        gradeAtRisk=latest.grade in _AT_RISK_GRADES,
+        gradeAtRisk=latest is not None and latest.grade in _AT_RISK_GRADES,
+        paperCount=sum(1 for record in history.records if is_paper(record)),
+        lastActiveAt=history.records[-1].recorded_at,
+        flags=[
+            _at_risk_flag_dto(flag, student_id=student_id, acks=acks) for flag in assessment.flags
+        ],
     )
 
 
-@router.get("/teacher/classes", response_model=ClassListDTO)
-def list_classes(
-    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
-) -> ClassListDTO:
-    """Return the (single, implicit) class summary derived from all history.
+def _visible_students(service: ClassService, auth: AuthContext) -> dict[str, RosterEntry]:
+    """Union of every roster in every class the caller may see (D3.1 tenancy).
 
-    The domain has no class/roster model yet, so every student with history is
-    treated as one cohort. ``average`` is the mean latest percentage across
-    students; empty history yields an empty class list.
+    The single authorization gate every student-scoped teacher route (P3.3:
+    the overview, ``GET /teacher/students/{id}``, ``GET /teacher/at-risk``)
+    is built on: a teacher/school_admin may reach a student only if that
+    student appears in the roster of at least one class the caller
+    owns/administers. ``ClassService.list_classes`` already returns ``[]`` for
+    platform_admin (no super-role bypass, D1.6/D1.10), so this is always empty
+    for them too — there is no separate case to special-case here.
+
+    When a class appears in more than one roster this iterates (unlikely
+    given ownership is per-teacher, but school_admin scope could theoretically
+    overlap two classes with the same enrolled student) the later class simply
+    overwrites the earlier ``RosterEntry`` for that student id; both carry the
+    same identity, so this is harmless.
     """
-    latest = _latest_records(history_store)
-    if not latest:
-        return ClassListDTO(classes=[])
-    average = _mean([r.percentage for r in latest])
-    return ClassListDTO(
-        classes=[
-            ClassSummaryDTO(
-                id="all",
-                label="All students",
-                studentCount=len(latest),
-                average=average,
-            )
-        ]
-    )
+    visible: dict[str, RosterEntry] = {}
+    for row in service.list_classes(auth.user_id, auth.role):
+        for entry in service.roster(auth.user_id, auth.role, row.class_id):
+            visible[str(entry.student_id)] = entry
+    return visible
 
 
-@router.get("/classes/{class_id}", response_model=ClassDetailDTO)
-def get_class(
-    class_id: str,
-    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
-) -> ClassDetailDTO:
-    """Return mastery, grade distribution, and the roster for a class.
+def _acknowledgement_index(
+    ack_service: AtRiskAckService,
+    auth: AuthContext,
+    *,
+    student_ids: list[str] | None = None,
+) -> dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow]:
+    """String-keyed index of every at-risk ack the caller has recorded (D3.5).
 
-    Mastery is per-topic accuracy across the cohort's aggregate weaknesses;
-    distribution counts students by latest grade; the roster is one row per
-    student. National benchmarks and hours-saved narratives have no backend
-    source and are omitted / left ``None``.
+    Loaded once per request and threaded through ``_at_risk_flag_dto`` so
+    T-01 (overview), T-05 (student detail), and T-06 (at-risk list) all read
+    the identical acknowledged/unacknowledged state for the same flag — the
+    shared-helper discipline D3.3/D3.4 already established for "at risk"
+    itself and for weaknesses, now applied to acknowledgement (D3.5's "how to
+    apply"). Keyed by ``str`` student id (not ``uuid.UUID``) because every
+    caller here already holds a plain ``str`` id (``history.student_id``,
+    ``str(entry.student_id)``) — converting at the one shared boundary
+    avoids repeating the conversion at every call site.
+
+    ``student_ids`` narrows the underlying query to a single student for T-05
+    (which only ever needs one student's acks); omitted for T-01/T-06, which
+    need every ack the caller has recorded across their whole roster in one
+    round trip (``AtRiskAckService.load_for_teacher``'s N+1-avoidance).
     """
-    student_ids = history_store.list_students()
-    histories = [history_store.load(sid) for sid in student_ids]
-    latest = [h.records[-1] for h in histories if h.records]
-
-    rows = [row for h in histories if (row := _student_row(h)) is not None]
-
-    aggregate = _aggregate_history_weaknesses(history_store)
-    mastery = [
-        MasteryRowDTO(topic=area.topic, value=round(area.accuracy * 100))
-        for area in aggregate.weak_areas
-    ]
-
-    grade_counts: dict[str, int] = {}
-    for record in latest:
-        grade_counts[record.grade] = grade_counts.get(record.grade, 0) + 1
-    distribution = [DistributionBarDTO(grade=g, count=grade_counts.get(g, 0)) for g in _GRADE_ORDER]
-
-    average = _mean([r.percentage for r in latest])
-    at_risk = sum(1 for r in latest if r.grade in _AT_RISK_GRADES)
-    stats = [
-        StatCardDTO(
-            key="Class average",
-            value=str(round(average)) if average is not None else "—",
-            unit="%",
-            footTone="ok",
-        ),
-        StatCardDTO(key="Students", value=str(len(latest)), unit="tracked"),
-        StatCardDTO(
-            key="At risk",
-            value=str(at_risk),
-            unit="students",
-            valueTone="err" if at_risk else "t1",
-            footTone="err" if at_risk else "t2",
-        ),
-    ]
-
-    return ClassDetailDTO(
-        id=class_id,
-        label="All students",
-        stats=stats,
-        mastery=mastery,
-        distribution=distribution,
-        students=rows,
-    )
+    raw = ack_service.load_for_teacher(auth.user_id, student_ids=student_ids)
+    return {(str(student_id), reason): row for (student_id, reason), row in raw.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -1024,32 +1232,68 @@ def get_class(
 
 @router.get("/teacher/overview", response_model=OverviewDTO)
 def teacher_overview(
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    review_service: Annotated[ReviewService, Depends(get_review_service)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
 ) -> OverviewDTO:
     """Return headline stats plus at-risk students, all from history/analytics.
 
+    Scoped to the union of the caller's own classes (``_visible_students``,
+    D3.1) — this route used to call ``history_store.list_students()``, i.e.
+    *every* student in the store regardless of owner, and built each at-risk
+    student's ``name`` from the raw ``history.student_id`` (a uuid, not a
+    human name). Both were the one remaining instance of the cross-tenant leak
+    P3.1 fixed everywhere else (``/teacher/classes``, ``/classes/{id}``); this
+    closes it and names students from their real ``RosterEntry.display_name``.
+    A teacher with no classes gets a coherent empty overview (zeros, an empty
+    at-risk list), never a 500 and never someone else's students.
+
     ``retention`` (lesson-retention minutes) has no backend source and is always
-    empty. At-risk students are those whose grade is D/E/U or whose latest paper
-    fell versus their prior same-paper attempt.
+    empty. At-risk students are those flagged by the D3.3 rules engine
+    (declining trend / predicted below target / inactive) — see ``_at_risk``.
+    Each flag carries its acknowledged state (D3.5) via ``_acknowledgement_index``.
     """
-    student_ids = history_store.list_students()
-    histories = [history_store.load(sid) for sid in student_ids]
-    latest = [h.records[-1] for h in histories if h.records]
+    try:
+        visible = _visible_students(service, auth)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    histories = [
+        (history_store.load(student_id), entry.display_name)
+        for student_id, entry in visible.items()
+    ]
+    # Group mean is a percentage claim, so it sees each student's latest
+    # *paper*, never their latest quiz (``docs/quiz-model.md`` §5).
+    latest = [
+        record
+        for history, _ in histories
+        if (record := latest_grade_bearing(history.records)) is not None
+    ]
 
     average = _mean([r.percentage for r in latest])
-    needs_review = _count_review_papers()
-    at_risk_students = _at_risk(histories)
+    needs_review = _count_review_items(review_service, auth)
+    acks = _acknowledgement_index(ack_service, auth)
+    at_risk_students = _at_risk(histories, now=datetime.now(UTC), acks=acks)
+    recent_activity = _recent_activity(histories)
 
     stats = [
         StatCardDTO(
             key="Papers graded",
-            value=str(sum(len(h.records) for h in histories)),
+            # Counts papers, so ``is_paper`` (origin only) rather than
+            # ``is_grade_bearing``: a past paper whose grade came back
+            # unreadable is still a paper the student sat and this teacher had
+            # marked, but a quiz is not a paper and must not inflate the count
+            # of a card that says "papers" (``docs/quiz-model.md`` §5).
+            value=str(
+                sum(1 for history, _ in histories for record in history.records if is_paper(record))
+            ),
             unit="papers",
         ),
         StatCardDTO(
             key="Need your eyes",
             value=str(needs_review),
-            unit="papers",
+            unit="items",
             valueTone="err" if needs_review else "t1",
             footTone="err" if needs_review else "t2",
         ),
@@ -1066,35 +1310,643 @@ def teacher_overview(
             valueTone="err" if at_risk_students else "t1",
         ),
     ]
-    return OverviewDTO(stats=stats, atRisk=at_risk_students, retention=[])
-
-
-def _count_review_papers() -> int:
-    """Count stored papers currently flagged for teacher review."""
-    return sum(
-        1
-        for e in papers_store.all()
-        if e.report is not None and e.report.correction.needs_teacher_review
+    return OverviewDTO(
+        stats=stats, atRisk=at_risk_students, retention=[], recentActivity=recent_activity
     )
 
 
-def _at_risk(histories: list[StudentHistory]) -> list[AtRiskStudentDTO]:
-    """Identify at-risk students (low grade or falling trajectory) from history."""
+_RECENT_ACTIVITY_LIMIT = 8
+
+
+def _recent_activity(
+    histories: list[tuple[StudentHistory, str]], *, limit: int = _RECENT_ACTIVITY_LIMIT
+) -> list[RecentActivityDTO]:
+    """Flatten every visible student's records into one recency-sorted feed.
+
+    T-01 item 4 ("submissions across their classes", D3.12) — spans papers
+    *and* quizzes because the spec says "submissions", not "papers". Built
+    from the exact ``histories`` list ``teacher_overview`` already loaded for
+    ``stats``/``atRisk`` above; no new query. ``grade`` reads
+    ``is_grade_bearing`` per record — a quiz has no grade and reports
+    ``None`` here rather than the student's last *paper* grade, which would
+    misattribute someone else's evidence to this submission (the exact
+    mistake D3.9 exists to prevent). Sorted most-recent-first (``recorded_at``
+    strings compare correctly as ISO-8601 UTC — the same convention
+    ``lemely.core.class_analytics.cohort_trend`` already relies on) and
+    capped at ``limit`` (a dashboard tile, not a full history browser).
+    """
+    entries = [
+        (record, history.student_id, display_name)
+        for history, display_name in histories
+        for record in history.records
+    ]
+    entries.sort(key=lambda item: item[0].recorded_at, reverse=True)
+    return [
+        RecentActivityDTO(
+            studentId=student_id,
+            studentName=display_name,
+            subjectCode=record.metadata.subject_code,
+            percentage=record.percentage,
+            grade=record.grade if is_grade_bearing(record) else None,
+            recordedAt=record.recorded_at,
+            origin=record.origin,
+        )
+        for record, student_id, display_name in entries[:limit]
+    ]
+
+
+def _count_review_items(review_service: ReviewService, auth: AuthContext) -> int:
+    """Count OPEN review-queue items scoped to the caller's own students (P3.4).
+
+    Previously counted the entire in-process ``papers_store`` with no owner
+    filter at all — every teacher saw a global count including every other
+    teacher's flagged papers (the inherited P3.3 finding this closes). Now
+    sourced from the real, properly-scoped, DB-backed review queue via
+    ``ReviewService.list_queue`` (the same tenancy every other stat on this
+    route uses).
+
+    **This changes the stat's granularity**, not just its scoping: the old
+    count was per-*paper* (a paper with three flagged questions counted once);
+    this one is per-*review-queue-item*, i.e. per flagged question per reason
+    (that same paper can contribute 2-3+ rows — ``persist_correction`` writes
+    one row per (question, reason) pair, so a question flagged for both low
+    confidence and plagiarism contributes two rows). "Need your eyes" now
+    literally means "how many items are waiting in your review queue" (T-07's
+    own framing), which is arguably the more actionable number for a teacher
+    about to open that screen — but it is a real behaviour change from the
+    old paper-count semantics, called out here rather than silently swapped.
+
+    ``auth.user_id`` is already validated as a UUID by ``_visible_students``
+    above (which runs, and raises its 422, before this is called) — no
+    redundant validation here.
+    """
+    return len(review_service.list_queue(auth.user_id, auth.role))
+
+
+def _at_risk(
+    histories: list[tuple[StudentHistory, str]],
+    *,
+    now: datetime,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
+) -> list[AtRiskStudentDTO]:
+    """Identify at-risk students via the D3.3 rules engine.
+
+    ``histories`` pairs each student's history with their real
+    ``RosterEntry.display_name`` (D3.1/P3.3) — ``AtRiskStudentDTO.name`` used
+    to be the raw ``history.student_id`` (a uuid), which this signature makes
+    impossible to regress back to.
+
+    Runs ``lemely.core.at_risk.assess_at_risk`` (declining trend / predicted
+    below target / inactive, combined with OR) over each student's history. No
+    ``target_grade`` is passed — the schema has no target-grade column yet
+    (Phase 4 onboarding, D3.3) — so rule 2 is always "not evaluable" in
+    production; that is an honest, recorded limitation, not a bug. Supersedes
+    the old "grade in {D,E,U} or any negative delta" heuristic, which matched
+    none of the three specified rules and carried no reason label.
+
+    ``acks`` (D3.5, P3.4b) is the caller's :func:`_acknowledgement_index`,
+    threaded through to :func:`_at_risk_flag_dto` so this route reports the
+    identical acknowledged state T-05/T-06 do for the same flag.
+    """
     at_risk: list[AtRiskStudentDTO] = []
-    for history in histories:
+    for history, display_name in histories:
         if not history.records:
             continue
-        latest = history.records[-1]
-        delta = _student_delta(history)
-        falling = delta is not None and delta < 0
-        if latest.grade in _AT_RISK_GRADES or falling:
-            weakest = min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
-            at_risk.append(
-                AtRiskStudentDTO(
-                    name=history.student_id,
-                    grade=latest.grade,
-                    delta=delta,
-                    weakTopic=weakest.topic if weakest is not None else None,
+        assessment = assess_at_risk(history, now=now)
+        if not assessment.flags:
+            continue
+        # ``grade``/``weakTopic`` describe the student's standing, which only a
+        # real paper establishes (``docs/quiz-model.md`` §5). A student flagged
+        # purely on inactivity may legitimately have no paper at all — the
+        # flag still stands, the grade is honestly empty.
+        latest = latest_grade_bearing(history.records)
+        weakest = (
+            min(latest.weak_areas, key=lambda a: a.accuracy, default=None)
+            if latest is not None
+            else None
+        )
+        at_risk.append(
+            AtRiskStudentDTO(
+                name=display_name,
+                grade=latest.grade if latest is not None else "",
+                delta=_student_delta(history),
+                weakTopic=weakest.topic if weakest is not None else None,
+                flags=[
+                    _at_risk_flag_dto(flag, student_id=history.student_id, acks=acks)
+                    for flag in assessment.flags
+                ],
+            )
+        )
+    return at_risk
+
+
+def _at_risk_flag_dto(
+    flag: AtRiskFlag,
+    *,
+    student_id: str,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
+) -> AtRiskFlagDTO:
+    """Convert a core ``AtRiskFlag`` to its wire DTO.
+
+    Core evidence models are snake_case (D2.2-style domain naming); this
+    module's DTOs are camelCase throughout (mirrors the frontend TS types), so
+    the evidence dict keys are translated explicitly rather than passed through
+    ``model_dump()`` verbatim.
+
+    **The single point that populates ``acknowledged`` (D3.5, P3.4b).** Every
+    teacher-facing caller (the overview, student detail, the at-risk list)
+    must route through here rather than checking ``acks`` itself — that is
+    exactly the shared-helper discipline D3.5's "how to apply" note demands,
+    and the reason this function takes ``student_id``/``acks`` instead of
+    staying a pure ``AtRiskFlag -> AtRiskFlagDTO`` converter: bolting the ack
+    lookup onto three call sites independently is precisely how "at risk" and
+    "weaknesses" each drifted once before (D3.3/D3.4). A flag reads
+    acknowledged only when a stored ack exists for
+    ``(student_id, flag.reason)`` **and** its ``evidence_fingerprint`` still
+    equals :func:`~lemely.core.at_risk.flag_fingerprint` of *this* flag — an
+    ack whose evidence has moved on is silently treated as absent, never
+    surfaced as stale reassurance.
+    """
+    ack = acks.get((student_id, flag.reason))
+    acknowledged: AtRiskAcknowledgementDTO | None = None
+    if ack is not None and ack.evidence_fingerprint == flag_fingerprint(flag):
+        acknowledged = AtRiskAcknowledgementDTO(
+            acknowledgedBy=str(ack.acknowledged_by),
+            acknowledgedAt=ack.acknowledged_at.isoformat(),
+            note=ack.note,
+        )
+    evidence = flag.evidence
+    payload: dict[str, float | int | str | list[float]]
+    if isinstance(evidence, DecliningTrendEvidence):
+        payload = {"percentages": evidence.percentages}
+    elif isinstance(evidence, BelowTargetEvidence):
+        payload = {
+            "targetGrade": evidence.target_grade,
+            "predictedGrade": evidence.predicted_grade,
+            "positionsBelow": evidence.positions_below,
+        }
+    elif isinstance(evidence, InactivityEvidence):
+        payload = {
+            "daysInactive": evidence.days_inactive,
+            "lastActiveAt": evidence.last_active_at,
+        }
+    else:
+        raise TypeError(f"Unhandled AtRiskFlag evidence type: {type(evidence)!r}")
+    return AtRiskFlagDTO(
+        reason=flag.reason.value,
+        summary=flag.summary,
+        evidence=payload,
+        acknowledged=acknowledged,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Student detail (teacher view) — T-05.
+# ---------------------------------------------------------------------------
+
+
+def _parse_recorded_at(value: str) -> datetime | None:
+    """Defensively parse a ``PaperRecord.recorded_at`` ISO string.
+
+    A private per-module copy, matching the existing convention: both
+    ``lemely.core.at_risk`` and ``lemely.core.class_analytics`` (and
+    ``lemely.db.history_repo``/``lemely.db.attempt_repo``) each carry their own
+    copy of this exact defensive-parse rather than reaching across modules for
+    a leading-underscore helper.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def _subject_predictions(history: StudentHistory) -> list[SubjectPredictionDTO]:
+    """Group a student's history by subject and report the latest grade/pct.
+
+    ``predictedGrade`` is the student's latest recorded grade for that
+    subject — the same domain notion of "predicted grade"
+    ``lemely.core.at_risk`` already uses for its below-target rule
+    (``history.records[-1].grade``), not a second, differently-computed
+    forecast that could disagree with the at-risk engine's own reading of the
+    same data.
+
+    Grade-bearing records only, for exactly that reason: ``at_risk``'s
+    below-target rule filters the same way (``docs/quiz-model.md`` §5), so
+    reading quizzes here would make this screen's predicted grade disagree
+    with the at-risk badge sitting beside it. A subject with only quiz
+    activity produces no row at all rather than a row predicting ``""``.
+    """
+    by_subject: dict[str, list[PaperRecord]] = {}
+    for record in grade_bearing(history.records):
+        by_subject.setdefault(record.metadata.subject_code, []).append(record)
+    return [
+        SubjectPredictionDTO(
+            subjectCode=code,
+            predictedGrade=records[-1].grade,
+            latestPercentage=records[-1].percentage,
+            paperCount=len(records),
+        )
+        for code, records in sorted(by_subject.items())
+    ]
+
+
+def _paper_id(record: PaperRecord) -> str:
+    """Human paper identity: ``"0625/32"`` (subject/paper+variant)."""
+    m = record.metadata
+    return f"{m.subject_code}/{m.paper_number}{m.paper_variant}"
+
+
+def _attempt_dto(record: PaperRecord) -> AttemptDTO:
+    """Convert one recorded paper into its T-05 attempt-history row."""
+    m = record.metadata
+    return AttemptDTO(
+        paperId=_paper_id(record),
+        subjectCode=m.subject_code,
+        paperNumber=m.paper_number,
+        paperVariant=m.paper_variant,
+        awardedMarks=record.awarded_marks,
+        maximumMarks=record.maximum_marks,
+        percentage=record.percentage,
+        grade=record.grade,
+        recordedAt=record.recorded_at,
+    )
+
+
+def _student_engagement_dto(history: StudentHistory, *, now: datetime) -> StudentEngagementDTO:
+    """This student's own activity stats, purely from ``recorded_at`` values.
+
+    ``lastActiveAt``/``daysSinceLastSubmission`` read **all** records: a quiz
+    is activity, and ``at_risk``'s inactivity rule counts it the same way
+    (``docs/quiz-model.md`` §5) — a screen that told a teacher a student had
+    been silent for 20 days while the at-risk engine saw them last week would
+    be reporting on a different student than the badge next to it.
+    ``totalPapers`` says *papers*, so it counts only those (``is_paper``).
+    """
+    if not history.records:
+        return StudentEngagementDTO(totalPapers=0, lastActiveAt=None, daysSinceLastSubmission=None)
+    last = history.records[-1]
+    last_active = _parse_recorded_at(last.recorded_at)
+    days_since = (now - last_active).days if last_active is not None else None
+    return StudentEngagementDTO(
+        totalPapers=sum(1 for record in history.records if is_paper(record)),
+        lastActiveAt=last.recorded_at,
+        daysSinceLastSubmission=days_since,
+    )
+
+
+def _student_detail_dto(
+    entry: RosterEntry,
+    history: StudentHistory,
+    *,
+    now: datetime,
+    acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
+) -> StudentDetailDTO:
+    """Build the T-05 student-detail DTO from one student's real history.
+
+    Reuses ``aggregate_weaknesses_from_history`` (weaknesses),
+    ``assess_at_risk``/``_at_risk_flag_dto`` (at-risk status — never a second,
+    re-implemented translation), and this module's own subject/attempt/
+    engagement helpers. Integrity signals are deliberately absent: see the
+    route docstring. ``acks`` (D3.5, P3.4b) threads the caller's
+    :func:`_acknowledgement_index` through to ``_at_risk_flag_dto`` so this
+    screen reports the identical acknowledged state T-01/T-06 do.
+    """
+    assessment = assess_at_risk(history, now=now)
+    student_id = str(entry.student_id)
+    # ``attempts``/``trend`` are the paper-history table and the percentage
+    # sparkline — both paper-comparison claims, both grade-bearing only
+    # (``docs/quiz-model.md`` §5). A quiz listed here would render as
+    # "0625/11", the synthetic paper identity the marking call needed, against
+    # a percentage out of a quiz total. ``weaknesses`` below is deliberately
+    # unfiltered: a weakness is a weakness whatever revealed it.
+    paper_records = grade_bearing(history.records)
+    return StudentDetailDTO(
+        studentId=student_id,
+        displayName=entry.display_name,
+        subjects=_subject_predictions(history),
+        attempts=[_attempt_dto(r) for r in reversed(paper_records)],
+        weaknesses=[
+            StudentWeaknessDTO(
+                topic=w.topic,
+                lostMarks=w.lost_marks,
+                maximumMarks=w.maximum_marks,
+                accuracy=w.accuracy,
+                questionIds=w.question_ids,
+            )
+            for w in aggregate_weaknesses_from_history(history).weak_areas
+        ],
+        trend=[
+            StudentTrendPointDTO(recordedAt=r.recorded_at, percentage=r.percentage)
+            for r in paper_records
+        ],
+        isAtRisk=assessment.is_at_risk,
+        atRiskFlags=[
+            _at_risk_flag_dto(flag, student_id=student_id, acks=acks) for flag in assessment.flags
+        ],
+        engagement=_student_engagement_dto(history, now=now),
+    )
+
+
+@router.get("/teacher/students/{student_id}", response_model=StudentDetailDTO)
+def teacher_student_detail(
+    student_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+) -> StudentDetailDTO:
+    """Return T-05's full student detail for one student (P3.3).
+
+    Subjects and predicted grades, full attempt history, weakness list with
+    evidence, this student's own trend series, at-risk status with reasons and
+    evidence (reusing ``assess_at_risk``/``_at_risk_flag_dto``), and
+    activity/engagement. Each at-risk flag's acknowledged state (D3.5,
+    P3.4b) is populated identically to T-01/T-06.
+
+    **Authz is the whole point of this route.** A teacher/school_admin may see
+    a student ONLY if that student is enrolled in one of the caller's own
+    classes (``_visible_students`` — the union of every roster the caller may
+    see, D3.1). A student who exists but is in nobody's class the caller
+    owns/administers is a 403; a student id matching no user at all is a 404;
+    a malformed (non-UUID) id is a clean 422. platform_admin always sees no
+    classes (``ClassService.list_classes``), so this is always 403 for them —
+    no super-role bypass (D1.6/D1.10).
+
+    Note honestly what that 403-vs-404 split *is*: a user-existence oracle. An
+    authenticated staff caller who probes an id learns whether it belongs to a
+    real user, even when they may not see that user. This is a deliberate,
+    accepted trade — it matches the class routes' established behaviour
+    (``get_class``), and user ids are random 122-bit UUIDs, so enumerating
+    them is infeasible rather than merely discouraged. It is recorded here
+    because the alternative (collapsing both to 404) is the textbook advice,
+    and a future reader should see that the deviation was a decision, not an
+    oversight. No student *data* crosses a tenancy boundary either way.
+
+    **Integrity signals are deliberately omitted from the response**, not
+    stubbed as an always-empty field: a persisted :class:`PaperRecord` carries
+    only totals, weak-areas, and metadata, never the per-question answers
+    that plagiarism/AI-content detection needs (those checks run only in the
+    live, in-process ``/papers/{id}/grade`` flow, whose paper store is keyed by
+    an ephemeral paper id, not yet a verified real-student identity — see
+    ``upload_paper``'s docstring). There is nothing honest to compute here.
+    """
+    try:
+        visible = _visible_students(service, auth)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    entry = visible.get(student_id)
+    if entry is not None:
+        history = history_store.load(student_id)
+        acks = _acknowledgement_index(ack_service, auth, student_ids=[student_id])
+        return _student_detail_dto(entry, history, now=datetime.now(UTC), acks=acks)
+    try:
+        exists = service.user_exists(student_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not exists:
+        raise HTTPException(status_code=404, detail=f"Unknown student: {student_id}")
+    raise HTTPException(
+        status_code=403, detail=f"Student {student_id} is not in any of the caller's classes"
+    )
+
+
+# ---------------------------------------------------------------------------
+# At-risk list — T-06.
+# ---------------------------------------------------------------------------
+
+
+def _grade_severity_rank(grade: str) -> int:
+    """Position of ``grade`` on the ladder (0 = A*, higher = worse).
+
+    An unrecognised grade defensively ranks as the mildest possible (``-1``),
+    mirroring ``lemely.core.at_risk``'s "unrecognised = not fired" judgment
+    call rather than crashing the sort.
+    """
+    return _GRADE_ORDER.index(grade) if grade in _GRADE_ORDER else -1
+
+
+def _at_risk_severity_key(entry: AtRiskListEntryDTO) -> tuple[int, int]:
+    """Sort key for T-06: most flags first, then worst grade first.
+
+    Documented severity definition (per the P3.3 brief): **flag count
+    descending**, then **worst latest grade** (furthest down
+    ``GRADE_ORDER``) **first**. A student flagged by all three D3.3 rules
+    outranks one flagged by one rule regardless of grade; among
+    equally-flagged students, the one with the worse grade surfaces first.
+    """
+    return (-len(entry.flags), -_grade_severity_rank(entry.grade))
+
+
+@router.get("/teacher/at-risk", response_model=AtRiskListDTO)
+def teacher_at_risk_list(
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+    reason: str | None = None,
+    acknowledged: bool | None = None,
+) -> AtRiskListDTO:
+    """Return every flagged student across the caller's own classes (T-06).
+
+    Reuses ``assess_at_risk`` (never a fourth at-risk heuristic) over each
+    roster entry in each class the caller owns/administers — never a student
+    outside that scope, and never every student in the store. ``reason``
+    (optional query param) filters to students carrying at least one flag
+    whose ``AtRiskReason.value`` matches; an unrecognised reason value simply
+    yields no matches, never a 500. Sorted by severity — see
+    ``_at_risk_severity_key`` for the exact, documented definition.
+
+    ``acknowledged`` (P3.4b/D3.5) filters to students carrying at least one
+    flag whose acknowledged state (see ``_at_risk_flag_dto``) matches; a
+    student flagged by both an acknowledged and an unacknowledged reason
+    passes either filter, and — mirroring ``reason``'s existing
+    entry-vs-flag granularity — the ``flags`` list on a matching entry still
+    carries *every* flag for that student, not just the matching one (D3.5:
+    an acknowledged flag is never removed from a response, only tagged).
+    Omitting the parameter returns both states, unfiltered.
+    """
+    try:
+        rows = service.list_classes(auth.user_id, auth.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    now = datetime.now(UTC)
+    acks = _acknowledgement_index(ack_service, auth)
+    entries: list[AtRiskListEntryDTO] = []
+    for row in rows:
+        roster = service.roster(auth.user_id, auth.role, row.class_id)
+        for roster_entry in roster:
+            student_id = str(roster_entry.student_id)
+            history = history_store.load(student_id)
+            if not history.records:
+                continue
+            assessment = assess_at_risk(history, now=now)
+            if not assessment.flags:
+                continue
+            if reason is not None and reason not in {f.reason.value for f in assessment.flags}:
+                continue
+            flags_dto = [
+                _at_risk_flag_dto(flag, student_id=student_id, acks=acks)
+                for flag in assessment.flags
+            ]
+            if acknowledged is not None and not any(
+                (f.acknowledged is not None) == acknowledged for f in flags_dto
+            ):
+                continue
+            # Latest *paper* grade, matching the overview's at-risk rows
+            # exactly (``_at_risk`` above); empty when the student has only
+            # quiz activity (``docs/quiz-model.md`` §5).
+            latest_paper = latest_grade_bearing(history.records)
+            entries.append(
+                AtRiskListEntryDTO(
+                    studentId=student_id,
+                    displayName=roster_entry.display_name,
+                    classId=str(row.class_id),
+                    className=row.name,
+                    grade=latest_paper.grade if latest_paper is not None else "",
+                    flags=flags_dto,
                 )
             )
-    return at_risk
+    entries.sort(key=_at_risk_severity_key)
+    return AtRiskListDTO(students=entries)
+
+
+# ---------------------------------------------------------------------------
+# Acknowledge / un-acknowledge an at-risk flag — T-06 (P3.4b, D3.5).
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/teacher/at-risk/{student_id}/acknowledge",
+    response_model=AtRiskFlagDTO,
+)
+def acknowledge_at_risk_flag(
+    student_id: str,
+    body: AcknowledgeAtRiskRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+) -> AtRiskFlagDTO:
+    """Acknowledge one currently-firing at-risk flag with an optional note (T-06).
+
+    Upserts: acknowledging a reason already acknowledged just refreshes the
+    note and re-pins the evidence fingerprint to whatever is firing right now
+    (harmless — it is already firing, by construction of this route, so the
+    fingerprint cannot change under it in the same request).
+
+    Authz mirrors ``teacher_student_detail``: a student outside the union of
+    the caller's own classes is a 403; an id matching no user anywhere is a
+    404; a malformed (non-UUID) id is a clean 422 (see that route's docstring
+    for the full 403-vs-404 rationale, which applies identically here).
+
+    **Rejects acknowledging a reason that is not currently firing (422).**
+    Flags are derived, not stored (D3.3) — there is no persistent flag to
+    "acknowledge" unless ``assess_at_risk`` is, right now, actually raising
+    ``body.reason`` for this student. This also rejects an unrecognised
+    ``reason`` string (not one of ``AtRiskReason``'s values) with the same
+    422, since by definition it cannot be firing.
+    """
+    try:
+        visible = _visible_students(service, auth)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    entry = visible.get(student_id)
+    if entry is None:
+        try:
+            exists = service.user_exists(student_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"Unknown student: {student_id}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Student {student_id} is not in any of the caller's classes",
+        )
+
+    try:
+        reason_enum = AtRiskReason(body.reason)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"Unknown at-risk reason: {body.reason!r}"
+        ) from exc
+
+    history = history_store.load(student_id)
+    assessment = assess_at_risk(history, now=datetime.now(UTC))
+    flag = next((f for f in assessment.flags if f.reason == reason_enum), None)
+    if flag is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Reason {reason_enum.value!r} is not currently firing for this student",
+        )
+
+    fingerprint = flag_fingerprint(flag)
+    try:
+        ack_service.acknowledge(
+            auth.user_id,
+            auth.role,
+            student_id,
+            reason_enum,
+            fingerprint,
+            note=body.note,
+        )
+    except AtRiskAckOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    acks = _acknowledgement_index(ack_service, auth, student_ids=[student_id])
+    return _at_risk_flag_dto(flag, student_id=student_id, acks=acks)
+
+
+@router.delete(
+    "/teacher/at-risk/{student_id}/acknowledge/{reason}",
+    status_code=204,
+)
+def unacknowledge_at_risk_flag(
+    student_id: str,
+    reason: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+) -> None:
+    """Remove an acknowledgement (T-06). Idempotent.
+
+    A flag with no stored acknowledgement (or an already-unacknowledged one)
+    still returns 204. Authz mirrors ``acknowledge_at_risk_flag``: a student outside the
+    caller's classes is a 403. Does not require the reason to currently be
+    firing (unlike the POST) — un-acknowledging is always safe to attempt,
+    even for a reason that has since stopped firing entirely (e.g. the
+    student is no longer inactive); there is nothing left to protect by
+    rejecting it.
+    """
+    try:
+        visible = _visible_students(service, auth)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    entry = visible.get(student_id)
+    if entry is None:
+        try:
+            exists = service.user_exists(student_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"Unknown student: {student_id}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Student {student_id} is not in any of the caller's classes",
+        )
+
+    try:
+        reason_enum = AtRiskReason(reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Unknown at-risk reason: {reason!r}") from exc
+
+    try:
+        ack_service.unacknowledge(auth.user_id, auth.role, student_id, reason_enum)
+    except AtRiskAckOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

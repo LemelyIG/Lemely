@@ -121,12 +121,15 @@ def request_otp(
 
     A re-request inside the resend cooldown is a 429 (not a 500): the cooldown
     stops a caller resetting the brute-force attempt counter by spamming issues.
+
+    ``devCode`` is populated only by an SMS provider that does not deliver out of
+    band (the offline mock) — see :class:`OtpRequestResponseDTO` and D3.16.
     """
     try:
-        service.request_otp(body.phone)
+        dev_code = service.request_otp(body.phone)
     except OtpRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    return OtpRequestResponseDTO()
+    return OtpRequestResponseDTO(devCode=dev_code)
 
 
 @router.post("/auth/otp/verify", response_model=TokenResponseDTO)

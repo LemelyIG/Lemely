@@ -49,7 +49,7 @@ class PostNtfyTests(unittest.TestCase):
             ok = notify.post_ntfy("body text", title="T", priority="high")
 
         self.assertTrue(ok)
-        self.assertEqual(opened["url"], "https://ntfy.sh/my-topic")
+        self.assertEqual(opened["url"], "http://home-server/my-topic")
         self.assertEqual(opened["data"], b"body text")
         # urllib title-cases header keys.
         self.assertEqual(opened["headers"].get("Title"), "T")
