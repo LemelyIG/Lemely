@@ -868,3 +868,31 @@ linked children only.
   five minutes every time a chunk mutates rows.
 - Next: P3.8 chunk c — T-09 quiz builder stepped flow, replacing the mock `Quizzes.tsx`;
   `portals/teacher/data.ts` should be gone by the end of it.
+
+## 2026-08-07 — P3.8 chunk c (T-09 quiz builder)
+
+- Did: resumed onto a dirty tree carrying a near-complete chunk c (QuizBuilder.tsx,
+  a new C-15 Stepper, the rewritten Quizzes.tsx, and the client hooks/types). Rather
+  than wip-committing it blind, verified it first: all 12 gates green, then committed
+  it properly (7b80532), then ran the live-stack verification the chunk still owed.
+- Did: 6/6 green against the real Alembic-migrated stack — list empty state, the full
+  six-step walk, draft-resume-at-`builderStep`, and 380/768/1440 — each asserting zero
+  serious/critical axe violations, zero console errors, no horizontal scroll. Followed
+  by the direct Postgres check: every step's field persisted, `quiz_questions` carry
+  **copied** prompt text with `question_bank_id` as provenance only (§1.5), the
+  assignment row converted the local due date to UTC correctly, and `status` reached
+  `assigned` without the UI ever posting `/status` — D3.15's claim, now evidenced.
+- Learned: the plan line "data.ts should be gone by the end of chunk c" was simply
+  wrong — `navItems` and the `StatCard` interface have two other real importers. The
+  previous session caught it and corrected the plan in the file's header rather than
+  deleting the file to satisfy a checklist. Corrected in STATE.md too.
+- Learned: `text-t3` at 10-13px measures 4.36:1, under WCAG AA's 4.5:1. This screen
+  sidesteps it with `text-t2`, but every other teacher screen still emits it — invisible
+  only because `audit.mjs` is still scoped to D2.10's four *student* routes. That makes
+  P3.10's carried item (a) a correctness fix, not housekeeping: the gate currently
+  passes by never looking.
+- Learned: seeding cost three iterations on field names alone (`ClassRow.class_id` not
+  `.id`; `QuestionBank.total_marks`/`difficulty_source` not `.marks`). Recorded in
+  STATE.md so chunk d doesn't pay for it again.
+- Next: P3.8 chunk d — T-10 quiz results + T-12 announcement composer. `useSetQuizStatus`
+  is already written and waiting for the results screen to consume it.

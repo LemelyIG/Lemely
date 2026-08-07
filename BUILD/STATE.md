@@ -824,18 +824,77 @@ Starting facts (established 2026-08-06, do not re-derive):
             rejects it as an extra input. And `./scripts/check.sh` needs
             `source .venv/bin/activate` as well as the `PATH` fix, or all five backend gates
             report "command not found" as FAIL.
-      - [ ] **doing** **c** — T-09 quiz builder stepped flow (replaces mock `Quizzes.tsx`).
-            **Design fixed before starting (D3.15) — implement it, do not redesign.**
-            Step→field map: 1 title/subjectCode/timeLimit (`POST ""` then `PATCH`), 2
-            `includedTopics`, 3 `targetGrade`, 4 `poolSource` + `GET /pool-count`, 5
-            `POST /{id}/questions/generate` + `DELETE /{id}/questions/{ref}`, 6
-            `POST /{id}/assignments` (class + dueAt + closesAt live HERE, not step 1 —
-            `quizzes` has no such columns; D3.15). `create_assignment` already flips
-            `draft→assigned` itself, so the UI must NOT also `POST /{id}/status`.
-            Topics: free text + suggestions from `ClassSummary.topWeakness`; never
-            `GET /api/quizzes/topics` (global cross-tenant aggregate). Delete the mock's
-            "Predicted class average" — invented precision, no data source.
+      - [x] **c** done (7b80532) — T-09 quiz builder on the real quiz API, implementing
+            D3.15's step map exactly. `Quizzes.tsx` rewritten as a real quiz list
+            (`GET /teacher/quizzes`) whose "New quiz" form creates a real draft row
+            immediately (no client-side unsaved state); new `screens/QuizBuilder.tsx`
+            (route `/teacher/quizzes/:quizId`); new C-15 `Stepper`
+            (`components/ui/stepper.tsx`), catalogued. **Zero backend files touched:
+            1863 tests / 89.34% cov, unchanged from chunk a.** All 12 gates green.
+            **Do not reintroduce / do not "tidy" away:**
+            (a) The active step lives in `?step=n` and is persisted to `quiz.builderStep`
+            by the *same* `PATCH` that saves the step's fields, through one
+            `goToStep(next, extra?)`. That single-request coupling is what makes
+            "draft saving throughout" real — leaving mid-flow resumes at the step left,
+            not step 1. A failed PATCH shows an inline banner and does **not** roll the
+            visible step back (only the resume point is at risk, never the teacher's
+            unsaved form state).
+            (b) `subjectCode` renders read-only on step 1: it is fixed at creation and has
+            no `UpdateQuizDraftRequest` field, so an editable input would be wired to a
+            PATCH that silently drops it.
+            (c) A non-draft quiz is read-only on steps 1-5 (every write 422s once out of
+            `draft`), but step 6 stays live — `create_assignment`/`delete_assignment` have
+            their own independent preconditions. Narrower than "opens read-only" read
+            literally; deliberate.
+            (d) The builder never posts `/status`. `create_assignment` flips
+            `draft→assigned` itself — **verified in Postgres** (`status = assigned` after
+            assigning, with no status call made).
+            **Verified end-to-end against the live Alembic-migrated stack** (throwaway seed
+            + spec, both deleted after use — do not look for them): 6/6 green across the
+            list empty state, the full six-step walk, draft-resume-at-`builderStep`, and
+            all three breakpoints, each asserting zero serious/critical axe violations,
+            zero console errors, and no horizontal scroll at 380/768/1440.
+            **Independent Postgres check of the writes** (the D3.13 lesson — a green UI is
+            not evidence of a correct write): every step's field landed —
+            `time_limit_minutes 45`, `included_topics ["Thermal physics"]`,
+            `target_grade C`, `pool_source past_paper`, `requested_count 6`,
+            `builder_step 6`, `status assigned`; 6 `quiz_questions` rows, all `included`,
+            6 distinct `question_ref`s, prompt text **copied** with `question_bank_id`
+            retained as provenance only (§1.5); the `quiz_assignments` row carries the
+            right class, `assigned_by`, `due_at` correctly converted local→UTC, and
+            `closes_at` NULL because it was left blank; difficulty mix for target C came
+            back 3 standard / 2 foundation / 1 challenge — three bands, honouring
+            "every target keeps at least two difficulty bands in play".
+            **`data.ts` is NOT gone — this line's own plan above was wrong.** It still
+            exports `navItems` and the `StatCard` interface, which
+            `portals/teacher/index.tsx` and `components/StatCard.tsx` import; deleting the
+            file would break both. Every *mock-data* export it held is gone. The file's
+            header records this.
+            **`useSetQuizStatus` is implemented and exported but has no consumer yet** —
+            quiz-level close/archive belongs to chunk d's results screen, not to the
+            builder. Wire it there rather than deleting it.
+            **Two pre-existing defects surfaced here, neither introduced by this chunk and
+            neither in scope to fix:** (i) `text-t3` at 10-13px measures 4.36:1 against the
+            default surface, below WCAG AA's 4.5:1 — this screen uses `text-t2` throughout
+            to avoid emitting it, but `Classes.tsx`/`ReviewItem.tsx` and every other
+            teacher screen still use `text-t3` for identical caption text and would fail
+            the same check; they are simply outside D2.10's fixed 4-route audit scope.
+            Fixing the `--t3` token or retrofitting those screens is **P3.10** work (it
+            belongs with carried item (a) — extending `audit.mjs` past the 4 student
+            routes is what would have caught this).
+            (ii) `EmptyState` renders its heading as plain text, not a heading element —
+            the "non-heading empty/error tags" gap already listed in the Phase-2.5 report
+            §8 deferred set. Confirmed still present; still deferred.
       - [ ] **d** todo — T-10 quiz results + T-12 announcement composer screen.
+            Reuse chunk c's verification recipe: seed a teacher via `AuthService.signup`
+            directly (self-service signup is student-only) in a script run with
+            `LEMELY_SUPABASE__ANON_KEY`/`__SERVICE_ROLE_KEY` exported from
+            `supabase status -o env` (never `LEMELY_AUTH__JWT_SECRET` — `Settings` rejects
+            it), drive a throwaway spec in `web/e2e/`, then **delete the spec** (a stale
+            one fails `check.sh`'s Playwright gate), and confirm the mutations in Postgres
+            with `docker exec supabase_db_Lemely psql -U postgres -d postgres`.
+            Note `ClassRow`'s field is `class_id`, not `id`, and `QuestionBank` takes
+            `total_marks`/`difficulty_source`, not `marks`.
 - [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
 - [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
