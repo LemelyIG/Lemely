@@ -98,7 +98,7 @@ export function Classes() {
     return (
       <div className="lm-screen flex flex-col gap-5 min-w-0">
         <h1 className="sr-only">Classes</h1>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading classes…
         </div>
       </div>
@@ -181,10 +181,10 @@ export function Classes() {
     <div className="lm-screen flex flex-col gap-5 min-w-0">
       <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-3">
         <div>
-          <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t3">
+          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
             {classes.length} class{classes.length === 1 ? "" : "es"}
           </div>
-          <h1 className="font-serif text-[34px] leading-[1.1] mt-1.5">Classes</h1>
+          <h1 className="text-display-md mt-1.5">Classes</h1>
         </div>
         <div className="flex-1" />
         <label className="flex flex-col gap-1">
@@ -194,7 +194,7 @@ export function Classes() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search classes or subjects…"
-            className="border border-border bg-surface rounded-lg px-3.5 py-2 text-[13px] w-[240px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3.5 py-2 text-dense w-[240px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           />
         </label>
         <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
@@ -205,32 +205,32 @@ export function Classes() {
       {showCreate ? (
         <form
           onSubmit={handleCreate}
-          className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-wrap items-end gap-3"
+          className="bg-surface border border-border rounded-lg p-[18px] flex flex-wrap items-end gap-3"
         >
-          <label className="flex flex-col gap-1.5 text-[12.5px] text-t2 flex-1 min-w-[200px]">
+          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 flex-1 min-w-[200px]">
             Class name
             <input
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Y11 Physics"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             />
           </label>
-          <label className="flex flex-col gap-1.5 text-[12.5px] text-t2 w-[180px]">
+          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 w-[180px]">
             Subject code (optional)
             <input
               value={subjectCode}
               onChange={(e) => setSubjectCode(e.target.value)}
               placeholder="e.g. 0625"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             />
           </label>
           <Button type="submit" variant="ink" disabled={createClass.isPending}>
             {createClass.isPending ? "Creating…" : "Create class"}
           </Button>
           {createClass.isError ? (
-            <div className="text-[12.5px] text-err w-full">
+            <div className="text-dense-sm text-err w-full">
               Couldn't create the class: {createClass.error.message}
             </div>
           ) : null}
@@ -245,7 +245,7 @@ export function Classes() {
         />
       ) : (
         <div
-          className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0"
+          className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
           // `tabIndex`/`role`/`aria-label` are required, not decorative: a
           // horizontally scrollable container no keyboard user can reach or
           // scroll is axe's serious `scrollable-region-focusable`. Chunk c hit
@@ -257,10 +257,10 @@ export function Classes() {
           role="region"
           aria-label="Your classes, scrollable horizontally"
         >
-          <table className="w-full text-[13px] border-collapse">
+          <table className="w-full text-dense border-collapse">
             <caption className="sr-only">Your classes, sortable by every column</caption>
             <thead>
-              <tr className="bg-[oklch(0.965_0.012_78)] border-b border-border">
+              <tr className="bg-surface-2 border-b border-border">
                 {COLUMNS.map((col) => {
                   const active = col.key === sortColumn
                   return (
@@ -273,7 +273,7 @@ export function Classes() {
                       <button
                         type="button"
                         onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 font-mono text-[10px] tracking-[0.09em] uppercase text-t3 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
+                        className="inline-flex items-center gap-1 font-mono text-3xs tracking-[0.09em] uppercase text-t3 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
                       >
                         {col.label}
                         {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
@@ -289,7 +289,7 @@ export function Classes() {
             <tbody>
               {sorted.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1} className="px-[18px] py-6 text-t2 text-[13px]">
+                  <td colSpan={COLUMNS.length + 1} className="px-[18px] py-6 text-t2 text-dense">
                     No classes match "{search}".
                   </td>
                 </tr>
@@ -303,7 +303,7 @@ export function Classes() {
                             autoFocus
                             value={editName}
                             onChange={(e) => setEditName(e.target.value)}
-                            className="border border-border bg-surface rounded-lg px-2.5 py-1.5 text-[13px] text-t1 w-[160px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                            className="border border-border bg-surface rounded-lg px-2.5 py-1.5 text-dense text-t1 w-[160px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                           />
                           <Button
                             size="sm"
@@ -323,21 +323,21 @@ export function Classes() {
                         </Link>
                       )}
                     </td>
-                    <td className="px-[18px] py-[13px] font-mono text-[12.5px] text-t2">
+                    <td className="px-[18px] py-[13px] font-mono text-dense-sm text-t2">
                       {c.subjectCode ?? "—"}
                     </td>
-                    <td className="px-[18px] py-[13px] font-mono text-[12.5px]">{c.studentCount}</td>
-                    <td className="px-[18px] py-[13px] font-mono text-[12.5px]">
+                    <td className="px-[18px] py-[13px] font-mono text-dense-sm">{c.studentCount}</td>
+                    <td className="px-[18px] py-[13px] font-mono text-dense-sm">
                       {c.average != null ? `${Math.round(c.average)}%` : "—"}
                     </td>
-                    <td className="px-[18px] py-[13px] text-[12.5px] text-t2">
+                    <td className="px-[18px] py-[13px] text-dense-sm text-t2">
                       {c.lastActivityAt ? relativeTime(c.lastActivityAt) : "No activity yet"}
                     </td>
                     <td className="px-[18px] py-[13px]">
                       {c.atRiskCount ? (
                         <Chip tone="err">{c.atRiskCount}</Chip>
                       ) : (
-                        <span className="font-mono text-[12.5px] text-t3">0</span>
+                        <span className="font-mono text-dense-sm text-t3">0</span>
                       )}
                     </td>
                     <td className="px-[18px] py-[13px] text-right whitespace-nowrap">
@@ -367,12 +367,12 @@ export function Classes() {
       )}
 
       {deleteClass.isError ? (
-        <div className="text-[12.5px] text-err">
+        <div className="text-dense-sm text-err">
           Couldn't delete the class: {deleteClass.error.message}
         </div>
       ) : null}
       {updateClass.isError ? (
-        <div className="text-[12.5px] text-err">
+        <div className="text-dense-sm text-err">
           Couldn't rename the class: {updateClass.error.message}
         </div>
       ) : null}

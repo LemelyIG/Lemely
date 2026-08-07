@@ -56,10 +56,10 @@ const CIRC = 2 * Math.PI * 42
 const PIPE_MARK = { done: "✓", active: "●", idle: "" } as const
 
 const CHIP_TONE: Record<PaperKind, string> = {
-  graded: "bg-ok-bg text-[oklch(0.36_0.09_152)]",
-  review: "bg-err-bg text-[oklch(0.40_0.10_22)]",
-  processing: "bg-accent-subtle text-[oklch(0.42_0.10_68)]",
-  queued: "bg-[oklch(0.93_0.008_78)] text-t2",
+  graded: "bg-ok-bg text-ok",
+  review: "bg-err-bg text-err",
+  processing: "bg-accent-subtle text-accent-subtle-on",
+  queued: "bg-surface-2 text-t2",
 }
 
 type TabId = "all" | "review" | "graded" | "processing"
@@ -133,28 +133,28 @@ function PaperCard({
         }
       }}
       className={cn(
-        "rounded-[13px] overflow-hidden bg-surface cursor-pointer transition-transform hover:-translate-y-0.5 border",
-        paper.kind === "review" ? "border-[oklch(0.84_0.06_22)]" : "border-border",
+        "rounded-md overflow-hidden bg-surface cursor-pointer transition-transform hover:-translate-y-0.5 border",
+        paper.kind === "review" ? "border-err" : "border-border",
       )}
     >
-      <div className="relative h-[64px] bg-[oklch(0.975_0.008_78)] border-b border-border overflow-hidden">
+      <div className="relative h-[64px] bg-surface-2 border-b border-border overflow-hidden">
         {paper.kind === "review" ? (
-          <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-[10px] flex items-center justify-center font-mono">
+          <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-3xs flex items-center justify-center font-mono">
             !
           </div>
         ) : null}
         {showSpinner ? (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-[26px] h-[26px] rounded-full border-[3px] border-[oklch(0.90_0.012_78)] border-t-accent animate-spin" />
+            <div className="w-[26px] h-[26px] rounded-full border-[3px] border-border border-t-accent animate-spin" />
           </div>
         ) : null}
       </div>
       <div className="px-[13px] py-3">
         <div className="flex items-center gap-2">
-          <div className="text-[13.5px] font-medium flex-1">{paper.name}</div>
+          <div className="text-dense-lg font-medium flex-1">{paper.name}</div>
           <div
             className={cn(
-              "text-[10.5px] rounded-full px-[9px] py-0.5",
+              "text-3xs rounded-full px-[9px] py-0.5",
               CHIP_TONE[paper.kind],
             )}
           >
@@ -163,10 +163,10 @@ function PaperCard({
         </div>
         <div className="flex items-baseline gap-2 mt-[9px]">
           {confText ? (
-            <div className={cn("font-mono text-[11.5px]", confTone)}>{confText}</div>
+            <div className={cn("font-mono text-xs", confTone)}>{confText}</div>
           ) : null}
           <div className="flex-1" />
-          <div className="font-mono text-[15px]">{scoreText}</div>
+          <div className="font-mono text-md">{scoreText}</div>
         </div>
       </div>
     </div>
@@ -246,7 +246,7 @@ export function Grading() {
   if (papersQuery.isPending) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-[13.5px] text-t2">Loading papers…</div>
+        <div className="text-dense-lg text-t2">Loading papers…</div>
       </div>
     )
   }
@@ -254,7 +254,7 @@ export function Grading() {
   if (papersQuery.isError) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-[13.5px] text-accent">
+        <div className="text-dense-lg text-accent">
           Couldn't load papers: {papersQuery.error.message}
         </div>
       </div>
@@ -284,13 +284,13 @@ export function Grading() {
     <div className="lm-screen flex flex-col gap-5">
       <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-2.5">
         <div>
-          <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t3">
+          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
             Grading console
           </div>
           {/* A real h1, not a styled div: axe's `page-has-heading-one` fired
               on this route the moment P3.10 chunk b added it to the audit
               registry, and QUALITY-BAR.md requires one h1 per page. */}
-          <h1 className="font-serif text-[34px] leading-[1.1] mt-1.5">
+          <h1 className="text-display-md mt-1.5">
             Grading {papers.length} paper{papers.length === 1 ? "" : "s"}
           </h1>
         </div>
@@ -303,33 +303,33 @@ export function Grading() {
       <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-6 items-start">
         {/* Left column */}
         <div className="flex flex-col gap-4">
-          <div className="bg-surface border border-border rounded-[14px] px-5 py-[18px]">
-            <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3">
+          <div className="bg-surface border border-border rounded-lg px-5 py-[18px]">
+            <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3">
               Detected
             </div>
             {!selectedPaperId ? (
-              <div className="text-[13px] text-t2 mt-[18px]">
+              <div className="text-dense text-t2 mt-[18px]">
                 Upload a scan to see detected fields.
               </div>
             ) : detectedFields.length === 0 ? (
-              <div className="text-[13px] text-t2 mt-[18px]">
+              <div className="text-dense text-t2 mt-[18px]">
                 No metadata detected for this paper.
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-x-[14px] gap-y-4 mt-[18px]">
                 {detectedFields.map((d) => (
                   <div key={d.key}>
-                    <div className="font-mono text-[10px] tracking-[0.1em] uppercase text-t3">
+                    <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3">
                       {d.key}
                     </div>
-                    <div className="font-mono text-[15px] mt-1">{d.value}</div>
+                    <div className="font-mono text-md mt-1">{d.value}</div>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          <div className="bg-surface border border-border rounded-[14px] p-5 flex gap-5 items-center">
+          <div className="bg-surface border border-border rounded-lg p-5 flex gap-5 items-center">
             <svg
               viewBox="0 0 100 100"
               className="w-[92px] h-[92px] flex-none -rotate-90"
@@ -339,7 +339,7 @@ export function Grading() {
                 cy="50"
                 r="42"
                 fill="none"
-                stroke="oklch(0.92 0.012 78)"
+                stroke="var(--border)"
                 strokeWidth="10"
               />
               <circle
@@ -354,24 +354,24 @@ export function Grading() {
               />
             </svg>
             <div className="flex-1">
-              <div className="text-[15px] font-semibold">Auto-grading</div>
+              <div className="text-md font-semibold">Auto-grading</div>
               {processingCount > 0 ? (
-                <div className="font-mono text-[11.5px] text-t2 mt-[5px]">
+                <div className="font-mono text-xs text-t2 mt-[5px]">
                   {processingCount} processing
                 </div>
               ) : null}
               <div className="flex gap-[22px] mt-[14px]">
                 <div>
-                  <div className="font-serif text-[26px] leading-none">{gradedCount}</div>
-                  <div className="font-mono text-[10px] text-t3 mt-[3px]">
+                  <div className="text-display-sm">{gradedCount}</div>
+                  <div className="font-mono text-3xs text-t3 mt-[3px]">
                     AUTO-CONFIRMED
                   </div>
                 </div>
                 <div>
-                  <div className="font-serif text-[26px] leading-none text-err">
+                  <div className="text-display-sm text-err">
                     {reviewCount}
                   </div>
-                  <div className="font-mono text-[10px] text-t3 mt-[3px]">
+                  <div className="font-mono text-3xs text-t3 mt-[3px]">
                     NEED REVIEW
                   </div>
                 </div>
@@ -379,20 +379,20 @@ export function Grading() {
             </div>
           </div>
 
-          <div className="bg-surface border border-border rounded-[14px] px-5 py-[18px]">
-            <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3 mb-[14px]">
+          <div className="bg-surface border border-border rounded-lg px-5 py-[18px]">
+            <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mb-[14px]">
               Pipeline
             </div>
             {!selectedPaperId ? (
-              <div className="text-[13px] text-t2">Upload a scan to see its pipeline.</div>
+              <div className="text-dense text-t2">Upload a scan to see its pipeline.</div>
             ) : paperDetailQuery.isPending ? (
-              <div className="text-[13px] text-t2">Loading…</div>
+              <div className="text-dense text-t2">Loading…</div>
             ) : isSelectedPaperNotGraded ? (
-              <div className="text-[13px] text-t2">
+              <div className="text-dense text-t2">
                 {gradingIds[selectedPaperId] ? "Grading in progress…" : "Not graded yet."}
               </div>
             ) : paperDetailQuery.isError ? (
-              <div className="text-[13px] text-accent">
+              <div className="text-dense text-accent">
                 Couldn't load pipeline: {paperDetailQuery.error.message}
               </div>
             ) : (
@@ -400,7 +400,7 @@ export function Grading() {
                 <div key={p.label} className="flex items-center gap-3 py-[9px]">
                   <span
                     className={cn(
-                      "w-[19px] h-[19px] flex-none rounded-full border-[1.5px] flex items-center justify-center text-[10px] font-mono",
+                      "w-[19px] h-[19px] flex-none rounded-full border-[1.5px] flex items-center justify-center text-3xs font-mono",
                       p.state === "done"
                         ? "bg-ok border-ok text-accent-on"
                         : p.state === "active"
@@ -412,24 +412,24 @@ export function Grading() {
                   </span>
                   <span
                     className={cn(
-                      "flex-1 text-[13.5px]",
+                      "flex-1 text-dense-lg",
                       p.state === "idle" ? "text-t3" : "text-t1",
                     )}
                   >
                     {p.label}
                   </span>
-                  <span className="font-mono text-[12px] text-t2">{p.count}</span>
+                  <span className="font-mono text-xs text-t2">{p.count}</span>
                 </div>
               ))
             )}
           </div>
 
-          <div className="border border-border rounded-[14px] p-5 bg-[oklch(0.975_0.01_78)] flex flex-col gap-3">
-            <div className="text-[14px] font-medium">Upload a scan</div>
+          <div className="border border-border rounded-lg p-5 bg-surface-2 flex flex-col gap-3">
+            <div className="text-sm font-medium">Upload a scan</div>
             <div>
               <label
                 htmlFor="grading-scan-file"
-                className="text-[12px] font-medium block mb-1.5"
+                className="text-xs font-medium block mb-1.5"
               >
                 Scanned paper
               </label>
@@ -439,13 +439,13 @@ export function Grading() {
                 accept="application/pdf,image/*"
                 disabled={uploading}
                 onChange={handleScanChange}
-                className="text-[12px] text-t2 file:mr-3 file:border file:border-border file:bg-surface file:rounded-lg file:px-3 file:py-1.5 file:text-[12px] file:cursor-pointer file:font-sans"
+                className="text-xs text-t2 file:mr-3 file:border file:border-border file:bg-surface file:rounded-lg file:px-3 file:py-1.5 file:text-xs file:cursor-pointer file:font-sans"
               />
             </div>
             <div>
               <label
                 htmlFor="grading-scheme-file"
-                className="text-[12px] font-medium block mb-1.5"
+                className="text-xs font-medium block mb-1.5"
               >
                 Mark scheme (optional)
               </label>
@@ -455,10 +455,10 @@ export function Grading() {
                 accept="application/pdf,image/*"
                 disabled={uploading}
                 onChange={handleSchemeChange}
-                className="text-[12px] text-t2 file:mr-3 file:border file:border-border file:bg-surface file:rounded-lg file:px-3 file:py-1.5 file:text-[12px] file:cursor-pointer file:font-sans"
+                className="text-xs text-t2 file:mr-3 file:border file:border-border file:bg-surface file:rounded-lg file:px-3 file:py-1.5 file:text-xs file:cursor-pointer file:font-sans"
               />
               {!schemeFile ? (
-                <div className="font-mono text-[10.5px] text-t3 mt-1.5">
+                <div className="font-mono text-3xs text-t3 mt-1.5">
                   Attach a mark scheme to enable grading — otherwise the scan is
                   uploaded but nothing gets marked.
                 </div>
@@ -473,12 +473,12 @@ export function Grading() {
               {uploading ? "Uploading…" : "Upload & grade"}
             </Button>
             {uploadError ? (
-              <div className="text-[12px] text-accent">{uploadError}</div>
+              <div className="text-xs text-accent">{uploadError}</div>
             ) : null}
             {log.length > 0 ? (
               <div className="flex flex-col gap-1 max-h-[140px] overflow-auto lm-scroll border-t border-border pt-2">
                 {log.map((line, i) => (
-                  <div key={i} className="text-[11.5px] text-t2 leading-[1.4]">
+                  <div key={i} className="text-xs text-t2 leading-[1.4]">
                     {line}
                   </div>
                 ))}
@@ -490,7 +490,7 @@ export function Grading() {
         {/* Right column: tabs + papers */}
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-[14px] flex-wrap">
-            <div className="flex gap-1 bg-[oklch(0.945_0.012_78)] p-1 rounded-[11px]">
+            <div className="flex gap-1 bg-surface-2 p-1 rounded-md">
               {tabs.map((t) => {
                 const on = tab === t.id
                 return (
@@ -498,16 +498,16 @@ export function Grading() {
                     key={t.id}
                     onClick={() => setTab(t.id)}
                     className={cn(
-                      "border-0 cursor-pointer text-[13px] px-[14px] py-2 rounded-lg",
+                      "border-0 cursor-pointer text-dense px-[14px] py-2 rounded-lg",
                       on
-                        ? "bg-surface text-t1 font-medium shadow-[0_1px_3px_oklch(0.2_0.02_60/.08)]"
+                        ? "bg-surface text-t1 font-medium shadow-sm"
                         : "bg-transparent text-t2 font-normal",
                     )}
                   >
                     {t.label}{" "}
                     <span
                       className={cn(
-                        "font-mono text-[11.5px]",
+                        "font-mono text-xs",
                         on ? "text-accent" : "text-t3",
                       )}
                     >
@@ -521,7 +521,7 @@ export function Grading() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {filtered.length === 0 ? (
-              <div className="text-[13px] text-t2">No papers in this view yet.</div>
+              <div className="text-dense text-t2">No papers in this view yet.</div>
             ) : (
               filtered.map((p) => (
                 <PaperCard

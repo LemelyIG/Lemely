@@ -3,6 +3,113 @@
 
 ## Phase 3
 
+### D3.18 — The token retrofit: the inherited premise was wrong, D2.9's workaround was half-applied, and the type scale had a hole (P3.10 chunk c)
+
+**Context.** P3.7 chunk b handed forward carried item (b): "the teacher portal's five
+screens use arbitrary px/oklch literals instead of the DESIGN.md token scale (P2.5.3
+retrofitted only the student screens). Decide: retrofit them, or record it as accepted
+debt." Chunk c measured that premise before acting on it. Two of its three claims are
+false:
+
+- It is not five screens. It is **18 teacher files carrying 482 `text-[Npx]` literals**,
+  57 arbitrary radii and 34 raw `oklch()` colours.
+- The **parent portal was already clean** — zero font-size, radius or colour literals.
+  So was `portals/auth/`. Nothing to retrofit there; the "teacher + parent" scoping in
+  the chunk title is satisfied by the teacher half alone.
+- The student portal was **partly** unretrofitted, and the shared `components/` C-*
+  library carried literals of its own. Measured per file rather than in aggregate, the
+  split is exact and exonerates P2.5.3: every student screen that was *in scope then* is
+  clean (`Overview`, `CorrectPaper`, `PaperResult`, and P3.9's `Parents` — 0 literals
+  each). All 141 remaining literals sit in `Subject` (37) plus the five P4/P5 mock
+  surfaces `Landing` (30), `Directions` (19), `StudyPlan` (15), `Standings` (14) and
+  `Onboarding` (13) — which is precisely the set chunk b kept out of the audit registry.
+  So P2.5's acceptance criterion held for its own scope; the aggregate count is
+  misleading and an earlier draft of this entry read it as a P2.5 failure, which it is
+  not.
+
+**What was done.** The teacher portal, the shared `components/` library and the student
+*shell* (`portals/student/index.tsx`, which wraps all four in-gate student routes) are
+retrofitted — 598 literals replaced, leaving zero in all three.
+
+**What is left, and why.** 141 literals in six student screens. Five are P4/P5 mock-data
+surfaces; retrofitting unbuilt work is the same mistake as gating it, so they wait for
+the phase that builds them. The sixth, **`Subject.tsx` (37 literals), is the one genuine
+gap** — a real, API-backed P2 screen (`useSubject`) that P2.5.3 did not reach and that
+chunk b excluded from the registry as "real but P2's". It is not fixed here because it
+is outside both the chunk's stated scope and the audit gate that would prove the fix
+safe; it is named so the phase report can carry it as debt with a number attached rather
+than as a vague "some screens".
+
+**The three findings behind the mechanical work.**
+
+1. **D2.9's workaround was only ever half-applied, and the other half was live.** D2.9
+   found that a `text-`-prefixed custom class falls into tailwind-merge's `text-color`
+   group, so `cn()` silently drops either it or the colour beside it, and fixed it by
+   renaming the button rungs to `.btn-text*`. The *composite type-scale* classes
+   (`.text-display-*`, `.text-body-*`, `.text-label-sm`, `.text-metadata`) were left in
+   the trap. Verified empirically this chunk: `twMerge("text-display-md text-t1")`
+   returned `"text-t1"` — the font-size, family and line-height dropped entirely. **Five
+   shared C-* components hit exactly that shape** (`trend-sparkline` twice,
+   `boundary-bar`, `confidence-indicator`, `paper-identity`), so the defect shipped on
+   every student and parent screen composing them. It is invisible to every gate the
+   build has: a dropped type class degrades to *inherited* type, which is not a type
+   error, a lint error, a console error, an axe violation or a layout overflow.
+
+   Fixed at the source instead of by renaming again: `lib/utils.ts` now builds `cn()`
+   from `extendTailwindMerge` with every custom `text-*` class declared as a font-size.
+   D2.9's "never name a custom class `text-anything`" rule is superseded — the correct
+   rule is **"register it"**, which also lets rungs be named for what they are.
+   `.btn-text*` keep their names (load-bearing in `button.tsx`'s cva variants).
+
+2. **DESIGN.md's type scale has a hole between 15px and 30px.** Its `typography:` table
+   jumps straight from `body-lg` (15px) to `display-md` (30px), so every dense-dashboard
+   serif heading had nowhere on-scale to land — which is precisely why the teacher portal
+   invented 19/20/22/24/26/34px ad hoc across 18 screens. Two rungs were added,
+   `--fs-display-sm: 24px` and `--fs-display-xs: 19px`. These are not invented brand
+   values: they continue the table's own ~1.25 ratio (30/24 = 1.25, 24/19 = 1.26,
+   19/15 = 1.27). The ad-hoc sizes collapse onto the scale as 34→display-md,
+   26/24/22→display-sm, 20/19→display-xs.
+
+   Three size-only "dense" rungs (13.5/13/12.5px) were also added, aliasing the existing
+   `--fs-button-text*` raw values. The numbers were already tokenized, but only as
+   *composite* `.btn-text*` classes that also set weight 500 and line-height 1 — unusable
+   for the 240 table cells and captions that need the size alone. Same for `--text-md`
+   (15px), needed because `.text-body-lg` would have overridden `font-mono` on Grading's
+   two readouts.
+
+3. **The raw `oklch()` literals in the teacher portal were the *student* palette.** All
+   34 were hue 78/60/68 warm-terracotta values hardcoded from the pre-DESIGN.md mock,
+   surviving into a portal whose accent is teal. They are now semantic tokens, so they
+   follow `[data-portal]` like everything else. One genuine gap was filled to do it
+   honestly: `--accent-subtle-on`, defined per portal
+   (`--md-on-{primary,tertiary,secondary}-fixed`), for the badges that sat on
+   `bg-accent-subtle` with a hand-picked foreground and no defined on-colour.
+
+**Deliberate consequence, not an oversight.** Adopting a composite type class means
+adopting its line-height: the class is unlayered CSS and so beats any `leading-*` utility
+beside it. Rather than preserve ad-hoc `leading-none`/`leading-[1.08]` overrides that
+could not win anyway, the conversion drops them — size and leading travel together, which
+is what a type scale is for. The 21-route audit gate is what proves nothing broke.
+
+**Testing.** `web/` still has no unit-test runner (that decision belongs to chunk e), and
+both invariants here fail *silently*, so `web/scripts/check-design-tokens.mjs` is a
+standalone guard wired into `scripts/check.sh`: it asserts every registered custom class
+survives `cn()` beside a colour in both orders, that two sizes still collapse, that
+`lib/utils.ts` and `index.css` agree in **both** directions, and that no arbitrary
+font-size/radius/colour literal has reappeared in the retrofitted paths. Verified by
+inversion — it fails against the unregistered class and against a reintroduced
+`text-[13px]`. If a real runner lands, these checks move into it verbatim.
+
+**Also removed here (carried item (d), plus two of the same class found beside it).** The
+student sidebar's hardcoded "Maya Rahman / Year 11 - Helwan Science Centre" and "MR"
+initials — the twin of the teacher fiction P3.7 chunk b deleted — now render the real
+caller via `useProfile()`. The header's fabricated `<span>`-as-search-box (no handler, no
+search endpoint anywhere in the API) and its "24 day streak" pill are gone. The streak was
+**not** wired to real data on purpose: the only streak-shaped field in the API is
+`StandingsDTO.streakDays`, which is `len({distinct dates in history})` — a count of active
+days, not consecutive ones. Wiring it would have swapped a hardcoded lie for a mislabelled
+one. Streaks are Phase 5's to build; the misnomer is flagged there.
+
 ### D3.17 — The UI gate stops being a 4-route gate: a 21-route registry, real console/responsive gates, and an unreachable route is a failure (P3.10 chunk b)
 
 **Context.** D2.10 fixed `web/scripts/audit.mjs` at exactly four student routes, and

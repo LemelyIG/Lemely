@@ -95,9 +95,9 @@ import { confidenceTone, isIntegrityReason, paperIdentityLabel, reasonLabel } fr
 
 function AwardedMarks({ detail }: { detail: ReviewItemDetail }) {
   return (
-    <div className="font-serif text-[30px] leading-none">
+    <div className="text-display-md">
       {detail.aiAwardedMarks ?? "—"}
-      <span className="text-[16px] text-t2">/{detail.maximumMarks ?? "—"}</span>
+      <span className="text-base text-t2">/{detail.maximumMarks ?? "—"}</span>
     </div>
   )
 }
@@ -114,13 +114,13 @@ function DismissForm({ itemId, onDone }: { itemId: string; onDone: () => void })
       }}
       className="flex flex-col gap-2.5"
     >
-      <label className="flex flex-col gap-1.5 text-[12px] text-t2">
+      <label className="flex flex-col gap-1.5 text-xs text-t2">
         Internal note (optional — visible only to you, never the student)
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
-          className="border border-border bg-surface rounded-md px-2.5 py-2 text-[12.5px] text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="border border-border bg-surface rounded-md px-2.5 py-2 text-dense-sm text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         />
       </label>
       <div>
@@ -129,7 +129,7 @@ function DismissForm({ itemId, onDone }: { itemId: string; onDone: () => void })
         </Button>
       </div>
       {dismiss.isError ? (
-        <div role="alert" className="text-[12.5px] text-err">
+        <div role="alert" className="text-dense-sm text-err">
           Couldn't dismiss: {dismiss.error.message}
         </div>
       ) : null}
@@ -198,17 +198,17 @@ function ResolveControls({
 
   return (
     <section className="flex flex-col gap-3">
-      <div className="font-serif text-[20px]">Your decision</div>
-      <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-4">
+      <div className="text-display-xs">Your decision</div>
+      <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-4">
         {mode === "accept" ? (
           <>
-            <label className="flex flex-col gap-1.5 text-[12.5px] text-t2">
+            <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
               Internal note (optional — visible only to you and other teachers, not the student)
               <textarea
                 value={acceptNote}
                 onChange={(e) => setAcceptNote(e.target.value)}
                 rows={2}
-                className="border border-border bg-surface rounded-md px-2.5 py-2 text-[12.5px] text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="border border-border bg-surface rounded-md px-2.5 py-2 text-dense-sm text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               />
             </label>
             <div className="flex items-center gap-2.5 flex-wrap">
@@ -229,7 +229,7 @@ function ResolveControls({
         ) : (
           <form onSubmit={handleSaveCorrection} className="flex flex-col gap-3">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <label className="flex flex-col gap-1.5 text-[12px] text-t2">
+              <label className="flex flex-col gap-1.5 text-xs text-t2">
                 Marks to award
                 <input
                   type="number"
@@ -237,60 +237,60 @@ function ResolveControls({
                   max={detail.maximumMarks ?? undefined}
                   value={overrideMarks}
                   onChange={(e) => setOverrideMarks(e.target.value)}
-                  className="border border-border bg-surface rounded-md px-2.5 py-1.5 text-[13px] text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="border border-border bg-surface rounded-md px-2.5 py-1.5 text-dense text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 />
               </label>
-              <label className="flex flex-col gap-1.5 text-[12px] text-t2">
+              <label className="flex flex-col gap-1.5 text-xs text-t2">
                 Method
                 <input
                   type="number"
                   min={0}
                   value={methodMarks}
                   onChange={(e) => setMethodMarks(e.target.value)}
-                  className="border border-border bg-surface rounded-md px-2.5 py-1.5 text-[13px] text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="border border-border bg-surface rounded-md px-2.5 py-1.5 text-dense text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 />
               </label>
-              <label className="flex flex-col gap-1.5 text-[12px] text-t2">
+              <label className="flex flex-col gap-1.5 text-xs text-t2">
                 Accuracy
                 <input
                   type="number"
                   min={0}
                   value={accuracyMarks}
                   onChange={(e) => setAccuracyMarks(e.target.value)}
-                  className="border border-border bg-surface rounded-md px-2.5 py-1.5 text-[13px] text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="border border-border bg-surface rounded-md px-2.5 py-1.5 text-dense text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 />
               </label>
-              <label className="flex flex-col gap-1.5 text-[12px] text-t2">
+              <label className="flex flex-col gap-1.5 text-xs text-t2">
                 Other
                 <input
                   type="number"
                   min={0}
                   value={otherMarks}
                   onChange={(e) => setOtherMarks(e.target.value)}
-                  className="border border-border bg-surface rounded-md px-2.5 py-1.5 text-[13px] text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="border border-border bg-surface rounded-md px-2.5 py-1.5 text-dense text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 />
               </label>
             </div>
-            <label className="flex flex-col gap-1.5 text-[12px] text-t2">
+            <label className="flex flex-col gap-1.5 text-xs text-t2">
               Breakdown notes (internal — how you split the marks)
               <textarea
                 value={breakdownNotes}
                 onChange={(e) => setBreakdownNotes(e.target.value)}
                 rows={2}
-                className="border border-border bg-surface rounded-md px-2.5 py-2 text-[12.5px] text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="border border-border bg-surface rounded-md px-2.5 py-2 text-dense-sm text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               />
             </label>
-            <label className="flex flex-col gap-1.5 text-[12px] text-t2">
+            <label className="flex flex-col gap-1.5 text-xs text-t2">
               Note to the student — saved on their corrected result as the reason for the change
               <textarea
                 value={studentNote}
                 onChange={(e) => setStudentNote(e.target.value)}
                 rows={2}
-                className="border border-border bg-surface rounded-md px-2.5 py-2 text-[12.5px] text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="border border-border bg-surface rounded-md px-2.5 py-2 text-dense-sm text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               />
             </label>
             {validationError ? (
-              <div role="alert" className="text-[12.5px] text-err">
+              <div role="alert" className="text-dense-sm text-err">
                 {validationError}
               </div>
             ) : null}
@@ -305,7 +305,7 @@ function ResolveControls({
           </form>
         )}
         {resolve.isError ? (
-          <div role="alert" className="text-[12.5px] text-err">
+          <div role="alert" className="text-dense-sm text-err">
             Couldn't save: {resolve.error.message}
           </div>
         ) : null}
@@ -376,7 +376,7 @@ export function ReviewItem() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Review item</h1>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading review item…
         </div>
       </div>
@@ -406,7 +406,7 @@ export function ReviewItem() {
         <button
           type="button"
           onClick={goToQueue}
-          className="text-[12px] text-t3 hover:text-t1 w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="text-xs text-t3 hover:text-t1 w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           ← Back to queue
         </button>
@@ -414,13 +414,13 @@ export function ReviewItem() {
           <Avatar
             initials={initialsOf(detail.studentDisplayName)}
             tone="accent"
-            className="w-9 h-9 text-[13px] flex-none"
+            className="w-9 h-9 text-dense flex-none"
           />
           <div className="min-w-0">
-            <h1 className="font-serif text-[26px] leading-[1.15] text-pretty">
+            <h1 className="text-display-sm text-pretty">
               {detail.studentDisplayName}
             </h1>
-            <div className="text-[12.5px] text-t2 mt-0.5">
+            <div className="text-dense-sm text-t2 mt-0.5">
               {detail.className} · {paperIdentityLabel(detail)}
               {detail.questionId ? ` · Q${detail.questionId}` : ""}
             </div>
@@ -438,7 +438,7 @@ export function ReviewItem() {
       </div>
 
       <div className="flex items-center justify-between gap-3 flex-wrap border-y border-border py-2.5">
-        <div className="flex items-center gap-4 flex-wrap text-[11px] text-t3 font-mono">
+        <div className="flex items-center gap-4 flex-wrap text-2xs text-t3 font-mono">
           <span className="flex items-center gap-1.5">
             <kbd className="px-1.5 py-0.5 rounded border border-border bg-surface-2 text-t2">A</kbd>
             accept as-is
@@ -459,40 +459,40 @@ export function ReviewItem() {
 
       {/* Evidence: honest substitutes for the scan crop / mark-scheme extract (D3.14 §1) */}
       <section className="flex flex-col gap-3">
-        <div className="font-serif text-[20px]">What Lemely saw</div>
-        <div className="text-[12.5px] text-t2 bg-surface-2 border border-border rounded-[10px] px-3.5 py-3 text-pretty">
+        <div className="text-display-xs">What Lemely saw</div>
+        <div className="text-dense-sm text-t2 bg-surface-2 border border-border rounded-md px-3.5 py-3 text-pretty">
           The original scan image and the mark scheme's own wording aren't stored anywhere in
           this product — what's below is the closest honest record: Lemely's own transcription
           of the student's answer, and the identifiers of the mark-scheme points it matched.
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-2 min-w-0">
-            <div className="font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
+            <div className="font-mono text-3xs tracking-[0.09em] uppercase text-t3">
               Lemely's transcription of the student's answer — not the scan
             </div>
             {detail.studentAnswer ? (
-              <p className="text-[13.5px] leading-[1.55] text-pretty whitespace-pre-wrap m-0">
+              <p className="text-dense-lg leading-[1.55] text-pretty whitespace-pre-wrap m-0">
                 {detail.studentAnswer}
               </p>
             ) : (
-              <p className="text-[13px] text-t3 m-0">No transcription recorded for this question.</p>
+              <p className="text-dense text-t3 m-0">No transcription recorded for this question.</p>
             )}
           </div>
-          <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-3 min-w-0">
+          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
             <div>
-              <div className="font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+              <div className="font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                 Expected answer
               </div>
               {detail.expectedAnswer ? (
-                <p className="text-[13.5px] leading-[1.55] text-pretty whitespace-pre-wrap mt-1 mb-0">
+                <p className="text-dense-lg leading-[1.55] text-pretty whitespace-pre-wrap mt-1 mb-0">
                   {detail.expectedAnswer}
                 </p>
               ) : (
-                <p className="text-[13px] text-t3 mt-1 mb-0">No expected answer recorded.</p>
+                <p className="text-dense text-t3 mt-1 mb-0">No expected answer recorded.</p>
               )}
             </div>
             <div>
-              <div className="font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+              <div className="font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                 Matched mark-scheme points — identifiers only, the scheme's own wording isn't
                 stored
               </div>
@@ -505,18 +505,18 @@ export function ReviewItem() {
                   ))}
                 </div>
               ) : (
-                <p className="text-[13px] text-t3 mt-1 mb-0">No points matched.</p>
+                <p className="text-dense text-t3 mt-1 mb-0">No points matched.</p>
               )}
             </div>
           </div>
         </div>
-        {detail.topic ? <div className="text-[12px] text-t3">Topic: {detail.topic}</div> : null}
+        {detail.topic ? <div className="text-xs text-t3">Topic: {detail.topic}</div> : null}
       </section>
 
       {/* What Lemely awarded, and why this needs a look */}
       <section className="flex flex-col gap-3">
-        <div className="font-serif text-[20px]">What Lemely awarded</div>
-        <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-4">
+        <div className="text-display-xs">What Lemely awarded</div>
+        <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-4">
           <div className="flex items-center gap-4 flex-wrap">
             <AwardedMarks detail={detail} />
             {detail.confidenceScore != null ? (
@@ -529,20 +529,20 @@ export function ReviewItem() {
           </div>
           {detail.reviewReason ? (
             <div className="border-t border-border pt-3">
-              <div className="font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+              <div className="font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                 Why this needs review
               </div>
-              <p className="text-[13px] text-t2 leading-[1.5] mt-1.5 mb-0 text-pretty">
+              <p className="text-dense text-t2 leading-[1.5] mt-1.5 mb-0 text-pretty">
                 {detail.reviewReason}
               </p>
             </div>
           ) : null}
           {detail.feedback ? (
             <div className="border-t border-border pt-3">
-              <div className="font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+              <div className="font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                 Lemely's feedback
               </div>
-              <p className="text-[13px] text-t2 leading-[1.5] mt-1.5 mb-0 text-pretty">
+              <p className="text-dense text-t2 leading-[1.5] mt-1.5 mb-0 text-pretty">
                 {detail.feedback}
               </p>
             </div>
@@ -552,12 +552,12 @@ export function ReviewItem() {
 
       {/* Integrity flag: distinct, non-inflammatory, dismiss-only on this item */}
       {integrity ? (
-        <section className="border border-warn rounded-[14px] p-[18px] bg-warn-bg flex flex-col gap-3">
+        <section className="border border-warn rounded-lg p-[18px] bg-warn-bg flex flex-col gap-3">
           <div className="flex items-center gap-2.5">
             <Flag weight="fill" className="w-[18px] h-[18px] text-warn flex-none" aria-hidden />
-            <div className="font-medium text-[14px] text-t1">Flagged: {reasonLabel(detail.reason)}</div>
+            <div className="font-medium text-sm text-t1">Flagged: {reasonLabel(detail.reason)}</div>
           </div>
-          <p className="text-[12.5px] text-t2 leading-[1.5] m-0 text-pretty">
+          <p className="text-dense-sm text-t2 leading-[1.5] m-0 text-pretty">
             This is a signal for you to look at — not a conclusion about the student. If you
             dismiss it, nothing about this flag reaches the student: dismissing never touches
             their mark or their result.
@@ -565,7 +565,7 @@ export function ReviewItem() {
           {detail.status === "open" ? (
             <DismissForm itemId={detail.itemId} onDone={goNext} />
           ) : (
-            <div className="text-[12px] text-t3">
+            <div className="text-xs text-t3">
               {detail.status === "dismissed" ? "Dismissed" : "Resolved"}
               {detail.resolutionNote ? ` — "${detail.resolutionNote}"` : "."}
             </div>
@@ -579,22 +579,22 @@ export function ReviewItem() {
       ) : null}
 
       {!integrity && detail.status !== "open" && detail.resolutionNote ? (
-        <div className="text-[12.5px] text-t2">Resolution note: "{detail.resolutionNote}"</div>
+        <div className="text-dense-sm text-t2">Resolution note: "{detail.resolutionNote}"</div>
       ) : null}
 
       {detail.isOverridden ? (
         <section className="flex flex-col gap-3">
-          <div className="font-serif text-[20px]">Teacher correction on record</div>
-          <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-2">
-            <div className="font-serif text-[24px]">
+          <div className="text-display-xs">Teacher correction on record</div>
+          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-2">
+            <div className="text-display-sm">
               {detail.teacherAwardedMarks}
-              <span className="text-[14px] text-t2">/{detail.maximumMarks ?? "—"}</span>
+              <span className="text-sm text-t2">/{detail.maximumMarks ?? "—"}</span>
             </div>
             {detail.teacherNote ? (
-              <p className="text-[13px] text-t2 m-0 text-pretty">"{detail.teacherNote}"</p>
+              <p className="text-dense text-t2 m-0 text-pretty">"{detail.teacherNote}"</p>
             ) : null}
             {detail.overriddenAt ? (
-              <div className="text-[11.5px] text-t3">{relativeTime(detail.overriddenAt)}</div>
+              <div className="text-xs text-t3">{relativeTime(detail.overriddenAt)}</div>
             ) : null}
           </div>
         </section>

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils"
  */
 const button = cva(
   // DESIGN.md "Buttons & Inputs: Use a consistent 0.5rem (8px) radius" —
-  // `rounded` (--radius: 0.5rem) is the exact token, not rounded-[10px].
+  // `rounded` (--radius: 0.5rem) is the exact token, not rounded-md.
   "inline-flex items-center justify-center gap-2 font-sans whitespace-nowrap rounded cursor-pointer transition-colors disabled:opacity-50 disabled:pointer-events-none active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
   {
     variants: {

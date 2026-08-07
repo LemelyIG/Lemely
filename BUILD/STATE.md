@@ -1234,15 +1234,94 @@ Starting facts (established 2026-08-06, do not re-derive):
             scale (impeccable hook), pre-existing and untouched by this diff; and the
             student header's `"24 day streak"` is still hardcoded — same fiction class
             as carried item (d), which is chunk c's.
-      - [ ] **c** todo — token retrofit of the teacher + parent portals onto the DESIGN.md
-            scale (item (b) below), plus the student-sidebar `useProfile()` fix (item (d)).
-            Chunk b established the safety net this can lean on: all 21 routes are now
-            audited, so a retrofit that breaks contrast, adds overflow or drops a
-            heading will be caught by `./scripts/check.sh` rather than by hand. Also in
-            scope, found by chunk b and deliberately left: the student header's
-            hardcoded `"24 day streak"` (`portals/student/index.tsx`) and the
-            non-functional `<span>`-as-search-box beside it are the same fabricated-UI
-            class as item (d)'s `studentName`/`studentMeta`.
+      - [x] **c** done — token retrofit + the twMerge defect it uncovered (D3.18).
+            **598 literals replaced**; teacher portal, shared `components/` and the
+            student shell are now at **zero** `text-[Npx]`/`rounded-[Npx]`/`oklch()`.
+            1892 tests (1888 passed / 4 live-only skips), 89.35% cov — both **unchanged**,
+            and necessarily so: zero `lemely/` files touched (diff is `web/`, `scripts/`,
+            `BUILD/` only). **All 13 gates green, 0 skipped** (12 + the new
+            `design-tokens` gate). Post-retrofit audit over all 21 routes: **0 axe
+            violations at ANY severity**, Lighthouse a11y **100** on every route, perf
+            floor 85 (`/login`), **0** console errors, **0** horizontal-scroll violations.
+
+            **The inherited premise was wrong — do not re-derive it.** P3.7 chunk b's
+            carried item (b) said "the teacher portal's *five screens*… (P2.5.3
+            retrofitted only the student screens)". Measured: it is **18 teacher files /
+            482 font-size literals** + 57 radii + 34 `oklch()`. The **parent portal and
+            `portals/auth/` were already clean (0)** — nothing to retrofit there, so the
+            chunk title's "+ parent" is satisfied by the teacher half alone. And P2.5.3
+            did **not** fail: every student screen in scope then is clean
+            (`Overview`/`CorrectPaper`/`PaperResult`, plus P3.9's `Parents`).
+
+            **Real defect found and fixed at the source — this is the important part.**
+            D2.9 found that a `text-`-prefixed custom class falls into tailwind-merge's
+            *text-color* group so `cn()` silently drops it or the colour beside it, and
+            fixed only the button rungs by renaming them `.btn-text*`. **The composite
+            type classes were left in the trap and the bug was live**: verified
+            empirically, `twMerge("text-display-md text-t1")` returned `"text-t1"` — the
+            font-size, family and line-height dropped entirely. **Five shared C-*
+            components hit exactly that shape** (`trend-sparkline` ×2, `boundary-bar`,
+            `confidence-indicator`, `paper-identity`), so it shipped on every student and
+            parent screen composing them. **No gate in this build can see it** — a
+            dropped type class degrades to *inherited* type: not a type error, lint
+            error, console error, axe violation or overflow. `lib/utils.ts` now builds
+            `cn()` from `extendTailwindMerge` registering every custom `text-*` class as
+            a font-size. **D2.9's rule ("never name a custom class `text-anything`") is
+            superseded by "register it"** — `.btn-text*` keep their names only because
+            `button.tsx`'s cva variants depend on them.
+
+            **Token layer gained (all traceable, none invented):** `--fs-display-sm: 24px`
+            + `--fs-display-xs: 19px` — DESIGN.md's `typography:` jumps 15px → 30px with
+            nothing between, which is *why* 18 screens invented 19/20/22/24/26/34px ad
+            hoc; the two new rungs continue the table's own ~1.25 ratio. Size-only
+            `--text-dense{,-sm,-lg}` (aliasing the existing `--fs-button-text*`) and
+            `--text-md` (aliasing `--fs-body-lg`) exist because those numbers were only
+            reachable through *composite* classes that also force weight/leading/family.
+            Per-portal `--accent-subtle-on` fills a real gap (badges on `bg-accent-subtle`
+            had a hand-picked foreground and no defined on-colour).
+
+            **Do not reintroduce / do not "tidy" away:**
+            (a) `web/scripts/check-design-tokens.mjs`, wired into `check.sh` as the
+            `design-tokens` gate. Both invariants it guards fail *silently*, and `web/`
+            still has no unit-test runner. It asserts every registered class survives
+            `cn()` beside a colour **in both orders**, that two sizes still collapse, that
+            `lib/utils.ts` and `index.css` agree in **both** directions, and that no
+            arbitrary literal reappeared. **Verified by inversion** (fails against an
+            unregistered class and against a reintroduced `text-[13px]`) — not assumed.
+            If a runner lands in chunk e, move these checks into it verbatim.
+            (b) Adopting a composite type class means adopting its line-height: the class
+            is **unlayered CSS and beats any `leading-*` utility beside it**, so the
+            conversion drops the ad-hoc `leading-none`/`leading-[1.08]` overrides that
+            could never have won. Size and leading travel together — that is what a scale
+            is. Re-adding a `leading-*` next to a `text-display-*` does nothing.
+            (c) The 34 teacher `oklch()` literals were the **student** palette (hue
+            78/60/68 terracotta) hardcoded into a teal portal. They now follow
+            `[data-portal]`.
+
+            **Item (d) and two of the same class beside it, all removed:** the student
+            sidebar's "Maya Rahman / Year 11 - Helwan Science Centre" + "MR" now render
+            the real caller via `useProfile()` (the twin of the teacher fiction P3.7
+            chunk b killed). The header's `<span>`-as-search-box (no handler, no search
+            endpoint anywhere) is gone, and so is the "24 day streak" pill. **The streak
+            was deliberately NOT wired to real data**: the only streak-shaped field is
+            `StandingsDTO.streakDays` = `len({distinct dates})` — active days, *not*
+            consecutive. Wiring it swaps a hardcoded lie for a mislabelled one. **Flagged
+            for P5, which owns streaks: `streakDays` is misnamed at the source
+            (`student.py:904`) and `Standings.tsx` renders it as a streak too.**
+
+            **Measured debt left, with numbers so the report need not hand-wave (141
+            literals, 6 student screens):** `Subject.tsx` **37 — the one genuine gap**, a
+            real API-backed P2 screen (`useSubject`) P2.5.3 never reached and chunk b
+            excluded from the registry as "real but P2's". The other 104 are in the five
+            P4/P5 mock surfaces `Landing` 30 / `Directions` 19 / `StudyPlan` 15 /
+            `Standings` 14 / `Onboarding` 13 — retrofitting unbuilt work is the same
+            mistake as gating it. Also untouched deliberately: **spacing** literals
+            (`p-[34px]`, `w-[246px]`, …) portal-wide — DESIGN.md's `spacing:` block covers
+            container padding/gutters but no sidebar or max-width dimensions, so that is a
+            scale decision, not a substitution. `Avatar.tsx`'s `accent`/`err`/`warn` tones
+            are **dead** (every `<Avatar>` renders `neutral`; the `tone="warn"` hits
+            belong to `Chip`) — documented in-file, not pruned, since deleting unused
+            public variants is a simplification pass.
       - [ ] **d** todo — Playwright E2E per role + at-risk flags asserted against chunk a's
             seeded scenarios (the phase's named acceptance criterion).
       - [ ] **e** todo — screenshot corpus for every new screen × state × breakpoint

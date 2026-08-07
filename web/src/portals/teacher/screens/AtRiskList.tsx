@@ -143,10 +143,10 @@ function AcknowledgeControl({
           </Button>
         </div>
         {flag.acknowledged.note ? (
-          <div className="text-[12px] text-t2 italic text-pretty">“{flag.acknowledged.note}”</div>
+          <div className="text-xs text-t2 italic text-pretty">“{flag.acknowledged.note}”</div>
         ) : null}
         {unacknowledge.isError ? (
-          <div className="text-[12px] text-err">Couldn't undo: {unacknowledge.error.message}</div>
+          <div className="text-xs text-err">Couldn't undo: {unacknowledge.error.message}</div>
         ) : null}
       </div>
     )
@@ -176,16 +176,16 @@ function AcknowledgeControl({
       }}
       className="flex flex-col gap-2 max-w-[320px] bg-surface-2 border border-border rounded-lg p-3 mt-1"
     >
-      <label className="flex flex-col gap-1 text-[12px] text-t2">
+      <label className="flex flex-col gap-1 text-xs text-t2">
         Note (optional — visible only to you)
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
-          className="border border-border bg-surface rounded-md px-2 py-1.5 text-[12.5px] text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="border border-border bg-surface rounded-md px-2 py-1.5 text-dense-sm text-t1 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         />
       </label>
-      <p className="text-[11.5px] text-t3 m-0">
+      <p className="text-xs text-t3 m-0">
         This notes that you've seen it — the flag stays visible and reappears as new if the
         student's situation changes. It's never a permanent mute.
       </p>
@@ -198,19 +198,19 @@ function AcknowledgeControl({
         </Button>
       </div>
       {acknowledge.isError ? (
-        <div className="text-[12px] text-err">Couldn't acknowledge: {acknowledge.error.message}</div>
+        <div className="text-xs text-err">Couldn't acknowledge: {acknowledge.error.message}</div>
       ) : null}
     </form>
   )
 }
 
 function FlagsCell({ studentId, flags }: { studentId: string; flags: AtRiskFlag[] }) {
-  if (flags.length === 0) return <span className="text-[12px] text-t3">—</span>
+  if (flags.length === 0) return <span className="text-xs text-t3">—</span>
   return (
     <div className="flex flex-col gap-3 max-w-[360px]">
       {flags.map((f) => (
         <div key={f.reason} className="flex flex-col">
-          <div className="flex items-start gap-1.5 text-[12.5px] text-t2 leading-[1.4]">
+          <div className="flex items-start gap-1.5 text-dense-sm text-t2 leading-[1.4]">
             <span
               aria-hidden="true"
               className="text-err mt-[5px] w-[5px] h-[5px] rounded-full bg-err flex-none"
@@ -248,7 +248,7 @@ export function AtRiskList() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">At-risk students</h1>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading at-risk students…
         </div>
       </div>
@@ -276,19 +276,19 @@ export function AtRiskList() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t3">
+        <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
           Flagged by trajectory, not by one bad day
         </div>
-        <h1 className="font-serif text-[34px] leading-[1.1] mt-1">At-risk students</h1>
+        <h1 className="text-display-md mt-1">At-risk students</h1>
       </div>
 
       <div className="flex items-end gap-4 flex-wrap">
-        <label className="flex flex-col gap-1.5 text-[12.5px] text-t2">
+        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
           Reason
           <select
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             {REASON_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -297,12 +297,12 @@ export function AtRiskList() {
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1.5 text-[12.5px] text-t2">
+        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
           Acknowledged
           <select
             value={acknowledged}
             onChange={(e) => setAcknowledged(e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             {ACK_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -335,19 +335,19 @@ export function AtRiskList() {
         />
       ) : (
         <div
-          className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0"
+          className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
           tabIndex={0}
           role="region"
           aria-label="At-risk students, scrollable horizontally"
         >
-          <table className="w-full text-[13px] border-collapse">
+          <table className="w-full text-dense border-collapse">
             <caption className="sr-only">
               Flagged students across your classes, sortable by every column. Severity mirrors
               the order this list already arrives in from the server: most flags, then worst
               grade, first.
             </caption>
             <thead>
-              <tr className="bg-[oklch(0.965_0.012_78)] border-b border-border">
+              <tr className="bg-surface-2 border-b border-border">
                 {COLUMNS.map((col) => {
                   const active = col.key === sortColumn
                   return (
@@ -360,7 +360,7 @@ export function AtRiskList() {
                       <button
                         type="button"
                         onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 font-mono text-[10px] tracking-[0.09em] uppercase text-t3 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
+                        className="inline-flex items-center gap-1 font-mono text-3xs tracking-[0.09em] uppercase text-t3 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
                       >
                         {col.label}
                         {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
@@ -375,7 +375,7 @@ export function AtRiskList() {
                 <tr key={s.studentId} className="border-b border-border last:border-b-0 align-top">
                   <td className="px-[16px] py-[13px]">
                     <div className="flex items-center gap-2.5">
-                      <Avatar initials={initialsOf(s.displayName)} className="w-7 h-7 text-[10.5px] flex-none" />
+                      <Avatar initials={initialsOf(s.displayName)} className="w-7 h-7 text-3xs flex-none" />
                       <Link to={`/teacher/students/${s.studentId}`} className="text-t1 hover:underline">
                         {s.displayName}
                       </Link>
@@ -402,11 +402,11 @@ export function AtRiskList() {
                       // value must never read differently on two screens.
                       <GradeBadge grade={s.grade} size="inline" basis="predicted" />
                     ) : (
-                      <span className="text-[12px] text-t3">No paper grade yet</span>
+                      <span className="text-xs text-t3">No paper grade yet</span>
                     )}
                   </td>
                   <td className="px-[16px] py-[13px]">
-                    <div className={cn("font-mono text-[12px]", s.flags.length >= 2 ? "text-err" : "text-t2")}>
+                    <div className={cn("font-mono text-xs", s.flags.length >= 2 ? "text-err" : "text-t2")}>
                       {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
                     </div>
                   </td>

@@ -64,7 +64,7 @@ export function Overview() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Overview</h1>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading overview…
         </div>
       </div>
@@ -107,13 +107,13 @@ export function Overview() {
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex items-end gap-5 flex-wrap gap-y-2.5">
         <div>
-          <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t3">
+          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
             Helwan Science Centre · Sunday 27 July
           </div>
-          <h1 className="font-serif text-[40px] leading-[1.08] mt-2">
+          <h1 className="text-display-lg mt-2">
             Good morning.
           </h1>
-          <div className="text-[14.5px] text-t2 mt-2 max-w-[62ch] text-pretty">
+          <div className="text-sm text-t2 mt-2 max-w-[62ch] text-pretty">
             {papersGraded ? `${papersGraded.value} papers graded so far. ` : ""}
             {needsEyes
               ? `${needsEyes.value} answers want your eyes`
@@ -132,15 +132,15 @@ export function Overview() {
       </div>
 
       {/* 1. Needs you — the permanent top item */}
-      <div className="bg-surface border border-border rounded-[14px] overflow-hidden max-w-[620px] w-full">
+      <div className="bg-surface border border-border rounded-lg overflow-hidden max-w-[620px] w-full">
         <div className="px-5 pt-[18px] pb-[13px]">
-          <div className="font-serif text-[22px]">Needs you</div>
-          <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3 mt-[5px]">
+          <div className="text-display-sm">Needs you</div>
+          <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mt-[5px]">
             Flagged by trajectory, not by one bad day
           </div>
         </div>
         {atRisk.length === 0 ? (
-          <div className="border-t border-border px-5 py-[15px] text-[13px] text-ok">
+          <div className="border-t border-border px-5 py-[15px] text-dense text-ok">
             No students flagged right now.
           </div>
         ) : (
@@ -149,16 +149,16 @@ export function Overview() {
               key={r.name}
               className="border-t border-border px-5 py-[15px] flex gap-[13px] items-start"
             >
-              <Avatar initials={initialsOf(r.name)} className="w-8 h-8 text-[11.5px]" />
+              <Avatar initials={initialsOf(r.name)} className="w-8 h-8 text-xs" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-[9px] flex-wrap gap-y-1">
-                  <div className="text-[13.5px] font-medium">{r.name}</div>
-                  <div className="text-[12px] text-t2">Grade {r.grade}</div>
+                  <div className="text-dense-lg font-medium">{r.name}</div>
+                  <div className="text-xs text-t2">Grade {r.grade}</div>
                   <div className="flex-1" />
                   {r.delta !== null ? (
                     <div
                       className={cn(
-                        "font-mono text-[12px]",
+                        "font-mono text-xs",
                         r.delta < 0 ? "text-err" : r.delta > 0 ? "text-ok" : "text-t2",
                       )}
                     >
@@ -168,7 +168,7 @@ export function Overview() {
                   ) : null}
                 </div>
                 {r.weakTopic ? (
-                  <div className="text-[12.5px] text-t2 mt-[5px] leading-[1.45] text-pretty">
+                  <div className="text-dense-sm text-t2 mt-[5px] leading-[1.45] text-pretty">
                     Weakest topic: {r.weakTopic}
                   </div>
                 ) : null}
@@ -177,7 +177,7 @@ export function Overview() {
                     {r.flags.map((f) => (
                       <div
                         key={f.reason}
-                        className="flex items-start gap-2 text-[12.5px] text-t2 leading-[1.45]"
+                        className="flex items-start gap-2 text-dense-sm text-t2 leading-[1.45]"
                       >
                         <span
                           aria-hidden="true"
@@ -216,14 +216,14 @@ export function Overview() {
         ))}
       </div>
       {needsEyesCount === 0 ? (
-        <div className="text-[13px] text-ok -mt-2">
+        <div className="text-dense text-ok -mt-2">
           Nothing needs your review right now — good news.
         </div>
       ) : null}
 
       {/* 3. Class summary cards */}
       <div>
-        <div className="font-serif text-[22px] mb-3">Your classes</div>
+        <div className="text-display-sm mb-3">Your classes</div>
         {classes.length === 0 ? (
           <EmptyState
             heading="Add your first class"
@@ -236,12 +236,12 @@ export function Overview() {
               <Link
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
-                className="block bg-surface border border-border rounded-[14px] p-[18px] hover:bg-[oklch(0.985_0.008_78)] transition-colors"
+                className="block bg-surface border border-border rounded-lg p-[18px] hover:bg-surface-2 transition-colors"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="font-serif text-[19px]">{c.label}</div>
-                    <div className="font-mono text-[11px] text-t3 mt-0.5">
+                    <div className="text-display-xs">{c.label}</div>
+                    <div className="font-mono text-2xs text-t3 mt-0.5">
                       {c.subjectCode ?? "No subject set"} · {c.studentCount} student
                       {c.studentCount === 1 ? "" : "s"}
                     </div>
@@ -254,23 +254,23 @@ export function Overview() {
                 </div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <div>
-                    <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+                    <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                       Average mark
                     </div>
-                    <div className="font-serif text-[22px] mt-1">
+                    <div className="text-display-sm mt-1">
                       {c.average != null ? `${Math.round(c.average)}%` : "—"}
                     </div>
                   </div>
                   <div>
-                    <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+                    <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                       Top weakness
                     </div>
-                    <div className="text-[13px] mt-1 text-pretty">
+                    <div className="text-dense mt-1 text-pretty">
                       {c.topWeakness ?? "Not enough data yet"}
                     </div>
                   </div>
                 </div>
-                <div className="text-[11.5px] text-t3 mt-3">
+                <div className="text-xs text-t3 mt-3">
                   {c.lastActivityAt ? `Active ${relativeTime(c.lastActivityAt)}` : "No activity yet"}
                 </div>
               </Link>
@@ -280,15 +280,15 @@ export function Overview() {
       </div>
 
       {/* 4. Recent activity */}
-      <div className="bg-surface border border-border rounded-[14px] overflow-hidden">
+      <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <div className="px-5 pt-[18px] pb-[13px]">
-          <div className="font-serif text-[22px]">Recent activity</div>
-          <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3 mt-[5px]">
+          <div className="text-display-sm">Recent activity</div>
+          <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mt-[5px]">
             Submissions across your classes
           </div>
         </div>
         {recentActivity.length === 0 ? (
-          <div className="border-t border-border px-5 py-[15px] text-[13px] text-t2">
+          <div className="border-t border-border px-5 py-[15px] text-dense text-t2">
             No submissions yet.
           </div>
         ) : (
@@ -297,17 +297,17 @@ export function Overview() {
               key={`${a.studentId}-${a.subjectCode}-${a.recordedAt}`}
               className="border-t border-border px-5 py-[13px] flex items-center gap-3 flex-wrap gap-y-1.5"
             >
-              <Avatar initials={initialsOf(a.studentName)} tone="neutral" className="w-7 h-7 text-[10.5px]" />
-              <div className="text-[13px]">{a.studentName}</div>
-              <div className="font-mono text-[11.5px] text-t3">{a.subjectCode}</div>
+              <Avatar initials={initialsOf(a.studentName)} tone="neutral" className="w-7 h-7 text-3xs" />
+              <div className="text-dense">{a.studentName}</div>
+              <div className="font-mono text-xs text-t3">{a.subjectCode}</div>
               <div className="flex-1" />
-              <div className="font-mono text-[13px]">{Math.round(a.percentage)}%</div>
+              <div className="font-mono text-dense">{Math.round(a.percentage)}%</div>
               {a.grade ? (
                 <GradeBadge grade={a.grade} size="inline" basis="achieved" />
               ) : (
-                <span className="text-[11px] text-t3 font-mono">{ORIGIN_LABEL[a.origin]}</span>
+                <span className="text-2xs text-t3 font-mono">{ORIGIN_LABEL[a.origin]}</span>
               )}
-              <div className="text-[11px] text-t3 w-[72px] text-right">{relativeTime(a.recordedAt)}</div>
+              <div className="text-2xs text-t3 w-[72px] text-right">{relativeTime(a.recordedAt)}</div>
             </div>
           ))
         )}

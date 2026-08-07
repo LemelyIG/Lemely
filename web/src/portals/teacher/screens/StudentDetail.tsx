@@ -85,7 +85,7 @@ export function StudentDetail() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Student detail</h1>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading student…
         </div>
       </div>
@@ -114,16 +114,16 @@ export function StudentDetail() {
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="text-[12px] text-t3 hover:text-t1 w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="text-xs text-t3 hover:text-t1 w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           ← Back
         </button>
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">
-            <h1 className="font-serif text-[34px] leading-[1.1] mt-1.5 text-pretty">
+            <h1 className="text-display-md mt-1.5 text-pretty">
               {student.displayName}
             </h1>
-            <div className="text-[12.5px] text-t2 mt-1">
+            <div className="text-dense-sm text-t2 mt-1">
               {student.engagement.totalPapers} paper
               {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}
               {student.engagement.lastActiveAt
@@ -143,10 +143,10 @@ export function StudentDetail() {
       {/* At-risk status and reason */}
       {student.atRiskFlags.length > 0 ? (
         <section className="flex flex-col gap-3">
-          <div className="font-serif text-[22px]">At-risk flags</div>
-          <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-3">
+          <div className="text-display-sm">At-risk flags</div>
+          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3">
             {student.atRiskFlags.map((f) => (
-              <div key={f.reason} className="flex items-start gap-2.5 text-[13px] text-t2 leading-[1.5]">
+              <div key={f.reason} className="flex items-start gap-2.5 text-dense text-t2 leading-[1.5]">
                 <span
                   aria-hidden="true"
                   className="text-err mt-[6px] w-[6px] h-[6px] rounded-full bg-err flex-none"
@@ -165,22 +165,22 @@ export function StudentDetail() {
 
       {/* Subjects and predicted grades */}
       <section className="flex flex-col gap-3">
-        <div className="font-serif text-[22px]">Subjects</div>
+        <div className="text-display-sm">Subjects</div>
         {student.subjects.length === 0 ? (
-          <div className="text-[13px] text-t2">No subjects recorded yet.</div>
+          <div className="text-dense text-t2">No subjects recorded yet.</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {student.subjects.map((s) => (
               <div
                 key={s.subjectCode}
-                className="bg-surface border border-border rounded-[14px] p-[18px] flex items-center gap-4"
+                className="bg-surface border border-border rounded-lg p-[18px] flex items-center gap-4"
               >
                 <GradeBadge grade={s.predictedGrade} size="medium" basis="predicted" />
                 <div className="min-w-0">
-                  <div className="font-mono text-[11px] tracking-[0.08em] uppercase text-t3">
+                  <div className="font-mono text-2xs tracking-[0.08em] uppercase text-t3">
                     {s.subjectCode}
                   </div>
-                  <div className="text-[13px] text-t2 mt-1">
+                  <div className="text-dense text-t2 mt-1">
                     {subjectPercent(s.latestPercentage)} latest · {s.paperCount} paper
                     {s.paperCount === 1 ? "" : "s"}
                   </div>
@@ -194,10 +194,10 @@ export function StudentDetail() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
         {/* Trend chart */}
         <section className="flex flex-col gap-3 min-w-0">
-          <div className="font-serif text-[22px]">Performance over time</div>
-          <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-3 min-w-0">
+          <div className="text-display-sm">Performance over time</div>
+          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
             {student.trend.length === 0 ? (
-              <div className="text-[13px] text-t2">No graded papers yet.</div>
+              <div className="text-dense text-t2">No graded papers yet.</div>
             ) : (
               <>
                 <TrendSparkline values={student.trend.map((p) => p.percentage)} width={140} />
@@ -207,14 +207,14 @@ export function StudentDetail() {
                   role="region"
                   aria-label="Percentage over time, scrollable"
                 >
-                  <table className="w-full text-[12px] border-collapse">
+                  <table className="w-full text-xs border-collapse">
                     <caption className="sr-only">This student's percentage over time</caption>
                     <thead>
                       <tr className="text-t3">
-                        <th scope="col" className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-1 py-1">
+                        <th scope="col" className="text-left font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
                           Date
                         </th>
-                        <th scope="col" className="text-right font-mono text-[10px] uppercase tracking-[0.08em] px-1 py-1">
+                        <th scope="col" className="text-right font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
                           Percentage
                         </th>
                       </tr>
@@ -244,29 +244,29 @@ export function StudentDetail() {
 
         {/* Activity / engagement */}
         <section className="flex flex-col gap-3 min-w-0">
-          <div className="font-serif text-[22px]">Engagement</div>
-          <div className="bg-surface border border-border rounded-[14px] p-[18px] grid grid-cols-2 gap-4">
+          <div className="text-display-sm">Engagement</div>
+          <div className="bg-surface border border-border rounded-lg p-[18px] grid grid-cols-2 gap-4">
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Total papers
               </div>
-              <div className="font-serif text-[26px] mt-1">{student.engagement.totalPapers}</div>
+              <div className="text-display-sm mt-1">{student.engagement.totalPapers}</div>
             </div>
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Last active
               </div>
-              <div className="font-serif text-[22px] mt-1">
+              <div className="text-display-sm mt-1">
                 {student.engagement.lastActiveAt
                   ? relativeTime(student.engagement.lastActiveAt)
                   : "Never"}
               </div>
             </div>
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Days since last submission
               </div>
-              <div className="font-serif text-[26px] mt-1">
+              <div className="text-display-sm mt-1">
                 {student.engagement.daysSinceLastSubmission ?? "—"}
               </div>
             </div>
@@ -276,9 +276,9 @@ export function StudentDetail() {
 
       {/* Weakness list with evidence */}
       <section className="flex flex-col gap-3">
-        <div className="font-serif text-[22px]">Weaknesses</div>
+        <div className="text-display-sm">Weaknesses</div>
         {student.weaknesses.length === 0 ? (
-          <div className="text-[13px] text-t2">No weakness data yet.</div>
+          <div className="text-dense text-t2">No weakness data yet.</div>
         ) : (
           <div className="flex flex-col gap-2">
             {student.weaknesses.map((w) => (
@@ -290,33 +290,33 @@ export function StudentDetail() {
 
       {/* Full attempt history */}
       <section className="flex flex-col gap-3 min-w-0">
-        <div className="font-serif text-[22px]">Attempt history</div>
+        <div className="text-display-sm">Attempt history</div>
         {student.attempts.length === 0 ? (
-          <div className="text-[13px] text-t2">No papers recorded yet.</div>
+          <div className="text-dense text-t2">No papers recorded yet.</div>
         ) : (
           <div
-            className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0"
+            className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
             tabIndex={0}
             role="region"
             aria-label="Attempt history, scrollable horizontally"
           >
-            <table className="w-full text-[13px] border-collapse">
+            <table className="w-full text-dense border-collapse">
               <caption className="sr-only">Full attempt history, newest first</caption>
               <thead>
-                <tr className="bg-[oklch(0.965_0.012_78)] border-b border-border">
-                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                <tr className="bg-surface-2 border-b border-border">
+                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Paper
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Marks
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Percentage
                   </th>
-                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Grade
                   </th>
-                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Recorded
                   </th>
                   <th scope="col" className="px-4 py-2.5">
@@ -337,13 +337,13 @@ export function StudentDetail() {
                   // verified against seeded multi-attempt data. `recordedAt`
                   // (a full ISO timestamp, one per submission) disambiguates.
                   <tr key={`${a.paperId}-${a.recordedAt}`} className="border-b border-border last:border-b-0">
-                    <td className="px-4 py-2.5 font-mono text-[12.5px] whitespace-nowrap">
+                    <td className="px-4 py-2.5 font-mono text-dense-sm whitespace-nowrap">
                       {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-[12.5px]">
+                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
                       {a.awardedMarks}/{a.maximumMarks}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-[12.5px]">
+                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
                       {Math.round(a.percentage)}%
                     </td>
                     <td className="px-4 py-2.5">

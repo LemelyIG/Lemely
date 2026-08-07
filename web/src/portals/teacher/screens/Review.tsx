@@ -214,7 +214,7 @@ export function Review() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Review queue</h1>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading review queue…
         </div>
       </div>
@@ -243,23 +243,23 @@ export function Review() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t3">
+        <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
           The teacher's core recurring task
         </div>
-        <h1 className="font-serif text-[34px] leading-[1.1] mt-1">Review queue</h1>
-        <p className="text-[13px] text-t2 mt-1 max-w-[560px] text-pretty">
+        <h1 className="text-display-md mt-1">Review queue</h1>
+        <p className="text-dense text-t2 mt-1 max-w-[560px] text-pretty">
           Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the
           trivially fine ones — open anything that needs a real look.
         </p>
       </div>
 
       <div className="flex items-end gap-4 flex-wrap">
-        <label className="flex flex-col gap-1.5 text-[12.5px] text-t2">
+        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
           Class
           <select
             value={classId}
             onChange={(e) => updateFilter("class_id", e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-w-[170px]"
+            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-w-[170px]"
           >
             <option value="">All classes</option>
             {(classesQuery.data?.classes ?? []).map((c) => (
@@ -269,12 +269,12 @@ export function Review() {
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1.5 text-[12.5px] text-t2">
+        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
           Reason
           <select
             value={reason}
             onChange={(e) => updateFilter("reason", e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             {REASON_FILTER_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -283,12 +283,12 @@ export function Review() {
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1.5 text-[12.5px] text-t2">
+        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
           Waiting at least
           <select
             value={minAgeHours}
             onChange={(e) => updateFilter("min_age_hours", e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             {AGE_FILTER_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -333,14 +333,14 @@ export function Review() {
                 ? "Approving…"
                 : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
             </Button>
-            <span className="text-[12px] text-t3">
+            <span className="text-xs text-t3">
               Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
               selectable here — open one to look at it properly.
             </span>
           </div>
 
           {bulkApprove.isError ? (
-            <div role="alert" className="text-[12.5px] text-err">
+            <div role="alert" className="text-dense-sm text-err">
               Couldn't bulk-approve: {bulkApprove.error.message}
             </div>
           ) : null}
@@ -348,10 +348,10 @@ export function Review() {
           {bulkResult ? (
             <div
               role="status"
-              className="border border-border rounded-[12px] p-4 bg-surface-2 flex flex-col gap-2"
+              className="border border-border rounded-md p-4 bg-surface-2 flex flex-col gap-2"
             >
               <div className="flex items-center justify-between gap-3">
-                <div className="text-[13px] font-medium">
+                <div className="text-dense font-medium">
                   Approved {bulkResult.approved.length} item
                   {bulkResult.approved.length === 1 ? "" : "s"}
                   {bulkResult.skipped.length > 0 ? ` · skipped ${bulkResult.skipped.length}` : "."}
@@ -361,7 +361,7 @@ export function Review() {
                 </Button>
               </div>
               {bulkResult.skipped.length > 0 ? (
-                <ul className="flex flex-col gap-1 text-[12.5px] text-t2 m-0 pl-4 list-disc">
+                <ul className="flex flex-col gap-1 text-dense-sm text-t2 m-0 pl-4 list-disc">
                   {bulkResult.skipped.map((s) => {
                     const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
                     return (
@@ -378,54 +378,54 @@ export function Review() {
           ) : null}
 
           <div
-            className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0"
+            className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
             tabIndex={0}
             role="region"
             aria-label="Review queue, scrollable horizontally"
           >
-            <table className="w-full text-[13px] border-collapse">
+            <table className="w-full text-dense border-collapse">
               <caption className="sr-only">
                 Review queue, oldest-waiting item first — the priority order the server already
                 returns this list in
               </caption>
               <thead>
-                <tr className="bg-[oklch(0.965_0.012_78)] border-b border-border">
+                <tr className="bg-surface-2 border-b border-border">
                   <th scope="col" className="px-[16px] py-[10px]">
                     <span className="sr-only">Select</span>
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-[10px] tracking-[0.09em] uppercase text-t3"
+                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
                   >
                     Student
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-[10px] tracking-[0.09em] uppercase text-t3"
+                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
                   >
                     Paper
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-[10px] tracking-[0.09em] uppercase text-t3"
+                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
                   >
                     Question
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-[10px] tracking-[0.09em] uppercase text-t3"
+                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
                   >
                     Why it's here
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-[10px] tracking-[0.09em] uppercase text-t3"
+                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
                   >
                     Waiting
                   </th>
                   <th
                     scope="col"
-                    className="text-right px-[16px] py-[10px] font-mono text-[10px] tracking-[0.09em] uppercase text-t3"
+                    className="text-right px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
                   >
                     AI mark
                   </th>
@@ -458,7 +458,7 @@ export function Review() {
                       <div className="flex items-center gap-2.5 min-w-0">
                         <Avatar
                           initials={initialsOf(item.studentDisplayName)}
-                          className="w-7 h-7 text-[10.5px] flex-none"
+                          className="w-7 h-7 text-3xs flex-none"
                         />
                         <div className="min-w-0">
                           <Link
@@ -469,17 +469,17 @@ export function Review() {
                           </Link>
                           <Link
                             to={`/teacher/classes/${item.classId}`}
-                            className="text-[11.5px] text-t3 hover:text-t1 hover:underline block truncate"
+                            className="text-xs text-t3 hover:text-t1 hover:underline block truncate"
                           >
                             {item.className}
                           </Link>
                         </div>
                       </div>
                     </td>
-                    <td className="px-[16px] py-[13px] whitespace-nowrap text-[12.5px] text-t2">
+                    <td className="px-[16px] py-[13px] whitespace-nowrap text-dense-sm text-t2">
                       {paperIdentityLabel(item)}
                     </td>
-                    <td className="px-[16px] py-[13px] font-mono text-[12.5px] whitespace-nowrap">
+                    <td className="px-[16px] py-[13px] font-mono text-dense-sm whitespace-nowrap">
                       {item.questionId ?? "—"}
                     </td>
                     <td className="px-[16px] py-[13px]">
@@ -487,11 +487,11 @@ export function Review() {
                         {reasonLabel(item.reason)}
                       </Chip>
                     </td>
-                    <td className="px-[16px] py-[13px] whitespace-nowrap text-[12.5px] text-t2">
+                    <td className="px-[16px] py-[13px] whitespace-nowrap text-dense-sm text-t2">
                       {relativeTime(item.createdAt)}
                     </td>
                     <td className="px-[16px] py-[13px] text-right whitespace-nowrap">
-                      <div className="font-mono text-[12.5px]">
+                      <div className="font-mono text-dense-sm">
                         {item.aiAwardedMarks ?? "—"}/{item.maximumMarks ?? "—"}
                       </div>
                       {item.confidenceScore != null ? (

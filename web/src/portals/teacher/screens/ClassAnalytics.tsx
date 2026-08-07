@@ -77,7 +77,7 @@ function HeatmapCellView({ cell }: { cell: HeatmapCell | undefined }) {
     return (
       <td className="p-0.5">
         <div
-          className="w-11 h-8 flex items-center justify-center rounded bg-surface-2 border border-dashed border-border text-t3 text-[11px]"
+          className="w-11 h-8 flex items-center justify-center rounded bg-surface-2 border border-dashed border-border text-t3 text-2xs"
           role="img"
           aria-label="No data"
           title="No data — this student has no recorded attempt on this topic"
@@ -93,7 +93,7 @@ function HeatmapCellView({ cell }: { cell: HeatmapCell | undefined }) {
     <td className="p-0.5">
       <div
         className={cn(
-          "w-11 h-8 flex items-center justify-center rounded font-mono text-[11px] font-medium",
+          "w-11 h-8 flex items-center justify-center rounded font-mono text-2xs font-medium",
           TONE_CLASS[tone],
         )}
         title={`${pct}% accuracy`}
@@ -118,7 +118,7 @@ export function ClassAnalytics() {
     return (
       <div className="flex flex-col gap-6 min-w-0">
         <h2 className="sr-only">Analytics</h2>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading analytics…
         </div>
       </div>
@@ -155,8 +155,8 @@ export function ClassAnalytics() {
       <section className="flex flex-col gap-3 min-w-0">
         <div className="flex items-end justify-between gap-3 flex-wrap gap-y-2">
           <div>
-            <div className="font-serif text-[24px]">Topic weakness heatmap</div>
-            <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3 mt-1">
+            <div className="text-display-sm">Topic weakness heatmap</div>
+            <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mt-1">
               Ranked by class-wide marks lost — what to teach next week
             </div>
           </div>
@@ -179,7 +179,7 @@ export function ClassAnalytics() {
           />
         ) : (
           <div
-            className="bg-surface border border-border rounded-[14px] p-3 overflow-x-auto min-w-0"
+            className="bg-surface border border-border rounded-lg p-3 overflow-x-auto min-w-0"
             tabIndex={0}
             role="region"
             aria-label="Topic weakness heatmap, scrollable horizontally"
@@ -202,7 +202,7 @@ export function ClassAnalytics() {
                       title={s.name}
                     >
                       <span
-                        className="block w-11 font-mono text-[9.5px] text-t3 truncate"
+                        className="block w-11 font-mono text-3xs text-t3 truncate"
                         style={{ writingMode: "vertical-rl" }}
                       >
                         {s.name}
@@ -216,7 +216,7 @@ export function ClassAnalytics() {
                   <tr key={t.topic}>
                     <th
                       scope="row"
-                      className="sticky left-0 bg-surface px-2 py-1 text-left text-[12.5px] font-normal whitespace-nowrap max-w-[180px] truncate"
+                      className="sticky left-0 bg-surface px-2 py-1 text-left text-dense-sm font-normal whitespace-nowrap max-w-[180px] truncate"
                       title={t.topic}
                     >
                       {t.topic}
@@ -255,18 +255,18 @@ export function ClassAnalytics() {
 
         {selected ? (
           <div className="bg-surface-2 border border-border rounded-lg p-4 flex flex-col gap-2.5">
-            <div className="text-[13.5px] font-medium">
+            <div className="text-dense-lg font-medium">
               Students affected by "{selected.topic}"
             </div>
             {selected.studentIds.length === 0 ? (
-              <div className="text-[12.5px] text-t2">No individual students identified.</div>
+              <div className="text-dense-sm text-t2">No individual students identified.</div>
             ) : (
               <ul className="flex flex-wrap gap-2 list-none p-0 m-0">
                 {selected.studentIds.map((id) => (
                   <li key={id}>
                     <Link
                       to={`/teacher/students/${id}`}
-                      className="inline-flex items-center border border-border bg-surface rounded-full px-3 py-1 text-[12.5px] text-t1 hover:underline"
+                      className="inline-flex items-center border border-border bg-surface rounded-full px-3 py-1 text-dense-sm text-t1 hover:underline"
                     >
                       {studentsById.get(id) ?? id}
                     </Link>
@@ -280,18 +280,18 @@ export function ClassAnalytics() {
 
       {/* Grade distribution */}
       <section className="flex flex-col gap-3">
-        <div className="font-serif text-[22px]">Grade distribution</div>
-        <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-2.5">
+        <div className="text-display-sm">Grade distribution</div>
+        <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-2.5">
           {data.gradeDistribution.map((b) => (
             <div key={b.grade} className="flex items-center gap-3">
-              <div className="w-6 font-mono text-[12.5px] text-t2 flex-none">{b.grade}</div>
+              <div className="w-6 font-mono text-dense-sm text-t2 flex-none">{b.grade}</div>
               <div className="flex-1 h-4 bg-surface-2 rounded-full overflow-hidden min-w-0">
                 <div
                   className={cn("h-full rounded-full", GRADE_BAND_BG[gradeBand(b.grade)])}
                   style={{ width: `${(b.count / maxGradeCount) * 100}%` }}
                 />
               </div>
-              <div className="w-8 text-right font-mono text-[12.5px] text-t2 flex-none">
+              <div className="w-8 text-right font-mono text-dense-sm text-t2 flex-none">
                 {b.count}
               </div>
             </div>
@@ -302,16 +302,16 @@ export function ClassAnalytics() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
         {/* Cohort trend */}
         <section className="flex flex-col gap-3 min-w-0">
-          <div className="font-serif text-[22px]">Performance over time</div>
-          <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-3 min-w-0">
+          <div className="text-display-sm">Performance over time</div>
+          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
             {data.trend.length === 0 ? (
-              <div className="text-[13px] text-t2">No graded submissions yet.</div>
+              <div className="text-dense text-t2">No graded submissions yet.</div>
             ) : (
               <>
                 <div className="flex items-center gap-3 flex-wrap">
                   <TrendSparkline values={data.trend.map((p) => p.meanPercentage)} width={120} />
                   {latestTrendPoint ? (
-                    <div className="text-[12.5px] text-t2">
+                    <div className="text-dense-sm text-t2">
                       Latest: {Math.round(latestTrendPoint.meanPercentage)}% mean, over{" "}
                       {latestTrendPoint.sampleSize} student
                       {latestTrendPoint.sampleSize === 1 ? "" : "s"}
@@ -324,17 +324,17 @@ export function ClassAnalytics() {
                   role="region"
                   aria-label="Cohort mean percentage over time, scrollable"
                 >
-                  <table className="w-full text-[12px] border-collapse">
+                  <table className="w-full text-xs border-collapse">
                     <caption className="sr-only">Cohort mean percentage over time</caption>
                     <thead>
                       <tr className="text-t3">
-                        <th scope="col" className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-1 py-1">
+                        <th scope="col" className="text-left font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
                           Date
                         </th>
-                        <th scope="col" className="text-right font-mono text-[10px] uppercase tracking-[0.08em] px-1 py-1">
+                        <th scope="col" className="text-right font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
                           Mean
                         </th>
-                        <th scope="col" className="text-right font-mono text-[10px] uppercase tracking-[0.08em] px-1 py-1">
+                        <th scope="col" className="text-right font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
                           Students
                         </th>
                       </tr>
@@ -367,43 +367,43 @@ export function ClassAnalytics() {
 
         {/* Engagement */}
         <section className="flex flex-col gap-3 min-w-0">
-          <div className="font-serif text-[22px]">Engagement</div>
-          <div className="bg-surface border border-border rounded-[14px] p-[18px] grid grid-cols-2 gap-4">
+          <div className="text-display-sm">Engagement</div>
+          <div className="bg-surface border border-border rounded-lg p-[18px] grid grid-cols-2 gap-4">
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Submissions, 7 days
               </div>
-              <div className="font-serif text-[26px] mt-1">{data.engagement.submissionsLast7Days}</div>
+              <div className="text-display-sm mt-1">{data.engagement.submissionsLast7Days}</div>
             </div>
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Submissions, 30 days
               </div>
-              <div className="font-serif text-[26px] mt-1">{data.engagement.submissionsLast30Days}</div>
+              <div className="text-display-sm mt-1">{data.engagement.submissionsLast30Days}</div>
             </div>
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Active students, 7 days
               </div>
-              <div className="font-serif text-[26px] mt-1">{data.engagement.activeStudentsLast7Days}</div>
+              <div className="text-display-sm mt-1">{data.engagement.activeStudentsLast7Days}</div>
             </div>
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Active students, 30 days
               </div>
-              <div className="font-serif text-[26px] mt-1">{data.engagement.activeStudentsLast30Days}</div>
+              <div className="text-display-sm mt-1">{data.engagement.activeStudentsLast30Days}</div>
             </div>
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Never active
               </div>
-              <div className="font-serif text-[26px] mt-1">{data.engagement.neverActiveCount}</div>
+              <div className="text-display-sm mt-1">{data.engagement.neverActiveCount}</div>
             </div>
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-t3">
+              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
                 Median days since last submission
               </div>
-              <div className="font-serif text-[26px] mt-1">
+              <div className="text-display-sm mt-1">
                 {data.engagement.medianDaysSinceLastSubmission != null
                   ? Math.round(data.engagement.medianDaysSinceLastSubmission)
                   : "—"}
@@ -415,30 +415,30 @@ export function ClassAnalytics() {
 
       {/* Per-paper comparison */}
       <section className="flex flex-col gap-3 min-w-0">
-        <div className="font-serif text-[22px]">Per-paper comparison</div>
+        <div className="text-display-sm">Per-paper comparison</div>
         {data.paperComparison.length === 0 ? (
-          <div className="text-[13px] text-t2">No papers recorded for this class yet.</div>
+          <div className="text-dense text-t2">No papers recorded for this class yet.</div>
         ) : (
           <div
-            className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0"
+            className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
             tabIndex={0}
             role="region"
             aria-label="Per-paper comparison, scrollable horizontally"
           >
-            <table className="w-full text-[13px] border-collapse">
+            <table className="w-full text-dense border-collapse">
               <caption className="sr-only">Cohort stats per paper</caption>
               <thead>
-                <tr className="bg-[oklch(0.965_0.012_78)] border-b border-border">
-                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                <tr className="bg-surface-2 border-b border-border">
+                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Paper
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Mean
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Attempts
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-[10px] tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
                     Students
                   </th>
                 </tr>
@@ -446,16 +446,16 @@ export function ClassAnalytics() {
               <tbody>
                 {data.paperComparison.map((p) => (
                   <tr key={p.paperId} className="border-b border-border last:border-b-0">
-                    <td className="px-4 py-2.5 font-mono text-[12.5px]">
+                    <td className="px-4 py-2.5 font-mono text-dense-sm">
                       {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-[12.5px]">
+                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
                       {Math.round(p.meanPercentage)}%
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-[12.5px]">
+                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
                       {p.attemptCount}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-[12.5px]">
+                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
                       {p.studentCount}
                     </td>
                   </tr>

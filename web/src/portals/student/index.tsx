@@ -6,10 +6,10 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom"
-import { MagnifyingGlass } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { crumbs, navGroups, studentMeta, studentName } from "./data"
+import { useProfile } from "@/lib/hooks/useMeApi"
+import { crumbs, navGroups } from "./data"
 import { Overview } from "./screens/Overview"
 import { Subject } from "./screens/Subject"
 import { PaperResult } from "./screens/PaperResult"
@@ -28,18 +28,69 @@ import { Parents } from "./screens/Parents"
  * terracotta accent + neutrals (student is also the default scope).
  */
 
+/**
+ * Sidebar identity block. Wired to `GET /api/me/profile` (`useProfile()`) —
+ * replaces the mock's hardcoded "Maya Rahman / Year 11 - Helwan Science
+ * Centre" and "MR" initials, which no field anywhere supplies. This is the
+ * same fiction P3.7 chunk b removed from the *teacher* sidebar; the student
+ * side was missed then and is fixed here (P3.10 chunk c), reusing that
+ * screen's `UserBlock` shape verbatim so the two cannot drift.
+ *
+ * `displayName` is nullable (a caller who never set one); the fallback is the
+ * email's local part, never a fabricated name. The subtitle is the caller's
+ * real platform role — the only affiliation-like fact this account actually
+ * carries. There is no year-group or school-name field on `Profile`, so no
+ * "Year 11 - <school>" line is rendered at all rather than invented.
+ */
+function UserBlock() {
+  const { data, isPending, isError } = useProfile()
+
+  if (isPending || isError || !data) {
+    return (
+      <div className="flex items-center gap-2.5 px-0.5 text-xs text-t3">
+        {isPending ? "Loading…" : "Signed in"}
+      </div>
+    )
+  }
+
+  const name = data.displayName ?? data.email.split("@")[0]
+  const initials = name
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase()
+  const roleLabel = data.role
+    .split("_")
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ")
+
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="w-8 h-8 rounded-full bg-accent-subtle text-accent-subtle-on flex items-center justify-center text-dense-sm font-semibold flex-none">
+        {initials}
+      </div>
+      <div className="leading-[1.25] min-w-0">
+        <div className="text-dense font-medium truncate">{name}</div>
+        <div className="text-2xs text-t2">{roleLabel}</div>
+      </div>
+    </div>
+  )
+}
+
 function Sidebar() {
   return (
     <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       <div className="flex items-center gap-[9px] px-2">
         <div className="w-[11px] h-[11px] rounded-full bg-accent" />
-        <div className="font-serif text-[25px] tracking-[0.01em]">Lemely</div>
+        <div className="text-display-sm tracking-[0.01em]">Lemely</div>
       </div>
 
       <div className="flex flex-col gap-[22px] overflow-auto lm-scroll">
         {navGroups.map((grp) => (
           <div key={grp.label} className="flex flex-col gap-0.5">
-            <div className="text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium">
+            <div className="text-3xs tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium">
               {grp.label}
             </div>
             {grp.items.map((it) => (
@@ -49,10 +100,10 @@ function Sidebar() {
                 end={it.end}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-2.5 w-full text-left text-[13.5px] px-[9px] py-2 rounded-[9px] transition-colors",
+                    "flex items-center gap-2.5 w-full text-left text-dense-lg px-[9px] py-2 rounded transition-colors",
                     isActive
-                      ? "bg-[oklch(0.90_0.02_40)] text-t1 font-medium"
-                      : "bg-transparent text-[oklch(0.36_0.018_35)] font-normal hover:bg-[oklch(0.93_0.01_40)]",
+                      ? "bg-surface text-t1 font-medium"
+                      : "bg-transparent text-t2 font-normal hover:bg-bg",
                   )
                 }
               >
@@ -61,12 +112,12 @@ function Sidebar() {
                     <span
                       className={cn(
                         "w-1.5 h-1.5 rounded-full flex-none",
-                        isActive ? "bg-accent" : "bg-[oklch(0.85_0.008_40)]",
+                        isActive ? "bg-accent" : "bg-border",
                       )}
                     />
                     <span className="flex-1">{it.label}</span>
                     {it.tag ? (
-                      <span className="font-mono text-[10px] text-t3">
+                      <span className="font-mono text-3xs text-t3">
                         {it.tag}
                       </span>
                     ) : null}
@@ -79,18 +130,10 @@ function Sidebar() {
       </div>
 
       <div className="mt-auto border-t border-border pt-[14px] flex flex-col gap-3">
-        <Link to="/teacher" className="text-[11.5px] text-t3 px-0.5 hover:text-ink">
+        <Link to="/teacher" className="text-xs text-t3 px-0.5 hover:text-ink">
           Open the teacher portal -&gt;
         </Link>
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full bg-accent-subtle text-accent flex items-center justify-center text-[12.5px] font-semibold">
-            MR
-          </div>
-          <div className="leading-[1.25]">
-            <div className="text-[13px] font-medium">{studentName}</div>
-            <div className="text-[11px] text-t2">{studentMeta}</div>
-          </div>
-        </div>
+        <UserBlock />
       </div>
     </aside>
   )
@@ -120,28 +163,27 @@ function Header() {
   const crumb = resolveCrumb(location.pathname)
   return (
     // Responsive sizing here is load-bearing, not cosmetic: this row's fixed
-    // items (34px padding either side, the streak pill, the 138px CTA and two
-    // 18px gaps) summed to 391px, so /student/result overflowed a 380px
-    // viewport by 10px — a real QUALITY-BAR "no horizontal scroll from 320px
-    // up" failure, found by P3.10 chunk b's responsive gate once it covered
-    // this route. The crumb must be able to shrink (`min-w-0 truncate`; it
-    // renders "Home / Result <uuid>", the longest string on the row), the
-    // padding tightens below 640px, and the streak pill hides there — the
-    // same treatment the search affordance already gets below 1080px, and
-    // the streak is shown again on the dashboard itself.
-    <header className="lm-head flex items-center gap-[18px] px-4 min-[640px]:px-[34px] py-4 border-b border-border bg-[oklch(0.97_0.007_40/0.82)] backdrop-blur-[10px] sticky top-0 z-20">
-      <div className="font-mono text-[11.5px] text-t2 min-w-0 truncate">{crumb}</div>
+    // items (34px padding either side, the 138px CTA and the gaps) overflowed
+    // a 380px viewport on /student/result — a real QUALITY-BAR "no horizontal
+    // scroll from 320px up" failure, found by P3.10 chunk b's responsive gate
+    // once it covered this route. The crumb must still be able to shrink
+    // (`min-w-0 truncate`; it renders "Home / Result <uuid>", the longest
+    // string on the row) and the padding still tightens below 640px.
+    //
+    // P3.10 chunk c removed two of the fixed items this row used to carry, so
+    // it now has considerably more slack than the fix above needed:
+    //   - a `<span>` styled as a search input ("Search papers, topics,
+    //     students"). It was not an input, had no handler, and no search
+    //     endpoint exists anywhere in the API — fabricated UI.
+    //   - a "24 day streak" pill, where the 24 was a literal. The only
+    //     streak-shaped field in the API is `StandingsDTO.streakDays`, and
+    //     that is `len({distinct dates in history})` — a count of active
+    //     days, NOT consecutive ones. Wiring the pill to it would have
+    //     replaced a hardcoded lie with a mislabelled one, so the pill is
+    //     gone instead; streaks are Phase 5's to build for real.
+    <header className="lm-head flex items-center gap-[18px] px-4 min-[640px]:px-[34px] py-4 border-b border-border bg-bg/80 backdrop-blur-[10px] sticky top-0 z-20">
+      <div className="font-mono text-xs text-t2 min-w-0 truncate">{crumb}</div>
       <div className="flex-1" />
-      <div className="hidden min-[1080px]:flex items-center gap-2 bg-surface border border-border rounded-[9px] px-3 py-[7px] w-[280px]">
-        <MagnifyingGlass size={13} className="text-t3" weight="bold" />
-        <span className="text-[12.5px] text-t3">
-          Search papers, topics, students
-        </span>
-      </div>
-      <div className="hidden min-[640px]:flex items-center gap-[7px] border border-border bg-surface rounded-[9px] px-[11px] py-[7px]">
-        <span className="text-[12.5px] font-semibold font-mono">24</span>
-        <span className="text-[11.5px] text-t2">day streak</span>
-      </div>
       <Button
         variant="accent"
         size="md"

@@ -69,6 +69,7 @@ echo "== Web =="
 run "web-typecheck" bash -c 'cd web && npm run -s typecheck'
 run "web-lint" bash -c 'cd web && npm run -s lint'
 run "web-build" bash -c 'cd web && npm run -s build'
+run "design-tokens" bash -c 'cd web && node scripts/check-design-tokens.mjs'
 run "impeccable-detect" bash -c 'cd web && npx --yes impeccable detect src/'
 
 STACK_UP=0

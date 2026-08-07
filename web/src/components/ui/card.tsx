@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils"
 
 /** Surface card matching the mock (surface bg, 1px border, DESIGN.md
  * "Primary Cards: Use a 1rem (16px) radius" — `rounded-lg` is the exact
- * token, not rounded-[14px]). */
+ * token, not rounded-lg). */
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div

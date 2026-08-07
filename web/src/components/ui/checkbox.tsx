@@ -35,14 +35,14 @@ export function Checkbox({ className, label, ...props }: CheckboxProps) {
     >
       <span
         className={cn(
-          "relative inline-flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] border border-border bg-surface transition-colors",
+          "relative inline-flex h-[18px] w-[18px] flex-none items-center justify-center rounded-sm border border-border bg-surface transition-colors",
           "has-checked:bg-accent has-checked:border-accent",
           "has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-accent",
         )}
       >
         <input
           type="checkbox"
-          className="peer absolute inset-0 h-full w-full m-0 cursor-pointer appearance-none rounded-[4px] disabled:cursor-not-allowed"
+          className="peer absolute inset-0 h-full w-full m-0 cursor-pointer appearance-none rounded-sm disabled:cursor-not-allowed"
           {...props}
         />
         <Check
@@ -51,7 +51,7 @@ export function Checkbox({ className, label, ...props }: CheckboxProps) {
           className="pointer-events-none hidden h-3 w-3 text-accent-on peer-checked:block"
         />
       </span>
-      {label ? <span className="text-[12.5px] text-t2">{label}</span> : null}
+      {label ? <span className="text-dense-sm text-t2">{label}</span> : null}
     </label>
   )
 }

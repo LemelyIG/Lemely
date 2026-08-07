@@ -119,10 +119,10 @@ function StatTile({
   detail?: string
 }) {
   return (
-    <div className="bg-surface border border-border rounded-[14px] px-4 py-3.5 min-w-0">
-      <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2">{label}</div>
-      <div className="text-[22px] text-t1 mt-1 tabular-nums">{value}</div>
-      {detail ? <div className="text-[12px] text-t2 mt-0.5 text-pretty">{detail}</div> : null}
+    <div className="bg-surface border border-border rounded-lg px-4 py-3.5 min-w-0">
+      <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t2">{label}</div>
+      <div className="text-display-sm text-t1 mt-1 tabular-nums">{value}</div>
+      {detail ? <div className="text-xs text-t2 mt-0.5 text-pretty">{detail}</div> : null}
     </div>
   )
 }
@@ -134,7 +134,7 @@ function ScoreDistribution({ data }: { data: QuizAssignmentResults }) {
 
   if (marked === 0) {
     return (
-      <p className="text-[12.5px] text-t2 m-0">
+      <p className="text-dense-sm text-t2 m-0">
         No marked submissions yet — there is nothing to distribute.
       </p>
     )
@@ -152,7 +152,7 @@ function ScoreDistribution({ data }: { data: QuizAssignmentResults }) {
               aria-label={`${label}: ${b.studentCount} student${b.studentCount === 1 ? "" : "s"}`}
               className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0"
             >
-              <span className="text-[11px] text-t2 tabular-nums">
+              <span className="text-2xs text-t2 tabular-nums">
                 {b.studentCount > 0 ? b.studentCount : ""}
               </span>
               <div
@@ -170,13 +170,13 @@ function ScoreDistribution({ data }: { data: QuizAssignmentResults }) {
         {buckets.map((b) => (
           <div
             key={`${b.lower}-${b.upper}`}
-            className="flex-1 text-center font-mono text-[9.5px] text-t2 min-w-0"
+            className="flex-1 text-center font-mono text-3xs text-t2 min-w-0"
           >
             {b.lower}
           </div>
         ))}
       </div>
-      <p className="text-[12px] text-t2 mt-2 m-0">
+      <p className="text-xs text-t2 mt-2 m-0">
         Ten-point bands of percentage score, not grades — a quiz has no grade boundaries to
         bucket by.
       </p>
@@ -186,16 +186,16 @@ function ScoreDistribution({ data }: { data: QuizAssignmentResults }) {
 
 function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[] }) {
   if (questions.length === 0) {
-    return <p className="text-[12.5px] text-t2 m-0">This quiz has no included questions.</p>
+    return <p className="text-dense-sm text-t2 m-0">This quiz has no included questions.</p>
   }
   return (
     <div
-      className="bg-surface border border-border rounded-[14px] overflow-x-auto min-w-0"
+      className="bg-surface border border-border rounded-lg overflow-x-auto min-w-0"
       tabIndex={0}
       role="region"
       aria-label="Per-question analysis, scrollable horizontally"
     >
-      <table className="w-full border-collapse text-[13px]">
+      <table className="w-full border-collapse text-dense">
         <thead>
           <tr className="text-left">
             {[
@@ -212,7 +212,7 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
               <th
                 key={h}
                 scope="col"
-                className="font-mono text-[10px] tracking-[0.1em] uppercase text-t2 font-normal px-3 py-2.5 border-b border-border whitespace-nowrap"
+                className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 font-normal px-3 py-2.5 border-b border-border whitespace-nowrap"
               >
                 {h}
               </th>
@@ -222,7 +222,7 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
         <tbody>
           {questions.map((q) => (
             <tr key={q.questionRef} className="border-b border-border last:border-b-0">
-              <td className="px-3 py-2.5 font-mono text-[12px] text-t2">{q.questionRef}</td>
+              <td className="px-3 py-2.5 font-mono text-xs text-t2">{q.questionRef}</td>
               <td className="px-3 py-2.5 text-t1 max-w-[320px]">
                 <span className="line-clamp-2">{q.prompt}</span>
               </td>
@@ -278,19 +278,19 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
   }
   return (
     <div
-      className="bg-surface border border-border rounded-[14px] overflow-x-auto min-w-0"
+      className="bg-surface border border-border rounded-lg overflow-x-auto min-w-0"
       tabIndex={0}
       role="region"
       aria-label="Per-student results, scrollable horizontally"
     >
-      <table className="w-full border-collapse text-[13px]">
+      <table className="w-full border-collapse text-dense">
         <thead>
           <tr className="text-left">
             {["Student", "Status", "Score", "Submitted", "Notes"].map((h) => (
               <th
                 key={h}
                 scope="col"
-                className="font-mono text-[10px] tracking-[0.1em] uppercase text-t2 font-normal px-3 py-2.5 border-b border-border whitespace-nowrap"
+                className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 font-normal px-3 py-2.5 border-b border-border whitespace-nowrap"
               >
                 {h}
               </th>
@@ -330,7 +330,7 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
                 <div className="flex gap-1 flex-wrap items-center">
                   {s.needsTeacherReview ? <Chip tone="warn">Needs review</Chip> : null}
                   {s.markingError ? (
-                    <span className="inline-flex items-center gap-1 text-[12px] text-err">
+                    <span className="inline-flex items-center gap-1 text-xs text-err">
                       <Warning weight="fill" className="h-3.5 w-3.5 flex-none" />
                       Marking failed: {s.markingError}
                     </span>
@@ -352,7 +352,7 @@ export function QuizResults() {
   const [confirmingClose, setConfirmingClose] = useState(false)
 
   if (resultsQuery.isPending) {
-    return <div className="text-[13px] text-t2 p-1">Loading results…</div>
+    return <div className="text-dense text-t2 p-1">Loading results…</div>
   }
   if (resultsQuery.isError) {
     return (
@@ -378,11 +378,11 @@ export function QuizResults() {
     <div className="flex flex-col gap-6 min-w-0">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2">
+          <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t2">
             {data.subjectCode} · {assignment.className}
           </div>
-          <h1 className="text-[26px] text-t1 m-0 mt-1 text-pretty">{data.quizTitle}</h1>
-          <p className="text-[12.5px] text-t2 m-0 mt-1">
+          <h1 className="text-display-md text-t1 m-0 mt-1 text-pretty">{data.quizTitle}</h1>
+          <p className="text-dense-sm text-t2 m-0 mt-1">
             {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · {data.totalMarks}{" "}
             marks · assigned {relativeTime(assignment.assignedAt)}
             {assignment.dueAt ? ` · due ${new Date(assignment.dueAt).toLocaleString()}` : ""}
@@ -400,7 +400,7 @@ export function QuizResults() {
           </Button>
           <Link
             to={`/teacher/quizzes/${quizId}?step=6`}
-            className="text-[12.5px] text-t2 no-underline hover:text-t1"
+            className="text-dense-sm text-t2 no-underline hover:text-t1"
           >
             Back to the quiz
           </Link>
@@ -409,7 +409,7 @@ export function QuizResults() {
 
       {/* Results are per assignment; say so rather than letting a teacher
           assume this is every class that got the quiz. */}
-      <p className="text-[12.5px] text-t2 m-0 -mt-3">
+      <p className="text-dense-sm text-t2 m-0 -mt-3">
         These results cover <strong className="text-t1 font-medium">{assignment.className}</strong>{" "}
         only. A quiz assigned to another class has its own separate results.
       </p>
@@ -438,7 +438,7 @@ export function QuizResults() {
       </div>
 
       {completion.offRosterSubmissionCount > 0 ? (
-        <p className="text-[12.5px] text-t2 bg-surface-2 border border-border rounded-[12px] px-3.5 py-2.5 m-0 text-pretty">
+        <p className="text-dense-sm text-t2 bg-surface-2 border border-border rounded-md px-3.5 py-2.5 m-0 text-pretty">
           {completion.offRosterSubmissionCount} submission
           {completion.offRosterSubmissionCount === 1 ? "" : "s"} came from{" "}
           {completion.offRosterSubmissionCount === 1 ? "a student" : "students"} no longer on this
@@ -448,19 +448,19 @@ export function QuizResults() {
       ) : null}
 
       <section>
-        <h2 className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
+        <h2 className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
           Score distribution
         </h2>
-        <div className="bg-surface border border-border rounded-[14px] p-[18px]">
+        <div className="bg-surface border border-border rounded-lg p-[18px]">
           <ScoreDistribution data={data} />
         </div>
       </section>
 
       <section>
-        <h2 className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
+        <h2 className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
           Per-question analysis
         </h2>
-        <p className="text-[12.5px] text-t2 m-0 mb-2.5 text-pretty">
+        <p className="text-dense-sm text-t2 m-0 mb-2.5 text-pretty">
           Marks here include your own overrides, so this reads exactly as the student sees it. A
           dash means nobody has been marked on that question yet — not that they scored zero.
         </p>
@@ -468,11 +468,11 @@ export function QuizResults() {
       </section>
 
       <section>
-        <h2 className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
+        <h2 className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
           What the quiz revealed
         </h2>
         {rankedTopics.length === 0 ? (
-          <p className="text-[12.5px] text-t2 m-0">
+          <p className="text-dense-sm text-t2 m-0">
             No class-wide weak topics yet — the questions either carry no topic, or not enough of
             the class has been marked.
           </p>
@@ -491,7 +491,7 @@ export function QuizResults() {
       </section>
 
       <section>
-        <h2 className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
+        <h2 className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
           Students
         </h2>
         <StudentTable students={data.students} />
@@ -500,12 +500,12 @@ export function QuizResults() {
       {/* Close/archive lives on this screen, not in the builder: this is where
           a teacher can actually see everyone has finished. */}
       <section className="border-t border-border pt-4">
-        <h2 className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2 m-0 mb-2">
+        <h2 className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 m-0 mb-2">
           Quiz status
         </h2>
         {confirmingClose ? (
           <div className="flex flex-col gap-2 max-w-[560px]">
-            <p className="text-[12.5px] text-t2 m-0 text-pretty">
+            <p className="text-dense-sm text-t2 m-0 text-pretty">
               Closing stops any further submissions, on every class this quiz is assigned to — not
               just {assignment.className}. Students who have already submitted keep their marks.
               This cannot be undone.
@@ -535,7 +535,7 @@ export function QuizResults() {
           </Button>
         )}
         {setStatus.isError ? (
-          <div role="alert" className="text-[12.5px] text-err mt-2">
+          <div role="alert" className="text-dense-sm text-err mt-2">
             Couldn't change the status: {setStatus.error.message}
           </div>
         ) : null}

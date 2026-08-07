@@ -115,7 +115,7 @@ export function Quizzes() {
     return (
       <div className="lm-screen flex flex-col gap-5 min-w-0">
         <h1 className="sr-only">AI quizzes</h1>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading quizzes…
         </div>
       </div>
@@ -172,10 +172,10 @@ export function Quizzes() {
     <div className="lm-screen flex flex-col gap-5 min-w-0">
       <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-3">
         <div>
-          <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t2">
+          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t2">
             {quizzes.length} quiz{quizzes.length === 1 ? "" : "zes"}
           </div>
-          <h1 className="font-serif text-[34px] leading-[1.1] mt-1.5">AI quizzes</h1>
+          <h1 className="text-display-md mt-1.5">AI quizzes</h1>
         </div>
         <div className="flex-1" />
         <label className="flex flex-col gap-1">
@@ -185,7 +185,7 @@ export function Quizzes() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search quizzes or subjects…"
-            className="border border-border bg-surface rounded-lg px-3.5 py-2 text-[13px] w-[240px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3.5 py-2 text-dense w-[240px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           />
         </label>
         <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
@@ -196,33 +196,33 @@ export function Quizzes() {
       {showCreate ? (
         <form
           onSubmit={handleCreate}
-          className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-wrap items-end gap-3"
+          className="bg-surface border border-border rounded-lg p-[18px] flex flex-wrap items-end gap-3"
         >
-          <label className="flex flex-col gap-1.5 text-[12.5px] text-t2 flex-1 min-w-[220px]">
+          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 flex-1 min-w-[220px]">
             Quiz title
             <input
               required
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Y11 Thermal physics catch-up"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             />
           </label>
-          <label className="flex flex-col gap-1.5 text-[12.5px] text-t2 w-[160px]">
+          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 w-[160px]">
             Subject code
             <input
               required
               value={subjectCode}
               onChange={(e) => setSubjectCode(e.target.value)}
               placeholder="e.g. 0625"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             />
           </label>
           <Button type="submit" variant="ink" disabled={createQuiz.isPending}>
             {createQuiz.isPending ? "Creating…" : "Create draft"}
           </Button>
           {createQuiz.isError ? (
-            <div className="text-[12.5px] text-err w-full">
+            <div className="text-dense-sm text-err w-full">
               Couldn't create the quiz: {createQuiz.error.message}
             </div>
           ) : null}
@@ -237,12 +237,12 @@ export function Quizzes() {
         />
       ) : (
         <div
-          className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0"
+          className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
           tabIndex={0}
           role="region"
           aria-label="Your quizzes, scrollable horizontally"
         >
-          <table className="w-full text-[13px] border-collapse">
+          <table className="w-full text-dense border-collapse">
             <caption className="sr-only">Your quizzes, sortable by every column</caption>
             <thead>
               <tr className="bg-surface-2 border-b border-border">
@@ -258,7 +258,7 @@ export function Quizzes() {
                       <button
                         type="button"
                         onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 font-mono text-[10px] tracking-[0.09em] uppercase text-t2 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
+                        className="inline-flex items-center gap-1 font-mono text-3xs tracking-[0.09em] uppercase text-t2 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
                       >
                         {col.label}
                         {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
@@ -274,7 +274,7 @@ export function Quizzes() {
             <tbody>
               {sorted.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1} className="px-[18px] py-6 text-t2 text-[13px]">
+                  <td colSpan={COLUMNS.length + 1} className="px-[18px] py-6 text-t2 text-dense">
                     No quizzes match "{search}".
                   </td>
                 </tr>
@@ -286,23 +286,23 @@ export function Quizzes() {
                         {q.title}
                       </Link>
                       {q.status === "draft" ? (
-                        <div className="text-[11.5px] text-t2 mt-0.5">
+                        <div className="text-xs text-t2 mt-0.5">
                           Step {q.builderStep} of 6
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-[18px] py-[13px] font-mono text-[12.5px] text-t2">
+                    <td className="px-[18px] py-[13px] font-mono text-dense-sm text-t2">
                       {q.subjectCode}
                     </td>
                     <td className="px-[18px] py-[13px]">
                       <Chip tone={statusTone(q.status)}>{statusLabel(q.status)}</Chip>
                     </td>
-                    <td className="px-[18px] py-[13px] font-mono text-[12.5px]">{q.questionCount}</td>
+                    <td className="px-[18px] py-[13px] font-mono text-dense-sm">{q.questionCount}</td>
                     <td className="px-[18px] py-[13px]">
                       {q.targetGrade ? (
                         <GradeBadge grade={q.targetGrade} size="inline" basis="predicted" />
                       ) : (
-                        <span className="text-[12px] text-t2">Not set</span>
+                        <span className="text-xs text-t2">Not set</span>
                       )}
                     </td>
                     <td className="px-[18px] py-[13px] text-right whitespace-nowrap">

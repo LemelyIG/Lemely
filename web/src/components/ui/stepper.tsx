@@ -50,7 +50,7 @@ export function Stepper({ steps, current, onSelect, completed, disabled }: Stepp
             <span
               aria-hidden="true"
               className={cn(
-                "flex h-6 w-6 flex-none items-center justify-center rounded-full font-mono text-[11px]",
+                "flex h-6 w-6 flex-none items-center justify-center rounded-full font-mono text-2xs",
                 active
                   ? "bg-ink text-accent-on"
                   : done
@@ -62,7 +62,7 @@ export function Stepper({ steps, current, onSelect, completed, disabled }: Stepp
             </span>
           )
           const label = (
-            <span className={cn("text-[12.5px] whitespace-nowrap", active ? "text-t1 font-medium" : "text-t2")}>
+            <span className={cn("text-dense-sm whitespace-nowrap", active ? "text-t1 font-medium" : "text-t2")}>
               {step.label}
             </span>
           )

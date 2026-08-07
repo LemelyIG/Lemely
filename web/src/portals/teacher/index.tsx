@@ -48,10 +48,10 @@ function SidebarNavItem({ item }: { item: NavItem }) {
       end={item.end}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-3 w-full text-left text-[14px] px-3 py-[10px] rounded-[11px] border transition-colors",
+          "flex items-center gap-3 w-full text-left text-sm px-3 py-[10px] rounded-md border transition-colors",
           isActive
-            ? "bg-surface border-border text-t1 font-medium shadow-[0_1px_3px_oklch(0.2_0.02_60/.07)]"
-            : "border-transparent text-[oklch(0.38_0.015_60)] font-normal hover:bg-[oklch(0.985_0.008_78)]",
+            ? "bg-surface border-border text-t1 font-medium shadow-sm"
+            : "border-transparent text-t2 font-normal hover:bg-surface-2",
         )
       }
     >
@@ -62,7 +62,7 @@ function SidebarNavItem({ item }: { item: NavItem }) {
             weight={isActive ? "fill" : "regular"}
             className={cn(
               "flex-none",
-              isActive ? "text-accent" : "text-[oklch(0.62_0.02_60)]",
+              isActive ? "text-accent" : "text-t3",
             )}
           />
           <span className="flex-1">{item.label}</span>
@@ -84,18 +84,18 @@ function ClassesNavSection() {
 
   return (
     <div>
-      <div className="font-mono text-[10.5px] tracking-[0.12em] uppercase text-t3 px-3 pb-[9px] font-medium">
+      <div className="font-mono text-3xs tracking-[0.12em] uppercase text-t3 px-3 pb-[9px] font-medium">
         Your classes
       </div>
       <div className="flex flex-col gap-px">
         {isPending ? (
-          <div className="px-3 py-[7px] text-[12.5px] text-t3">Loading…</div>
+          <div className="px-3 py-[7px] text-dense-sm text-t3">Loading…</div>
         ) : isError ? (
-          <div className="px-3 py-[7px] text-[12.5px] text-t3">Couldn't load classes.</div>
+          <div className="px-3 py-[7px] text-dense-sm text-t3">Couldn't load classes.</div>
         ) : data.classes.length === 0 ? (
           <Link
             to="/teacher/classes"
-            className="px-3 py-[7px] text-[12.5px] text-accent hover:underline"
+            className="px-3 py-[7px] text-dense-sm text-accent hover:underline"
           >
             Add your first class →
           </Link>
@@ -105,16 +105,16 @@ function ClassesNavSection() {
               <Link
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
-                className="flex items-center gap-[11px] px-3 py-[7px] text-[13.5px] text-t2 rounded-[9px] hover:bg-[oklch(0.985_0.008_78)]"
+                className="flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2"
               >
-                <span className="w-1.5 h-1.5 rounded-full flex-none bg-[oklch(0.85_0.01_78)]" />
+                <span className="w-1.5 h-1.5 rounded-full flex-none bg-border" />
                 {c.label}
               </Link>
             ))}
             {data.classes.length > 5 ? (
               <Link
                 to="/teacher/classes"
-                className="px-3 py-[7px] text-[12.5px] text-t3 hover:text-ink"
+                className="px-3 py-[7px] text-dense-sm text-t3 hover:text-ink"
               >
                 See all {data.classes.length} →
               </Link>
@@ -160,12 +160,12 @@ function UserBlock() {
 
   return (
     <div className="flex items-center gap-[11px] px-1">
-      <div className="w-8 h-8 rounded-full bg-accent-subtle text-[oklch(0.45_0.10_68)] flex items-center justify-center text-xs font-semibold flex-none">
+      <div className="w-8 h-8 rounded-full bg-accent-subtle text-accent-subtle-on flex items-center justify-center text-xs font-semibold flex-none">
         {initials}
       </div>
       <div className="leading-[1.25] min-w-0">
-        <div className="text-[13px] font-medium truncate">{name}</div>
-        <div className="text-[11px] text-t2">{roleLabel}</div>
+        <div className="text-dense font-medium truncate">{name}</div>
+        <div className="text-2xs text-t2">{roleLabel}</div>
       </div>
     </div>
   )
@@ -175,10 +175,10 @@ function Sidebar() {
   return (
     <aside className="hidden md:flex w-[252px] flex-none border-r border-border px-[14px] py-[22px] flex-col gap-6 sticky top-0 h-screen">
       <div className="flex items-center gap-2.5 px-2">
-        <div className="w-[26px] h-[26px] rounded-full bg-accent text-accent-on flex items-center justify-center font-serif text-[16px] italic">
+        <div className="w-[26px] h-[26px] rounded-full bg-accent text-accent-on flex items-center justify-center font-serif text-base italic">
           l
         </div>
-        <div className="font-serif text-[24px]">Lemely</div>
+        <div className="text-display-sm">Lemely</div>
       </div>
 
       <nav className="flex flex-col gap-[3px]">
@@ -192,7 +192,7 @@ function Sidebar() {
       <div className="mt-auto border-t border-border pt-[14px] flex flex-col gap-3">
         <Link
           to="/student"
-          className="text-[11.5px] text-t3 px-1 hover:text-ink"
+          className="text-xs text-t3 px-1 hover:text-ink"
         >
           Open the student portal →
         </Link>

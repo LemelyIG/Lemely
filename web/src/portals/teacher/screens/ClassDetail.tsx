@@ -56,11 +56,11 @@ function JoinCodeChip({ code }: { code: string }) {
     <button
       type="button"
       onClick={copy}
-      className="inline-flex items-center gap-2 border border-border bg-surface rounded-lg px-3 py-1.5 font-mono text-[13px] tracking-[0.06em] hover:bg-[oklch(0.985_0.008_78)] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      className="inline-flex items-center gap-2 border border-border bg-surface rounded-lg px-3 py-1.5 font-mono text-dense tracking-[0.06em] hover:bg-surface-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       title="Copy join code"
     >
       {code}
-      <span className="text-[11px] text-t3">{copied ? "Copied" : "Copy"}</span>
+      <span className="text-2xs text-t3">{copied ? "Copied" : "Copy"}</span>
     </button>
   )
 }
@@ -73,7 +73,7 @@ export function ClassDetailLayout() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Class detail</h1>
-        <div role="status" className="text-[13.5px] text-t2">
+        <div role="status" className="text-dense-lg text-t2">
           Loading class…
         </div>
       </div>
@@ -99,29 +99,29 @@ export function ClassDetailLayout() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <Link to="/teacher/classes" className="text-[12px] text-t3 hover:text-t1 w-fit">
+        <Link to="/teacher/classes" className="text-xs text-t3 hover:text-t1 w-fit">
           ← All classes
         </Link>
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">
-            <div className="font-mono text-[11px] tracking-[0.11em] uppercase text-t3">
+            <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
               {classDetail.subjectCode ?? "No subject set"}
             </div>
-            <h1 className="font-serif text-[34px] leading-[1.1] mt-1.5 text-pretty">
+            <h1 className="text-display-md mt-1.5 text-pretty">
               {classDetail.label}
             </h1>
           </div>
           <div className="flex-1" />
           {classDetail.joinCode ? (
             <div className="flex flex-col items-end gap-1">
-              <span className="font-mono text-[10px] uppercase tracking-[0.09em] text-t3">
+              <span className="font-mono text-3xs uppercase tracking-[0.09em] text-t3">
                 Invite code
               </span>
               <JoinCodeChip code={classDetail.joinCode} />
             </div>
           ) : null}
         </div>
-        <div className="flex items-center gap-3 flex-wrap text-[12.5px] text-t2 mt-1">
+        <div className="flex items-center gap-3 flex-wrap text-dense-sm text-t2 mt-1">
           <span>{classDetail.topWeakness ? `Top weakness: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
           <span aria-hidden="true">·</span>
           <span>
@@ -154,7 +154,7 @@ export function ClassDetailLayout() {
           end
           className={({ isActive }) =>
             cn(
-              "px-4 py-2.5 text-[13.5px] border-b-2 -mb-px",
+              "px-4 py-2.5 text-dense-lg border-b-2 -mb-px",
               isActive
                 ? "border-accent text-t1 font-medium"
                 : "border-transparent text-t2 hover:text-t1",
@@ -167,7 +167,7 @@ export function ClassDetailLayout() {
           to="analytics"
           className={({ isActive }) =>
             cn(
-              "px-4 py-2.5 text-[13.5px] border-b-2 -mb-px",
+              "px-4 py-2.5 text-dense-lg border-b-2 -mb-px",
               isActive
                 ? "border-accent text-t1 font-medium"
                 : "border-transparent text-t2 hover:text-t1",

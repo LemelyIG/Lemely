@@ -1,5 +1,52 @@
 import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
+import { extendTailwindMerge } from "tailwind-merge"
+
+/**
+ * Every `text-`-prefixed font-size class we define ourselves, declared to
+ * tailwind-merge as font-sizes.
+ *
+ * Without this they fall into twMerge's default `text-color` class group —
+ * the trap `index.css` documents above `.btn-text*`, which was only ever
+ * worked around for the button rungs by renaming them out of the `text-`
+ * namespace. The composite type-scale classes were left in it, and the bug
+ * was live: `twMerge("text-display-md text-t1")` returned `"text-t1"`,
+ * silently dropping the font-size/family/line-height, and
+ * `twMerge("text-metadata mt-1", <a color>)` dropped the type class the same
+ * way. Five shared C-* components hit exactly that shape (trend-sparkline x2,
+ * boundary-bar, confidence-indicator, paper-identity), so the defect shipped
+ * on every screen composing them — invisibly, since a dropped type class
+ * degrades to inherited type rather than to a visible error.
+ *
+ * `text-2xs`/`text-3xs` were always safe by accident: twMerge's default
+ * font-size validator accepts t-shirt-shaped suffixes. Registering them here
+ * anyway makes that intentional rather than a naming coincidence, and lets
+ * the density rungs below use honest names instead of contorting to fit the
+ * t-shirt pattern.
+ *
+ * P3.10 chunk c. Pinned by `cn`'s own tests — do not remove a name from this
+ * list without removing the class from `index.css` too.
+ */
+const CUSTOM_FONT_SIZE_CLASSES = [
+  "display-hero",
+  "display-lg",
+  "display-md",
+  "display-sm",
+  "display-xs",
+  "body-lg",
+  "body-md",
+  "label-sm",
+  "metadata",
+  "dense-lg",
+  "dense",
+  "dense-sm",
+  "md",
+  "2xs",
+  "3xs",
+] as const
+
+const twMerge = extendTailwindMerge({
+  extend: { classGroups: { "font-size": [{ text: [...CUSTOM_FONT_SIZE_CLASSES] }] } },
+})
 
 /** Merge conditional class names, de-duplicating Tailwind utilities. */
 export function cn(...inputs: ClassValue[]) {

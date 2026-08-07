@@ -117,12 +117,12 @@ const COLUMNS: { key: SortColumn; label: string }[] = [
 
 function TrendCell({ delta }: { delta: number | null }) {
   if (delta == null) {
-    return <span className="text-[12px] text-t3">No prior paper</span>
+    return <span className="text-xs text-t3">No prior paper</span>
   }
   const Icon = delta > 0 ? TrendUp : delta < 0 ? TrendDown : Minus
   const tone = delta > 0 ? "text-ok" : delta < 0 ? "text-err" : "text-t2"
   return (
-    <span className={cn("inline-flex items-center gap-1 font-mono text-[12px]", tone)}>
+    <span className={cn("inline-flex items-center gap-1 font-mono text-xs", tone)}>
       <Icon weight="bold" className="w-3 h-3" aria-hidden />
       {delta > 0 ? "+" : ""}
       {Math.round(delta)}pts
@@ -132,12 +132,12 @@ function TrendCell({ delta }: { delta: number | null }) {
 
 function AtRiskCell({ flags }: { flags: StudentRow["flags"] }) {
   if (flags.length === 0) {
-    return <span className="text-[12px] text-t3">—</span>
+    return <span className="text-xs text-t3">—</span>
   }
   return (
     <div className="flex flex-col gap-[7px] max-w-[280px]">
       {flags.map((f) => (
-        <div key={f.reason} className="flex items-start gap-1.5 text-[12px] text-t2 leading-[1.4]">
+        <div key={f.reason} className="flex items-start gap-1.5 text-xs text-t2 leading-[1.4]">
           <span
             aria-hidden="true"
             className="text-err mt-[5px] w-[5px] h-[5px] rounded-full bg-err flex-none"
@@ -166,22 +166,22 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
   }
 
   return (
-    <div className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-3">
-      <div className="font-serif text-[19px]">Add students</div>
-      <p className="text-[13px] text-t2 text-pretty m-0">
+    <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3">
+      <div className="text-display-xs">Add students</div>
+      <p className="text-dense text-t2 text-pretty m-0">
         Share the invite code above — students join themselves from the student portal. That
         works for every class, with or without a linked school.
       </p>
       {hasSchool ? (
         <form onSubmit={handleEnroll} className="flex flex-wrap items-end gap-3 pt-2 border-t border-border">
-          <label className="flex flex-col gap-1.5 text-[12.5px] text-t2 flex-1 min-w-[220px]">
+          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 flex-1 min-w-[220px]">
             Or add a student already seated in this school, by id
             <input
               required
               value={studentId}
               onChange={(e) => setStudentId(e.target.value)}
               placeholder="Student id (uuid)"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             />
           </label>
           <Button type="submit" variant="secondary" disabled={enroll.isPending}>
@@ -189,13 +189,13 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
           </Button>
         </form>
       ) : (
-        <p className="text-[12.5px] text-t3 pt-2 border-t border-border m-0">
+        <p className="text-dense-sm text-t3 pt-2 border-t border-border m-0">
           This class has no linked school, so there's no seat pool to add a student by id from —
           the invite code above is the only way in.
         </p>
       )}
       {enroll.isError ? (
-        <div className="text-[12.5px] text-err">Couldn't add that student: {enroll.error.message}</div>
+        <div className="text-dense-sm text-err">Couldn't add that student: {enroll.error.message}</div>
       ) : null}
     </div>
   )
@@ -264,15 +264,15 @@ export function ClassRoster() {
         />
       ) : (
         <div
-          className="bg-surface border border-border rounded-[14px] overflow-hidden overflow-x-auto min-w-0"
+          className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
           tabIndex={0}
           role="region"
           aria-label="Class roster, scrollable horizontally"
         >
-          <table className="w-full text-[13px] border-collapse">
+          <table className="w-full text-dense border-collapse">
             <caption className="sr-only">Class roster, sortable by every column</caption>
             <thead>
-              <tr className="bg-[oklch(0.965_0.012_78)] border-b border-border">
+              <tr className="bg-surface-2 border-b border-border">
                 {COLUMNS.map((col) => {
                   const active = col.key === sortColumn
                   return (
@@ -285,7 +285,7 @@ export function ClassRoster() {
                       <button
                         type="button"
                         onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 font-mono text-[10px] tracking-[0.09em] uppercase text-t3 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
+                        className="inline-flex items-center gap-1 font-mono text-3xs tracking-[0.09em] uppercase text-t3 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
                       >
                         {col.label}
                         {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
@@ -303,7 +303,7 @@ export function ClassRoster() {
                 <tr key={s.studentId} className="border-b border-border last:border-b-0 align-top">
                   <td className="px-[16px] py-[13px]">
                     <div className="flex items-center gap-2.5">
-                      <Avatar initials={initialsOf(s.name)} className="w-7 h-7 text-[10.5px] flex-none" />
+                      <Avatar initials={initialsOf(s.name)} className="w-7 h-7 text-3xs flex-none" />
                       <Link
                         to={`/teacher/students/${s.studentId}`}
                         className="text-t1 hover:underline"
@@ -312,10 +312,10 @@ export function ClassRoster() {
                       </Link>
                     </div>
                   </td>
-                  <td className="px-[16px] py-[13px] font-mono text-[12.5px]">
+                  <td className="px-[16px] py-[13px] font-mono text-dense-sm">
                     {s.paperCount ?? 0}
                   </td>
-                  <td className="px-[16px] py-[13px] font-mono text-[12.5px]">
+                  <td className="px-[16px] py-[13px] font-mono text-dense-sm">
                     {s.mark || "—"}
                   </td>
                   <td className="px-[16px] py-[13px]">
@@ -323,7 +323,7 @@ export function ClassRoster() {
                       {s.grade ? (
                         <GradeBadge grade={s.grade} size="inline" basis="predicted" />
                       ) : (
-                        <span className="text-[12px] text-t3">No grade yet</span>
+                        <span className="text-xs text-t3">No grade yet</span>
                       )}
                       {s.gradeAtRisk ? <Chip tone="warn">Low</Chip> : null}
                     </div>
@@ -334,7 +334,7 @@ export function ClassRoster() {
                   <td className="px-[16px] py-[13px]">
                     <AtRiskCell flags={s.flags} />
                   </td>
-                  <td className="px-[16px] py-[13px] text-[12.5px] text-t2 whitespace-nowrap">
+                  <td className="px-[16px] py-[13px] text-dense-sm text-t2 whitespace-nowrap">
                     {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
                   </td>
                   <td className="px-[16px] py-[13px] text-right whitespace-nowrap">
@@ -356,7 +356,7 @@ export function ClassRoster() {
       )}
 
       {removeStudent.isError ? (
-        <div className="text-[12.5px] text-err">
+        <div className="text-dense-sm text-err">
           Couldn't remove that student: {removeStudent.error.message}
         </div>
       ) : null}

@@ -235,6 +235,26 @@
   --fs-button-text-sm: 12.5px;
   --fs-button-text-lg: 13.5px;
 
+  /* P3.10 chunk c — the two serif heading rungs DESIGN.md's table implies but
+     never writes down. Its `typography:` block jumps straight from body-lg
+     (15px) to display-md (30px), so every dense dashboard heading between
+     those two had nowhere on-scale to land: the teacher portal invented
+     19/20/22/24/26/34px ad hoc across 18 screens, all as bare
+     `font-serif text-[Npx]`.
+     These are not new brand values — they are the existing scale's own ratio
+     continued downward. display-md/? = 30/24 = 1.25, 24/19 = 1.26,
+     19/body-lg = 19/15 = 1.27, matching the ~1.25 step the table already uses
+     between its lower rungs. Same family and weight as the display rungs
+     above; only size and line-height differ (headings this small need a
+     slightly looser leading than 1.1, hence 1.15/1.2).
+     The ad-hoc sizes collapse onto the scale as: 34 -> display-md (page
+     titles), 26/24/22 -> display-sm (section headings, stat numerals),
+     20/19 -> display-xs (sub-section headings). */
+  --fs-display-sm: 24px;
+  --lh-display-sm: 1.15;
+  --fs-display-xs: 19px;
+  --lh-display-xs: 1.2;
+
   /* ---- Motion — pulled out of the .lm-screen rule below into reusable
      tokens. Only one duration (0.32s) existed before; short/long are new,
      conservative steps around it since DESIGN.md doesn't specify exact
@@ -258,6 +278,7 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-subtle: var(--accent-subtle);
+  --color-accent-subtle-on: var(--accent-subtle-on);
   --color-accent-on: var(--accent-on);
 
   --color-secondary: var(--secondary);
@@ -358,6 +379,35 @@
   --text-2xs: 11px;
   --text-3xs: 10.5px;
 
+  /* P3.10 chunk c — size-only rungs for the three fractional "dense UI" sizes
+     between the built-in `text-xs` (12px) and `text-sm` (14px). DESIGN.md
+     already sanctions the fractional sizing itself ("Button text utilizes
+     high-precision fractional sizing to optimize information density", and
+     "Intentional Density: information-rich dashboards remain legible through
+     strict typographic scales") and the raw values are already tokenized
+     above as --fs-button-text{,-sm,-lg} — but only as *composite* .btn-text*
+     classes, which also set family/weight/line-height and so cannot be used
+     for a table cell or a caption without dragging weight 500 and
+     line-height 1 along with them.
+     These are the same three numbers exposed size-only, the way --text-2xs/
+     --text-3xs already are. The teacher portal used them 240 times as bare
+     text-[12.5px]/text-[13px]/text-[13.5px]; that is what they are for.
+     Named `dense` rather than a t-shirt suffix because there is no free
+     t-shirt rung between xs and sm — safe to name honestly now that
+     `lib/utils.ts` registers every custom font-size class with
+     tailwind-merge instead of relying on the suffix shape. */
+  --text-dense-lg: var(--fs-button-text-lg);
+  --text-dense: var(--fs-button-text);
+  --text-dense-sm: var(--fs-button-text-sm);
+
+  /* Size-only companion to DESIGN.md's body-lg rung, for the call sites that
+     need the 15px but not the sans family that `.text-body-lg` bundles with
+     it (Grading's two `font-mono text-[15px]` readouts would have had their
+     family silently overridden — the composite class is unlayered CSS and so
+     beats any utility beside it). `md` is free: Tailwind ships no `text-md`.
+     P3.10 chunk c. */
+  --text-md: var(--fs-body-lg);
+
   /* DESIGN.md's display-lg/display-md typography both specify line-height
      1.1 (already tokenized as --lh-display-lg/--lh-display-md above, but
      only reachable via the composite .text-display-* classes). primitives.
@@ -434,6 +484,7 @@
   --accent: var(--md-primary);
   --accent-hover: var(--md-on-primary-fixed-variant);
   --accent-subtle: var(--md-primary-fixed);
+  --accent-subtle-on: var(--md-on-primary-fixed);
   --accent-on: var(--md-on-primary);
 
   --secondary: var(--md-secondary);
@@ -466,6 +517,7 @@
   --accent: var(--md-tertiary);
   --accent-hover: var(--md-on-tertiary-fixed-variant);
   --accent-subtle: var(--md-tertiary-fixed);
+  --accent-subtle-on: var(--md-on-tertiary-fixed);
   --accent-on: var(--md-on-tertiary);
 
   --secondary: var(--md-secondary);
@@ -508,6 +560,7 @@
   --accent: var(--md-secondary);
   --accent-hover: var(--md-on-secondary-fixed-variant);
   --accent-subtle: var(--md-secondary-fixed);
+  --accent-subtle-on: var(--md-on-secondary-fixed);
   --accent-on: var(--md-on-secondary);
 
   --secondary: var(--md-tertiary);
@@ -569,6 +622,18 @@ body {
   font-weight: 400;
   line-height: var(--lh-display-md);
 }
+.text-display-sm {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: var(--fs-display-sm);
+  line-height: var(--lh-display-sm);
+}
+.text-display-xs {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: var(--fs-display-xs);
+  line-height: var(--lh-display-xs);
+}
 .text-body-lg {
   font-family: var(--font-sans);
   font-size: var(--fs-body-lg);
@@ -604,7 +669,16 @@ body {
  * empirically (`twMerge('text-accent-on text-button-text-lg')` →
  * `'text-button-text-lg'`, no color at all) after it caused a real
  * color-contrast axe regression on Login's submit button during this task.
- * `.btn-text*` doesn't collide with anything in twMerge's default groups. */
+ * `.btn-text*` doesn't collide with anything in twMerge's default groups.
+ *
+ * P3.10 chunk c: that workaround only ever covered these three classes. The
+ * `.text-display-*`/`.text-body-*`/`.text-label-sm`/`.text-metadata`
+ * composites above were left in the trap and the bug was live in five shared
+ * C-* components — see the comment on CUSTOM_FONT_SIZE_CLASSES in
+ * `lib/utils.ts`, which now registers every custom font-size class with
+ * tailwind-merge and fixes the whole family at the source. The `.btn-text*`
+ * names are kept as-is (they are load-bearing in button.tsx's cva variants);
+ * they are simply no longer the only safe option. */
 .btn-text {
   font-family: var(--font-sans);
   font-size: var(--fs-button-text);

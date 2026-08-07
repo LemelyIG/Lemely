@@ -73,17 +73,17 @@ function AnnouncementRow({
   deleting: boolean
 }) {
   return (
-    <li className="bg-surface border border-border rounded-[14px] px-4 py-3.5 flex items-start gap-3">
+    <li className="bg-surface border border-border rounded-lg px-4 py-3.5 flex items-start gap-3">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[14px] text-t1 font-medium">{announcement.title}</span>
+          <span className="text-sm text-t1 font-medium">{announcement.title}</span>
           <Chip tone="neutral">{audienceLabel}</Chip>
           {announcement.publishAt ? <Chip tone="warn">Dated</Chip> : null}
         </div>
-        <p className="text-[13px] text-t2 m-0 mt-1 whitespace-pre-wrap text-pretty">
+        <p className="text-dense text-t2 m-0 mt-1 whitespace-pre-wrap text-pretty">
           {announcement.body}
         </p>
-        <div className="text-[11.5px] text-t2 mt-1.5">
+        <div className="text-xs text-t2 mt-1.5">
           Written {relativeTime(announcement.createdAt)}
           {announcement.publishAt
             ? ` · dated ${new Date(announcement.publishAt).toLocaleString()}`
@@ -186,8 +186,8 @@ export function Announcements() {
   return (
     <div className="flex flex-col gap-6 min-w-0">
       <header>
-        <h1 className="text-[26px] text-t1 m-0">Announcements</h1>
-        <p className="text-[13px] text-t2 m-0 mt-1 max-w-[640px] text-pretty">
+        <h1 className="text-display-md text-t1 m-0">Announcements</h1>
+        <p className="text-dense text-t2 m-0 mt-1 max-w-[640px] text-pretty">
           Write a note for one or more of your classes. Announcements are saved against the
           classes you pick — <strong className="text-t1 font-medium">students cannot see them
           yet</strong>, and no notification is sent; the student-facing surface and delivery
@@ -197,20 +197,20 @@ export function Announcements() {
 
       <form
         onSubmit={handleSubmit}
-        className="bg-surface border border-border rounded-[14px] p-[18px] flex flex-col gap-4 max-w-[720px]"
+        className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-4 max-w-[720px]"
       >
-        <label className="flex flex-col gap-1.5 text-[12.5px] text-t2">
+        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
           Title
           <input
             required
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="e.g. Thermal physics test moved to Thursday"
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-[14px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3 py-2 text-sm text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           />
         </label>
 
-        <label className="flex flex-col gap-1.5 text-[12.5px] text-t2">
+        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
           Message
           <textarea
             required
@@ -218,15 +218,15 @@ export function Announcements() {
             onChange={(e) => setBody(e.target.value)}
             rows={5}
             placeholder="Plain text. Line breaks are kept as you type them."
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-[13.5px] text-t1 resize-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense-lg text-t1 resize-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           />
         </label>
 
         <fieldset className="border-0 p-0 m-0 flex flex-col gap-2">
-          <legend className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2 p-0 mb-1">
+          <legend className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 p-0 mb-1">
             Audience
           </legend>
-          <label className="flex items-center gap-2 text-[13px] text-t1">
+          <label className="flex items-center gap-2 text-dense text-t1">
             <input
               type="radio"
               name="audience"
@@ -241,13 +241,13 @@ export function Announcements() {
           {audience === "classes" ? (
             <div className="pl-6 flex flex-col gap-1.5">
               {classesQuery.isPending ? (
-                <span className="text-[12.5px] text-t2">Loading your classes…</span>
+                <span className="text-dense-sm text-t2">Loading your classes…</span>
               ) : classesQuery.isError ? (
-                <span className="text-[12.5px] text-err">
+                <span className="text-dense-sm text-err">
                   Couldn't load your classes: {classesQuery.error.message}
                 </span>
               ) : classes.length === 0 ? (
-                <span className="text-[12.5px] text-t2">
+                <span className="text-dense-sm text-t2">
                   You have no classes yet — create one before writing an announcement.
                 </span>
               ) : (
@@ -265,7 +265,7 @@ export function Announcements() {
 
           {isSchoolAdmin ? (
             <>
-              <label className="flex items-center gap-2 text-[13px] text-t1">
+              <label className="flex items-center gap-2 text-dense text-t1">
                 <input
                   type="radio"
                   name="audience"
@@ -279,19 +279,19 @@ export function Announcements() {
               {audience === "school" ? (
                 <div className="pl-6">
                   {schoolsQuery.isPending ? (
-                    <span className="text-[12.5px] text-t2">Loading your schools…</span>
+                    <span className="text-dense-sm text-t2">Loading your schools…</span>
                   ) : schoolsQuery.isError ? (
-                    <span className="text-[12.5px] text-err">
+                    <span className="text-dense-sm text-err">
                       Couldn't load your schools: {schoolsQuery.error.message}
                     </span>
                   ) : (
-                    <label className="flex flex-col gap-1.5 text-[12.5px] text-t2 max-w-[320px]">
+                    <label className="flex flex-col gap-1.5 text-dense-sm text-t2 max-w-[320px]">
                       School
                       <select
                         required
                         value={schoolId}
                         onChange={(e) => setSchoolId(e.target.value)}
-                        className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                       >
                         <option value="" disabled>
                           Choose a school…
@@ -308,21 +308,21 @@ export function Announcements() {
               ) : null}
             </>
           ) : null}
-          <p className="text-[12px] text-t2 m-0 mt-0.5 text-pretty">
+          <p className="text-xs text-t2 m-0 mt-0.5 text-pretty">
             One audience or the other — a class announcement and a school-wide one would reach the
             same student twice.
           </p>
         </fieldset>
 
-        <label className="flex flex-col gap-1.5 text-[12.5px] text-t2 max-w-[280px]">
+        <label className="flex flex-col gap-1.5 text-dense-sm text-t2 max-w-[280px]">
           Date it (optional)
           <input
             type="datetime-local"
             value={publishAt}
             onChange={(e) => setPublishAt(e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-[13px] text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           />
-          <span className="text-[11.5px] text-t2 text-pretty">
+          <span className="text-xs text-t2 text-pretty">
             Recorded with the announcement. It does <strong>not</strong> schedule anything — there
             is no delivery yet, so nothing will fire at this time.
           </span>
@@ -333,14 +333,14 @@ export function Announcements() {
             {createAnnouncement.isPending ? "Saving…" : "Save announcement"}
           </Button>
           {sentCount != null ? (
-            <span role="status" className="text-[12.5px] text-ok">
+            <span role="status" className="text-dense-sm text-ok">
               Saved to {sentCount} class{sentCount === 1 ? "" : "es"}.
             </span>
           ) : null}
         </div>
 
         {createAnnouncement.isError ? (
-          <div role="alert" className="text-[12.5px] text-err">
+          <div role="alert" className="text-dense-sm text-err">
             Couldn't save it: {createAnnouncement.error.message}
             <span className="block text-t2 mt-0.5">
               Nothing was written — an announcement is saved for every class you picked or for
@@ -354,24 +354,24 @@ export function Announcements() {
           no student-facing surface exists to preview against. */}
       {title.trim() || body.trim() ? (
         <section className="max-w-[720px]">
-          <h2 className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2 m-0 mb-2">
+          <h2 className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 m-0 mb-2">
             Preview
           </h2>
-          <div className="bg-surface-2 border border-border rounded-[14px] p-4">
+          <div className="bg-surface-2 border border-border rounded-lg p-4">
             <div className="flex items-center gap-2">
-              <span className="h-7 w-7 rounded-full bg-accent-subtle text-accent flex items-center justify-center font-mono text-[11px]">
+              <span className="h-7 w-7 rounded-full bg-accent-subtle text-accent flex items-center justify-center font-mono text-2xs">
                 {initialsOf(profileQuery.data?.displayName ?? profileQuery.data?.email ?? "?")}
               </span>
-              <span className="text-[12.5px] text-t2">
+              <span className="text-dense-sm text-t2">
                 {profileQuery.data?.displayName ?? profileQuery.data?.email ?? "You"}
               </span>
             </div>
-            <div className="text-[15px] text-t1 mt-2.5">{title || "Untitled"}</div>
-            <p className="text-[13.5px] text-t2 m-0 mt-1 whitespace-pre-wrap text-pretty">
+            <div className="text-md text-t1 mt-2.5">{title || "Untitled"}</div>
+            <p className="text-dense-lg text-t2 m-0 mt-1 whitespace-pre-wrap text-pretty">
               {body || "No message yet."}
             </p>
           </div>
-          <p className="text-[11.5px] text-t2 mt-1.5 m-0 text-pretty">
+          <p className="text-xs text-t2 mt-1.5 m-0 text-pretty">
             This shows what gets stored. It is not a preview of a student's view — students have
             no announcements surface yet.
           </p>
@@ -379,11 +379,11 @@ export function Announcements() {
       ) : null}
 
       <section>
-        <h2 className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
+        <h2 className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 m-0 mb-2.5">
           Your announcements
         </h2>
         {announcementsQuery.isPending ? (
-          <div className="text-[13px] text-t2">Loading announcements…</div>
+          <div className="text-dense text-t2">Loading announcements…</div>
         ) : announcementsQuery.isError ? (
           <ErrorState
             heading="Couldn't load your announcements"
@@ -413,7 +413,7 @@ export function Announcements() {
           </ul>
         )}
         {deleteAnnouncement.isError ? (
-          <div role="alert" className="text-[12.5px] text-err mt-2">
+          <div role="alert" className="text-dense-sm text-err mt-2">
             Couldn't delete it: {deleteAnnouncement.error.message}
           </div>
         ) : null}
