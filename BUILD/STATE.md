@@ -1436,7 +1436,7 @@ Starting facts (established 2026-08-06, do not re-derive):
                   expected and they should re-invoke, never wait-loop.**
                   **It found B3 (see BLOCKERS.md) — a real, live product defect**, which is
                   worth more than the chunk itself.
-            - [ ] **e2** doing — `audit.mjs`: per-route `states[]` mechanism, T-08/T-10 added
+            - [x] **e2** done (e2a d02cb99 + e2b 3abe1fe) — `audit.mjs`: per-route `states[]` mechanism, T-08/T-10 added
                   to the registry, full capture re-baselined into `reports/phase-3/` +
                   contact sheet, and `scripts/compare_screens.mjs` (sharp) reporting
                   added/removed/changed vs the Phase-2.5 baselines. The compare is an
@@ -1720,15 +1720,44 @@ Starting facts (established 2026-08-06, do not re-derive):
                     empty screen); Lighthouse is ~30s and its scores are a property of
                     the route, not the state. State the tradeoff in the report — do not
                     let it read as "every state fully audited".
-              - [ ] **e2b** todo — `scripts/compare_screens.mjs` (sharp: decode both PNGs
-                    to raw pixels, compare dimensions then per-pixel with a stated
-                    threshold) emitting added/removed/changed vs
-                    `reports/phase-2.5/screens/`, plus the real re-baseline run
-                    (`LEMELY_REPORT_DIR=reports/phase-3`) and its contact sheet, both
-                    committed. **The compare is an explicit phase act, not a `check.sh`
-                    gate** — a per-run gate would re-fail on every intended change. An
-                    unintended diff is a blocker; an intended one is re-baselined with a
-                    note in the phase report (MISSION §11).
+              - [x] **e2b** done (3abe1fe) — Phase-3 re-baseline + the first real
+                    cross-phase compare, both committed. **The run and the compare had
+                    already completed and a session died before committing either** (the
+                    uncommitted-work pattern of e2a sessions 2/5/6); this session verified
+                    them rather than re-running an ~11-minute walk.
+                    Corpus `reports/phase-3/` (26 MB, 131 PNGs / 27 screen ids): 26 routes,
+                    **zero unreachable**, 34 audited states, **zero axe violations at ANY
+                    severity**, Lighthouse a11y 100 everywhere bar `teacher-review`'s 96,
+                    0 console errors, 0 horizontal-scroll violations. Student-route
+                    performance floor 82 (clears MISSION §11's ≥80); **teacher routes floor
+                    67** (`teacher-quiz-detail`) — that floor never covered them, report it,
+                    do not silently imply it passed.
+                    **Compare verdict: 39 changed / 0 removed / 92 added, and all 39 are
+                    intended** (MISSION §11's "unintended diff is a blocker"). Verified
+                    **visually on representative pairs**, not inferred from the diffstat:
+                    (i) `S-15/default--380` is 392x1446 → 380x1349 — the *baseline* PNG was
+                    wider than its own 380px viewport, because a full-page capture expands
+                    to scrollWidth, so the committed baseline had been recording P3.10b
+                    defect (b)'s header overflow as if it were the design. Same on S-17.
+                    (ii) That same pair shows the five questions scored 1/1 losing their
+                    "Needs review" flag while the three 0/1 answers stay clean — **B3/D3.19's
+                    inverted MCQ plagiarism signal, photographed.** This corpus is the first
+                    visual evidence that fix landed.
+                    (iii) The rest trace to the `--t3` token move (P3.10b defect (a)) and
+                    P3.10c's type-scale retrofit. `removed` is empty — nothing that used to
+                    be audited stopped being.
+                    **Two defects fixed while verifying, do not reintroduce either:**
+                    (a) `compare_screens.mjs` resolved `--json` against the repo root with no
+                    containment check, so a `web/`-relative `../reports/...` (the natural
+                    mistake — every other npm script runs from `web/`) wrote **outside the
+                    working tree**; that is what the earlier run did. It now refuses, naming
+                    the resolved path. The stray `/home/sico/reports/` it left is outside the
+                    repo and is the human's to delete (MISSION §5).
+                    (b) `pre-commit`'s trailing-whitespace/end-of-file hooks rewrote the
+                    generated axe/Lighthouse JSON and the contact sheet — which would make
+                    the committed evidence differ byte-for-byte from what the tool emits and
+                    show a spurious diff on every re-baseline. Both now `exclude: ^reports/`;
+                    `detect-private-key` still sees everything.
             - [ ] **e3** todo — the item-(c) decision: stand up Vitest (the Vite-native
                   runner; no framework drift), move `check-design-tokens.mjs`'s invariants
                   in verbatim per chunk c's own note, and cover `lib/utils.ts`
