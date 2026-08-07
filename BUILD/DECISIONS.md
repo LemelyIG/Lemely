@@ -3,6 +3,64 @@
 
 ## Phase 3
 
+### D3.20 — `web/` gets Vitest, in Node, with no component-rendering stack (P3.10 chunk e3)
+
+**Context.** MISSION §6 gate 3 requires "frontend unit tests green". For the whole
+build there has been no frontend test runner at all, so that gate has been
+*vacuously* satisfied — it passed by having nothing to run. P3.7 chunk b recorded
+this and explicitly warned against briefing a chunk to "add the missing frontend
+unit tests" before a runner existed; P3.10 carried it as open item (c).
+
+**Decision, three parts.**
+
+1. **Vitest, not Jest.** Vite is already the build tool; Vitest reuses its
+   resolver and transform pipeline, so a test imports `@/lib/utils` under the same
+   rules the app does. Jest would mean a second, differently-configured transform
+   chain that can disagree with the build — framework drift for no gain. One
+   devDependency (`vitest`), no babel config, no transformer config.
+
+2. **`environment: "node"`, and no jsdom / no @testing-library.** This is the part
+   worth arguing. The obvious next step from "we have a runner" is to render
+   components into jsdom, and that is deliberately *not* taken. Component and
+   screen behaviour is already covered by the Playwright suite, which drives the
+   real Chromium against the real backend and the real Alembic-migrated database.
+   A jsdom-based component stack would be a second, lower-fidelity account of the
+   same behaviour — and D3.13 is this build's own hard evidence about what happens
+   when a lower-fidelity fixture (`create_all()` instead of the migration) is
+   trusted: it was self-consistently wrong against itself for four chunks while
+   every gate stayed green. jsdom stands in the same relation to a browser. So the
+   runner's remit is the two things Playwright genuinely cannot see: pure logic,
+   and repo-wide invariants over source text.
+
+   Consequence accepted honestly: there is still no unit-level coverage of React
+   components, and the phase report says so rather than implying a runner means
+   the frontend is unit-tested. Revisit only if a component grows logic worth
+   testing away from a browser — and then argue the case, don't assume it.
+
+3. **`check-design-tokens.mjs` is deleted, its two invariants moved into
+   `web/tests/unit/design-tokens.test.ts` verbatim.** That script existed only
+   because no runner did, and its own header instructed exactly this migration. In
+   `check.sh` the `design-tokens` gate becomes `web-test`, so the gate count is
+   unchanged at 13 and no invariant is lost in the move. Both were re-verified by
+   inversion after the move, not assumed: unregistering `"metadata"` from
+   `CUSTOM_FONT_SIZE_CLASSES` fails the utils.ts↔index.css drift check, and
+   pasting a raw `#ff00aa` into a teacher screen fails the literal scan.
+
+**Also fixed here.** `tests/` gets its own `tsconfig.test.json`, referenced from
+the root `tsconfig.json`, so `npm run typecheck` covers the tests. **Note the gap
+this exposes and does not close:** `web/e2e/` and `playwright.config.ts` are in no
+tsconfig `include` either, so the Playwright specs — the build's most expensive
+gate — have never been typechecked. Left alone in this chunk (pulling them in
+would mix an unknown number of pre-existing type errors into a runner chunk);
+recorded in the phase report as measured debt.
+
+**Two vacuity guards in the moved suite, deliberately.** Both invariants iterate a
+list derived from source (`it.each(registered)`, `it.each(files)`). An empty list
+makes `it.each` register zero cases and the suite reports green — the exact
+failure mode where a mistyped path or a renamed constant silently disables the
+check. Each block therefore asserts its list is non-empty first. Do not remove
+those as trivial.
+
 ### D3.19 — B3's MCQ integrity guard is on question *type*, and it exempts AI-detection too
 
 **Context.** B3 (`BUILD/BLOCKERS.md`): `apply_integrity_checks` ran the plagiarism

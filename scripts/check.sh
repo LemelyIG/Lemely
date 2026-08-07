@@ -69,7 +69,12 @@ echo "== Web =="
 run "web-typecheck" bash -c 'cd web && npm run -s typecheck'
 run "web-lint" bash -c 'cd web && npm run -s lint'
 run "web-build" bash -c 'cd web && npm run -s build'
-run "design-tokens" bash -c 'cd web && node scripts/check-design-tokens.mjs'
+# Vitest (P3.10 e3, D3.20). Absorbs the former standalone `design-tokens` gate:
+# `web/scripts/check-design-tokens.mjs`'s two invariants moved into
+# `web/tests/unit/design-tokens.test.ts` verbatim, as that script's own header
+# said to do once a runner existed. MISSION §6 gate 3's "frontend unit tests
+# green" was vacuous before this — there was no runner to be green.
+run "web-test" bash -c 'cd web && npm run -s test'
 run "impeccable-detect" bash -c 'cd web && npx --yes impeccable detect src/'
 
 STACK_UP=0

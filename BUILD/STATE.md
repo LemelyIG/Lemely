@@ -1758,10 +1758,42 @@ Starting facts (established 2026-08-06, do not re-derive):
                     the committed evidence differ byte-for-byte from what the tool emits and
                     show a spurious diff on every re-baseline. Both now `exclude: ^reports/`;
                     `detect-private-key` still sees everything.
-            - [ ] **e3** todo — the item-(c) decision: stand up Vitest (the Vite-native
-                  runner; no framework drift), move `check-design-tokens.mjs`'s invariants
-                  in verbatim per chunk c's own note, and cover `lib/utils.ts`
-                  (`cn`/`initialsOf`/`relativeTime`). Record as a decision.
+            - [x] **e3** done — the item-(c) decision: Vitest stood up (**D3.20**).
+                  **All 13 gates green, 0 skipped** (`./scripts/check.sh`, verified in
+                  the foreground with `PATH="$HOME/.local/bin:$PATH"` so the three
+                  live-stack UI gates actually ran, not skipped).
+                  Shipped: one devDependency (`vitest` 4.1.10), `web/vitest.config.ts`
+                  (`environment: "node"`, `include: tests/unit/**`, `@` alias),
+                  `web/tsconfig.test.json` referenced from the root `tsconfig.json` so
+                  `npm run typecheck` covers the tests, `npm test`/`test:watch` scripts,
+                  and two suites — **116 tests, 385ms**:
+                  `tests/unit/utils.test.ts` (`cn`, `relativeTime`, `initialsOf`,
+                  `downloadCsv`) and `tests/unit/design-tokens.test.ts`.
+                  `web/scripts/check-design-tokens.mjs` is **deleted**, its two invariants
+                  moved in verbatim exactly as that script's own header instructed; the
+                  `check.sh` gate `design-tokens` becomes `web-test`, so the count stays
+                  **13** and no invariant was lost.
+                  **Verified by inversion, not assumed** (both, after the move):
+                  unregistering `"metadata"` from `CUSTOM_FONT_SIZE_CLASSES` fails the
+                  utils.ts↔index.css drift check; a raw `#ff00aa` pasted into
+                  `Overview.tsx` fails the literal scan. Restored, 116/116 green.
+                  **Do not "tidy" away:** (i) the non-empty assertions guarding each
+                  `it.each(...)` block — an empty derived list registers zero cases and
+                  reports green, which is precisely how a renamed constant or mistyped
+                  path would silently disable the whole check; (ii) `environment: "node"`
+                  with no jsdom and no @testing-library — that is D3.20's argued position
+                  (Playwright owns component behaviour against a real browser; a second
+                  lower-fidelity stack is the D3.13 mistake in a new place), not an
+                  oversight to be corrected by adding jsdom later without re-arguing it.
+                  Corrected while writing: `initialsOf("Ada  Lovelace")` does **not** emit
+                  `"AundefinedL"` — `Array.join` renders `undefined` as an empty string,
+                  so it is clean by accident; pinned so a `String(w[0])` refactor can't put
+                  "undefined" in an avatar.
+                  **Gap exposed, deliberately NOT closed here:** `web/e2e/` and
+                  `playwright.config.ts` are in no tsconfig `include`, so the Playwright
+                  specs — the build's most expensive gate — have never been typechecked.
+                  Pulling them in would mix an unknown number of pre-existing type errors
+                  into a runner chunk. Report it as measured debt (D3.20).
 
       Carried in from P3.7 chunk b, both genuinely P3.10-shaped:
       (a) `web/scripts/audit.mjs` is still scoped to the 4 *student* routes (D2.10). Every
