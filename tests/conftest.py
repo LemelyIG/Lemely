@@ -39,6 +39,45 @@ def _disable_dotenv_file() -> Iterator[None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _forbid_live_gemini_calls() -> Iterator[None]:
+    """Make a real Gemini API call impossible for the whole suite.
+
+    MISSION §8 requires every automated test to mock Gemini; live calls are
+    permitted only for controlled accuracy validation under the budget
+    protocol. Nothing enforced that, and the ``.env``-neutralising fixture
+    above deliberately leaves ``os.environ`` alone — so running the gates the
+    documented way (``set -a && . ./.env``) put a real key in the environment
+    and ``test_plan_post_narrate_without_key_is_503_not_500`` made a **billed**
+    ``gemini-2.5-flash`` call against the hard $8 cap, then failed on the 200
+    it got back instead of the expected 503.
+
+    Guarding at client *construction* rather than at the key is deliberate:
+    tests that legitimately exercise "a key is configured" inject a fake
+    client (``_genai_client=...``) or a ``MagicMock`` and never reach here, so
+    they keep working. Only an unmocked path that would actually open a
+    socket trips this — and it trips loudly rather than spending money.
+    """
+    import lemely.io.gemini as gemini_module
+
+    original = gemini_module.GeminiClient._client.fget  # type: ignore[attr-defined]
+
+    def _guarded(self: object) -> object:
+        if getattr(self, "_raw_client", None) is None:
+            raise RuntimeError(
+                "A test tried to construct a real google-genai client. Automated "
+                "tests must mock Gemini (MISSION §8) — inject _genai_client=... or "
+                "patch the call site. Live calls belong in the accuracy harness."
+            )
+        return original(self)
+
+    gemini_module.GeminiClient._client = property(_guarded)  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        gemini_module.GeminiClient._client = property(original)  # type: ignore[method-assign]
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _disable_ambient_toml() -> Iterator[None]:
     """Neutralise *ambient* ``lemely.toml`` discovery for the whole session.
 

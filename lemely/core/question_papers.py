@@ -34,17 +34,30 @@ from pydantic import Field
 
 from lemely.core.schemas import StrictModel
 
-FigureKind = Literal["image", "vector_drawing"]
+FigureKind = Literal["image", "vector_drawing", "unmapped_symbol", "diagram_only_option"]
 
 
 class FigureEvidence(StrictModel):
-    """One piece of evidence a question's region overlaps a graphic object."""
+    """One piece of evidence a question is not honestly bankable as extracted.
+
+    Despite the name, this covers more than literal figures — it is the
+    single mechanism ``lemely.io.question_papers`` uses to exclude any leaf
+    whose extracted text cannot be trusted as complete and correct (see
+    ``docs/LEMELY_UI_SPEC.md`` §1.4, never invent precision):
+    """
 
     kind: FigureKind = Field(
         ...,
-        description="'image' for an embedded raster (pdfplumber page.images), "
+        description="'image' for an embedded raster (pdfplumber page.images); "
         "'vector_drawing' for line/rect/curve objects (graphs, diagrams drawn "
-        "as vector paths — the common case in CAIE physics/maths papers).",
+        "as vector paths — the common case in CAIE physics/maths papers); "
+        "'unmapped_symbol' when a Symbol-font glyph (Greek letter, operator) "
+        "could not be confidently mapped to Unicode — emitting the raw "
+        "private-use-area codepoint would be corrupt text, so the question "
+        "is excluded rather than banked with garbage in it; "
+        "'diagram_only_option' when an MCQ option's text is empty after "
+        "cleaning — the answer is a picture (e.g. 'which diagram shows...'), "
+        "not something has_figure on the stem alone would catch.",
     )
     page_number: int = Field(..., ge=1, description="1-indexed page the evidence was found on.")
     object_count: int = Field(

@@ -35,6 +35,7 @@ counted as ``reconcile_mismatch``) instead of hidden here.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -49,6 +50,7 @@ from lemely.core.question_papers import (
     QuestionPaperQuestion,
 )
 from lemely.io.det.profiles import get_profile
+from lemely.io.det.symbols import SYMBOL_FONT_MAP, desymbolize
 from lemely.io.metadata import parse_caie_qp_filename_metadata
 from lemely.runtime.errors import ParseError
 
@@ -78,9 +80,138 @@ _TRAILING_DOTS_RE = re.compile(r"\.{4,}\s*$")
 #: (LEMELY_UI_SPEC.md §1.4).
 _VECTOR_FIGURE_THRESHOLD = 2
 
+#: Unicode superscript equivalents for the digits/sign that appear in a
+#: standard-form exponent (e.g. "10⁷", "10⁻³"). All ten digits have exact
+#: Unicode superscript codepoints, so once a raised-small-digit run is
+#: correctly *detected* (the genuinely uncertain part — see
+#: ``_reconstruct_line``), converting it is unambiguous.
+_SUPERSCRIPT_MAP: dict[str, str] = {
+    "0": "⁰",
+    "1": "¹",
+    "2": "²",
+    "3": "³",
+    "4": "⁴",
+    "5": "⁵",
+    "6": "⁶",
+    "7": "⁷",
+    "8": "⁸",
+    "9": "⁹",
+    "-": "⁻",
+    "−": "⁻",
+    "+": "⁺",
+}
+
+#: A raised digit run counts as a superscript only when its font size is at
+#: most this fraction of the line's dominant (base) size. Calibrated against
+#: a real corpus example (0625_w23_qp_33.pdf, "1.5 × 10" + superscript "11"):
+#: base size 11.0pt, superscript size 8.25pt — ratio 0.75.
+_SUPERSCRIPT_SIZE_RATIO = 0.85
+#: A raised digit run's `top` must be at least this many points above the
+#: base line's dominant `top` (smaller `top` = higher on the page). The real
+#: example above has a 1.13pt rise; 0.3pt is a conservative floor that will
+#: not fire on font-rendering jitter of same-size text.
+_SUPERSCRIPT_RISE_PT = 0.3
+
 
 def _clean(text: str) -> str:
     return _TRAILING_DOTS_RE.sub("", text).strip()
+
+
+def _reconstruct_line(
+    chars: list[dict[str, Any]], top: float, bottom: float, fallback_text: str
+) -> tuple[str, bool]:
+    """Rebuild one text line from ``page.chars``, fixing glyphs and exponents.
+
+    Recovers Symbol-font glyphs and reconstructs raised small-digit runs
+    (exponents) as Unicode superscripts. Falls back to ``fallback_text`` (pdfplumber's own merged
+    line text, still desymbolized at the string level) when no chars fall in
+    the band — keeps synthetic-PDF tests that fake line text without fake
+    char objects working unchanged.
+    """
+    band = [
+        c for c in chars if c.get("text") and c["top"] >= top - 0.6 and c["bottom"] <= bottom + 0.6
+    ]
+    if not band:
+        return desymbolize(fallback_text)
+
+    band.sort(key=lambda c: c["x0"])
+    sizes = Counter(round(c["size"], 1) for c in band)
+    base_size = sizes.most_common(1)[0][0]
+    base_tops = Counter(round(c["top"], 1) for c in band if abs(c["size"] - base_size) < 0.3)
+    base_top = base_tops.most_common(1)[0][0] if base_tops else top
+
+    out: list[str] = []
+    unmapped = False
+    prev_x1: float | None = None
+    i = 0
+    while i < len(band):
+        c = band[i]
+        text = c["text"]
+        gap = c["x0"] - prev_x1 if prev_x1 is not None else 0.0
+        if gap > max(0.25 * c["size"], 0.5):
+            out.append(" ")
+
+        cp = ord(text) if len(text) == 1 else -1
+        if 0xE000 <= cp <= 0xF8FF:
+            mapped = SYMBOL_FONT_MAP.get(cp - 0xF000) if 0xF000 <= cp <= 0xF0FF else None
+            if mapped is not None:
+                out.append(mapped)
+            else:
+                unmapped = True
+            prev_x1 = c["x1"]
+            i += 1
+            continue
+
+        is_super = (
+            text in _SUPERSCRIPT_MAP
+            and c["size"] < base_size * _SUPERSCRIPT_SIZE_RATIO
+            and c["top"] < base_top - _SUPERSCRIPT_RISE_PT
+        )
+        if is_super:
+            run = [c]
+            j = i + 1
+            while j < len(band):
+                nc = band[j]
+                ntext = nc["text"]
+                if (
+                    ntext in _SUPERSCRIPT_MAP
+                    and nc["size"] < base_size * _SUPERSCRIPT_SIZE_RATIO
+                    and nc["top"] < base_top - _SUPERSCRIPT_RISE_PT
+                    and nc["x0"] - run[-1]["x1"] < max(0.25 * nc["size"], 0.5) + 1.0
+                ):
+                    run.append(nc)
+                    j += 1
+                else:
+                    break
+            out.append("".join(_SUPERSCRIPT_MAP[r["text"]] for r in run))
+            prev_x1 = run[-1]["x1"]
+            i = j
+            continue
+
+        out.append(text)
+        prev_x1 = c["x1"]
+        i += 1
+
+    return "".join(out), unmapped
+
+
+def _lines(page: Any) -> list[dict[str, Any]]:
+    """``page.extract_text_lines()``, with Symbol-glyph and exponent recovery.
+
+    Each returned line dict has ``text``, ``top``, ``bottom`` (as before)
+    plus ``unmapped``: True when the line contained a Symbol-font glyph this
+    module could not confidently map. Callers must flag the leaf that line
+    belongs to for exclusion (see ``_LeafBuilder.record_figure`` calls at
+    every line-processing site in ``_extract_mcq``/``_extract_theory``) —
+    never bank the raw private-use-area character.
+    """
+    chars = getattr(page, "chars", None) or []
+    result: list[dict[str, Any]] = []
+    for line in page.extract_text_lines():
+        top, bottom = line["top"], line["bottom"]
+        text, unmapped = _reconstruct_line(chars, top, bottom, line["text"])
+        result.append({"text": text, "top": top, "bottom": bottom, "unmapped": unmapped})
+    return result
 
 
 @dataclass
@@ -237,6 +368,20 @@ def _append_with_marks(leaf: _LeafBuilder, text: str) -> None:
 _FOOTER_RE = re.compile(r"©\s*UCLES|\[Turn over|PMT\b", re.IGNORECASE)
 _PAGE_HEADER_RE = re.compile(r"^\d{1,3}$")
 
+#: First line of the end-of-paper copyright/acknowledgements block. Unlike
+#: the running footer this is not one line to skip: every line after it is
+#: boilerplate, and because it sits on the last page it was being appended
+#: wholesale to the *final* question of every paper (11 stems ended with
+#: "...Local Examinations Syndicate (UCLES), which is a department of the
+#: University of Cambridge."). Matching it terminates extraction outright.
+#:
+#: Deliberately **not** anchored on "BLANK PAGE", which is the other line on
+#: that page: CAIE also inserts blank pages *mid-paper* between sections, so
+#: terminating on it would silently truncate a paper. "BLANK PAGE" is
+#: skipped as a stray line instead (``_BLANK_PAGE_RE``).
+_END_OF_PAPER_RE = re.compile(r"^Permission to reproduce items where third-party", re.IGNORECASE)
+_BLANK_PAGE_RE = re.compile(r"^\s*BLANK PAGE\s*$", re.IGNORECASE)
+
 
 def _extract_mcq(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
     """Buffer raw lines per top-level question, then split stem from options.
@@ -254,21 +399,30 @@ def _extract_mcq(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
     next_id = 1
     current: _LeafBuilder | None = None
     raw_lines: list[str] = []
+    raw_unmapped = False
 
     def close_current() -> None:
-        nonlocal current, raw_lines
+        nonlocal current, raw_lines, raw_unmapped
         if current is not None:
             _finalize_mcq_leaf(current, raw_lines)
+            if raw_unmapped:
+                current.record_figure("unmapped_symbol", current.page_number, 1)
             if current.options and len(current.options) == 4:
                 leaves.append(current)
         current = None
         raw_lines = []
+        raw_unmapped = False
 
     for page_index, page in enumerate(pages):
         page_number = page_index + page_offset
-        for i, line in enumerate(page.extract_text_lines()):
+        for i, line in enumerate(_lines(page)):
             text = line["text"].strip()
             if not text:
+                continue
+            if _END_OF_PAPER_RE.match(text):
+                close_current()
+                return leaves
+            if _BLANK_PAGE_RE.match(text):
                 continue
             if i == 0 and _PAGE_HEADER_RE.match(text):
                 continue  # running page-number header
@@ -282,6 +436,7 @@ def _extract_mcq(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
                 current = _LeafBuilder(ref=str(next_id), page_number=page_number, options={})
                 current.marks = 1
                 raw_lines = [text[top_match.end() :]]
+                raw_unmapped = bool(line["unmapped"])
                 _record_figure_evidence(current, page, top, bottom)
                 next_id += 1
                 continue
@@ -289,6 +444,7 @@ def _extract_mcq(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
             if current is None:
                 continue
             raw_lines.append(text)
+            raw_unmapped = raw_unmapped or bool(line["unmapped"])
             _record_figure_evidence(current, page, top, bottom)
 
     close_current()
@@ -303,6 +459,12 @@ def _finalize_mcq_leaf(leaf: _LeafBuilder, raw_lines: list[str]) -> None:
     inline layouts, and multi-line option text) and treats everything before
     it as the stem. ``leaf.options`` is left empty (and the leaf therefore
     dropped by the caller) when no such run is found.
+
+    If any resulting option is empty/whitespace after cleaning, the answer
+    is a picture (e.g. "which diagram shows...") that ``has_figure`` on the
+    stem alone would not catch — flagged as ``diagram_only_option`` so the
+    leaf is excluded the same way a figure-dependent stem is, rather than
+    banked with an unanswerable blank option.
     """
     if leaf.options is None:
         return
@@ -322,6 +484,9 @@ def _finalize_mcq_leaf(leaf: _LeafBuilder, raw_lines: list[str]) -> None:
         leaf.options[letter] = _clean(seg.replace("\n", " "))
     for stem_line in stem_text.split("\n"):
         leaf.add_line(stem_line)
+
+    if any(not value.strip() for value in leaf.options.values()):
+        leaf.record_figure("diagram_only_option", leaf.page_number, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -365,11 +530,20 @@ def _extract_theory(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
 
     for page_index, page in enumerate(pages):
         page_number = page_index + page_offset
-        for line in page.extract_text_lines():
+        for i, line in enumerate(_lines(page)):
             text = line["text"].strip()
             if not text:
                 continue
+            if _END_OF_PAPER_RE.match(text):
+                return [leaves[ref] for ref in order]
+            if _BLANK_PAGE_RE.match(text):
+                continue
+            if i == 0 and _PAGE_HEADER_RE.match(text):
+                continue  # running page-number header
+            if _FOOTER_RE.search(text):
+                continue  # "© UCLES ... [Turn over]" running footer
             top, bottom = line["top"], line["bottom"]
+            unmapped = bool(line["unmapped"])
 
             top_match = re.match(rf"^{next_top}\s+(?=\S)", text)
             if top_match:
@@ -386,6 +560,8 @@ def _extract_theory(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
                 _append_with_marks(active, rest)
                 top_intro = list(active.lines)
                 _record_figure_evidence(active, page, top, bottom)
+                if unmapped:
+                    active.record_figure("unmapped_symbol", page_number, 1)
                 # Registered as a leaf provisionally — a top-level question
                 # with no lettered sub-parts (e.g. "1 Calculate x. [5]") is a
                 # leaf in its own right. If a sub-part marker arrives before
@@ -415,6 +591,8 @@ def _extract_theory(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
                 if rest:
                     _append_with_marks(active, rest)
                 _record_figure_evidence(active, page, top, bottom)
+                if unmapped:
+                    active.record_figure("unmapped_symbol", page_number, 1)
                 continue
 
             subsub_match = _SUBSUBPART_RE.match(text)
@@ -425,6 +603,8 @@ def _extract_theory(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
                 if rest:
                     _append_with_marks(active, rest)
                 _record_figure_evidence(active, page, top, bottom)
+                if unmapped:
+                    active.record_figure("unmapped_symbol", page_number, 1)
                 continue
 
             if active is None:
@@ -432,6 +612,8 @@ def _extract_theory(pages: list[Any], page_offset: int) -> list[_LeafBuilder]:
 
             _append_with_marks(active, text)
             _record_figure_evidence(active, page, top, bottom)
+            if unmapped:
+                active.record_figure("unmapped_symbol", page_number, 1)
             # Keep the running intro buffer in sync while no sub-part has
             # opened yet, so the first sub-part (once it appears) inherits
             # the shared context lines that precede it.

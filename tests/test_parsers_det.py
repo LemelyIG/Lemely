@@ -380,6 +380,37 @@ class SelectTablesTests(unittest.TestCase):
         tables = select_tables(pdf, page_start=0, max_mark=40)
         self.assertEqual(tables, [table_q1])
 
+    def test_symbol_font_glyphs_are_recovered_in_cells(self) -> None:
+        """CAIE embeds a Symbol subset font; pdfplumber returns U+F0xx for it.
+
+        Left raw, "Δ" reaches the marking engine (and the P4 question bank)
+        as an unreadable private-use codepoint — 26 banked rows carried
+        mangled marking points before this. Converting at selection time
+        fixes every downstream consumer at once.
+        """
+        table = [
+            ["Question", "Answer", "Marks"],
+            ["1", "t = 2 s and 3, 4", "1"],
+            [None, "continuation", "1"],
+        ]
+        pdf = _fake_pdf([_fake_page(tables=[table])])
+        tables = select_tables(pdf, page_start=0, max_mark=40)
+        self.assertEqual(tables[0][1][1], "Δt = 2 s and {3, 4}")
+
+    def test_unmappable_glyph_is_dropped_not_emitted_raw(self) -> None:
+        # 0xF0E1 is one of the glyph-assembly fragments used to draw a
+        # multi-line bracket; it has no single-character Unicode equivalent,
+        # so it is deliberately absent from the table. Emitting the raw
+        # codepoint would be corrupt text either way.
+        table = [
+            ["Question", "Answer", "Marks"],
+            ["1", "ab", "1"],
+            [None, "continuation", "1"],
+        ]
+        pdf = _fake_pdf([_fake_page(tables=[table])])
+        tables = select_tables(pdf, page_start=0, max_mark=40)
+        self.assertEqual(tables[0][1][1], "ab")
+
 
 # ---------------------------------------------------------------------------
 # rows.build_questions — theory state machine

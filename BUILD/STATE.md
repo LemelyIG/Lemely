@@ -3,7 +3,7 @@
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
 last_updated: 2026-08-07T12:00:00Z
-gemini_spend_usd: 0.1586
+gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
@@ -137,21 +137,25 @@ the quiz take/submit/auto-mark path (`quiz_taking_repo`/`quiz_marking_repo`), `c
 screen. The placement test and practice sets are quiz-shaped: reuse that engine, do not fork it.
 
 ### Task checklist
-- [ ] doing — **P4.1** Question-stem extractor (D4.1). **Structurally done and verified; four
-      content defects out for fix.** `lemely/io/det/question_papers.py` (deterministic, zero
-      Gemini) + `lemely/io/question_papers.py` pairing/writer + `lemely question-bank
-      ingest-question-papers`. Checkpointed at `4c58c15`.
-      **Orchestrator-measured yield (0625): 72 papers → 2090 leaves → 298 banked** (206 MCQ,
-      92 theory), 651 figure-excluded, re-ingest idempotent. Bank is no longer empty — D3.7 closed.
-      Open defects sent back to the implementer: PUA symbol-font glyphs (16 prompts / 34
-      mark-point sets / 17 option sets), `© UCLES` footer leakage (30 prompts), diagram-only MCQ
-      options banked empty (3 rows), flattened superscripts (4 prompts), and a silent
-      no-op on a nonexistent `--schemes-dir`. Re-measure with `/tmp/p41_quality.py`.
-      **Corpus expanded** via paperscraper: 312 qp + 312 ms across 0580/0606/0625, 0 failures.
+- [x] done — **P4.1** Question-stem extractor (D4.1) + all five content defects closed (D4.2).
+      `lemely/io/det/question_papers.py` (deterministic, zero Gemini) + the new shared
+      `lemely/io/det/symbols.py` (Adobe SymbolEncoding recovery, also wired into `tables.py`
+      so the **marking engine** stops reading mangled mark points) + `lemely/io/question_papers.py`
+      pairing/writer + `lemely question-bank ingest-question-papers`.
+      **Orchestrator-measured yield (0625): 72 papers → 2018 leaves → 273 banked**, 654
+      figure/unmapped-excluded, re-ingest idempotent. Bank is no longer empty — D3.7 closed.
+      Yield fell 298 → 273 **deliberately**: leaves with unmappable glyphs are now excluded
+      rather than banked corrupt. All six quality counters are now 0 (see D4.2 table).
       **Ceiling worth knowing:** only 32/72 0625 mark schemes parse deterministically, and a
       stem needs its scheme to be bankable — mark-scheme parse coverage, not stem extraction,
-      is what caps bank size.
-- [ ] todo — **P4.2** Syllabus topic taxonomy + classification of bank questions (0580/0606/0625).
+      is what caps bank size. Improving the det mark-scheme parser is the highest-leverage
+      way to grow the bank.
+      Re-measure any time with `/tmp/p41_quality.py` (purge `question_bank where
+      source='past_paper'` first — ingest is idempotent and will skip).
+      **Also fixed here (D4.3):** the test suite could make *billed* Gemini calls when a key
+      was exported — `tests/conftest.py` now blocks real client construction suite-wide.
+- [ ] doing — **P4.2** Syllabus topic taxonomy + classification of bank questions (0580/0606/0625).
+      `question_bank.topic` is NULL on all 273 past-paper rows (deliberate, D4.1 §4).
 - [ ] todo — **P4.3** Student profile + onboarding data model (migration 0009): grade level,
       school, external lessons, weekly study hours, per-subject enrolment with **target grade**,
       papers, confidence sliders. Activating target grades also closes at-risk rule 2 (D3.3) —
@@ -188,6 +192,11 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
 - The E2E backend is `scripts/e2e_server.py` on port 8000 — there is no module-level `app`
   attribute on `lemely.web.app`.
 - `scripts/seed_e2e.py` is the ONE seeding path for both harnesses, all 5 roles.
+- **The past-paper corpus is outside this repo**: `/home/sico/PaperScraper/papers/CAIE/igcse/
+  <subject>-<code>/<year>/<session>/` (648 PDFs, 0580/0606/0625). `Sources/` holds only mark
+  schemes and the 4 solved scripts — no question papers. Read-only from here.
+- Re-parse mark schemes with `lemely parse-mark-schemes <corpus-dir> --output-root
+  outputs/schemes --force --on-error continue` (~54s for 0625; 32/72 parse).
 
 ## Session journal
 See `BUILD/JOURNAL.md` for the dated 3-6 line entries; decisions and rationale live in

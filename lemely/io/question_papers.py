@@ -243,10 +243,23 @@ def ingest_question_papers_dir(
     Safe to re-run: rows already present for a given
     ``(subject_code, source_question_id)`` are skipped, not duplicated (see
     module docstring on why the DB's own unique index cannot do this here).
+
+    Raises ``FileNotFoundError`` when either directory does not exist. A
+    missing ``schemes_dir`` would otherwise report every paper as
+    ``papers_no_scheme`` — a "0 banked" run that looks like an honest
+    corpus finding but is really a typo'd path.
     """
     extractor = extractor or DeterministicQuestionPaperExtractor()
     qp_dir = Path(qp_dir)
     schemes_dir = Path(schemes_dir)
+
+    if not qp_dir.is_dir():
+        raise FileNotFoundError(f"Question-paper directory does not exist: {qp_dir}")
+    if not schemes_dir.is_dir():
+        raise FileNotFoundError(
+            f"Parsed mark-scheme directory does not exist: {schemes_dir}. "
+            "Run `lemely parse-mark-schemes` first, or pass --schemes-dir."
+        )
 
     qp_paths: list[Path] = []
     for pdf_path in sorted(qp_dir.rglob("*.pdf")):

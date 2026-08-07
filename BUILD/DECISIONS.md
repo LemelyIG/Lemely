@@ -3,6 +3,104 @@
 
 ## Phase 4
 
+### D4.3 — The test suite could make billed Gemini calls; now it structurally cannot (P4.1)
+
+**Found by running the gates, not by looking for it.** `./scripts/check.sh` failed on
+`test_plan_post_narrate_without_key_is_503_not_500` (`assert 200 == 503`), and the captured
+log showed a real `POST generativelanguage.googleapis.com/.../gemini-2.5-flash` in the
+middle of the suite. MISSION §8 requires every automated test to mock Gemini; nothing
+enforced it.
+
+**Three separate defects, all real:**
+
+1. **`tests/conftest.py` neutralises `.env` but deliberately not `os.environ`** ("exactly
+   as in CI"). Sound for env isolation, but STATE.md's own documented way to run the gates
+   is `set -a && . ./.env && set +a` — which exports `GEMINI_API_KEY`. So the "no key" test
+   ran *with* a key, took the narrate path, and spent money against the hard $8 cap.
+2. **`Settings.model_validate(dict)` re-runs the pydantic-settings sources.** The obvious
+   fix — build a settings copy with `gemini_api_key=None` — silently gets the env key
+   reinstated during validation. `model_copy(update=...)` is the form that actually works.
+   Worth not re-deriving: the sibling `_settings_with_key` helper appeared to work only
+   because *any* key satisfies it.
+3. **The first accidental call poisoned the disk cache**, so subsequent runs took a
+   `gemini_cache_hit` and the test kept failing with no network call at all — the symptom
+   outlived its cause and looked like a code bug.
+
+**Fix, in enforcement order.** A session-scoped autouse fixture in `tests/conftest.py`
+raises if anything constructs a real `google-genai` client during the suite. Guarding at
+*client construction* rather than at the key is the decision: tests that legitimately
+exercise "a key is configured" inject `_genai_client=` or a `MagicMock` and never reach
+the guard, so nothing had to change for them; only a genuinely unmocked path trips it, and
+it trips loudly instead of spending. The narrate test then injects the absent key via
+`app.dependency_overrides[get_settings]` rather than hoping the environment is clean.
+**Verified by inversion**, not assumed: a throwaway test constructing a real client raises
+`RuntimeError`, and one passing `_genai_client=<sentinel>` still gets its sentinel back.
+
+**Cost of the leak: $0.0026** (cumulative $0.1586 → **$0.1612** / $8.00). Small, and now
+bounded — but it was unbounded before, and it was a full test-suite run away from being
+much larger.
+
+### D4.2 — All five P4.1 content defects closed; the yield *fell* to 273 and that is the honest number (P4.1)
+
+**Context.** D4.1 closed P4.1 structurally but recorded four content defects (plus a
+CLI no-op) found only by reading banked rows back out of Postgres. This is the fix,
+re-measured the same way.
+
+**Measured, before → after** (`/tmp/p41_quality.py` over the 0625 bank, full purge +
+re-ingest each time, not an incremental run):
+
+| defect | before | after |
+|---|---|---|
+| prompts with private-use-area glyphs | 16 | **0** |
+| MCQ option sets with PUA glyphs | 17 | **0** |
+| mark-point sets with PUA glyphs | 34 | **0** |
+| prompts with `© UCLES` / copyright bleed | 30 | **0** |
+| MCQ rows with a blank (diagram-only) option | 3 | **0** |
+| prompts with a flattened exponent | 4 | **0** (1 residual hit is a verified false positive — "1050 J") |
+
+**Decisions.**
+
+1. **Symbol-glyph recovery is a shared det module, not a question-paper concern.**
+   `lemely/io/det/symbols.py` holds the Adobe SymbolEncoding table and `desymbolize()`;
+   `tables.py` now runs every qualifying mark-scheme cell through it at selection time.
+   That placement is the decision: the 34 mangled mark-point sets were *not* a P4.1 bug,
+   they were the **marking engine** reading the same garbage since Phase 2 — fixing it in
+   the extractor would have cleaned the bank and left the marker broken. Fixed once,
+   upstream, so every consumer benefits.
+2. **Five delimiter codepoints added to the table** (`[ ] { | }`). A corpus scan found
+   113 PUA glyph occurrences in mark points, of which exactly 6 were unmappable — all
+   `0xF07B`/`0xF07D`, SymbolEncoding braceleft/braceright, an identity mapping at their
+   ASCII positions. Adding them takes unmappable to **zero** on this corpus, so nothing
+   is silently dropped from a marking point.
+3. **The end-of-paper block terminates extraction; "BLANK PAGE" does not.** The copyright
+   bleed was not the running footer (already filtered) but the *last page's* notice being
+   appended wholesale to the final question. Anchoring the terminator on "BLANK PAGE" was
+   rejected: CAIE also inserts blank pages **mid-paper** between sections, so that would
+   silently truncate a paper — a failure that looks exactly like a short paper. Pinned by
+   `test_mid_paper_blank_page_does_not_truncate_extraction`.
+4. **A missing `--schemes-dir` now raises instead of reporting zero.** Previously every
+   paper fell through to `papers_no_scheme` and the run printed "0 banked" and exited 0 —
+   indistinguishable from a real finding about the corpus. `click.Path(exists=True)` on
+   the flag plus a `FileNotFoundError` in `ingest_question_papers_dir` for both directories.
+
+**The yield went down, 298 → 273, and the report says so.** Leaves whose text contains a
+glyph this module cannot confidently map are now excluded rather than banked with garbage
+in them — the same policy already applied to figure-dependent stems (UI spec §1.4). 25
+questions moved from "banked, subtly corrupt" to "not banked". That is the right
+direction and the number should not be quoted as a regression.
+
+**Known limitation, not fixed:** 7 of 273 prompts (2.6%) contain an orphaned
+symbol-only line — a raised `°` that pdfplumber bands as its own text line, so
+"100 °C" extracts as "°\n...100  C". The text is correct and readable, the line
+break is wrong. Merging vertically-overlapping line bands risks over-merging real
+lines; deferred and recorded rather than guessed at. Relevant to P4.11's
+"maths notation verified visually in screenshots, not assumed".
+
+**Environment fact worth not re-deriving:** the paperscraper corpus (648 PDFs across
+0580/0606/0625) lives **outside this repo** at
+`/home/sico/PaperScraper/papers/CAIE/igcse/<subject>-<code>/<year>/<session>/`. Nothing
+under `Sources/` holds question papers.
+
 ### D4.1 — The question-stem extractor closes D3.7, and the honest yield is about a third of the corpus (P4.1)
 
 **Context.** D3.7 established that `question_bank` ships empty for a *structural*

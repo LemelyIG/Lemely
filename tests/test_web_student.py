@@ -501,6 +501,17 @@ def test_plan_post_narrate_uses_mocked_gemini(
     fake_client.generate_structured.assert_called_once()
 
 
+def _settings_without_key() -> Settings:
+    """A Settings copy with the Gemini credential cleared.
+
+    ``model_copy``, not ``model_validate``: ``Settings`` is a
+    pydantic-settings model, so validating a dict re-runs its env/dotenv
+    sources and an exported ``GEMINI_API_KEY`` silently reinstates the very
+    key this helper exists to remove.
+    """
+    return load_settings().model_copy(update={"gemini_api_key": None})
+
+
 def test_plan_post_narrate_without_key_is_503_not_500(
     seeded_store: HistoryStore,
 ) -> None:
@@ -508,13 +519,20 @@ def test_plan_post_narrate_without_key_is_503_not_500(
 
     Regression for the Gemini-absent HIGH item: on the default no-key state the
     narrate path must degrade to 503 instead of raising through to a 500.
+
+    The absence of a key is now **injected**, not assumed from the ambient
+    environment. Relying on the environment made this both flaky and a
+    live-spend leak: running the gates the documented way (`set -a && . ./.env`)
+    exported a real key, so the narrate path made a billed `gemini-2.5-flash`
+    call and returned 200 instead of 503 (MISSION §8 — automated tests mock
+    Gemini). `tests/conftest.py` now also blocks live clients suite-wide.
     """
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_settings] = _settings_without_key
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=STUDENT_ID, role="student"
     )
-    # Default settings carry no API key.
     resp = TestClient(app).post(
         "/api/student/plan",
         json={"weeklyHours": 8.0, "narrate": True},

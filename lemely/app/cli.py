@@ -773,7 +773,7 @@ def question_bank_import_generated_cmd(ctx: click.Context, questions_dir: str | 
 @click.argument("qp_dir", type=click.Path(exists=True, file_okay=False))
 @click.option(
     "--schemes-dir",
-    type=click.Path(file_okay=False),
+    type=click.Path(exists=True, file_okay=False),
     default=None,
     help="Directory of parsed MarkScheme JSON (default: <output_dir>/schemes).",
 )

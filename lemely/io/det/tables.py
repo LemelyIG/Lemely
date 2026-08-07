@@ -31,6 +31,7 @@ from __future__ import annotations
 from typing import Any
 
 from lemely.io.det.marks import is_marks_column
+from lemely.io.det.symbols import desymbolize
 
 # Keywords that strongly indicate a row is a mark-scheme column header.
 _MS_HEADER_TOKENS: frozenset[str] = frozenset({"question", "answer", "marks", "guidance", "notes"})
@@ -76,6 +77,23 @@ def qualifies_as_mark_scheme_table(table: list[list[str | None]], max_mark: int 
     return _has_header_row(table) or _has_marks_column(table, max_mark)
 
 
+def _desymbolize_table(table: list[list[str | None]]) -> list[list[str | None]]:
+    """Recover Symbol-font glyphs in every cell of a qualifying table.
+
+    Applied at selection time so *every* downstream consumer of a
+    mark-scheme table — the marking engine as much as the P4 question-bank
+    ingest — sees "Δ" and "×" rather than the raw private-use-area
+    codepoints pdfplumber hands back for CAIE's embedded Symbol subset font.
+    Before this, 26 banked question rows carried mangled marking points, and
+    the marker was reading the same garbage.
+
+    Qualification runs on the *pre*-conversion table deliberately: the checks
+    look at header words and numeric marks columns, neither of which contains
+    Symbol glyphs, so converting first would only add work.
+    """
+    return [[desymbolize(cell)[0] if cell else cell for cell in row] for row in table]
+
+
 def select_tables(
     pdf: Any,
     page_start: int,
@@ -102,7 +120,7 @@ def select_tables(
             page_tables = page.extract_tables()
             for tbl in page_tables:
                 if qualifies_as_mark_scheme_table(tbl, max_mark):
-                    all_tables.append(tbl)
+                    all_tables.append(_desymbolize_table(tbl))
         if all_tables:
             return all_tables
 

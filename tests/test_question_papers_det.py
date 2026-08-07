@@ -319,3 +319,102 @@ def test_real_corpus_theory_paper_measured_yield() -> None:
     assert qp.metadata.stated_total_marks == 80
     assert qp.extracted_marks_total == 80
     assert len(qp.questions) >= 40
+
+
+# ---------------------------------------------------------------------------
+# Extraction *fidelity* on real documents.
+#
+# The structural tests above all pass over synthetic pages and said nothing
+# about whether the extracted text is correct — four content defects (PUA
+# Symbol glyphs, end-of-paper copyright bleed, empty diagram-only options,
+# flattened exponents) survived them and were only found by reading banked
+# rows back out of Postgres. These pin the fixes at the extractor level.
+# ---------------------------------------------------------------------------
+
+
+def _all_text(qp: QuestionPaper) -> str:
+    parts: list[str] = []
+    for q in qp.questions:
+        parts.append(q.stem)
+        parts.extend((q.options or {}).values())
+    return "\n".join(parts)
+
+
+def _has_pua(text: str) -> bool:
+    return any(0xE000 <= ord(ch) <= 0xF8FF for ch in text)
+
+
+@pytest.mark.parametrize("paper", [_REAL_CORPUS_MCQ, _REAL_CORPUS_THEORY])
+def test_real_corpus_extraction_emits_no_private_use_glyphs(paper: Path) -> None:
+    """Raw U+E000 to U+F8FF is corrupt text, never something a student can read."""
+    if not paper.exists():
+        pytest.skip(f"real corpus paper not available at {paper}")
+
+    assert not _has_pua(_all_text(DeterministicQuestionPaperExtractor()(paper)))
+
+
+@pytest.mark.parametrize("paper", [_REAL_CORPUS_MCQ, _REAL_CORPUS_THEORY])
+def test_real_corpus_extraction_stops_before_the_copyright_block(paper: Path) -> None:
+    """The last page's copyright notice was being appended to the final question."""
+    if not paper.exists():
+        pytest.skip(f"real corpus paper not available at {paper}")
+
+    text = _all_text(DeterministicQuestionPaperExtractor()(paper))
+    assert "UCLES" not in text
+    assert "Permission to reproduce items" not in text
+    assert "BLANK PAGE" not in text
+
+
+def test_real_corpus_mcq_options_are_never_blank() -> None:
+    """An empty option means the answer was a diagram; blank is unanswerable."""
+    if not _REAL_CORPUS_MCQ.exists():
+        pytest.skip(f"real corpus paper not available at {_REAL_CORPUS_MCQ}")
+
+    qp = DeterministicQuestionPaperExtractor()(_REAL_CORPUS_MCQ)
+    for q in qp.questions:
+        if q.has_figure:
+            continue  # excluded from the bank anyway — only banked rows must be clean
+        assert q.options is not None
+        for label, value in q.options.items():
+            assert value.strip(), f"{q.ref} option {label} is blank"
+
+
+def test_mid_paper_blank_page_does_not_truncate_extraction() -> None:
+    """CAIE inserts "BLANK PAGE" mid-paper between sections.
+
+    Terminating on it (rather than on the copyright block that follows it on
+    the *last* page) would silently drop every question after a section
+    break — a truncation that looks exactly like a short paper.
+    """
+    cover = _fake_page([], cover_text=_cover(2))
+    first = _fake_page(
+        [
+            _line("1 Which unit is a unit of weight?", 0),
+            _line("A kilogram", 12),
+            _line("B kilojoule", 24),
+            _line("C kilometre", 36),
+            _line("D kilonewton", 48),
+        ]
+    )
+    divider = _fake_page([_line("BLANK PAGE", 0)])
+    second = _fake_page(
+        [
+            _line("2 What is 2 + 2?", 0),
+            _line("A 1", 12),
+            _line("B 2", 24),
+            _line("C 3", 36),
+            _line("D 4", 48),
+        ]
+    )
+    back = _fake_page(
+        [
+            _line("BLANK PAGE", 0),
+            _line("Permission to reproduce items where third-party owned material...", 12),
+            _line("Local Examinations Syndicate (UCLES), a department of the University", 24),
+        ]
+    )
+
+    qp = _run([cover, first, divider, second, back], "0625_s24_qp_11.pdf")
+
+    assert [q.ref for q in qp.questions] == ["1", "2"]
+    assert "UCLES" not in _all_text(qp)

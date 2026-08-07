@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import sqlalchemy as sa
@@ -458,6 +458,28 @@ def test_ingest_question_papers_dir_extract_failure_is_counted_not_fatal(
     assert report.papers_extract_failed == 1
     assert "0625_s24_qp_41.pdf" in report.extract_failures[0]
     assert report.produced == 1  # the good paper still gets banked
+
+
+def test_ingest_missing_schemes_dir_raises_rather_than_reporting_zero(tmp_path: Path) -> None:
+    """A typo'd --schemes-dir must not masquerade as an honest empty corpus.
+
+    Without this guard every paper falls through ``_find_scheme_path`` and
+    is counted ``papers_no_scheme``, so the run prints "0 banked" and exits
+    0 — indistinguishable from a real finding about the corpus. No
+    Postgres needed: the check fires before the service is ever touched.
+    """
+    qp_dir = tmp_path / "qp"
+    qp_dir.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="mark-scheme directory does not exist"):
+        ingest_question_papers_dir(
+            cast("QuestionBankService", None), qp_dir, tmp_path / "nope-schemes"
+        )
+
+    with pytest.raises(FileNotFoundError, match="Question-paper directory does not exist"):
+        ingest_question_papers_dir(
+            cast("QuestionBankService", None), tmp_path / "nope-qp", tmp_path
+        )
 
 
 def test_ingest_question_papers_dir_ignores_non_caie_filenames(

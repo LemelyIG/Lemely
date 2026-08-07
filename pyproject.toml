@@ -103,10 +103,14 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
 "lemely/io/parsers.py" = ["TCH"]
 "lemely/io/det/gmp.py" = ["ANN401"]
+# Unicode lookalikes are the entire subject matter here: the module maps Adobe
+# SymbolEncoding bytes to the Greek letters and operators they actually denote,
+# so RUF001/2/3 fire on every correct entry (Α is Alpha, not A — that is the point).
+"lemely/io/det/symbols.py" = ["RUF001", "RUF002", "RUF003"]
 "lemely/io/det/metadata.py" = ["ANN401", "RUF001"]
-"lemely/io/det/tables.py" = ["ANN401"]
+"lemely/io/det/tables.py" = ["ANN401", "RUF002"]
 "lemely/io/det/parser.py" = ["ANN401"]
-"lemely/io/det/question_papers.py" = ["ANN401"]
+"lemely/io/det/question_papers.py" = ["ANN401", "RUF001", "RUF003"]
 "lemely/io/validation.py" = ["RUF001"]
 "lemely/io/correction_ai.py" = ["BLE001", "ANN401", "TCH"]
 "lemely/io/subject.py" = ["TCH"]
