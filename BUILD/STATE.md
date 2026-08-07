@@ -1478,7 +1478,23 @@ Starting facts (established 2026-08-06, do not re-derive):
                     *added*, not *changed*. `reports/phase-3/` does not exist yet and is
                     NOT gitignored (only `reports/.scratch/` is).
                   - `sharp` is already a `web/` devDependency — no new package.
-              - [ ] **e2a** doing (started 2026-08-07) — harness only, verified into `reports/.scratch`.
+              - [ ] **e2a** doing (started 2026-08-07; **built, verification run in flight
+                    2026-08-07 session 2**) — harness only, verified into `reports/.scratch`.
+                    Session-2 resume note: the harness was found **written but uncommitted**
+                    (a prior session died before committing) and is now checkpointed at
+                    `ad50d74` as a `wip:` commit — `audit.mjs` +434/−51 (the `states[]`
+                    mechanism, T-08/T-09-detail/T-10 registry entries, empty/loading/error/
+                    offline states) plus `scripts/compare_screens.mjs` (281 lines, e2b's
+                    script, reviewed and sound) and its `npm run compare-screens` entry.
+                    Both files pass `node --check`; `pre-commit run --all-files` clean.
+                    The mandated axe/Lighthouse tradeoff **is recorded in code** at
+                    `audit.mjs:498-508` (`state.lighthouse !== false`, defaulting true; axe
+                    every state, Lighthouse canonical state only, with an explicit warning
+                    not to read `lighthouse/_summary.json`'s row count as "states audited").
+                    It must also be stated in the P3.11 report — do not let the report imply
+                    every state was fully audited.
+                    **Not yet verified:** no audit run has ever exercised this code. That run
+                    is what e2a's `done` depends on; do not mark it done on the syntax check.
                     (i) `states[]` on a registry route: each entry `{state, slug, setup?,
                     ready?, teardown?}`, defaulting to today's single implicit
                     `"default"` so every existing entry keeps working unchanged.
