@@ -1638,6 +1638,47 @@ Starting facts (established 2026-08-06, do not re-derive):
                     misreading a harness-lifecycle artifact as a seventh cause.
                     Run **v8** launched detached from `c504c9b` → `/tmp/audit_v8.log`.
 
+                    **Session-8 note (2026-08-07). The Chromium saga is OVER — v8
+                    completed the entire walk with no browser death.** Session 5's
+                    TMPDIR-off-tmpfs fix is confirmed by a full run, and the detached
+                    launch (session 7's rule) is what let it finish. Do not spend a
+                    ninth session on Chromium lifetime; the remaining work is ordinary.
+                    v8's numbers: 26 routes (22 declarative + 4 inline), 31 axe passes,
+                    24 Lighthouse passes, **0 console errors, 0 horizontal-scroll
+                    violations**, Lighthouse a11y ≥ 96 everywhere (min 96 on
+                    `teacher-review`), performance floor 66 (`teacher-quiz-detail`).
+                    v8 failed on exactly **one** route, and both causes were real
+                    harness defects in `resolveReviewItemViaAdjustForm`, fixed in
+                    `2f140e7` after reproducing the flow step-by-step against the live
+                    stack (**not** by inspection — the guess "the disabled Adjust
+                    button" was wrong; `question_result_id` was set all along):
+                    (a) `click({clickCount:3})` does **not** select inside an
+                    `input[type=number]` in headless Chromium, so `type("0")`
+                    *appended* — 75 became "750", above the question's `max`, and the
+                    browser's own constraint validation refused to submit with no
+                    request and no visible error. The helper now uses Ctrl+A and
+                    **asserts the typed value**, so this class of failure names the
+                    value instead of timing out blind.
+                    (b) A successful resolve calls `goNext`, which with no later queue
+                    item navigates to `/teacher/review` — so the old
+                    `waitForText("Teacher correction on record")` could never have
+                    passed *even on success*. It now resolves on the mutation's real
+                    outcome (navigated / panel / refusal text, refusal surfaced in the
+                    thrown error) and re-opens the item, which makes the setup
+                    self-verifying rather than able to screenshot an un-corrected item
+                    as "corrected". Verified in Postgres, not just on screen (D3.13):
+                    `resolved`, `teacher_awarded_marks` 0, AI's `awarded_marks` still
+                    75. **Do not restore the triple-click or the bare waitForText.**
+                    v8's only axe findings were 3 × moderate `page-has-heading-one`,
+                    all **product** code and all in states no audit could see before
+                    this chunk (`teacher-quiz-results` loading + error,
+                    `parent-children` empty) — chunk b's "audit every state" argument
+                    holding a second time. Fixed in the same commit with the sr-only-h1
+                    shape `ReviewItem.tsx`/`QuizBuilder.tsx` already use, and by
+                    promoting the parent empty state's `h2` to the `h1` it actually is.
+                    Run **v9** launched detached from `2f140e7` → `/tmp/audit_v9.log`;
+                    that is the run e2a's `done` depends on.
+
                     (i) `states[]` on a registry route: each entry `{state, slug, setup?,
                     ready?, teardown?}`, defaulting to today's single implicit
                     `"default"` so every existing entry keeps working unchanged.
