@@ -126,6 +126,13 @@ def build_questions(
     point_idx = 0
     q_row_had_answer = False  # True when the Q-number row itself carried answer text
     in_alt_branch = False  # True after a standalone OR until the next question
+    has_a_mark = False  # True once an A-type (final answer) point has been seen for
+    # the current leaf question. Per CAIE's own Generic Marking Principles ("C mark:
+    # Compensatory mark which may be scored when the final answer (A) mark for a
+    # question has not been awarded" — see the M3 acronym table on the GMP pages),
+    # a C-type mark that follows an A-type mark within the same leaf is an
+    # alternative/partial-credit route to that SAME allocation, not an additional
+    # one — it must never be summed with the A mark it compensates for.
 
     q_col = layout.q_col
     answer_col_end = layout.answer_col_end
@@ -137,7 +144,7 @@ def build_questions(
     # -----------------------------------------------------------------------
 
     def flush() -> None:
-        nonlocal point_idx, in_alt_branch, q_row_had_answer
+        nonlocal point_idx, in_alt_branch, q_row_had_answer, has_a_mark
         if stack and current_points:
             stack[-1].answer_points = list(current_points)
             if q_row_had_answer:
@@ -153,6 +160,7 @@ def build_questions(
         point_idx = 0
         in_alt_branch = False
         q_row_had_answer = False
+        has_a_mark = False
 
     def unwind_to(target_depth: int) -> None:
         while len(stack) > target_depth:
@@ -267,6 +275,8 @@ def build_questions(
                 # Real answer on the Q row — add as a point.
                 current_points.append(make_point(answer_cell, marks_int, math_type, False))
                 q_row_had_answer = True
+                if math_type == MathMarkType.A:
+                    has_a_mark = True
             elif upper in ("EITHER", "OR"):
                 # Structural bracket: signals q_row_had_answer (so flush()
                 # recounts from primary branch) but produces no AnswerPoint.
@@ -282,6 +292,8 @@ def build_questions(
             if answer_cell:
                 current_points.append(make_point(answer_cell, marks_int, math_type, False))
                 q_row_had_answer = True
+                if math_type == MathMarkType.A:
+                    has_a_mark = True
 
         elif _LEVEL_2_RE.match(q_cell):
             flush()
@@ -291,6 +303,8 @@ def build_questions(
             if answer_cell:
                 current_points.append(make_point(answer_cell, marks_int, math_type, False))
                 q_row_had_answer = True
+                if math_type == MathMarkType.A:
+                    has_a_mark = True
 
         else:
             # Continuation row — add an AnswerPoint to the deepest question.
@@ -315,10 +329,24 @@ def build_questions(
                 text = answer_cell[7:].strip()
                 is_alt = True
 
+            # Compensatory C mark: per CAIE's own Generic Marking Principles, a
+            # C-type mark is "scored when the final answer (A) mark for a
+            # question has not been awarded" — i.e. it is an alternative,
+            # partial-credit route to the SAME allocation as the A mark it
+            # follows, not an additional mark on top of it. Detected
+            # structurally (via math_mark_type), not by textual "OR"/"EITHER"
+            # markers, since CAIE mark schemes list these compensatory rows
+            # without any such keyword (e.g. "1(c)(ii) ... A3" followed by two
+            # plain continuation rows marked "C1").
+            if math_type == MathMarkType.C and has_a_mark:
+                is_alt = True
+
             if not text:
                 continue
 
             current_points.append(make_point(text, marks_int, math_type, is_alt))
+            if math_type == MathMarkType.A:
+                has_a_mark = True
 
     # Final flush and full unwind
     flush()
