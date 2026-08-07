@@ -36,7 +36,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.models import ParentChildLink, User
 from lemely.db.models.enums import Role
-from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
+from lemely.db.parent_repo import (
+    _PLACEHOLDER_EMAIL_DOMAIN,
+    ParentLinkService,
+    ParentUserNotFoundError,
+)
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -313,3 +317,53 @@ def test_unlink_absent_link_is_a_silent_no_op(pg_sessionmaker: sessionmaker[Sess
     service.unlink(child, parent)  # never linked — must not raise
 
     assert _link_row_count(pg_sessionmaker) == 0
+
+
+def test_a_phone_only_parents_name_is_their_phone_not_the_placeholder_email(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A synthesised address must never surface as a person's name (P3.9 chunk d).
+
+    ``AuthService.verify_otp`` mints a phone-only parent with a
+    ``phone+20…@parents.lemely.local`` email because ``users.email`` is NOT
+    NULL + unique. Falling back to that address showed a student
+    "phone+201000000555@parents.lemely.local" where their parent's name should
+    be. Both ``ParentRow`` construction sites go through the same helper, so
+    both are asserted here.
+    """
+    phone = "+201000000555"
+    parent = uuid.uuid4()
+    child = _seed_user(pg_sessionmaker, Role.student)
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            User(
+                id=parent,
+                email=f"phone+201000000555{_PLACEHOLDER_EMAIL_DOMAIN}",
+                role=Role.parent,
+                display_name=None,
+                phone=phone,
+            )
+        )
+    service = ParentLinkService(pg_sessionmaker)
+
+    # link() returns a row directly...
+    linked = service.link(student_id=child, phone=phone)
+    assert linked.display_name == phone
+
+    # ...and list_parents() reads it back the same way.
+    listed = service.list_parents(child)
+    assert [p.display_name for p in listed] == [phone]
+    assert all(_PLACEHOLDER_EMAIL_DOMAIN not in p.display_name for p in listed)
+
+
+def test_placeholder_domain_matches_the_auth_services_synthesised_address() -> None:
+    """Pins the two halves that import-linter forbids wiring together directly.
+
+    ``lemely.db`` may not import ``lemely.auth``, so ``parent_repo`` keeps its
+    own copy of the placeholder domain. If ``_phone_placeholder_email`` ever
+    changes shape, this fails instead of silently reverting the fix above to
+    "show the raw placeholder".
+    """
+    from lemely.auth.service import _phone_placeholder_email
+
+    assert _phone_placeholder_email("+20 100 000 0555").endswith(_PLACEHOLDER_EMAIL_DOMAIN)

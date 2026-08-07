@@ -63,6 +63,7 @@ export const navGroups: NavGroup[] = [
       { to: "/student/subject/0625", label: "Physics", tag: "0625" },
       { to: "/student/plan", label: "Study plan" },
       { to: "/student/board", label: "Standings" },
+      { to: "/student/parents", label: "Your parents" },
     ],
   },
   {
@@ -87,6 +88,7 @@ export const crumbs: Record<string, string> = {
   "/student/correct": "Marking / Correct a paper",
   "/student/plan": "Home / Study plan",
   "/student/board": "Home / Standings",
+  "/student/parents": "Home / Your parents",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
   "/student/directions": "Design directions",

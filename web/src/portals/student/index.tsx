@@ -19,6 +19,7 @@ import { Standings } from "./screens/Standings"
 import { Onboarding } from "./screens/Onboarding"
 import { Landing } from "./screens/Landing"
 import { Directions } from "./screens/Directions"
+import { Parents } from "./screens/Parents"
 
 /*
  * Student portal (terracotta). Grouped sidebar nav + a sticky top header
@@ -166,6 +167,8 @@ export const studentRoute: RouteObject = {
     { path: "correct", element: <CorrectPaper /> },
     { path: "plan", element: <StudyPlan /> },
     { path: "board", element: <Standings /> },
+    // The only place a parent_child_links row is created (D3.11).
+    { path: "parents", element: <Parents /> },
     { path: "onboard", element: <Onboarding /> },
     { path: "landing", element: <Landing /> },
     { path: "directions", element: <Directions /> },

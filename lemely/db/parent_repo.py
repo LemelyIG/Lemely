@@ -66,6 +66,37 @@ class ParentRow:
     phone: str | None
 
 
+def _parent_display_name(display_name: str | None, email: str, phone: str | None) -> str:
+    """Best honest identity for a parent, never an internal artefact.
+
+    A phone-only parent is minted by :meth:`~lemely.auth.service.AuthService.verify_otp`
+    with a **synthesised** ``phone+20…@parents.lemely.local`` address, because
+    ``users.email`` is NOT NULL + unique and no real address has been captured
+    yet (:func:`~lemely.auth.service._phone_placeholder_email`). Falling back
+    straight to ``email`` therefore showed a student that machine-generated
+    string as their parent's name — found in P3.9 chunk-d verification.
+
+    The phone number is the right fallback: it is the identifier the student
+    typed to create the link, so they recognise it, and unlike the placeholder
+    it is a real fact about the account. The real email is still preferred over
+    it when one exists, and the placeholder is only ever reached if a parent
+    somehow has neither a name nor a phone — in which case it is the sole
+    remaining identifier and showing it beats showing nothing.
+    """
+    if display_name:
+        return display_name
+    if email.endswith(_PLACEHOLDER_EMAIL_DOMAIN) and phone:
+        return phone
+    return email
+
+
+_PLACEHOLDER_EMAIL_DOMAIN = "@parents.lemely.local"
+"""Domain of the synthesised address above. Kept beside its only consumer
+rather than imported from ``lemely.auth.service`` — the DB layer must not
+depend on the auth layer (import-linter enforces this), so the two are pinned
+together by a test instead."""
+
+
 class ParentLinkService:
     """Parent-child link lookup/create/delete (D3.11).
 
@@ -144,7 +175,11 @@ class ParentLinkService:
                 .order_by(User.display_name, User.email)
             )
             return [
-                ParentRow(parent_id=parent_id, display_name=display_name or email, phone=phone)
+                ParentRow(
+                    parent_id=parent_id,
+                    display_name=_parent_display_name(display_name, email, phone),
+                    phone=phone,
+                )
                 for parent_id, display_name, email, phone in session.execute(stmt).all()
             ]
 
@@ -181,7 +216,7 @@ class ParentLinkService:
             self._link_if_absent(session, parent.id, student_uuid)
             return ParentRow(
                 parent_id=parent.id,
-                display_name=parent.display_name or parent.email,
+                display_name=_parent_display_name(parent.display_name, parent.email, parent.phone),
                 phone=parent.phone,
             )
 
