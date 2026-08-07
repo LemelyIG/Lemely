@@ -944,7 +944,7 @@ Starting facts (established 2026-08-06, do not re-derive):
             `QuizResultsService`'s own tests (100% cov, P3.5 chunk F2); what this pass
             proves is the rendering and the route, not the marking pipeline.
             **P3.8 is now done — T-07..T-10 and T-12 are all on real data.**
-- [ ] doing — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
+- [x] done — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
       Four chunks, one commit each.
 
       **Established facts (2026-08-07, do not re-derive):**
@@ -1065,12 +1065,42 @@ Starting facts (established 2026-08-06, do not re-derive):
             errors at 380/768/1440.
             **Fact worth not re-deriving:** `SubjectPaperDTO.marks`/`RecentPaperDTO.marks`
             are `"63/80"` — no spaces around the slash (cost one test iteration).
-      - [ ] **d** todo — student-side parent-link management (the only way a link is
-            created in production — D3.11's scope note). Backend exists:
-            `GET|POST /api/student/parent-links`, `DELETE .../{parent_id}`; the
-            `LinkedParent`/`ParentLinkList` mirrors are already in `lib/parentTypes.ts`.
-            A 404 on POST means "that parent has not signed in yet" — surface that as the
-            real, actionable message, not a generic failure.
+      - [x] **d** done (11eb8a2) — student-side parent-link management. New
+            `portals/student/screens/Parents.tsx` (route `/student/parents`, nav entry
+            "Your parents" + crumb) + `useParentLinks`/`useLinkParent`/`useUnlinkParent`
+            in `useStudentApi.ts`. 1868 tests (1864 passed / 4 live-only skips), 89.35%
+            cov (from 89.34%), `parent_repo.py` at 100%. All 12 gates green, no migration.
+            **Real defect found in verification and fixed at the source:** `verify_otp`
+            mints a phone-only parent with a synthesised
+            `phone+20…@parents.lemely.local` email (`users.email` is NOT NULL + unique),
+            and **both** `ParentRow` sites fell back to it — so a student saw that
+            machine-generated string where their parent's name belongs. New
+            `_parent_display_name` prefers a real name, then the **phone**, and only
+            then the address. The placeholder domain is duplicated in `parent_repo.py`
+            rather than imported (import-linter forbids `lemely.db` → `lemely.auth`);
+            `test_placeholder_domain_matches_the_auth_services_synthesised_address` pins
+            the two so `_phone_placeholder_email` cannot drift. **Verified by inversion**
+            — the test fails against `display_name or email`. Do not "simplify" it back.
+            **Do not reintroduce:** a generic error render for POST's 404. It means
+            exactly "that parent has not signed in yet" and is the only actionable
+            message on the screen; it has its own branch keyed on `ApiError.status`.
+            Verified end to end on the live stack (throwaway spec, deleted) **with no
+            seed script in the loop**: parent OTP-signs-in → empty state → signs out;
+            student signs up → 404 message for an unknown number → links the real one and
+            sees the phone, not the placeholder; parent signs back in → child present.
+            Axe clean and no horizontal scroll at 380/768/1440.
+            **Test-writing facts:** a deliberately-provoked 404 shows up as a browser
+            console error, so clear the buffer after that step rather than weakening the
+            assertion to ignore 404s; and any spec that exercises the empty state must
+            use a **per-run unique phone**, or the previous run's link makes the
+            single-child skip bypass the state under test.
+            **Pre-existing, NOT this chunk's to fix:** the student sidebar still renders
+            hardcoded `studentName`/`studentMeta` ("Maya Rahman / Year 11 - Helwan Science
+            Centre") and "MR" initials from `portals/student/data.ts` — the same fiction
+            P3.7 chunk b killed in the teacher sidebar, still live on the student side.
+            `useProfile()` already exists and is the fix. Carried to P3.10.
+            **P3.9 is now done — G-05 and P-01..P-04 are all on real data, and the link
+            that makes them reachable exists.**
 - [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
       Lighthouse a11y ≥95, screenshot corpus for every new screen × state × breakpoint,
@@ -1089,6 +1119,17 @@ Starting facts (established 2026-08-06, do not re-derive):
       them, or record it as accepted debt in the phase report. Do not leave it unstated.
       (c) `web/` has no frontend test runner configured. Either stand one up or state
       plainly in the report that frontend behaviour is covered by Playwright E2E only.
+      Carried in from P3.9:
+      (d) The **student** sidebar still renders hardcoded `studentName`/`studentMeta`
+      ("Maya Rahman / Year 11 - Helwan Science Centre") and "MR" initials from
+      `portals/student/data.ts` — the identical fiction P3.7 chunk b removed from the
+      teacher sidebar, never done for the student side. `useProfile()` already exists.
+      (e) Item (a) is now **three times** evidenced: P3.8c's `text-t3` contrast finding,
+      and two real serious axe violations P3.9 found only by hand-verifying (icon-only
+      `button-name` on the parent shell below 640px). Every teacher AND parent route is
+      still outside `audit.mjs`'s four student routes; the gate passes by never looking.
+      P3.9 added six routes (`/login/parent`, `/parent`, `/parent/children/:id`,
+      `.../subjects/:code`, `.../weaknesses`, `/student/parents`).
 - [ ] todo — **P3.11** Phase-3 report, merge to develop, push, update PR #3, ntfy.
 
 

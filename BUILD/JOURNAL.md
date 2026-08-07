@@ -923,3 +923,31 @@ linked children only.
   is not exercised by this pass (it is covered by F2's own 100%-cov tests).
 - Next: P3.9 — parent frontend G-05 (phone+OTP login) + P-01..P-04. No parent portal
   exists at all yet; the backend landed in P3.6.
+
+## 2026-08-07 (later still) — P3.9 complete, parent portal exists
+
+- Did: all four chunks of P3.9. Chunk a added G-05's mandated developer OTP
+  affordance (D3.16); b built the parent portal shell, phone+OTP login, P-01 and
+  P-02; c added P-03 and P-04; d added the student-side link management that makes
+  any of it reachable without a seed script. 1868 tests / 89.35% cov, 12 gates green.
+- Learned: the standing gates cannot see this work at all. Three real defects came
+  out of hand-verification and none from `./scripts/check.sh` — parents were being
+  routed into the *teacher* portal (`"parent"` was in `TEACHER_ROLES`), two
+  icon-only controls lost their accessible name below 640px, and a synthesised
+  `phone+20…@parents.lemely.local` address was being shown to students as their
+  parent's name. `audit.mjs` is still scoped to D2.10's four student routes, so
+  P3.10 item (a) is now three-times evidenced, not a tidy-up.
+- Learned: gating a secret's disclosure on a *provider capability*
+  (`delivers_out_of_band`) rather than an environment string turned out to also be
+  the thing that made the Playwright OTP flow trivial — the test reads the code off
+  the screen. The safe design and the testable design were the same design.
+- Learned: two verification specs were wrong in the same way — they assumed a clean
+  database. A previous run's link silently disabled the empty state and the
+  single-child skip under test. Per-run unique phone numbers fixed it; worth doing
+  by default for anything that asserts an empty state.
+- Honest gap recorded: the student sidebar still renders "Maya Rahman / Year 11 -
+  Helwan Science Centre" from `data.ts` — the same fiction P3.7 removed from the
+  teacher sidebar. Left alone deliberately (out of P3.9's scope), carried to P3.10.
+- Next: P3.10 — acceptance. Extend `audit.mjs` past the four student routes (the
+  gate is vacuous for ~15 teacher/parent routes), decide the `text-t3` contrast fix,
+  and run the standing UI gate properly.
