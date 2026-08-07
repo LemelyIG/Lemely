@@ -984,6 +984,75 @@ function buildRouteRegistry(seed) {
   ]
 }
 
+// ── Chromium lifecycle ────────────────────────────────────────────────────
+//
+// Chromium dying mid-run is NOT a route failure, and must never be reported
+// as one. When the browser process goes away, every remaining route throws a
+// CDP protocol error ("Session closed", "detached Frame", "Target closed")
+// and the run's output reads as a dozen simultaneous product defects — which
+// is exactly how two P3.10 e2a verification runs were first misread. Capture
+// the real exit code/signal here (a SIGKILL means the OS killed it, i.e.
+// memory; a SIGSEGV/SIGABRT means Chromium crashed) so the run diagnoses
+// itself, and abort the walk at the first sign rather than accumulating
+// phantom failures. Same class of finding as the `reuseExistingServer` one
+// recorded in BUILD/STATE.md: a gate whose failure mode is undiagnostic is
+// barely better than no gate.
+//
+// These live at module scope rather than inside `main` because the registry
+// walk *recycles* the browser (see `RECYCLE_EVERY`), so the death watch has
+// to be re-armable against a new process.
+let browserExit = null
+
+function watchBrowserExit(browser) {
+  browserExit = null
+  browser.process()?.once("exit", (code, signal) => {
+    browserExit = { code, signal }
+  })
+}
+
+function browserDeath(context) {
+  return new Error(
+    `Chromium died mid-run (${browserExit ? `exit code ${browserExit.code}, signal ${browserExit.signal}` : "still connected per the process handle — see the underlying error"}) ${context}. ` +
+      "This is a harness/environment failure, not a route defect: every route after this " +
+      "point would report a spurious CDP protocol error. Re-run; if it recurs, check " +
+      "memory pressure (free -m) while the audit runs.",
+  )
+}
+
+/** Recycle the browser process every N registry routes.
+ *
+ * Closing each session's context after its last route (below) bounds how many
+ * contexts are open at once, but it does NOT bound the lifetime of the busiest
+ * one: the teacher session owns ~14 of the ~21 registry routes, so a single
+ * renderer accumulates every screenshot, axe injection and Lighthouse trace
+ * across that whole span. On this host (7.8 GB RAM, ~3.4 GB swap already in
+ * use before the run) that is what kills the process — the first three
+ * verification runs died progressively later as the per-context hygiene
+ * improved, which is the signature of a ceiling being approached, not of a
+ * route defect. Recycling puts a hard bound on peak RSS regardless of how the
+ * registry is ordered.
+ *
+ * This is safe precisely because sessions are *injected*, never logged into:
+ * a recycled browser re-creates the context on the next route and calls
+ * `injectSession` again, so nothing is lost but the memory. Override with
+ * LEMELY_AUDIT_RECYCLE_EVERY=0 to disable (useful when bisecting whether a
+ * failure is memory-related at all).
+ */
+const RECYCLE_EVERY = Number(process.env.LEMELY_AUDIT_RECYCLE_EVERY ?? 4)
+
+/** MemAvailable in MB, or null where /proc is not readable. Logged per route
+ * so a death leaves behind the evidence for its own diagnosis instead of
+ * needing a second instrumented run. */
+function memAvailableMb() {
+  try {
+    const meminfo = fs.readFileSync("/proc/meminfo", "utf8")
+    const match = /^MemAvailable:\s+(\d+) kB$/m.exec(meminfo)
+    return match ? Math.round(Number(match[1]) / 1024) : null
+  } catch {
+    return null
+  }
+}
+
 async function main() {
   fs.mkdirSync(AXE_DIR, { recursive: true })
   fs.mkdirSync(LH_DIR, { recursive: true })
@@ -1035,29 +1104,7 @@ async function main() {
   let routes = []
   try {
     browser = await puppeteer.launch({ headless: true })
-    // Chromium dying mid-run is NOT a route failure, and must never be
-    // reported as one. When the browser process goes away, every remaining
-    // route throws a CDP protocol error ("Session closed", "detached
-    // Frame", "Target closed") and the run's output reads as a dozen
-    // simultaneous product defects — which is exactly how two P3.10 e2a
-    // verification runs were first misread. Capture the real exit
-    // code/signal here (a SIGKILL means the OS killed it, i.e. memory; a
-    // SIGSEGV/SIGABRT means Chromium crashed) so the run diagnoses itself,
-    // and abort the walk at the first sign rather than accumulating
-    // phantom failures. Same class of finding as the `reuseExistingServer`
-    // one recorded in BUILD/STATE.md: a gate whose failure mode is
-    // undiagnostic is barely better than no gate.
-    let browserExit = null
-    browser.process()?.once("exit", (code, signal) => {
-      browserExit = { code, signal }
-    })
-    const browserDeath = (context) =>
-      new Error(
-        `Chromium died mid-run (${browserExit ? `exit code ${browserExit.code}, signal ${browserExit.signal}` : "still connected per the process handle — see the underlying error"}) ${context}. ` +
-          "This is a harness/environment failure, not a route defect: every route after this " +
-          "point would report a spurious CDP protocol error. Re-run; if it recurs, check " +
-          "memory pressure (free -m) while the audit runs.",
-      )
+    watchBrowserExit(browser)
 
     const page = await browser.newPage()
     watchConsole(page, consoleErrors)
@@ -1252,6 +1299,21 @@ async function main() {
 
     for (const [routeIndex, route] of routes.entries()) {
       if (!browser.connected) throw browserDeath(`before ${route.screenId} ${route.path}`)
+
+      if (RECYCLE_EVERY > 0 && routeIndex > 0 && routeIndex % RECYCLE_EVERY === 0) {
+        for (const openPage of sessionsSeen.values()) {
+          await openPage.browserContext().close().catch(() => {})
+        }
+        sessionsSeen.clear()
+        await browser.close().catch(() => {})
+        browser = await puppeteer.launch({ headless: true })
+        watchBrowserExit(browser)
+        log(
+          `recycled Chromium before route ${routeIndex} (every ${RECYCLE_EVERY}) — ` +
+            `MemAvailable ${memAvailableMb() ?? "?"} MB`,
+        )
+      }
+
       const sessionKey = sessionKeyOf(route)
       let routePage = sessionsSeen.get(sessionKey)
       if (!routePage) {
@@ -1270,6 +1332,10 @@ async function main() {
       // that fails here also contributes no axe/Lighthouse summary row, and
       // check_ui_gates.py can only check rows that exist.
       try {
+        log(
+          `[mem] before ${route.screenId} (${route.states?.length ?? 1} state(s)): ` +
+            `MemAvailable ${memAvailableMb() ?? "?"} MB`,
+        )
         await visitRoute(routePage, route, {
           axeSummary,
           lighthouseSummary,
