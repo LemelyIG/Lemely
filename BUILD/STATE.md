@@ -30,8 +30,10 @@ session registry (D1.11). Adversarial review: no Critical/High bypass (D1.12). 5
 ### Carried backlog from Phase 1 (non-blocking, do opportunistically)
 - [ ] todo — (D1.9) Migrate CLI + Gradio history to the DB (or retire Gradio), then delete
       `lemely/io/history_store.py` + `tests/test_history_store.py`. Parity already proven.
-- [ ] todo — (D1.6) Teacher per-tenant ownership (own-classes-only) — lands with the Phase 3
-      class model; role boundary is already enforced, row-level ownership is not yet.
+- [x] done — (D1.6) Teacher per-tenant ownership (own-classes-only). Closed across P3.1
+      (`ClassService` replaced the implicit "all students are one cohort" endpoints) and
+      P3.3 (`/api/teacher/overview` stopped enumerating every student in the store; pinned
+      by a two-teacher disjoint-class regression test). Row-level ownership is now real.
 
 ## Phase 2 — The core loop, real and end-to-end — DONE (2026-08-05)
 Real SSE correction pipeline (P2.1), grade-boundary ingestion from cambridgeinternational.org
