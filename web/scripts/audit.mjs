@@ -17,34 +17,55 @@
  * built in P3.7–P3.9 was outside it, so the gate passed by never looking (it
  * is how `text-t3`'s 4.36:1 contrast and a parent-shell `button-name`
  * violation both shipped undetected — see BUILD/STATE.md's P3.10 section).
- * `ROUTE_REGISTRY` below is the full 21-route Phase-3 inventory — a
- * declarative table, not a hardcoded journey — covering:
+ * `ROUTE_REGISTRY` below is the full Phase-3 inventory — a declarative
+ * table, not a hardcoded journey — covering (counts as of P3.10 chunk e2a):
  *   - 4 unauthenticated/student routes carried over from D2.10, run through
  *     `runStudentMainJourney()` because they are inherently a stateful
  *     sequence (sign up -> log in -> upload a real scan -> get a real
  *     paperId), not a bare navigation: /login (G-04), /student (S-06,
  *     non-empty), /student/correct (S-10), /student/result/:paperId
  *     (S-15/S-17).
- *   - 17 new routes run through the generic `visitRoute()` runner, reached by
- *     injecting a real session (a genuine access token from
+ *   - 22 registry entries run through the generic `visitRoute()` runner,
+ *     reached by injecting a real session (a genuine access token from
  *     `scripts/seed_e2e.py`, decoded server-side exactly as a real login
  *     would produce — see `injectSession`) into `localStorage` and
  *     navigating directly, rather than re-driving each role's login UI for
- *     every route: G-05 (unauthenticated), the teacher's 11 routes, the
- *     parent's 4 routes, and the student's `/student/parents`.
- * Deliberately still NOT in this registry (P4/P5 screens still on mock data,
- * or Phase-3 routes that need a fixture the seed does not create — see the
- * end-of-run "not yet covered" log line):
+ *     every route: G-05 (unauthenticated), 15 teacher entries (two of them
+ *     `T-01`, one populated one `emptyTeacher`), 5 parent entries (two of
+ *     them `P-01`, same split), and the student's `/student/parents`. Several
+ *     entries carry more than one `states[]` capture (see below), so the
+ *     actual number of axe passes this run performs is higher than 22 — see
+ *     `main()`'s end-of-run log for the honest total.
+ * Deliberately still NOT in this registry (P4/P5 screens still on mock data):
  *   /student/subject/:code, /student/plan, /student/board, /student/onboard,
- *   /student/landing, /student/directions (P4/P5, mock data),
- *   /teacher/review/:itemId (no item needs review in the seed — every
- *   correction is HIGH-confidence by construction), and
- *   /teacher/quizzes/:quizId plus its results route (the seed creates no
- *   quiz, so both would 404 rather than render an empty state).
+ *   /student/landing, /student/directions.
  * Note "no *populated* fixture" is NOT on its own a reason to leave a route
  * out: /teacher/grading and /teacher/schemes are audited in their genuinely
  * empty state, because an unlooked-at route is exactly how this gate became
  * vacuous.
+ *
+ * ── States (P3.10 chunk e2a — per-route `states[]`) ────────────────────────
+ * A registry route may carry an optional `states: [{state, slug, setup?,
+ * ready?, teardown?, waitUntil?, lighthouse?}]` array. No `states` means
+ * exactly what it always meant: one implicit `"default"` state using the
+ * route's own top-level `slug`/`ready` — every route that predates this
+ * chunk is unchanged. `setup(page)` runs once before that state's captures
+ * (screenshots + axe); `teardown(page)` runs once after, in a `finally` so a
+ * capture failure can't leak request interception / offline mode into the
+ * next state or route sharing this session's page. `lighthouse` defaults
+ * `true`; every non-canonical state in a multi-state array sets it `false`
+ * explicitly (see the decision note at `visitRoute`, below).
+ * Three new zero-coverage routes were the point of this chunk (T-08/
+ * T-09-detail/T-10 — see BUILD/STATE.md's P3.10 section for why they were
+ * unreachable before e1 seeded a real review item and a real quiz), each
+ * with real `loading`/`error` states via request interception (reusing the
+ * pattern `main()`'s G-04 section already proved, not a second one), plus
+ * T-08's real `low-confidence`/`teacher-corrected` pair driven through the
+ * actual UI. `empty` (a genuinely empty seeded account, never a stubbed
+ * payload) needs its own session, so it is a *separate* registry entry
+ * sharing the primary route's `screenId`, not a `states[]` entry — see the
+ * `emptyTeacher`/`emptyParent` entries below. `offline` (CDP) is a `states[]`
+ * entry (same session, same context) on T-01.
  *
  * Usage: `npm run audit` (from web/), or `node scripts/audit.mjs` directly.
  * Builds the frontend, runs `scripts/seed_e2e.py` for the multi-role
@@ -348,11 +369,6 @@ async function injectSession(page, { accessToken, userId, role }) {
   )
 }
 
-/** Generic runner for one `ROUTE_REGISTRY` entry: screenshots the route's
- * current (real, not stubbed) state at all 3 breakpoints, checks each for
- * horizontal overflow, then runs one axe + Lighthouse pass at the desktop
- * viewport — the same shape `main()`'s G-04 section already used, pulled out
- * so the 15 new routes are data, not 15 more copies of that shape. */
 /** `goto` + the route's readiness wait, with one retry on a detached-frame
  * error. The very first navigation on a freshly-created page in an origin
  * that already has an active PWA service worker (every route after the
@@ -361,39 +377,180 @@ async function injectSession(page, { accessToken, userId, role }) {
  * interaction, not a flaky test to paper over with a longer timeout. One
  * clean re-navigation resolves it; a second failure is a real bug and still
  * throws. */
-async function gotoReady(page, url, ready) {
+async function gotoReady(page, url, ready, waitUntil = "networkidle0") {
   try {
-    await page.goto(url, { waitUntil: "networkidle0" })
+    await page.goto(url, { waitUntil })
     if (ready) await ready(page)
   } catch (err) {
     if (!/detached/i.test(String(err?.message))) throw err
-    await page.goto(url, { waitUntil: "networkidle0" })
+    await page.goto(url, { waitUntil })
     if (ready) await ready(page)
   }
 }
 
+/** Races `promise` against a plain timer — `page.evaluate()` has no timeout
+ * of its own, so a promise that never resolves (e.g. a service worker that
+ * never activates) would otherwise hang the whole run rather than surfacing
+ * as the diagnostic route failure it actually is. */
+function withTimeout(promise, ms, label) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+/** `setup`/`teardown` pair for a `loading` state: holds the route's own API
+ * request open for `delayMs` before letting it through, so the screen's real
+ * pending UI (its `isPending` render, not a stub) is what gets captured.
+ * Exactly the mechanism `main()`'s G-04 loading-state capture already used
+ * (request interception + a delayed `continue()`) — pulled out so registry
+ * routes reuse it instead of reinventing it. Callers must navigate with
+ * `waitUntil: "domcontentloaded"` (see the `waitUntil` state field): the
+ * held request means the page is never actually network-idle, so
+ * `networkidle0` would block until the delay elapses and defeat the capture
+ * — the pending UI renders immediately from the query's initial state,
+ * before the delayed response ever arrives, so `domcontentloaded` +
+ * `ready`'s own explicit text wait is enough. */
+function loadingStateHooks(urlSubstring, delayMs = 2_000) {
+  let handler
+  return {
+    setup: async (page) => {
+      await page.setRequestInterception(true)
+      handler = (req) => {
+        if (req.url().includes(urlSubstring)) {
+          setTimeout(() => req.continue().catch(() => {}), delayMs)
+        } else {
+          req.continue().catch(() => {})
+        }
+      }
+      page.on("request", handler)
+    },
+    teardown: async (page) => {
+      page.off("request", handler)
+      await page.setRequestInterception(false)
+    },
+  }
+}
+
+/** `setup`/`teardown` pair for an `error` state: fulfils the route's own API
+ * request with a real 500 + FastAPI-shaped `{"detail": ...}` body (matching
+ * what `lib/api.ts`'s `request()` actually parses), so the screen's real
+ * `isError`/`ErrorState` branch renders — never a stubbed error payload
+ * baked into the DOM by hand. Same interception mechanism as
+ * `loadingStateHooks`, just an immediate `respond()` instead of a delayed
+ * `continue()` — no `waitUntil` override needed, the response is never held
+ * open. */
+function errorStateHooks(urlSubstring) {
+  let handler
+  return {
+    setup: async (page) => {
+      await page.setRequestInterception(true)
+      handler = (req) => {
+        if (req.url().includes(urlSubstring)) {
+          req
+            .respond({
+              status: 500,
+              contentType: "application/json",
+              body: JSON.stringify({ detail: "Simulated failure (web/scripts/audit.mjs)" }),
+            })
+            .catch(() => {})
+        } else {
+          req.continue().catch(() => {})
+        }
+      }
+      page.on("request", handler)
+    },
+    teardown: async (page) => {
+      page.off("request", handler)
+      await page.setRequestInterception(false)
+    },
+  }
+}
+
+/** Drives ReviewItem.tsx's real "Adjust marks instead" -> "Save correction"
+ * flow so T-08's `teacher-corrected` state (`isOverridden`) is reached
+ * through the actual UI and `ReviewService.resolve`, never a stubbed
+ * payload. Marks are always set to 0 — valid for any item regardless of its
+ * real `maximumMarks` (0 is in `[0, max]` whenever `max >= 0`), so this needs
+ * no knowledge of the specific seeded item's mark scheme. This mutates real
+ * backend state and cannot be undone through this UI, which is why the
+ * registry entry below orders `teacher-corrected` after `low-confidence`. */
+async function resolveReviewItemViaAdjustForm(page, url) {
+  await gotoReady(page, url, (p) => waitForText(p, "← Back to queue"))
+  await clickButtonByText(page, "Adjust marks instead")
+  const marksInput = await page.waitForSelector('input[type="number"]', { timeout: 15_000 })
+  await marksInput.click({ clickCount: 3 })
+  await marksInput.type("0")
+  await clickButtonByText(page, "^save correction$")
+  await waitForText(page, "Teacher correction on record")
+}
+
+/** Generic runner for one `ROUTE_REGISTRY` entry: for each of its `states`
+ * (one implicit `"default"` state when the route carries no `states[]` — see
+ * the file header), screenshots the route's current (real, not stubbed)
+ * state at all 3 breakpoints, checks each for horizontal overflow, then runs
+ * axe at the desktop viewport — the same shape `main()`'s G-04 section
+ * already used, pulled out so registry routes are data, not copies of that
+ * shape.
+ *
+ * **Decision (P3.10 chunk e2a): axe on every state, Lighthouse on the
+ * canonical state only** (`state.lighthouse !== false`, defaulting `true`).
+ * axe is ~1s and empty/error states are exactly where violations hide (chunk
+ * b's `page-has-heading-one` finding was on an empty screen); Lighthouse is
+ * ~30s per pass and its performance/best-practices/SEO scores are a property
+ * of the route's shipped code, not of which fixture state happens to be on
+ * screen this run. Concretely: this means a multi-state route's
+ * `lighthouse/_summary.json` has ONE row (the canonical state), while its
+ * `axe/_summary.json` has one row per state — do not read
+ * `lighthouse/_summary.json`'s row count as "how many states were audited";
+ * see `main()`'s end-of-run log for the honest per-kind counts. */
 async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsiveViolations }) {
   const url = `${PREVIEW_URL}${route.path}`
-  log(`${route.screenId} ${route.path} — screenshots + responsive check (3 breakpoints)...`)
-  for (const bp of BREAKPOINTS) {
-    await page.setViewport(bp)
-    await gotoReady(page, url, route.ready)
-    const violation = await checkNoHorizontalScroll(page, route.slug, bp.width)
-    if (violation) responsiveViolations.push(violation)
-    await shoot(page, route.screenId, route.state ?? "default", bp.width)
-  }
+  const states = route.states ?? [
+    { state: route.state ?? "default", slug: route.slug, ready: route.ready },
+  ]
 
-  log(`${route.screenId} ${route.path} — axe + Lighthouse...`)
-  await page.setViewport(AUDIT_VIEWPORT)
-  await gotoReady(page, url, route.ready)
-  axeSummary.push(await runAxe(page, route.slug))
-  lighthouseSummary.push(
-    await runLighthouseAudit(url, page, route.slug, { authed: route.authed }),
-  )
+  for (const st of states) {
+    const ready = st.ready ?? route.ready
+    const waitUntil = st.waitUntil ?? "networkidle0"
+    try {
+      if (st.setup) {
+        log(`${route.screenId} ${route.path} [${st.state}] — setup...`)
+        await st.setup(page)
+      }
+
+      log(`${route.screenId} ${route.path} [${st.state}] — screenshots + responsive check (3 breakpoints)...`)
+      for (const bp of BREAKPOINTS) {
+        await page.setViewport(bp)
+        await gotoReady(page, url, ready, waitUntil)
+        const violation = await checkNoHorizontalScroll(page, st.slug, bp.width)
+        if (violation) responsiveViolations.push(violation)
+        await shoot(page, route.screenId, st.state, bp.width)
+      }
+
+      log(`${route.screenId} ${route.path} [${st.state}] — axe...`)
+      await page.setViewport(AUDIT_VIEWPORT)
+      await gotoReady(page, url, ready, waitUntil)
+      axeSummary.push(await runAxe(page, st.slug))
+
+      if (st.lighthouse !== false) {
+        log(`${route.screenId} ${route.path} [${st.state}] — Lighthouse...`)
+        lighthouseSummary.push(
+          await runLighthouseAudit(url, page, st.slug, { authed: route.authed }),
+        )
+      }
+    } finally {
+      if (st.teardown) {
+        log(`${route.screenId} ${route.path} [${st.state}] — teardown...`)
+        await st.teardown(page)
+      }
+    }
+  }
 }
 
 /**
- * The 15 routes reached via `visitRoute()` (session injection + plain
+ * The routes reached via `visitRoute()` (session injection + plain
  * navigation) — see the file header for why the other 4 (G-04 + the student
  * main journey) are not in this table. `session` is a function of the seed
  * payload so the registry can be defined once, before the seed has run, and
@@ -404,6 +561,15 @@ async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsi
  * no assigned id yet, so it is labelled `S-32-provisional` here — the next
  * free slot after S-31, flagged as provisional rather than silently reusing
  * or inventing a spec-sanctioned one.
+ *
+ * `emptyTeacherSession`/`emptyParentSession` (P3.10 chunk e1's
+ * `emptyTeacher`/`emptyParent`) back the `empty` captures — real accounts
+ * with genuinely no data, never a stubbed empty payload. They get their own
+ * registry entries below (same `screenId` as the populated route, distinct
+ * slug, `state: "empty"`), not a `states[]` entry on the populated one,
+ * because the session-context driver in `main()` keys its incognito
+ * contexts by `role:userId` — a different account needs a different entry
+ * to land in a different context in the first place.
  */
 function buildRouteRegistry(seed) {
   const teacherSession = {
@@ -421,11 +587,25 @@ function buildRouteRegistry(seed) {
     userId: seed.students.declining.userId,
     role: "student",
   }
+  const emptyTeacherSession = {
+    accessToken: seed.emptyTeacher.accessToken,
+    userId: seed.emptyTeacher.userId,
+    role: "teacher",
+  }
+  const emptyParentSession = {
+    accessToken: seed.emptyParent.accessToken,
+    userId: seed.emptyParent.userId,
+    role: "parent",
+  }
   const classId = seed.class.classId
   // The parent's one linked child (D3.11) is the "declining" student — same
   // account for both sessions above, just wearing a different role's token.
   const childId = seed.students.declining.userId
   const subjectCode = "0625" // scripts/seed_e2e.py's SUBJECT_CODE — every declining-student attempt is this subject.
+  const reviewItemUrl = `/teacher/review/${seed.reviewItem.itemId}`
+  const reviewItemReady = (page) => waitForText(page, "← Back to queue")
+  const quizDetailUrl = `/teacher/quizzes/${seed.quiz.quizId}`
+  const quizResultsUrl = `/teacher/quizzes/${seed.quiz.quizId}/assignments/${seed.quiz.assignmentId}/results`
 
   return [
     // ── G-05 · Parent log in (phone + OTP) — unauthenticated ──────────────
@@ -437,14 +617,49 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Check on your child"),
       authed: false,
     },
-    // ── Teacher (9 routes) ─────────────────────────────────────────────────
+    // ── Teacher (15 entries — several carry more than one `states[]`) ──────
     {
       screenId: "T-01",
-      slug: "teacher-overview",
       path: "/teacher",
       session: teacherSession,
-      ready: (page) => waitForText(page, "Good morning"),
       authed: true,
+      states: [
+        {
+          state: "default",
+          slug: "teacher-overview",
+          ready: (page) => waitForText(page, "Good morning"),
+        },
+        // Honest CDP `offline` capture. `web/src/components/ui/state-views.tsx`
+        // defines an `OfflineState` primitive but nothing under `portals/`
+        // ever imports it (verified — no importer anywhere but the file
+        // itself), so going offline today just falls into this route's
+        // ordinary `overviewQuery.isError` branch via a failed `fetch()` — a
+        // real product gap, not something this harness should paper over
+        // with a bespoke "offline" screenshot. `lighthouse: false`: this is
+        // a state of T-01, not a second route — T-01's Lighthouse score
+        // already ran against the `default` state above.
+        {
+          state: "offline",
+          slug: "teacher-overview-offline",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "Couldn't load the overview"),
+          setup: async (page) => {
+            // Wait for the service worker to be active before flipping
+            // offline — `vite.config.ts`'s `navigateFallback` only serves
+            // the app shell offline once a worker controls navigations for
+            // this origin, and this session's page has already navigated
+            // here once (the `default` state above), giving it time to
+            // install.
+            await withTimeout(
+              page.evaluate(() => navigator.serviceWorker.ready),
+              15_000,
+              "service worker ready (T-01 offline capture)",
+            )
+            await page.setOfflineMode(true)
+          },
+          teardown: (page) => page.setOfflineMode(false),
+        },
+      ],
     },
     {
       screenId: "T-02",
@@ -502,11 +717,61 @@ function buildRouteRegistry(seed) {
       path: "/teacher/review",
       session: teacherSession,
       // Same shape as T-06: "Review queue" duplicates into the pending
-      // sr-only h1, so wait on the loaded-only eyebrow line instead. Empty
-      // queue is the genuine state here — every seeded correction is
-      // HIGH-confidence by construction (D3.9), so nothing needs review.
+      // sr-only h1, so wait on the loaded-only eyebrow line instead. Not
+      // empty since P3.10 chunk e1: the seed now deliberately persists one
+      // LOW-confidence attempt (`seed.reviewItem`, D3.9's queueing path) so
+      // T-08 below has a real item to drill into — this list shows exactly
+      // that one row.
       ready: (page) => waitForText(page, "core recurring task"),
       authed: true,
+    },
+    // ── T-08 · Review item detail — zero coverage before e1 seeded a real
+    // LOW-confidence item (scripts/seed_e2e.py's `reviewItem`, linked to
+    // `AttemptRepository`'s real fan-out, never a hand-inserted
+    // `review_queue` row). Two states from that ONE real item:
+    // `low-confidence` is how it renders untouched (its actual queued
+    // reason); `teacher-corrected` is reached by really driving
+    // ReviewItem.tsx's "Adjust marks instead" -> "Save correction" flow
+    // (`resolveReviewItemViaAdjustForm`), never a stubbed `isOverridden`
+    // payload. That mutation is real and irreversible through this UI, so
+    // `teacher-corrected` MUST stay ordered after `low-confidence` here.
+    {
+      screenId: "T-08",
+      path: reviewItemUrl,
+      session: teacherSession,
+      authed: true,
+      states: [
+        {
+          state: "low-confidence",
+          slug: "teacher-review-detail",
+          ready: reviewItemReady,
+        },
+        {
+          state: "teacher-corrected",
+          slug: "teacher-review-detail-corrected",
+          lighthouse: false,
+          ready: reviewItemReady,
+          setup: (page) => resolveReviewItemViaAdjustForm(page, `${PREVIEW_URL}${reviewItemUrl}`),
+        },
+        {
+          state: "loading",
+          slug: "teacher-review-detail-loading",
+          lighthouse: false,
+          waitUntil: "domcontentloaded",
+          ready: (page) => waitForText(page, "Loading review item"),
+          ...loadingStateHooks(`/api${reviewItemUrl}`),
+        },
+        {
+          state: "error",
+          slug: "teacher-review-detail-error",
+          lighthouse: false,
+          // Distinguish from the *loaded* state's own "← Back to queue" —
+          // the error state's secondary action reads "Back to queue", no
+          // arrow (see ReviewItem.tsx).
+          ready: (page) => waitForText(page, "Couldn't load this review item"),
+          ...errorStateHooks(`/api${reviewItemUrl}`),
+        },
+      ],
     },
     {
       // Screen table has no separate id for the quiz *list* — STATE.md's own
@@ -518,6 +783,77 @@ function buildRouteRegistry(seed) {
       session: teacherSession,
       ready: (page) => waitForText(page, "New quiz"),
       authed: true,
+    },
+    // ── T-09-detail · Quiz builder detail — zero coverage before e1 seeded a
+    // real quiz (scripts/seed_e2e.py's `quiz`). The seeded quiz is
+    // `status: "marked"` (submitted + marked, not draft), so this exercises
+    // QuizBuilder.tsx's real read-only path, genuinely — not staged.
+    {
+      screenId: "T-09-detail",
+      path: quizDetailUrl,
+      session: teacherSession,
+      authed: true,
+      states: [
+        {
+          state: "default",
+          slug: "teacher-quiz-detail",
+          ready: (page) => waitForText(page, "← All quizzes"),
+        },
+        {
+          state: "loading",
+          slug: "teacher-quiz-detail-loading",
+          lighthouse: false,
+          waitUntil: "domcontentloaded",
+          ready: (page) => waitForText(page, "Loading quiz"),
+          ...loadingStateHooks(`/api${quizDetailUrl}`),
+        },
+        {
+          state: "error",
+          slug: "teacher-quiz-detail-error",
+          lighthouse: false,
+          // Error state's secondary action reads "Back to quizzes" (no
+          // arrow, no "All") — distinct from the loaded state's own text.
+          ready: (page) => waitForText(page, "Couldn't load this quiz"),
+          ...errorStateHooks(`/api${quizDetailUrl}`),
+        },
+      ],
+    },
+    // ── T-10 · Quiz results (per assignment) — zero coverage before e1
+    // seeded a real quiz assignment + submission (scripts/seed_e2e.py's
+    // `quiz`, marked through `QuizMarkingService`'s real path). Ready
+    // predicate is the completion line, never "Back to quizzes": that text
+    // is the *error* state's secondary-action label
+    // (`QuizResults.tsx`), and the loaded header instead reads "Back to the
+    // quiz" (no "quizzes") — waiting on the wrong one would silently resolve
+    // on either state.
+    {
+      screenId: "T-10",
+      path: quizResultsUrl,
+      session: teacherSession,
+      authed: true,
+      states: [
+        {
+          state: "default",
+          slug: "teacher-quiz-results",
+          ready: (page) =>
+            waitForText(page, "on the current roster|No students on the roster yet"),
+        },
+        {
+          state: "loading",
+          slug: "teacher-quiz-results-loading",
+          lighthouse: false,
+          waitUntil: "domcontentloaded",
+          ready: (page) => waitForText(page, "Loading results"),
+          ...loadingStateHooks(`/api${quizResultsUrl}`),
+        },
+        {
+          state: "error",
+          slug: "teacher-quiz-results-error",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "Couldn't load these results"),
+          ...errorStateHooks(`/api${quizResultsUrl}`),
+        },
+      ],
     },
     {
       screenId: "T-12",
@@ -560,19 +896,57 @@ function buildRouteRegistry(seed) {
       session: teacherSession,
       authed: true,
     },
-    // ── Parent (4 routes) ────────────────────────────────────────────────
+    // Honest `empty` capture (P3.10 chunk e2a): `seed.emptyTeacher` is a real
+    // second teacher account with zero classes, ever — not a states[] entry
+    // on T-01 above, because `empty` needs its OWN session/incognito context
+    // (see this file's `buildRouteRegistry` doc comment). `lighthouse:
+    // false` — this is a state of the T-01 *screen*, not a second route to
+    // score.
+    {
+      screenId: "T-01",
+      path: "/teacher",
+      session: emptyTeacherSession,
+      authed: true,
+      states: [
+        {
+          state: "empty",
+          slug: "teacher-overview-empty",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "Good morning"),
+        },
+      ],
+    },
+    // ── Parent (5 entries — P-01 twice: populated + `emptyParent`) ───────
     {
       // With exactly one linked child (D3.11's spec-mandated behaviour —
       // Children.tsx `<Navigate replace>`s straight to P-02), /parent never
       // actually renders P-01's list UI for this seed; it renders P-02. That
       // is the real, spec-correct behaviour for a one-child parent, not a
       // gap in this registry — genuinely visiting /parent, not faking it.
+      // (The `empty` entry right below IS how P-01's real list UI — its
+      // `NoChildrenLinked` branch — actually gets audited: `seed.emptyParent`
+      // has zero linked children, so Children.tsx's one-child `<Navigate>`
+      // never fires for it.)
       screenId: "P-01",
       slug: "parent-children",
       path: "/parent",
       session: parentSession,
       ready: (page) => waitForText(page, "Subjects"),
       authed: true,
+    },
+    {
+      screenId: "P-01",
+      path: "/parent",
+      session: emptyParentSession,
+      authed: true,
+      states: [
+        {
+          state: "empty",
+          slug: "parent-children-empty",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "one step to go"),
+        },
+      ],
     },
     {
       screenId: "P-02",
@@ -658,6 +1032,7 @@ async function main() {
   const routeFailures = []
 
   let browser
+  let routes = []
   try {
     browser = await puppeteer.launch({ headless: true })
     const page = await browser.newPage()
@@ -834,7 +1209,7 @@ async function main() {
     // every login route. An isolated context is what makes "unauthenticated"
     // actually unauthenticated, and it also removes the registry's implicit
     // dependency on route ordering for the authenticated roles.
-    const routes = buildRouteRegistry(seed)
+    routes = buildRouteRegistry(seed)
     const sessionsSeen = new Map()
     for (const route of routes) {
       const sessionKey = route.session
@@ -886,7 +1261,16 @@ async function main() {
   generateContactSheet()
 
   log("─────────────────────────────────────────────")
-  log(`Routes audited: ${axeSummary.length} (4 D2.10-era + 17 P3.10 chunk b)`)
+  log(
+    `Registry routes: ${routes.length} declarative + 4 D2.10-era inline. ` +
+      `axe passes: ${axeSummary.length} (one per audited STATE — a multi-state route ` +
+      `contributes more than one row). Lighthouse passes: ${lighthouseSummary.length} ` +
+      "(one per route's canonical state only — P3.10 chunk e2a's decision: Lighthouse " +
+      "scores a route's shipped code, not which fixture state is on screen; axe runs on " +
+      "every state because that's exactly where violations like an empty-screen missing " +
+      "h1 hide). Do not read this run as \"every state got a full Lighthouse pass\" — it " +
+      "didn't, deliberately.",
+  )
   log("axe violation counts by severity (critical/serious/moderate/minor):")
   for (const r of axeSummary) {
     log(
@@ -911,10 +1295,9 @@ async function main() {
     }
   }
   log(
-    "Not covered by this registry (P4/P5 mock-data screens, or a route the seed cannot " +
-      "reach at all): /student/subject/:code, /student/plan, /student/board, " +
-      "/student/onboard, /student/landing, /student/directions, /teacher/review/:itemId, " +
-      "/teacher/quizzes/:quizId(+/assignments/:id/results).",
+    "Not covered by this registry (P4/P5 screens still on mock data): " +
+      "/student/subject/:code, /student/plan, /student/board, /student/onboard, " +
+      "/student/landing, /student/directions.",
   )
   log(`Contact sheet: ${CONTACT_SHEET_PATH}`)
 
