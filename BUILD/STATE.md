@@ -1518,6 +1518,40 @@ Starting facts (established 2026-08-06, do not re-derive):
                     i.e. where cumulative pressure first lands. Host has 7.8 GB RAM / 4 cores
                     with ~3.4 GB swap already in use before the run — memory is the live
                     hypothesis, which is what the hardening targets.
+                    **Session-4 resume note (2026-08-07). The cause was found: Lighthouse
+                    was running inside the audit's main browser.** Sessions 2–3 chased
+                    "memory pressure" generically; the evidence actually points at one
+                    call. Run v5 (with session-3's per-context hygiene AND the
+                    recycle-every-N commit in place) died at **S-15/S-17's Lighthouse** —
+                    *earlier* than v4's T-08, and in `main()`'s inline block, which the
+                    registry-walk recycler never protects. Both deaths are at or
+                    immediately after a `runLighthouseAudit` call; v4 also logged
+                    `trace_engine` `TypeError: Cannot read properties of undefined
+                    (reading 'url')` twice. Ruled out by measurement this session, so do
+                    not re-check them: `/dev/shm` is **3.9 GB and empty** (not the classic
+                    Chromium shm crash), the kernel log has **no OOM kill**, and the host
+                    had 5.5 GB available with no process over 400 MB RSS.
+                    **The fix (`runLighthouseAudit`, `audit.mjs:285`): Lighthouse now runs
+                    in its own throwaway Chromium, launched and closed per call.** Its
+                    default config collects a full performance trace plus a full-page
+                    screenshot every run; driven through the shared page, that accumulated
+                    in the one renderer holding every injected session. Isolating it bounds
+                    peak memory to a single run and — the part that matters more — makes a
+                    Lighthouse crash *survivable* instead of fatal to the whole ~11-minute
+                    walk. **The signature is deliberately unchanged**, so all five call
+                    sites (one in `visitRoute`, four inline in `main()`) are untouched;
+                    `page` is now the *source of the session*, not the audit target.
+                    `sessionSnapshot()` copies `localStorage["lemely.session"]` verbatim
+                    into the throwaway browser via the same opaque-origin-guarded
+                    `evaluateOnNewDocument` shape `injectSession` uses — no session-shape
+                    assumption is duplicated.
+                    **A Lighthouse failure is now recorded, not fatal and not swallowed:**
+                    null scores + the error message. Verified before writing it that
+                    `scripts/check_ui_gates.py:72` already fails on `score is None`, so a
+                    Lighthouse that could not run **fails the gate** rather than passing by
+                    omission — this is not a softened gate.
+                    Keep the recycle-every-N logic; it is still correct, just no longer
+                    the load-bearing part.
                     Do not "fix" the offline capture, and do not delete it: it is an honest
                     CDP capture of a real product gap (`OfflineState` in `state-views.tsx` has
                     no importer under `portals/`, so going offline falls into T-01's ordinary

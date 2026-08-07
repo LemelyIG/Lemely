@@ -248,27 +248,84 @@ async function runAxe(page, slug) {
   return { slug, url: results.url, violationCount: results.violations.length, counts }
 }
 
-async function runLighthouseAudit(url, page, slug, { authed }) {
-  const result = await lighthouse(
-    url,
-    {
-      onlyCategories: LIGHTHOUSE_CATEGORIES,
-      logLevel: "error",
-      // Preserve the localStorage session across the audit's own internal
-      // navigation for authenticated routes — Lighthouse clears all origin
-      // storage before each run by default (Storage.clearDataForOrigin).
-      disableStorageReset: authed,
-    },
-    undefined,
-    page,
-  )
-  const lhr = result.lhr
-  fs.writeFileSync(path.join(LH_DIR, `${slug}.json`), JSON.stringify(lhr, null, 2))
-  const scores = {}
-  for (const cat of LIGHTHOUSE_CATEGORIES) {
-    scores[cat] = lhr.categories[cat] ? Math.round(lhr.categories[cat].score * 100) : null
+/** Copies the app session out of `page`'s localStorage verbatim, so an
+ * isolated Lighthouse browser can authenticate as exactly the same user
+ * without re-deriving the session shape. Returns the raw string (or null for
+ * an unauthenticated page / an origin with no session). */
+async function sessionSnapshot(page) {
+  try {
+    return await page.evaluate(() => window.localStorage.getItem("lemely.session"))
+  } catch {
+    return null
   }
-  return { slug, scores }
+}
+
+/**
+ * Runs Lighthouse in its **own throwaway Chromium process**, never in the
+ * audit's main browser.
+ *
+ * This is load-bearing, not tidiness. Lighthouse's default config collects a
+ * full performance trace and a full-page screenshot per run; driven through a
+ * shared page, that cost accumulates in the one renderer that also holds every
+ * injected session, and past runs (`/tmp/audit_v4.log`, `/tmp/audit_v5.log`)
+ * died mid-walk with `Target closed`/`Session closed` at or immediately after
+ * a Lighthouse call — the browser process itself dying, which then made every
+ * later route report a phantom CDP error. Isolating Lighthouse bounds peak
+ * memory to one run and, just as importantly, makes a Lighthouse-induced crash
+ * survivable: it can no longer take the authenticated contexts with it.
+ *
+ * The signature is deliberately unchanged (`page` is now the *source of the
+ * session*, not the audit target), so all call sites keep working as-is.
+ *
+ * A failure here is recorded as null scores + the error, never swallowed:
+ * `scripts/check_ui_gates.py` already fails on a null accessibility score, so
+ * a Lighthouse that could not run fails the gate rather than passing by
+ * omission — while the remaining ~11 minutes of the run still complete.
+ */
+async function runLighthouseAudit(url, page, slug, { authed }) {
+  const rawSession = authed ? await sessionSnapshot(page) : null
+  let lhBrowser
+  try {
+    lhBrowser = await puppeteer.launch({ headless: true })
+    const lhPage = await lhBrowser.newPage()
+    if (rawSession) {
+      await lhPage.evaluateOnNewDocument((raw) => {
+        // Same opaque-origin guard as `injectSession` — Lighthouse navigates
+        // to `about:blank` between its own passes.
+        if (window.location.origin === "null") return
+        window.localStorage.setItem("lemely.session", raw)
+      }, rawSession)
+    }
+
+    const result = await lighthouse(
+      url,
+      {
+        onlyCategories: LIGHTHOUSE_CATEGORIES,
+        logLevel: "error",
+        // Preserve the localStorage session across the audit's own internal
+        // navigation for authenticated routes — Lighthouse clears all origin
+        // storage before each run by default (Storage.clearDataForOrigin).
+        disableStorageReset: authed,
+      },
+      undefined,
+      lhPage,
+    )
+    const lhr = result.lhr
+    fs.writeFileSync(path.join(LH_DIR, `${slug}.json`), JSON.stringify(lhr, null, 2))
+    const scores = {}
+    for (const cat of LIGHTHOUSE_CATEGORIES) {
+      scores[cat] = lhr.categories[cat] ? Math.round(lhr.categories[cat].score * 100) : null
+    }
+    return { slug, scores }
+  } catch (err) {
+    const message = String(err?.message ?? err)
+    log(`  !! Lighthouse FAILED for ${slug}: ${message}`)
+    const scores = {}
+    for (const cat of LIGHTHOUSE_CATEGORIES) scores[cat] = null
+    return { slug, scores, error: message }
+  } finally {
+    if (lhBrowser) await lhBrowser.close().catch(() => {})
+  }
 }
 
 /** Fails loudly (throws) if the page has horizontal overflow at its current
