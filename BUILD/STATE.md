@@ -154,14 +154,38 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       source='past_paper'` first — ingest is idempotent and will skip).
       **Also fixed here (D4.3):** the test suite could make *billed* Gemini calls when a key
       was exported — `tests/conftest.py` now blocks real client construction suite-wide.
-- [ ] doing — **P4.2** Syllabus topic taxonomy + classification of bank questions (0580/0606/0625).
-      `question_bank.topic` is NULL on all 273 past-paper rows (deliberate, D4.1 §4).
+- [x] done — **P4.2** Syllabus topic taxonomy + classification of bank questions (D4.4).
+      `lemely/data/syllabus_topics.json` (topic/subtopic **codes and names transcribed from
+      the three official CAIE syllabus PDFs**, not from memory — 0625 2023-25 `595430`,
+      0580 2025-27 `662466`, 0606 2025-27 `662470`; matching vocabulary is authored and the
+      file says so) + `lemely/core/topics.py` (pure classifier) + `lemely/io/syllabus_topics.py`
+      (loader) + `classify_bank_topics` in `question_bank_repo.py` + `lemely question-bank
+      classify-topics [--subject|--reclassify|--dry-run]`. Deterministic, **$0.00, zero Gemini**.
+      **Measured: 245/273 (89.7%) classified, 211/273 (77.3%) written** — 108 high, 103 medium,
+      across 29 distinct topics spanning all 6 physics topics. **D3.7's empty-topic gap is closed.**
+      The 34 `low`-band matches are counted and **discarded**: `question_bank.topic` has no
+      companion confidence column, so writing them would launder a guess into apparent fact
+      (hand-check found e.g. an alpha/beta/gamma question labelled "4.2 Electrical quantities").
+      Label format is `"<code> <name>"`, e.g. `"4.3 Electric circuits"`.
+      Two real defects the corpus exposed and one measurement worth keeping: hyphens never
+      matched (`double-insulated` vs `double insulated`); including `mcq_options` in the
+      classified text moved coverage 78.8% → 89.4%.
+      **P4.4 MUST also fill the marking side.** `CorrectedQuestion.topic` comes from
+      `topic_hint`, which is `None` on **all 637 questions across all 33** parsed 0625 schemes
+      — so the weakness engine reports no topics for real papers, and **practice-targets-weakness
+      (P4.5) does not join up until both sides use this vocabulary.** Not done in P4.2 because
+      `core.topics` cannot import the `io` loader without a layering violation; the fill belongs
+      at the db/io boundary where a `CorrectionResult` is persisted. See D4.4 §6.
 - [ ] todo — **P4.3** Student profile + onboarding data model (migration 0009): grade level,
       school, external lessons, weekly study hours, per-subject enrolment with **target grade**,
       papers, confidence sliders. Activating target grades also closes at-risk rule 2 (D3.3) —
       wire it into the at-risk engine and the T-06 reason filter in the same task.
 - [ ] todo — **P4.4** Placement test backend: ~15-min per-subject assembly from the bank across
       topics, serve/resume/submit, mark through the existing engine, initialise weakness profile.
+      **Includes the marking-side topic fill carried over from P4.2 (D4.4 §6)** — classify
+      `CorrectedQuestion.topic` at the db/io persistence boundary when `topic_hint` is absent,
+      so weakness topics and bank topics share one vocabulary. Re-verify the accuracy harness
+      (MISSION §6 gate 5) since it touches the marking output.
 - [ ] todo — **P4.5** Practice generator backend: topic/difficulty/count/source filtering,
       persisted practice sets, "not enough questions" honesty path, export/print payload.
 - [ ] todo — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a

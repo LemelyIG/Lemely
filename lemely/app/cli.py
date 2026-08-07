@@ -726,6 +726,70 @@ def question_bank_survey_cmd(ctx: click.Context) -> None:
     click.echo(report.explanation())
 
 
+@question_bank_group.command("classify-topics")
+@click.option("--subject", default=None, help="Restrict to one subject code, e.g. 0625.")
+@click.option(
+    "--reclassify",
+    is_flag=True,
+    help="Re-derive rows that already carry a topic (use after editing the taxonomy).",
+)
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+@click.pass_context
+def question_bank_classify_topics_cmd(
+    ctx: click.Context, subject: str | None, reclassify: bool, dry_run: bool
+) -> None:
+    """Backfill ``question_bank.topic`` from the bundled CAIE syllabus taxonomies (P4.2).
+
+    Deterministic and free: keyword scoring against
+    ``lemely/data/syllabus_topics.json``, no Gemini call. Idempotent unless
+    ``--reclassify`` is passed.
+
+    Only ``high``- and ``medium``-confidence matches are written; ``low`` ones
+    are counted and discarded (``lemely.core.topics.WRITABLE_BANDS`` explains
+    why). The printed counters are the honest yield, zeros included.
+    """
+    from lemely.db.question_bank_repo import classify_bank_topics
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    report = classify_bank_topics(
+        get_sessionmaker(settings),
+        subject_code=subject,
+        reclassify=reclassify,
+        dry_run=dry_run,
+    )
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "rowsExamined": report.rows_examined,
+                "alreadyClassified": report.already_classified,
+                "assigned": report.assigned,
+                "skippedLowConfidence": report.skipped_low_confidence,
+                "unclassified": report.unclassified,
+                "noTaxonomy": report.no_taxonomy,
+                "coverage": round(report.coverage, 4),
+                "bandDistribution": report.band_distribution,
+                "labelDistribution": report.label_distribution,
+                "dryRun": dry_run,
+            }
+        )
+        return
+
+    if dry_run:
+        click.echo("DRY RUN — nothing written.")
+    click.echo(f"Rows examined: {report.rows_examined}")
+    click.echo(f"Already classified (left alone): {report.already_classified}")
+    click.echo(f"Assigned: {report.assigned}")
+    click.echo(f"Skipped (low confidence, left NULL): {report.skipped_low_confidence}")
+    click.echo(f"Unclassified (no confident match): {report.unclassified}")
+    if report.no_taxonomy:
+        click.echo(f"Skipped (no bundled syllabus for subject): {report.no_taxonomy}")
+    click.echo(f"Coverage: {report.coverage:.1%}")
+    click.echo(f"Confidence bands (assigned only): {report.band_distribution}")
+    click.echo(f"Distinct topics assigned: {len(report.label_distribution)}")
+
+
 @question_bank_group.command("import-generated")
 @click.option(
     "--questions-dir",

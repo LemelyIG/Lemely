@@ -2590,3 +2590,98 @@ utility (e.g. a real color/spacing value) — a font-size-bundling class must no
 etc. When in doubt, verify empirically before shipping:
 `node -e "console.log(require('tailwind-merge').twMerge('<class A> <candidate class>'))"`
 from `web/` and confirm both classes survive in the output.
+
+### D4.4 — Syllabus topic taxonomy: transcribed from source, and the write policy that follows from measuring it
+
+**P4.2.** `question_bank.topic` was NULL on all 273 past-paper rows (D4.1 §4 left it
+that way deliberately rather than guessing). This is what closed it, and the parts
+worth not re-deriving.
+
+**1. The taxonomy is transcribed, not remembered.** The first instinct was to author
+the topic lists from model knowledge of the CAIE syllabuses. That would have been
+invented precision at the root of the whole phase: CAIE renumbers topics between
+syllabus cycles, and every label Phase 4 emits is only meaningful against a stated
+version. No syllabus PDF was in the repo or in the PaperScraper corpus (which holds
+question papers and mark schemes only), so the three official PDFs were fetched from
+cambridgeinternational.org — the same domain Phase 2 already scrapes for grade
+boundaries (D2.1), so no new source authorisation was involved — and the topic and
+subtopic **codes and names** extracted from their §3 Subject content sections:
+
+| Subject | Syllabus | Structure |
+|---|---|---|
+| 0625 Physics | 2023–2025 (`595430`) | 6 topics, 21 named subtopics |
+| 0580 Mathematics | 2025–2027 (`662466`) | 9 topics, 59 named subtopics |
+| 0606 Additional Mathematics | 2025–2027 (`662470`) | 14 topics, **no** named subtopics |
+
+0606's asymmetry is real, not an omission: that syllabus numbers *learning objectives*
+under each topic rather than naming subtopics, so the classifier can never emit a 0606
+subtopic label. Pinned by `test_0606_is_topic_level_only` so a future session does not
+"fix" it by inventing fourteen subtopic names.
+
+The `strong`/`keywords` arrays in `lemely/data/syllabus_topics.json` are **not** from
+the syllabus — they are Lemely's authored matching vocabulary, and the file says so in
+its own `note` field so the two are never conflated when the file is read back.
+
+**2. Label format is `"<code> <name>"`** — `"4.3 Electric circuits"`, `"14 Calculus"`.
+Self-describing in a UI chip, parseable back to a code, sorts in syllabus order, and
+hierarchically related to its parent by code prefix. Subject scoping comes from the
+row, not the label, so the "Trigonometry" that exists in both 0580 and 0606 is never
+ambiguous — every bank query and every weakness report is already per-subject.
+
+**3. Two defects the real corpus found that no synthetic test would have.**
+- *Hyphens never matched.* CAIE prints `double-insulated` in one paper and `double
+  insulated` in the next. `_normalise` now folds hyphens and all five unicode dashes
+  to spaces, on **both** sides — taxonomy terms are normalised by a pydantic validator
+  at construction, so the invariant holds for hand-built nodes in tests too.
+- *MCQ options carry the signal.* An MCQ stem is deliberately terse ("Which planet is
+  classed as a rocky planet?") and the discriminating vocabulary often lives entirely
+  in the four options, which `question_bank.mcq_options` already stores (197/273 rows).
+  Including them moved coverage **78.8% → 89.4%**. They are part of the question.
+
+**4. Two scoring defects found by writing the tests, fixed in the code not the test.**
+- A tie between two subtopics *of the same parent* was being resolved by file order and
+  reported as a finding. It now falls through to the topic-level label: right topic,
+  undetermined subtopic, which is the true statement. A tie across *different* parents
+  still abstains entirely.
+- `_band` ignored whether anything else claimed the question. "Define specific heat
+  capacity" scores one strong hit and **nothing else in the syllabus scores at all** —
+  thin, but uncontested. An uncontested single strong hit is now `medium`; a contested
+  one at the same raw score stays `low`. The discriminator is competition, not the
+  total, so this is not simply lowering the bar. Verified on the 13 rows it promotes:
+  12 correct on inspection.
+
+**5. The write policy — only `high` and `medium` are persisted (the honest bit).**
+Measured on the real 273-row 0625 bank: scoring produces a match for **245/273 (89.7%)**,
+but a hand-checked orchestrator sample of ~47 classified rows put label accuracy at
+roughly 84%, with errors heavily concentrated in the `low` band — which contained
+outright nonsense, e.g. a question about alpha, beta and gamma emission from radioactive
+nuclei labelled `4.2 Electrical quantities`.
+
+The decisive argument is **not** the error rate. It is that there is nowhere to put the
+caveat: `question_bank.topic` is a bare string with no companion confidence column, so a
+low-confidence label is indistinguishable downstream from a certain one. Writing it
+would launder a guess into apparent fact and silently point a student's practice at the
+wrong syllabus material (UI spec §1.4). So `low` is counted and discarded.
+
+**Final measured yield: 211/273 (77.3%) of past-paper rows carry a topic** — 108 high,
+103 medium — spanning **29 distinct topics across all six** physics topics. 34 rows were
+classified but discarded as low-confidence; 28 had no confident match at all. D3.7's
+empty-topic gap is closed. `TopicClassificationReport` keeps those two rejection buckets
+separate on purpose: they are different failures, and the 34 is exactly what a future
+`topic_confidence` column would reclaim.
+
+**6. Scope boundary — the marking side is NOT wired up, and P4.4 must do it.**
+`CorrectedQuestion.topic` comes from `topic_hint` on the parsed mark scheme, which is
+`None` on **all 637 questions across all 33** deterministically-parsed 0625 schemes in
+`outputs/schemes/` (measured, not assumed). So the weakness engine currently reports no
+topics at all for real papers, and **practice-targets-weakness (P4.5) does not join up
+until both sides speak this vocabulary.** It was not done here because
+`lemely.core.topics` is in `core` and the taxonomy loader is in `io`: `core.correction`
+cannot reach it without either a signature change through every marking caller or a
+layering violation. The fill belongs at the db/io boundary where a `CorrectionResult` is
+persisted and the loader is reachable. P4.4 owns it.
+
+**7. Cost: $0.00.** Deterministic keyword scoring, no Gemini call, no new dependency.
+Re-run any time with `lemely question-bank classify-topics [--subject X] [--reclassify]
+[--dry-run]`; `--reclassify` is the one to use after editing the vocabulary, and it can
+*remove* a label the new vocabulary no longer supports, not only add.

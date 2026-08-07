@@ -190,6 +190,7 @@ module = [
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
   "lemely.core.question_papers",
+  "lemely.core.topics",
   "lemely.runtime.config",
   "lemely.runtime.logging",
   "lemely.runtime.events",

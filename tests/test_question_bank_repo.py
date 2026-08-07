@@ -49,6 +49,8 @@ from lemely.db.models.enums import (
 from lemely.db.models.quizzes import QuestionBank
 from lemely.db.question_bank_repo import (
     QuestionBankService,
+    classification_text,
+    classify_bank_topics,
     generated_questions_to_bank_rows,
     import_generated_quiz_files,
     survey_past_paper_questions,
@@ -732,3 +734,143 @@ def test_visible_bank_filter_composes_into_an_arbitrary_select(
 
     assert ids == {shared_id, owned_id}
     assert other_id not in ids
+
+
+# ---------------------------------------------------------------------------
+# classify_bank_topics (P4.2, D4.4)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_bank_topics_assigns_writes_and_is_idempotent(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A confident row gets a syllabus label; a second run leaves it alone.
+
+    Idempotency is not cosmetic — the corpus grows between runs, and a backfill
+    that re-derived every row each time would silently churn labels a teacher
+    may already have seen.
+    """
+    row_id = _seed_bank_row(
+        pg_sessionmaker,
+        subject_code="0625",
+        prompt=(
+            "A thin converging lens is used to produce a real image of an object. "
+            "State the focal length and mark the principal focus on the ray diagram."
+        ),
+    )
+
+    first = classify_bank_topics(pg_sessionmaker, subject_code="0625")
+    assert first.assigned >= 1
+    with pg_sessionmaker() as session:
+        assert session.get(QuestionBank, row_id).topic == "3.2 Light"
+
+    second = classify_bank_topics(pg_sessionmaker, subject_code="0625")
+    assert second.assigned == 0
+    assert second.already_classified >= 1
+    with pg_sessionmaker() as session:
+        assert session.get(QuestionBank, row_id).topic == "3.2 Light"
+
+
+def test_classify_bank_topics_leaves_an_unplaceable_row_null(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The whole point of the module: no label beats a wrong one (UI spec §1.4)."""
+    row_id = _seed_bank_row(
+        pg_sessionmaker, subject_code="0625", prompt="Which statement is correct?"
+    )
+
+    report = classify_bank_topics(pg_sessionmaker, subject_code="0625")
+
+    assert report.unclassified >= 1
+    with pg_sessionmaker() as session:
+        assert session.get(QuestionBank, row_id).topic is None
+
+
+def test_classify_bank_topics_dry_run_writes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``--dry-run`` must report the identical counts without touching a row."""
+    row_id = _seed_bank_row(
+        pg_sessionmaker,
+        subject_code="0625",
+        prompt=(
+            "Define specific heat capacity. Describe experiments to measure the "
+            "specific heat capacity of a metal block."
+        ),
+    )
+
+    dry = classify_bank_topics(pg_sessionmaker, subject_code="0625", dry_run=True)
+    assert dry.assigned >= 1
+    with pg_sessionmaker() as session:
+        assert session.get(QuestionBank, row_id).topic is None
+
+    wet = classify_bank_topics(pg_sessionmaker, subject_code="0625")
+    assert wet.assigned == dry.assigned
+    with pg_sessionmaker() as session:
+        assert session.get(QuestionBank, row_id).topic is not None
+
+
+def test_classify_bank_topics_skips_a_subject_with_no_bundled_syllabus(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Forcing a 9701 question against the physics tree would be worse than nothing."""
+    row_id = _seed_bank_row(
+        pg_sessionmaker,
+        subject_code="9701",
+        prompt="Describe the reaction of ethanol with acidified potassium dichromate.",
+    )
+
+    report = classify_bank_topics(pg_sessionmaker, subject_code="9701")
+
+    assert report.no_taxonomy >= 1
+    assert report.assigned == 0
+    with pg_sessionmaker() as session:
+        assert session.get(QuestionBank, row_id).topic is None
+
+
+def test_reclassify_removes_a_label_the_vocabulary_no_longer_supports(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A reclassify pass must be able to retract, not only add.
+
+    Otherwise editing the taxonomy could only ever grow coverage, and a term
+    removed because it was producing wrong labels would leave those labels
+    behind in the bank.
+    """
+    row_id = _seed_bank_row(
+        pg_sessionmaker, subject_code="0625", prompt="Which statement is correct?"
+    )
+    with pg_sessionmaker.begin() as session:
+        session.get(QuestionBank, row_id).topic = "9.9 Nonsense From An Older Run"
+
+    report = classify_bank_topics(pg_sessionmaker, subject_code="0625", reclassify=True)
+
+    assert report.already_classified == 0  # reclassify re-derives everything
+    with pg_sessionmaker() as session:
+        assert session.get(QuestionBank, row_id).topic is None
+
+
+def test_classification_text_includes_mcq_options(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Measured on the real bank, the options carried coverage from 78.8% to 89.4%.
+
+    An MCQ stem is deliberately terse and the discriminating vocabulary often
+    lives entirely in the four options.
+    """
+    row_id = _seed_bank_row(
+        pg_sessionmaker, subject_code="0625", prompt="Which planet is closest to the Sun?"
+    )
+    with pg_sessionmaker.begin() as session:
+        session.get(QuestionBank, row_id).mcq_options = [
+            "A Mercury",
+            "B a comet in the solar system",
+            "C an asteroid",
+            "D Neptune",
+        ]
+
+    with pg_sessionmaker() as session:
+        text = classification_text(session.get(QuestionBank, row_id))
+
+    assert "asteroid" in text
+    assert "comet in the solar system" in text
