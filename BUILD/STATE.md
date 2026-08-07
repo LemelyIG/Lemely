@@ -696,7 +696,7 @@ Starting facts (established 2026-08-06, do not re-derive):
             never disappears). Throwaway spec + seed script deleted after verification, per
             brief.
             **P3.7 is now done — all six teacher screens (T-01..T-06) on real data.**
-- [ ] doing — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
+- [x] done — **P3.8** Teacher frontend T-07/T-08 (review queue + remark), T-09/T-10 (quiz
       builder + class results), T-12 (announcement composer). Four chunks, one commit each.
 
       **Established facts (2026-08-06, do not re-derive):**
@@ -885,16 +885,65 @@ Starting facts (established 2026-08-06, do not re-derive):
             (ii) `EmptyState` renders its heading as plain text, not a heading element —
             the "non-heading empty/error tags" gap already listed in the Phase-2.5 report
             §8 deferred set. Confirmed still present; still deferred.
-      - [ ] **d** todo — T-10 quiz results + T-12 announcement composer screen.
-            Reuse chunk c's verification recipe: seed a teacher via `AuthService.signup`
-            directly (self-service signup is student-only) in a script run with
-            `LEMELY_SUPABASE__ANON_KEY`/`__SERVICE_ROLE_KEY` exported from
-            `supabase status -o env` (never `LEMELY_AUTH__JWT_SECRET` — `Settings` rejects
-            it), drive a throwaway spec in `web/e2e/`, then **delete the spec** (a stale
-            one fails `check.sh`'s Playwright gate), and confirm the mutations in Postgres
-            with `docker exec supabase_db_Lemely psql -U postgres -d postgres`.
-            Note `ClassRow`'s field is `class_id`, not `id`, and `QuestionBank` takes
-            `total_marks`/`difficulty_source`, not `marks`.
+      - [x] **d** done (b306f7f) — T-10 quiz results + T-12 announcement composer.
+            New `screens/QuizResults.tsx` (route
+            `/teacher/quizzes/:quizId/assignments/:assignmentId/results`, linked from
+            T-09 step 6) and `screens/Announcements.tsx` (route
+            `/teacher/announcements`, added to the sidebar). **Zero backend files
+            touched: 1863 tests / 89.34% cov, unchanged.** All 12 gates green.
+            **Do not reintroduce / do not "tidy" away:**
+            (a) T-10 renders every panel straight from `QuizAssignmentResultsDTO` and
+            **never re-derives one panel's number from another** (the class average is
+            `averagePercentage`, not a mean over the student rows; completion is
+            `completion.completedCount`, not a filter over `students`). That is what
+            makes two panels structurally unable to disagree — computing one
+            client-side "to save a field" undoes the whole §4.6 shape.
+            (b) `null` is never 0%: an empty roster reads "No students on the roster
+            yet", an unmarked question an em-dash. Pinned by a live assertion that the
+            empty-assignment view contains **no** "0%" string anywhere.
+            (c) T-12's audience is a **radio pair, not two checkboxes** — `classIds`
+            and `schoolWide` together are a 422 by design (chunk a's follow-up), so the
+            rejected state is unreachable rather than merely validated.
+            (d) The composer states plainly that students cannot see announcements yet,
+            and `publishAt` is labelled recorded-but-not-scheduled. No attachment
+            control at all (D3.14 §2) — not even a disabled one.
+            **No backend change was needed for T-12's school-wide option**: the
+            pre-existing `school_admin`-gated `GET /api/school/seats` already returns
+            `schoolId` + `schoolName` per administered school, and is now mirrored by
+            `lib/schoolTypes.ts` + `useSchoolApi.ts::useAdminSchools(enabled)`.
+            **Do not enrich `/api/me/profile` with school memberships to avoid it** —
+            that was considered and rejected as a second source for the same fact.
+            **Quiz close/archive lives on the results screen**, not the builder — it is
+            the only screen that can see whether the class has finished. That gives
+            chunk c's `useSetQuizStatus` its consumer; it is no longer unused.
+            **Two shared helpers extracted, not copied** (the `initialsOf` lesson from
+            P3.7 chunk c): `downloadCsv` → `lib/utils.ts` and the
+            accuracy→tone→severity ladder → **`lib/severity.ts`**
+            (`accuracyTone`/`TONE_TO_SEVERITY`/`TONE_CLASS`), both previously private to
+            `ClassAnalytics.tsx`, which now imports them. **Never inline those
+            thresholds into a screen** — a second copy is how a fourth "same label, two
+            numbers" divergence (D3.3/D3.4/D3.5) starts.
+            **Verified end-to-end against the live Alembic-migrated stack** (throwaway
+            seed + spec, both deleted after use): 8/8 green — populated T-10 (completion
+            measured against the *live* roster at 3 of 4, the off-roster submission
+            reported, the overridden question counted, a `marking_error` row explained
+            rather than blank, a no-submission roster student present as "Not started"),
+            the nothing-marked-yet state, T-12 compose→list→delete, the disabled-without-
+            an-audience guard, the T-09→T-10 link, and all three breakpoints — each
+            asserting zero serious/critical axe violations, zero console errors, and no
+            horizontal scroll at 380/768/1440.
+            **Independent Postgres check:** the composed row carries the right
+            `class_id` with `school_id` NULL (audience provably exclusive) and a
+            `publish_at` correctly converted local→UTC; the delete round trip leaves
+            **zero** rows, so the UI removing the row is a real delete and not a hidden
+            list entry.
+            Known, honest: T-10's populated state was reached by seeding
+            `quiz_submissions`/`attempts`/`question_results` directly, because the e2e
+            harness forces `gemini_api_key = None` and stubs the client, so real quiz
+            marking cannot run there. The projection logic itself is covered by
+            `QuizResultsService`'s own tests (100% cov, P3.5 chunk F2); what this pass
+            proves is the rendering and the route, not the marking pipeline.
+            **P3.8 is now done — T-07..T-10 and T-12 are all on real data.**
 - [ ] todo — **P3.9** Parent frontend G-05 (phone+OTP login screen) + P-01..P-04.
 - [ ] todo — **P3.10** Acceptance: Playwright E2E per role, at-risk flags verified against
       seeded scenarios, plus the standing UI gate (QUALITY-BAR, axe 0 serious/critical,
@@ -904,6 +953,11 @@ Starting facts (established 2026-08-06, do not re-derive):
       (a) `web/scripts/audit.mjs` is still scoped to the 4 *student* routes (D2.10). Every
       teacher/parent route added in P3.7–P3.9 needs adding here, or the axe/Lighthouse/
       screenshot gate is vacuous for all of them — it passes by never looking.
+      **This is now evidenced, not theoretical:** P3.8 chunk c measured `text-t3` at
+      10-13px as **4.36:1**, under WCAG AA's 4.5:1, on the default surface. Every teacher
+      screen except chunk c's/chunk d's uses `text-t3` for exactly that caption text. The
+      gate has never seen it. Fixing it is either a `--t3` token change or a per-screen
+      retrofit — decide here, and do the retrofit in the same pass as (b).
       (b) The teacher portal's five screens use arbitrary px/oklch literals instead of the
       DESIGN.md token scale (P2.5.3 retrofitted only the student screens). Decide: retrofit
       them, or record it as accepted debt in the phase report. Do not leave it unstated.

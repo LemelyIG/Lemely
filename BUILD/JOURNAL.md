@@ -896,3 +896,30 @@ linked children only.
   STATE.md so chunk d doesn't pay for it again.
 - Next: P3.8 chunk d — T-10 quiz results + T-12 announcement composer. `useSetQuizStatus`
   is already written and waiting for the results screen to consume it.
+
+## 2026-08-07 (later) — P3.8 chunk d, phase task done
+
+- Did: built T-10 quiz results and T-12 announcement composer, closing P3.8. Both
+  verified against the live stack (8/8, axe clean at 380/768/1440) plus the direct
+  Postgres check: the composed announcement row has the right class, `school_id`
+  NULL, `publish_at` converted local→UTC, and the delete round trip leaves zero
+  rows — a real delete, not a hidden list entry.
+- Learned: T-12's school-wide option looked like it needed a backend change (a
+  `school_admin` has no client-visible school id), and the instinct was to enrich
+  `/api/me/profile`. It didn't — the `school_admin`-gated `GET /api/school/seats`
+  from Phase 1 already returns `schoolId` + `schoolName`. Ten minutes of looking
+  beat a speculative DTO addition and a second source for the same fact.
+- Learned: `npx tsc --noEmit -p tsconfig.json` passed while `npm run build` failed
+  with three real narrowing errors — the root tsconfig is not the one the build
+  uses. Trust the build, not a hand-rolled tsc invocation, when checking types here.
+- Learned: two helpers were about to be copied into a second screen (`downloadCsv`,
+  and the accuracy→tone→severity ladder). Extracted them instead — `lib/utils.ts`
+  and the new `lib/severity.ts`. The codebase has fixed "same label, two numbers"
+  three times already (D3.3/D3.4/D3.5); the thresholds are exactly the thing that
+  must not exist twice.
+- Honest gap recorded: T-10's populated state had to be seeded directly into
+  `quiz_submissions`/`attempts`/`question_results`, because the e2e harness forces
+  `gemini_api_key = None`. The rendering and route are proven; the marking pipeline
+  is not exercised by this pass (it is covered by F2's own 100%-cov tests).
+- Next: P3.9 — parent frontend G-05 (phone+OTP login) + P-01..P-04. No parent portal
+  exists at all yet; the backend landed in P3.6.
