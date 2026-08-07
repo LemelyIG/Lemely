@@ -1362,9 +1362,50 @@ Starting facts (established 2026-08-06, do not re-derive):
             with `"Good afternoon,"` — hardcoded, not time-aware. Cosmetic, but the same
             "hardcoded value masquerading as a feature" class P3.7b and P3.10c each removed
             once. Not fixed here (would be a product change inside a test chunk).
-      - [ ] **e** todo — screenshot corpus for every new screen × state × breakpoint
+      - [ ] **e** doing — screenshot corpus for every new screen × state × breakpoint
             re-baselined into `reports/phase-3/`, contact sheet, regression check against
             the Phase-2.5 baselines, and the item-(c) frontend-runner decision.
+
+            **Three-part split (2026-08-07). Established facts, do not re-derive:**
+            - The corpus is *already* captured at **`default` only**, for 21 routes × 3
+              breakpoints, by chunk b's `audit.mjs` (`shoot()` → `screens/<screenId>/
+              <state>--<bp>.png`, `route.state ?? "default"`). `audit.mjs` also already
+              **regenerates `contact-sheet.html`** from whatever is in `screens/`, so it
+              picks up the Playwright corpus too. Neither needs building — what is missing
+              is (i) non-default states, (ii) the two screens the seed cannot reach, (iii)
+              the cross-phase regression compare, (iv) re-baselining into `reports/phase-3/`.
+            - **T-08 (review detail) and T-10 (quiz results) have ZERO audit coverage** —
+              chunk b excluded `/teacher/review/:itemId`, `/teacher/quizzes/:quizId` and
+              `.../assignments/:aid/results` because `seed_e2e.py` creates no review item
+              and no quiz, so all three 404. That is the largest hole in the phase's own
+              acceptance criterion ("screenshot corpus for every new screen"), and it is a
+              *seed* gap, not a harness gap.
+            - No image-diff dependency exists — but **`sharp` is already a devDependency**
+              (`web/package.json`), and decodes PNG to raw pixels, so the regression compare
+              needs no new package.
+            - `web/` has **no test runner and no vitest/jsdom/@testing-library** installed
+              (carried item (c)). MISSION §6 gate 3 ("frontend unit tests green") has
+              therefore been vacuous for the whole build.
+            - States that can be captured honestly, and how (screenshots.spec.ts sets the
+              precedent for the last two): `empty` ← a genuinely empty seeded account, never
+              a stubbed payload; `low-confidence`/`teacher-corrected` ← real seeded rows;
+              `loading` ← request interception with a delay; `error` ← interception → 500;
+              `offline` ← CDP offline emulation.
+            - [ ] **e1** todo — seed extension (`scripts/seed_e2e.py`): a review-queue item
+                  (low-confidence question result), a quiz + assignment + student submission,
+                  and genuinely-empty accounts (teacher with no classes, parent with no
+                  linked child). Unlocks T-08/T-10 and every `empty` capture. Update
+                  `tests/test_seed_e2e.py`; verify against the live stack; extend the
+                  documented JSON contract additively.
+            - [ ] **e2** todo — `audit.mjs`: per-route `states[]` mechanism, T-08/T-10 added
+                  to the registry, full capture re-baselined into `reports/phase-3/` +
+                  contact sheet, and `scripts/compare_screens.mjs` (sharp) reporting
+                  added/removed/changed vs the Phase-2.5 baselines. The compare is an
+                  explicit phase act, not a per-run `check.sh` gate.
+            - [ ] **e3** todo — the item-(c) decision: stand up Vitest (the Vite-native
+                  runner; no framework drift), move `check-design-tokens.mjs`'s invariants
+                  in verbatim per chunk c's own note, and cover `lib/utils.ts`
+                  (`cn`/`initialsOf`/`relativeTime`). Record as a decision.
 
       Carried in from P3.7 chunk b, both genuinely P3.10-shaped:
       (a) `web/scripts/audit.mjs` is still scoped to the 4 *student* routes (D2.10). Every
