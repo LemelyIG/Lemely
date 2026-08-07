@@ -978,3 +978,34 @@ linked children only.
 - Next: P3.10 chunk c — token retrofit of the teacher + parent portals onto the
   DESIGN.md scale, plus the student-sidebar `useProfile()` fix. Chunk b's 21-route
   registry is the safety net that makes that retrofit checkable.
+
+## 2026-08-07 — P3.10 chunk c (token retrofit + the defect it uncovered)
+- Did: retrofitted the teacher portal, shared `components/` and the student shell onto
+  the token scale — 598 literals, zero left in all three. Added the two serif rungs
+  DESIGN.md's table implies but never writes down (its `typography:` jumps 15px → 30px,
+  which is exactly why 18 screens invented 19/20/22/24/26/34px ad hoc), size-only
+  aliases for the values that were only reachable through composite classes, and a
+  per-portal `--accent-subtle-on`. Killed the student sidebar's fake identity, a
+  non-functional search box and a hardcoded "24 day streak".
+- Learned: **measure the brief before executing it.** The inherited item said "five
+  teacher screens; P2.5.3 retrofitted the student ones". It was 18 files / 482
+  literals, the parent portal was already clean, and P2.5.3 had *not* failed — read
+  per-file rather than in aggregate, every student screen in scope then is clean. My
+  own first draft of D3.18 got that wrong and had to be corrected; an aggregate count
+  across in-scope and out-of-scope files is a misleading number.
+- Learned: **D2.9 was only half-applied and the other half was live.** The composite
+  type classes stayed in tailwind-merge's colour-collision trap —
+  `twMerge("text-display-md text-t1")` returned `"text-t1"`, dropping the type outright
+  — and five shared C-* components hit that shape. Nothing in this build could see it:
+  a dropped type class degrades to *inherited* type, so it is not a type error, lint
+  error, console error, axe violation or overflow. Renaming (D2.9's rule) treats the
+  symptom; registering the classes with twMerge fixes the cause.
+- Learned: a whole class of frontend defect is invisible to every gate we have, because
+  every gate looks for a *failure* and this one produces a plausible-looking success.
+  That is what `check-design-tokens.mjs` exists for, and why it is verified by
+  inversion rather than trusted.
+- Next: P3.10 chunk d — Playwright E2E per role, with at-risk flags asserted against
+  chunk a's seeded scenarios (`scripts/seed_e2e.py`). That is the phase's named
+  acceptance criterion. Chunk e then owns the screenshot corpus + re-baselining, and
+  must decide the frontend-runner question (if a runner lands, fold
+  `check-design-tokens.mjs`'s two checks into it verbatim).
