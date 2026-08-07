@@ -106,6 +106,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/det/metadata.py" = ["ANN401", "RUF001"]
 "lemely/io/det/tables.py" = ["ANN401"]
 "lemely/io/det/parser.py" = ["ANN401"]
+"lemely/io/det/question_papers.py" = ["ANN401"]
 "lemely/io/validation.py" = ["RUF001"]
 "lemely/io/correction_ai.py" = ["BLE001", "ANN401", "TCH"]
 "lemely/io/subject.py" = ["TCH"]
@@ -184,6 +185,7 @@ ignore_errors = true
 module = [
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
+  "lemely.core.question_papers",
   "lemely.runtime.config",
   "lemely.runtime.logging",
   "lemely.runtime.events",
@@ -199,6 +201,7 @@ module = [
   "lemely.io.det.tables",
   "lemely.io.det.parser",
   "lemely.io.det.gmp",
+  "lemely.io.det.question_papers",
   "lemely.io.study_plan_ai",
   "lemely.web.sse",
   "lemely.web.jobs",

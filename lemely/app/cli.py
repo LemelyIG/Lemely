@@ -769,6 +769,80 @@ def question_bank_import_generated_cmd(ctx: click.Context, questions_dir: str | 
         click.echo(f"  - {s.path}: {s.reason}")
 
 
+@question_bank_group.command("ingest-question-papers")
+@click.argument("qp_dir", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--schemes-dir",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Directory of parsed MarkScheme JSON (default: <output_dir>/schemes).",
+)
+@click.pass_context
+def question_bank_ingest_question_papers_cmd(
+    ctx: click.Context, qp_dir: str, schemes_dir: str | None
+) -> None:
+    """Deterministically extract question-paper PDFs under QP_DIR and bank them (P4.1).
+
+    Closes the D3.7 prerequisite: pairs each extracted question-paper leaf
+    with its matching mark-scheme question (by ref) from the parsed-scheme
+    cache and writes real `source=past_paper` bank rows. Never invents a
+    question the mark scheme can't grade and never banks a stem that
+    depends on a figure it cannot represent — every exclusion is counted
+    and printed by reason, honestly, not hidden. Safe to re-run.
+    """
+    from lemely.db.question_bank_repo import QuestionBankService
+    from lemely.db.session import get_sessionmaker
+    from lemely.io.question_papers import ingest_question_papers_dir
+
+    settings = _get_settings(ctx)
+    schemes_directory = Path(schemes_dir) if schemes_dir else settings.paths.output_dir / "schemes"
+    service = QuestionBankService(get_sessionmaker(settings))
+    report = ingest_question_papers_dir(service, qp_dir, schemes_directory)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "papersScanned": report.papers_scanned,
+                "papersExtractFailed": report.papers_extract_failed,
+                "papersNoScheme": report.papers_no_scheme,
+                "papersReconcileMismatch": report.papers_reconcile_mismatch,
+                "leavesExamined": report.leaves_examined,
+                "produced": report.produced,
+                "skippedAlreadyBanked": report.skipped_already_banked,
+                "skippedFigure": report.skipped_figure,
+                "skippedNoSchemeMatch": report.skipped_no_scheme_match,
+                "skippedNoMarkingPoints": report.skipped_no_marking_points,
+                "skippedMarksMismatch": report.skipped_marks_mismatch,
+                "extractFailures": report.extract_failures,
+                "noSchemePapers": report.no_scheme_papers,
+                "reconcileMismatchPapers": report.reconcile_mismatch_papers,
+            }
+        )
+        return
+
+    click.echo(f"Question papers scanned: {report.papers_scanned}")
+    click.echo(f"Extraction failures: {report.papers_extract_failed}")
+    click.echo(f"No paired mark scheme found: {report.papers_no_scheme}")
+    click.echo(
+        f"Reconcile mismatch (extracted total != stated total): {report.papers_reconcile_mismatch}"
+    )
+    click.echo(f"Leaves examined: {report.leaves_examined}")
+    click.echo(f"Produced (banked): {report.produced}")
+    click.echo(f"Skipped — already banked: {report.skipped_already_banked}")
+    click.echo(f"Skipped — has_figure: {report.skipped_figure}")
+    click.echo(f"Skipped — no scheme match / container: {report.skipped_no_scheme_match}")
+    click.echo(f"Skipped — no marking points: {report.skipped_no_marking_points}")
+    click.echo(f"Skipped — marks mismatch: {report.skipped_marks_mismatch}")
+    if report.extract_failures:
+        click.echo("Extraction failures:")
+        for line in report.extract_failures:
+            click.echo(f"  - {line}")
+    if report.reconcile_mismatch_papers:
+        click.echo("Reconcile-mismatch papers:")
+        for name in report.reconcile_mismatch_papers:
+            click.echo(f"  - {name}")
+
+
 @cli.command("aggregate-subject")
 @click.argument(
     "correction_jsons", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False)

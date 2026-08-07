@@ -22,19 +22,30 @@ Four things, matching the chunk-B brief exactly:
    (today: nothing — ``outputs/questions/`` does not exist, so this is a
    0-row import against the current repo state, and that is the correct,
    honest answer, not a bug).
-4. :func:`survey_past_paper_questions` — **a reporting function, not a
-   writer**. ``BUILD/DECISIONS.md`` D3.7 records the measurement: across the
-   entire parsed corpus, 0 of 122 leaf questions carry prompt text, because
-   :class:`~lemely.core.loose_schemas.Question` has no question-stem field
-   at all — a CAIE mark scheme contains marking points, not the question
-   text (the stem lives in the question paper, which this codebase never
-   parses into structure). Since ``question_bank.prompt`` is ``NOT NULL``,
-   there is no row to construct from a mark scheme today, and there never
-   will be until a question-paper stem extractor exists (out of Phase-3
-   scope). Persisting is therefore not merely deferred here; it is
-   structurally impossible from this input, so this function only counts
-   and reports — it does not gate a persist branch on a field the source
-   schema does not have.
+4. :func:`survey_past_paper_questions` — **a reporting function over
+   mark-scheme payloads, not a writer**. ``BUILD/DECISIONS.md`` D3.7 records
+   the original measurement: across the Phase-3 parsed corpus, 0 of 122 leaf
+   questions carried prompt text, because
+   :class:`~lemely.core.loose_schemas.Question` (the mark-scheme model) has
+   no question-stem field at all — a CAIE mark scheme contains marking
+   points, not the question text; the stem lives in the paired question
+   paper. **P4.1 closed that gap**: ``lemely.io.det.question_papers``
+   deterministically extracts stems from question-paper PDFs, and
+   ``lemely.io.question_papers.ingest_question_papers_dir`` pairs them with
+   parsed mark schemes and writes real ``source=past_paper`` bank rows
+   through :meth:`QuestionBankService.add_questions` — the same writer this
+   module's other three pieces use. Persisting past-paper questions is no
+   longer structurally impossible.
+
+   What did *not* change: this specific function still walks
+   ``mark_schemes.parsed_payload`` rows only, and a mark-scheme payload
+   still never carries a stem — so :func:`survey_past_paper_questions`
+   itself still reports 0 producible from that input, honestly, not because
+   the feature is missing but because this function was never the writer
+   for it. Use ``lemely ingest-question-papers`` (CLI) for real past-paper
+   coverage; this survey remains useful as-is for auditing mark-scheme
+   corpus shape (topic hints, inferred difficulty distribution) independent
+   of stem availability.
 """
 
 from __future__ import annotations
@@ -294,6 +305,26 @@ class QuestionBankService:
             objs = session.scalars(stmt).all()
             return [_to_row(obj) for obj in objs]
 
+    def existing_source_question_ids(self, *, source: QuestionSource) -> set[str]:
+        """All non-null ``source_question_id`` values already banked for ``source``.
+
+        Backs idempotent re-ingest (``lemely.io.question_papers``,
+        P4.1): that writer keys on ``(subject_code, source_question_id)``
+        rather than the DB's own partial unique index (which requires
+        ``paper_id``, and P4.1 does not create ``Paper`` rows — see that
+        module's docstring), so it needs the full existing set up front to
+        skip rows it has already written on a prior run. Includes inactive
+        rows (``is_active`` not filtered) — a row a teacher deactivated must
+        still block a duplicate insert, not silently reappear on the next
+        ingest.
+        """
+        with self._sessionmaker() as session:
+            stmt = select(QuestionBank.source_question_id).where(
+                QuestionBank.source == source,
+                QuestionBank.source_question_id.is_not(None),
+            )
+            return {row for row in session.scalars(stmt).all() if row is not None}
+
     def has_inferred_difficulty(
         self,
         caller_id: uuid.UUID | None,
@@ -494,11 +525,16 @@ def import_generated_quiz_files(
 class PastPaperSurveyReport:
     """Counts from walking every parsed mark scheme's leaf questions.
 
-    **A survey, not a writer** — see module docstring / ``docs/quiz-model.md``
-    §2 / ``BUILD/DECISIONS.md`` D3.7. ``produced`` is always ``0`` against
-    today's corpus because :class:`~lemely.core.loose_schemas.Question` has
+    **A survey over mark-scheme payloads, not a writer** — see module
+    docstring / ``docs/quiz-model.md`` §2 / ``BUILD/DECISIONS.md`` D3.7.
+    ``produced`` is always ``0`` here because
+    :class:`~lemely.core.loose_schemas.Question` (the mark-scheme model) has
     no question-stem field to read a prompt from; ``skipped_no_prompt``
-    therefore equals ``leaf_questions_seen`` in full, not partially.
+    therefore equals ``leaf_questions_seen`` in full, not partially. This is
+    a property of *this function's input* (mark schemes alone), not a
+    statement that past-paper questions cannot be banked at all — P4.1's
+    ``lemely.io.question_papers.ingest_question_papers_dir`` banks them from
+    question-paper PDFs paired with these same mark schemes instead.
     """
 
     mark_schemes_scanned: int
@@ -519,25 +555,29 @@ class PastPaperSurveyReport:
         if self.mark_schemes_scanned == 0:
             # Distinct from the structural finding below: having examined
             # nothing, this run observed nothing, and saying otherwise would
-            # report a conclusion it did not reach. The structural blocker is
-            # still named, as the standing reason no writer exists — but as
-            # prior knowledge (D3.7), not as this scan's result.
+            # report a conclusion it did not reach.
             return (
                 "0 past-paper questions produced: no parsed mark schemes are "
-                "indexed, so nothing was examined. Independently of that, "
-                "persisting past-paper questions is blocked on a "
-                "question-paper stem extractor that does not exist yet "
-                "(BUILD/DECISIONS.md D3.7) — indexing mark schemes alone "
-                "would not change this count. Use generated questions instead."
+                "indexed, so nothing was examined. A question-paper stem "
+                "extractor now exists (lemely.io.det.question_papers) and "
+                "banks real past-paper questions directly from question-paper "
+                "PDFs paired with a mark scheme — run `lemely "
+                "ingest-question-papers` for that. Indexing mark schemes here "
+                "would not change this survey's own count: it only reads "
+                "mark-scheme payloads, which never carry stem text."
             )
         return (
             "0 past-paper questions produced: loose_schemas.Question carries "
             "marking points, not question-stem text, so no leaf question in "
             f"{self.mark_schemes_scanned} scanned mark scheme(s) carries the "
-            "prompt question_bank.prompt requires. This is structural "
-            "(BUILD/DECISIONS.md D3.7), not a parsing gap — persisting "
-            "past-paper questions needs a question-paper stem extractor, "
-            "which does not exist yet. Use generated questions instead."
+            "prompt question_bank.prompt requires. This is structural to "
+            "mark-scheme payloads, not a parsing gap — and not a dead end: a "
+            "question-paper stem extractor now exists "
+            "(lemely.io.det.question_papers) and banks past-paper questions "
+            "directly from question-paper PDFs via `lemely "
+            "ingest-question-papers`. This survey function only walks "
+            "mark-scheme payloads, which never carry stems, so its own yield "
+            "stays zero regardless."
         )
 
 
