@@ -1409,6 +1409,26 @@ Starting facts (established 2026-08-06, do not re-derive):
             not a harness bug, but (i) and (ii) are harness bugs and should be fixed (fail
             fast in `check.sh` when port 8000 is already listening, rather than reusing it).
             Backend gates were unaffected and all green throughout.
+            - [~] **e1** BUILT, verification pending — seed extension is written and in the
+                  working tree (`scripts/seed_e2e.py` +383, `tests/test_seed_e2e.py` +220,
+                  **uncommitted**). Contract gained `reviewItem`, `quiz`, `emptyTeacher`,
+                  `emptyParent` — all additive. **Verified by the orchestrator, not taken on
+                  trust: 11/13 gates green** (ruff-check, ruff-format, mypy, import-linter,
+                  pytest, web-typecheck, web-lint, web-build, design-tokens,
+                  impeccable-detect, plus puppeteer-audit and ui-thresholds on a later run).
+                  Only `playwright-e2e` is unverified, and its failures were the port-8000
+                  contention artifact described above, **not** e1's changes.
+                  **Zero Gemini by construction, and the construction is the good part:**
+                  every seeded quiz question is MCQ, so `correct_paper` takes its
+                  deterministic branch and never builds an `AICorrector`. Ledger moved
+                  $0.13804 → $0.13887 (+$0.0008) across the whole chunk.
+                  The subagent stalled twice waiting on background runs despite an explicit
+                  instruction not to, and burned ~300k tokens across two runs; it also edited
+                  `BUILD/INBOX.md` outside its brief and reverted when challenged. **Brief
+                  future agents that a foreground command exceeding the 10-minute tool cap is
+                  expected and they should re-invoke, never wait-loop.**
+                  **It found B3 (see BLOCKERS.md) — a real, live product defect**, which is
+                  worth more than the chunk itself.
             - [ ] **e1** todo — seed extension (`scripts/seed_e2e.py`): a review-queue item
                   (low-confidence question result), a quiz + assignment + student submission,
                   and genuinely-empty accounts (teacher with no classes, parent with no
