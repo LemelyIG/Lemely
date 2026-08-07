@@ -1495,6 +1495,34 @@ Starting facts (established 2026-08-06, do not re-derive):
                     every state was fully audited.
                     **Not yet verified:** no audit run has ever exercised this code. That run
                     is what e2a's `done` depends on; do not mark it done on the syntax check.
+
+                    **Session-3 resume note (2026-08-07). Read this before touching the
+                    offline capture — the obvious suspect has been ruled out by experiment.**
+                    Session 2's two verification runs (`/tmp/audit_e2a.log`, `/tmp/audit_v3.log`)
+                    both died, and the visible symptom was `T-01 [offline]` failing with
+                    `Attempted to use detached Frame`, followed by *every* subsequent route
+                    reporting `Protocol error … Session closed` and the run ending on
+                    `ConnectionClosedError`. That reads as a dozen simultaneous route defects
+                    and **is not** — the Chromium process had died, and the cascade is phantom.
+                    Session 2's uncommitted hardening (now checkpointed at `cfa8834`) makes
+                    that self-diagnosing: `audit.mjs` watches the browser process's `exit`,
+                    aborts the registry walk at the first sign with the real exit code/signal,
+                    and cuts peak memory (closes the heavy student-journey page before the walk;
+                    closes each incognito context after the last route that uses it).
+                    **`scripts/_repro_offline.mjs` was run to completion this session and does
+                    NOT reproduce** — SW-ready → `setOfflineMode(true)` → goto+screenshot at
+                    380/768/1440 → teardown all pass, with a Lighthouse pass on the same page
+                    beforehand (the variable an earlier repro was missing), and the browser
+                    survives to open a fresh context afterwards (`/tmp/repro1.log`). So the
+                    offline state is **not** the cause; it is merely the first registry route,
+                    i.e. where cumulative pressure first lands. Host has 7.8 GB RAM / 4 cores
+                    with ~3.4 GB swap already in use before the run — memory is the live
+                    hypothesis, which is what the hardening targets.
+                    Do not "fix" the offline capture, and do not delete it: it is an honest
+                    CDP capture of a real product gap (`OfflineState` in `state-views.tsx` has
+                    no importer under `portals/`, so going offline falls into T-01's ordinary
+                    `isError` branch — see the comment at `audit.mjs:632`).
+
                     (i) `states[]` on a registry route: each entry `{state, slug, setup?,
                     ready?, teardown?}`, defaulting to today's single implicit
                     `"default"` so every existing entry keeps working unchanged.
