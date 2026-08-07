@@ -1557,6 +1557,52 @@ Starting facts (established 2026-08-06, do not re-derive):
                     no importer under `portals/`, so going offline falls into T-01's ordinary
                     `isError` branch — see the comment at `audit.mjs:632`).
 
+                    **Session-5 resume note (2026-08-07). Session 4's fix was applied and
+                    run (v6, `/tmp/audit_v6.log`) and it made things WORSE — read this
+                    before re-reading session 4's reasoning as settled.** v6 died at
+                    **S-06**, *earlier* than v5's S-15/S-17 and v4's T-08. The log shows
+                    `Lighthouse FAILED for student-overview: Protocol error (Page.enable):
+                    Session closed` — i.e. the *throwaway* browser's page died on startup —
+                    and in the same instant the *main* browser's connection was dead too
+                    (`ConnectionClosedError` from `CdpPage.close`). **Two Chromiums dying
+                    together is a host resource event, not a code defect**, and running
+                    Lighthouse in its own browser doubled the concurrent Chromium count
+                    rather than bounding anything.
+                    **The actual cause, measured this session: `/tmp` is a 3.9 GB tmpfs
+                    that is ~70% full (2.7 GB) of stale junk from unrelated projects**
+                    (two leaked pyenv `python-build.*` dirs from Aug 4, a `cargo-install`
+                    temp, `/tmp/bulk`, …), leaving **~1.2 GB free**. Puppeteer puts every
+                    browser's user-data-dir under `os.tmpdir()`, and Lighthouse spills
+                    traces there. **ENOSPC on the profile dir kills Chromium instantly and
+                    silently** — which is why sessions 3–4 correctly ruled out the classic
+                    suspects and still found nothing: there is no kernel OOM entry, nothing
+                    in dmesg, and `/dev/shm` is 3.9 GB and *empty*. It also explains the one
+                    fact the memory hypothesis never could — **why each run died earlier
+                    than the last**: every crashed run leaks another profile into the tmpfs.
+                    Correction to a figure worth not repeating: the tmpfs is not eating
+                    2.7 GB of RAM. `Shmem` is only 183 MB — the rest is paged to swap, which
+                    is what the 3.4 GB swap usage sessions 3–4 saw actually was. Supabase's
+                    11 containers total only ~1.4 GB and MemAvailable was 5.5 GB at launch,
+                    so the box is **not** RAM-starved. Do not go back to chasing RAM.
+                    **The fix (this session), two parts:**
+                    (a) `audit.mjs` now sets `process.env.TMPDIR` to a fixed, gitignored,
+                    **disk-backed** `reports/.scratch/audit-tmp` (wiped at startup), so
+                    Chromium scratch never touches tmpfs. Deliberately independent of
+                    `LEMELY_REPORT_DIR` — e2b's re-baseline points that at the *committed*
+                    `reports/phase-3/`, and browser scratch must never land there.
+                    (b) A shared `launchAuditBrowser()` applies frugal flags to the **main**
+                    browser only. **Never add these to Lighthouse's browser** — capping
+                    renderer count or JS heap would change the very numbers Lighthouse
+                    reports while the run gates on performance ≥ 80, i.e. a cheaper score
+                    bought by throttling the browser being measured. Nothing on the main
+                    browser's path is timed. `--disable-dev-shm-usage` is deliberately NOT
+                    set: it would push shared memory back onto TMPDIR, and `/dev/shm` is the
+                    better home for it here.
+                    **Not deleted, on purpose:** the 2.7 GB of `/tmp` junk belongs to other
+                    projects and lives outside the repo (MISSION §5), and deleting it is
+                    irreversible. Redirecting TMPDIR makes it irrelevant to this run. If a
+                    future session wants the swap back, that is a question for the human.
+
                     (i) `states[]` on a registry route: each entry `{state, slug, setup?,
                     ready?, teardown?}`, defaulting to today's single implicit
                     `"default"` so every existing entry keeps working unchanged.

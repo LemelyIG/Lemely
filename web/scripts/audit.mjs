@@ -139,6 +139,50 @@ const AUDIT_VIEWPORT = { width: 1440, height: 900 }
 // silently dropping the requirement; see the final report for this gap.
 const LIGHTHOUSE_CATEGORIES = ["performance", "accessibility", "best-practices", "seo"]
 
+// ── Keep Chromium's scratch off tmpfs ────────────────────────────────────────
+// This host mounts /tmp as a 3.9 GB **tmpfs**, i.e. RAM, and unrelated stale
+// build junk keeps it ~70% full (≈1.2 GB free). Puppeteer puts each browser's
+// user-data-dir under os.tmpdir(), and Lighthouse spills traces there too, so a
+// long run can hit ENOSPC on the profile dir. Chromium dies *instantly and
+// silently* when that happens — no kernel OOM entry, nothing in dmesg, and
+// /dev/shm untouched — which is exactly the signature sessions 2–4 chased as
+// generic "memory pressure". It also explains why each successive run died
+// earlier than the last: every crashed run leaked another profile into the
+// tmpfs, shrinking the headroom for the next one.
+//
+// Fixed to a path independent of LEMELY_REPORT_DIR: the re-baseline run points
+// that at the committed `reports/phase-3/`, and browser scratch must never land
+// in a committed directory. `reports/.scratch/` is gitignored.
+const AUDIT_TMP_DIR = path.resolve(repoRoot, "reports/.scratch/audit-tmp")
+fs.rmSync(AUDIT_TMP_DIR, { recursive: true, force: true })
+fs.mkdirSync(AUDIT_TMP_DIR, { recursive: true })
+process.env.TMPDIR = AUDIT_TMP_DIR
+
+/** The main audit browser: screenshots, axe, responsive checks.
+ *
+ * Frugal flags are applied **here only, never to Lighthouse's browser.**
+ * Capping renderer processes or the JS heap would change the very numbers
+ * Lighthouse reports, and the run gates on performance ≥ 80 — a cheaper score
+ * bought by throttling the browser we measure in would be a dishonest gate.
+ * Nothing on this page's critical path is timed, so constraining it is free.
+ *
+ * `--disable-dev-shm-usage` is deliberately NOT set: it would redirect shared
+ * memory back onto TMPDIR. /dev/shm here is 3.9 GB and empty, which is the
+ * better home for it.
+ */
+function launchAuditBrowser() {
+  return puppeteer.launch({
+    headless: true,
+    args: [
+      "--disable-gpu",
+      "--disable-extensions",
+      "--disable-background-networking",
+      "--renderer-process-limit=2",
+      "--js-flags=--max-old-space-size=512",
+    ],
+  })
+}
+
 /** Resolve local Supabase stack keys the same way web/playwright.config.ts
  * does — this sandbox's non-interactive shells don't have `supabase` (at
  * ~/.local/bin) on PATH otherwise. */
@@ -1160,7 +1204,7 @@ async function main() {
   let browser
   let routes = []
   try {
-    browser = await puppeteer.launch({ headless: true })
+    browser = await launchAuditBrowser()
     watchBrowserExit(browser)
 
     const page = await browser.newPage()
@@ -1363,7 +1407,7 @@ async function main() {
         }
         sessionsSeen.clear()
         await browser.close().catch(() => {})
-        browser = await puppeteer.launch({ headless: true })
+        browser = await launchAuditBrowser()
         watchBrowserExit(browser)
         log(
           `recycled Chromium before route ${routeIndex} (every ${RECYCLE_EVERY}) — ` +
