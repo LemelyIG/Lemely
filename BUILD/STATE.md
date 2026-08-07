@@ -1603,6 +1603,41 @@ Starting facts (established 2026-08-06, do not re-derive):
                     irreversible. Redirecting TMPDIR makes it irrelevant to this run. If a
                     future session wants the swap back, that is a question for the human.
 
+                    **Session-6 note (2026-08-07).** Session 5's fix was found
+                    **uncommitted** (the session died before committing) and is now
+                    checkpointed at `c504c9b`; `pre-commit run --all-files` clean, `node
+                    --check` clean. Verification run **v7** launched from that commit
+                    (`/tmp/audit_v7.log`) — this is the run e2a's `done` depends on.
+                    Environment at launch, for comparison against v6: `/tmp` still 3.9 GB
+                    tmpfs at 70% (2.7 GB used, 1.2 GB free — deliberately not cleaned, it
+                    is other projects' data), MemAvailable 5.5 GB, swap 3.4 GB used, 11
+                    Supabase containers up, port 8000 free. Nothing else was run against
+                    port 8000 during the run (the P3.10-e2 orchestration rule).
+
+                    **Session-7 note (2026-08-07). v7 did NOT crash — it was killed with
+                    the session, and the distinction is the finding.** `/tmp/audit_v7.log`
+                    ends mid-run at `T-01 [default] — Lighthouse...` (19:01:43) with **no
+                    error line of any kind**, one minute before this session started. Every
+                    genuine death so far logged a loud signature (v6: `Lighthouse FAILED …
+                    Session closed` then `ConnectionClosedError`); the session-2 hardening
+                    exists precisely so a Chromium death self-reports. A silent stop with
+                    no report is the shape of the whole process group being SIGKILLed.
+                    Corroborating: `/tmp/mem_audit.log` shows MemAvailable 4.4 GB at
+                    19:01:34 (not starved) then every process gone by 19:01:54; `/tmp`
+                    never grew past 70%; `reports/.scratch/audit-tmp` exists, so session
+                    5's TMPDIR redirect was in force.
+                    **The load-bearing observation: v7 got PAST S-06 — the exact route v6
+                    died on — plus G-05, and reached T-01.** That is evidence session 5's
+                    tmpfs fix works, which no run had yet shown.
+                    **Process rule for every future long harness run: launch it with
+                    `setsid nohup … &` so it is detached from this session's process
+                    group.** The Bash tool's own `run_in_background` does *not* survive a
+                    session restart, and the supervisor restarts freely (MISSION §7b), so
+                    an ~11-minute run launched in-session is a coin flip. Six sessions of
+                    e2a have been spent on Chromium deaths; do not spend a seventh
+                    misreading a harness-lifecycle artifact as a seventh cause.
+                    Run **v8** launched detached from `c504c9b` → `/tmp/audit_v8.log`.
+
                     (i) `states[]` on a registry route: each entry `{state, slug, setup?,
                     ready?, teardown?}`, defaulting to today's single implicit
                     `"default"` so every existing entry keeps working unchanged.
