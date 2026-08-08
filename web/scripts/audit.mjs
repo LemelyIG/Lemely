@@ -36,11 +36,18 @@
  *     entries carry more than one `states[]` capture (see below), so the
  *     actual number of axe passes this run performs is higher than 22 — see
  *     `main()`'s end-of-run log for the honest total.
- *   - 6 entries added by P4.8 chunk C for the Phase-4 onboarding/placement
- *     screens (S-01, S-02, S-03 twice — available AND the honest
- *     `no_questions` refusal — S-04, S-05), on four distinct seeded student
- *     accounts. These shipped in P4.8 chunks A/B with no registry entry at
- *     all, so `ui-thresholds` passed over them without ever loading one.
+ *   - 6 entries / 7 captured states added by P4.8 chunk C for the Phase-4
+ *     onboarding/placement screens, on four distinct seeded student accounts:
+ *     S-01, S-02 (twice — the questionnaire, AND a *skipped* question, which
+ *     is where D4.5's "a skipped answer is NULL and must not render as an
+ *     answer the student gave" is actually visible), S-03 twice (available
+ *     AND the honest `no_questions` refusal), S-04, S-05. These shipped in
+ *     P4.8 chunks A/B with no registry entry at all, so `ui-thresholds`
+ *     passed over them without ever loading one.
+ *     Entry order matters for the two that share the `unonboarded` account:
+ *     S-01 claims a genuinely first-run state (no profile, no enrolment) and
+ *     S-02's drive really persists an enrolment, so S-01 must stay ahead of
+ *     it in this array.
  * Deliberately still NOT in this registry (P5 screens still on mock data):
  *   /student/subject/:code, /student/plan, /student/board,
  *   /student/landing, /student/directions.
@@ -279,6 +286,53 @@ async function clickButtonByText(page, pattern, timeout = 15_000) {
   const element = handle.asElement()
   if (!element) throw new Error(`No enabled button matching ${pattern}`)
   await element.click()
+}
+
+/**
+ * Click an `aria-pressed` toggle button ONLY if it is not already pressed.
+ *
+ * This exists because `visitRoute` drives a state once but navigates to it
+ * four times (three breakpoints + axe), so any drive written into `ready`
+ * runs repeatedly against an account whose server-side state the previous
+ * run already changed. S-01's "Continue" really does `PUT /api/me/
+ * student-profile/enrolments`, and Onboarding.tsx's seeding effect restores
+ * that enrolment on the next load — so an unconditional click would
+ * *deselect* Physics on pass two, leaving `Continue` disabled
+ * (`SubjectsStep.tsx`: `disabled={selectedCount === 0}`) and hanging the run
+ * on a timeout that reads as a product defect rather than a harness one.
+ *
+ * `aria-pressed` is what distinguishes the two cases, and it is on the real
+ * button already (`SubjectsStep.tsx:92`) for accessibility reasons — this
+ * reads the product's own state, it does not add a test-only hook.
+ */
+async function pressToggleOnce(page, pattern, timeout = 15_000) {
+  const handle = await page.waitForFunction(
+    (source) => {
+      const re = new RegExp(source, "i")
+      return (
+        Array.from(document.querySelectorAll("button[aria-pressed]")).find(
+          (b) => re.test(b.textContent || "") && !b.disabled,
+        ) ?? null
+      )
+    },
+    { timeout },
+    pattern,
+  )
+  const element = handle.asElement()
+  if (!element) throw new Error(`No enabled aria-pressed button matching ${pattern}`)
+  const alreadyPressed = await element.evaluate((b) => b.getAttribute("aria-pressed") === "true")
+  if (!alreadyPressed) await element.click()
+  await page.waitForFunction(
+    (source) => {
+      const re = new RegExp(source, "i")
+      const b = Array.from(document.querySelectorAll("button[aria-pressed]")).find((el) =>
+        re.test(el.textContent || ""),
+      )
+      return Boolean(b) && b.getAttribute("aria-pressed") === "true"
+    },
+    { timeout },
+    pattern,
+  )
 }
 
 /** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>.png`
@@ -575,6 +629,22 @@ function errorStateHooks(urlSubstring) {
       await page.setRequestInterception(false)
     },
   }
+}
+
+/**
+ * Drives Onboarding.tsx's real S-01 -> S-02 transition: select Physics, then
+ * Continue (which really calls `PUT /api/me/student-profile/enrolments`).
+ *
+ * Idempotent by construction, because it is called from `ready` and `ready`
+ * runs after EVERY navigation `visitRoute` makes for a state — see
+ * `pressToggleOnce`. Physics specifically because it is the one subject with
+ * a viable placement bank (0625), so the S-02 -> S-03 exit this drive sets up
+ * lands on the available invite rather than the refusal.
+ */
+async function driveToQuestionnaire(page) {
+  await waitForText(page, "What are you studying?")
+  await pressToggleOnce(page, "Physics")
+  await clickButtonByText(page, "^continue$")
 }
 
 /** Drives ReviewItem.tsx's real "Adjust marks instead" -> "Save correction"
@@ -1189,10 +1259,21 @@ function buildRouteRegistry(seed) {
     },
     {
       // S-02 · the questionnaire step. Only reachable by actually completing
-      // S-01, so `setup` drives the real UI (pick Physics, Continue) rather
+      // S-01, so the drive works the real UI (pick Physics, Continue) rather
       // than deep-linking a state the product cannot get into on its own.
-      // `lighthouse: false` — a second state of the onboarding *screen*, not
-      // a second route to score.
+      // `lighthouse: false` — these are further states of the onboarding
+      // *screen*, not further routes to score.
+      //
+      // The drive lives in `ready`, NOT in `setup`, and that is load-bearing:
+      // `visitRoute` calls `setup` once but then calls `gotoReady` again for
+      // every breakpoint and once more for axe, and `Onboarding.tsx` holds
+      // `wizardStep` in component state that remounts as `"subjects"` on
+      // every load (its seeding effect restores the *answers* from the
+      // server but never which step you were on). A `setup`-driven wizard
+      // state is therefore undone by the first reload, and every capture
+      // after the first would have been the subjects step wearing the
+      // questionnaire's slug. See `pressToggleOnce` for why re-running the
+      // drive against an account the previous pass already mutated is safe.
       screenId: "S-02",
       path: "/student/onboard",
       session: placementUnonboardedSession,
@@ -1202,12 +1283,36 @@ function buildRouteRegistry(seed) {
           state: "questionnaire",
           slug: "student-onboard-questionnaire",
           lighthouse: false,
-          setup: async (page) => {
-            await waitForText(page, "What are you studying?")
-            await clickButtonByText(page, "Physics")
-            await clickButtonByText(page, "Continue")
+          ready: async (page) => {
+            await driveToQuestionnaire(page)
+            await waitForText(page, "Which school")
           },
-          ready: (page) => waitForText(page, "Which school"),
+        },
+        {
+          // S-02 · a question the student has SKIPPED, which is the one
+          // rendering D4.5 turns on and the one the entry above does not
+          // reach: `SkippableSlider` shows `unsetLabel` ("Not set") while
+          // the thumb sits at `min`, because an untouched field is `NULL`
+          // and must never render as an answer the student gave. A
+          // regression to `formatValue(min)` would print "0 hours/week" —
+          // invented precision that screenshots perfectly clean — so this
+          // state is captured on its own rather than trusted to the unit
+          // tests. Reached by skipping the two questions before it, which
+          // is also how a real student gets here.
+          state: "questionnaire-skipped",
+          slug: "student-onboard-questionnaire-skipped",
+          lighthouse: false,
+          ready: async (page) => {
+            await driveToQuestionnaire(page)
+            await waitForText(page, "Which school")
+            await clickButtonByText(page, "^skip$")
+            await waitForText(page, "outside school")
+            await clickButtonByText(page, "^skip$")
+            await waitForText(page, "hours can you study each week")
+            // The assertion, not decoration: the slider reports "Not set",
+            // not the value its thumb is resting on.
+            await waitForText(page, "Not set")
+          },
         },
       ],
     },
