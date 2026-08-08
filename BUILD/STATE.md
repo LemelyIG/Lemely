@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-08T23:40:00Z
+last_updated: 2026-08-09T01:30:00Z
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -434,7 +434,33 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       (`routers/student.py:790/814`) rebuild it from scratch on every request, so a plan cannot
       be completed, regenerated, or compared against the previous week.
       **Chunk plan (2026-08-08):**
-      - [ ] chunk A — pure scheduler rewrite in `lemely/core/study_plan.py`: sessions carry an
+      - [x] chunk A — **done** (`fc4dca9`). `lemely/core/study_plan.py` rewritten pure +
+        clock-injected; `ActivityType`, `StudySession(date, activity_type, duration_minutes)`
+        and `StudyPlanUnavailableReason` added to `core/study.py`. Weights **0.5 weakness /
+        0.3 placement / 0.2 confidence**, documented at the point of divergence and pinned;
+        a missing signal **renormalises** rather than zero-filling, which is what makes
+        "questionnaire only, no placement yet" a real plan instead of a diluted one.
+        All callers migrated in the same commit (`routers/student.py` GET+POST, `cli.py`,
+        the narrator prompt). 28 tests in `tests/test_study_plan.py`; $0.00 Gemini.
+        **2250 tests / 6 skipped / 0 failed / 90.13% cov** (P4.6 baseline 2229 / 90.08%);
+        all 13 gates green, 0 skipped.
+        **The defect the orchestrator found by measuring, not from the subagent's report —
+        do not re-derive:** the first implementation clipped each topic's share to the
+        90-minute session cap and dropped the remainder, so **a three-weak-topic ten-hour
+        week scheduled 270 of 600 minutes** while `weekly_hours` still reported 10 for the
+        S-24 header. Topics over the cap are now **split into several blocks on distinct
+        days** (585/600 for that case, and no topic is ever sat twice in one day).
+        The pre-fix figure is written into the regression test.
+        Two `TestWeighting` tests read priority off session *position*, which stopped being
+        a proxy once sessions sorted by date; rewritten to assert **total minutes per
+        topic** — what the weighting actually decides. Nothing skipped or deleted.
+        **Gap chunk C must close (not a regression — this state did not exist before):**
+        `StudyPlanDTO` carries no `available`/`reason`, so the honest `no_signal` refusal
+        and the real "nothing to schedule this week" both reach the frontend as an empty
+        `sessions` list and are indistinguishable. Chunk A's whole distinction dies at the
+        wire until chunk C decides the DTO. `activityType`/`date` are likewise not exposed
+        yet — `hours` is a unit conversion of `duration_minutes`.
+      - [ ] chunk A (original plan, kept for the rationale) — pure scheduler rewrite in `lemely/core/study_plan.py`: sessions carry an
         **activity type** (`practice` / `flashcards` / `past_paper` / `review`) and a **duration
         in minutes**, and are laid out across the days of one week. Inputs become explicit and
         weighted: weakness `lost_marks` (rolling performance), placement topic results, and the
