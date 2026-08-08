@@ -1171,3 +1171,30 @@ $0.00 Gemini this session; everything here is deterministic.
 
 **Next.** B-4: `PlacementService` + the three routes in D4.6 §4. Take/resume/submit are
 the existing endpoints — reusing them is the point. Then P4.5.
+
+## 2026-08-08 (session 2) — P4.4 finished, P4.5 landed
+
+**Did.** Closed P4.4 with chunk B-4: `PlacementService` (availability/create/result) and
+the three S-03/S-05 routes over the assembler chunk B-3 had already measured (D4.9). Then
+P4.5 end to end: `PracticeService` (preview/create/export), `/api/student/practice`, and
+the `list_assigned` branch D4.6 §3 had explicitly deferred to this task (D4.10). Feature
+branch pushed for the first time.
+
+**Learned — the same lesson twice, from two different subagents.** Neither reported back;
+both had to be verified from the artefacts instead. The placement implementer silently
+dropped one clause of D4.6 §5 (narrow to the papers the student will actually sit), which
+would have measured a 0625 **Core** student on **Extended** questions — inventing a
+weakness in every topic that sample touched, then feeding it into P4.7's study plan. **No
+test could have caught it**: the seeded bank is single-paper, so the narrowing is
+unobservable unless a test deliberately enrols the student elsewhere. Found by reading the
+code against the decision record, not by running anything. The practice implementer
+reported done with `ruff format` red on two of its own files. MISSION §5's "verify their
+output yourself" is not ceremony.
+
+**Also worth keeping:** practice deliberately draws from 273 rows where placement draws
+from 211. An untopiced question cannot support a weakness *profile* but is perfectly good
+practice *material* — the two services filter differently on purpose, and that asymmetry is
+easy to mistake for a bug later.
+
+**Next.** P4.6 flashcards backend (decks by subject/topic, AI generation from a weakness,
+SM-2 review). Then P4.7 study plan, then the four frontend tasks.
