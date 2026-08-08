@@ -14,6 +14,7 @@ import {
   buildProfilePatchPayload,
   buildQuestionnaireSteps,
   clampStepIndex,
+  placementInviteSubject,
   toggleInSet,
   SUPPORTED_SUBJECTS,
   type QuestionnaireAnswers,
@@ -191,10 +192,11 @@ export function Onboarding() {
       }
       await completeOnboarding.mutateAsync()
       // S-02 -> S-03 (UI spec): the placement invite is per subject, so this
-      // sends the student to the first subject they enrolled in, in their
-      // own S-01 selection order. A student who selected nothing has no
+      // sends the student to the first subject they enrolled in, in the
+      // order S-01 presented them. A student who selected nothing has no
       // subject to invite them into a placement test for — S-06 directly.
-      const firstSubject = Object.keys(drafts)[0]
+      // See `placementInviteSubject` for why this is not `Object.keys(...)[0]`.
+      const firstSubject = placementInviteSubject(Object.keys(drafts))
       navigate(firstSubject ? `/student/placement/${firstSubject}` : "/student")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save your answers.")

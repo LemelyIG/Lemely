@@ -62,21 +62,24 @@ export function countUnanswered(
   return questions.filter((q) => !isQuestionAnswered(q)).length
 }
 
-// ── Answer autosave payload (mirrors the D4.5 "only touched keys" rule
-// from onboardingData.ts — never send a field that did not change, since an
-// omitted field leaves the stored value untouched but a sent one, even
-// unchanged, would round-trip through the same "leave untouched" path
-// harmlessly UNLESS it happens to differ from what's stored, in which case
-// it would silently overwrite a value this save never meant to touch) ────
-
-/** Build the `PUT .../answers/{questionRef}` body for a single-field save:
- * only the field that changed is present on the wire object. */
-export function buildAnswerSavePayload(
-  field: "answerText" | "workingText",
-  value: string,
-): SaveAnswerRequest {
-  return { [field]: value } as SaveAnswerRequest
-}
+// ── Answer autosave payload ──────────────────────────────────────────────
+//
+// Every save — debounced edit, reconnect retry, pre-submit flush — sends
+// BOTH fields, read from the cache at send time (`buildRetrySavePayload`
+// below). There is deliberately no single-field variant any more.
+//
+// A single-field payload ("only send the key that changed", the D4.5
+// onboarding rule) was correct while each edit had its own save on the
+// wire. It stopped being expressible once saves are coalesced per question
+// (see `SaveQueueState` below): a coalesced save stands for *several* edits,
+// possibly to both fields, so there is no one "field that changed" to name.
+// Sending both from the cache is safe for the reason `buildRetrySavePayload`
+// documents — a cache entry always holds the question's true current state,
+// seeded from the server and thereafter only ever updated by a real edit —
+// so it re-asserts reality rather than clobbering an untouched field with a
+// stale `null`. `SaveAnswerRequestDTO` treats an omitted field as "leave
+// untouched" and a present one as "set to this", which is exactly what a
+// both-fields re-assertion wants.
 
 // ── Time display (S-04: elapsed always; remaining only when the quiz
 // carries a `timeLimitMinutes` — placement's is always `null`, D4.6 §5) ──
@@ -266,22 +269,78 @@ export function dirtyQuestionRefs(cached: CachedAnswers | null): string[] {
 
 /**
  * Which refs the reconnect/reload retry should actually resend: still
- * dirty, and not already being saved right now.
+ * dirty, and not already busy (a save on the wire, or one already chained
+ * behind it — see `refsToFlush` and the queue notes below).
  *
- * The `inFlight` exclusion is load-bearing rather than tidy. An entry stays
+ * The `busy` exclusion is load-bearing rather than tidy. An entry stays
  * `dirty: true` for the whole duration of its own save (it only flips on
  * success), so a retry pass that ran while a save was in flight would fire a
  * duplicate PUT for a question that is already on its way — and with a
  * second `online` transition or a re-run of the effect, several. The normal
  * debounced edit path deliberately does NOT consult this: a student who
- * types while a save is in flight must have that newer edit sent, not
- * dropped as a duplicate.
+ * types while a save is in flight must have that newer edit sent. It is not
+ * dropped and it is not raced — it is chained behind the in-flight save and
+ * reads the cache when its turn comes.
  */
 export function refsToRetry(
   cached: CachedAnswers | null,
-  inFlight: ReadonlySet<string>,
+  busy: ReadonlySet<string>,
 ): string[] {
-  return dirtyQuestionRefs(cached).filter((questionRef) => !inFlight.has(questionRef))
+  return dirtyQuestionRefs(cached).filter((questionRef) => !busy.has(questionRef))
+}
+
+/**
+ * Every ref a pre-submit flush must wait on before the paper may be
+ * submitted: everything still dirty, PLUS everything currently busy.
+ *
+ * The second half is the part that is easy to get wrong. A question whose
+ * save is on the wire right now is *not* safe to ignore just because a save
+ * exists for it — that save may still fail, and a save that fails after
+ * submit has already gone through marks the paper without an answer the
+ * student can see on screen. Waiting on it means the post-flush
+ * "is anything still dirty?" check sees its real outcome.
+ *
+ * Union, not concatenation: a ref that is both dirty and busy is one ref,
+ * and enqueuing it twice would put a redundant PUT on the wire.
+ */
+export function refsToFlush(
+  cached: CachedAnswers | null,
+  busy: ReadonlySet<string>,
+): string[] {
+  return [...new Set([...dirtyQuestionRefs(cached), ...busy])]
+}
+
+/**
+ * Is the cache still holding exactly what a completing save put on the
+ * wire? Only then may that save mark the entry `dirty: false`.
+ *
+ * This is the guard against a fourth answer-loss path, distinct from the
+ * three fixed in c2d444f. A save's completion handler used to write back the
+ * value its own call had captured and mark it clean, unconditionally. But
+ * two saves for one question could be in flight together (a reconnect retry
+ * carrying the cached value, and a debounced edit carrying a just-typed
+ * newer one), and network arrival order is not dispatch order, so the older
+ * save could complete last — overwriting the newer answer in the cache and
+ * stamping it "confirmed saved". The student keeps seeing their newer answer
+ * on screen the whole time; on the next reload `mergeAnswers` sees
+ * `dirty: false` and defers to the server, and the paper is marked against
+ * the older text. Same confidently-wrong shape as D3.21, reached by a
+ * different door.
+ *
+ * Per-question save chaining (`QuizTaker`'s `saveChains`) is the primary fix
+ * — it means the two saves can no longer overlap at all, on the wire or at
+ * the server, whose upsert is last-write-wins with no version guard. This
+ * check is the second, independent line: it is value equality rather than
+ * object identity on purpose, so a student who types a change and undoes it
+ * back to the same text still gets a clean commit rather than a needless
+ * resend.
+ */
+export function isCacheEntryUnchanged(
+  cached: CachedAnswerEntry | undefined,
+  sent: LocalAnswer,
+): boolean {
+  if (!cached) return false
+  return cached.answerText === sent.answerText && cached.workingText === sent.workingText
 }
 
 /** The retry-on-reconnect save payload for one question: both fields,

@@ -104,6 +104,26 @@ export const WEEKLY_HOURS_MAX = 40
 export const CONFIDENCE_MIN = 1
 export const CONFIDENCE_MAX = 5
 
+/**
+ * Which subject's placement invite (S-03) to send the student to when they
+ * finish S-02, or `null` if they enrolled in none — in which case there is
+ * no placement test to invite them into and the caller sends them to S-06.
+ *
+ * Deliberately NOT `Object.keys(drafts)[0]`. The drafts object is keyed by
+ * syllabus code, and JS enumerates integer-like string keys first, in
+ * ascending numeric order, ahead of every other key's insertion order. All
+ * three of today's codes have a leading zero (`0625`/`0580`/`0606`) and so
+ * are not integer-like — insertion order happens to survive, which is
+ * exactly what makes the bug invisible now and live the day a code without
+ * a leading zero is added. Ordering by the catalogue instead means the
+ * student is sent to the first subject *as presented to them in S-01*,
+ * which is a rule that stays true whatever the codes look like.
+ */
+export function placementInviteSubject(enrolledCodes: readonly string[]): string | null {
+  const enrolled = new Set(enrolledCodes)
+  return SUPPORTED_SUBJECTS.find((subject) => enrolled.has(subject.code))?.code ?? null
+}
+
 // ── S-01 subject/paper/target selection ─────────────────────────────────
 
 export interface SubjectDraft {

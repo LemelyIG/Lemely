@@ -12,16 +12,17 @@ import { ApiError } from "@/lib/api"
 import {
   answerCacheKey,
   answerInputKind,
-  buildAnswerSavePayload,
   buildRetrySavePayload,
   clampQuestionIndex,
   countUnanswered,
   dirtyQuestionRefs,
   formatDuration,
   formatQuestionTopic,
+  isCacheEntryUnchanged,
   mergeAnswers,
   quizAffiliationLabel,
   readCachedAnswers,
+  refsToFlush,
   refsToRetry,
   remainingSeconds,
   seedAnswers,
@@ -46,12 +47,15 @@ import {
  * `writeCachedAnswers`, tagged `dirty: true` (so a hard reload before the
  * debounced save fires still has the in-progress text — `mergeAnswers` is
  * the pure function that decides a dirty local edit beats the server's
- * older value on reload). A debounced autosave then PUTs just the field
- * that changed (`buildAnswerSavePayload`); on success the cache entry flips
- * to `dirty: false`. A failed save is shown per-question, never swallowed,
- * and `dirtyQuestionRefs` drives a full resend (`buildRetrySavePayload`,
- * both fields — safe because the cache always holds the question's true
- * current state) once the browser reports `online` again.
+ * older value on reload). A debounced autosave then PUTs the question's
+ * current cached state (`buildRetrySavePayload`, both fields — safe because
+ * the cache always holds the question's true current state); on success the
+ * cache entry flips to `dirty: false`, but only if it still holds what that
+ * save actually sent (`isCacheEntryUnchanged`). Saves for one question are
+ * serialized through `saveChains` so two can never race each other to the
+ * server. A failed save is shown per-question, never swallowed, and
+ * `dirtyQuestionRefs` drives a resend once the browser reports `online`
+ * again — and again, blocking, before any submit.
  *
  * No maths renderer (measured: 1/273 stems are LaTeX-shaped, the rest is
  * plain Unicode browsers render natively) — `white-space: pre-line` on the
@@ -193,41 +197,86 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     [assignmentId],
   )
 
-  // Refs whose save is on the wire right now. Only the retry pass consults
-  // this (see `refsToRetry`) — the debounced edit path must always send a
-  // newer edit, even mid-flight.
-  const inFlightRefs = useRef<Set<string>>(new Set())
+  // One promise chain per question ref, holding the tail of that question's
+  // outstanding saves, and the set of refs that currently have one.
+  //
+  // Saves for a given question are serialized rather than allowed to
+  // overlap. Two could previously be on the wire at once — the reconnect
+  // retry resending the cached value, and a debounced edit sending a
+  // just-typed newer one — and since network arrival order is not dispatch
+  // order and the server's upsert is last-write-wins with no version guard,
+  // the OLDER value could land last at the server and win. The completion
+  // handler then wrote its own captured value back into the cache marked
+  // clean, so the newer answer was lost locally too, silently, while it was
+  // still on screen. See `isCacheEntryUnchanged` for the full write-up.
+  //
+  // Chaining keeps the property that made the debounce path skip the
+  // in-flight check in the first place: a newer edit is never dropped as a
+  // duplicate. It is queued, and because each run reads `answerCache` when
+  // its turn comes rather than when it was queued, it sends the newest value
+  // rather than the one that was current at queue time.
+  const saveChains = useRef<Record<string, Promise<void>>>({})
+  const busyRefs = useRef<Set<string>>(new Set())
 
-  // `saveAnswer.mutate` and NOT `saveAnswer`: react-query returns
-  // `{ ...result, mutate }` — a fresh object every render — while `mutate`
-  // itself is `useCallback`-stable on the observer. Depending on the whole
-  // result object made `doSave` change identity on every render, which made
-  // the retry effect below re-run on every render and resend every dirty
-  // answer each time. With a 1s elapsed-time tick already forcing a render a
-  // second, that was a duplicate PUT per dirty answer per second on the
-  // ordinary typing path, not just after a reconnect.
-  const saveMutate = saveAnswer.mutate
+  // `saveAnswer.mutateAsync` and NOT `saveAnswer`: react-query returns
+  // `{ ...result, mutateAsync }` — a fresh object every render — while
+  // `mutateAsync` itself is stable on the observer. Depending on the whole
+  // result object made the save callback change identity on every render,
+  // which made the retry effect below re-run on every render and resend
+  // every dirty answer each time. With a 1s elapsed-time tick already
+  // forcing a render a second, that was a duplicate PUT per dirty answer per
+  // second on the ordinary typing path, not just after a reconnect.
+  const saveMutateAsync = saveAnswer.mutateAsync
 
-  const doSave = useCallback(
-    (questionRef: string, body: ReturnType<typeof buildAnswerSavePayload>, entry: LocalAnswer) => {
-      setSaveStatus((prev) => ({ ...prev, [questionRef]: "saving" }))
-      inFlightRefs.current.add(questionRef)
-      saveMutate(
-        { questionRef, body },
-        {
-          onSuccess: () => {
-            inFlightRefs.current.delete(questionRef)
-            persistCacheEntry(questionRef, entry, false)
-            setSaveStatus((prev) => ({ ...prev, [questionRef]: "saved" }))
-          },
-          onError: () => {
-            inFlightRefs.current.delete(questionRef)
-            setSaveStatus((prev) => ({ ...prev, [questionRef]: "error" }))
-          },
-        },
-      )
+  /**
+   * Queue a save for one question and return a promise that settles when it
+   * (and anything already queued ahead of it) is done.
+   *
+   * Never rejects: a failed save surfaces as the per-question `error` status
+   * and leaves the entry `dirty`, which is what the retry pass and the
+   * pre-submit flush both key on. Callers therefore check the cache for what
+   * happened, not this promise.
+   */
+  const enqueueSave = useCallback(
+    (questionRef: string): Promise<void> => {
+      const run = async (): Promise<void> => {
+        const entry = answerCache.current[questionRef]
+        // Nothing to do: either the question has no cache entry, or a save
+        // queued ahead of this one already carried this value to the server.
+        if (!entry || !entry.dirty) return
+        const sent: LocalAnswer = { answerText: entry.answerText, workingText: entry.workingText }
+        setSaveStatus((prev) => ({ ...prev, [questionRef]: "saving" }))
+        try {
+          await saveMutateAsync({ questionRef, body: buildRetrySavePayload(sent) })
+        } catch {
+          setSaveStatus((prev) => ({ ...prev, [questionRef]: "error" }))
+          return
+        }
+        // Only mark clean if the cache still holds what we actually sent. If
+        // the student typed while this was on the wire, the entry stays
+        // dirty and the edit that changed it has its own save chained behind
+        // this one.
+        if (!isCacheEntryUnchanged(answerCache.current[questionRef], sent)) return
+        persistCacheEntry(questionRef, sent, false)
+        setSaveStatus((prev) => ({ ...prev, [questionRef]: "saved" }))
+      }
+      const previous = saveChains.current[questionRef] ?? Promise.resolve()
+      // `run, run` — run next in the chain whether the previous link
+      // resolved or rejected, so one failure cannot strand every later save
+      // for that question.
+      const chained: Promise<void> = previous.then(run, run).then(() => {
+        // Only the tail clears the slot; an earlier link finishing while
+        // another is queued behind it must leave the chain intact.
+        if (saveChains.current[questionRef] === chained) {
+          delete saveChains.current[questionRef]
+          busyRefs.current.delete(questionRef)
+        }
+      })
+      saveChains.current[questionRef] = chained
+      busyRefs.current.add(questionRef)
+      return chained
     },
-    [saveMutate, persistCacheEntry],
+    [saveMutateAsync, persistCacheEntry],
   )
 
   // Resend every question still marked dirty in the cache, once the
@@ -246,12 +295,10 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
   // list would have missed the seed entirely.
   useEffect(() => {
     if (!online) return
-    for (const questionRef of refsToRetry(answerCache.current, inFlightRefs.current)) {
-      const entry = answerCache.current[questionRef]
-      if (!entry) continue
-      doSave(questionRef, buildRetrySavePayload(entry), entry)
+    for (const questionRef of refsToRetry(answerCache.current, busyRefs.current)) {
+      void enqueueSave(questionRef)
     }
-  }, [online, doSave, seedVersion])
+  }, [online, enqueueSave, seedVersion])
 
   function updateAnswer(questionRef: string, field: "answerText" | "workingText", value: string) {
     const prevEntry = answers[questionRef] ?? { answerText: null, workingText: null }
@@ -261,7 +308,8 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     const timers = debounceTimers.current
     if (timers[questionRef]) window.clearTimeout(timers[questionRef])
     timers[questionRef] = window.setTimeout(() => {
-      doSave(questionRef, buildAnswerSavePayload(field, value), nextEntry)
+      delete debounceTimers.current[questionRef]
+      void enqueueSave(questionRef)
     }, 600)
   }
 
@@ -295,21 +343,30 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
    * A failure here therefore blocks the submit rather than being swallowed:
    * submitting anyway would mark a script that is not the one the student
    * wrote.
+   *
+   * The failure test is the cache, not the promises: `enqueueSave` never
+   * rejects, and a save that failed leaves its entry `dirty`. Checking the
+   * cache afterwards is the stronger contract anyway — it blocks on *any*
+   * answer that is not confirmed saved, however it got that way, rather than
+   * only on the ones this call happened to put on the wire.
    */
   async function flushPendingSaves(): Promise<void> {
+    // Cancel the debounce timers first, so nothing dispatches a save behind
+    // the flush's back after it has read the cache.
     const timers = debounceTimers.current
     for (const questionRef of Object.keys(timers)) {
       window.clearTimeout(timers[questionRef])
       delete timers[questionRef]
     }
     await Promise.all(
-      dirtyQuestionRefs(answerCache.current).map(async (questionRef) => {
-        const entry = answerCache.current[questionRef]
-        if (!entry) return
-        await saveAnswer.mutateAsync({ questionRef, body: buildRetrySavePayload(entry) })
-        persistCacheEntry(questionRef, entry, false)
-      }),
+      refsToFlush(answerCache.current, busyRefs.current).map((questionRef) =>
+        enqueueSave(questionRef),
+      ),
     )
+    const unsaved = dirtyQuestionRefs(answerCache.current)
+    if (unsaved.length > 0) {
+      throw new Error(`${unsaved.length} answer(s) are not saved`)
+    }
   }
 
   async function handleSubmit() {

@@ -5,10 +5,45 @@ import {
   buildProfilePatchPayload,
   buildQuestionnaireSteps,
   clampStepIndex,
+  placementInviteSubject,
   toggleInSet,
   type QuestionnaireAnswers,
   type SubjectDraft,
 } from "@/portals/student/screens/onboarding/onboardingData"
+
+describe("placementInviteSubject — S-02 → S-03 routing", () => {
+  it("sends a single-subject student to that subject", () => {
+    expect(placementInviteSubject(["0580"])).toBe("0580")
+  })
+
+  it("returns null when the student enrolled in nothing (S-06 instead)", () => {
+    expect(placementInviteSubject([])).toBeNull()
+  })
+
+  it("orders by the S-01 catalogue, not by the order the codes arrive in", () => {
+    // 0625 is first in SUPPORTED_SUBJECTS, so it wins regardless of argument
+    // order — the rule is "the first subject as S-01 presented them".
+    expect(placementInviteSubject(["0606", "0625"])).toBe("0625")
+    expect(placementInviteSubject(["0625", "0606"])).toBe("0625")
+  })
+
+  it("does not depend on JS object key enumeration order", () => {
+    // The regression this function exists for. `Object.keys` hoists
+    // integer-like keys ahead of insertion order, so a future syllabus code
+    // without a leading zero would silently jump the queue and route the
+    // student to a subject they picked second. Today's codes all have a
+    // leading zero, which is exactly why the bug was invisible.
+    const drafts: Record<string, boolean> = {}
+    drafts["0625"] = true
+    drafts["9709"] = true
+    expect(Object.keys(drafts)[0]).toBe("9709") // the trap, pinned
+    expect(placementInviteSubject(Object.keys(drafts))).toBe("0625")
+  })
+
+  it("ignores a code that is not a supported subject", () => {
+    expect(placementInviteSubject(["9999"])).toBeNull()
+  })
+})
 
 describe("toggleInSet", () => {
   it("adds an item not yet present", () => {

@@ -2,17 +2,18 @@ import { describe, expect, it } from "vitest"
 import {
   answerCacheKey,
   answerInputKind,
-  buildAnswerSavePayload,
   buildRetrySavePayload,
   clampQuestionIndex,
   countUnanswered,
   dirtyQuestionRefs,
   formatDuration,
   formatQuestionTopic,
+  isCacheEntryUnchanged,
   isQuestionAnswered,
   mergeAnswers,
   quizAffiliationLabel,
   readCachedAnswers,
+  refsToFlush,
   refsToRetry,
   remainingSeconds,
   seedAnswers,
@@ -102,22 +103,78 @@ describe("isQuestionAnswered / countUnanswered — the real, current answer stat
   })
 })
 
-describe("buildAnswerSavePayload — never send the untouched field", () => {
-  it("an answerText save carries only answerText on the wire", () => {
-    const payload = buildAnswerSavePayload("answerText", "42")
-    expect(payload).toEqual({ answerText: "42" })
-    expect("workingText" in payload).toBe(false)
+describe("isCacheEntryUnchanged — a stale save must not stamp a newer answer 'saved'", () => {
+  const sent = { answerText: "42", workingText: null }
+
+  it("commits when the cache still holds exactly what this save sent", () => {
+    expect(isCacheEntryUnchanged({ answerText: "42", workingText: null, dirty: true }, sent)).toBe(
+      true,
+    )
   })
 
-  it("a workingText save carries only workingText on the wire", () => {
-    const payload = buildAnswerSavePayload("workingText", "F = ma")
-    expect(payload).toEqual({ workingText: "F = ma" })
-    expect("answerText" in payload).toBe(false)
+  it("refuses to commit when the student edited the answer mid-flight", () => {
+    // The load-bearing case. Without this, the completing save writes its own
+    // older value back over the newer one and marks it clean, so the next
+    // reload defers to the server and the newer answer is gone — while it was
+    // on screen the whole time.
+    expect(isCacheEntryUnchanged({ answerText: "43", workingText: null, dirty: true }, sent)).toBe(
+      false,
+    )
   })
 
-  it("survives JSON.stringify without leaking the other key as undefined", () => {
-    const payload = buildAnswerSavePayload("answerText", "")
-    expect(JSON.parse(JSON.stringify(payload))).toEqual({ answerText: "" })
+  it("refuses to commit when only the OTHER field changed mid-flight", () => {
+    // Both fields go on the wire together, so a working-out edit makes an
+    // answerText-triggered save just as stale.
+    expect(
+      isCacheEntryUnchanged({ answerText: "42", workingText: "F = ma", dirty: true }, sent),
+    ).toBe(false)
+  })
+
+  it("compares by value, not identity — a typed-then-undone edit still commits", () => {
+    // A fresh object with equal values: identity comparison would force a
+    // pointless resend and leave the entry dirty, blocking submit.
+    expect(isCacheEntryUnchanged({ ...sent, dirty: true }, sent)).toBe(true)
+  })
+
+  it("treats null and empty string as different (clearing an answer is an edit)", () => {
+    expect(
+      isCacheEntryUnchanged({ answerText: "", workingText: null, dirty: true }, sent),
+    ).toBe(false)
+  })
+
+  it("does not commit against a cache entry that no longer exists", () => {
+    expect(isCacheEntryUnchanged(undefined, sent)).toBe(false)
+  })
+})
+
+describe("refsToFlush — what a submit must wait on", () => {
+  const cached = {
+    q1: { answerText: "a", workingText: null, dirty: true },
+    q2: { answerText: "b", workingText: null, dirty: false },
+  }
+
+  it("includes every dirty ref", () => {
+    expect(refsToFlush(cached, new Set())).toEqual(["q1"])
+  })
+
+  it("also waits on a ref whose save is already on the wire, though it is clean", () => {
+    // q2 is not dirty, but a save for it is in flight and may still FAIL.
+    // Submitting without waiting would mark the paper while that answer is
+    // still unconfirmed — the D3.21 shape.
+    expect(refsToFlush(cached, new Set(["q2"])).sort()).toEqual(["q1", "q2"])
+  })
+
+  it("counts a ref that is both dirty and busy exactly once", () => {
+    expect(refsToFlush(cached, new Set(["q1"]))).toEqual(["q1"])
+  })
+
+  it("waits on a busy ref with no cache entry at all", () => {
+    expect(refsToFlush(cached, new Set(["q9"])).sort()).toEqual(["q1", "q9"])
+  })
+
+  it("is empty when nothing is dirty and nothing is on the wire", () => {
+    expect(refsToFlush({ q2: cached.q2 }, new Set())).toEqual([])
+    expect(refsToFlush(null, new Set())).toEqual([])
   })
 })
 
