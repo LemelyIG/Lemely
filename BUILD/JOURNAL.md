@@ -1122,3 +1122,25 @@ activates target grades and closes at-risk rule 2 (D3.3). Carry into P4.4: the m
 side still has **no** topics (`topic_hint` is None on all 637 questions in all 33 parsed
 0625 schemes), so practice-targets-weakness does not join up until that fill is done at
 the db/io boundary. D4.4 §6.
+
+## 2026-08-08 — P4.3: the student profile, and the at-risk rule that never fired
+
+**Did.** P4.3 in two chunks. Migration 0009 adds four additive tables (profile,
+per-subject enrolment, papers, confidence ratings) plus a service and student-only
+onboarding routes on `/api/me`. Then the part that actually mattered: at-risk rule 2
+("predicted ≥2 grades below target") has been permanently *not evaluable* since Phase 3
+for want of a target-grade column, and is now live. D4.5 records both.
+
+**Learned.** The tempting shape for `assess_at_risk` was to keep its scalar
+`target_grade` and just start passing a value. That is wrong the moment a student enrols
+in two subjects — it would compare a physics paper against a maths target and put a false
+flag on a teacher's dashboard. Targets had to become a subject-keyed mapping resolved
+against the latest *grade-bearing* record. Worth remembering generally: activating a
+dormant rule is not the same task as filling in its missing input.
+
+**Also.** Two subagents deadlocked waiting on each other's gate run and produced nothing
+for ~20 minutes; I finished that chunk by hand. Watch for the wait-loop pattern — an
+agent that reports "waiting for X" twice is not working.
+
+**Next.** P4.4 — placement-test backend, which also carries P4.2's marking-side topic
+fill (D4.4 §6) and therefore needs the accuracy harness re-verified (MISSION §6 gate 5).
