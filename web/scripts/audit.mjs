@@ -36,9 +36,17 @@
  *     entries carry more than one `states[]` capture (see below), so the
  *     actual number of axe passes this run performs is higher than 22 — see
  *     `main()`'s end-of-run log for the honest total.
- * Deliberately still NOT in this registry (P4/P5 screens still on mock data):
- *   /student/subject/:code, /student/plan, /student/board, /student/onboard,
+ *   - 6 entries added by P4.8 chunk C for the Phase-4 onboarding/placement
+ *     screens (S-01, S-02, S-03 twice — available AND the honest
+ *     `no_questions` refusal — S-04, S-05), on four distinct seeded student
+ *     accounts. These shipped in P4.8 chunks A/B with no registry entry at
+ *     all, so `ui-thresholds` passed over them without ever loading one.
+ * Deliberately still NOT in this registry (P5 screens still on mock data):
+ *   /student/subject/:code, /student/plan, /student/board,
  *   /student/landing, /student/directions.
+ *   (`/student/onboard` was on this list until P4.8 chunk C — chunk A made it
+ *   real, and the list had gone stale, which is precisely how a route stays
+ *   unaudited: the exclusion note outlives the exclusion.)
  * Note "no *populated* fixture" is NOT on its own a reason to leave a route
  * out: /teacher/grading and /teacher/schemes are audited in their genuinely
  * empty state, because an unlooked-at route is exactly how this gate became
@@ -748,6 +756,37 @@ function buildRouteRegistry(seed) {
     userId: seed.emptyParent.userId,
     role: "parent",
   }
+  // ── P4.8 chunk C · the four S-01..S-05 sessions ──────────────────────────
+  // Four DISTINCT student accounts, one per state, because
+  // `PlacementService.availability` excludes a student's own prior placement
+  // questions for the same subject (D4.6 §4): reusing one account across
+  // "invite available" and "already completed" would report the pool
+  // exhausted on the very screen meant to show it available. The seed builds
+  // them that way deliberately — see scripts/seed_e2e.py's `placement` block.
+  const placementUnonboardedSession = {
+    accessToken: seed.placement.students.unonboarded.accessToken,
+    userId: seed.placement.students.unonboarded.userId,
+    role: "student",
+  }
+  const placementAvailableSession = {
+    accessToken: seed.placement.students.available.accessToken,
+    userId: seed.placement.students.available.userId,
+    role: "student",
+  }
+  const placementInProgressSession = {
+    accessToken: seed.placement.students.inProgress.accessToken,
+    userId: seed.placement.students.inProgress.userId,
+    role: "student",
+  }
+  const placementCompletedSession = {
+    accessToken: seed.placement.students.completed.accessToken,
+    userId: seed.placement.students.completed.userId,
+    role: "student",
+  }
+  const placementSubject = seed.placement.subjectCode
+  const placementTestUrl = `/student/placement/test/${seed.placement.students.inProgress.assignmentId}`
+  const placementResultUrl = `/student/placement/result/${seed.placement.students.completed.assignmentId}`
+
   const classId = seed.class.classId
   // The parent's one linked child (D3.11) is the "declining" student — same
   // account for both sessions above, just wearing a different role's token.
@@ -1130,6 +1169,100 @@ function buildRouteRegistry(seed) {
       path: "/student/parents",
       session: decliningStudentSession,
       ready: (page) => waitForText(page, "Your parents"),
+      authed: true,
+    },
+    // ── Student onboarding + placement (P4.8 chunk C · S-01..S-05) ────────
+    // These five screens shipped in P4.8 chunks A and B with NO registry
+    // entry, so `ui-thresholds` was green over them without ever loading
+    // one — the same vacuous pass this file's header warns about, and the
+    // reason the header's "deliberately NOT in this registry" list is
+    // corrected above rather than left to rot.
+    {
+      // S-01 · the subjects step, on a genuinely un-onboarded account (no
+      // profile, no enrolment) — the real first-run state, not a reset one.
+      screenId: "S-01",
+      slug: "student-onboard-subjects",
+      path: "/student/onboard",
+      session: placementUnonboardedSession,
+      ready: (page) => waitForText(page, "What are you studying?"),
+      authed: true,
+    },
+    {
+      // S-02 · the questionnaire step. Only reachable by actually completing
+      // S-01, so `setup` drives the real UI (pick Physics, Continue) rather
+      // than deep-linking a state the product cannot get into on its own.
+      // `lighthouse: false` — a second state of the onboarding *screen*, not
+      // a second route to score.
+      screenId: "S-02",
+      path: "/student/onboard",
+      session: placementUnonboardedSession,
+      authed: true,
+      states: [
+        {
+          state: "questionnaire",
+          slug: "student-onboard-questionnaire",
+          lighthouse: false,
+          setup: async (page) => {
+            await waitForText(page, "What are you studying?")
+            await clickButtonByText(page, "Physics")
+            await clickButtonByText(page, "Continue")
+          },
+          ready: (page) => waitForText(page, "Which school"),
+        },
+      ],
+    },
+    {
+      // S-03 · placement invite, AVAILABLE. 0625 is the only subject with a
+      // viable bank, and the seed guarantees it (a pinned Paper-2 bank of its
+      // own MCQ rows — see scripts/seed_e2e.py's PLACEMENT_PAPER_NUMBER).
+      screenId: "S-03",
+      slug: "student-placement-invite",
+      path: `/student/placement/${placementSubject}`,
+      session: placementAvailableSession,
+      ready: (page) => waitForText(page, "Get a real starting picture"),
+      authed: true,
+    },
+    {
+      // S-03 · placement invite, UNAVAILABLE — and this is not a second-class
+      // capture. 0580/0606 genuinely have zero ingested questions (D4.6 §5),
+      // so the honest `no_questions` refusal is real product behaviour P4.8
+      // exists to keep on screen, and auditing only the happy path would be
+      // the vacuous pass again. Same screen, own session-free state.
+      screenId: "S-03",
+      path: "/student/placement/0580",
+      session: placementAvailableSession,
+      authed: true,
+      states: [
+        {
+          state: "unavailable",
+          slug: "student-placement-invite-unavailable",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "No placement test yet for this subject"),
+        },
+      ],
+    },
+    {
+      // S-04 · placement test in progress — the product's FIRST question-
+      // rendering + answer-input surface, and the one that owns the answer-
+      // persistence behaviour four separate defects were fixed in (D4.15).
+      // The seed leaves this assignment created and never submitted.
+      screenId: "S-04",
+      slug: "student-placement-test",
+      path: placementTestUrl,
+      session: placementInProgressSession,
+      ready: (page) => waitForText(page, "Question 1 of"),
+      authed: true,
+    },
+    {
+      // S-05 · placement result, really marked: the seed takes and submits
+      // this one through the unmodified quiz take/submit/mark path, with
+      // exactly one deliberately wrong answer, so the topic breakdown is
+      // backed by a real WeaknessRecord rather than a stubbed payload.
+      screenId: "S-05",
+      slug: "student-placement-result",
+      path: placementResultUrl,
+      session: placementCompletedSession,
+      ready: (page) => waitForText(page, "starting picture"),
       authed: true,
     },
   ]
