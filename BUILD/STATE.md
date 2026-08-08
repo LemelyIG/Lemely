@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T21:30:00Z   # P4.8 DONE (all 4 chunks). Next: P4.9 (practice + flashcards frontend).
+last_updated: 2026-08-09T22:10:00Z   # P4.9 opened, scoped by measurement. Next: P4.9 chunk 0 (backend read paths).
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -894,7 +894,74 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
   memoization. Lighthouse perf 82, so not currently measurable — but this exact ticker is what
   turned an unstable react-query object identity into a duplicate-PUT-per-second bug (D4.15 §1).
 
-- [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
+- [ ] doing — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
+      Backends this composes: `/api/student/practice/*` (P4.5, 3 routes: preview / create /
+      export), `/api/student/flashcards/*` (P4.6 chunk C, 10 routes), and the **existing**
+      `/api/student/quizzes/{assignment_id}` take/save/submit path — practice sets are
+      quiz-shaped and `list_assigned` already carries `kind IN (practice, study_plan)`.
+      **Five scoping facts established by measurement before any chunk was briefed — do not
+      re-derive:**
+      1. **A practice set is marked but its result cannot be read.** `POST .../submit`
+         (`quiz.py:837`) triggers `QuizMarkingService.mark_submission` on a background thread
+         for **every** kind, so a submitted practice set really is marked and the marks are in
+         the DB. But `StudentQuizTakeDTO` carries **no score, no per-question marks and no
+         feedback at all** (`schemas_quiz.py:303` — header + questions only), and the only
+         result route in the product, `GET /api/student/placement/{id}/result`, is narrowed by
+         `Quiz.kind == QuizKind.placement` (`placement_repo.py:476`) so a practice assignment
+         404s there. **`practice.py` has exactly three routes and none of them is a result.**
+         So S-21's "finish action producing a short summary" has no backend: a student can
+         generate a set, work it, submit it, and there is nowhere in the product to see how
+         they did. The marking already ran — only the *read* is missing. Same class as P4.8
+         chunk 0: fix the data seam before building the screen that would display it.
+      2. **S-20's topic-selection control has no data source.** There is **no topic-listing
+         endpoint anywhere in `lemely/web/`** (checked every router). `survey_past_paper_
+         questions` is CLI-level and unscoped; `QuestionBankService.count_by_band` is
+         per-band and staff-scoped. The teacher builder (T-09) works around this with
+         **free-text topic entry** plus a live `pool-count` — acceptable for a teacher, wrong
+         for a student, who cannot be expected to type `"4.3 Electric circuits"` exactly.
+         The list must be filtered through the *same* clauses `_preview` uses (enrolled
+         papers, `visible_bank_filter`, chunk-0's `renderable_bank_filter`) or it will offer
+         topics the pool cannot serve.
+      3. **Weak-topic prefill must come from the server, not the client.** S-20 says "topic
+         selection pre-filled with their weak topics", and there are **two different weak-topic
+         vocabularies in this codebase**: `PracticeService._preview` resolves
+         `weak_topics_only` from `WeaknessRecord` rows (D4.10 §2, P4.2 `"<code> <name>"`
+         labels), while the student subject-overview `WeakThreadDTO`
+         (`schemas_student.py:49`) comes from `aggregate_weaknesses_from_history`. Prefilling
+         the chips from the screen's own weakness list would silently join against nothing.
+         `preview` **returns** its resolved `topics` — read them back from there.
+      4. **Reveal-answer (UI spec S-21) cannot be built honestly and is deliberately not
+         built.** No route returns a model answer for a bank question, and
+         `PracticeExportQuestionDTO` excludes `modelAnswer`/`markSchemePoints`/`mcqAnswer`
+         **structurally** on purpose (D3.8). Adding a reveal route would put marking material
+         on a student surface. The spec's "deliberate friction so it isn't the default" is
+         satisfied by submitting and reading the marked result, where the answer arrives
+         attributed and carrying its confidence — not by a raw model-answer dump. Recorded as
+         a scope decision, not a silent omission.
+      5. **The local dev DB has drifted from STATE's recorded figures — measure, do not
+         restate.** `question_bank` now holds **801** `past_paper` 0625 rows (739 topiced, 29
+         distinct topics) plus **745** `generated` and 1 `teacher_upload`, against the 273
+         P4.1 recorded; 528 past-paper and 390 generated rows were added 2026-08-08. Any
+         pool figure quoted for P4.9 must be re-measured live through the service filters,
+         not carried forward from P4.1/P4.5.
+      **Chunk plan (2026-08-09):**
+      - [ ] chunk 0 — backend, the two missing read paths. No migration, $0.00, zero Gemini.
+        `GET /api/student/practice/{assignment_id}/result` (owner-scoped, `kind` narrowed to
+        practice exactly as placement narrows to placement; must distinguish *not yet marked*
+        from *marked* rather than collapsing both to an empty body — S-21 polls it the way
+        S-05 polls placement) and `GET /api/student/practice/{subject_code}/topics` (distinct
+        servable topics + **real** per-topic counts through the same clauses `_preview` uses).
+        Both pinned by their inverses or they will silently offer/return nothing.
+      - [ ] chunk A — S-20 + S-21 frontend. `QuizTaker` is **composed, not forked** (its own
+        docstring names P4.9 as a caller); the finish summary reads chunk 0's result route.
+      - [ ] chunk B — S-22 + S-23 frontend on the existing 10 flashcard routes. No backend
+        work expected. `source: "ai"` must stay visible on the card for its whole life, and
+        `generatedCount` (not `requestedCount`) is what the screen reports.
+      - [ ] chunk C — the standing UI gate (gate 8) for all four screens: audit-registry
+        entries with their **real** states (including the honest `no_questions` /
+        `no_weaknesses` / `insufficient_pool` refusals and S-22's "nothing due today"), axe
+        zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus, `<h1>` per screen
+        (D4.16's defect — do not repeat it).
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
       current placeholder `StudyPlan.tsx`.
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
