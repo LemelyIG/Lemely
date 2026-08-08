@@ -768,7 +768,23 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         **Visually spot-checked by the orchestrator rather than trusted to the string assert:**
         the `questionnaire-skipped` capture shows the thumb at `min` with the readout reading
         **"Not set"**, not "0 hours/week" — D4.5's honesty rendering is real on screen, which is
-        the whole reason that state was given its own capture.
+        the whole reason that state was given its own capture. S-05 checked the same way: the
+        title promotion is visually identical, and the screen really does render "This is a
+        baseline, not a grade", the working-level refusal ("we're not estimating a working level
+        from it yet") and **"Not enough data yet."** instead of a fabricated weakest topic.
+        **Full 13-gate run: ALL PASS, 0 skipped, exit 0** (foreground, ~19 min incl. the
+        playwright + audit legs). **2307 tests / 6 skipped / 0 failed / 90.30% cov**
+        (chunk-0 baseline 2297 / 90.30% — +10 from `tests/test_seed_e2e.py`, coverage flat).
+        Note for whoever reads a raw `pytest` log next: **the backend diff since chunk 0 is NOT
+        empty** — earlier chunk-C sessions added `scripts/seed_e2e.py` (+398) and
+        `tests/test_seed_e2e.py` (+192), so the carried-forward 2297 figure needed re-measuring
+        rather than restating.
+        **One measurement trap worth not re-deriving:** a bare `.venv/bin/pytest` reports
+        **1 failed** — `tests/architecture/test_import_linter.py` shells out to `lint-imports`,
+        which is not on PATH unless you export `.venv/bin` yourself. It is a `FileNotFoundError`
+        in the harness, not a broken contract: with PATH set the test passes and `lint-imports`
+        exits 0 ("Contracts: 2 kept, 0 broken"). `check.sh` exports PATH at its line 34, which is
+        why its `pytest` gate is green. Verified both ways rather than assumed.
         **Session 5 progress (2026-08-09):** the seed was run standalone against the live stack
         and is green — exit 0, all four placement accounts created, `bankQuestionCount: 24` on
         paper 2, and every key `audit.mjs` dereferences (`assignmentId` on inProgress/completed,
