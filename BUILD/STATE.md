@@ -364,7 +364,20 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         `datetime.now()` inside, so scheduling is testable by inversion.
         SM-2 state lives **on the card**, not in a join table, because a deck is owned by exactly
         one student — there is no shared-deck case to key around in this phase.
-      - [ ] chunk B — `lemely/db/flashcard_repo.py` (`FlashcardService`) + AI generation
+      - [x] chunk B — **done** (`03fee94`) — `FlashcardService` + AI generation, all three
+        honesty rules pinned by tests. 36 tests, Gemini mocked, $0.00.
+        **Found the chunk B work already on disk uncommitted** from a killed session and
+        verified it rather than trusting it: 38 tests passed but `ruff` was **red on 8 findings**
+        in `flashcard_repo.py` (the same "subagent reports done with its own gate red" pattern
+        P4.5 hit — keep running the orchestrator's own gate pass, the handover's word is not
+        evidence). Fixed, plus one real gap: **there was no `delete_deck`**, so a student handed
+        an unwanted AI deck could only delete cards one at a time and keep the husk. Added with
+        cascade proven at both ORM (`delete-orphan`) and DB (`ON DELETE CASCADE`) level, plus
+        subject-filter and due-limit tests that had no coverage.
+        **Weakness→topic resolution reads `WeaknessRecord` rows verbatim** (D4.10 §2), reduced
+        to a single topic because `FlashcardDeck.topic` is singular; ties broken alphabetically
+        so the choice is deterministic rather than whatever the planner returned.
+      - [ ] chunk B (original plan, kept for the rationale) — `lemely/db/flashcard_repo.py` (`FlashcardService`) + AI generation
         (`lemely/core/flashcards.py` schemas + `lemely/io/flashcard_generation.py` mirroring
         `QuestionGenerator`, mocked in tests, $0.00 live spend).
         **Honesty rules, non-negotiable:** an AI-written card is stored `source='ai'` and stays
