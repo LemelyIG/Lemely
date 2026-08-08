@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T06:30:00Z
+last_updated: 2026-08-09T12:00:00Z
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -623,8 +623,18 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         `Onboarding.tsx`, whose own docstring says "there is no multi-step wizard backend yet" —
         there is now. Whether the legacy `POST /api/student/onboarding` route and
         `usePostOnboarding` die here or in P4.11 is a chunk-A decision to record, not assume.
-      - [ ] doing — chunk B (started 2026-08-09; resumed twice, latest 2026-08-09 third session).
-        **Third-session state: `a690040` fixes a FOURTH answer-loss defect (D4.15), found by
+      - [x] chunk B — **done** (verified 2026-08-09, fourth session). The gate run that was
+        "in flight" at the previous checkpoint has now **completed and is green**:
+        **all 13 gates PASS, 0 skipped** (`ruff-check`, `ruff-format`, `mypy`, `import-linter`,
+        `pytest`, `web-typecheck`, `web-lint`, `web-build`, `web-test`, `impeccable-detect`,
+        `playwright-e2e`, `puppeteer-audit`, `ui-thresholds`). Run in the **foreground** per the
+        environment note; exit 0.
+        **Backend figures are unchanged and that is verified, not assumed:**
+        `git diff --stat 27744b5..HEAD -- lemely tests alembic scripts` is **empty**, so chunk B
+        carries **zero backend diff** and chunk 0's **2297 tests / 6 skipped / 0 failed /
+        90.30% cov** still stand. The moving number is **224 web unit tests**, green. $0.00 Gemini.
+        Narrative of what chunk B actually fixed follows.
+        **`a690040` fixes a FOURTH answer-loss defect (D4.15), found by
         actually running gate 7 — the previous two sessions never ran an orchestrator gate pass
         at all.** Two saves for one question could be on the wire together (reconnect retry with
         the cached value, debounced edit with newer text — that overlap was deliberate, so a
@@ -648,8 +658,8 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         zero. `placementInviteSubject` orders by the S-01 catalogue.
         11 new tests, **each verified by inversion** (probes fail exactly 5 / 5 / 3).
         **224 web unit tests green, `tsc --noEmit` clean, `pre-commit run --all-files` clean.**
-        Full 13-gate run was in flight at this checkpoint — do not quote it as green until the
-        line below says so. $0.00 Gemini.
+        (The full 13-gate run that was in flight at that checkpoint has since completed green —
+        see the chunk-B header above.) $0.00 Gemini.
         Previous-session narrative follows.
         **The gaps the previous session recorded below are now closed and the extraction it
         described is on disk**: `placementData.ts` carries `placementInviteView`/
@@ -717,7 +727,19 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         `not available` + machine-readable reason** for 0580/0606; S-04 owns answer persistence
         across a lost connection and resume (UI spec §S-04 states both); S-05 is framed as a
         *baseline*, never a grade.
-      - [ ] todo — chunk C — the standing UI gate for all five screens (gate 8).
+      - [ ] doing — chunk C (opened 2026-08-09) — the standing UI gate for all five screens
+        (gate 8: QUALITY-BAR.md, `/impeccable audit` on the changed files, `npx impeccable
+        detect` clean, axe zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus for
+        every screen × state × breakpoint, no unintended regression against baselines).
+        **`impeccable-detect` and `ui-thresholds` already pass — that is NOT evidence the new
+        screens are covered.** The audit registry is P3.10's 24-route/34-state one (D3.17/D3.18)
+        and predates S-01..S-05; a green `ui-thresholds` on a registry that never lists the new
+        routes is a gate passing *vacuously*. First job of this chunk is to establish, by
+        reading the registry rather than assuming, which of S-01..S-05 are absent from it, and
+        to add them with their **real** states — including the honesty states P4.8 exists to
+        keep on screen: placement `not available` + machine-readable reason for 0580/0606
+        (D4.6 §5), and the skipped-questionnaire-field case where a skipped answer is `NULL`
+        and must not render as an answer the student gave (D4.5).
 - [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
       current placeholder `StudyPlan.tsx`.
