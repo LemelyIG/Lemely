@@ -398,8 +398,20 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     }
   }
 
+  /* Every branch below carries an `sr-only` h1 rather than a visible one,
+   * because this screen deliberately has no visible page title: the identity
+   * a student needs mid-test is "Question 3 of 10" and the countdown, and a
+   * banner title would push both down the viewport on a 380px phone. The
+   * heading still has to exist — QUALITY-BAR.md requires one h1 per page, and
+   * a screen reader otherwise lands on this screen with nothing to orient by.
+   * P3's ReviewItem/QuizBuilder set the same precedent. */
   if (isPending) {
-    return <div className="lm-screen text-body-md text-t2">Loading your test…</div>
+    return (
+      <div className="lm-screen text-body-md text-t2">
+        <h1 className="sr-only">Test in progress</h1>
+        Loading your test…
+      </div>
+    )
   }
 
   if (isError || !data) {
@@ -410,12 +422,20 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
           ? "This test couldn't be found."
           : error?.message ?? "Couldn't load this test."
     return (
-      <ErrorState heading="Couldn't load your test" body={message} className="lm-screen" />
+      <>
+        <h1 className="sr-only">Test in progress</h1>
+        <ErrorState heading="Couldn't load your test" body={message} className="lm-screen" />
+      </>
     )
   }
 
   if (!current) {
-    return <ErrorState heading="This test has no questions" className="lm-screen" />
+    return (
+      <>
+        <h1 className="sr-only">Test in progress</h1>
+        <ErrorState heading="This test has no questions" className="lm-screen" />
+      </>
+    )
   }
 
   const total = questions.length
@@ -429,6 +449,10 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
 
   return (
     <div className={cn("lm-screen mx-auto flex max-w-[820px] flex-col gap-5", className)}>
+      {/* The real title, not a generic one — this component is composed by
+       * placement now and by practice/assigned quizzes in P4.9/P5, so the
+       * heading names whichever test the student is actually sitting. */}
+      <h1 className="sr-only">{data.header.quizTitle}</h1>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex flex-col gap-0.5">
           <div className="text-dense-sm text-t2">

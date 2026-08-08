@@ -67,7 +67,11 @@ function SkippableSlider({
 function QuestionShell({ question, children }: { question: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-5">
-      <div className="font-serif text-display-md leading-display text-t1">{question}</div>
+      {/* The question IS the page title on this step, and exactly one
+       * `QuestionShell` renders at a time (`steps[stepIndex]` above), so this
+       * is the screen's single h1 — not a decorative div wearing display
+       * type. QUALITY-BAR.md: "one h1 per page, heading order unbroken". */}
+      <h1 className="font-serif text-display-md leading-display text-t1 m-0">{question}</h1>
       {children}
     </div>
   )

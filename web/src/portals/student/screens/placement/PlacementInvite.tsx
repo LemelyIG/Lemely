@@ -53,18 +53,31 @@ export function PlacementInvite() {
     navigate("/student")
   }
 
+  /* The `sr-only` h1 on the loading and error branches follows the P3
+   * pattern (ReviewItem/StudentDetail/QuizResults): every branch of a screen
+   * is still a page and still owes a level-one heading, and `ErrorState`
+   * renders its own heading as a non-heading element (a Phase-2.5 gap
+   * recorded in that phase's report §8). */
   if (isPending) {
-    return <div className="lm-screen text-body-md text-t2">Checking availability…</div>
+    return (
+      <div className="lm-screen text-body-md text-t2">
+        <h1 className="sr-only">Placement test</h1>
+        Checking availability…
+      </div>
+    )
   }
 
   if (isError || !data) {
     return (
-      <ErrorState
-        heading="Couldn't check placement-test availability"
-        body={error?.message}
-        action={{ label: "Try again", onClick: () => void refetch() }}
-        className="lm-screen"
-      />
+      <>
+        <h1 className="sr-only">Placement test</h1>
+        <ErrorState
+          heading="Couldn't check placement-test availability"
+          body={error?.message}
+          action={{ label: "Try again", onClick: () => void refetch() }}
+          className="lm-screen"
+        />
+      </>
     )
   }
 
@@ -74,7 +87,7 @@ export function PlacementInvite() {
   if (view.kind === "unavailable") {
     return (
       <div className="lm-screen mx-auto flex max-w-[560px] flex-col gap-6">
-        <div className="font-serif text-display-md leading-display text-t1">{subjectName}</div>
+        <h1 className="font-serif text-display-md leading-display text-t1 m-0">{subjectName}</h1>
         <Card>
           <CardBody className="flex flex-col gap-3">
             <div className="text-body-lg font-medium text-t1">{view.message.heading}</div>
@@ -91,9 +104,9 @@ export function PlacementInvite() {
   return (
     <div className="lm-screen mx-auto flex max-w-[560px] flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <div className="font-serif text-display-md leading-display text-t1">
+        <h1 className="font-serif text-display-md leading-display text-t1 m-0">
           Get a real starting picture in {subjectName}
-        </div>
+        </h1>
         <p className="text-body-md text-t2">
           A short placement test built from real past-paper questions across the syllabus gives
           us a much better starting picture than a guess — strongest and weakest topics, not a

@@ -51,9 +51,9 @@ export function SubjectsStep({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <div className="font-serif text-display-lg leading-display">
+        <h1 className="font-serif text-display-lg leading-display m-0">
           What are you studying?
-        </div>
+        </h1>
         <p className="text-body-md text-t2 text-pretty">
           Pick a qualification and every subject you're sitting — we'll build the
           rest of onboarding and your study plan around this.

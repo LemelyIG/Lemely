@@ -40,18 +40,30 @@ export function PlacementResult() {
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
   const { data, isPending, isError, error, refetch } = usePlacementResult(assignmentId)
 
+  /* `sr-only` h1 per branch, as in PlacementInvite — see the note there.
+   * Deliberately worded "starting picture", never "result" or "score": S-05
+   * is a baseline, and the heading a screen reader announces first should not
+   * imply a grade the rest of the screen then walks back. */
   if (isPending) {
-    return <div className="lm-screen text-body-md text-t2">Loading your results…</div>
+    return (
+      <div className="lm-screen text-body-md text-t2">
+        <h1 className="sr-only">Your placement starting picture</h1>
+        Loading your results…
+      </div>
+    )
   }
 
   if (isError || !data) {
     return (
-      <ErrorState
-        heading="Couldn't load your placement result"
-        body={error?.message}
-        action={{ label: "Try again", onClick: () => void refetch() }}
-        className="lm-screen"
-      />
+      <>
+        <h1 className="sr-only">Your placement starting picture</h1>
+        <ErrorState
+          heading="Couldn't load your placement result"
+          body={error?.message}
+          action={{ label: "Try again", onClick: () => void refetch() }}
+          className="lm-screen"
+        />
+      </>
     )
   }
 
@@ -62,9 +74,9 @@ export function PlacementResult() {
     return (
       <div className="lm-screen mx-auto flex max-w-[560px] flex-col items-center gap-4 py-16 text-center">
         <CircleNotch size={28} className="animate-spin text-accent" aria-hidden />
-        <div className="text-body-lg font-medium text-t1">
+        <h1 className="text-body-lg font-medium text-t1 m-0">
           Marking your {subjectName} placement test
-        </div>
+        </h1>
         <p className="text-body-md text-t2">
           This usually only takes a moment. This page will update on its own — no need to refresh.
         </p>
@@ -80,9 +92,9 @@ export function PlacementResult() {
   return (
     <div className="lm-screen mx-auto flex max-w-[720px] flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <div className="font-serif text-display-md leading-display text-t1">
+        <h1 className="font-serif text-display-md leading-display text-t1 m-0">
           Your {subjectName} starting picture
-        </div>
+        </h1>
         <p className="text-body-md text-t2">
           This is a baseline, not a grade — a snapshot of where you're starting from, so your
           study plan can target what actually needs work. It gets more accurate the more you
