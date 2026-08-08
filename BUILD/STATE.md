@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T12:00:00Z
+last_updated: 2026-08-09T21:30:00Z   # P4.8 DONE (all 4 chunks). Next: P4.9 (practice + flashcards frontend).
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
