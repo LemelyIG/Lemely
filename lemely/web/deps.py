@@ -41,6 +41,7 @@ from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
 from lemely.io.storage import HttpStorageBackend, StorageBackend
@@ -329,6 +330,21 @@ def get_notification_prefs_service() -> NotificationPreferencesService:
 
 
 @lru_cache(maxsize=1)
+def get_student_profile_service() -> StudentProfileService:
+    """Return the process-wide :class:`StudentProfileService` singleton (P4.3 chunk B).
+
+    Wired with the DB session factory alone — mirrors :func:`get_notification_prefs_service`:
+    a student's profile has no cross-tenant ownership question (tenancy is
+    just ``auth.user_id == row.user_id``, enforced at the router layer), so
+    this service needs no composed service or account-creation seam. The
+    clock is left at its default (real UTC now); tests override this
+    dependency with a service built on an injected fake clock and a
+    throwaway Postgres database.
+    """
+    return StudentProfileService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_announcement_service() -> AnnouncementService:
     """Return the process-wide :class:`AnnouncementService` singleton (P3.8 chunk a).
 
@@ -482,3 +498,4 @@ def reset_singletons() -> None:
     get_quiz_taking_service.cache_clear()
     get_quiz_marking_service.cache_clear()
     get_announcement_service.cache_clear()
+    get_student_profile_service.cache_clear()

@@ -28,6 +28,21 @@ class Role(enum.Enum):
     platform_admin = "platform_admin"
 
 
+class QualificationLevel(enum.Enum):
+    """Qualification track a student is studying towards (P4.3 S-02, D4.5).
+
+    Free-text ``grade_level`` (e.g. "Year 11") captures the school-year
+    dimension; this captures the *qualification* dimension separately, since
+    the same year group can sit different qualifications (an IGCSE resit
+    alongside AS-level subjects, for instance).
+    """
+
+    igcse = "igcse"
+    o_level = "o_level"
+    as_level = "as_level"
+    a_level = "a_level"
+
+
 class SessionMonth(enum.Enum):
     """CAIE exam session month codes.
 
@@ -285,6 +300,7 @@ __all__ = [
     "MembershipRole",
     "NotificationType",
     "PlanInterval",
+    "QualificationLevel",
     "QuestionDifficulty",
     "QuestionSource",
     "QuizQuestionStatus",

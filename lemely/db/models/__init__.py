@@ -26,6 +26,7 @@ from lemely.db.models.enums import (
     MembershipRole,
     NotificationType,
     PlanInterval,
+    QualificationLevel,
     QuestionDifficulty,
     QuestionSource,
     QuizQuestionStatus,
@@ -49,6 +50,12 @@ from lemely.db.models.ops import (
     ReviewQueueItem,
 )
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat
+from lemely.db.models.profiles import (
+    StudentConfidenceRating,
+    StudentEnrolmentPaper,
+    StudentProfile,
+    StudentSubjectEnrolment,
+)
 from lemely.db.models.quizzes import (
     QuestionBank,
     Quiz,
@@ -75,6 +82,7 @@ def import_all_models() -> None:
         engagement,
         ops,
         orgs,
+        profiles,
         quizzes,
         users,
     )
@@ -104,6 +112,7 @@ __all__ = [
     "ParentChildLink",
     "PlanInterval",
     "PlanTier",
+    "QualificationLevel",
     "QuestionBank",
     "QuestionDifficulty",
     "QuestionResult",
@@ -127,6 +136,10 @@ __all__ = [
     "SeatStatus",
     "SessionMonth",
     "Streak",
+    "StudentConfidenceRating",
+    "StudentEnrolmentPaper",
+    "StudentProfile",
+    "StudentSubjectEnrolment",
     "Subject",
     "Subscription",
     "SubscriptionStatus",
