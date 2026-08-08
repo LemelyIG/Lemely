@@ -267,7 +267,7 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         **Measured after all three fixes (the number to quote, not re-derive): 0625 assembles
         9 questions / 15.2 min / all 6 physics topics / 2 difficulty bands. 0580 and 0606
         return `no_questions` — correct, they have zero ingested questions (D4.6 §5).**
-      - chunk B-4 — *next* — the DB service + the three routes. Everything above is landed and
+      - [ ] doing — chunk B-4 (started 2026-08-08) — the DB service + the three routes. Everything above is landed and
         measured; what remains is wiring, with no open design questions:
         `PlacementService` (availability / create / result) creating the `kind=placement`,
         `student_id`-owned `Quiz` + self-`QuizAssignment` + frozen `QuizQuestion` snapshot from
