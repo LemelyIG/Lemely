@@ -536,6 +536,50 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       (they have zero ingested questions — D4.6 §5, not a gap to code around), and every
       S-02 questionnaire field is skippable, where a skipped answer is `NULL` and must not
       render as an answer the student gave (D4.5).
+      **Two scoping facts established by measurement before any chunk was briefed — do not
+      re-derive:**
+      1. **No maths renderer is needed, and adding one would be speculative work.** MISSION §4
+         requires maths notation to render properly and be *verified in screenshots*. Measured
+         the actual banked corpus: **1 of 273** stems contains anything LaTeX-shaped, and the
+         maths that is present is **plain Unicode** (`Ω α β γ ρ θ ² ³ ⁵ × °`, 21 distinct
+         non-ASCII chars) which every browser renders natively. **Do not add KaTeX/MathJax.**
+         What the stems *do* need is `white-space: pre-line` — they carry real newlines that
+         structure the question, and collapsing them is the actual rendering risk here.
+      2. **No student quiz-taking screen exists anywhere in `web/`.** P3.5 built the take/
+         submit *backend* and P3.8 built only the teacher side (`QuizBuilder`/`QuizResults`).
+         So S-04 is not "reuse the quiz screen" — it is the first question-rendering +
+         answer-input surface in the product, and P4.9/P5 will compose it. Build it as a
+         reusable component, not as a screen-local one-off.
+      **Chunk plan (2026-08-09):**
+      - [ ] **doing** — chunk 0 — **the figure-dependency defect, found by measuring the live
+        bank while scoping S-04.** `question_bank` has **no image/figure column at all** (verified
+        against `information_schema`) — P4.1 excluded 654 figure-bearing leaves, but **4 stems
+        that survived still say "The diagram shows …"** and are placement-eligible
+        (`0625_w24_qp_13#39`, `0625_s24_qp_11#5`, `0625_w24_qp_11#36`, `0625_s24_qp_11#19`;
+        a looser pattern flags up to 18, the 4 are the provable ones).
+        **Why this is not cosmetic and not deferrable behind the frontend:** the 0625 placement
+        assembles exactly **9** questions, so one such draw makes ~11% of the test unanswerable.
+        The student loses those marks, the placement records a weakness they **do not have**, and
+        that false weakness is precisely what seeds the P4.7 study plan and the P4.5
+        weakness-targeted practice. It renders perfectly and screenshots clean — invisible to
+        every gate this build runs, which is why it gets fixed before the screen that would
+        display it. Same class as D3.21's confidently-wrong paper 22.
+        Fix as **exclusion from serving, not deletion**: a deterministic detector, no Gemini, so
+        placement/practice never draw a question the bank cannot fully render. Must be pinned by
+        its inverse (a non-figure stem is still servable) or it will silently empty the pool.
+      - [ ] todo — chunk A — S-01 + S-02: the real multi-step wizard on the **P4.3** backend
+        (`PATCH /api/me/student-profile`, `PUT .../enrolments`, `PUT .../confidence-ratings`,
+        `POST .../complete-onboarding`) + the TS types/hooks for them, which do not exist yet
+        (`meTypes.ts` covers only `ProfileDTO`). **Replaces** the legacy single-step
+        `Onboarding.tsx`, whose own docstring says "there is no multi-step wizard backend yet" —
+        there is now. Whether the legacy `POST /api/student/onboarding` route and
+        `usePostOnboarding` die here or in P4.11 is a chunk-A decision to record, not assume.
+      - [ ] todo — chunk B — S-03 + S-04 + S-05 on `/api/student/placement/*` + the existing
+        `/api/student/quizzes/...` take/resume/submit path. S-03 must render the **honest
+        `not available` + machine-readable reason** for 0580/0606; S-04 owns answer persistence
+        across a lost connection and resume (UI spec §S-04 states both); S-05 is framed as a
+        *baseline*, never a grade.
+      - [ ] todo — chunk C — the standing UI gate for all five screens (gate 8).
 - [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
       current placeholder `StudyPlan.tsx`.
