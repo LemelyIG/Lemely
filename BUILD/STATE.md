@@ -211,13 +211,22 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       so weakness topics and bank topics share one vocabulary. Re-verify the accuracy harness
       (MISSION §6 gate 5) since it touches the marking output.
       **Chunk plan (2026-08-08):**
-      - chunk A — *doing* — marking-side topic fill (D4.4 §6). Layering verified by the
-        orchestrator: `lemely.db` is **outside** the import-linter `app > io > core` contract
-        (`exhaustive = false`), so `attempt_repo` may import both `core.topics` and
-        `io.syllabus_topics`. The trap to watch: `summarize_weaknesses(correction)` runs
-        **before** `persist_quiz_correction` (`quiz_marking_repo.py:275`), so filling the topic
-        only inside `_persist` fixes `WeaknessRecord.topic` but NOT the grouping — the fill must
-        land where it changes the grouping on both the quiz and past-paper paths.
+      - [x] chunk A — **done** — marking-side topic fill (D4.4 §6, now **D4.7**).
+        `fill_correction_topics` + `_resolve_topic_labels` in `lemely/db/attempt_repo.py`,
+        called from `grade_paper` and `QuizMarkingService.mark_submission` **before**
+        `summarize_weaknesses` (the flagged trap — filling only in `_persist` would fix the
+        column and leave the grouping on `"unknown"`). Deterministic, $0.00, zero Gemini.
+        **Orchestrator-measured on the real corpus, not from a subagent report:** the first
+        implementation classified each node's own fields only and reached **108/1329 marked
+        nodes (8.1%)** — two structural defects found by measuring: it ignored the `parts`
+        subtree (parents carry no prose of their own) and had no ancestor inheritance.
+        Both fixed → **428 nodes (32.2%) across 26 topics spanning all six 0625 topics**.
+        **Do not re-measure and do not read the 32.2% as a shortfall:** 520 of the 1329 nodes
+        are MCQ and a CAIE MCQ scheme carries only the answer letter, so they are
+        unclassifiable *from a mark scheme* at any depth (D3.7's wall). The reachable
+        population is the 809 non-MCQ nodes and the fill reaches **52.9%** of them. Each rule
+        verified by inversion. 5 new tests + the 4 already written; 21/21 in
+        `tests/test_attempt_repo.py`.
       - chunk B — *blocked on D4.6* — placement assembly/serve/resume/submit. The fork the
         architect is deciding: `Quiz.teacher_id` and `QuizAssignment.class_id` are both
         **NOT NULL**, but a placement test has no teacher and no class. MISSION forbids forking

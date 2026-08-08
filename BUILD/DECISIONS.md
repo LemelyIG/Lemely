@@ -3,6 +3,63 @@
 
 ## Phase 4
 
+### D4.7 — The marking-side topic fill lands, and its honest reach is 52.9% of the questions that *can* be classified (P4.4 chunk A)
+
+D4.4 §6 left the marking side of the topic vocabulary open: `CorrectedQuestion.topic` comes
+from `topic_hint`, measured `None` on all 637 questions across the 33 deterministically-parsed
+0625 schemes, so `summarize_weaknesses` grouped every real-paper question under `"unknown"`.
+`fill_correction_topics` (`lemely/db/attempt_repo.py`) closes it by running the *same* P4.2
+deterministic classifier the bank side uses against the mark scheme's own prose. $0.00, zero
+Gemini.
+
+**Where it is called, and why not at persist time.** Both marking paths — `grade_paper`
+(past paper) and `QuizMarkingService.mark_submission` (quiz) — call it immediately after
+`apply_integrity_checks` and **before** `summarize_weaknesses`. This is the trap the P4.4
+chunk plan flagged: both paths compute the `WeaknessReport` *before* calling
+`persist_*_correction`, so filling the topic inside `AttemptRepository._persist` would have
+fixed the `QuestionResult.topic` column while leaving the weakness **grouping** on
+`"unknown"` — and the grouping is the whole point, since P4.5's practice-targets-weakness
+joins on it.
+
+**Two structural rules, both measured rather than assumed** (1329 marked nodes; `correct_paper`
+iterates `all_questions_flat`, so it marks parents *and* leaves, and the fill must resolve the
+same set):
+
+| rule | nodes filled | of all 1329 | of the 809 non-MCQ |
+|---|---|---|---|
+| node's own fields only (first implementation) | 108 | 8.1% | 13.3% |
+| + classify from the node's whole **subtree** | 198 | 14.9% | 24.5% |
+| + inherit the **nearest ancestor's** label | 428 | 32.2% | **52.9%** |
+
+Rule 1 exists because a parent node carries almost no prose of its own — the marking content
+hangs off its `parts`, which the first implementation ignored. Rule 2 is inheritance, not
+guesswork: `3(b)(ii)` whose own mark points read "correct substitution" *is structurally part
+of* question 3, and the ancestor's evidence is a superset of the child's. Both stay gated by
+`is_writable`, so a `low`-band match is still discarded (D4.4 §5 — there is no per-question
+topic-confidence column, so writing a guess would launder it into apparent fact), and a real
+`topic_hint` is never overwritten. Result: **428 nodes across 26 distinct topics spanning all
+six 0625 syllabus topics.**
+
+**The ceiling is structural and is recorded so it is not later mistaken for a defect.**
+520 of the 1329 nodes are MCQ, and a CAIE MCQ mark scheme carries exactly one datum — the
+answer letter. There is no text to classify at any depth, so those nodes are unclassifiable
+*from a mark scheme* by construction; their stems live in the question paper. That is D3.7's
+wall, the same one P4.1's stem extractor exists to climb, and closing it here would mean
+joining marked questions back to banked stems — a larger change than this chunk, deliberately
+not attempted. **The reachable population is the 809 non-MCQ nodes, and the fill reaches 52.9%
+of them.**
+
+Each rule was verified by inversion, not assumed: disabling inheritance fails
+`test_fill_correction_topics_inherits_the_nearest_ancestors_label`, disabling subtree
+recursion fails `test_fill_correction_topics_classifies_a_parent_from_its_parts`, and both
+pass restored. The MCQ ceiling is pinned by its own test so a future reader sees it as
+intended behaviour.
+
+**Layering:** the function lives in `lemely.db`, which is outside the import-linter
+`app > io > core` contract (`exhaustive = false`), because it must compose `lemely.core.topics`
+(pure classifier) with `lemely.io.syllabus_topics` (taxonomy loader); `core.correction` can
+reach neither without a signature change through every marking caller or a layering violation.
+
 ### D4.3 — The test suite could make billed Gemini calls; now it structurally cannot (P4.1)
 
 **Found by running the gates, not by looking for it.** `./scripts/check.sh` failed on

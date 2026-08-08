@@ -82,6 +82,7 @@ from lemely.core.loose_schemas import (
 )
 from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+from lemely.db.attempt_repo import fill_correction_topics
 from lemely.db.models.enums import QuizQuestionStatus, QuizSubmissionStatus
 from lemely.db.models.quizzes import Quiz, QuizAnswer, QuizAssignment, QuizQuestion, QuizSubmission
 from lemely.io.correction_ai import correct_paper
@@ -272,6 +273,10 @@ class QuizMarkingService:
                 gemini_client=self._gemini_client,
                 settings=self._integrity_settings or IntegritySettings(),
             )
+            # P4.4: fill CorrectedQuestion.topic before summarize_weaknesses
+            # groups on it — see lemely.db.attempt_repo's module docstring for
+            # why this must happen here rather than at persist time.
+            fill_correction_topics(correction, mark_scheme)
             weaknesses = summarize_weaknesses(correction)
             attempt_id = self._attempt_repo.persist_quiz_correction(
                 user_id=str(student_id),

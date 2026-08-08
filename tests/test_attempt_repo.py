@@ -19,7 +19,18 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from lemely.core.analytics import summarize_weaknesses
 from lemely.core.history import PaperRecord
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MarkSchemeMetadata,
+    PaperType,
+    SchemeFormat,
+)
+from lemely.core.loose_schemas import Question as SchemeQuestion
+from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
+from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -30,7 +41,7 @@ from lemely.core.schemas import (
     WeakArea,
     WeaknessReport,
 )
-from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.attempt_repo import AttemptRepository, fill_correction_topics
 from lemely.db.base import Base
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
@@ -392,3 +403,288 @@ def test_coexists_with_db_history_store(
 
     # The history store sees BOTH attempts (its own record + the repo's).
     assert len(history.load(user_id).records) == 2
+
+
+# ---------------------------------------------------------------------------
+# fill_correction_topics (P4.4, D4.4 §6)
+# ---------------------------------------------------------------------------
+
+# Real text against the bundled 0625 taxonomy, chosen by running the actual
+# classifier (not guessed): two strong hits, uncontested -> HIGH; one
+# uncontested strong hit -> MEDIUM; a topic-level match contested by a rival
+# -> LOW (discarded); no vocabulary at all -> unclassified.
+HALF_LIFE_TEXT = (
+    "State the half-life of a radioactive isotope and describe background radiation measurements."
+)
+CIRCUIT_TEXT = (
+    "Calculate the current flowing through the circuit component when the switch is closed."
+)
+LOW_BAND_TEXT = "Describe how force affects motion of the object."
+UNPLACEABLE_TEXT = "Which statement is correct?"
+
+
+def _scheme_question(question_id: str, *, point_text: str, marks: int = 1) -> SchemeQuestion:
+    return SchemeQuestion(
+        id=question_id,
+        marks=marks,
+        type=SchemeQuestionType.RECALL,
+        answer_points=[AnswerPoint(id="p1", point=point_text, marks=marks)],
+    )
+
+
+def _mark_scheme(questions: list[SchemeQuestion], *, subject_code: str = "0625") -> MarkScheme:
+    metadata = MarkSchemeMetadata(
+        subject="Physics",
+        subject_code=subject_code,
+        paper_number=1,
+        paper_variant=2,
+        session_month=LooseSessionMonth.MAY_JUNE,
+        session_year=2020,
+        paper_type=PaperType.THEORY_CORE,
+        maximum_mark=sum(q.marks for q in questions),
+        scheme_format=SchemeFormat.POINT_BASED,
+    )
+    return MarkScheme(metadata=metadata, questions=questions)
+
+
+def _corrected(question_id: str, *, topic: str | None = None) -> CorrectedQuestion:
+    return CorrectedQuestion(
+        question_id=question_id,
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=1.0,
+        needs_teacher_review=False,
+        marker_source="ai",
+        topic=topic,
+    )
+
+
+def _single_question_correction(
+    subject_code: str = "0625", *, question_id: str = "1", topic: str | None = None
+) -> CorrectionResult:
+    return CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code=subject_code,
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        questions=[_corrected(question_id, topic=topic)],
+    )
+
+
+def test_fill_correction_topics_assigns_a_high_confidence_label() -> None:
+    correction = _single_question_correction()
+    mark_scheme = _mark_scheme([_scheme_question("1", point_text=HALF_LIFE_TEXT)])
+
+    fill_correction_topics(correction, mark_scheme)
+
+    assert correction.questions[0].topic == "5.2 Radioactivity"
+
+
+def test_fill_correction_topics_assigns_a_medium_confidence_label() -> None:
+    correction = _single_question_correction()
+    mark_scheme = _mark_scheme([_scheme_question("1", point_text=CIRCUIT_TEXT)])
+
+    fill_correction_topics(correction, mark_scheme)
+
+    assert correction.questions[0].topic == "4.3 Electric circuits"
+
+
+def test_fill_correction_topics_discards_a_low_confidence_match() -> None:
+    """A low-band match is real (``classify`` returns one) but must not be written."""
+    correction = _single_question_correction()
+    mark_scheme = _mark_scheme([_scheme_question("1", point_text=LOW_BAND_TEXT)])
+
+    fill_correction_topics(correction, mark_scheme)
+
+    assert correction.questions[0].topic is None
+
+
+def test_fill_correction_topics_never_overwrites_an_existing_topic() -> None:
+    """A real ``topic_hint`` from the mark scheme outranks the classifier."""
+    correction = _single_question_correction(topic="3.2 Light")
+    # Point text that would otherwise classify as Radioactivity.
+    mark_scheme = _mark_scheme([_scheme_question("1", point_text=HALF_LIFE_TEXT)])
+
+    fill_correction_topics(correction, mark_scheme)
+
+    assert correction.questions[0].topic == "3.2 Light"
+
+
+def test_fill_correction_topics_leaves_an_unclassifiable_question_unlabelled() -> None:
+    correction = _single_question_correction()
+    mark_scheme = _mark_scheme([_scheme_question("1", point_text=UNPLACEABLE_TEXT)])
+
+    fill_correction_topics(correction, mark_scheme)
+
+    assert correction.questions[0].topic is None
+
+
+def test_fill_correction_topics_classifies_nothing_for_an_unbundled_subject() -> None:
+    correction = _single_question_correction(subject_code="9701")
+    mark_scheme = _mark_scheme(
+        [_scheme_question("1", point_text=HALF_LIFE_TEXT)], subject_code="9701"
+    )
+
+    fill_correction_topics(correction, mark_scheme)
+
+    assert correction.questions[0].topic is None
+
+
+def test_fill_correction_topics_leaves_a_question_absent_from_the_scheme_unlabelled() -> None:
+    """A ``CorrectedQuestion`` id absent from the mark scheme is skipped, not fatal."""
+    correction = _single_question_correction(question_id="does-not-exist")
+    mark_scheme = _mark_scheme([_scheme_question("1", point_text=HALF_LIFE_TEXT)])
+
+    fill_correction_topics(correction, mark_scheme)
+
+    assert correction.questions[0].topic is None
+
+
+def test_fill_correction_topics_classifies_a_parent_from_its_parts() -> None:
+    """A parent node carries no prose of its own — the marking content hangs off
+    its ``parts``. Measured on the real 0625 corpus, classifying nodes in
+    isolation reaches 8.1% of marked nodes and using the subtree reaches 14.9%.
+    """
+    child = _scheme_question("1(a)", point_text=HALF_LIFE_TEXT)
+    parent = SchemeQuestion(id="1", marks=1, type=SchemeQuestionType.RECALL, parts=[child])
+    correction = _single_question_correction()  # the CorrectedQuestion for "1"
+
+    fill_correction_topics(correction, _mark_scheme([parent]))
+
+    assert correction.questions[0].topic == "5.2 Radioactivity"
+
+
+def test_fill_correction_topics_inherits_the_nearest_ancestors_label() -> None:
+    """A sub-part whose own mark points are bare bookkeeping ("correct
+    substitution") inherits its parent's topic — it *is* structurally part of
+    that question, and the parent's evidence is a superset of the child's.
+    Worth 14.9% -> 32.2% of marked nodes on the real corpus.
+    """
+    child = _scheme_question("1(a)", point_text="correct substitution")
+    parent = SchemeQuestion(
+        id="1",
+        marks=1,
+        type=SchemeQuestionType.RECALL,
+        answer_points=[AnswerPoint(id="p1", point=HALF_LIFE_TEXT, marks=1)],
+        parts=[child],
+    )
+    correction = _single_question_correction(question_id="1(a)")
+
+    fill_correction_topics(correction, _mark_scheme([parent]))
+
+    assert correction.questions[0].topic == "5.2 Radioactivity"
+
+
+def test_fill_correction_topics_prefers_a_childs_own_match_over_inheritance() -> None:
+    """Inheritance is a fallback, never an override: a part that confidently
+    classifies on its own keeps its own label, not its parent's.
+    """
+    child = _scheme_question("1(a)", point_text=CIRCUIT_TEXT)
+    parent = SchemeQuestion(
+        id="1",
+        marks=1,
+        type=SchemeQuestionType.RECALL,
+        answer_points=[AnswerPoint(id="p1", point=HALF_LIFE_TEXT, marks=1)],
+        parts=[child],
+    )
+    correction = _single_question_correction(question_id="1(a)")
+
+    fill_correction_topics(correction, _mark_scheme([parent]))
+
+    assert correction.questions[0].topic == "4.3 Electric circuits"
+
+
+def test_fill_correction_topics_does_not_inherit_from_an_unplaceable_ancestor() -> None:
+    """Inheritance is still gated by ``is_writable`` — a topic no ancestor could
+    confidently place stays ``None`` rather than becoming a laundered guess.
+    """
+    child = _scheme_question("1(a)", point_text="correct substitution")
+    parent = SchemeQuestion(
+        id="1",
+        marks=1,
+        type=SchemeQuestionType.RECALL,
+        answer_points=[AnswerPoint(id="p1", point=UNPLACEABLE_TEXT, marks=1)],
+        parts=[child],
+    )
+    correction = _single_question_correction(question_id="1(a)")
+
+    fill_correction_topics(correction, _mark_scheme([parent]))
+
+    assert correction.questions[0].topic is None
+
+
+def test_fill_correction_topics_leaves_mcq_nodes_unlabelled() -> None:
+    """The structural ceiling, pinned so it is not mistaken for a regression:
+    a CAIE MCQ mark scheme carries exactly one datum — the answer letter — so
+    520 of the real corpus's 1329 marked nodes have no text to classify at any
+    depth. Their stems live in the question paper (D3.7).
+    """
+    mcq = SchemeQuestion(id="1", marks=1, type=SchemeQuestionType.MCQ, mcq_answer="D")
+    correction = _single_question_correction()
+
+    fill_correction_topics(correction, _mark_scheme([mcq]))
+
+    assert correction.questions[0].topic is None
+
+
+def test_fill_correction_topics_changes_the_weakness_grouping() -> None:
+    """The feature-proving test: real syllabus topics group the weakness report,
+    not a single 'unknown' bucket — the entire point of D4.4 §6 / P4.4.
+    """
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        questions=[_corrected("1"), _corrected("2")],
+    )
+    mark_scheme = _mark_scheme(
+        [
+            _scheme_question("1", point_text=HALF_LIFE_TEXT),
+            _scheme_question("2", point_text=CIRCUIT_TEXT),
+        ]
+    )
+    for q in correction.questions:
+        q.awarded_marks = 0  # ensure every question contributes lost marks
+
+    before = summarize_weaknesses(correction)
+    assert {area.topic for area in before.weak_areas} == {"unknown"}
+
+    fill_correction_topics(correction, mark_scheme)
+    after = summarize_weaknesses(correction)
+
+    assert {area.topic for area in after.weak_areas} == {
+        "5.2 Radioactivity",
+        "4.3 Electric circuits",
+    }
+
+
+def test_persist_quiz_correction_writes_weakness_records_grouped_by_real_topic(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """End-to-end through the actual writer: fill, summarize, persist — the
+    ``WeaknessRecord`` rows a teacher/analytics query reads come out grouped
+    by a real syllabus topic, not ``"unknown"``.
+    """
+    correction = _single_question_correction()
+    correction.questions[0].awarded_marks = 0
+    mark_scheme = _mark_scheme([_scheme_question("1", point_text=HALF_LIFE_TEXT)])
+
+    fill_correction_topics(correction, mark_scheme)
+    weaknesses = summarize_weaknesses(correction)
+
+    user_id = _seed_user(pg_sessionmaker)
+    AttemptRepository(pg_sessionmaker).persist_quiz_correction(
+        user_id=user_id, correction=correction, weaknesses=weaknesses
+    )
+
+    with pg_sessionmaker() as session:
+        records = session.scalars(select(WeaknessRecord)).all()
+        assert {r.topic for r in records} == {"5.2 Radioactivity"}
