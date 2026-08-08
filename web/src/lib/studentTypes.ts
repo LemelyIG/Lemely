@@ -5,8 +5,8 @@
  * authTypes.ts's convention: the Python class name with its `DTO` suffix
  * stripped (e.g. `SubjectRowDTO` -> `SubjectRow`); request/response bodies
  * that already have no `DTO` suffix in Python (`CorrectRequest`,
- * `StudyPlanRequest`, `OnboardingRequest`, `OnboardSliderInput`,
- * `StudentUploadResponse`) keep their Python name unchanged.
+ * `StudyPlanRequest`, `StudentUploadResponse`) keep their Python name
+ * unchanged.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/student/data.ts` (the mock shapes these DTOs were modeled
@@ -259,34 +259,18 @@ export interface Standings {
   streakDays: number
 }
 
-// ── Onboarding ────────────────────────────────────────────────────────────
-
-/** One onboarding slider reading (mirrors `OnboardSliderInput`). */
-export interface OnboardSliderInput {
-  label: string
-  code?: string
-  pct: number
-}
-
-/** Request body for `POST /student/onboarding`. */
-export interface OnboardingRequest {
-  gradeLevel?: string
-  school?: string | null
-  weeklyHours: number
-  sliders?: OnboardSliderInput[]
-}
-
-/** Payload returned by `POST /student/onboarding` (mirrors `StudentProfileDTO`). */
-export interface StudentProfile {
-  studentId: string
-  gradeLevel: string
-  subjects: string[]
-  school: string | null
-  weeklyStudyHours: number
-  confidenceBySubject: Record<string, number>
-}
-
 // ── POST /student/correct SSE frames ─────────────────────────────────────
+//
+// The legacy onboarding types (`OnboardingRequest`, `OnboardSliderInput`,
+// `StudentProfile`) that used to live here were removed in P4.8 chunk A: the
+// backend `POST /api/student/onboarding` route + `OnboardingRequest` schema
+// they mirrored are the pre-P4.3 IDOR-hardened onboarding endpoint, superseded
+// by the real `/api/me/student-profile/...` surface (P4.3, `lib/meTypes.ts`).
+// The frontend hook (`usePostOnboarding`) and its only caller
+// (`screens/Onboarding.tsx`) are both gone; the backend route/schema and its
+// two test files (`tests/test_authz_matrix.py`, `tests/test_web_student.py`)
+// are backend surface this chunk doesn't touch — left for P4.11 to formally
+// retire, recorded rather than silently deleted or silently left dangling.
 
 /**
  * SSE frames emitted by `POST /student/correct` over the shared event bus

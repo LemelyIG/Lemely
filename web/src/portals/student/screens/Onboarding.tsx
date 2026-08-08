@@ -1,150 +1,253 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { usePostOnboarding } from "@/lib/hooks/useStudentApi"
-import type { OnboardSliderInput } from "@/lib/studentTypes"
+import { Stepper } from "@/components/ui/stepper"
+import {
+  useCompleteOnboarding,
+  usePatchStudentProfile,
+  usePutConfidenceRatings,
+  usePutEnrolments,
+  useStudentProfile,
+} from "@/lib/hooks/useMeApi"
+import {
+  buildConfidenceRatingsPayload,
+  buildEnrolmentPayload,
+  buildProfilePatchPayload,
+  buildQuestionnaireSteps,
+  clampStepIndex,
+  toggleInSet,
+  SUPPORTED_SUBJECTS,
+  type QuestionnaireAnswers,
+  type SubjectDraft,
+} from "./onboarding/onboardingData"
+import { SubjectsStep } from "./onboarding/SubjectsStep"
+import { QuestionnaireStep } from "./onboarding/QuestionnaireStep"
 
 /*
- * Onboarding (isOnboard). This phase is scoped to exactly 3 CAIE subjects
- * (BUILD/MISSION.md §1): Mathematics 0580, Additional Mathematics 0606,
- * Physics 0625 — the confidence sliders below are fixed to that set, each a
- * real interactive range input bound to local state (the mock's static
- * positioned divs are gone). Submits `OnboardingRequest` to
- * usePostOnboarding() and navigates to Overview on success. There is no
- * multi-step wizard backend yet — this is the single confidence-collection
- * step, not the full onboarding flow (the mock's 5-segment progress bar and
- * "Step 3 of 5" copy implied a wizard that doesn't exist, so both are
- * dropped). The mock's "last exam week" chip multi-select has no backing
- * field on `OnboardingRequest` and is dropped rather than submitted as
- * fabricated data.
+ * Onboarding (S-01 + S-02). The real multi-step wizard on the P4.3 backend
+ * (`/api/me/student-profile/...`) — replaces the legacy single-step screen,
+ * whose own docstring said "there is no multi-step wizard backend yet".
+ * There is now (P4.3, D4.5).
+ *
+ * D4.5's rule governs every piece of local state here: a field the student
+ * hasn't touched is `undefined`/absent, never a defaulted sentinel, and only
+ * touched fields are ever included in a PATCH/PUT body (`onboardingData.ts`'s
+ * `build*Payload` functions are the single enforcement point, unit-tested in
+ * `web/tests/unit/onboarding.test.ts`).
+ *
+ * Existing profile/enrolment data (`GET /student-profile`) seeds local state
+ * once on load, so a student resuming onboarding doesn't lose earlier
+ * answers — including confidence ratings for topics outside this UI's
+ * 2-3-per-subject display set, which are carried through untouched rather
+ * than dropped by the PUT's full-replace semantics on Finish.
+ *
+ * One-directional: S-01 -> S-02, matching the UI spec's "Exits: S-02" (no
+ * back-to-subjects nav) — going back would risk silently orphaning a
+ * deselected subject's enrolment, since `/api/me` exposes no
+ * delete-enrolment route to clean it up.
  */
-const SUBJECTS: { label: string; code: string }[] = [
-  { label: "Mathematics", code: "0580" },
-  { label: "Additional Mathematics", code: "0606" },
-  { label: "Physics", code: "0625" },
-]
+
+type WizardStep = "subjects" | "questionnaire"
 
 export function Onboarding() {
   const navigate = useNavigate()
-  const onboard = usePostOnboarding()
-  const [sliders, setSliders] = useState<OnboardSliderInput[]>(
-    SUBJECTS.map((s) => ({ label: s.label, code: s.code, pct: 50 })),
-  )
-  const [gradeLevel, setGradeLevel] = useState("")
-  const [school, setSchool] = useState("")
-  const [weeklyHoursInput, setWeeklyHoursInput] = useState("")
+  const { data: existing } = useStudentProfile()
+  const patchProfile = usePatchStudentProfile()
+  const putEnrolments = usePutEnrolments()
+  const putConfidenceRatings = usePutConfidenceRatings()
+  const completeOnboarding = useCompleteOnboarding()
 
-  function setPct(index: number, pct: number) {
-    setSliders((prev) =>
-      prev.map((s, i) => (i === index ? { ...s, pct } : s)),
-    )
+  const [wizardStep, setWizardStep] = useState<WizardStep>("subjects")
+  const [qualificationLevel, setQualificationLevel] = useState<string | null>(null)
+  const [drafts, setDrafts] = useState<Record<string, SubjectDraft>>({})
+  const [answers, setAnswers] = useState<QuestionnaireAnswers>({})
+  const [confidenceBySubject, setConfidenceBySubject] = useState<
+    Record<string, Record<string, number>>
+  >({})
+  const [questionnaireIndex, setQuestionnaireIndex] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+
+  const seeded = useRef(false)
+  useEffect(() => {
+    if (seeded.current || !existing) return
+    seeded.current = true
+    setQualificationLevel(existing.profile.qualificationLevel)
+    const seededDrafts: Record<string, SubjectDraft> = {}
+    const seededConfidence: Record<string, Record<string, number>> = {}
+    for (const enrolment of existing.enrolments) {
+      if (!SUPPORTED_SUBJECTS.some((s) => s.code === enrolment.subjectCode)) continue
+      seededDrafts[enrolment.subjectCode] = {
+        subjectCode: enrolment.subjectCode,
+        papers: new Set(enrolment.papers),
+        targetGrade: enrolment.targetGrade,
+        sessionMonth: enrolment.sessionMonth,
+        sessionYear: enrolment.sessionYear,
+      }
+      if (enrolment.confidenceRatings.length > 0) {
+        seededConfidence[enrolment.subjectCode] = Object.fromEntries(
+          enrolment.confidenceRatings.map((r) => [r.topic, r.rating]),
+        )
+      }
+    }
+    setDrafts(seededDrafts)
+    setConfidenceBySubject(seededConfidence)
+    setAnswers({
+      schoolName: existing.profile.schoolName ?? undefined,
+      hasExternalLessons: existing.profile.hasExternalLessons ?? undefined,
+      weeklyStudyHours: existing.profile.weeklyStudyHours ?? undefined,
+      gradeLevel: existing.profile.gradeLevel ?? undefined,
+    })
+  }, [existing])
+
+  const questionnaireSteps = buildQuestionnaireSteps(Object.keys(drafts))
+
+  function toggleSubject(code: string) {
+    setDrafts((prev) => {
+      const next = { ...prev }
+      if (next[code]) {
+        delete next[code]
+      } else {
+        next[code] = {
+          subjectCode: code,
+          papers: new Set(),
+          targetGrade: null,
+          sessionMonth: null,
+          sessionYear: null,
+        }
+      }
+      return next
+    })
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const weeklyHours = Number(weeklyHoursInput)
-    if (!weeklyHours) return
-    onboard.mutate(
-      {
-        gradeLevel: gradeLevel.trim() ? gradeLevel.trim() : undefined,
-        school: school.trim() ? school.trim() : undefined,
-        weeklyHours,
-        sliders,
-      },
-      { onSuccess: () => navigate("/student") },
-    )
+  function togglePaper(code: string, paper: number) {
+    setDrafts((prev) => {
+      const draft = prev[code]
+      if (!draft) return prev
+      return { ...prev, [code]: { ...draft, papers: toggleInSet(draft.papers, paper) } }
+    })
   }
+
+  function updateDraft(code: string, patch: Partial<SubjectDraft>) {
+    setDrafts((prev) => {
+      const draft = prev[code]
+      if (!draft) return prev
+      return { ...prev, [code]: { ...draft, ...patch } }
+    })
+  }
+
+  async function handleSubjectsContinue() {
+    setError(null)
+    try {
+      if (qualificationLevel) {
+        await patchProfile.mutateAsync(buildProfilePatchPayload({ qualificationLevel }))
+      }
+      await putEnrolments.mutateAsync({
+        enrolments: buildEnrolmentPayload(Object.values(drafts)),
+      })
+      setQuestionnaireIndex(0)
+      setWizardStep("questionnaire")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save your subjects.")
+    }
+  }
+
+  function goToStep(index: number) {
+    setQuestionnaireIndex(clampStepIndex(index, questionnaireSteps.length))
+  }
+
+  function advance() {
+    goToStep(questionnaireIndex + 1)
+  }
+
+  function skipCurrent() {
+    const step = questionnaireSteps[questionnaireIndex]
+    if (step?.kind === "school") setAnswers((prev) => ({ ...prev, schoolName: undefined }))
+    else if (step?.kind === "externalLessons")
+      setAnswers((prev) => ({ ...prev, hasExternalLessons: undefined }))
+    else if (step?.kind === "weeklyHours")
+      setAnswers((prev) => ({ ...prev, weeklyStudyHours: undefined }))
+    else if (step?.kind === "gradeLevel") setAnswers((prev) => ({ ...prev, gradeLevel: undefined }))
+    advance()
+  }
+
+  function setConfidence(subjectCode: string, topic: string, rating: number) {
+    setConfidenceBySubject((prev) => ({
+      ...prev,
+      [subjectCode]: { ...prev[subjectCode], [topic]: rating },
+    }))
+  }
+
+  async function handleFinish() {
+    setError(null)
+    try {
+      const patch = buildProfilePatchPayload(answers)
+      if (Object.keys(patch).length > 0) {
+        await patchProfile.mutateAsync(patch)
+      }
+      for (const [subjectCode, ratings] of Object.entries(confidenceBySubject)) {
+        const payload = buildConfidenceRatingsPayload(ratings)
+        if (Object.keys(payload).length > 0) {
+          await putConfidenceRatings.mutateAsync({ subjectCode, ratings: payload })
+        }
+      }
+      await completeOnboarding.mutateAsync()
+      navigate("/student")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save your answers.")
+    }
+  }
+
+  const saving =
+    patchProfile.isPending ||
+    putEnrolments.isPending ||
+    putConfidenceRatings.isPending ||
+    completeOnboarding.isPending
 
   return (
     <div className="lm-screen max-w-[760px] mx-auto flex flex-col gap-6">
-      <div>
-        <div className="font-serif text-[36px] leading-[1.15]">
-          How does each subject actually feel right now?
-        </div>
-        <div className="text-[14px] text-t2 mt-[9px] text-pretty">
-          Be honest rather than optimistic - the plan is built from this.
-        </div>
-      </div>
+      <Stepper
+        steps={[
+          { id: 1, label: "Subjects" },
+          { id: 2, label: "Questionnaire" },
+        ]}
+        current={wizardStep === "subjects" ? 1 : 2}
+        completed={wizardStep === "questionnaire" ? new Set([1]) : new Set()}
+        onSelect={() => undefined}
+        disabled
+      />
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-        <Card className="p-6 flex flex-col gap-[22px]">
-          {sliders.map((s, i) => (
-            <div key={s.code}>
-              <div className="flex items-baseline gap-2.5 mb-[11px]">
-                <div className="text-[13.5px] font-medium">{s.label}</div>
-                <div className="font-mono text-[11.5px] text-t2">{s.code}</div>
-                <div className="flex-1" />
-                <div className="text-[12.5px] text-accent">{s.pct}%</div>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={s.pct}
-                onChange={(event) => setPct(i, Number(event.target.value))}
-                className="w-full h-5 accent-ink"
-                aria-label={`${s.label} confidence`}
-              />
-              <div className="flex justify-between text-[11px] text-t3 mt-[5px]">
-                <span>lost</span>
-                <span>confident</span>
-              </div>
-            </div>
-          ))}
-        </Card>
-
-        <Card className="p-6 flex flex-col gap-4">
-          <label className="flex flex-col gap-1.5 text-[13px]">
-            Grade level
-            <input
-              type="text"
-              value={gradeLevel}
-              onChange={(event) => setGradeLevel(event.target.value)}
-              placeholder="e.g. Year 11"
-              className="rounded-[8px] border border-border px-3 py-2 text-[14px]"
-            />
-          </label>
-          <label className="flex flex-col gap-1.5 text-[13px]">
-            Hours you can study each week
-            <input
-              type="number"
-              min={1}
-              max={60}
-              required
-              value={weeklyHoursInput}
-              onChange={(event) => setWeeklyHoursInput(event.target.value)}
-              className="rounded-[8px] border border-border px-3 py-2 text-[14px] w-[140px]"
-            />
-          </label>
-          <label className="flex flex-col gap-1.5 text-[13px]">
-            School (optional)
-            <input
-              type="text"
-              value={school}
-              onChange={(event) => setSchool(event.target.value)}
-              className="rounded-[8px] border border-border px-3 py-2 text-[14px]"
-            />
-          </label>
-        </Card>
-
-        {onboard.isError ? (
-          <div className="text-[12.5px] text-accent">
-            Couldn't save your profile: {onboard.error.message}
-          </div>
-        ) : null}
-
-        <div className="flex gap-3 items-center">
-          <Button
-            type="submit"
-            variant="accent"
-            size="lg"
-            disabled={onboard.isPending}
-          >
-            {onboard.isPending ? "Saving…" : "Continue"}
-          </Button>
-        </div>
-      </form>
+      {wizardStep === "subjects" ? (
+        <SubjectsStep
+          qualificationLevel={qualificationLevel}
+          onQualificationLevel={setQualificationLevel}
+          drafts={drafts}
+          onToggleSubject={toggleSubject}
+          onTogglePaper={togglePaper}
+          onTargetGrade={(code, grade) => updateDraft(code, { targetGrade: grade })}
+          onSessionMonth={(code, month) => updateDraft(code, { sessionMonth: month })}
+          onSessionYear={(code, year) => updateDraft(code, { sessionYear: year })}
+          onContinue={handleSubjectsContinue}
+          saving={saving}
+          error={error}
+        />
+      ) : (
+        <QuestionnaireStep
+          steps={questionnaireSteps}
+          stepIndex={questionnaireIndex}
+          onBack={() => goToStep(questionnaireIndex - 1)}
+          onSkip={skipCurrent}
+          onContinue={advance}
+          onFinish={handleFinish}
+          answers={answers}
+          onSchoolName={(v) => setAnswers((prev) => ({ ...prev, schoolName: v }))}
+          onExternalLessons={(v) => setAnswers((prev) => ({ ...prev, hasExternalLessons: v }))}
+          onWeeklyHours={(v) => setAnswers((prev) => ({ ...prev, weeklyStudyHours: v }))}
+          onGradeLevel={(v) => setAnswers((prev) => ({ ...prev, gradeLevel: v }))}
+          confidenceBySubject={confidenceBySubject}
+          onConfidence={setConfidence}
+          saving={saving}
+          error={error}
+        />
+      )}
     </div>
   )
 }

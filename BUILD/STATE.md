@@ -591,7 +591,32 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         Fix as **exclusion from serving, not deletion**: a deterministic detector, no Gemini, so
         placement/practice never draw a question the bank cannot fully render. Must be pinned by
         its inverse (a non-figure stem is still servable) or it will silently empty the pool.
-      - [ ] **doing** — chunk A — S-01 + S-02: the real multi-step wizard on the **P4.3** backend
+      - [x] chunk A — **done**. `web/src/portals/student/screens/onboarding/` (`SubjectsStep.tsx`,
+        `QuestionnaireStep.tsx`, `onboardingData.ts` — the pure payload builders, which is what
+        made the honesty rule testable), `Onboarding.tsx` rewritten as the wizard shell,
+        `meTypes.ts` + `useMeApi.ts` grown to cover the four P4.3 endpoints, new
+        `components/ui/slider.tsx` added to the catalogue rather than inlined.
+        **138 web unit tests (3 files) green; all 13 gates green, 0 skipped.** No backend diff,
+        so the 2297/90.30% backend figures from chunk 0 stand. $0.00 Gemini.
+        **D4.5's skip rule is pinned three ways, and the third is the subtle one:** a skipped
+        field is **absent from the payload** (not `0`, not `null` — asserted on the serialised
+        wire, not just the object); an **explicit** `null` on a touched field is preserved, so
+        *clearing* an answer stays distinguishable from *never answering*; and
+        `hasExternalLessons: false` is sent, **not** mistaken for a skip. A falsy-means-skipped
+        bug would have silently discarded every "no" answer in the questionnaire.
+        **Constraint 3 verified by the orchestrator, not from the report:** all 9 confidence
+        topic labels checked against `lemely/data/syllabus_topics.json` — 9/9 are real taxonomy
+        entries, no invented vocabulary. That mattered because an invented label would join
+        against nothing in the bank or the weakness engine and fail silently.
+        **Legacy-route decision:** the frontend `usePostOnboarding` hook and its
+        `OnboardingRequest` type are deleted (their only caller was the screen this replaces);
+        the backend `POST /api/student/onboarding` route **stays** — it is still covered by
+        `tests/test_authz_matrix.py` and `tests/test_web_student.py`, so deleting it here would
+        have been an unrelated backend change inside a frontend chunk. Its removal belongs with
+        the legacy `/api/student/plan` pair in P4.10/P4.11.
+        **Seventh handover this phase to sign off before its own gate run finished** — it was
+        in fact green, but that was verified by the orchestrator's own run, not taken on trust.
+      - [ ] chunk A (original plan, kept for the rationale) — S-01 + S-02: the real multi-step wizard on the **P4.3** backend
         (`PATCH /api/me/student-profile`, `PUT .../enrolments`, `PUT .../confidence-ratings`,
         `POST .../complete-onboarding`) + the TS types/hooks for them, which do not exist yet
         (`meTypes.ts` covers only `ProfileDTO`). **Replaces** the legacy single-step

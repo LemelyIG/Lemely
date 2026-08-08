@@ -9,12 +9,10 @@ import { request, streamActivity } from "@/lib/api"
 import type { LinkedParent, ParentLinkList } from "@/lib/parentTypes"
 import type {
   CorrectRequest,
-  OnboardingRequest,
   Overview,
   Result,
   Standings,
   StudentCorrectFrame,
-  StudentProfile,
   StudentUploadResponse,
   StudyPlan,
   StudyPlanRequest,
@@ -115,16 +113,6 @@ export function useStandings(): UseQueryResult<Standings, Error> {
   return useQuery({
     queryKey: ["student", "standings"],
     queryFn: () => request<Standings>("/student/standings"),
-  })
-}
-
-export function usePostOnboarding(): UseMutationResult<StudentProfile, Error, OnboardingRequest> {
-  return useMutation({
-    mutationFn: (body: OnboardingRequest) =>
-      request<StudentProfile>("/student/onboarding", {
-        method: "POST",
-        body: JSON.stringify(body satisfies OnboardingRequest),
-      }),
   })
 }
 

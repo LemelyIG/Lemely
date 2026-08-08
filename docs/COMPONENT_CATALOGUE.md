@@ -152,6 +152,20 @@ hardcoded routes.
 - `aria-current="step"` on the active step; native buttons carry full
   keyboard/AT semantics for free.
 
+## C-16 — Slider
+`slider.tsx` — `Slider({ value, onValueChange, min, max, step, "aria-label" })` (P4.8 chunk A)
+- Not named in the UI-spec §4 C-1..C-13 list — added because S-02's weekly-
+  study-time and per-topic confidence questions need a real range input and
+  nothing else in the library provides one.
+- Native `<input type="range">` restyled via `accent-accent` (keyboard/AT
+  semantics free); `py-9px` wrapper gives the thumb a >=44px touch target
+  without inflating the visible 6px track past DESIGN.md's meter rhythm.
+- Deliberately owns no "skipped" state — that is a screen-level decision
+  (D4.5): the caller (`QuestionnaireStep.tsx`'s `SkippableSlider`) tracks
+  whether the student has touched the control and renders its own "Not set"
+  affordance before the first interaction, so an unmoved slider never reads
+  as an answer the student gave.
+
 ## Known follow-ups for the P2.5.3 retrofit
 - Two pre-token-system components duplicate new library components and
   should be deleted in favor of the new ones once screens are retrofitted:
