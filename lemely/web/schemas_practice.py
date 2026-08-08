@@ -80,3 +80,62 @@ class PracticeExportDTO(ApiModel):
     subjectCode: str
     title: str
     questions: list[PracticeExportQuestionDTO]
+
+
+class PracticeResultQuestionDTO(ApiModel):
+    """One marked question's outcome — feedback on the student's own answer.
+
+    No ``modelAnswer``/``markSchemePoints``/``mcqAnswer`` field exists here
+    at all (D3.8's structural-exclusion discipline, mirroring
+    ``PracticeExportQuestionDTO``). ``confidenceBand``/``confidenceScore``
+    are the marking engine's own confidence for this mark — every displayed
+    mark carries its confidence (QUALITY-BAR.md).
+    """
+
+    questionRef: str
+    position: int
+    topic: str | None
+    totalMarks: int
+    awardedMarks: int
+    confidenceBand: str
+    confidenceScore: float
+
+
+class PracticeResultDTO(ApiModel):
+    """S-21's result payload: has this practice set been marked, and how did it go.
+
+    ``marked=False`` (with ``awardedMarks``/``maximumMarks`` absent and
+    ``questions`` empty) means the submission has not been marked yet —
+    never a fabricated zero score. ``submissionStatus`` tells "not
+    submitted yet" (``"not_started"``/``"in_progress"``) apart from
+    "submitted, being marked" (``"submitted"``).
+    """
+
+    assignmentId: str
+    quizId: str
+    subjectCode: str
+    marked: bool
+    submissionStatus: str
+    awardedMarks: int | None
+    maximumMarks: int | None
+    questions: list[PracticeResultQuestionDTO]
+
+
+class PracticeTopicCountDTO(ApiModel):
+    """One servable topic and its real, unpadded available count."""
+
+    topic: str
+    availableCount: int
+
+
+class PracticeTopicsDTO(ApiModel):
+    """S-20's topic-selection payload: real, servable topics plus the caller's weak topics.
+
+    ``untopicedCount`` is reported separately from ``topics`` — an
+    untopiced row is legitimate practice material, just not a topic.
+    """
+
+    subjectCode: str
+    topics: list[PracticeTopicCountDTO]
+    weakTopics: list[str]
+    untopicedCount: int

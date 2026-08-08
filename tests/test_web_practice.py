@@ -22,7 +22,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
 from lemely.db.models import User
-from lemely.db.models.enums import DifficultySource, QuestionSource, Role
+from lemely.db.models.enums import DifficultySource, QuestionSource, QuizKind, QuizStatus, Role
+from lemely.db.models.quizzes import Quiz, QuizAssignment
 from lemely.db.practice_repo import PracticeRequest, PracticeService
 from lemely.db.question_bank_repo import NewBankQuestion, QuestionBankService
 from lemely.runtime.config import DatabaseSettings
@@ -285,3 +286,201 @@ def test_export_route_unknown_assignment_is_404(
     resp = client.get(f"/api/student/practice/{uuid.uuid4()}/export")
 
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Result — wire shapes, authz matrix (P4.9 chunk 0).
+# ---------------------------------------------------------------------------
+
+
+def test_result_route_not_started_never_fabricates_a_score(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_bank(pg_sessionmaker, per_topic=3)
+    _use_practice_service(client, practice_service)
+    created = practice_service.create(
+        student, PracticeRequest(subject_code="0625", count=3, topics=("1 Motion",))
+    )
+
+    _auth_as(client, student, Role.student)
+    resp = client.get(f"/api/student/practice/{created.assignment_id}/result")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["marked"] is False
+    assert body["submissionStatus"] == "not_started"
+    assert body["awardedMarks"] is None
+    assert body["maximumMarks"] is None
+    assert body["questions"] == []
+
+
+def test_result_route_unknown_assignment_is_404(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    _use_practice_service(client, practice_service)
+    student = _seed_user(pg_sessionmaker)
+    _auth_as(client, student, Role.student)
+
+    resp = client.get(f"/api/student/practice/{uuid.uuid4()}/result")
+
+    assert resp.status_code == 404
+
+
+def test_result_route_cross_tenant_is_403_with_no_body_leakage(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    _seed_bank(pg_sessionmaker, per_topic=3)
+
+    _auth_as(client, owner, Role.student)
+    _use_practice_service(client, practice_service)
+    created = practice_service.create(
+        owner, PracticeRequest(subject_code="0625", count=3, topics=("1 Motion",))
+    )
+
+    _auth_as(client, other, Role.student)
+    resp = client.get(f"/api/student/practice/{created.assignment_id}/result")
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert set(body) == {"detail"}
+    assert isinstance(body["detail"], str)
+
+
+def test_result_route_a_placement_assignment_is_404(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    """A caller-owned placement assignment 404s here — kind narrows, never leaks as data."""
+    student = _seed_user(pg_sessionmaker)
+    quiz_id = uuid.uuid4()
+    assignment_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Quiz(
+                id=quiz_id,
+                teacher_id=None,
+                student_id=student,
+                kind=QuizKind.placement,
+                subject_code="0625",
+                title="Placement test",
+                status=QuizStatus.assigned,
+            )
+        )
+        session.add(
+            QuizAssignment(
+                id=assignment_id,
+                quiz_id=quiz_id,
+                class_id=None,
+                student_id=student,
+                assigned_by=student,
+            )
+        )
+
+    _use_practice_service(client, practice_service)
+    _auth_as(client, student, Role.student)
+    resp = client.get(f"/api/student/practice/{assignment_id}/result")
+
+    assert resp.status_code == 404
+
+
+def test_result_route_a_teacher_assigned_quiz_is_404(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    quiz_id = uuid.uuid4()
+    assignment_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Quiz(
+                id=quiz_id,
+                teacher_id=teacher,
+                student_id=None,
+                kind=QuizKind.teacher,
+                subject_code="0625",
+                title="Teacher quiz",
+                status=QuizStatus.assigned,
+            )
+        )
+        session.add(
+            QuizAssignment(
+                id=assignment_id,
+                quiz_id=quiz_id,
+                class_id=None,
+                student_id=student,
+                assigned_by=teacher,
+            )
+        )
+
+    _use_practice_service(client, practice_service)
+    _auth_as(client, student, Role.student)
+    resp = client.get(f"/api/student/practice/{assignment_id}/result")
+
+    assert resp.status_code == 404
+
+
+def test_result_route_rejects_a_non_student_role(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_practice_service(client, practice_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/student/practice/{uuid.uuid4()}/result")
+
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Topics — real counts, weak-topic vocabulary, non-student rejection.
+# ---------------------------------------------------------------------------
+
+
+def test_topics_route_shape(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _seed_bank(pg_sessionmaker, topic="1 Motion", per_topic=5)
+    _use_practice_service(client, practice_service)
+    _auth_as(client, student, Role.student)
+
+    resp = client.get("/api/student/practice/0625/topics")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["subjectCode"] == "0625"
+    assert {"topic": "1 Motion", "availableCount": 5} in body["topics"]
+    assert body["weakTopics"] == []
+    assert body["untopicedCount"] == 0
+
+
+def test_topics_route_empty_subject_returns_empty_not_error(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    _use_practice_service(client, practice_service)
+    _auth_as(client, student, Role.student)
+
+    resp = client.get("/api/student/practice/0580/topics")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "subjectCode": "0580",
+        "topics": [],
+        "weakTopics": [],
+        "untopicedCount": 0,
+    }
+
+
+def test_topics_route_rejects_a_non_student_role(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_practice_service(client, practice_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get("/api/student/practice/0625/topics")
+
+    assert resp.status_code == 403

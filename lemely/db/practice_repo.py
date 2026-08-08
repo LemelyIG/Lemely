@@ -79,15 +79,22 @@ import sqlalchemy as sa
 from sqlalchemy import func, select
 
 from lemely.db.models.academic import Paper
-from lemely.db.models.attempts import Attempt, WeaknessRecord
+from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import (
     QuestionDifficulty,
     QuestionSource,
     QuizKind,
     QuizQuestionStatus,
     QuizStatus,
+    QuizSubmissionStatus,
 )
-from lemely.db.models.quizzes import QuestionBank, Quiz, QuizAssignment, QuizQuestion
+from lemely.db.models.quizzes import (
+    QuestionBank,
+    Quiz,
+    QuizAssignment,
+    QuizQuestion,
+    QuizSubmission,
+)
 from lemely.db.question_bank_repo import _to_row, renderable_bank_filter, visible_bank_filter
 from lemely.db.quiz_repo import _snapshot_bank_row
 from lemely.db.student_profile_repo import enrolled_paper_numbers
@@ -241,6 +248,79 @@ class PracticeExportSet:
     questions: list[PracticeExportQuestion] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class PracticeResultQuestion:
+    """One marked question's outcome, for S-21's result view.
+
+    Unlike :class:`~lemely.db.placement_repo.PlacementQuestionResult`, this
+    carries ``position`` (S-21 renders a set the student built themselves,
+    ordered) and the marking engine's own confidence for the mark — every
+    displayed mark must carry its confidence (QUALITY-BAR.md's product
+    section). No ``model_answer``/``mark_scheme_points``/``mcq_answer`` here
+    either — this is feedback on the student's own answer, not the scheme
+    material (D3.8's discipline, mirrored from :class:`PracticeExportQuestion`).
+    """
+
+    question_ref: str
+    position: int
+    topic: str | None
+    total_marks: int
+    awarded_marks: int
+    """:attr:`~lemely.db.models.attempts.QuestionResult.effective_marks` — the
+    teacher's override when one exists, else the AI's own mark (mirrors
+    :attr:`~lemely.db.placement_repo.PlacementQuestionResult.awarded_marks`)."""
+    confidence_band: str
+    confidence_score: float
+
+
+@dataclass(frozen=True, slots=True)
+class PracticeResultRow:
+    """S-21's result payload: has this practice set been marked, and how did it go.
+
+    ``marked=False`` covers both "not yet submitted" and "submitted but not
+    yet marked" — :attr:`submission_status` is what tells those two apart
+    (S-21 polls this the way S-05 polls placement's result route); every
+    score field is ``None``, never ``0``, while unmarked (spec §1.4: a zero
+    score for an unmarked set is invented precision).
+    """
+
+    assignment_id: uuid.UUID
+    quiz_id: uuid.UUID
+    subject_code: str
+    marked: bool
+    submission_status: str
+    """A :class:`~lemely.db.models.enums.QuizSubmissionStatus` value —
+    ``"not_started"`` when no ``QuizSubmission`` row exists yet (a row is
+    created lazily on first open, never pre-seeded)."""
+    awarded_marks: int | None
+    maximum_marks: int | None
+    questions: list[PracticeResultQuestion]
+
+
+@dataclass(frozen=True, slots=True)
+class PracticeTopicCount:
+    """One servable topic and its real, unpadded available count."""
+
+    topic: str
+    available_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PracticeTopicsResult:
+    """S-20's topic-selection payload: real, servable topics plus the caller's own weak topics.
+
+    ``untopiced_count`` is reported separately, never folded into
+    :attr:`topics` under an invented label — an untopiced row is legitimate
+    practice *material* (P4.5), just not a *topic* (module docstring / P4.9
+    scoping).
+    """
+
+    subject_code: str
+    topics: list[PracticeTopicCount]
+    weak_topics: list[str]
+    untopiced_count: int
+
+
 class PracticeService:
     """Preview, self-assign, and export a student's practice set.
 
@@ -386,6 +466,179 @@ class PracticeService:
                     )
                     for q in questions
                 ],
+            )
+
+    # -- Result (S-21 poll target) ----------------------------------------------
+
+    def result(
+        self, student_id: uuid.UUID | str, assignment_id: uuid.UUID | str
+    ) -> PracticeResultRow:
+        """S-21's result payload: has this practice set been marked, and how did it go.
+
+        Submitting any quiz (placement, practice, or teacher-assigned) triggers
+        ``QuizMarkingService.mark_submission`` on a background thread — this
+        method only reads what that already wrote, exactly the way
+        :meth:`~lemely.db.placement_repo.PlacementService.result` does.
+        ``marked=False`` (every score field ``None``, ``questions=[]``) when
+        the submission has not been marked yet, rather than a half-true
+        result; :attr:`PracticeResultRow.submission_status` still tells
+        "not submitted yet" apart from "submitted, being marked".
+
+        Raises:
+            PracticeNotFoundError: No assignment exists with
+                ``assignment_id`` anywhere (404); or it exists and belongs
+                to the caller but is not a ``practice``-kind quiz (404 —
+                see the class docstring, same ordering as :meth:`export`).
+            PracticeOwnershipError: The assignment exists but is not the
+                caller's (403).
+        """
+        student_uuid = _as_uuid(student_id)
+        assignment_uuid = _as_uuid(assignment_id)
+        with self._sessionmaker() as session:
+            assignment = session.get(QuizAssignment, assignment_uuid)
+            if assignment is None:
+                raise PracticeNotFoundError(f"Unknown assignment: {assignment_uuid}")
+            if assignment.student_id != student_uuid:
+                raise PracticeOwnershipError(
+                    f"Assignment {assignment_uuid} is not assigned to student {student_uuid}"
+                )
+            quiz = session.get(Quiz, assignment.quiz_id)
+            if quiz is None:  # pragma: no cover - FK guarantees the row exists
+                raise PracticeError(f"Unknown quiz: {assignment.quiz_id}")
+            if quiz.kind != QuizKind.practice:
+                raise PracticeNotFoundError(f"Assignment {assignment_uuid} is not a practice set")
+
+            submission = session.scalars(
+                select(QuizSubmission).where(
+                    QuizSubmission.assignment_id == assignment_uuid,
+                    QuizSubmission.student_id == student_uuid,
+                )
+            ).first()
+            if submission is None:
+                return PracticeResultRow(
+                    assignment_id=assignment_uuid,
+                    quiz_id=quiz.id,
+                    subject_code=quiz.subject_code,
+                    marked=False,
+                    submission_status=QuizSubmissionStatus.not_started.value,
+                    awarded_marks=None,
+                    maximum_marks=None,
+                    questions=[],
+                )
+            if submission.status != QuizSubmissionStatus.marked or submission.attempt_id is None:
+                return PracticeResultRow(
+                    assignment_id=assignment_uuid,
+                    quiz_id=quiz.id,
+                    subject_code=quiz.subject_code,
+                    marked=False,
+                    submission_status=submission.status.value,
+                    awarded_marks=None,
+                    maximum_marks=None,
+                    questions=[],
+                )
+
+            attempt = session.get(Attempt, submission.attempt_id)
+            if attempt is None:  # pragma: no cover - FK guarantees the row exists
+                raise PracticeError(f"Unknown attempt: {submission.attempt_id}")
+            question_results = session.scalars(
+                select(QuestionResult).where(QuestionResult.attempt_id == attempt.id)
+            ).all()
+            positions = {
+                qq.question_ref: qq.position
+                for qq in session.scalars(
+                    select(QuizQuestion).where(
+                        QuizQuestion.quiz_id == quiz.id,
+                        QuizQuestion.status == QuizQuestionStatus.included,
+                    )
+                ).all()
+            }
+
+            questions = sorted(
+                (
+                    PracticeResultQuestion(
+                        question_ref=qr.question_id,
+                        position=positions[qr.question_id],
+                        topic=qr.topic,
+                        total_marks=qr.maximum_marks,
+                        awarded_marks=qr.effective_marks,
+                        confidence_band=qr.confidence_band.value,
+                        confidence_score=qr.confidence_score,
+                    )
+                    for qr in question_results
+                    if qr.question_id in positions
+                ),
+                key=lambda q: q.position,
+            )
+
+            return PracticeResultRow(
+                assignment_id=assignment_uuid,
+                quiz_id=quiz.id,
+                subject_code=quiz.subject_code,
+                marked=True,
+                submission_status=QuizSubmissionStatus.marked.value,
+                awarded_marks=attempt.awarded_marks,
+                maximum_marks=attempt.maximum_marks,
+                questions=questions,
+            )
+
+    # -- Topics (S-20) ------------------------------------------------------
+
+    def topics(self, student_id: uuid.UUID | str, subject_code: str) -> PracticeTopicsResult:
+        """The distinct **servable** topics for this student and subject, with real counts.
+
+        Filtered through exactly the clauses :meth:`_preview` uses
+        (:func:`~lemely.db.student_profile_repo.enrolled_paper_numbers`,
+        :func:`~lemely.db.question_bank_repo.visible_bank_filter`,
+        :func:`~lemely.db.question_bank_repo.renderable_bank_filter`, subject) via
+        :meth:`_matching_clauses` — the same shared predicate, not a second,
+        drifting copy, so an offered topic can never be one the pool cannot
+        actually serve.
+
+        Untopiced rows (``topic IS NULL``) are not a topic: their count is
+        reported separately (:attr:`PracticeTopicsResult.untopiced_count`),
+        never folded into :attr:`PracticeTopicsResult.topics` under an
+        invented label. Also returns the caller's own weak topics for this
+        subject (:meth:`_weak_topics_for` — the same ``WeaknessRecord``
+        resolution :meth:`_preview` uses for ``weak_topics_only``), so S-20
+        can pre-fill its chips from the server's own vocabulary rather than
+        re-deriving from a different one.
+        """
+        student_uuid = _as_uuid(student_id)
+        with self._sessionmaker() as session:
+            enrolled = enrolled_paper_numbers(session, student_uuid, subject_code)
+            base_clauses = self._matching_clauses(
+                enrolled, student_uuid, subject_code, (), (), None
+            )
+
+            topic_rows = session.execute(
+                select(QuestionBank.topic, func.count())
+                .select_from(QuestionBank)
+                .outerjoin(Paper, Paper.id == QuestionBank.paper_id)
+                .where(*base_clauses, QuestionBank.topic.is_not(None))
+                .group_by(QuestionBank.topic)
+            ).all()
+            untopiced_count = (
+                session.scalar(
+                    select(func.count())
+                    .select_from(QuestionBank)
+                    .outerjoin(Paper, Paper.id == QuestionBank.paper_id)
+                    .where(*base_clauses, QuestionBank.topic.is_(None))
+                )
+                or 0
+            )
+            weak_topics = self._weak_topics_for(session, student_uuid, subject_code)
+
+            return PracticeTopicsResult(
+                subject_code=subject_code,
+                topics=sorted(
+                    (
+                        PracticeTopicCount(topic=topic, available_count=count)
+                        for topic, count in topic_rows
+                    ),
+                    key=lambda t: t.topic,
+                ),
+                weak_topics=weak_topics,
+                untopiced_count=untopiced_count,
             )
 
     # -- Internals --------------------------------------------------------------
@@ -573,7 +826,11 @@ __all__ = [
     "PracticeOwnershipError",
     "PracticePreview",
     "PracticeRequest",
+    "PracticeResultQuestion",
+    "PracticeResultRow",
     "PracticeService",
+    "PracticeTopicCount",
+    "PracticeTopicsResult",
     "PracticeUnavailableError",
     "PracticeUnavailableReason",
 ]

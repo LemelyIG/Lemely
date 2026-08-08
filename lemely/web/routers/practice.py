@@ -25,7 +25,9 @@ from lemely.db.practice_repo import (
     PracticeOwnershipError,
     PracticePreview,
     PracticeRequest,
+    PracticeResultRow,
     PracticeService,
+    PracticeTopicsResult,
     PracticeUnavailableError,
 )
 from lemely.web.deps import AuthContext, get_practice_service, require_role
@@ -35,6 +37,10 @@ from lemely.web.schemas_practice import (
     PracticeExportQuestionDTO,
     PracticePreviewDTO,
     PracticeRequestDTO,
+    PracticeResultDTO,
+    PracticeResultQuestionDTO,
+    PracticeTopicCountDTO,
+    PracticeTopicsDTO,
 )
 
 if TYPE_CHECKING:
@@ -115,6 +121,42 @@ def _export_to_dto(row: PracticeExportSet) -> PracticeExportDTO:
     )
 
 
+def _result_to_dto(row: PracticeResultRow) -> PracticeResultDTO:
+    return PracticeResultDTO(
+        assignmentId=str(row.assignment_id),
+        quizId=str(row.quiz_id),
+        subjectCode=row.subject_code,
+        marked=row.marked,
+        submissionStatus=row.submission_status,
+        awardedMarks=row.awarded_marks,
+        maximumMarks=row.maximum_marks,
+        questions=[
+            PracticeResultQuestionDTO(
+                questionRef=q.question_ref,
+                position=q.position,
+                topic=q.topic,
+                totalMarks=q.total_marks,
+                awardedMarks=q.awarded_marks,
+                confidenceBand=q.confidence_band,
+                confidenceScore=q.confidence_score,
+            )
+            for q in row.questions
+        ],
+    )
+
+
+def _topics_to_dto(row: PracticeTopicsResult) -> PracticeTopicsDTO:
+    return PracticeTopicsDTO(
+        subjectCode=row.subject_code,
+        topics=[
+            PracticeTopicCountDTO(topic=t.topic, availableCount=t.available_count)
+            for t in row.topics
+        ],
+        weakTopics=row.weak_topics,
+        untopicedCount=row.untopiced_count,
+    )
+
+
 @router.get("/{subject_code}/preview", response_model=PracticePreviewDTO)
 def practice_preview(
     subject_code: str,
@@ -152,6 +194,26 @@ def practice_preview(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _preview_to_dto(result)
+
+
+@router.get("/{subject_code}/topics", response_model=PracticeTopicsDTO)
+def practice_topics(
+    subject_code: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[PracticeService, Depends(get_practice_service)],
+) -> PracticeTopicsDTO:
+    """S-20's topic-selection control: real, servable topics with real counts.
+
+    Filtered through the identical clauses ``GET .../preview`` uses, so an
+    offered topic can never be one the pool cannot actually serve. Also
+    carries the caller's own weak topics for this subject, so S-20 can
+    pre-fill its chips from the server's own vocabulary.
+    """
+    try:
+        result = service.topics(auth.user_id, subject_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _topics_to_dto(result)
 
 
 @router.post("", response_model=CreatePracticeResponseDTO, status_code=201)
@@ -207,6 +269,27 @@ def practice_export(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _export_to_dto(result)
+
+
+@router.get("/{assignment_id}/result", response_model=PracticeResultDTO)
+def practice_result(
+    assignment_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[PracticeService, Depends(get_practice_service)],
+) -> PracticeResultDTO:
+    """S-21's poll target: has this practice set been marked, and how did it go.
+
+    404 when the assignment does not exist anywhere, or exists but is not a
+    ``practice``-kind quiz; 403 when it exists as a practice set but is not
+    the caller's — never data (mirrors :func:`practice_export`'s discipline).
+    """
+    try:
+        result = service.result(auth.user_id, assignment_id)
+    except (PracticeNotFoundError, PracticeOwnershipError) as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _result_to_dto(result)
 
 
 __all__ = ["router"]
