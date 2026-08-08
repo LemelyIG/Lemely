@@ -1198,3 +1198,32 @@ easy to mistake for a bug later.
 
 **Next.** P4.6 flashcards backend (decks by subject/topic, AI generation from a weakness,
 SM-2 review). Then P4.7 study plan, then the four frontend tasks.
+
+## 2026-08-09 — P4.6 closed, P4.7 chunks A and B landed
+
+**Did.** Found P4.6 chunk C uncommitted on disk from a killed session; verified it with my
+own gate run rather than the handover's word and it came back clean — the first one this
+phase that did. Committed (`b1a44bf`). Then P4.7 chunk A (`fc4dca9`): the adaptive scheduler
+rebuilt pure and clock-injected, sessions carrying topic + activity type + duration + a real
+date, three weighted signals (0.5 rolling weakness / 0.3 placement / 0.2 self-report) with
+renormalisation instead of zero-filling. Then chunk B (`27f6a16`): migration 0012,
+persistence, ISO-week regeneration by supersession, per-session completion. D4.12 recorded.
+
+**Learned.** The thing worth carrying forward is *measure the output, don't read the code and
+nod*. Chunk A looked right — good docstrings, honest refusal path, every rule tested — and
+scheduled **270 of 600 minutes** for a student with three weak topics, because sessions capped
+at 90 minutes silently dropped the excess while the header still claimed ten hours a week. No
+test failed. Nothing was obviously wrong on the page. It took running the function over a few
+realistic inputs and looking at the totals. The worst failures in this phase have all been
+this shape: plausible code, invisible to the suite, wrong in a way only arithmetic reveals.
+
+**Also.** Five of five handovers this phase have now reported done with a gate red — this
+time `test_db_schema.py`'s EXPECTED_TABLES registry, the deliberate schema-drift guard the
+two new tables were never added to. It caught the diff exactly as designed. The pattern is
+stable enough that the orchestrator's own `./scripts/check.sh` run should be treated as part
+of the task, not as a formality after it.
+
+**Next.** P4.7 chunk C — the routes, and the DTO decision. `StudyPlanDTO` currently carries
+no `available`/`reason`, so chunk A's honest `no_signal` refusal and a genuine "nothing to
+schedule this week" both arrive at the frontend as an empty list. That distinction is the
+whole point of chunk A and it dies at the wire until chunk C fixes it. Then P4.8–P4.12.
