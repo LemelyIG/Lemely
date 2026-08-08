@@ -1258,11 +1258,20 @@ function buildRouteRegistry(seed) {
       // this one through the unmodified quiz take/submit/mark path, with
       // exactly one deliberately wrong answer, so the topic breakdown is
       // backed by a real WeaknessRecord rather than a stubbed payload.
+      //
+      // `ready` deliberately does NOT match "starting picture": that phrase
+      // renders on PlacementInvite too ("Get a real starting picture in X"),
+      // so it would have been satisfied by the invite screen and this entry
+      // would have passed without ever loading the result — the vacuous pass
+      // again, on the one screen whose whole point is the honesty framing.
+      // The string below is unique to PlacementResult's *marked* branch and
+      // is the UI-spec framing itself (a baseline, never a grade), so a
+      // regression that dropped it would fail this gate rather than hide.
       screenId: "S-05",
       slug: "student-placement-result",
       path: placementResultUrl,
       session: placementCompletedSession,
-      ready: (page) => waitForText(page, "starting picture"),
+      ready: (page) => waitForText(page, "This is a baseline, not a grade"),
       authed: true,
     },
   ]

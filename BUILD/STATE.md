@@ -731,6 +731,21 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         (gate 8: QUALITY-BAR.md, `/impeccable audit` on the changed files, `npx impeccable
         detect` clean, axe zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus for
         every screen × state × breakpoint, no unintended regression against baselines).
+        **Session 5 progress (2026-08-09):** the seed was run standalone against the live stack
+        and is green — exit 0, all four placement accounts created, `bankQuestionCount: 24` on
+        paper 2, and every key `audit.mjs` dereferences (`assignmentId` on inProgress/completed,
+        `subjectCode`) confirmed present in the emitted payload rather than assumed.
+        **One real vacuity found by the orchestrator while reviewing the registry, not from any
+        report — do not re-derive:** S-05's `ready` matched **`"starting picture"`**, which
+        `PlacementInvite` also renders (`"Get a real starting picture in {subject}"`). The entry
+        would have been satisfied by the *invite* screen and passed **without ever loading the
+        result** — the exact vacuous pass this chunk exists to remove, on the one screen whose
+        whole point is the honesty framing. Tightened to `"This is a baseline, not a grade"`,
+        which is unique to `PlacementResult`'s **marked** branch (grep-verified: one hit in
+        `web/src`) and is the UI-spec framing itself, so a regression that dropped it fails the
+        gate instead of hiding. The other five `ready` strings were checked the same way and are
+        each unique to their screen; S-03's refusal heading is specific to the `no_questions`
+        reason alone (`placementData.ts:32`), so a different reason would fail rather than pass.
         **`impeccable-detect` and `ui-thresholds` already pass — that is NOT evidence the new
         screens are covered.** The audit registry is P3.10's 24-route/34-state one (D3.17/D3.18)
         and predates S-01..S-05; a green `ui-thresholds` on a registry that never lists the new
