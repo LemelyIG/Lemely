@@ -3662,3 +3662,98 @@ are zero NULL prompts today, so the three-valued-logic hole cannot bite — reco
 future nullable column would reopen it invisibly.
 
 Gemini spend: **$0.00**.
+
+---
+
+## D4.15 — Saves for one question are serialized, and a save may only mark clean what it actually sent (P4.8 chunk B)
+
+**Found by the MISSION §6 gate-7 adversarial review of the chunk-B diff, after the three
+answer-loss defects in `c2d444f` were already fixed.** A fourth, narrower path to the same
+outcome, in the same class as D3.21: the student sees their answer on screen while the paper
+is marked against different text, and every gate this build runs stays green.
+
+### 1. The defect
+
+Two saves for the same question could be on the wire simultaneously:
+
+- the reconnect/reload retry pass, resending the cached value, and
+- the debounced edit path, sending a just-typed newer one.
+
+That overlap was deliberate, not accidental. `refsToRetry` excludes in-flight refs so the retry
+never duplicates a save; the debounce path deliberately does **not** consult it, because a
+student who types while a save is in flight must have that newer edit sent rather than dropped
+as a duplicate. Both halves are right on their own.
+
+What was missing is that **network arrival order is not dispatch order**, and
+`quiz_taking_repo.save_answer` is a plain last-write-wins upsert with no version or timestamp
+guard. So the older save could land last at the server. Worse, `doSave`'s `onSuccess` wrote the
+value *its own call had captured* back into the cache and stamped it `dirty: false`,
+unconditionally — so the newer answer was overwritten locally too, and marked "confirmed
+saved". On the next reload `mergeAnswers` sees a clean entry, defers to the server's value, and
+the newer answer is gone with no error shown anywhere.
+
+Reachable on the ordinary flaky-connection path this whole subsystem exists to serve.
+
+### 2. Two independent lines, because one would have been enough to look fixed
+
+1. **Serialization.** Each question ref owns a promise chain (`saveChains` in `QuizTaker.tsx`);
+   a save requested while one is in flight is appended rather than dispatched. Two saves for a
+   question can no longer overlap, on the wire or at the server, so ordering ambiguity is gone
+   at the source.
+   **Coalescing, not cancelling** — that distinction is what stops the fix from becoming a
+   fifth loss path. The queued save reads `answerCache` **when its turn comes**, not when it
+   was queued, so it carries the newest value; a newer edit is deferred, never dropped.
+2. **`isCacheEntryUnchanged`.** A completing save may only mark an entry clean if the cache
+   still holds exactly what that save put on the wire. **Value equality, not object identity**,
+   on purpose: a student who types a change and undoes it back to the same text still gets a
+   clean commit rather than a needless resend that would leave the entry dirty and block
+   submit.
+
+Line 2 is redundant given line 1 holds. It is kept because line 1 is an invariant maintained by
+component wiring, and this one is a pure, tested check at the point of the actual write.
+
+### 3. The single-field payload is deleted, not left dead
+
+`buildAnswerSavePayload` ("only send the key that changed", the D4.5 onboarding rule) was
+correct while each edit owned its own save. It stops being *expressible* under coalescing: one
+save now stands for several edits, possibly to both fields, so there is no single "field that
+changed" to name. Every save sends both fields from the cache, which is safe for the reason
+`buildRetrySavePayload` already documented — a cache entry always holds the question's true
+current state — and `SaveAnswerRequestDTO` treats an omitted field as "leave untouched" and a
+present one as "set to this", which is exactly what a both-fields re-assertion wants
+(verified against `lemely/web/schemas_quiz.py:312`, not assumed).
+
+Its three tests were deleted with it. Keeping a tested function nothing calls would have been
+the worse trade.
+
+### 4. Submit now blocks on the cache, not on its own promises
+
+`flushPendingSaves` had **zero test coverage** despite being the fix for the worst of the three
+`c2d444f` defects. Two changes fell out of covering it:
+
+- It waits on refs that are **busy but clean** (`refsToFlush`), not just dirty ones. A save
+  already on the wire may still fail, and a save that fails after submit has gone through marks
+  the paper without an answer the student can see.
+- It decides failure by re-reading the cache for dirty entries rather than by catching its own
+  rejections. Stronger contract: it blocks on *any* unsaved answer, however it got that way,
+  not only the ones this call happened to dispatch.
+
+### 5. `Object.keys` is not selection order (S-02 → S-03 routing)
+
+`Object.keys(drafts)[0]` was documented as "the first subject they enrolled in, in their own
+S-01 selection order". It is not: JS enumerates integer-like string keys first, ascending,
+ahead of every other key's insertion order. Invisible today **only** because all three current
+syllabus codes carry a leading zero (`0625`/`0580`/`0606`) and so are not integer-like — it
+goes live the day a code without one is added. `placementInviteSubject` orders by the
+`SUPPORTED_SUBJECTS` catalogue instead: "the first subject as S-01 presented them", a rule that
+stays true whatever the codes look like. The test pins the trap itself
+(`Object.keys(...)[0] === "9709"`) next to the function avoiding it.
+
+### 6. Verification
+
+11 new unit tests, **each verified by inversion** rather than assumed: probing
+`isCacheEntryUnchanged` to always-true fails exactly 5, reducing `refsToFlush` to the dirty
+set fails exactly 5, and reverting `placementInviteSubject` to `enrolledCodes[0]` fails exactly
+3. 224 web unit tests green, `tsc --noEmit` clean.
+
+Gemini spend: **$0.00**.

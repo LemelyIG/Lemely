@@ -623,7 +623,34 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         `Onboarding.tsx`, whose own docstring says "there is no multi-step wizard backend yet" —
         there is now. Whether the legacy `POST /api/student/onboarding` route and
         `usePostOnboarding` die here or in P4.11 is a chunk-A decision to record, not assume.
-      - [ ] doing — chunk B (started 2026-08-09; resumed 2026-08-09 by a fresh session).
+      - [ ] doing — chunk B (started 2026-08-09; resumed twice, latest 2026-08-09 third session).
+        **Third-session state: `a690040` fixes a FOURTH answer-loss defect (D4.15), found by
+        actually running gate 7 — the previous two sessions never ran an orchestrator gate pass
+        at all.** Two saves for one question could be on the wire together (reconnect retry with
+        the cached value, debounced edit with newer text — that overlap was deliberate, so a
+        newer edit is never dropped as a duplicate). But arrival order is not dispatch order and
+        `save_answer` is a last-write-wins upsert with no version guard, so the **older** save
+        could land last at the server, and `onSuccess` then wrote its own captured value into the
+        cache stamped `dirty: false`. The student sees the newer answer on screen; the next
+        reload sees a clean entry, defers to the server, and **the paper is marked against text
+        the student did not write.** D3.21's shape exactly; invisible to every gate.
+        Fixed on two independent lines: saves serialized per question (`saveChains` —
+        **coalescing, not cancelling**, so a queued save reads the cache when its turn comes and
+        carries the newest value) plus `isCacheEntryUnchanged` gating the clean-commit by value
+        equality. `buildAnswerSavePayload` deleted rather than left dead — a coalesced save has
+        no single "field that changed"; both fields now go from the cache, which
+        `SaveAnswerRequestDTO` handles as "set these, leave the rest" (checked against
+        `schemas_quiz.py:312`, not assumed). `flushPendingSaves` — which had **zero coverage**
+        despite being the fix for the worst of the three `c2d444f` defects — now also waits on
+        busy-but-clean refs and blocks submit on the cache being dirty-free.
+        Plus a latent S-02→S-03 routing bug: `Object.keys(drafts)[0]` is not selection order (JS
+        hoists integer-like keys), invisible only because all three syllabus codes have a leading
+        zero. `placementInviteSubject` orders by the S-01 catalogue.
+        11 new tests, **each verified by inversion** (probes fail exactly 5 / 5 / 3).
+        **224 web unit tests green, `tsc --noEmit` clean, `pre-commit run --all-files` clean.**
+        Full 13-gate run was in flight at this checkpoint — do not quote it as green until the
+        line below says so. $0.00 Gemini.
+        Previous-session narrative follows.
         **The gaps the previous session recorded below are now closed and the extraction it
         described is on disk**: `placementData.ts` carries `placementInviteView`/
         `placementResultView` (both screens switch on the discriminated union rather than
