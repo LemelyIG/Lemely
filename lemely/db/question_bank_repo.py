@@ -63,8 +63,17 @@ from lemely.core.loose_schemas import MarkScheme as ParsedMarkScheme
 from lemely.core.loose_schemas import QuestionType
 from lemely.core.topics import classify, is_writable
 from lemely.db.models.academic import MarkScheme as MarkSchemeRecord
-from lemely.db.models.enums import DifficultySource, ExamBoard, QuestionDifficulty, QuestionSource
+from lemely.db.models.academic import Paper, Subject
+from lemely.db.models.enums import (
+    SESSION_MONTH_LABELS,
+    DifficultySource,
+    ExamBoard,
+    QuestionDifficulty,
+    QuestionSource,
+    SessionMonth,
+)
 from lemely.db.models.quizzes import QuestionBank
+from lemely.io.metadata import parse_caie_qp_filename_metadata
 from lemely.io.syllabus_topics import get_taxonomy
 
 if TYPE_CHECKING:
@@ -133,6 +142,123 @@ def visible_bank_filter(
 # ---------------------------------------------------------------------------
 
 
+_SESSION_MONTH_BY_LABEL: Final[dict[str, SessionMonth]] = {
+    label: member for member, label in SESSION_MONTH_LABELS.items()
+}
+"""Inverse of the display map. ``ExamMetadata.session_month`` is the *label*
+(``"May/June"``); the ``papers`` column is the enum. Derived from the one
+mapping rather than restated, so the two cannot drift apart."""
+
+
+def _paper_identity(board: ExamBoard, source_question_id: str | None) -> _PaperIdentity | None:
+    """Parse a bank row's paper identity out of its ``source_question_id``.
+
+    P4.1 builds that value as ``f"{qp_stem}#{ref}"`` — e.g.
+    ``"0625_s23_qp_11#22"`` — so the stem before the ``#`` is the source PDF's
+    filename, and the same parser the ingest used reads it back. Returns
+    ``None`` (never a partial guess) if the stem does not parse.
+    """
+    if not source_question_id or "#" not in source_question_id:
+        return None
+    stem = source_question_id.split("#", 1)[0]
+    try:
+        meta = parse_caie_qp_filename_metadata(f"{stem}.pdf")
+    except ValueError:
+        return None
+    month = _SESSION_MONTH_BY_LABEL.get(meta.session_month)
+    if month is None:
+        return None
+    return _PaperIdentity(
+        board=board,
+        subject_code=meta.subject_code,
+        session_month=month,
+        session_year=meta.session_year,
+        paper_number=meta.paper_number,
+        paper_variant=meta.paper_variant,
+    )
+
+
+def _resolve_paper(session: Session, identity: _PaperIdentity) -> tuple[uuid.UUID, bool] | None:
+    """Get-or-create the ``papers`` row (and the ``subjects`` row it FKs to).
+
+    Returns ``(paper_id, created)``, or ``None`` when the subject has no
+    bundled syllabus taxonomy — ``subjects.name`` is NOT NULL and the only
+    honest source for it is the transcribed ``subject_name`` D4.4 already
+    loads. Inventing a display name to satisfy a foreign key would put a made-up
+    string in front of a user.
+    """
+    existing = session.scalars(
+        select(Paper).where(
+            Paper.board == identity.board,
+            Paper.subject_code == identity.subject_code,
+            Paper.session_month == identity.session_month,
+            Paper.session_year == identity.session_year,
+            Paper.paper_number == identity.paper_number,
+            Paper.paper_variant == identity.paper_variant,
+        )
+    ).first()
+    if existing is not None:
+        return existing.id, False
+
+    # Looked up by `code`, not by primary key: `subjects.id` is a generated
+    # uuid and `code` is the natural key the FK on `papers` actually points at.
+    subject = session.scalars(select(Subject).where(Subject.code == identity.subject_code)).first()
+    if subject is None:
+        taxonomy = get_taxonomy(identity.subject_code, board=identity.board.value)
+        if taxonomy is None:
+            return None
+        subject = Subject(
+            code=identity.subject_code, name=taxonomy.subject_name, board=identity.board
+        )
+        session.add(subject)
+        session.flush()
+
+    paper = Paper(
+        board=identity.board,
+        subject_code=identity.subject_code,
+        session_month=identity.session_month,
+        session_year=identity.session_year,
+        paper_number=identity.paper_number,
+        paper_variant=identity.paper_variant,
+    )
+    session.add(paper)
+    session.flush()
+    return paper.id, True
+
+
+@dataclass(slots=True)
+class PaperLinkOutcome:
+    """Counts from :meth:`QuestionBankService.link_past_paper_rows`.
+
+    Every non-linked row lands in exactly one counter, so ``considered`` always
+    equals ``linked + unparseable + no_subject_taxonomy`` — a backfill that
+    quietly drops rows is the failure mode this shape prevents.
+    """
+
+    considered: int = 0
+    linked: int = 0
+    papers_created: int = 0
+    unparseable: int = 0
+    """``source_question_id`` did not carry a parseable CAIE paper stem. Left
+    unlinked rather than attached to a guessed paper."""
+    no_subject_taxonomy: int = 0
+    """No bundled syllabus for the subject, so no transcribed subject name for
+    the ``subjects`` row the FK needs. Skipped rather than given an invented
+    display name."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PaperIdentity:
+    """The six columns of ``uq_papers_identity``, as a hashable cache key."""
+
+    board: ExamBoard
+    subject_code: str
+    session_month: SessionMonth
+    session_year: int | None
+    paper_number: int
+    paper_variant: int
+
+
 @dataclass(frozen=True, slots=True)
 class NewBankQuestion:
     """Everything :meth:`QuestionBankService.add_questions` needs for one row.
@@ -154,6 +280,14 @@ class NewBankQuestion:
     owner_id: uuid.UUID | None = None
     school_id: uuid.UUID | None = None
     paper_id: uuid.UUID | None = None
+    """The ``papers`` row this question came from.
+
+    Left ``None`` by the P4.1 past-paper writer, which had no reason to create
+    ``Paper`` rows; :meth:`QuestionBankService.link_past_paper_rows` fills it
+    afterwards from ``source_question_id``. P4.4 made it load-bearing —
+    placement duration estimates resolve through it (D4.6 §5) — so a row
+    without it is placement-ineligible, not merely under-described.
+    """
     source_question_id: str | None = None
     topic: str | None = None
     model_answer: str | None = None
@@ -326,6 +460,72 @@ class QuestionBankService:
                 QuestionBank.source_question_id.is_not(None),
             )
             return {row for row in session.scalars(stmt).all() if row is not None}
+
+    def link_past_paper_rows(self, *, dry_run: bool = False) -> PaperLinkOutcome:
+        """Fill ``question_bank.paper_id`` for banked past-paper questions.
+
+        **Why this exists.** P4.1 banked 273 real past-paper questions and left
+        every one of them with ``paper_id IS NULL`` — that module's docstring
+        says so plainly ("P4.1 does not create ``Paper`` rows"), and nothing
+        needed the link until now. P4.4 does: a placement estimate is
+        ``total_marks * (paper duration / paper total marks)``, and the only
+        route from a bank row to its paper's number is this column (D4.6 §5).
+        Without it *every* question is ineligible and placement is
+        un-assemblable for 0625 too — which is what an orchestrator measurement
+        against the real bank actually returned, before this method existed.
+
+        The paper identity is not inferred: it is parsed from the
+        ``source_question_id``, which P4.1 already builds as
+        ``f"{qp_stem}#{ref}"`` from the source PDF's filename, by the same
+        :func:`~lemely.io.metadata.parse_caie_qp_filename_metadata` the
+        ingest used. A row whose stem does not parse is left unlinked and
+        counted, never linked to a guessed paper.
+
+        ``Paper`` rows are created on demand (``papers`` is empty today), and
+        so is the ``subjects`` row its FK requires — with the subject *name*
+        taken from the bundled syllabus taxonomy, the same transcribed source
+        D4.4 used. A subject with no bundled taxonomy is skipped rather than
+        given an invented display name; its questions stay unlinked, which the
+        availability path already reports honestly.
+
+        Idempotent: only rows with a NULL ``paper_id`` are considered.
+        """
+        outcome = PaperLinkOutcome()
+        # Not `session.begin()`: a dry run must be able to create Paper rows in
+        # the session (so the *second* row for the same paper takes the cache
+        # path and the counts are the real ones) and then throw them away. The
+        # commit is explicit and only happens on a live run.
+        with self._sessionmaker() as session:
+            rows = session.scalars(
+                select(QuestionBank).where(
+                    QuestionBank.source == QuestionSource.past_paper,
+                    QuestionBank.paper_id.is_(None),
+                    QuestionBank.source_question_id.is_not(None),
+                )
+            ).all()
+            outcome.considered = len(rows)
+            cache: dict[_PaperIdentity, uuid.UUID] = {}
+            for row in rows:
+                identity = _paper_identity(row.board, row.source_question_id)
+                if identity is None:
+                    outcome.unparseable += 1
+                    continue
+                paper_id = cache.get(identity)
+                if paper_id is None:
+                    resolved = _resolve_paper(session, identity)
+                    if resolved is None:
+                        outcome.no_subject_taxonomy += 1
+                        continue
+                    paper_id, created = resolved
+                    cache[identity] = paper_id
+                    outcome.papers_created += int(created)
+                row.paper_id = paper_id
+                outcome.linked += 1
+            if dry_run:
+                session.rollback()
+            else:
+                session.commit()
+        return outcome
 
     def has_inferred_difficulty(
         self,

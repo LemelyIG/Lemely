@@ -136,7 +136,13 @@ class Assembly:
     selected: list[Selected]
     estimated_minutes: float
     topics: list[str]
-    """Distinct topics covered, in syllabus-code order."""
+    """Distinct topic *labels* covered, in syllabus-code order. A mix of
+    top-level and subtopic labels, because that is what D4.2's classifier
+    writes — so ``len(topics)`` is a count of labels, not of syllabus topics."""
+    syllabus_topic_count: int
+    """Distinct **top-level** syllabus topics covered (see
+    :func:`_syllabus_group`). This is the number that means "how broad is this
+    test"; ``len(topics)`` overstates it whenever subtopics are involved."""
 
     @property
     def question_count(self) -> int:
@@ -181,6 +187,25 @@ def _topic_sort_key(topic: str) -> tuple[list[int], str]:
     if all(p.isdigit() for p in parts) and parts != [""]:
         return ([int(p) for p in parts], topic)
     return ([10**6], topic)
+
+
+def _syllabus_group(topic: str) -> str:
+    """The top-level syllabus topic a label belongs to.
+
+    D4.2's classifier writes whichever level it matched, so the bank holds a
+    mix of top-level labels (``"3 Waves"``) and subtopic labels
+    (``"1.2 Motion"``). Counting those as peers makes breadth a lie: an
+    orchestrator measurement against the real 0625 bank produced a set
+    reported as "13 topics" of which **nine questions sat under physics topic
+    1**. Breadth is therefore measured on this key — the code before the first
+    ``.`` — and only depth is measured on the full label.
+
+    A label with no dotted numeric code is its own group; two such labels are
+    never silently merged.
+    """
+    code = topic.split(" ", 1)[0]
+    head = code.split(".", 1)[0]
+    return head if head.isdigit() else topic
 
 
 def assemble(
@@ -238,16 +263,25 @@ def assemble(
     if eligible_count == 0:
         return Unavailable(UnavailableReason.no_eligible_questions, 0, 0, 0.0)
 
-    topics_in_order = sorted(by_topic, key=_topic_sort_key)
-    if len(topics_in_order) < min_topics:
+    # Breadth is measured across top-level syllabus topics, depth across the
+    # subtopic labels inside one — see :func:`_syllabus_group`. Grouping first
+    # is what stops "1.1", "1.2", ..., "1.8" from reading as eight topics.
+    labels_by_group: dict[str, list[str]] = {}
+    for label in by_topic:
+        labels_by_group.setdefault(_syllabus_group(label), []).append(label)
+    for labels in labels_by_group.values():
+        labels.sort(key=_topic_sort_key)
+    groups_in_order = sorted(labels_by_group, key=lambda g: _topic_sort_key(labels_by_group[g][0]))
+
+    if len(groups_in_order) < min_topics:
         return Unavailable(
-            UnavailableReason.insufficient_topics, eligible_count, len(topics_in_order), 0.0
+            UnavailableReason.insufficient_topics, eligible_count, len(groups_in_order), 0.0
         )
 
-    # Aim each topic at an even share of the budget, so "closest to the share"
-    # prefers a question that leaves room for the other topics rather than the
-    # longest one that still fits.
-    share = target_minutes / len(topics_in_order)
+    # Aim each top-level topic at an even share of the budget, so "closest to
+    # the share" prefers a question that leaves room for the other topics
+    # rather than the longest one that still fits.
+    share = target_minutes / len(groups_in_order)
     for options in by_topic.values():
         options.sort(
             key=lambda s: (abs(s.estimated_minutes - share), str(s.candidate.question_bank_id))
@@ -255,7 +289,8 @@ def assemble(
 
     selected: list[Selected] = []
     spent = 0.0
-    cursors = dict.fromkeys(topics_in_order, 0)
+    cursors = dict.fromkeys(by_topic, 0)
+    label_cursors = dict.fromkeys(groups_in_order, 0)
     progressed = True
 
     def _keep_going() -> bool:
@@ -272,44 +307,65 @@ def assemble(
         """
         return spent < target_minutes or len(selected) < min_questions
 
-    while progressed and _keep_going():
-        progressed = False
-        for topic in topics_in_order:
-            options = by_topic[topic]
-            index = cursors[topic]
-            if index >= len(options):
+    def _take_from_group(group: str) -> Selected | None:
+        """One question from ``group``, rotating through its subtopic labels.
+
+        The inner rotation is what keeps a group's share spread across its
+        subtopics instead of drilling into whichever one happens to be first.
+        """
+        labels = labels_by_group[group]
+        for offset in range(len(labels)):
+            label = labels[(label_cursors[group] + offset) % len(labels)]
+            index = cursors[label]
+            if index >= len(by_topic[label]):
                 continue
-            choice = options[index]
+            choice = by_topic[label][index]
             if spent + choice.estimated_minutes > max_minutes:
                 continue
-            cursors[topic] = index + 1
+            cursors[label] = index + 1
+            label_cursors[group] = (label_cursors[group] + offset + 1) % len(labels)
+            return choice
+        return None
+
+    while progressed and _keep_going():
+        progressed = False
+        for group in groups_in_order:
+            choice = _take_from_group(group)
+            if choice is None:
+                continue
             selected.append(choice)
             spent += choice.estimated_minutes
             progressed = True
             if not _keep_going():
                 break
 
-    covered = sorted(
-        {s.candidate.topic for s in selected if s.candidate.topic}, key=_topic_sort_key
-    )
-    if len(covered) < min_topics:
+    covered_groups = {_syllabus_group(s.candidate.topic or "") for s in selected}
+    if len(covered_groups) < min_topics:
         return Unavailable(
-            UnavailableReason.insufficient_topics, eligible_count, len(topics_in_order), spent
+            UnavailableReason.insufficient_topics, eligible_count, len(groups_in_order), spent
         )
     if len(selected) < min_questions:
         return Unavailable(
-            UnavailableReason.insufficient_questions, eligible_count, len(topics_in_order), spent
+            UnavailableReason.insufficient_questions, eligible_count, len(groups_in_order), spent
         )
     if spent < min_minutes:
         return Unavailable(
-            UnavailableReason.insufficient_duration, eligible_count, len(topics_in_order), spent
+            UnavailableReason.insufficient_duration, eligible_count, len(groups_in_order), spent
         )
 
     ordered = sorted(
         selected,
         key=lambda s: (_topic_sort_key(s.candidate.topic or ""), str(s.candidate.question_bank_id)),
     )
-    return Assembly(selected=ordered, estimated_minutes=spent, topics=covered)
+    covered = sorted(
+        {s.candidate.topic for s in selected if s.candidate.topic}, key=_topic_sort_key
+    )
+    return Assembly(
+        selected=ordered,
+        estimated_minutes=spent,
+        topics=covered,
+        syllabus_topic_count=len(covered_groups),
+    )
 
 
 def estimated_minutes_for(

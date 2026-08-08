@@ -29,9 +29,17 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.models import User
-from lemely.db.models.enums import QuizKind, QuizStatus, Role
+from lemely.db.models.academic import Paper, Subject
+from lemely.db.models.enums import (
+    DifficultySource,
+    QuestionSource,
+    QuizKind,
+    QuizStatus,
+    Role,
+    SessionMonth,
+)
 from lemely.db.models.quizzes import Quiz, QuizAssignment
-from lemely.db.question_bank_repo import QuestionBankService
+from lemely.db.question_bank_repo import NewBankQuestion, QuestionBankService
 from lemely.db.quiz_repo import QuizOwnershipError, QuizService
 from lemely.db.quiz_taking_repo import (
     QuizTakingNotFoundError,
@@ -325,6 +333,65 @@ def test_another_student_cannot_open_someone_elses_placement_test(
         taking.get_take(other_id, assignment_id)
     with pytest.raises(QuizTakingOwnershipError):
         taking.submit(other_id, assignment_id)
+
+
+def test_banked_past_paper_rows_are_linked_to_their_paper(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The P4.1 gap P4.4 had to close: bank rows carried no ``paper_id``.
+
+    Not a cosmetic link — a placement estimate resolves the paper's transcribed
+    duration through it (D4.6 §5), so before this backfill *every* question was
+    placement-ineligible and 0625 reported ``no_eligible_questions``.
+
+    The identity is parsed from ``source_question_id``, never inferred, so a
+    row whose stem is not a CAIE filename is counted and left unlinked rather
+    than attached to a guessed paper.
+    """
+    service = QuestionBankService(pg_sessionmaker)
+    service.add_questions(
+        [
+            NewBankQuestion(
+                subject_code="0625",
+                source=QuestionSource.past_paper,
+                difficulty="standard",
+                difficulty_source=DifficultySource.inferred_from_marks,
+                question_type="explanation",
+                prompt=f"Question {ref}",
+                total_marks=2,
+                source_question_id=sqid,
+            )
+            for sqid, ref in (
+                ("0625_s23_qp_11#1", "1"),
+                ("0625_s23_qp_11#2", "2"),
+                ("0625_w24_qp_41#3", "3"),
+                ("not-a-caie-filename#4", "4"),
+            )
+        ]
+    )
+
+    dry = service.link_past_paper_rows(dry_run=True)
+    assert (dry.considered, dry.linked, dry.papers_created, dry.unparseable) == (4, 3, 2, 1)
+    with pg_sessionmaker() as session:
+        assert session.scalars(sa.select(sa.func.count()).select_from(Paper)).one() == 0
+
+    outcome = service.link_past_paper_rows()
+    assert (outcome.considered, outcome.linked, outcome.papers_created) == (4, 3, 2)
+    assert outcome.unparseable == 1
+    assert outcome.considered == outcome.linked + outcome.unparseable + outcome.no_subject_taxonomy
+
+    with pg_sessionmaker() as session:
+        # Two questions from the same PDF share one Paper row, and its columns
+        # come from the filename: 0625, May/June 2023, paper 1 variant 1.
+        papers = session.scalars(sa.select(Paper)).all()
+        assert len(papers) == 2
+        s23 = next(p for p in papers if p.session_year == 2023)
+        assert (s23.subject_code, s23.paper_number, s23.paper_variant) == ("0625", 1, 1)
+        assert s23.session_month is SessionMonth.may_june
+        # The subject name is the transcribed one, not an invented placeholder.
+        assert session.scalars(sa.select(Subject.name)).one() == "Physics"
+
+    assert service.link_past_paper_rows().considered == 1, "idempotent; only the unlinked row left"
 
 
 def test_an_unknown_assignment_is_still_a_404_not_a_403(

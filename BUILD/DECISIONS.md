@@ -3075,3 +3075,88 @@ placement result is.
 - **Marking:** end-to-end placement → `attempts.origin == quiz`, `grade IS NULL`,
   `predicted_grade IS NULL`, and ≥1 `WeaknessRecord` whose topic is a P4.2 label.
 - **`alembic check`** reports no drift after 0010 (D1.3), including the new nullability.
+
+---
+
+## D4.8 — Placement assembly: paper links were missing, and breadth was counting subtopics as topics (P4.4 chunk B)
+
+D4.6 §5 designed the marks-derived duration budget on paper. Building it surfaced
+three things that only a measurement against the real bank could have found. All
+three are recorded here because each cost real work and none is re-derivable from
+reading the code.
+
+### 1. `question_bank.paper_id` was NULL on every banked question, and `papers` was empty
+
+D4.6 §5 says the rate is "resolved via `question_bank.paper_id →
+papers.paper_number/subject_code`, both of which already exist and are NOT NULL".
+The `papers` *columns* exist and are NOT NULL. The **link** did not: P4.1 banked
+273 real past-paper questions with `paper_id IS NULL` on all of them — its own
+module docstring records that it "does not create `Paper` rows" — and both
+`papers` and `subjects` were empty tables. Nothing had needed the link before,
+because nothing before placement resolved a bank row back to its paper.
+
+The consequence was total, not marginal: with no paper, no timing; with no
+timing, ineligible; so the first honest run of the assembler returned
+`no_eligible_questions` for **0625 as well as** 0580/0606. Had this not been
+measured, "placement is unavailable for every subject" would have looked exactly
+like the expected 0580/0606 corpus gap.
+
+**Fix: `QuestionBankService.link_past_paper_rows` + `lemely question-bank
+link-papers`.** The paper identity is *parsed*, never inferred: P4.1 already
+builds `source_question_id` as `f"{qp_stem}#{ref}"`, so `"0625_s23_qp_11#22"`
+carries the source PDF's filename, and the same
+`parse_caie_qp_filename_metadata` the ingest used reads it back. A stem that does
+not parse is counted and left unlinked rather than attached to a guessed paper.
+The `subjects` row the FK requires is created with the **transcribed**
+`subject_name` from the bundled taxonomy; a subject with no bundled syllabus is
+skipped rather than given an invented display name to satisfy a foreign key.
+`PaperLinkOutcome` is shaped so `considered == linked + unparseable +
+no_subject_taxonomy`, because a backfill that silently drops rows is the failure
+mode worth designing against.
+
+**Measured: 273 considered → 273 linked, 26 `papers` rows, 1 `subjects` row, 0
+unparseable, 0 skipped.** Re-run considers 0 (idempotent — only NULL rows are
+looked at). Dry run creates nothing.
+
+### 2. Breadth was counting subtopics as topics, and the count was a lie
+
+D4.2's classifier writes whichever level it matched, so the bank holds a mix of
+top-level labels (`"3 Waves"`) and subtopic labels (`"1.2 Motion"`). Treating
+those as peers, the first successful assembly reported **"13 topics"** for a set
+in which **nine of the 13 questions sat under physics topic 1**. The number was
+broad; the test was not. A weakness profile built from it would have been a
+profile of one corner of the syllabus wearing a whole-subject label — the same
+invented-precision failure UI spec §1.4 forbids, arriving through a counter
+rather than through a value.
+
+**Chosen:** breadth is measured on the top-level code (`_syllabus_group`: the
+part before the first `.`), depth on the full label. The round-robin is now two
+levels — across top-level topics on the outer loop, across that topic's subtopics
+on the inner — and `Assembly` carries `syllabus_topic_count` as a field distinct
+from `len(topics)`, with both documented, so a caller cannot pick up the
+flattering number by accident. `MIN_TOPICS` now means four *syllabus topics*.
+
+**Rejected: normalising the bank's labels to top-level.** It throws away real
+information the classifier earned, and subtopic labels are what
+`student_confidence_ratings` (D4.5) is already keyed on.
+
+### 3. The greedy fill refused sets it could have completed
+
+Filling stopped the moment `spent >= target_minutes`, which on a mark-heavy pool
+left the set below `MIN_QUESTIONS` and then refused it — when one more question
+inside the existing 18-minute tolerance would have made it viable. The fill now
+continues past the target, bounded by `max_minutes`, while questions are still
+owed. It is still a refusal when the extra question does not fit: the tolerance
+is a tolerance, not a licence to overrun.
+
+### The measurement that stands (do not re-derive)
+
+After all three: **0625 assembles 9 questions, 15.2 estimated minutes, all six
+physics topics, two difficulty bands.** 0580 and 0606 return `no_questions` —
+correct and required behaviour per D4.6 §5, not a gap to code around. Practical
+papers (0625 Paper 5/6) are excluded from placement by default: their questions
+assume apparatus, so a practical question in an at-home 15-minute test measures
+whether the student owns a ripple tank. Their timings are still transcribed and
+reachable — this is assembly policy, not a claim the data is wrong.
+
+$0.00 Gemini, zero LLM calls: every step here is deterministic.

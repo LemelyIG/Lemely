@@ -187,6 +187,35 @@ def test_a_retake_never_reuses_a_question_the_student_has_already_seen() -> None
     assert not seen & {s.candidate.question_bank_id for s in second.selected}
 
 
+def test_subtopics_of_one_topic_do_not_count_as_breadth() -> None:
+    """Eight subtopics of physics topic 1 are one topic, not eight.
+
+    D4.2's classifier writes whichever level it matched, so the bank holds a
+    mix of ``"3 Waves"`` and ``"1.2 Motion"``. Counting those as peers is how a
+    measurement against the real 0625 bank reported "13 topics" for a set whose
+    nine questions all sat under topic 1 — broad by the counter, narrow in
+    fact. Breadth is measured on the top-level code for exactly that reason.
+    """
+    pool = [_c(f"1.{i} Sub {i}", 2) for i in range(1, 9) for _ in range(3)]
+    result = assemble(pool, TIMINGS)
+
+    assert isinstance(result, Unavailable)
+    assert result.reason is UnavailableReason.insufficient_topics
+    assert result.eligible_topics == 1
+
+
+def test_breadth_spreads_across_top_level_topics_then_across_subtopics() -> None:
+    """Four topics, three subtopics each: every topic represented, and within a
+    topic the questions come from different subtopics rather than drilling
+    into the first one."""
+    pool = [_c(f"{t}.{s} Sub", 2) for t in range(1, 5) for s in range(1, 4) for _ in range(2)]
+    result = assemble(pool, TIMINGS)
+
+    assert isinstance(result, Assembly)
+    assert result.syllabus_topic_count == 4
+    assert len(result.topics) > 4, "a second question in a topic should pick a new subtopic"
+
+
 # ── The refusals: short is refused, never padded (UI spec §1.4) ──────────
 
 

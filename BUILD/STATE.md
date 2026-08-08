@@ -227,7 +227,58 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         population is the 809 non-MCQ nodes and the fill reaches **52.9%** of them. Each rule
         verified by inversion. 5 new tests + the 4 already written; 21/21 in
         `tests/test_attempt_repo.py`.
-      - chunk B — *doing* — placement assembly/serve/resume/submit, per D4.6. **Unblocked:**
+      - [x] chunk B-1 — **done** (`3c765e3`) — the ownership schema. Details below, kept
+        because B-2/B-3 build directly on them.
+      - [x] chunk B-2 — **done** (`fce3231`) — the two `quiz_taking_repo` sites D4.6 §3 named.
+        `_load_enrolled` → `_load_permitted` (two-branch predicate on whichever target column
+        the XOR CHECK left populated; exactly two returns, no fallthrough), `get_take` resolves
+        `SchoolClass`/`User` conditionally, and `QuizTakeHeader`/`AssignedQuizRow`
+        `class_name`/`teacher_name` + their wire DTOs became `str | None` — S-04 renders the
+        absence, not `_display_name`'s empty string. 11 tests; the 239 existing quiz tests
+        unchanged. **The owning student can now take a class-less assignment at all**, which
+        no code path allowed before.
+      - [x] chunk B-3 — **done** (`5809814` + the paper-link commit) — the assembler and its data.
+        `lemely/data/paper_timing.json` (12 papers × `duration_minutes`/`total_marks`,
+        transcribed from the **Assessment overview** of the same three syllabus PDFs D4.4
+        cites; **no rate is stored** — `minutes_per_mark` is division on read, and a test
+        pins the file's key set so a derived figure cannot creep in), `lemely/io/paper_timing.py`
+        (loader; excludes 0625 practical papers 5/6 from placement — apparatus), and
+        `lemely/core/placement.py` (pure: breadth-first select, 15-min target / 18 ceiling /
+        12 floor, `Unavailable` with a machine-readable reason). 20 tests.
+        **Three real defects the orchestrator found by measuring against the live bank, not
+        from a report — do not re-derive these:**
+        1. **All 273 banked questions had `paper_id IS NULL`**, and `papers`/`subjects` were
+           both empty. P4.1 never created `Paper` rows (its own docstring says so) and nothing
+           needed the link until placement made it load-bearing. Placement returned
+           `no_eligible_questions` for **0625 too**. Fixed by
+           `QuestionBankService.link_past_paper_rows` + `lemely question-bank link-papers`:
+           the identity is *parsed* from `source_question_id` (`"0625_s23_qp_11#22"` → the
+           source PDF's filename) by the same parser the ingest used, never inferred; the
+           `subjects.name` comes from the bundled taxonomy, never invented to satisfy the FK.
+           **Measured: 273 considered → 273 linked, 26 papers, 1 subject, 0 unparseable**;
+           re-run considers 0. Backfill already applied to the local DB.
+        2. **Breadth counted subtopics as topics.** D4.2's classifier writes whichever level
+           it matched, so the bank mixes `"3 Waves"` with `"1.2 Motion"`. First real assembly
+           reported "13 topics" for a set with **nine of 13 questions under physics topic 1**.
+           Breadth is now measured on the top-level code (`_syllabus_group`), depth on the full
+           label, and `Assembly` carries `syllabus_topic_count` separately from `len(topics)`.
+        3. The greedy fill stopped dead on the 15-minute target even when that left it below
+           the 6-question floor, then refused a set one question short of viable.
+        **Measured after all three fixes (the number to quote, not re-derive): 0625 assembles
+        9 questions / 15.2 min / all 6 physics topics / 2 difficulty bands. 0580 and 0606
+        return `no_questions` — correct, they have zero ingested questions (D4.6 §5).**
+      - chunk B-4 — *next* — the DB service + the three routes. Everything above is landed and
+        measured; what remains is wiring, with no open design questions:
+        `PlacementService` (availability / create / result) creating the `kind=placement`,
+        `student_id`-owned `Quiz` + self-`QuizAssignment` + frozen `QuizQuestion` snapshot from
+        an `Assembly`, then `GET /api/student/placement/{subject_code}/availability`,
+        `POST /api/student/placement`, `GET /api/student/placement/{assignment_id}/result`
+        (D4.6 §4 lists the exact payloads; **409 carries the availability payload**). Take,
+        resume and submit are the *existing* endpoints — that reuse is the whole point.
+        `exclude_bank_ids` for a retake = the bank ids of this student's prior placement
+        quizzes for the subject. S-05 may show a working-level estimate only when
+        `Assembly.spans_multiple_bands`.
+      - chunk B (superseded planning note, kept for the rationale) — per D4.6. **Unblocked:**
         the schema fork is decided and **B-1 (the schema half) is landed** — migration
         **0010**, `QuizKind` enum, `quizzes.student_id` + `kind`, `quiz_assignments.student_id`,
         both XOR CHECKs, `ck_quizzes_kind_owner`, and the partial unique index. `alembic check`
@@ -250,6 +301,7 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       - Assembly constraint already known, do not re-measure: the 0625 bank is 273 rows / 211
         topic-labelled (D4.4), and **0580/0606 have zero ingested questions** — placement is
         un-assemblable for two of three subjects and needs an honest "not available" path.
+        (Confirmed by the chunk-B-3 measurement above, which is the authoritative one now.)
 - [ ] todo — **P4.5** Practice generator backend: topic/difficulty/count/source filtering,
       persisted practice sets, "not enough questions" honesty path, export/print payload.
 - [ ] todo — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a

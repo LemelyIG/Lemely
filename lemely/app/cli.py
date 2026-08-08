@@ -790,6 +790,52 @@ def question_bank_classify_topics_cmd(
     click.echo(f"Distinct topics assigned: {len(report.label_distribution)}")
 
 
+@question_bank_group.command("link-papers")
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+@click.pass_context
+def question_bank_link_papers_cmd(ctx: click.Context, dry_run: bool) -> None:
+    """Fill ``question_bank.paper_id`` for banked past-paper questions (P4.4).
+
+    P4.1 banked real past-paper questions without creating ``Paper`` rows, so
+    every one of them was left unlinked. P4.4 made that link load-bearing: a
+    placement duration estimate is derived from the paper's transcribed
+    duration and mark total, reachable only through this column (D4.6 §5).
+    Until this runs, placement reports ``no_eligible_questions`` for every
+    subject.
+
+    Deterministic and free — the paper identity is parsed from each row's
+    ``source_question_id`` (which already carries the source PDF's filename),
+    never inferred. Rows whose stem does not parse are counted and left
+    unlinked. Idempotent: only NULL ``paper_id`` rows are considered.
+    """
+    from lemely.db.question_bank_repo import QuestionBankService
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    outcome = QuestionBankService(get_sessionmaker(settings)).link_past_paper_rows(dry_run=dry_run)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "considered": outcome.considered,
+                "linked": outcome.linked,
+                "papersCreated": outcome.papers_created,
+                "unparseable": outcome.unparseable,
+                "noSubjectTaxonomy": outcome.no_subject_taxonomy,
+                "dryRun": dry_run,
+            }
+        )
+        return
+
+    if dry_run:
+        click.echo("DRY RUN — nothing written.")
+    click.echo(f"Rows considered (past_paper, paper_id IS NULL): {outcome.considered}")
+    click.echo(f"Linked: {outcome.linked}")
+    click.echo(f"Paper rows created: {outcome.papers_created}")
+    click.echo(f"Unparseable source_question_id (left unlinked): {outcome.unparseable}")
+    click.echo(f"Skipped (no bundled syllabus for subject): {outcome.no_subject_taxonomy}")
+
+
 @question_bank_group.command("import-generated")
 @click.option(
     "--questions-dir",
