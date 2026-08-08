@@ -79,11 +79,11 @@ function SubjectRow({ childId, subject }: { childId: string; subject: SubjectOve
  * which is the same data the summary was built from; no fact is added or
  * softened, only worded for a non-specialist.
  *
- * Anything without a hand-written parent phrasing falls back to the backend's
- * own `summary`. That fallback is deliberate: `below_target` cannot fire at all
- * until Phase 4 (D3.3 reports it *not evaluable*, never as a pass), and writing
- * parent copy for a rule that has never produced a flag would be guessing at
- * wording for data nobody has seen.
+ * `below_target` (P4.3/D4.5) gets its own phrasing too, built from
+ * `BelowTargetEvidence`'s `targetGrade`/`predictedGrade`/`positionsBelow` —
+ * the same evidence shape the teacher-facing `AtRiskList.tsx` translates.
+ * Anything else without a hand-written parent phrasing falls back to the
+ * backend's own `summary`.
  */
 function atRiskCopy(flag: ParentAtRiskFlag): { title: string; body: string } {
   if (flag.reason === "declining_trend") {
@@ -110,6 +110,20 @@ function atRiskCopy(flag: ParentAtRiskFlag): { title: string; body: string } {
                 ? ` — the last was ${relativeTime(lastActive)}`
                 : ""
             }.`
+          : flag.summary,
+    }
+  }
+  if (flag.reason === "below_target") {
+    const target = flag.evidence.targetGrade
+    const predicted = flag.evidence.predictedGrade
+    const positions = flag.evidence.positionsBelow
+    return {
+      title: "Behind their target grade",
+      body:
+        typeof target === "string" && typeof predicted === "string"
+          ? `Their most recent predicted grade is ${predicted}, ${
+              typeof positions === "number" ? `${positions} grades` : "several grades"
+            } below the ${target} target.`
           : flag.summary,
     }
   }

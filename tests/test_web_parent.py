@@ -13,7 +13,9 @@ history side. Proves:
 * Every non-parent role (student, teacher) is 403'd off every ``/api/parent/*``
   route.
 * Malformed ``child_id`` is 422, never 500.
-* ``target`` is always ``null`` on P-02 (no target-grade column exists yet).
+* ``target`` is always ``null`` on P-02's per-subject rows (``SubjectOverviewDTO``
+  has no wired source for it — see its docstring; distinct from the real
+  target-grade column that now drives at-risk rule 2's evidence).
 * The grade-bearing filter (D3.9): a quiz-origin record must not move any
   grade/percentage/paper-count claim on P-01/P-02/P-03, but must still
   surface in every weakness list (P-02/P-03/P-04) — mirrors
@@ -38,9 +40,10 @@ from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
-from lemely.db.models import ParentChildLink, User
+from lemely.db.models import ParentChildLink, Subject, User
 from lemely.db.models.enums import Role
 from lemely.db.parent_repo import ParentLinkService
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
@@ -51,6 +54,7 @@ from lemely.web.deps import (
     get_history_store,
     get_parent_link_service,
     get_settings,
+    get_student_profile_service,
 )
 from lemely.web.routers.parent import _grade_boundary_distance, _parent_at_risk_flag_dto
 
@@ -110,6 +114,11 @@ def parent_link_service(pg_sessionmaker: sessionmaker[Session]) -> ParentLinkSer
 
 
 @pytest.fixture
+def profile_service(pg_sessionmaker: sessionmaker[Session]) -> StudentProfileService:
+    return StudentProfileService(pg_sessionmaker)
+
+
+@pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     base = load_settings()
     data = base.model_dump()
@@ -128,12 +137,14 @@ def client(
     history_store: HistoryStore,
     class_service: ClassService,
     parent_link_service: ParentLinkService,
+    profile_service: StudentProfileService,
 ) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_history_store] = lambda: history_store
     app.dependency_overrides[get_class_service] = lambda: class_service
     app.dependency_overrides[get_parent_link_service] = lambda: parent_link_service
+    app.dependency_overrides[get_student_profile_service] = lambda: profile_service
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -167,6 +178,15 @@ def _seed_user(
 def _link(sm: sessionmaker[Session], *, parent_id: uuid.UUID, child_id: uuid.UUID) -> None:
     with sm.begin() as session:
         session.add(ParentChildLink(parent_id=parent_id, child_id=child_id))
+
+
+def _seed_subject(sm: sessionmaker[Session], code: str = "0625", name: str = "Physics") -> str:
+    """Seed a ``subjects`` row (P4.3/D4.5): required for a real target-grade
+    enrolment — :meth:`StudentProfileService.upsert_enrolment` validates
+    ``subject_code`` against this table rather than trusting the caller."""
+    with sm.begin() as session:
+        session.add(Subject(code=code, name=name))
+    return code
 
 
 def _auth_as(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
@@ -507,13 +527,16 @@ def test_quiz_only_subject_still_contributes_to_p04_weaknesses(
 def test_child_overview_surfaces_at_risk_flags_with_reason_and_evidence(
     client: TestClient, pg_sessionmaker: sessionmaker[Session], history_store: HistoryStore
 ) -> None:
-    """Both evidence types D3.3 can actually fire reach the parent's wire DTO.
+    """Two of the three evidence types this fixture triggers reach the parent's wire DTO.
 
     Three declining papers (85 → 75 → 60, well past the 5pp floor) fire
-    ``declining_trend``; their 2020 timestamps fire ``inactive``. The
-    ``below_target`` rule cannot fire at all until P4 records a target grade
-    (D3.3's *not evaluable* state) — its converter branch is covered by the
-    direct unit test below rather than by faking a target here.
+    ``declining_trend``; their 2020 timestamps fire ``inactive``. No target
+    grade is seeded for this student, so ``below_target`` stays *not
+    evaluable* here by construction (D3.3/D4.5) — the case where it *does*
+    fire end-to-end is covered separately by
+    ``test_child_overview_surfaces_a_real_below_target_flag_when_a_target_is_set``
+    below; this fixture's converter coverage for the evidence shape itself is
+    the direct unit test further down.
     """
     parent = _seed_user(pg_sessionmaker, Role.parent)
     student = _seed_user(pg_sessionmaker, Role.student)
@@ -543,15 +566,51 @@ def test_child_overview_surfaces_at_risk_flags_with_reason_and_evidence(
     assert home["children"][0]["statusLine"].endswith("At least one at-risk signal is active.")
 
 
-def test_below_target_evidence_translates_even_though_the_rule_cannot_fire_yet() -> None:
-    """Pin the ``below_target`` branch of the parent evidence converter.
+def test_child_overview_surfaces_a_real_below_target_flag_when_a_target_is_set(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    history_store: HistoryStore,
+    profile_service: StudentProfileService,
+) -> None:
+    """Rule 2 fires end-to-end through the real HTTP surface (P4.3/D4.5).
 
-    Driven directly rather than through the API on purpose: no target-grade
-    column exists until P4's onboarding questionnaire, so ``assess_at_risk``
-    reports rule 2 as *not evaluable* and can never emit this evidence type
-    today (D3.3). Seeding a fake target to force it through HTTP would be
-    testing a fiction; the converter is still real code on a real union
-    member, and this is the honest way to cover it.
+    A real target grade — set via ``StudentProfileService.upsert_enrolment``,
+    the same seam ``PUT /me/profile/enrolments`` writes through — is now
+    resolvable by ``assess_at_risk`` for this student's subject, so
+    ``below_target`` must appear in P-02's ``atRiskFlags`` alongside its
+    evidence, not stay perpetually not-evaluable as it did before P4.3.
+    """
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    student = _seed_user(pg_sessionmaker, Role.student)
+    _link(pg_sessionmaker, parent_id=parent, child_id=student)
+    _seed_subject(pg_sessionmaker, code="0625", name="Physics")
+    profile_service.upsert_enrolment(student, "0625", target_grade="A")
+    history_store.append(
+        str(student),
+        _paper(
+            student_id=student, percentage=40.0, grade="D", recorded_at="2026-08-04T10:00:00+00:00"
+        ),
+    )
+
+    _auth_as(client, parent, Role.parent)
+    body = client.get(f"/api/parent/children/{student}").json()
+
+    flags = {flag["reason"]: flag for flag in body["atRiskFlags"]}
+    assert "below_target" in flags
+    assert flags["below_target"]["evidence"] == {
+        "targetGrade": "A",
+        "predictedGrade": "D",
+        "positionsBelow": 3,
+    }
+
+
+def test_below_target_evidence_translates_through_the_converter() -> None:
+    """Pin the ``below_target`` branch of the parent evidence converter directly.
+
+    The end-to-end firing path is covered by
+    ``test_child_overview_surfaces_a_real_below_target_flag_when_a_target_is_set``
+    above; this unit-level test keeps the converter itself pinned against its
+    own ``AtRiskFlag`` input without the Postgres/HTTP round trip.
     """
     dto = _parent_at_risk_flag_dto(
         AtRiskFlag(

@@ -21,11 +21,13 @@ import type { AtRiskFlag, AtRiskListEntry } from "@/lib/teacherTypes"
  * fetch); `acknowledged` is D3.5's own caller-side filter, defaulting to
  * "all" so acknowledged flags are never hidden unless the teacher asks.
  *
- * **`below_target` is deliberately not offered in the reason filter.** D3.3:
- * rule 2 cannot fire in production until P4's onboarding questionnaire
- * supplies a target grade — the engine reports it *not evaluable*, never a
- * pass. Offering a filter option that can never match a real flag today
- * would imply data this build doesn't have.
+ * **`below_target` is offered in the reason filter (P4.3/D4.5).** Rule 2 now
+ * resolves a real per-subject target grade from the student's onboarding
+ * enrolment (`StudentProfileService.target_grades_for`), so it can fire in
+ * production like the other two reasons. A student with no target set for
+ * their latest-paper subject still reports *not evaluable*, never a pass
+ * (D3.3's tri-state) — this filter simply asks "did `below_target` fire",
+ * which for that student is honestly "no".
  *
  * **Severity is a UI convention, mirrored exactly from the backend's own
  * definition, not a client-invented score.** The list already arrives
@@ -62,6 +64,7 @@ const GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
 const REASON_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "All reasons" },
   { value: "declining_trend", label: "Declining trend" },
+  { value: "below_target", label: "Below target grade" },
   { value: "inactive", label: "Inactive" },
 ]
 

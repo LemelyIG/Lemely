@@ -32,8 +32,10 @@ import type { BulkApproveResponse, ReviewQueueItem } from "@/lib/teacherTypes"
  * place `ReviewQueueItem` rows are created) ever writes a `manual`-reason
  * row — every row is `low_confidence`, `plagiarism_flag`, or
  * `ai_detection_flag`. Offering a filter option that can never match a real
- * row today would imply data this build doesn't have — the identical
- * judgment call `AtRiskList.tsx` documents for `below_target` (D3.3).
+ * row today would imply data this build doesn't have — the same reasoning
+ * that used to keep `below_target` out of `AtRiskList.tsx`'s reason filter
+ * before P4.3/D4.5 wired up a real target grade there; `manual` has no such
+ * wiring in this codebase, so it stays excluded.
  * **Separately, the spec's fourth T-07 reason category — "student disputed
  * the transcription" — has no backing `ReviewReason` value or creation path
  * anywhere in this codebase.** `manual` is the closest enum member but is a

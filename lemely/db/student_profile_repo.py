@@ -43,7 +43,7 @@ from lemely.db.models.profiles import (
 from lemely.db.notification_prefs_repo import UNSET, _UnsetType
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -422,6 +422,38 @@ class StudentProfileService:
                 .where(StudentSubjectEnrolment.target_grade.is_not(None))
             ).all()
             return {subject_code: target_grade for subject_code, target_grade in rows}
+
+    def target_grades_for_many(
+        self, user_ids: Iterable[uuid.UUID | str]
+    ) -> dict[str, dict[str, str]]:
+        """Bulk form of :meth:`target_grades_for`.
+
+        Returns ``user_id (str) -> subject_code -> target_grade``.
+
+        One query for every student in the caller's roster/class rather than one
+        query per student in a loop (D4.5, chunk C) — teacher and parent routes
+        assess many students at once, and an N+1 there would scale with class
+        size on every dashboard load. A student with no enrolments, or none with
+        a target grade set, simply has no key in the returned mapping rather
+        than an empty-dict placeholder, so callers can use plain ``.get(uid, {})``.
+        """
+        uids = {_as_uuid(uid) for uid in user_ids}
+        if not uids:
+            return {}
+        with self._sessionmaker() as session:
+            rows = session.execute(
+                select(
+                    StudentSubjectEnrolment.user_id,
+                    StudentSubjectEnrolment.subject_code,
+                    StudentSubjectEnrolment.target_grade,
+                )
+                .where(StudentSubjectEnrolment.user_id.in_(uids))
+                .where(StudentSubjectEnrolment.target_grade.is_not(None))
+            ).all()
+        result: dict[str, dict[str, str]] = {}
+        for user_id, subject_code, target_grade in rows:
+            result.setdefault(str(user_id), {})[subject_code] = target_grade
+        return result
 
     # -- Internals ------------------------------------------------------------
 
