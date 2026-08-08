@@ -1227,3 +1227,27 @@ of the task, not as a formality after it.
 no `available`/`reason`, so chunk A's honest `no_signal` refusal and a genuine "nothing to
 schedule this week" both arrive at the frontend as an empty list. That distinction is the
 whole point of chunk A and it dies at the wire until chunk C fixes it. Then P4.8–P4.12.
+
+## 2026-08-09 — P4.7 closed, P4.8 opened (chunks 0 + A)
+
+**Did.** Verified and landed P4.7 chunk C (persisted study-plan routes, D4.13) — found
+already on disk from a killed session and, for the first time this phase, clean on every
+gate. Closed P4.7. Opened P4.8 and, while scoping S-04, found a real defect by measuring
+the live bank: 25 of 273 stems reference a figure the bank structurally cannot hold.
+Fixed as chunk 0 (D4.14). Landed chunk A — the real onboarding wizard on the P4.3 backend.
+
+**Learned.** Three things worth not re-deriving. (1) No maths renderer is needed: 1 of 273
+stems is LaTeX-shaped, the rest is plain Unicode; what stems actually need is
+`white-space: pre-line`. (2) There is no student quiz-taking screen anywhere in the
+product — S-04 will be the first, so it must be built reusable. (3) `PlacementService`
+does not use `visible_bank_filter`, which is why the obvious one-line fix for the figure
+defect would have left the worst-affected path unfixed.
+
+**The pattern that keeps paying.** Two more subagent handovers signed off before their own
+gate runs finished. Both happened to be green, but that was established by the
+orchestrator's own run each time. Seven of eight handovers this phase have done this; the
+five that were actually red were all caught the same way. Keep running the gates.
+
+**Next.** P4.8 chunk B — S-03/S-04/S-05 on the placement + quiz-taking endpoints. S-04
+owns answer persistence across a lost connection and resume, and is the reusable
+question-rendering surface P4.9 and P5 will compose.
