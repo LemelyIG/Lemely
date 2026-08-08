@@ -12,6 +12,7 @@ where it is mocked — no network calls anywhere in this module.
 
 from __future__ import annotations
 
+import datetime
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -32,7 +33,7 @@ from pydantic import SecretStr
 
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
-from lemely.core.study import StudyPlan, StudySession
+from lemely.core.study import ActivityType, StudyPlan, StudySession
 from lemely.db.base import Base
 from lemely.db.models import User
 from lemely.db.models.enums import Role
@@ -462,11 +463,12 @@ def test_plan_post_narrate_uses_mocked_gemini(
         weekly_hours=8.0,
         sessions=[
             StudySession(
-                week=1,
+                date=datetime.date(2026, 8, 10),
                 topic="Thermal physics",
                 subject_code="0625",
-                hours=8.0,
-                focus="Practice and review: Thermal physics",
+                activity_type=ActivityType.review,
+                duration_minutes=90,
+                focus="Review notes: Thermal physics",
             )
         ],
         narrative="Focus on thermal physics this week.",

@@ -588,6 +588,8 @@ def study_plan_cmd(
     profile: str | None,
     use_ai: bool,
 ) -> None:
+    import datetime
+
     from lemely.core.study import StudentProfile
     from lemely.core.study_plan import build_study_plan
     from lemely.io.history_store import HistoryStore
@@ -596,8 +598,15 @@ def study_plan_cmd(
     store = HistoryStore(settings.paths.output_dir / "history")
     history = store.load(student_id)
     profile_obj = StudentProfile.model_validate(_load_json_file(profile)) if profile else None
+    subject_code = profile_obj.subjects[0] if (profile_obj and profile_obj.subjects) else "unknown"
     weaknesses = aggregate_weaknesses_from_history(history)
-    plan = build_study_plan(profile_obj, weaknesses, weekly_hours=weekly_hours)
+    plan = build_study_plan(
+        student_id,
+        subject_code,
+        weekly_hours=weekly_hours,
+        now=datetime.datetime.now(datetime.UTC),
+        weaknesses=weaknesses.weak_areas,
+    )
     if use_ai:
         from lemely.io.gemini import GeminiClient
         from lemely.io.study_plan_ai import StudyPlanNarrator

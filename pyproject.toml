@@ -159,6 +159,12 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 # them into TYPE_CHECKING and break those. Mirrors the web/DI exemptions above.
 "lemely/auth/mirror.py" = ["TC001", "TC003"]
 "lemely/auth/tokens.py" = ["TC003"]
+# StudySession.date is a pydantic field (StrictModel): pydantic resolves
+# `from __future__ import annotations` string annotations at class-definition
+# time against the module's runtime namespace, so `datetime` must stay a
+# real import here, not move into TYPE_CHECKING (same reasoning as the ORM
+# and auth exemptions above).
+"lemely/core/study.py" = ["TC003"]
 # Synthetic test-fixture generator: randomness is for visual jitter, not
 # cryptography or security-sensitive selection.
 "lemely/accuracy/synth.py" = ["S311"]

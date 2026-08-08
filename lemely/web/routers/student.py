@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -770,7 +771,15 @@ def student_correct(
 
 
 def _plan_to_dto(plan: StudyPlan) -> StudyPlanDTO:
-    """Convert a core :class:`StudyPlan` into its camelCase DTO (data-backed)."""
+    """Convert a core :class:`StudyPlan` into its camelCase DTO (data-backed).
+
+    ``PlanSessionDTO.hours`` is a unit conversion of the scheduler's
+    ``duration_minutes`` (chunk A's real granularity), not a re-derivation —
+    the DTO shape itself is left untouched here on purpose: chunk C owns the
+    route/DTO decision (whether to expose ``activityType``/``date``), and this
+    conversion is the smallest change that keeps the existing route honest in
+    the meantime.
+    """
     return StudyPlanDTO(
         studentId=plan.student_id,
         weeklyHours=plan.weekly_hours,
@@ -778,7 +787,7 @@ def _plan_to_dto(plan: StudyPlan) -> StudyPlanDTO:
             PlanSessionDTO(
                 topic=s.topic,
                 subjectCode=s.subject_code,
-                hours=s.hours,
+                hours=round(s.duration_minutes / 60, 2),
                 focus=s.focus,
             )
             for s in plan.sessions
@@ -796,18 +805,21 @@ def student_plan_get(
 
     Built by :func:`lemely.core.study_plan.build_study_plan` from the student's
     aggregate weaknesses over the default weekly budget. ``narrative`` is null on
-    this path (no Gemini call).
+    this path (no Gemini call). Placement results and S-02 confidence ratings
+    are not read here yet — that is chunk B/C wiring; this route still passes
+    weaknesses alone, which ``build_study_plan`` schedules honestly on its own.
     """
     history = history_store.load(auth.user_id)
     weaknesses = aggregate_weaknesses_from_history(history)
     subjects = sorted({r.metadata.subject_code for r in history.records})
-    profile = StudentProfile(
-        student_id=auth.user_id,
-        grade_level="",
-        subjects=subjects or ["unknown"],
-        weekly_study_hours=_DEFAULT_WEEKLY_HOURS,
+    subject_code = subjects[0] if subjects else "unknown"
+    plan = build_study_plan(
+        auth.user_id,
+        subject_code,
+        weekly_hours=_DEFAULT_WEEKLY_HOURS,
+        now=datetime.now(UTC),
+        weaknesses=weaknesses.weak_areas,
     )
-    plan = build_study_plan(profile, weaknesses, weekly_hours=profile.weekly_study_hours)
     return _plan_to_dto(plan)
 
 
@@ -833,13 +845,14 @@ def student_plan_post(
     history = history_store.load(auth.user_id)
     weaknesses = aggregate_weaknesses_from_history(history)
     subjects = sorted({r.metadata.subject_code for r in history.records})
-    profile = StudentProfile(
-        student_id=auth.user_id,
-        grade_level="",
-        subjects=subjects or ["unknown"],
-        weekly_study_hours=payload.weeklyHours,
+    subject_code = subjects[0] if subjects else "unknown"
+    plan = build_study_plan(
+        auth.user_id,
+        subject_code,
+        weekly_hours=payload.weeklyHours,
+        now=datetime.now(UTC),
+        weaknesses=weaknesses.weak_areas,
     )
-    plan = build_study_plan(profile, weaknesses, weekly_hours=payload.weeklyHours)
 
     if payload.narrate:
         if settings.gemini_api_key is None:
