@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from lemely.core.at_risk import AtRiskReason, assess_at_risk
 from lemely.core.difficulty import allocate_difficulty
 from lemely.core.history import StudentHistory, is_grade_bearing
+from lemely.core.placement import MIN_QUESTIONS, MIN_TOPICS
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, ConfidenceBand
 from lemely.db.models.enums import QuestionSource
 from scripts.seed_e2e import (
@@ -27,6 +28,11 @@ from scripts.seed_e2e import (
     DECLINING_DAYS_AGO,
     DECLINING_SCORES,
     INACTIVE_SCORE,
+    PLACEMENT_MCQ_ANSWER,
+    PLACEMENT_QUESTION_MARKS,
+    PLACEMENT_QUESTIONS_PER_TOPIC,
+    PLACEMENT_SUBJECT_CODE,
+    PLACEMENT_TOPICS,
     QUIZ_BANK_ANSWERS,
     QUIZ_BANK_BANDS,
     QUIZ_REQUESTED_COUNT,
@@ -37,6 +43,8 @@ from scripts.seed_e2e import (
     build_empty_parent_phone,
     build_password,
     build_phone,
+    build_placement_bank_questions,
+    build_placement_paper_stem,
     build_quiz_bank_questions,
     build_result_payload,
     control_recorded_ats,
@@ -289,6 +297,102 @@ class TestQuizBankSupply:
 
 
 # ---------------------------------------------------------------------------
+# build_placement_bank_questions — P4.8 chunk C's placement-eligible bank.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPlacementPaperStem:
+    def test_is_deterministic(self) -> None:
+        assert build_placement_paper_stem("tag1") == build_placement_paper_stem("tag1")
+
+    def test_differs_across_run_tags(self) -> None:
+        """The regression this function exists to prevent: a fixed stem across
+        runs collides on ``uq_question_bank_paper_question (paper_id,
+        source_question_id)`` on a second ``python scripts/seed_e2e.py`` run —
+        verified against the live stack before this function existed."""
+        assert build_placement_paper_stem("a1b2c3d4e5f6") != build_placement_paper_stem(
+            "f6e5d4c3b2a1"
+        )
+
+    def test_parses_as_a_caie_question_paper_filename(self) -> None:
+        from lemely.io.metadata import parse_caie_qp_filename_metadata
+
+        stem = build_placement_paper_stem("abcdef123456")
+        meta = parse_caie_qp_filename_metadata(f"{stem}.pdf")
+        assert meta.subject_code == "0625"
+        assert meta.paper_number == 4
+        assert meta.paper_variant == 1
+
+
+class TestBuildPlacementBankQuestions:
+    def test_returns_one_row_per_topic_per_slot(self) -> None:
+        rows = build_placement_bank_questions("tag1")
+        assert len(rows) == len(PLACEMENT_TOPICS) * PLACEMENT_QUESTIONS_PER_TOPIC
+
+    def test_clears_the_assembly_viability_floor_by_shape(self) -> None:
+        """Not a substitute for the real Postgres-backed assembly test
+        (``tests/test_placement_repo.py``) — just a fast check that this
+        function did not regress below the floor that test measures against."""
+        assert len(PLACEMENT_TOPICS) >= MIN_TOPICS
+        assert len(PLACEMENT_TOPICS) * PLACEMENT_QUESTIONS_PER_TOPIC >= MIN_QUESTIONS
+
+    def test_every_row_is_past_paper_mcq_on_the_declared_topics(self) -> None:
+        rows = build_placement_bank_questions("tag1")
+        for row in rows:
+            assert row.source == QuestionSource.past_paper
+            assert row.question_type == "mcq"
+            assert row.subject_code == PLACEMENT_SUBJECT_CODE
+            assert row.topic in PLACEMENT_TOPICS
+            assert row.total_marks == PLACEMENT_QUESTION_MARKS
+            assert row.mcq_answer == PLACEMENT_MCQ_ANSWER
+            assert row.paper_id is None  # filled by link_past_paper_rows(), not here
+
+    def test_every_row_links_to_this_runs_paper_stem(self) -> None:
+        rows = build_placement_bank_questions("tag1")
+        stem = build_placement_paper_stem("tag1")
+        for row in rows:
+            assert row.source_question_id is not None
+            assert row.source_question_id.startswith(f"{stem}#")
+
+    def test_source_question_ids_are_distinct(self) -> None:
+        rows = build_placement_bank_questions("tag1")
+        ids = [row.source_question_id for row in rows]
+        assert len(set(ids)) == len(ids)
+
+    def test_source_question_ids_differ_across_run_tags(self) -> None:
+        """Two runs must not mint the same ``source_question_id`` — that is
+        exactly the collision :func:`build_placement_paper_stem` exists to
+        avoid (see its docstring)."""
+        ids_a = {row.source_question_id for row in build_placement_bank_questions("a1b2c3d4e5f6")}
+        ids_b = {row.source_question_id for row in build_placement_bank_questions("f6e5d4c3b2a1")}
+        assert ids_a.isdisjoint(ids_b)
+
+    def test_no_prompt_contains_a_figure_dependent_trigger_word(self) -> None:
+        """The whole point of this bank: every row must survive chunk 0's
+        ``renderable_bank_filter`` so ``assemble`` actually has a pool to draw
+        from — a prompt containing one of these words risks matching
+        ``_FIGURE_DEPENDENT_PATTERN`` and silently vanishing.
+
+        ``_FIGURE_DEPENDENT_PATTERN`` is Postgres POSIX regex syntax (``\\m``/
+        ``\\M`` word boundaries), not valid Python ``re`` — evaluated only via
+        ``QuestionBank.prompt.op("~*")`` against a live Postgres, so this test
+        checks the trigger words the pattern is built from rather than
+        compiling the pattern itself.
+        """
+        rows = build_placement_bank_questions("tag1")
+        for row in rows:
+            lowered = row.prompt.lower()
+            for trigger in ("figure", "diagram", "fig."):
+                assert trigger not in lowered, f"{row.prompt!r} contains trigger {trigger!r}"
+
+    def test_prompts_are_distinct_and_say_synthetic(self) -> None:
+        rows = build_placement_bank_questions("tag1")
+        assert len({r.prompt for r in rows}) == len(rows)
+        for row in rows:
+            assert "synthetic" in row.prompt.lower() or "not real" in row.prompt.lower()
+
+
+# ---------------------------------------------------------------------------
 # wrong_mcq_answer — the seeded quiz submission's deliberately-incorrect answers.
 # ---------------------------------------------------------------------------
 
@@ -371,6 +475,24 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
         },
         "empty_teacher": {"userId": "et1"},
         "empty_parent": {"userId": "ep1", "phone": "+201000000001"},
+        "placement": {
+            "subjectCode": "0625",
+            "paperNumber": 4,
+            "bankQuestionCount": 24,
+            "students": {
+                "unonboarded": {"userId": "pu1"},
+                "available": {"userId": "pa1"},
+                "inProgress": {"userId": "pi1", "quizId": "pq1", "assignmentId": "pas1"},
+                "completed": {
+                    "userId": "pc1",
+                    "quizId": "pq2",
+                    "assignmentId": "pas2",
+                    "submissionId": "psub1",
+                    "awardedMarks": 5,
+                    "maximumMarks": 10,
+                },
+            },
+        },
     }
     base.update(overrides)
     return base
@@ -406,6 +528,24 @@ class TestBuildResultPayload:
             },
             "emptyTeacher": {"userId": "et1"},
             "emptyParent": {"userId": "ep1", "phone": "+201000000001"},
+            "placement": {
+                "subjectCode": "0625",
+                "paperNumber": 4,
+                "bankQuestionCount": 24,
+                "students": {
+                    "unonboarded": {"userId": "pu1"},
+                    "available": {"userId": "pa1"},
+                    "inProgress": {"userId": "pi1", "quizId": "pq1", "assignmentId": "pas1"},
+                    "completed": {
+                        "userId": "pc1",
+                        "quizId": "pq2",
+                        "assignmentId": "pas2",
+                        "submissionId": "psub1",
+                        "awardedMarks": 5,
+                        "maximumMarks": 10,
+                    },
+                },
+            },
         }
 
     def test_is_json_serializable(self) -> None:

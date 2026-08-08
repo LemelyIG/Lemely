@@ -120,7 +120,22 @@ path::
                "submittedBy": "control", "status": "marked"},
       "emptyTeacher": {"userId": "...", "email": "...", "password": "...",
                         "displayName": "...", "accessToken": "..."},
-      "emptyParent": {"userId": "...", "phone": "+20...", "accessToken": "..."}
+      "emptyParent": {"userId": "...", "phone": "+20...", "accessToken": "..."},
+      "placement": {
+        "subjectCode": "0625",
+        "paperNumber": 4,
+        "bankQuestionCount": 24,
+        "students": {
+          "unonboarded": {"userId": "...", "email": "...", "password": "...",
+                          "displayName": "...", "accessToken": "..."},
+          "available":   {..., },
+          "inProgress":  {..., "quizId": "...", "assignmentId": "...",
+                          "questionCount": 8},
+          "completed":   {..., "quizId": "...", "assignmentId": "...",
+                          "submissionId": "...", "awardedMarks": 14,
+                          "maximumMarks": 16}
+        }
+      }
     }
 
 ``expectedAtRiskReasons`` values are :class:`~lemely.core.at_risk.AtRiskReason`
@@ -132,6 +147,30 @@ nothing for ``control``/``correctedPaper``.
 purely additive — every key documented above them is unchanged since chunk a.
 ``quiz.status`` is ``"marked"`` on a successful run; see :func:`seed`'s
 marking-failure branch for the (not expected, never faked) alternative.
+
+``placement`` (P4.8 chunk C) is additive on top of those. Its four student
+accounts are deliberately distinct (never one account reused across states)
+because :meth:`~lemely.db.placement_repo.PlacementService.availability`
+excludes a student's own prior placement questions for the same subject
+(D4.6 §4) — reusing one would report the pool exhausted on the very screen
+meant to show it available:
+
+* ``unonboarded`` — signed up, no profile, no enrolment: S-01/S-02's genuine
+  first-run state.
+* ``available`` — onboarded and enrolled in 0625, no placement taken yet:
+  S-03 renders ``available``. Calling
+  ``PlacementService.availability(userId, "0580")`` or ``"0606"`` for this
+  (or any placement) account still returns ``no_questions`` — those subjects
+  have zero ingested questions, an honest refusal this seed does not paper
+  over.
+* ``inProgress`` — a placement created (``PlacementService.create``) but
+  never submitted: S-04 has a real ``assignmentId`` with zero submitted
+  answers.
+* ``completed`` — a placement created, taken (first answer deliberately
+  wrong so a real ``WeaknessRecord`` exists), submitted, and marked through
+  the unmodified quiz-taking/marking repos: S-05 has a real
+  ``awardedMarks``/``maximumMarks`` produced by the marking engine, never a
+  hand-inserted mark.
 
 Usage::
 
@@ -245,6 +284,92 @@ QUIZ_BANK_BANDS: list[Band] = ["foundation", "standard", "standard", "standard",
 QUIZ_BANK_ANSWERS: list[str] = ["A", "B", "C", "D", "A"]
 
 _MCQ_LETTERS: tuple[str, ...] = ("A", "B", "C", "D")
+
+
+# ---------------------------------------------------------------------------
+# P4.8 chunk C additions: a placement-eligible 0625 past-paper bank, plus four
+# distinct student accounts covering S-01..S-05's real, un-faked states. See
+# this module's docstring for the full contract these additions extend.
+#
+# **The trap this whole section exists to avoid (D4.6 §4):**
+# ``PlacementService.availability`` excludes a student's OWN prior placement
+# questions for the same subject from the eligible pool. Reusing one student
+# for both "invite available" and "already completed a 0625 placement" would
+# report the pool exhausted (``no_eligible_questions``) on the invite screen
+# instead of ``available`` — so this seed uses four distinct student accounts,
+# one per S-01..S-05 state, never one account wearing two hats.
+# ---------------------------------------------------------------------------
+
+#: Same subject as the at-risk roster (:data:`SUBJECT_CODE`) — reused rather
+#: than restated, since both need a bank that already has a bundled syllabus
+#: taxonomy (:mod:`lemely.io.syllabus_topics`) and a transcribed paper timing
+#: entry (:mod:`lemely.io.paper_timing`).
+PLACEMENT_SUBJECT_CODE = SUBJECT_CODE
+
+#: 0625's real top-level syllabus labels (``lemely/data/syllabus_topics.json``),
+#: the exact "<code> <name>" vocabulary D4.2's classifier writes — copied from
+#: ``tests/test_placement_repo.py``'s viable-0625-bank fixture (its
+#: ``_PHYSICS_TOPICS``) rather than invented, per this chunk's brief.
+PLACEMENT_TOPICS: list[str] = [
+    "1 Motion, forces and energy",
+    "2 Thermal physics",
+    "3 Waves",
+    "4 Electricity and magnetism",
+]
+
+#: 0625 Paper 4 (Theory, Extended), variant 1 — the exact paper
+#: ``tests/test_placement_repo.py`` uses, whose transcribed rate (75 min / 80
+#: marks, D4.8) is "the measurement that stands". Paper 4 is a real,
+#: non-practical paper carried in ``lemely/data/paper_timing.json`` (Papers
+#: 5/6 are practical and excluded from placement by
+#: :func:`~lemely.io.paper_timing.get_paper_timings`'s default).
+PLACEMENT_PAPER_NUMBER_VARIANT = "41"
+
+
+def build_placement_paper_stem(run_tag: str) -> str:
+    """A per-run CAIE-shaped question-paper filename stem for 0625 Paper 4.
+
+    Feeding this stem through ``source_question_id`` is what lets
+    :meth:`~lemely.db.question_bank_repo.QuestionBankService.link_past_paper_rows`
+    create the real ``Paper``/``Subject`` rows the placement loader joins
+    against — never a hand-inserted ``papers`` row.
+
+    **Why this is a function of ``run_tag`` rather than a constant.** The
+    module docstring promises reruns never collide (no teardown, per-run
+    namespacing throughout). A *fixed* stem would not honour that: rerunning
+    this script inserts the identical 24 ``source_question_id`` values
+    (``"..._qp_41#1"``..``"...#24"``) against the SAME ``papers`` row a first
+    run already created (paper identity has no run-tag component of its
+    own), tripping ``uq_question_bank_paper_question (paper_id,
+    source_question_id)`` on the second run's ``link_past_paper_rows()``
+    call — verified against the live stack: a bare second run of
+    ``python scripts/seed_e2e.py`` raised exactly this ``IntegrityError``
+    before this function existed. Hashing ``run_tag`` into the session-year
+    digits (mirrors :func:`build_phone`'s per-character hashing) mints a
+    genuinely distinct ``papers`` row per run, so the 1..24 suffixes are
+    unique *within* that run's paper rather than colliding across runs. The
+    resulting year is filename shape only, never a claim about a real CAIE
+    sitting — see :func:`build_placement_bank_questions` for why the
+    question text itself is honestly synthetic regardless.
+    """
+    digits = "".join(str(ord(ch) % 10) for ch in run_tag)
+    year = (digits[:2] or "00").ljust(2, "0")
+    return f"0625_s{year}_qp_{PLACEMENT_PAPER_NUMBER_VARIANT}"
+
+
+#: One 2-mark MCQ per (topic, index) pair, 4 topics x 6 = 24 rows — the exact
+#: per-topic count ``tests/test_placement_repo.py``'s
+#: ``test_availability_true_for_a_viable_0625_bank`` already proves clears
+#: ``assemble``'s 6-question/4-topic floor and lands inside the 12-18 minute
+#: window against Paper 4's rate. Copied rather than re-derived (this
+#: chunk's brief).
+PLACEMENT_QUESTIONS_PER_TOPIC = 6
+PLACEMENT_QUESTION_MARKS = 2
+#: Every seeded placement question's correct MCQ answer — uniform, like
+#: :func:`build_quiz_bank_questions`' quiz bank, so :func:`wrong_mcq_answer`
+#: can produce a deliberately-wrong first answer for the "completed" student
+#: (see its use in :func:`seed`) without per-row bookkeeping.
+PLACEMENT_MCQ_ANSWER = "B"
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +608,60 @@ def wrong_mcq_answer(correct: str) -> str:
     raise AssertionError("unreachable: _MCQ_LETTERS always has an alternative")
 
 
+def build_placement_bank_questions(run_tag: str) -> list[NewBankQuestion]:
+    """Synthetic ``source=past_paper`` 0625 rows placement can actually assemble from.
+
+    **Honestly synthetic** (P4.8 chunk C's hard constraint): the prompts below
+    are seed fixture text, never real CAIE past-paper content — every prompt
+    says so plainly. What *is* real: the topic labels
+    (:data:`PLACEMENT_TOPICS`, verified against the bundled syllabus
+    taxonomy), the paper this bank links to (:data:`PLACEMENT_PAPER_STEM` ->
+    Paper 4, Theory Extended, 75 min / 80 marks — the transcribed rate D4.8
+    calls "the measurement that stands"), and the resulting assembly
+    behaviour (:func:`~lemely.core.placement.assemble` is exercised for real,
+    never stubbed).
+
+    ``paper_id`` is left ``None`` here, exactly like the P4.1 past-paper
+    importer's own rows — :func:`seed` calls
+    :meth:`~lemely.db.question_bank_repo.QuestionBankService.link_past_paper_rows`
+    immediately after inserting these, which is the one real path that
+    resolves ``source_question_id`` into a ``Paper``/``Subject`` row pair
+    (never a hand-inserted one).
+
+    No prompt here matches
+    :data:`~lemely.db.question_bank_repo._FIGURE_DEPENDENT_PATTERN` (no
+    "diagram"/"figure ... shows"), so none is dropped by chunk 0's
+    :func:`~lemely.db.question_bank_repo.renderable_bank_filter` — the point
+    of this seed is a placement test that actually assembles, not one that
+    silently loses rows to the same filter it exists to prove works.
+    """
+    stem = build_placement_paper_stem(run_tag)
+    rows: list[NewBankQuestion] = []
+    ref = 1
+    for topic in PLACEMENT_TOPICS:
+        for _ in range(PLACEMENT_QUESTIONS_PER_TOPIC):
+            rows.append(
+                NewBankQuestion(
+                    subject_code=PLACEMENT_SUBJECT_CODE,
+                    source=QuestionSource.past_paper,
+                    difficulty="standard",
+                    difficulty_source=DifficultySource.inferred_from_marks,
+                    question_type="mcq",
+                    prompt=(
+                        f"Synthetic placement seed item {ref} for topic {topic!r} "
+                        "(P4.8 chunk C fixture text — not real CAIE content)."
+                    ),
+                    total_marks=PLACEMENT_QUESTION_MARKS,
+                    topic=topic,
+                    source_question_id=f"{stem}#{ref}",
+                    mcq_options=["A", "B", "C", "D"],
+                    mcq_answer=PLACEMENT_MCQ_ANSWER,
+                )
+            )
+            ref += 1
+    return rows
+
+
 def build_result_payload(
     *,
     run_tag: str,
@@ -496,14 +675,16 @@ def build_result_payload(
     quiz: dict[str, Any],
     empty_teacher: dict[str, Any],
     empty_parent: dict[str, Any],
+    placement: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the documented output contract from already-computed pieces.
 
     Pure — no I/O, so the exact JSON shape is pinned by a unit test that
     feeds fake ids/tokens and asserts the nesting, independent of ever
     touching Postgres or GoTrue. ``reviewItem``/``quiz``/``emptyTeacher``/
-    ``emptyParent`` are additive (P3.10 chunk e1) — every key present since
-    chunk a is unchanged.
+    ``emptyParent`` are additive (P3.10 chunk e1); ``placement`` is additive
+    on top of those (P4.8 chunk C) — every key present before it is
+    unchanged.
     """
     return {
         "runTag": run_tag,
@@ -517,6 +698,7 @@ def build_result_payload(
         "quiz": quiz,
         "emptyTeacher": empty_teacher,
         "emptyParent": empty_parent,
+        "placement": placement,
     }
 
 
@@ -643,6 +825,8 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     quiz_service = deps.get_quiz_service()
     quiz_taking_service = deps.get_quiz_taking_service()
     quiz_marking_service = deps.get_quiz_marking_service()
+    placement_service = deps.get_placement_service()
+    student_profile_service = deps.get_student_profile_service()
 
     teacher = _signup_account("teacher", Role.teacher, run_tag)
     school_admin = _signup_account("admin", Role.school_admin, run_tag)
@@ -783,6 +967,81 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             "T-10 will see an unmarked submission; not faked as marked."
         )
 
+    _log(
+        "Seeding the placement-eligible 0625 past-paper bank (P4.8 chunk C) — real "
+        "Subject/Paper rows via link_past_paper_rows(), never a hand-inserted one"
+    )
+    placement_bank_rows = build_placement_bank_questions(run_tag)
+    question_bank_service.add_questions(placement_bank_rows)
+    paper_link_outcome = question_bank_service.link_past_paper_rows()
+    if paper_link_outcome.linked < len(placement_bank_rows):
+        raise RuntimeError(
+            f"Expected all {len(placement_bank_rows)} placement bank rows to link to a "
+            f"Paper row, but only {paper_link_outcome.linked} did "
+            f"(unparseable={paper_link_outcome.unparseable}, "
+            f"no_subject_taxonomy={paper_link_outcome.no_subject_taxonomy}) — "
+            "build_placement_paper_stem() may no longer parse as a CAIE question-paper "
+            "filename."
+        )
+
+    _log(
+        "Signing up the four placement-state accounts — distinct students per state "
+        "(D4.6 §4's own-prior-placement exclusion forbids reusing one account across states)"
+    )
+    placement_unonboarded = _signup_account("placement-unonboarded", Role.student, run_tag)
+    placement_available = _signup_account("placement-available", Role.student, run_tag)
+    placement_in_progress = _signup_account("placement-in-progress", Role.student, run_tag)
+    placement_completed = _signup_account("placement-completed", Role.student, run_tag)
+
+    _log(
+        "Onboarding + enrolling in 0625 the three placement accounts that need it — "
+        "placement-unonboarded stays untouched so S-01/S-02 see a genuine first-run state"
+    )
+    for account in (placement_available, placement_in_progress, placement_completed):
+        account_uuid = uuid.UUID(account["userId"])
+        student_profile_service.mark_onboarding_complete(account_uuid)
+        student_profile_service.upsert_enrolment(account_uuid, PLACEMENT_SUBJECT_CODE)
+
+    _log("Creating (never submitting) placement-in-progress's placement test — S-04")
+    in_progress_uuid = uuid.UUID(placement_in_progress["userId"])
+    in_progress_created = placement_service.create(in_progress_uuid, PLACEMENT_SUBJECT_CODE)
+
+    _log(
+        "Creating, taking, submitting and marking placement-completed's placement test — S-05, "
+        "through the real /api/student/quizzes take/submit repos and QuizMarkingService, "
+        "never a hand-inserted mark"
+    )
+    completed_uuid = uuid.UUID(placement_completed["userId"])
+    completed_created = placement_service.create(completed_uuid, PLACEMENT_SUBJECT_CODE)
+    take_detail = quiz_taking_service.get_take(completed_uuid, completed_created.assignment_id)
+    for position, question in enumerate(take_detail.questions):
+        # First question deliberately wrong, mirroring
+        # tests/test_placement_repo.py::test_create_take_submit_mark_end_to_end — a
+        # perfect score produces no WeaknessRecord at all (group_weak_areas excludes
+        # any topic with zero net lost marks), and S-05's topic breakdown needs one.
+        answer = wrong_mcq_answer(PLACEMENT_MCQ_ANSWER) if position == 0 else PLACEMENT_MCQ_ANSWER
+        quiz_taking_service.save_answer(
+            completed_uuid,
+            completed_created.assignment_id,
+            question.question_ref,
+            answer_text=answer,
+        )
+    completed_submit = quiz_taking_service.submit(completed_uuid, completed_created.assignment_id)
+    completed_mark = quiz_marking_service.mark_submission(completed_submit.submission_id)
+    if completed_mark.status.value != "marked":
+        raise RuntimeError(
+            f"Placement submission {completed_submit.submission_id} did not mark "
+            f"(status={completed_mark.status.value}, error={completed_mark.marking_error!r}) — "
+            "S-05 needs a real marked result, not an unmarked one; this account's whole "
+            "purpose is to provide it."
+        )
+    completed_result = placement_service.result(completed_uuid, completed_created.assignment_id)
+    if not completed_result.marked:  # pragma: no cover - contradicts the check just above
+        raise RuntimeError(
+            "PlacementService.result reports marked=False immediately after a 'marked' "
+            "QuizMarkingService outcome — investigate before trusting S-05's seed data."
+        )
+
     students = {
         "declining": {
             **declining,
@@ -830,6 +1089,29 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "phone": empty_parent_phone,
         "accessToken": empty_parent_result.access_token,
     }
+    placement_dict = {
+        "subjectCode": PLACEMENT_SUBJECT_CODE,
+        "paperNumber": 4,
+        "bankQuestionCount": len(placement_bank_rows),
+        "students": {
+            "unonboarded": placement_unonboarded,
+            "available": placement_available,
+            "inProgress": {
+                **placement_in_progress,
+                "quizId": str(in_progress_created.quiz_id),
+                "assignmentId": str(in_progress_created.assignment_id),
+                "questionCount": in_progress_created.question_count,
+            },
+            "completed": {
+                **placement_completed,
+                "quizId": str(completed_created.quiz_id),
+                "assignmentId": str(completed_created.assignment_id),
+                "submissionId": str(completed_submit.submission_id),
+                "awardedMarks": completed_result.awarded_marks,
+                "maximumMarks": completed_result.maximum_marks,
+            },
+        },
+    }
 
     _log("Seeding complete")
     return build_result_payload(
@@ -844,6 +1126,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         quiz=quiz,
         empty_teacher=empty_teacher,
         empty_parent=empty_parent_dict,
+        placement=placement_dict,
     )
 
 
