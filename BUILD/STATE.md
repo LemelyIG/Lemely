@@ -740,6 +740,35 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         keep on screen: placement `not available` + machine-readable reason for 0580/0606
         (D4.6 §5), and the skipped-questionnaire-field case where a skipped answer is `NULL`
         and must not render as an answer the student gave (D4.5).
+        **Four facts established by measurement before briefing — do not re-derive:**
+        1. **The registry does not mention placement or onboarding at all** (zero matches for
+           either in `web/scripts/audit.mjs` and in `web/e2e/*.ts`). `audit.mjs`'s own header
+           still lists `/student/onboard` under "Deliberately still NOT in this registry (P4/P5
+           screens still on mock data)" — **stale since chunk A**, and the header is part of the
+           fix. The five new routes are `/student/onboard`, `/student/placement/:subjectCode`,
+           `/student/placement/test/:assignmentId`, `/student/placement/result/:assignmentId`
+           (`portals/student/index.tsx:227-230`).
+        2. **S-04 and S-05 are unreachable in the E2E DB as seeded today, and this is the real
+           work of the chunk.** `scripts/seed_e2e.py` seeds exactly **5 teacher-authored MCQ
+           `question_bank` rows with `paper_id=None`** (for the T-09/T-10 quiz).
+           `PlacementService._load_candidates` takes only `source='past_paper'` rows,
+           outer-joined to `Paper` for a `paper_number` that must have a `paper_timing.json`
+           entry, and chunk 0's `renderable_bank_filter` applies on top. **Nothing in the seed
+           satisfies any of that**, so every subject returns `no_questions` and there is no
+           placement quiz to take or to have marked.
+        3. **Therefore auditing only S-03's `not available` state would be the vacuous pass
+           again**, in the exact shape `audit.mjs`'s header warns about ("an unlooked-at route
+           is exactly how this gate became vacuous"). S-04 is the product's **first**
+           question-rendering + answer-input surface and owns the answer-persistence behaviour
+           four separate defects were just fixed in (D4.15) — leaving it unaudited is the least
+           acceptable omission available. The seed must grow a genuinely placement-eligible
+           past-paper bank (real `Subject`/`Paper` rows, `source='past_paper'`, topics in the
+           P4.2 vocabulary, a paper number `paper_timing.json` actually carries).
+        4. **Both S-03 states are required, not one or the other.** A subject with a viable bank
+           (available) *and* one without (`no_questions`) are both real product states — 0580/
+           0606 genuinely have zero ingested questions, and that honest refusal is behaviour
+           P4.8 exists to keep on screen. `tests/test_placement_repo.py` already has the
+           viable-bank fixture shape to copy from rather than invent.
 - [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
       current placeholder `StudyPlan.tsx`.
