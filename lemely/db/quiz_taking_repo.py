@@ -98,8 +98,12 @@ class AssignedQuizRow:
     assignment_id: uuid.UUID
     quiz_title: str
     subject_code: str
-    class_name: str
-    teacher_name: str
+    class_name: str | None
+    """``None`` for a class-less assignment (a placement/practice quiz targeted
+    directly at the student, D4.6 §3). S-04 renders the absence — it must not be
+    flattened to an empty string, which reads as a class whose name is blank."""
+    teacher_name: str | None
+    """``None`` for a student-owned quiz, which has no teacher. See ``class_name``."""
     assigned_at: datetime
     due_at: datetime | None
     closes_at: datetime | None
@@ -141,8 +145,10 @@ class QuizTakeHeader:
 
     quiz_title: str
     subject_code: str
-    class_name: str
-    teacher_name: str
+    class_name: str | None
+    """``None`` for a class-less assignment — see :class:`AssignedQuizRow`."""
+    teacher_name: str | None
+    """``None`` for a student-owned quiz — see :class:`AssignedQuizRow`."""
     due_at: datetime | None
     closes_at: datetime | None
     time_limit_minutes: int | None
@@ -281,19 +287,24 @@ class QuizTakingService:
         Raises:
             QuizTakingNotFoundError: No assignment exists with
                 ``assignment_id``, anywhere (404).
-            QuizTakingOwnershipError: The student is not enrolled in the
-                assignment's class (403).
+            QuizTakingOwnershipError: The assignment belongs to another
+                student, or to a class the caller is not enrolled in (403).
         """
         student_uuid = _as_uuid(student_id)
         assignment_uuid = _as_uuid(assignment_id)
         now = self._now()
         with self._sessionmaker() as session, session.begin():
-            assignment = self._load_enrolled(session, student_uuid, assignment_uuid)
+            assignment = self._load_permitted(session, student_uuid, assignment_uuid)
             quiz = self._require_quiz(session, assignment.quiz_id)
-            school_class = session.get(SchoolClass, assignment.class_id)
-            if school_class is None:  # pragma: no cover - FK guarantees the row exists
-                raise QuizTakingError(f"Unknown class: {assignment.class_id}")
-            teacher = session.get(User, quiz.teacher_id)
+            # Both are absent on a student-owned assignment (D4.6 §3): placement
+            # has no class and no teacher. Resolve each only when its id is set,
+            # and carry the absence through as None rather than as a blank name.
+            school_class = None
+            if assignment.class_id is not None:
+                school_class = session.get(SchoolClass, assignment.class_id)
+                if school_class is None:  # pragma: no cover - FK guarantees the row exists
+                    raise QuizTakingError(f"Unknown class: {assignment.class_id}")
+            teacher = session.get(User, quiz.teacher_id) if quiz.teacher_id is not None else None
 
             closed = _is_closed(quiz.status, assignment.closes_at, now)
             submission = self._find_submission(
@@ -349,8 +360,8 @@ class QuizTakingService:
             header = QuizTakeHeader(
                 quiz_title=quiz.title,
                 subject_code=quiz.subject_code,
-                class_name=school_class.name,
-                teacher_name=_display_name(teacher),
+                class_name=school_class.name if school_class is not None else None,
+                teacher_name=_display_name(teacher) if teacher is not None else None,
                 due_at=assignment.due_at,
                 closes_at=assignment.closes_at,
                 time_limit_minutes=quiz.time_limit_minutes,
@@ -394,7 +405,7 @@ class QuizTakingService:
         assignment_uuid = _as_uuid(assignment_id)
         now = self._now()
         with self._sessionmaker() as session, session.begin():
-            assignment = self._load_enrolled(session, student_uuid, assignment_uuid)
+            assignment = self._load_permitted(session, student_uuid, assignment_uuid)
             quiz = self._require_quiz(session, assignment.quiz_id)
             if _is_closed(quiz.status, assignment.closes_at, now):
                 raise QuizTakingValidationError(
@@ -478,7 +489,7 @@ class QuizTakingService:
         assignment_uuid = _as_uuid(assignment_id)
         now = self._now()
         with self._sessionmaker() as session, session.begin():
-            assignment = self._load_enrolled(session, student_uuid, assignment_uuid)
+            assignment = self._load_permitted(session, student_uuid, assignment_uuid)
             quiz = self._require_quiz(session, assignment.quiz_id)
             submission = self._find_submission(
                 session, assignment_uuid, student_uuid, for_update=True
@@ -521,25 +532,42 @@ class QuizTakingService:
 
     # -- Internals ----------------------------------------------------------
 
-    def _load_enrolled(
+    def _load_permitted(
         self, session: Session, student_uuid: uuid.UUID, assignment_uuid: uuid.UUID
     ) -> QuizAssignment:
-        """Load an assignment, enforcing the 403-vs-404 split every owner-scoped route uses.
+        """Load an assignment the student may take, by whichever target column is set.
 
-        An assignment id that maps to nothing anywhere is a 404; one that
-        exists but whose class the student is not enrolled in is a 403 —
-        never data, mirroring :class:`~lemely.db.class_repo.ClassService`'s
-        accepted existence-oracle trade-off.
+        ``quiz_assignments`` carries an XOR CHECK (D4.6 §1) so exactly one of
+        ``student_id``/``class_id`` is populated: a direct-to-student
+        assignment (placement, and later practice/study-plan) or a
+        class assignment. The branch is selected by which one it is, never by
+        ``kind`` — ``kind`` is a label, ownership is the filter (D4.6 §3).
+
+        Fail-closed by construction: there are exactly two ``return``
+        statements, one guarded by an equality on ``student_id`` and one by
+        membership in the enrolled class set, and no trailing fallthrough.
+
+        The 403-vs-404 split every owner-scoped route uses is preserved: an
+        assignment id that maps to nothing anywhere is a 404; one that exists
+        but belongs to someone else is a 403 — never data, mirroring
+        :class:`~lemely.db.class_repo.ClassService`'s accepted
+        existence-oracle trade-off.
         """
         assignment = session.get(QuizAssignment, assignment_uuid)
         if assignment is None:
             raise QuizTakingNotFoundError(f"Unknown assignment: {assignment_uuid}")
+        if assignment.student_id is not None:
+            if assignment.student_id != student_uuid:
+                raise QuizTakingOwnershipError(
+                    f"Assignment {assignment_uuid} is not assigned to student {student_uuid}"
+                )
+            return assignment
         enrolled_ids = self._class_service.enrolled_class_ids(student_uuid)
-        if assignment.class_id not in enrolled_ids:
-            raise QuizTakingOwnershipError(
-                f"Student {student_uuid} is not enrolled in class {assignment.class_id}"
-            )
-        return assignment
+        if assignment.class_id in enrolled_ids:
+            return assignment
+        raise QuizTakingOwnershipError(
+            f"Student {student_uuid} is not enrolled in class {assignment.class_id}"
+        )
 
     def _require_quiz(self, session: Session, quiz_id: uuid.UUID) -> Quiz:
         """Load a quiz by id, defensively.

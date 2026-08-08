@@ -242,8 +242,10 @@ class StudentQuizListItemDTO(ApiModel):
     assignmentId: str
     quizTitle: str
     subjectCode: str
-    className: str
-    teacherName: str
+    className: str | None
+    """``null`` for a class-less assignment (placement, D4.6 §3)."""
+    teacherName: str | None
+    """``null`` for a student-owned quiz, which has no teacher."""
     assignedAt: str
     dueAt: str | None
     closesAt: str | None
@@ -287,8 +289,10 @@ class StudentQuizHeaderDTO(ApiModel):
 
     quizTitle: str
     subjectCode: str
-    className: str
-    teacherName: str
+    className: str | None
+    """``null`` for a class-less assignment (placement, D4.6 §3)."""
+    teacherName: str | None
+    """``null`` for a student-owned quiz, which has no teacher."""
     dueAt: str | None
     closesAt: str | None
     timeLimitMinutes: int | None

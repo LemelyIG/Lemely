@@ -33,7 +33,11 @@ from lemely.db.models.enums import QuizKind, QuizStatus, Role
 from lemely.db.models.quizzes import Quiz, QuizAssignment
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_repo import QuizOwnershipError, QuizService
-from lemely.db.quiz_taking_repo import QuizTakingService
+from lemely.db.quiz_taking_repo import (
+    QuizTakingNotFoundError,
+    QuizTakingOwnershipError,
+    QuizTakingService,
+)
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -266,3 +270,70 @@ def test_a_placement_quiz_is_not_an_assigned_quiz(
     taking = QuizTakingService(pg_sessionmaker, class_service)
 
     assert taking.list_assigned(student_id) == []
+
+
+# ── The one predicate that genuinely changed (D4.6 §4) ───────────────────
+
+
+def _assignment_id(sm: sessionmaker[Session], quiz_id: uuid.UUID) -> uuid.UUID:
+    with sm() as session:
+        return session.scalars(
+            sa.select(QuizAssignment.id).where(QuizAssignment.quiz_id == quiz_id)
+        ).one()
+
+
+def test_the_owning_student_can_open_their_own_placement_test(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> None:
+    """``_load_permitted``'s direct-to-student branch.
+
+    The student is enrolled in **no class at all** — which is the point. Under
+    the old ``_load_enrolled`` predicate a class-less assignment was
+    un-takeable by anyone, so this is the behaviour D4.6 §4 had to add rather
+    than a behaviour it preserved.
+    """
+    student_id = _seed_user(pg_sessionmaker, Role.student)
+    quiz_id = _placement_quiz(pg_sessionmaker, student_id)
+    assignment_id = _assignment_id(pg_sessionmaker, quiz_id)
+
+    taking = QuizTakingService(pg_sessionmaker, class_service)
+    detail = taking.get_take(student_id, assignment_id)
+
+    # The absence is carried through as absence, not as a blank name: a
+    # placement test has no teacher and no class, and S-04 must render that
+    # rather than an empty string (D4.6 §3).
+    assert detail.header.class_name is None
+    assert detail.header.teacher_name is None
+    assert detail.header.quiz_title == "Placement test"
+
+
+def test_another_student_cannot_open_someone_elses_placement_test(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> None:
+    """403, not data — the inequality branch, which is what makes ``_load_permitted``
+    fail closed rather than merely fail differently."""
+    owner_id = _seed_user(pg_sessionmaker, Role.student)
+    other_id = _seed_user(pg_sessionmaker, Role.student)
+    quiz_id = _placement_quiz(pg_sessionmaker, owner_id)
+    assignment_id = _assignment_id(pg_sessionmaker, quiz_id)
+
+    taking = QuizTakingService(pg_sessionmaker, class_service)
+
+    with pytest.raises(QuizTakingOwnershipError):
+        taking.get_take(other_id, assignment_id)
+    with pytest.raises(QuizTakingOwnershipError):
+        taking.submit(other_id, assignment_id)
+
+
+def test_an_unknown_assignment_is_still_a_404_not_a_403(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> None:
+    """The D3.4 403-vs-404 split survives the rewrite unchanged."""
+    student_id = _seed_user(pg_sessionmaker, Role.student)
+    taking = QuizTakingService(pg_sessionmaker, class_service)
+
+    with pytest.raises(QuizTakingNotFoundError):
+        taking.get_take(student_id, uuid.uuid4())
