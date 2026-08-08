@@ -746,6 +746,29 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         gate instead of hiding. The other five `ready` strings were checked the same way and are
         each unique to their screen; S-03's refusal heading is specific to the `no_questions`
         reason alone (`placementData.ts:32`), so a different reason would fail rather than pass.
+        **Session 6 (2026-08-09) — a second defect found by reading the on-disk registry against
+        the runner's contract, before the gate run reached it:** `visitRoute` calls `st.setup`
+        **once**, but then calls `gotoReady(page, url, …)` **again for every breakpoint and once
+        more for axe** — so any state driven through the UI must survive a reload. It does not:
+        `Onboarding.tsx:60` holds `wizardStep` in component state that always remounts as
+        `"subjects"`, and the seeding effect (`:71-100`) restores *answers* from the server but
+        **never which step you were on**. So S-02's `setup`-driven questionnaire state is undone
+        by the first reload and its `ready` ("Which school") cannot match. Fix is to drive the
+        wizard from `ready` (which runs after *every* navigation) rather than `setup`, and to make
+        the drive **tolerant of Physics already being selected** — after the first pass the
+        enrolment is real and the seeding effect restores it, so an unconditional click would
+        *deselect* it and leave `Continue` disabled forever (`SubjectsStep.tsx:92` carries
+        `aria-pressed`, which is how the drive tells the two apart).
+        **Also found: D4.5's honesty rendering is the one thing chunk C's brief names that the
+        on-disk registry does not actually cover.** The S-02 entry stops at the *school* step, but
+        the skipped-field risk lives on the **sliders** — `SkippableSlider` renders `unsetLabel`
+        ("Not set" / "Not rated yet") while the thumb sits at `min`
+        (`QuestionnaireStep.tsx:47-63,173,209`). A regression to `formatValue(min)` would render
+        "0 hours/week" — an answer the student never gave — and screenshot perfectly clean.
+        That state gets its own capture.
+        Plus the runtime summary line (`audit.mjs:1701`) still told a reader `/student/onboard`
+        was "not covered by this registry" — stale in exactly the way the header note it sits
+        beside warns about, and the log is what a human actually reads. Corrected.
         **`impeccable-detect` and `ui-thresholds` already pass — that is NOT evidence the new
         screens are covered.** The audit registry is P3.10's 24-route/34-state one (D3.17/D3.18)
         and predates S-01..S-05; a green `ui-thresholds` on a registry that never lists the new

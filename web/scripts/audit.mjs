@@ -1699,7 +1699,7 @@ async function main() {
   }
   log(
     "Not covered by this registry (P4/P5 screens still on mock data): " +
-      "/student/subject/:code, /student/plan, /student/board, /student/onboard, " +
+      "/student/subject/:code, /student/plan, /student/board, " +
       "/student/landing, /student/directions.",
   )
   log(`Contact sheet: ${CONTACT_SHEET_PATH}`)
