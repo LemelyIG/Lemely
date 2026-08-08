@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-08T22:10:00Z
+last_updated: 2026-08-08T23:40:00Z
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -334,8 +334,15 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       files — caught by the orchestrator's own gate run, not its report.
       *(Original scope line: topic/difficulty/count/source filtering, persisted practice sets,
       "not enough questions" honesty path, export/print payload; UI spec S-20/S-21.)*
-- [ ] doing — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
+- [x] done — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
       weakness, SM-2-style spaced repetition, review sessions. (UI spec S-22/S-23.)
+      All three chunks landed (`1fb49f7`, `03fee94`, `b1a44bf`); decisions D4.11.
+      **2229 tests / 6 skipped / 0 failed / 90.08% cov** (P4.5 baseline 2153 / 89.81%);
+      all 13 gates green, 0 skipped. Migration 0011, no `web/` diff, $0.00 Gemini.
+      Chunk C was found **already on disk uncommitted** from a killed session and was
+      verified by an independent gate run rather than trusted — the same pattern P4.5 and
+      chunk B hit. It came back clean this time (`pre-commit run --all-files` exit 0), which
+      is the first handover in this phase that did.
       **Chunk plan (2026-08-08), backend only — no `web/` diff, so gate 8 is not in play:**
       - [x] chunk A — **done** (`1fb49f7`) — schema + the pure scheduler, as planned below.
         Migration **0011** applied; `alembic check` clean on **upgrade and downgrade**
@@ -414,9 +421,40 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         and **owner-scoped on every read and write** (decks are per-student; a deck id from another
         student must 404, not 403-after-probe). S-22's "nothing due today" is a real state carrying
         the next due date, not an empty list.
-- [ ] todo — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +
+- [ ] doing — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +
       rolling performance; weekly regeneration; concrete sessions (topic, activity type,
       duration); completion + XP hook (XP itself is P5 — leave a seam, do not build it).
+      **What exists today and why it is not enough:** `lemely/core/study_plan.py`
+      (`build_study_plan`) splits `weekly_hours` across weak topics proportionally to
+      `lost_marks` and emits one `StudySession(week=1, hours=…, focus="Practice and review: X")`
+      per topic. That is *vague advice with a number attached* — MISSION §4 requires **concrete
+      sessions (topic, activity type, duration)**. It also ignores placement results, the S-02
+      questionnaire, and rolling performance, has no notion of a week other than the literal
+      constant `1`, and is never persisted: `GET/POST /api/student/plan`
+      (`routers/student.py:790/814`) rebuild it from scratch on every request, so a plan cannot
+      be completed, regenerated, or compared against the previous week.
+      **Chunk plan (2026-08-08):**
+      - [ ] chunk A — pure scheduler rewrite in `lemely/core/study_plan.py`: sessions carry an
+        **activity type** (`practice` / `flashcards` / `past_paper` / `review`) and a **duration
+        in minutes**, and are laid out across the days of one week. Inputs become explicit and
+        weighted: weakness `lost_marks` (rolling performance), placement topic results, and the
+        S-02 `student_confidence_ratings` — all three already keyed on the **P4.2
+        `"<code> <name>"` topic vocabulary**, which is the whole reason those three files were
+        made to share it. Pure, **clock-injected** (chunk A of P4.6 set that precedent), no I/O.
+        `build_study_plan`'s current signature is kept working or its callers migrated in the
+        same commit — `routers/student.py` and `io/study_plan_ai.py` both import it.
+        **Honesty rule:** a student with no weakness rows, no placement, and no questionnaire
+        gets an honest `no_signal` refusal, never a plausible-looking invented week (P4.5/P4.6
+        precedent). Activity type must be *earned* — do not schedule `flashcards` for a topic
+        with no deck or `practice` for a topic the bank cannot serve.
+      - [ ] chunk B — migration **0012** + `lemely/db/study_plan_repo.py`: persist the plan and
+        its sessions, weekly regeneration (a new week supersedes rather than mutates the old one,
+        so last week stays auditable), and per-session completion. **XP is P5 — leave the
+        completion record as the seam and build no XP.**
+      - [ ] chunk C — routes. `GET/POST /api/student/plan` in `routers/student.py` are the
+        existing surface; decide deliberately whether to extend them or add
+        `/api/student/study-plan` and record which in DECISIONS — S-24/S-25 (P4.10) and
+        `web/src/portals/student/screens/StudyPlan.tsx` consume whatever this picks.
 - [ ] todo — **P4.8** Frontend S-01..S-05 (onboarding steps + placement in-progress/results).
 - [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
