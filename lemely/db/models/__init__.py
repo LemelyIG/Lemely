@@ -72,6 +72,9 @@ from lemely.db.models.quizzes import (
     QuizQuestion,
     QuizSubmission,
 )
+from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
+from lemely.db.models.study_plan import StudyPlanActivityType
+from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
 from lemely.db.models.users import Device, ParentChildLink, User
 
 
@@ -93,6 +96,7 @@ def import_all_models() -> None:
         orgs,
         profiles,
         quizzes,
+        study_plan,
         users,
     )
 
@@ -155,6 +159,9 @@ __all__ = [
     "StudentEnrolmentPaper",
     "StudentProfile",
     "StudentSubjectEnrolment",
+    "StudyPlanActivityType",
+    "StudyPlanSessionTable",
+    "StudyPlanTable",
     "Subject",
     "Subscription",
     "SubscriptionStatus",

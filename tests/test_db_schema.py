@@ -75,6 +75,8 @@ EXPECTED_TABLES = {
     "flashcard_decks",
     "flashcards",
     "flashcard_reviews",
+    "study_plans",
+    "study_plan_sessions",
 }
 
 
