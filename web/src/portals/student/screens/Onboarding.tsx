@@ -190,7 +190,12 @@ export function Onboarding() {
         }
       }
       await completeOnboarding.mutateAsync()
-      navigate("/student")
+      // S-02 -> S-03 (UI spec): the placement invite is per subject, so this
+      // sends the student to the first subject they enrolled in, in their
+      // own S-01 selection order. A student who selected nothing has no
+      // subject to invite them into a placement test for — S-06 directly.
+      const firstSubject = Object.keys(drafts)[0]
+      navigate(firstSubject ? `/student/placement/${firstSubject}` : "/student")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save your answers.")
     }

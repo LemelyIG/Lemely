@@ -17,6 +17,9 @@ import { CorrectPaper } from "./screens/CorrectPaper"
 import { StudyPlan } from "./screens/StudyPlan"
 import { Standings } from "./screens/Standings"
 import { Onboarding } from "./screens/Onboarding"
+import { PlacementInvite } from "./screens/placement/PlacementInvite"
+import { PlacementTest } from "./screens/placement/PlacementTest"
+import { PlacementResult } from "./screens/placement/PlacementResult"
 import { Landing } from "./screens/Landing"
 import { Directions } from "./screens/Directions"
 import { Parents } from "./screens/Parents"
@@ -222,6 +225,9 @@ export const studentRoute: RouteObject = {
     // The only place a parent_child_links row is created (D3.11).
     { path: "parents", element: <Parents /> },
     { path: "onboard", element: <Onboarding /> },
+    { path: "placement/:subjectCode", element: <PlacementInvite /> },
+    { path: "placement/test/:assignmentId", element: <PlacementTest /> },
+    { path: "placement/result/:assignmentId", element: <PlacementResult /> },
     { path: "landing", element: <Landing /> },
     { path: "directions", element: <Directions /> },
   ],

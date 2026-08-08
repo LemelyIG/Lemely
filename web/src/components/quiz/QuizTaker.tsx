@@ -1,0 +1,545 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Flag, WifiSlash } from "@phosphor-icons/react"
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Card, CardBody } from "@/components/ui/card"
+import { Chip } from "@/components/ui/chip"
+import { Meter } from "@/components/ui/primitives"
+import { ErrorState } from "@/components/ui/state-views"
+import { useSaveQuizAnswer, useStudentQuizTake, useSubmitQuiz } from "@/lib/hooks/usePlacementApi"
+import type { StudentQuizQuestion, SubmitQuizResponse } from "@/lib/placementTypes"
+import { ApiError } from "@/lib/api"
+import {
+  answerCacheKey,
+  answerInputKind,
+  buildAnswerSavePayload,
+  buildRetrySavePayload,
+  clampQuestionIndex,
+  countUnanswered,
+  dirtyQuestionRefs,
+  formatDuration,
+  formatQuestionTopic,
+  mergeAnswers,
+  quizAffiliationLabel,
+  readCachedAnswers,
+  remainingSeconds,
+  seedAnswers,
+  writeCachedAnswers,
+  type CachedAnswers,
+  type LocalAnswer,
+} from "./quizTakerData"
+
+/*
+ * QuizTaker — the first question-rendering + answer-input surface in the
+ * product (P4.8 chunk B, S-04). Built as a reusable component under
+ * `components/quiz/`, not a screen-local one-off: P4.9's practice quizzes
+ * and P5's assigned-quiz taking compose the same `/api/student/quizzes/
+ * {assignmentId}/...` routes this component already wraps — including the
+ * teacher-assigned case, where `header.className`/`header.teacherName` are
+ * real (placement's are always `null`, D4.6 §3; `quizAffiliationLabel`
+ * renders the line only when at least one is present).
+ *
+ * Answer persistence (UI spec S-04: "connection lost mid-test — answers
+ * must survive; resume after leaving"): every keystroke updates local
+ * state immediately AND is mirrored into `localStorage` synchronously via
+ * `writeCachedAnswers`, tagged `dirty: true` (so a hard reload before the
+ * debounced save fires still has the in-progress text — `mergeAnswers` is
+ * the pure function that decides a dirty local edit beats the server's
+ * older value on reload). A debounced autosave then PUTs just the field
+ * that changed (`buildAnswerSavePayload`); on success the cache entry flips
+ * to `dirty: false`. A failed save is shown per-question, never swallowed,
+ * and `dirtyQuestionRefs` drives a full resend (`buildRetrySavePayload`,
+ * both fields — safe because the cache always holds the question's true
+ * current state) once the browser reports `online` again.
+ *
+ * No maths renderer (measured: 1/273 stems are LaTeX-shaped, the rest is
+ * plain Unicode browsers render natively) — `white-space: pre-line` on the
+ * stem is what actually matters, since stems carry real newlines.
+ */
+
+type SaveStatus = "idle" | "saving" | "saved" | "error"
+
+function storageKey(assignmentId: string, suffix: string): string {
+  return `lm.quiz.${suffix}.${assignmentId}`
+}
+
+/** Read a JSON-encoded localStorage value, tolerating a missing/corrupt
+ * entry (private browsing, a manually-edited value) by returning `null`
+ * rather than throwing — this is a resume convenience, not a source of
+ * truth, so a bad cache must never crash the take screen. Used for the two
+ * scalar caches (`startedAt`, `flags`); the answer cache has its own typed
+ * `readCachedAnswers`/`writeCachedAnswers` in `quizTakerData.ts`. */
+function readCache<T>(key: string): T | null {
+  try {
+    const raw = window.localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as T) : null
+  } catch {
+    return null
+  }
+}
+
+function writeCache(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Storage full/unavailable (private mode). The in-memory state and the
+    // debounced server save are still the primary paths; losing the local
+    // mirror degrades resume-after-reload, not correctness.
+  }
+}
+
+function clearCache(assignmentId: string): void {
+  for (const suffix of ["answers", "startedAt", "flags"]) {
+    try {
+      window.localStorage.removeItem(storageKey(assignmentId, suffix))
+    } catch {
+      // best-effort
+    }
+  }
+}
+
+function useOnlineStatus(): boolean {
+  const [online, setOnline] = useState(() => navigator.onLine)
+  useEffect(() => {
+    const goOnline = () => setOnline(true)
+    const goOffline = () => setOnline(false)
+    window.addEventListener("online", goOnline)
+    window.addEventListener("offline", goOffline)
+    return () => {
+      window.removeEventListener("online", goOnline)
+      window.removeEventListener("offline", goOffline)
+    }
+  }, [])
+  return online
+}
+
+function useElapsedSeconds(assignmentId: string): number {
+  const startedAtRef = useRef<number>(0)
+  if (startedAtRef.current === 0) {
+    const key = storageKey(assignmentId, "startedAt")
+    const cached = readCache<number>(key)
+    if (cached) {
+      startedAtRef.current = cached
+    } else {
+      startedAtRef.current = Date.now()
+      writeCache(key, startedAtRef.current)
+    }
+  }
+  const [elapsed, setElapsed] = useState(() =>
+    Math.floor((Date.now() - startedAtRef.current) / 1000),
+  )
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000))
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  return elapsed
+}
+
+export interface QuizTakerProps {
+  assignmentId: string
+  onSubmitted: (result: SubmitQuizResponse) => void
+  /** "Leave for now" — omit to hide the affordance (e.g. a required flow). */
+  onExit?: () => void
+  className?: string
+}
+
+export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: QuizTakerProps) {
+  const { data, isPending, isError, error } = useStudentQuizTake(assignmentId)
+  const saveAnswer = useSaveQuizAnswer(assignmentId)
+  const submitQuiz = useSubmitQuiz(assignmentId)
+  const online = useOnlineStatus()
+  const elapsedSeconds = useElapsedSeconds(assignmentId)
+
+  const [answers, setAnswers] = useState<Record<string, LocalAnswer>>({})
+  const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({})
+  const [flagged, setFlagged] = useState<Set<string>>(new Set())
+  const [index, setIndex] = useState(0)
+  const [confirmingSubmit, setConfirmingSubmit] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const seeded = useRef(false)
+  const debounceTimers = useRef<Record<string, number>>({})
+  // The single source of truth for "what's safe to resend" — every entry
+  // here is written to `localStorage` too, so it survives a reload as well
+  // as an in-session retry. `dirty: true` means "not yet confirmed saved".
+  const answerCache = useRef<CachedAnswers>({})
+
+  useEffect(() => {
+    if (seeded.current || !data) return
+    seeded.current = true
+    const server = seedAnswers(data.questions)
+    const cached = readCachedAnswers(window.localStorage, answerCacheKey(assignmentId))
+    answerCache.current = cached ?? {}
+    // `mergeAnswers` is the pin: a dirty (unsaved) cached edit beats the
+    // server's older value; a clean one defers back to the server.
+    setAnswers(mergeAnswers(server, cached))
+    const cachedFlags = readCache<string[]>(storageKey(assignmentId, "flags"))
+    if (cachedFlags) setFlagged(new Set(cachedFlags))
+  }, [data, assignmentId])
+
+  const questions = useMemo(() => data?.questions ?? [], [data])
+  const current: StudentQuizQuestion | undefined = questions[index]
+
+  const persistCacheEntry = useCallback(
+    (questionRef: string, entry: LocalAnswer, dirty: boolean) => {
+      answerCache.current = { ...answerCache.current, [questionRef]: { ...entry, dirty } }
+      writeCachedAnswers(window.localStorage, answerCacheKey(assignmentId), answerCache.current)
+    },
+    [assignmentId],
+  )
+
+  const doSave = useCallback(
+    (questionRef: string, body: ReturnType<typeof buildAnswerSavePayload>, entry: LocalAnswer) => {
+      setSaveStatus((prev) => ({ ...prev, [questionRef]: "saving" }))
+      saveAnswer.mutate(
+        { questionRef, body },
+        {
+          onSuccess: () => {
+            persistCacheEntry(questionRef, entry, false)
+            setSaveStatus((prev) => ({ ...prev, [questionRef]: "saved" }))
+          },
+          onError: () => {
+            setSaveStatus((prev) => ({ ...prev, [questionRef]: "error" }))
+          },
+        },
+      )
+    },
+    [saveAnswer, persistCacheEntry],
+  )
+
+  // Resend every question still marked dirty in the cache, once the
+  // browser reports it's back online — a lost connection must not strand
+  // an answer as permanently unsaved once the student is reachable again.
+  // Uses the full-both-fields retry payload (the cache holds the question's
+  // true current state, so this re-asserts reality rather than risking a
+  // partial, order-dependent resend of only "the last field touched").
+  useEffect(() => {
+    if (!online) return
+    for (const questionRef of dirtyQuestionRefs(answerCache.current)) {
+      const entry = answerCache.current[questionRef]
+      if (!entry) continue
+      doSave(questionRef, buildRetrySavePayload(entry), entry)
+    }
+  }, [online, doSave])
+
+  function updateAnswer(questionRef: string, field: "answerText" | "workingText", value: string) {
+    const prevEntry = answers[questionRef] ?? { answerText: null, workingText: null }
+    const nextEntry: LocalAnswer = { ...prevEntry, [field]: value }
+    setAnswers((prev) => ({ ...prev, [questionRef]: nextEntry }))
+    persistCacheEntry(questionRef, nextEntry, true)
+    const timers = debounceTimers.current
+    if (timers[questionRef]) window.clearTimeout(timers[questionRef])
+    timers[questionRef] = window.setTimeout(() => {
+      doSave(questionRef, buildAnswerSavePayload(field, value), nextEntry)
+    }, 600)
+  }
+
+  function toggleFlag(questionRef: string) {
+    setFlagged((prev) => {
+      const next = new Set(prev)
+      if (next.has(questionRef)) next.delete(questionRef)
+      else next.add(questionRef)
+      writeCache(storageKey(assignmentId, "flags"), [...next])
+      return next
+    })
+  }
+
+  const liveQuestions = questions.map((q) => answers[q.questionRef] ?? { answerText: q.answerText, workingText: q.workingText })
+  const unansweredCount = countUnanswered(liveQuestions)
+
+  async function handleSubmit() {
+    setSubmitError(null)
+    try {
+      const result = await submitQuiz.mutateAsync()
+      clearCache(assignmentId)
+      onSubmitted(result)
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Couldn't submit — try again.")
+      setConfirmingSubmit(false)
+    }
+  }
+
+  function requestSubmit() {
+    if (unansweredCount > 0) {
+      setConfirmingSubmit(true)
+    } else {
+      void handleSubmit()
+    }
+  }
+
+  if (isPending) {
+    return <div className="lm-screen text-body-md text-t2">Loading your test…</div>
+  }
+
+  if (isError || !data) {
+    const message =
+      error instanceof ApiError && error.status === 403
+        ? "This test isn't yours to take."
+        : error instanceof ApiError && error.status === 404
+          ? "This test couldn't be found."
+          : error?.message ?? "Couldn't load this test."
+    return (
+      <ErrorState heading="Couldn't load your test" body={message} className="lm-screen" />
+    )
+  }
+
+  if (!current) {
+    return <ErrorState heading="This test has no questions" className="lm-screen" />
+  }
+
+  const total = questions.length
+  const remaining = remainingSeconds(data.header.timeLimitMinutes, elapsedSeconds)
+  const timeNearlyUp = remaining !== null && remaining <= 120
+  const kind = answerInputKind(current.questionType, current.mcqOptions)
+  const currentAnswer = answers[current.questionRef] ?? { answerText: current.answerText, workingText: current.workingText }
+  const currentStatus = saveStatus[current.questionRef] ?? "idle"
+  const currentFlagged = flagged.has(current.questionRef)
+  const affiliation = quizAffiliationLabel(data.header.className, data.header.teacherName)
+
+  return (
+    <div className={cn("lm-screen mx-auto flex max-w-[820px] flex-col gap-5", className)}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-dense-sm text-t2">
+            Question {index + 1} of {total}
+          </div>
+          {/* `null` for every placement test (no class, no teacher, D4.6 §3);
+           * populated for a teacher-assigned quiz composing this same
+           * component in P4.9/P5. Never a "—" placeholder for the absent
+           * case — nothing renders here at all. */}
+          {affiliation ? <div className="text-3xs text-t3">{affiliation}</div> : null}
+        </div>
+        <div className="flex-1" />
+        {!online ? (
+          <Chip tone="warn" className="gap-1">
+            <WifiSlash size={12} weight="bold" aria-hidden />
+            Offline — answers save locally
+          </Chip>
+        ) : null}
+        <Chip tone={timeNearlyUp ? "warn" : "neutral"} className="font-mono">
+          {remaining !== null ? `${formatDuration(remaining)} left` : `${formatDuration(elapsedSeconds)} elapsed`}
+        </Chip>
+        {onExit ? (
+          <Button variant="ghost" size="sm" onClick={onExit}>
+            Leave for now
+          </Button>
+        ) : null}
+      </div>
+
+      <Meter
+        value={((index + 1) / total) * 100}
+        label={`Question ${index + 1} of ${total}`}
+        className="h-1.5"
+      />
+
+      {timeNearlyUp ? (
+        <div className="rounded-lg border border-warn bg-warn-bg px-4 py-2.5 text-dense-sm text-warn">
+          Less than 2 minutes left.
+        </div>
+      ) : null}
+
+      <Card>
+        <CardBody className="flex flex-col gap-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone="neutral" className="font-mono">
+                {current.totalMarks} mark{current.totalMarks === 1 ? "" : "s"}
+              </Chip>
+              <Chip tone={current.topic ? "accent" : "neutral"}>
+                {formatQuestionTopic(current.topic)}
+              </Chip>
+            </div>
+            <button
+              type="button"
+              onClick={() => toggleFlag(current.questionRef)}
+              aria-pressed={currentFlagged}
+              className={cn(
+                "flex items-center gap-1.5 rounded px-2.5 py-1.5 text-dense-sm transition-colors cursor-pointer",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                currentFlagged ? "bg-warn-bg text-warn" : "text-t3 hover:bg-surface-2",
+              )}
+            >
+              <Flag weight={currentFlagged ? "fill" : "regular"} size={14} aria-hidden />
+              {currentFlagged ? "Flagged for review" : "Flag for review"}
+            </button>
+          </div>
+
+          <p className="whitespace-pre-line text-body-lg leading-relaxed text-t1">
+            {current.prompt}
+          </p>
+
+          <AnswerInput
+            kind={kind}
+            question={current}
+            value={currentAnswer}
+            onAnswerText={(v) => updateAnswer(current.questionRef, "answerText", v)}
+            onWorkingText={(v) => updateAnswer(current.questionRef, "workingText", v)}
+          />
+
+          <SaveIndicator status={currentStatus} online={online} />
+        </CardBody>
+      </Card>
+
+      {confirmingSubmit ? (
+        <Card className="border-warn">
+          <CardBody className="flex flex-col gap-3">
+            <div className="text-body-md font-medium text-t1">
+              You have {unansweredCount} unanswered question{unansweredCount === 1 ? "" : "s"}.
+            </div>
+            <p className="text-dense-sm text-t2">
+              You can still go back and answer them, or submit as-is.
+            </p>
+            {submitError ? <p className="text-dense-sm text-err">{submitError}</p> : null}
+            <div className="flex flex-wrap gap-3">
+              <Button variant="secondary" onClick={() => setConfirmingSubmit(false)}>
+                Go back
+              </Button>
+              <Button variant="accent" disabled={submitQuiz.isPending} onClick={() => void handleSubmit()}>
+                {submitQuiz.isPending ? "Submitting…" : "Submit anyway"}
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="secondary"
+            disabled={index === 0}
+            onClick={() => setIndex((i) => clampQuestionIndex(i - 1, total))}
+          >
+            Previous
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={index === total - 1}
+            onClick={() => setIndex((i) => clampQuestionIndex(i + 1, total))}
+          >
+            Next
+          </Button>
+          <div className="flex-1" />
+          {submitError ? <p className="text-dense-sm text-err">{submitError}</p> : null}
+          <Button variant="accent" disabled={submitQuiz.isPending} onClick={requestSubmit}>
+            {submitQuiz.isPending ? "Submitting…" : "Submit test"}
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SaveIndicator({ status, online }: { status: SaveStatus; online: boolean }) {
+  if (status === "idle") return null
+  if (status === "error") {
+    return (
+      <p className="text-dense-sm text-err" role="status">
+        {online ? "Couldn't save — we'll retry automatically." : "Offline — this will save once you're back online."}
+      </p>
+    )
+  }
+  if (status === "saving") {
+    return (
+      <p className="text-dense-sm text-t3" role="status">
+        Saving…
+      </p>
+    )
+  }
+  return (
+    <p className="text-dense-sm text-t3" role="status">
+      Saved
+    </p>
+  )
+}
+
+function AnswerInput({
+  kind,
+  question,
+  value,
+  onAnswerText,
+  onWorkingText,
+}: {
+  kind: ReturnType<typeof answerInputKind>
+  question: StudentQuizQuestion
+  value: LocalAnswer
+  onAnswerText: (v: string) => void
+  onWorkingText: (v: string) => void
+}) {
+  if (kind === "mcq") {
+    return (
+      <div className="flex flex-col gap-2" role="radiogroup" aria-label="Choose an answer">
+        {(question.mcqOptions ?? []).map((option) => {
+          const selected = value.answerText === option
+          return (
+            <button
+              key={option}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onAnswerText(option)}
+              className={cn(
+                "flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-body-md cursor-pointer transition-colors",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                selected
+                  ? "border-accent bg-accent-subtle text-accent-subtle-on"
+                  : "border-border bg-surface text-t1 hover:bg-surface-2",
+              )}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "flex h-4 w-4 flex-none items-center justify-center rounded-full border",
+                  selected ? "border-accent bg-accent" : "border-border",
+                )}
+              />
+              {option}
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  if (kind === "short") {
+    return (
+      <input
+        type="text"
+        value={value.answerText ?? ""}
+        onChange={(event) => onAnswerText(event.target.value)}
+        placeholder="Your answer"
+        className="min-h-[44px] rounded-lg border border-border bg-surface px-4 py-3 text-body-lg text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      />
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <label className="text-dense-sm text-t2" htmlFor={`working-${question.id}`}>
+          Work it out on paper, then type your working here (optional)
+        </label>
+        <textarea
+          id={`working-${question.id}`}
+          value={value.workingText ?? ""}
+          onChange={(event) => onWorkingText(event.target.value)}
+          rows={4}
+          placeholder="Show your working…"
+          className="rounded-lg border border-border bg-surface px-4 py-3 text-body-md text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-dense-sm text-t2" htmlFor={`answer-${question.id}`}>
+          Your answer
+        </label>
+        <textarea
+          id={`answer-${question.id}`}
+          value={value.answerText ?? ""}
+          onChange={(event) => onAnswerText(event.target.value)}
+          rows={3}
+          placeholder="Your final answer"
+          className="rounded-lg border border-border bg-surface px-4 py-3 text-body-md text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        />
+      </div>
+    </div>
+  )
+}
