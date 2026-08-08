@@ -513,6 +513,35 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
         raise ValueError(f"Identifier must be a UUID, got {value!r}") from exc
 
 
+def enrolled_paper_numbers(
+    session: Session, student_uuid: uuid.UUID, subject_code: str
+) -> frozenset[int]:
+    """Paper numbers this student's onboarding says they will sit for ``subject_code``.
+
+    Shared by :class:`~lemely.db.placement_repo.PlacementService` and
+    :class:`~lemely.db.practice_repo.PracticeService` — D4.9's lesson
+    ("narrow to the papers the student will sit; empty means *not answered*,
+    never *sits no papers*") applies identically to both surfaces, so the
+    lookup lives here once rather than being copy-pasted into each. A caller
+    with no ``student_enrolment_papers`` rows for this subject gets back an
+    empty ``frozenset`` and must **not** treat that as a restriction — see
+    D4.6 §5 / D4.9 for why an unanswered S-02 question means "not narrowed",
+    not "sits nothing".
+    """
+    numbers = session.scalars(
+        select(StudentEnrolmentPaper.paper_number)
+        .join(
+            StudentSubjectEnrolment,
+            StudentSubjectEnrolment.id == StudentEnrolmentPaper.enrolment_id,
+        )
+        .where(
+            StudentSubjectEnrolment.user_id == student_uuid,
+            StudentSubjectEnrolment.subject_code == subject_code,
+        )
+    ).all()
+    return frozenset(numbers)
+
+
 __all__ = [
     "ConfidenceRatingRow",
     "StudentProfileError",
@@ -521,4 +550,5 @@ __all__ = [
     "StudentProfileService",
     "StudentProfileValidationError",
     "SubjectEnrolmentRow",
+    "enrolled_paper_numbers",
 ]

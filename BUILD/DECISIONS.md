@@ -3228,3 +3228,96 @@ rather than the ingested corpus, so the suite does not depend on 273 banked rows
 in a fresh checkout. The real-corpus measurement above was made by the orchestrator
 directly and is recorded here instead of being encoded as a test that would fail on a
 clean clone.
+
+---
+
+## D4.10 — Practice sets: the honest-shortfall path is the normal path, and `list_assigned` grows a positive allowlist (P4.5)
+
+P4.5 built the practice generator as the third consumer of the quiz engine, after the
+teacher builder (P3.5) and placement (P4.4). No migration: migration 0010 already shipped
+`quizkind` with all four members, so `kind=practice` needed only code. `$0.00` Gemini —
+selection from an existing bank is deterministic throughout.
+
+### 1. Availability is tri-state, not binary, because a short set is not a failed set
+
+Placement's viability floor is a genuine floor: a four-topic, twelve-minute minimum exists
+because a narrower sample cannot support a weakness profile (D4.6 §5). **Practice has no
+such floor.** A student who asks for 20 questions on one subtopic and can be given 7 has
+been served, not failed — refusing would be the product withholding material it holds.
+
+So `PracticePreview.available` is `True` whenever `create` would succeed *at all*,
+including the shortfall case, and the shortfall carries its own reason
+(`insufficient_pool`) alongside the true `available_count`. `available=False` is reserved
+for the two genuine refusals: `no_questions` (nothing for this subject) and
+`no_weaknesses` (weak-topic mode with no `WeaknessRecord` rows to target).
+
+**The set is never padded and never silently shortened.** The returned count is what the
+bank actually holds after filtering, and the reason says so — the S-20 form is kept honest
+before the student commits rather than after (spec §1.4). Given the corpus, this is the
+*normal* path, not an edge case: 0580 and 0606 refuse outright, and any topic-narrowed
+0625 request is a shortfall long before it is a full set.
+
+### 2. Weak-topic targeting reads `WeaknessRecord`; it does not re-derive weakness
+
+MISSION §4 makes "generated practice demonstrably targets seeded weaknesses" a Phase-4
+acceptance criterion, so the mode has to be real rather than present. The topic filter is
+derived from the caller's own `WeaknessRecord` rows for the subject, in P4.2's
+`"<code> <name>"` vocabulary — the vocabulary D4.7 made real on the marking side, which is
+what makes the join work at all. A second weakness computation here would be a second
+definition that could drift from the first.
+
+A topic with zero net lost marks is not a weakness (mirroring `group_weak_areas`), and is
+excluded — pinned by its own test, because "targeting" that included a perfectly-answered
+topic would be targeting in name only.
+
+### 3. `list_assigned` — the site D4.6 §3 deferred, and the shape it had to take
+
+D4.6 §3 named `quiz_taking_repo.list_assigned` as the one place P4.5 must change: a
+practice set is `class_id IS NULL`, so `class_id IN (:enrolled)` excluded it by SQL
+three-valued logic and it was invisible in S-25/S-26.
+
+**Chosen: two independently owner-scoped queries, unioned and re-sorted** — the class
+branch unchanged, plus a new branch scoped by `QuizAssignment.student_id == caller` and
+narrowed by a **positive** `kind IN (practice, study_plan)` allowlist
+(`_STUDENT_ASSIGNED_KINDS`).
+
+**Never `kind != 'teacher'`.** That form is one character shorter and fails open the day a
+fifth kind is added — and it would *already* be wrong today, because it would surface
+placement tests in the assigned-work list. `placement` is deliberately absent from the
+allowlist: a placement test is governed by its own S-03/S-04/S-05 flow.
+`test_a_placement_quiz_is_not_an_assigned_quiz` (written in chunk B-1, before practice
+existed) still passes unmodified, which is the regression that matters.
+
+### 4. The export/print payload excludes marking material structurally
+
+S-21's printable set reuses D3.8's discipline: `model_answer`, `mark_scheme_points` and
+`mcq_answer` are absent from the export dataclass itself, not omitted by a caller that
+remembers to. A test asserts the *dataclass field set*, not just one response body, so a
+future field addition cannot leak an answer key by being added in the obvious place.
+
+### 5. D4.9's enrolment lesson generalised
+
+`_load_enrolled_paper_numbers` moved out of `placement_repo` into
+`student_profile_repo.enrolled_paper_numbers`, shared by both services: narrow to the
+papers `student_enrolment_papers` names when rows exist, do not narrow when they do not.
+Mirrored by the same four inverse-verified tests D4.9 introduced.
+
+### Measured against the live bank (do not re-derive)
+
+| Request | Result |
+|---|---|
+| 0625, count 20, no filters | `available=True`, 273 available |
+| 0580 / 0606, count 20 | `available=False`, `no_questions`, 0 available |
+| 0625, count 5, topic `"4.3 Electric circuits"` | `available=True`, 10 available |
+| 0625, count 5, `weak_topics_only` (no weakness rows) | `available=False`, `no_weaknesses` |
+
+Note the pool for unfiltered practice is **273**, not the 211 topic-labelled rows placement
+is restricted to: an untopiced question is unusable for a weakness *profile* but perfectly
+good practice *material*. The two services filter differently on purpose.
+
+**Gates:** all 13 green, 0 skipped. **2153 tests / 6 skipped / 0 failed**, coverage
+**89.81%** (P4.4 baseline 89.68%).
+
+**Process note.** The implementing subagent reported done with `ruff format` failing on two
+of its own files; the orchestrator's own gate run caught it. MISSION §5's "verify their
+output yourself — never trust a subagent's claim of success" earned its place again.

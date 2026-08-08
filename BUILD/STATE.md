@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-08T04:15:00Z
+last_updated: 2026-08-08T21:30:00Z
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -312,31 +312,28 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         topic-labelled (D4.4), and **0580/0606 have zero ingested questions** — placement is
         un-assemblable for two of three subjects and needs an honest "not available" path.
         (Confirmed by the chunk-B-3 measurement above, which is the authoritative one now.)
-- [ ] doing — **P4.5** Practice generator backend (started 2026-08-08): topic/difficulty/count/
-      source filtering, persisted practice sets, "not enough questions" honesty path,
-      export/print payload. UI spec S-20/S-21.
-      **Design is already settled by D4.6 — do not re-open it.** A practice set is
-      `Quiz(kind=QuizKind.practice, student_id=caller, teacher_id=None)` + a self-
-      `QuizAssignment`, exactly like placement; the enum member already exists (migration
-      0010 shipped `quizkind` with all four members) so **no migration is needed**.
-      Take/resume/submit stay the existing `/api/student/quizzes/...` endpoints.
-      `lemely/db/placement_repo.py` is the worked example to mirror.
-      **The one site D4.6 §3 explicitly defers to P4.5:** `quiz_taking_repo.list_assigned`
-      currently returns only class-assigned rows, so a practice set is invisible in S-25/S-26.
-      P4.5 adds a second branch scoped by `QuizAssignment.student_id == caller` and narrowed
-      by a **positive** `kind IN (...)` allowlist — never `kind != 'teacher'`, which fails
-      open the day a fifth kind is added. A placement quiz must stay excluded from that list
-      (pinned today by `test_a_placement_quiz_is_not_an_assigned_quiz`).
-      **Targeting weakness is the acceptance criterion, not a nice-to-have** (MISSION §4:
-      "generated practice demonstrably targets seeded weaknesses"). The join vocabulary is
-      P4.2's `"<code> <name>"` labels, which D4.7 made real on the marking side — read weak
-      topics from `WeaknessRecord`, not from a re-derivation.
-      **Honesty path:** when the filtered pool cannot fill the requested count, return what
-      exists **and say so** with a machine-readable reason — never pad, never silently
-      shorten (spec §1.4). The 0625 bank is 273 rows / 211 topic-labelled and 0580/0606 are
-      empty, so this path is the common case, not an edge case.
-      **Carry D4.9's lesson:** narrow to the papers `student_enrolment_papers` names when the
-      student has rows, and do **not** narrow when they have none.
+- [x] done — **P4.5** Practice generator backend (D4.10). `lemely/db/practice_repo.py`
+      (`PracticeService`: preview / create / export) + `lemely/web/routers/practice.py` +
+      `schemas_practice.py`; `enrolled_paper_numbers` hoisted into `student_profile_repo` and
+      shared with placement. No migration (0010 already shipped `quizkind`). $0.00 Gemini.
+      **Availability is tri-state, not binary** — a *short* set is not a *failed* set, so
+      `available=True` covers the honest-shortfall case (`reason="insufficient_pool"`, true
+      `available_count`) and `False` is reserved for `no_questions` / `no_weaknesses`. Never
+      padded, never silently shortened. Given the corpus this is the normal path.
+      **`list_assigned` grew the second branch D4.6 §3 deferred here**: owner-scoped on
+      `QuizAssignment.student_id`, narrowed by a **positive** `kind IN (practice, study_plan)`
+      allowlist. Placement stays out — `test_a_placement_quiz_is_not_an_assigned_quiz` passes
+      unmodified. Export excludes `model_answer`/`mark_scheme_points`/`mcq_answer`
+      **structurally** (asserted on the dataclass field set, not one response body).
+      **Live-bank measurement:** 0625 unfiltered → 273 available; `"4.3 Electric circuits"` →
+      10; 0580/0606 → `no_questions`; weak-only with no weakness rows → `no_weaknesses`. The
+      273 (vs placement's 211) is deliberate — an untopiced question is unusable for a
+      weakness *profile* but fine as practice *material*.
+      **2153 tests / 6 skipped / 0 failed / 89.81% cov** (P4.4 baseline 89.68%); all 13 gates
+      green, 0 skipped. The subagent reported done with `ruff format` red on two of its own
+      files — caught by the orchestrator's own gate run, not its report.
+      *(Original scope line: topic/difficulty/count/source filtering, persisted practice sets,
+      "not enough questions" honesty path, export/print payload; UI spec S-20/S-21.)*
 - [ ] todo — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
       weakness, SM-2-style spaced repetition, review sessions.
 - [ ] todo — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +

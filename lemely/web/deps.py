@@ -34,6 +34,7 @@ from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.placement_repo import PlacementService
+from lemely.db.practice_repo import PracticeService
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_marking_repo import QuizMarkingService
 from lemely.db.quiz_repo import QuizService
@@ -302,6 +303,18 @@ def get_placement_service() -> PlacementService:
     dependency with a service built on a throwaway Postgres database.
     """
     return PlacementService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_practice_service() -> PracticeService:
+    """Return the process-wide :class:`PracticeService` singleton (P4.5).
+
+    Wired with the DB session factory alone, mirroring
+    :func:`get_placement_service` — a practice assignment is always
+    direct-to-student, so no ``ClassService`` seam is needed. Tests override
+    this dependency with a service built on a throwaway Postgres database.
+    """
+    return PracticeService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)

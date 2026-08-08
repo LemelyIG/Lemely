@@ -220,6 +220,7 @@ module = [
   "lemely.web.schemas_review",
   "lemely.web.schemas_quiz",
   "lemely.web.schemas_placement",
+  "lemely.web.schemas_practice",
   "lemely.web.schemas_parent",
   "lemely.web.schemas_me",
   "lemely.web.schemas_announcements",

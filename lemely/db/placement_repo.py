@@ -64,7 +64,6 @@ from lemely.db.models.enums import (
     QuizStatus,
     QuizSubmissionStatus,
 )
-from lemely.db.models.profiles import StudentEnrolmentPaper, StudentSubjectEnrolment
 from lemely.db.models.quizzes import (
     QuestionBank,
     Quiz,
@@ -74,6 +73,7 @@ from lemely.db.models.quizzes import (
 )
 from lemely.db.question_bank_repo import _to_row
 from lemely.db.quiz_repo import _snapshot_bank_row
+from lemely.db.student_profile_repo import enrolled_paper_numbers
 from lemely.io.paper_timing import get_paper_timings
 from lemely.io.syllabus_topics import get_taxonomy
 
@@ -407,31 +407,10 @@ class PlacementService:
         clothes (spec §1.4).
         """
         timings = get_paper_timings(subject_code)
-        enrolled = self._load_enrolled_paper_numbers(session, student_uuid, subject_code)
+        enrolled = enrolled_paper_numbers(session, student_uuid, subject_code)
         if not enrolled:
             return dict(timings)
         return {number: timing for number, timing in timings.items() if number in enrolled}
-
-    def _load_enrolled_paper_numbers(
-        self, session: Session, student_uuid: uuid.UUID, subject_code: str
-    ) -> frozenset[int]:
-        """Paper numbers this student's onboarding says they will sit for ``subject_code``.
-
-        Empty when the student never answered S-02's paper question — see
-        :meth:`_timings_for` for why that is deliberately not a restriction.
-        """
-        numbers = session.scalars(
-            select(StudentEnrolmentPaper.paper_number)
-            .join(
-                StudentSubjectEnrolment,
-                StudentSubjectEnrolment.id == StudentEnrolmentPaper.enrolment_id,
-            )
-            .where(
-                StudentSubjectEnrolment.user_id == student_uuid,
-                StudentSubjectEnrolment.subject_code == subject_code,
-            )
-        ).all()
-        return frozenset(numbers)
 
     def _load_candidates(self, session: Session, subject_code: str) -> list[Candidate]:
         """Every ``source=past_paper`` bank row for this subject, paper-joined.
