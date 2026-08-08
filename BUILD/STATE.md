@@ -623,7 +623,31 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         `Onboarding.tsx`, whose own docstring says "there is no multi-step wizard backend yet" —
         there is now. Whether the legacy `POST /api/student/onboarding` route and
         `usePostOnboarding` die here or in P4.11 is a chunk-A decision to record, not assume.
-      - [ ] todo — chunk B — S-03 + S-04 + S-05 on `/api/student/placement/*` + the existing
+      - [ ] doing — chunk B (started 2026-08-09). **Code is on disk, uncommitted, gates not yet
+        run by the orchestrator.** New: `web/src/lib/placementTypes.ts`,
+        `lib/hooks/usePlacementApi.ts`, `components/quiz/{QuizTaker.tsx,quizTakerData.ts}`,
+        `portals/student/screens/placement/{PlacementInvite,PlacementTest,PlacementResult}.tsx`
+        + `placementData.ts`, `tests/unit/{placement,quizTaker}.test.ts`. Changed: `lib/api.ts`
+        (`ApiError` now carries structured `.detail` — needed because placement's 409 detail is a
+        whole `PlacementAvailabilityDTO`, not a string; backward compatible, orchestrator-reviewed),
+        `portals/student/index.tsx` (3 routes), `Onboarding.tsx` (S-02 → S-03 exit).
+        **The eighth handover this phase to sign off before its own gate run finished** — but the
+        first to report its gaps *accurately* when asked instead of claiming green: it had extracted
+        only the pure-logic modules and left `marked:false`, `spansMultipleBands:false`,
+        `topic:null` and the offline/unsaved-answer cache implemented **but untested**.
+        **Component tests are not the fix and must not be added:** `web/vitest.config.ts` records
+        `environment: "node"` as a deliberate decision (D3.20) — no jsdom, no @testing-library,
+        because component behaviour belongs to Playwright against a real browser. Gaps are being
+        closed the repo's way instead: extract the decision out of the JSX into a pure function
+        (the `onboardingData.ts` pattern) and inject storage rather than touching the
+        `localStorage` global (the clock-injection precedent). Highest-value one is the
+        reload-merge: **a local edit that failed to save before a reload must not be silently
+        discarded in favour of the server's older value.**
+        Verified by the orchestrator already: the S-05 "this page will update on its own" promise
+        is backed by a real `refetchInterval` that stops when `marked` flips true (a claim the
+        student can check), and `white-space: pre-line` is on the stem — the actual rendering risk
+        per the P4.8 measurement, no maths renderer added.
+        (original scope line) — S-03 + S-04 + S-05 on `/api/student/placement/*` + the existing
         `/api/student/quizzes/...` take/resume/submit path. S-03 must render the **honest
         `not available` + machine-readable reason** for 0580/0606; S-04 owns answer persistence
         across a lost connection and resume (UI spec §S-04 states both); S-05 is framed as a
