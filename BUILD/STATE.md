@@ -204,12 +204,27 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       **Stale docstring left for whoever owns E2E next:** `web/e2e/at-risk-flags.spec.ts:21` still
       says rule 2 "cannot fire in Phase 3". Seeding a real below-target scenario in
       `scripts/seed_e2e.py` is a P4.11 job, not silently done here.
-- [ ] todo — **P4.4** Placement test backend: ~15-min per-subject assembly from the bank across
+- [ ] doing — **P4.4** Placement test backend: ~15-min per-subject assembly from the bank across
       topics, serve/resume/submit, mark through the existing engine, initialise weakness profile.
       **Includes the marking-side topic fill carried over from P4.2 (D4.4 §6)** — classify
       `CorrectedQuestion.topic` at the db/io persistence boundary when `topic_hint` is absent,
       so weakness topics and bank topics share one vocabulary. Re-verify the accuracy harness
       (MISSION §6 gate 5) since it touches the marking output.
+      **Chunk plan (2026-08-08):**
+      - chunk A — *doing* — marking-side topic fill (D4.4 §6). Layering verified by the
+        orchestrator: `lemely.db` is **outside** the import-linter `app > io > core` contract
+        (`exhaustive = false`), so `attempt_repo` may import both `core.topics` and
+        `io.syllabus_topics`. The trap to watch: `summarize_weaknesses(correction)` runs
+        **before** `persist_quiz_correction` (`quiz_marking_repo.py:275`), so filling the topic
+        only inside `_persist` fixes `WeaknessRecord.topic` but NOT the grouping — the fill must
+        land where it changes the grouping on both the quiz and past-paper paths.
+      - chunk B — *blocked on D4.6* — placement assembly/serve/resume/submit. The fork the
+        architect is deciding: `Quiz.teacher_id` and `QuizAssignment.class_id` are both
+        **NOT NULL**, but a placement test has no teacher and no class. MISSION forbids forking
+        the quiz engine; D1.2/D1.3 forbid non-additive schema change. One of the two gives.
+      - Assembly constraint already known, do not re-measure: the 0625 bank is 273 rows / 211
+        topic-labelled (D4.4), and **0580/0606 have zero ingested questions** — placement is
+        un-assemblable for two of three subjects and needs an honest "not available" path.
 - [ ] todo — **P4.5** Practice generator backend: topic/difficulty/count/source filtering,
       persisted practice sets, "not enough questions" honesty path, export/print payload.
 - [ ] todo — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
