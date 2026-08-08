@@ -204,7 +204,7 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       **Stale docstring left for whoever owns E2E next:** `web/e2e/at-risk-flags.spec.ts:21` still
       says rule 2 "cannot fire in Phase 3". Seeding a real below-target scenario in
       `scripts/seed_e2e.py` is a P4.11 job, not silently done here.
-- [ ] doing — **P4.4** Placement test backend: ~15-min per-subject assembly from the bank across
+- [x] done — **P4.4** Placement test backend (chunks A, B-1, B-2, B-3, B-4 — D4.6/D4.7/D4.8/D4.9): ~15-min per-subject assembly from the bank across
       topics, serve/resume/submit, mark through the existing engine, initialise weakness profile.
       **Includes the marking-side topic fill carried over from P4.2 (D4.4 §6)** — classify
       `CorrectedQuestion.topic` at the db/io persistence boundary when `topic_hint` is absent,
@@ -267,17 +267,27 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         **Measured after all three fixes (the number to quote, not re-derive): 0625 assembles
         9 questions / 15.2 min / all 6 physics topics / 2 difficulty bands. 0580 and 0606
         return `no_questions` — correct, they have zero ingested questions (D4.6 §5).**
-      - [ ] doing — chunk B-4 (started 2026-08-08) — the DB service + the three routes. Everything above is landed and
-        measured; what remains is wiring, with no open design questions:
-        `PlacementService` (availability / create / result) creating the `kind=placement`,
-        `student_id`-owned `Quiz` + self-`QuizAssignment` + frozen `QuizQuestion` snapshot from
-        an `Assembly`, then `GET /api/student/placement/{subject_code}/availability`,
-        `POST /api/student/placement`, `GET /api/student/placement/{assignment_id}/result`
-        (D4.6 §4 lists the exact payloads; **409 carries the availability payload**). Take,
-        resume and submit are the *existing* endpoints — that reuse is the whole point.
-        `exclude_bank_ids` for a retake = the bank ids of this student's prior placement
-        quizzes for the subject. S-05 may show a working-level estimate only when
-        `Assembly.spans_multiple_bands`.
+      - [x] chunk B-4 — **done** (D4.9) — the DB service + the three routes.
+        `lemely/db/placement_repo.py` (`PlacementService`: availability / create / result),
+        `lemely/web/routers/placement.py` + `schemas_placement.py`, wired in `app.py`/`deps.py`.
+        Take/resume/submit are the **existing** `/api/student/quizzes/...` endpoints — that
+        reuse is the whole point and no parallel set was added. `core/study.py::PlacementResult`
+        deleted per D4.6 §6. No migration (0010 already covers it). $0.00 Gemini.
+        **One real defect the orchestrator found by reading against D4.6 §5, not from the
+        subagent's report — do not re-derive:** the first pass ignored the
+        `student_enrolment_papers` clause entirely, so a 0625 **Core** student (papers 1/3)
+        would have been assembled from **Extended** questions (2/4) — every topic in that
+        sample reporting a weakness the student does not have, and P4.7 builds the study plan
+        out of exactly those `WeaknessRecord` rows. Invisible to the suite, because the seeded
+        bank is single-paper. Fixed by narrowing the **timings** mapping (so `assemble` keeps
+        being the one site that decides "ineligible"), with the empty case deliberately
+        **not** a restriction: every S-02 field is skippable (D4.5), so no rows means "not
+        answered", never "sits no papers". 4 tests, each verified by its inverse.
+        **Live-bank measurement, matching D4.8 exactly:** 0625 → available, 9 questions,
+        **6 syllabus topics** (`syllabus_topic_count`, not `len(topics)`≈13), 15.19 min;
+        0580/0606 → `no_questions`.
+        **2121 tests / 6 skipped / 0 failed / 89.68% cov** (P4.3 baseline 89.57%); all 13
+        gates green, 0 skipped.
       - chunk B (superseded planning note, kept for the rationale) — per D4.6. **Unblocked:**
         the schema fork is decided and **B-1 (the schema half) is landed** — migration
         **0010**, `QuizKind` enum, `quizzes.student_id` + `kind`, `quiz_assignments.student_id`,

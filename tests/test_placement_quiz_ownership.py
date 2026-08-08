@@ -39,6 +39,7 @@ from lemely.db.models.enums import (
     SessionMonth,
 )
 from lemely.db.models.quizzes import Quiz, QuizAssignment
+from lemely.db.placement_repo import PlacementService
 from lemely.db.question_bank_repo import NewBankQuestion, QuestionBankService
 from lemely.db.quiz_repo import QuizOwnershipError, QuizService
 from lemely.db.quiz_taking_repo import (
@@ -404,3 +405,55 @@ def test_an_unknown_assignment_is_still_a_404_not_a_403(
 
     with pytest.raises(QuizTakingNotFoundError):
         taking.get_take(student_id, uuid.uuid4())
+
+
+# ── P4.4 chunk B-4: PlacementService's own output, not a manual fixture ──
+
+
+def test_a_service_created_placement_quiz_is_also_invisible_to_teachers_and_class_lists(
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+) -> None:
+    """The chunk B-1 fail-closed guarantees hold for rows :class:`PlacementService`
+    itself writes, not just for a hand-built fixture row (D4.6 §3/§7)."""
+    teacher_id = _seed_user(pg_sessionmaker, Role.teacher)
+    student_id = _seed_user(pg_sessionmaker, Role.student)
+    bank = QuestionBankService(pg_sessionmaker)
+    bank.add_questions(
+        [
+            NewBankQuestion(
+                subject_code="0625",
+                source=QuestionSource.past_paper,
+                difficulty="standard",
+                difficulty_source=DifficultySource.inferred_from_marks,
+                question_type="mcq",
+                prompt=f"Question {i}",
+                total_marks=2,
+                topic=topic,
+                source_question_id=f"0625_s23_qp_41#{i}",
+                mcq_options=["A", "B", "C", "D"],
+                mcq_answer="B",
+            )
+            for i, topic in enumerate(
+                (
+                    "1 Motion, forces and energy",
+                    "2 Thermal physics",
+                    "3 Waves",
+                    "4 Electricity and magnetism",
+                )
+                * 6
+            )
+        ]
+    )
+    bank.link_past_paper_rows()
+
+    placement = PlacementService(pg_sessionmaker)
+    created = placement.create(student_id, "0625")
+
+    assert [row.quiz_id for row in quiz_service.list_quizzes(teacher_id)] == []
+    with pytest.raises(QuizOwnershipError):
+        quiz_service.get_quiz(teacher_id, created.quiz_id)
+
+    taking = QuizTakingService(pg_sessionmaker, class_service)
+    assert taking.list_assigned(student_id) == []

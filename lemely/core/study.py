@@ -4,12 +4,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from lemely.core.schemas import StrictModel, WeaknessReport
-
-
-class PlacementResult(StrictModel):
-    subject_code: str
-    weaknesses: WeaknessReport
+from lemely.core.schemas import StrictModel
 
 
 class StudentProfile(StrictModel):

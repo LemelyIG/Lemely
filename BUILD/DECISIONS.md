@@ -3160,3 +3160,71 @@ whether the student owns a ripple tank. Their timings are still transcribed and
 reachable — this is assembly policy, not a claim the data is wrong.
 
 $0.00 Gemini, zero LLM calls: every step here is deterministic.
+
+---
+
+## D4.9 — Placement narrows to the papers the student will sit; the empty case is "not answered", not "sits nothing" (P4.4 chunk B-4)
+
+Chunk B-4 landed `PlacementService` (availability / create / result) and the three
+S-03/S-04/S-05 routes over the already-measured assembler. Everything in D4.6 §1/§3/§4/§6
+was implemented as designed and needs no new decision. One clause of D4.6 §5 was **not**
+implemented in the first pass, and the omission is worth recording because it is invisible
+from the code and would have silently biased every downstream artefact.
+
+### What was missed
+
+D4.6 §5: selection runs *"across the topics of the papers the student's
+`student_enrolment_papers` rows say they will sit"*. The first implementation loaded every
+`source='past_paper'` bank row for the subject and every transcribed timing for it, with no
+reference to the student's enrolment at all.
+
+**Why that is not cosmetic.** 0625 is tiered: Core is papers 1/3, Extended 2/4. A Core
+student assembled against Extended questions is measured on material they will never sit,
+so every topic that sample touches reports a weakness the student does not have — and
+P4.7's adaptive study plan is built out of exactly those `WeaknessRecord` rows. The error
+would have compounded into the plan rather than staying visible at the placement screen.
+Nothing in the test suite would have caught it: the seeded bank is single-paper, so the
+narrowing is unobservable unless a test deliberately enrols the student elsewhere.
+
+### The fix, and where it is applied
+
+`PlacementService._timings_for` narrows the **timings mapping**, not the candidate list.
+A paper the student will not sit therefore has no rate, and a candidate with no rate is
+*already* ineligible in `core.placement.assemble` — so eligibility keeps having exactly
+one deciding site (D4.8's design property), and the reported reason stays
+`no_eligible_questions` rather than a fourth bespoke one.
+
+### The judgment call: a student with no enrolment-paper rows is not narrowed
+
+D4.6 §5 does not say what to do when the student has no rows, and this is the branch that
+matters in practice, because **every S-02 field is skippable (D4.5)**. Empty means *"not
+answered"*, never *"sits no papers"*. Treating it as an empty allowlist would deny
+placement to every student who skipped one onboarding question, while reporting
+`no_eligible_questions` — a defaulted answer wearing a filter's clothes, which is the
+laundering D4.4 §5 and D4.8 §2 both already refused in other forms. So: **rows present →
+narrow; no rows → no restriction.**
+
+Pinned by four tests, each verified by its inverse rather than asserted one-way: the same
+Paper-4 bank is unavailable to a P1/P3 student, available to a P4 student, available to a
+student with an enrolment but no papers, and student B's Core enrolment cannot deny
+student A (the lookup is owner-scoped).
+
+### Measured, not assumed
+
+Run against the **live local bank**, not a fixture, and matching D4.8's standing figure
+exactly: 0625 → `available=True`, 9 questions, **6 syllabus topics**, 15.19 minutes;
+0580 and 0606 → `available=False, reason="no_questions"`. The `topic_count` of 6 is
+`Assembly.syllabus_topic_count`; `len(topics)` for the same set is ~13, which is the
+overstatement D4.8 §2 exists to prevent — the wire payload carries the honest number.
+
+**Gates:** all 13 green, 0 skipped. **2121 tests / 6 skipped / 0 failed**, coverage
+**89.68%** (P4.3 baseline 89.57%). `$0.00` Gemini, zero LLM calls — every path here is
+deterministic, and the end-to-end marking test uses a Gemini stub that raises if called.
+
+### One deviation from the brief, accepted
+
+`test_placement_repo.py` exercises availability against a **seeded** 0625-shaped bank
+rather than the ingested corpus, so the suite does not depend on 273 banked rows existing
+in a fresh checkout. The real-corpus measurement above was made by the orchestrator
+directly and is recorded here instead of being encoded as a test that would fail on a
+clean clone.

@@ -33,6 +33,7 @@ from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.parent_repo import ParentLinkService
+from lemely.db.placement_repo import PlacementService
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_marking_repo import QuizMarkingService
 from lemely.db.quiz_repo import QuizService
@@ -289,6 +290,18 @@ def get_quiz_marking_service() -> QuizMarkingService:
     return QuizMarkingService(
         get_sessionmaker(get_settings()), get_attempt_repo(), get_gemini_client()
     )
+
+
+@lru_cache(maxsize=1)
+def get_placement_service() -> PlacementService:
+    """Return the process-wide :class:`PlacementService` singleton (P4.4 chunk B-4).
+
+    Wired with the DB session factory alone: unlike :class:`QuizTakingService`,
+    placement ownership needs no ``ClassService`` seam — a placement
+    assignment is always direct-to-student (D4.6 §1). Tests override this
+    dependency with a service built on a throwaway Postgres database.
+    """
+    return PlacementService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
