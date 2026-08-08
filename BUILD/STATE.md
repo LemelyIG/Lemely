@@ -731,6 +731,44 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         (gate 8: QUALITY-BAR.md, `/impeccable audit` on the changed files, `npx impeccable
         detect` clean, axe zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus for
         every screen × state × breakpoint, no unintended regression against baselines).
+        **Session 7 (2026-08-09) — the registry actually RAN for the first time, and it found a
+        real defect the previous six sessions could not have found by reading.** Session 6's two
+        fixes were on disk uncommitted; committed as `3bee1c3` after verifying their string
+        matchers against the real components, then the audit leg was run standalone
+        (`cd web && npm run -s audit`, exit 0, ~11 min). **Both session-6 fixes work:** all seven
+        new states loaded, the `ready`-driven wizard survived the repeated navigation
+        `pressToggleOnce` was written for, and S-04 was genuinely reachable — so the
+        placement-eligible seed is real, not just green in isolation.
+        **The defect (`b0e13ea`), which every gate had been passing over: all five new screens
+        shipped without an `<h1>`.** Every one of the seven new states reported
+        `page-has-heading-one` (**moderate**) while all 24 P3 routes reported zero at any
+        severity. Each screen rendered its page title as a styled `<div>` — the visual heading
+        existed, the semantic one did not. **This is a QUALITY-BAR.md:45 failure outright**
+        ("one h1 per page, heading order unbroken, landmarks"), but gate 8's axe threshold only
+        bars *serious/critical*, so `ui-thresholds` passed and would have kept passing forever.
+        Same shape as the vacuous passes this chunk exists to remove: it screenshots perfectly
+        clean, and a screen-reader user reached onboarding and the product's first
+        question-rendering surface with nothing to orient by.
+        Fixed by promoting each title div to `h1` (same classes + `m-0`; Tailwind preflight
+        already zeroes heading margins and makes them inherit size, so it is **visually
+        identical — confirmed against the re-captured screenshots, not assumed**).
+        `QuestionShell` is safe as the single h1 because `steps[stepIndex]` renders exactly one
+        question at a time. `QuizTaker` has no visible page title *by design* (mid-test a student
+        needs "Question 3 of 10" and the countdown, not a banner) so it carries an `sr-only` h1
+        with the real `quizTitle` — it is composed by placement now and practice/assigned quizzes
+        in P4.9/P5, so the fix lands once for all three. Loading/error branches get `sr-only` h1s
+        per the P3 ReviewItem/StudentDetail precedent, because `ErrorState` renders its heading as
+        a non-heading element (the Phase-2.5 report §8 gap, still open).
+        **Verified by a second full audit run, not by the first one's absence of complaint:** all
+        seven new states **0/0/0/0 at every severity**, zero nonzero axe counts anywhere in the
+        registry, **Lighthouse a11y 100** on all four scored new routes (perf 80–83, at/above the
+        §11 student floor of 80), zero console errors, zero horizontal-scroll violations;
+        `ui-thresholds` clean across **41 routes** (was 34 states). 224 web unit tests, typecheck
+        and lint green. $0.00 Gemini.
+        **Visually spot-checked by the orchestrator rather than trusted to the string assert:**
+        the `questionnaire-skipped` capture shows the thumb at `min` with the readout reading
+        **"Not set"**, not "0 hours/week" — D4.5's honesty rendering is real on screen, which is
+        the whole reason that state was given its own capture.
         **Session 5 progress (2026-08-09):** the seed was run standalone against the live stack
         and is green — exit 0, all four placement accounts created, `bankQuestionCount: 24` on
         paper 2, and every key `audit.mjs` dereferences (`assignmentId` on inProgress/completed,
