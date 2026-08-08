@@ -2747,3 +2747,274 @@ whose omission was explicitly conditional on the rule being unfirable. It is fir
 `not_evaluable`; a matching subject target 2 grades above the predicted grade `fired`; 1 grade
 above `not_fired`. Verified by the orchestrator running the engine directly rather than from the
 implementing subagent's report (MISSION §5).
+
+---
+
+## D4.6 — Placement tests reuse the quiz engine: NULL-owner rows, an XOR-checked ownership shape, and a marks-derived duration budget (P4.4)
+
+**The obstruction.** MISSION §4 / STATE's Phase-4 header: *"The placement test and
+practice sets are quiz-shaped: reuse that engine, do not fork it."* Two columns block
+that literally — `quizzes.teacher_id` NOT NULL and `quiz_assignments.class_id` NOT NULL.
+A placement test has neither: it is assembled by the platform and self-assigned by a
+student during onboarding (S-03/S-04). Everything downstream of those two columns —
+`QuizQuestion`'s frozen snapshot, `QuizSubmission`'s lifecycle, `QuizAnswer`,
+`QuizTakingService`, `QuizMarkingService` → `correct_paper` → `summarize_weaknesses` →
+`persist_quiz_correction` — is already student-shaped and needs no structural change.
+
+### 1. Schema: relax the two NOT NULLs, add a typed second owner, enforce the shape with XOR CHECKs
+
+**Chosen.** Migration 0010, board-agnostic, no data backfill:
+
+```sql
+CREATE TYPE quizkind AS ENUM ('teacher', 'placement', 'practice', 'study_plan');
+
+ALTER TABLE quizzes ALTER COLUMN teacher_id DROP NOT NULL;
+ALTER TABLE quizzes ADD COLUMN student_id uuid
+    REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE quizzes ADD COLUMN kind quizkind NOT NULL
+    DEFAULT 'teacher'::quizkind;              -- D1.3 cast, in model AND migration
+ALTER TABLE quizzes ADD CONSTRAINT ck_quizzes_owner_xor
+    CHECK ((teacher_id IS NULL) <> (student_id IS NULL));
+ALTER TABLE quizzes ADD CONSTRAINT ck_quizzes_kind_owner
+    CHECK ((kind = 'teacher') = (teacher_id IS NOT NULL));
+CREATE INDEX ix_quizzes_student_kind ON quizzes (student_id, kind, created_at DESC);
+
+ALTER TABLE quiz_assignments ALTER COLUMN class_id DROP NOT NULL;
+ALTER TABLE quiz_assignments ADD COLUMN student_id uuid
+    REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE quiz_assignments ADD CONSTRAINT ck_quiz_assignments_target_xor
+    CHECK ((class_id IS NULL) <> (student_id IS NULL));
+CREATE UNIQUE INDEX uq_quiz_assignments_student
+    ON quiz_assignments (quiz_id, student_id) WHERE student_id IS NOT NULL;
+CREATE INDEX ix_quiz_assignments_student ON quiz_assignments (student_id, assigned_at DESC);
+```
+
+Nothing else changes. `assigned_by` stays NOT NULL and holds the student's own id for a
+self-assignment — "who assigned this" is answered truthfully, not with a sentinel.
+`time_limit_minutes` stays NULL for placement (see §4). `quizzes.school_id` stays NULL
+for placement: a placement result is a personal baseline, not school analytics material,
+and adding it later is additive if a school_admin surface ever wants it.
+
+**Two owner columns rather than one polymorphic `owner_id` + `owner_type`.** A
+polymorphic id cannot carry a foreign key, so it cannot carry `ON DELETE CASCADE`
+either — deleting a student would leave orphaned quizzes holding their answers. Two
+typed FKs plus an XOR CHECK is the boring, referentially-correct version of the same
+idea, and it makes "exactly one owner, always" a database invariant instead of a
+convention.
+
+**Rejected (b), the `self_assessments` side-table.** It was rejected on its own terms,
+before the synthetic-user problem: without a fake `users` row there is no legal value
+for `quizzes.teacher_id`, so (b) *cannot* be built without exactly the sentinel D4.5
+refused. Even granting a way around it, it splits "who owns this attempt" across two
+tables, so every ownership check becomes a join that a future caller can forget — the
+opposite of the fail-closed property §2 buys.
+
+**Rejected (c), the full fork.** Duplicates take/resume/autosave/submit/mark, and with
+it the answer-leak discipline `QuizTakeQuestionRow` encodes (D3.8 — `model_answer`,
+`mark_scheme_points`, `mcq_answer` are excluded *structurally*). A second copy is a
+second place to get that wrong. MISSION forbids it, and MISSION is right.
+
+**Rejected (d), a `quiz_owners` join table.** Correct and general; buys nothing three
+kinds of owner do not, and makes the common teacher query a join.
+
+### 2. The additive-only rule is amended here, deliberately
+
+D1.2 promised Phases 2–5 need only additive migrations. Two `DROP NOT NULL`s break the
+letter of that. **The amended rule, which future phases follow:**
+
+> Migrations may add columns, add ENUM values, add indexes/constraints, and **relax a
+> constraint** (`DROP NOT NULL`, widening a CHECK). They may not drop or rename a
+> column, narrow a type, or tighten a constraint on a populated table without an
+> explicit decision entry.
+
+The justification is that a relaxation is exactly as reversible as an addition and
+strictly safer than the alternative: `DROP NOT NULL` rewrites no rows, takes a brief
+`ACCESS EXCLUSIVE` lock on catalog only, breaks no existing reader (every current row
+still satisfies the old constraint), and is undone by `SET NOT NULL` as long as no NULL
+row has been written. The intent D1.2 was actually protecting — "no migration rewrites
+or invalidates existing data" — is fully preserved. What it costs: `alembic check` drift
+discipline (D1.3) now has to cover nullability as well as defaults, and the down-migration
+is only valid before the first placement row exists, which is why 0010 must ship *before*
+any placement route does.
+
+### 3. How the discriminator propagates — ownership is the filter, `kind` is only a label
+
+**The rule.** *A query is scoped by an owner/target predicate, never by `kind`.* Teacher
+surfaces scope on `teacher_id = :caller`; class surfaces scope on `class_id IN
+(:enrolled)`; student-owned surfaces scope on `student_id = :caller`. `kind` may only
+*narrow* a query that is already owner-scoped ("list my practice sets"), and must be used
+as a positive allowlist (`kind IN (...)`) — never `kind != 'teacher'`, which fails open
+the day a fifth kind is added.
+
+**This fails closed with no code change at six of the eight enumerated sites,** because
+SQL three-valued logic already excludes a NULL owner from an equality or `IN`:
+
+| Site | Predicate | Effect on a placement row |
+|---|---|---|
+| `lemely/db/quiz_repo.py:254` (`list_quizzes`) | `Quiz.teacher_id == teacher_uuid` | NULL ≠ uuid → excluded. **No change.** |
+| `lemely/db/quiz_repo.py:756` (`_load_owned`, ORM-side `quiz.teacher_id != teacher_uuid`) — gates `get_quiz`:268, `patch_draft`:316, `set_status`:354, `generate_questions`:404, `remove_question`:471, `create_assignment`:587, `list_assignments`:676, `delete_assignment`:737 | `None != uuid` → True | raises `QuizOwnershipError` (403). **No change.** |
+| `lemely/db/quiz_repo.py:612` (assignment uniqueness) | `quiz_id AND class_id ==` | teacher path only. **No change.** |
+| `lemely/db/quiz_results_repo.py:228` (`assignment_results`) | delegates to `get_quiz(teacher_id, …)` | 403 before any read. **No change.** |
+| `lemely/db/quiz_taking_repo.py:232-241` (`list_assigned`) | `QuizAssignment.class_id.in_(class_ids)` | `NULL IN (…)` → NULL → excluded. **No change in P4.4** — which is exactly right: a placement test is not "an assigned quiz" in S-25/S-26. P4.5/P4.7 add a second, explicitly `kind`-allowlisted branch for practice/study-plan sets. |
+| `lemely/db/quiz_marking_repo.py:220,230` | keyed on `submission_id`/`quiz_id` only | no tenancy predicate to get wrong; reached only via a submission the taking service already authorised. **No change.** |
+
+**Two sites genuinely change**, both in `lemely/db/quiz_taking_repo.py`:
+
+- `_load_enrolled`:524 — see §4 below; renamed `_load_permitted`.
+- `get_take`:293-296 — `session.get(SchoolClass, assignment.class_id)` and
+  `session.get(User, quiz.teacher_id)` are called with what is now possibly `None`, which
+  raises inside SQLAlchemy. Both become conditional, and `QuizTakeHeader.class_name` /
+  `.teacher_name` (and the same two fields on `AssignedQuizRow`) become `str | None`.
+  A placement test has no teacher and no class; S-04 must render that absence, not the
+  empty string that `_display_name` currently returns for a missing user.
+
+**Do not add `AttemptOrigin.placement`.** A placement mark is persisted by
+`persist_quiz_correction` as `origin=quiz`, unchanged. `lemely/db/review_repo.py:540`
+tests `attempt.origin != AttemptOrigin.quiz` — negative polarity — so a new member would
+fail *open* there and let the first teacher override on a placement attempt invent a grade
+the marking path deliberately never wrote, which is the precise failure that guard exists
+to prevent. (`lemely/core/history.py:69` `is_grade_bearing` is positive-polarity and would
+have been safe; the codebase is mixed, so the safe move is to add no member.) "This attempt
+was a placement test" is recoverable exactly where it belongs:
+`quiz_submissions.attempt_id → quiz_assignments → quizzes.kind = 'placement'`.
+
+### 4. RBAC: the ownership predicate for a class-less assignment
+
+`QuizTakingService._load_enrolled` currently 403s any assignment whose `class_id` is not
+in the caller's enrolled set — so a placement assignment (`class_id IS NULL`) is
+un-takeable today. Replace it with a two-branch predicate selected by *which target
+column is populated*, which the XOR CHECK guarantees is exactly one:
+
+```python
+def _load_permitted(self, session, student_uuid, assignment_uuid) -> QuizAssignment:
+    assignment = session.get(QuizAssignment, assignment_uuid)
+    if assignment is None:
+        raise QuizTakingNotFoundError(f"Unknown assignment: {assignment_uuid}")
+    if assignment.student_id is not None:            # direct-to-student
+        if assignment.student_id != student_uuid:
+            raise QuizTakingOwnershipError(...)
+        return assignment
+    if assignment.class_id in self._class_service.enrolled_class_ids(student_uuid):
+        return assignment                            # class-enrolled
+    raise QuizTakingOwnershipError(...)
+```
+
+Fail-closed by construction: there are exactly two `return` statements, one guarded by an
+equality on `student_id` and one by membership in `class_id`, and no trailing
+`return assignment`. Student B opening student A's placement test hits the first branch's
+inequality → 403; the D3.4 403-vs-404 split is preserved unchanged (an id that exists
+anywhere is a 403, not a 404 — the same accepted existence-oracle trade-off). Every other
+method (`get_take`, `save_answer`, `submit`) already calls this one helper first, so the
+authorisation change lands in one place. All three keep their existing role gate:
+`lemely/web/routers/quiz.py:115` already mounts `/api/student/quizzes` behind
+`require_role(Role.student)`.
+
+**Take/save/submit endpoints are reused verbatim** — `/api/student/quizzes/{assignment_id}`
+and its `PUT .../answers/{ref}` and `POST .../submit`. That reuse *is* the "do not fork"
+payoff, and it is what makes S-04's "connection lost mid-test, answers must survive" free:
+the autosave and lazy-submission machinery is the one that has already been tested.
+Placement adds only three new routes, all thin:
+
+- `GET  /api/student/placement/{subject_code}/availability` → `{available, reason, topicCount, questionCount, estimatedMinutes}` (S-03).
+- `POST /api/student/placement` `{subjectCode}` → 201 `{assignmentId, quizId, questionCount, topicCount, estimatedMinutes}`; **409** carrying the same availability payload when unavailable.
+- `GET  /api/student/placement/{assignment_id}/result` → S-05 (§6).
+
+Retake = a new `quizzes` row with a fresh sample, never a mutation of the old one — the
+same "an assigned quiz is duplicated, never edited" rule the teacher builder already
+follows. Assembly excludes `question_bank_id`s used by this student's prior placement
+quizzes for the same subject where the pool allows it.
+
+### 5. The ~15-minute rule: duration is derived from marks and a *transcribed* paper rate, and there is no new column
+
+There is no per-question duration anywhere in the schema, and there will not be one.
+A nullable `question_bank.estimated_minutes` was rejected because nothing could populate
+it except a guess — it moves the invented number into a column where it acquires the
+authority of a fact, the exact laundering D4.4 §5 refused for low-confidence topics.
+
+**Chosen: a marks-based proxy with a per-paper rate transcribed from source.** New data
+file `lemely/data/paper_timing.json`, keyed `(board, subject_code, paper_number)` →
+`{duration_minutes, total_marks, source}`, transcribed from the **Assessment overview**
+section of the same three syllabus PDFs D4.4 already fetched (each entry's `source` names
+the syllabus document number and cycle, as `syllabus_topics.json` does). The rate is then
+`duration_minutes / total_marks`, **computed, never hardcoded**, and a question's estimate
+is `question_bank.total_marks × rate(its paper)` — resolved via
+`question_bank.paper_id → papers.paper_number/subject_code`, both of which already exist
+and are NOT NULL. P4.4's implementer transcribes these numbers from the PDF; **no
+marks-per-minute figure may be written from memory.** A question whose paper has no
+timing entry, or no `paper_id` at all, is ineligible for placement — not estimated by a
+subject average, which would be a guess wearing a measurement's clothes.
+
+**Budget:** target 15 min, accept 12–18 (±20%). Greedy fill; stop when the next question
+would exceed 18. `quizzes.time_limit_minutes` is left **NULL** — S-03 promises "~15
+minutes", an estimate, and S-04 shows *elapsed* time; a hard cutoff on a baseline test is
+churn at the highest-churn moment in the product (S-05's own framing). The displayed
+estimate is recomputed on read from the frozen `quiz_questions.total_marks`, so it stays
+true if a question is ever removed, and costs no column.
+
+**Topic spread.** Only questions with a non-NULL `topic` are eligible — an untopiced
+question cannot contribute to a topic-keyed weakness profile, which is the entire point of
+the test (this is what makes 62 of the 0625 bank's 273 rows ineligible). Breadth first:
+one question per distinct syllabus topic, in syllabus-code order, across the topics of the
+papers the student's `student_enrolment_papers` rows say they will sit; then a second pass
+adding a second question per topic until the budget fills. Difficulty comes from the
+existing `QuestionBankService.count_by_band`/`select_questions` band filter, preferring a
+mix.
+
+**Viability floor and the honest "not available" path.** Assembly succeeds only if the
+selected set reaches **≥4 distinct topics, ≥6 questions, and ≥12 estimated minutes**.
+Otherwise the API returns unavailable with a machine-readable `reason`
+(`no_questions` / `insufficient_topics` / `insufficient_duration`) and S-03 says so plainly
+per subject — never a silently short test, never a padded one (spec §1.4). **Today this
+means placement is available for 0625 only** (211 topiced rows spanning 29 distinct labels
+across all six topics) and unavailable for **0580 and 0606**, which have no ingested
+questions at all. That is the correct behaviour, not a gap to code around: onboarding must
+route those students straight to S-06 with the questionnaire-derived plan, and the
+availability endpoint is what makes the day the maths corpus lands a data change rather
+than a code change. **S-05's working-level estimate is shown only if the assembled set
+spans ≥2 difficulty bands**; otherwise S-05 shows strongest/weakest topics and states that
+the sample was too narrow to estimate a level.
+
+### 6. Weakness-profile initialisation adds no persistence at all
+
+Marking a placement submission already runs `summarize_weaknesses` and writes
+`WeaknessRecord` rows through `AttemptRepository._persist` — and the topic vocabulary
+already joins up end to end: `_snapshot_bank_row` freezes `question_bank.topic` onto
+`quiz_questions.topic`, and `quiz_question_to_scheme_question`
+(`lemely/db/quiz_marking_repo.py:382`) already passes `topic_hint=qq.topic` into the
+marking engine. So a placement test marked today produces real topic weaknesses keyed on
+the P4.2 label vocabulary, with no new code on the marking side. (D4.4 §6's gap is the
+*past-paper* path, whose `topic_hint` is None on all 637 parsed 0625 questions; it is
+unrelated to this one and still open.)
+
+Therefore: **no `placement_results` table, no `student_weakness_profile` table.** The
+placement result *is* `quiz_submissions.attempt_id` plus that attempt's `WeaknessRecord`
+rows, reached by the join in §3. S-05 reads them; the study plan (P4.7) reads them; a
+second copy could only drift from the first.
+
+`PlacementResult` in `lemely/core/study.py` — `subject_code` + `WeaknessReport`, called by
+nothing — is deleted by P4.4. Both its fields are already persisted (`quizzes.subject_code`,
+`weakness_records`); keeping it would leave a second, unwritten definition of what a
+placement result is.
+
+### 7. Testability
+
+- **Schema:** insert a placement quiz with both owners set, and one with neither, and
+  assert both raise `IntegrityError` on `ck_quizzes_owner_xor`; same for
+  `ck_quiz_assignments_target_xor`. Assert `kind='placement'` with a non-NULL `teacher_id`
+  is rejected by `ck_quizzes_kind_owner`.
+- **Fail-closed regression (the one that matters):** with a placement quiz and a placement
+  assignment in the DB for student A, assert `QuizService.list_quizzes(teacher)` omits it,
+  `get_quiz(teacher, quiz_id)` 403s, and `QuizTakingService.list_assigned(A)` omits it.
+  These are the assertions that catch a future refactor swapping an owner predicate for a
+  `kind` one.
+- **Cross-tenant:** student B calling every one of the four take/save/submit/result routes
+  against A's placement `assignment_id` → 403, no body leakage.
+- **Assembly:** unit-test the budget/spread selector against a synthetic bank; separately
+  run it against the real 0625 bank and assert it yields ≥4 topics and 12–18 minutes, and
+  against 0580 and assert `available=false, reason="no_questions"`.
+- **Duration:** assert `paper_timing.json` covers every `(subject_code, paper_number)`
+  present in `papers` for any subject the availability endpoint reports available, so a
+  new ingest cannot silently make questions ineligible.
+- **Marking:** end-to-end placement → `attempts.origin == quiz`, `grade IS NULL`,
+  `predicted_grade IS NULL`, and ≥1 `WeaknessRecord` whose topic is a P4.2 label.
+- **`alembic check`** reports no drift after 0010 (D1.3), including the new nullability.
