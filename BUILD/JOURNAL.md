@@ -1144,3 +1144,30 @@ agent that reports "waiting for X" twice is not working.
 
 **Next.** P4.4 — placement-test backend, which also carries P4.2's marking-side topic
 fill (D4.4 §6) and therefore needs the accuracy harness re-verified (MISSION §6 gate 5).
+
+---
+
+## 2026-08-08 — P4.4 chunk B: placement assembly is real, and three defects only measurement could find
+
+**Did.** Committed B-1 (the ownership schema, already written but uncommitted), then
+B-2 (`_load_permitted` — the owning student can now take a class-less assignment at all,
+which no code path previously allowed) and B-3 (the assembler, `paper_timing.json`
+transcribed from the three syllabus PDFs' Assessment overview, and the pure
+`core/placement.py`). D4.8 records the reasoning.
+
+**Learned.** Every one of the three defects in D4.8 was invisible from the code and
+obvious from one query against the real bank. The worst was silent rather than loud:
+`question_bank.paper_id` was NULL on all 273 rows and `papers` was an empty table, so
+placement returned "unavailable" for 0625 — which looks *identical* to the expected
+0580/0606 corpus gap. A designed-in honest-failure path is exactly where a real failure
+hides best. The second worst was a number that was true and meaningless: "13 topics" for
+a set with nine of 13 questions under physics topic 1, because D4.2's classifier writes
+both `"3 Waves"` and `"1.2 Motion"` and nothing had ever had to treat those as different
+levels. Both go in DELIVERY.md's honesty section, not just the report.
+
+**Also.** Wrote the assembler before the wiring, deliberately — it is where the rules
+live, and the DB/route layer around it is now mechanical with no open questions.
+$0.00 Gemini this session; everything here is deterministic.
+
+**Next.** B-4: `PlacementService` + the three routes in D4.6 §4. Take/resume/submit are
+the existing endpoints — reusing them is the point. Then P4.5.
