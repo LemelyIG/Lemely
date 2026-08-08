@@ -2732,3 +2732,18 @@ in physics but set no target there is still not-evaluable, not cleared.
 
 **The T-06 reason filter gains `below_target`** (`web/src/portals/teacher/screens/AtRiskList.tsx`),
 whose omission was explicitly conditional on the rule being unfirable. It is firable now.
+
+**Implementation note (added after P4.3 landed).** Two things worth not re-deriving:
+
+- `assess_at_risk`'s `targets` mapping is resolved against the **latest grade-bearing** record,
+  not the latest record of any kind. A quiz carries no grade (`docs/quiz-model.md` §5), so it can
+  never be the record that decides which subject's target applies.
+- The multi-student routes (teacher overview, at-risk list, class detail, parent children) use
+  `StudentProfileService.target_grades_for_many`, added for this. Calling the single-student
+  `target_grades_for` inside those loops would have made every teacher dashboard N+1 — the
+  cheapest possible way to turn a correctness fix into a performance regression.
+
+**Measured, not claimed:** no-targets, empty-mapping and wrong-subject-target all resolve to
+`not_evaluable`; a matching subject target 2 grades above the predicted grade `fired`; 1 grade
+above `not_fired`. Verified by the orchestrator running the engine directly rather than from the
+implementing subagent's report (MISSION §5).

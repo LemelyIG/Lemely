@@ -99,8 +99,9 @@ assume:
 - **The question bank is empty and corpus growth cannot change that (D3.7).** A mark scheme
   holds marking points; the question *stem* lives in the question paper and no stem extractor
   exists. This is a **P4 prerequisite**, not an assumption — do not re-run the measurement.
-- **At-risk rule 2 cannot fire until P4 supplies target grades (D3.3)** — the engine reports
-  it as *not evaluable*, never as a pass, and it is absent from the T-06 reason filter.
+- ~~**At-risk rule 2 cannot fire until P4 supplies target grades (D3.3)**~~ — **CLOSED by P4.3**
+  (D4.5). Targets are real and per-subject, the rule fires, and `below_target` is now in the T-06
+  reason filter. The *not evaluable* state survives and got stricter, not weaker.
 - **Teacher-route Lighthouse performance floors at 67** (`teacher-quiz-detail`). MISSION §11's
   ≥80 floor covers the student routes (met, floor 82) and never covered these.
 - **Lighthouse runs on `default` states only**; axe runs on all 34 (deliberate, D3.17).
@@ -176,10 +177,33 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       (P4.5) does not join up until both sides use this vocabulary.** Not done in P4.2 because
       `core.topics` cannot import the `io` loader without a layering violation; the fill belongs
       at the db/io boundary where a `CorrectionResult` is persisted. See D4.4 §6.
-- [ ] doing — **P4.3** Student profile + onboarding data model (migration 0009): grade level,
-      school, external lessons, weekly study hours, per-subject enrolment with **target grade**,
-      papers, confidence sliders. Activating target grades also closes at-risk rule 2 (D3.3) —
-      wire it into the at-risk engine and the T-06 reason filter in the same task.
+- [x] done — **P4.3** Student profile + onboarding data model (D4.5). Migration **0009**, four
+      additive tables (`student_profiles`, `student_subject_enrolments`,
+      `student_enrolment_papers`, `student_confidence_ratings`) + `QualificationLevel` enum +
+      `lemely/db/student_profile_repo.py` + student-only onboarding routes on `/api/me`.
+      Every S-02-skippable field is nullable: a skipped answer is `NULL`, never a defaulted
+      sentinel that would read back as an answer the student gave. Confidence ratings are keyed
+      on the **P4.2 topic-label vocabulary**, so questionnaire/bank/weakness engine share one
+      language. Commits `189a292` (schema+service+routes) and `99bf086` (chunk C).
+      **At-risk rule 2 is live — it has never once been able to fire before now.** `assess_at_risk`
+      took a scalar `target_grade`; it now takes `targets: Mapping[str, str]` (subject code →
+      grade) and resolves against the subject of the latest grade-bearing record. That keying is
+      the point: a scalar would have compared a physics paper against a maths target the moment a
+      student enrolled in two subjects — a false at-risk flag on a teacher's dashboard. All nine
+      call sites (teacher×5, classes×2, parent×2) pass real targets via
+      `StudentProfileService.target_grades_for{,_many}`; the multi-student routes use the bulk
+      form so a class overview is not N+1. `below_target` added to the T-06 reason filter and
+      given a real rendering branch in the parent `ChildOverview`.
+      **The tri-state got sharper, not looser:** `NOT_EVALUABLE` now also covers "targets supplied
+      but none for this student's subject" — an enrolled student with no target there is
+      *not checked*, never *cleared*. Orchestrator-verified by direct execution, not from the
+      subagent's report: no-targets / empty / wrong-subject all → `not_evaluable`; right-subject
+      2 grades below → `fired`; right-subject 1 grade below → `not_fired`.
+      All 13 gates green, 0 skipped; `alembic check` clean upgrade **and** downgrade; coverage
+      **89.57%** (pre-chunk baseline 89.56%, Phase-3 89.42% — flat, no regression). $0.00 Gemini.
+      **Stale docstring left for whoever owns E2E next:** `web/e2e/at-risk-flags.spec.ts:21` still
+      says rule 2 "cannot fire in Phase 3". Seeding a real below-target scenario in
+      `scripts/seed_e2e.py` is a P4.11 job, not silently done here.
 - [ ] todo — **P4.4** Placement test backend: ~15-min per-subject assembly from the bank across
       topics, serve/resume/submit, mark through the existing engine, initialise weakness profile.
       **Includes the marking-side topic fill carried over from P4.2 (D4.4 §6)** — classify
