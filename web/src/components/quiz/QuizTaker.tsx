@@ -474,8 +474,10 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
         <Chip tone={timeNearlyUp ? "warn" : "neutral"} className="font-mono">
           {remaining !== null ? `${formatDuration(remaining)} left` : `${formatDuration(elapsedSeconds)} elapsed`}
         </Chip>
+        {/* `min-h-[44px]` below: see the SubjectsStep note — `size="sm"` is
+         * ~31px and this is a phone-primary screen. */}
         {onExit ? (
-          <Button variant="ghost" size="sm" onClick={onExit}>
+          <Button variant="ghost" size="sm" className="min-h-[44px]" onClick={onExit}>
             Leave for now
           </Button>
         ) : null}
@@ -509,7 +511,13 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
               onClick={() => toggleFlag(current.questionRef)}
               aria-pressed={currentFlagged}
               className={cn(
-                "flex items-center gap-1.5 rounded px-2.5 py-1.5 text-dense-sm transition-colors cursor-pointer",
+                // `min-h-[44px]` per QUALITY-BAR.md:40, the same idiom the rest
+                // of the library uses. This is a phone-primary control used
+                // mid-exam — "come back to this question" — so a missed tap
+                // costs the student the question. Padding alone left it ~30px:
+                // tall enough for WCAG 2.5.8 AA (24px), which is exactly why no
+                // automated gate flagged it.
+                "flex min-h-[44px] items-center gap-1.5 rounded px-2.5 py-1.5 text-dense-sm transition-colors cursor-pointer",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                 currentFlagged ? "bg-warn-bg text-warn" : "text-t3 hover:bg-surface-2",
               )}

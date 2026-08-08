@@ -308,10 +308,12 @@ class TestBuildPlacementPaperStem:
         assert build_placement_paper_stem("tag1") == build_placement_paper_stem("tag1")
 
     def test_differs_across_run_tags(self) -> None:
-        """The regression this function exists to prevent: a fixed stem across
-        runs collides on ``uq_question_bank_paper_question (paper_id,
-        source_question_id)`` on a second ``python scripts/seed_e2e.py`` run —
-        verified against the live stack before this function existed."""
+        """A distinct stem per run is *usually* produced, and that is all this
+        asserts. It is **not** the rerun-safety guarantee: only the tag's first
+        two characters reach the year, so distinct tags can and do share a stem
+        (see ``TestBuildPlacementBankQuestions``'s stem-collision test).
+        Uniqueness lives in the ``source_question_id`` suffix.
+        """
         assert build_placement_paper_stem("a1b2c3d4e5f6") != build_placement_paper_stem(
             "f6e5d4c3b2a1"
         )
@@ -412,11 +414,38 @@ class TestBuildPlacementBankQuestions:
         assert len(set(ids)) == len(ids)
 
     def test_source_question_ids_differ_across_run_tags(self) -> None:
-        """Two runs must not mint the same ``source_question_id`` — that is
-        exactly the collision :func:`build_placement_paper_stem` exists to
-        avoid (see its docstring)."""
+        """Two runs must not mint the same ``source_question_id``.
+
+        Note this pair also differs in the *stem*, so on its own this test
+        passed even while reruns were colliding for real — see
+        :meth:`test_source_question_ids_differ_even_when_the_paper_stem_collides`
+        for the case that actually failed.
+        """
         ids_a = {row.source_question_id for row in build_placement_bank_questions("a1b2c3d4e5f6")}
         ids_b = {row.source_question_id for row in build_placement_bank_questions("f6e5d4c3b2a1")}
+        assert ids_a.isdisjoint(ids_b)
+
+    def test_source_question_ids_differ_even_when_the_paper_stem_collides(self) -> None:
+        """The regression that actually fired, and the reason uniqueness cannot
+        live in the stem.
+
+        ``build_placement_paper_stem`` hashes only ``run_tag``'s **first two**
+        characters into the session-year digits, so the year has a 100-value
+        namespace and two runs share a ``papers`` row roughly every dozen runs
+        (birthday bound). It happened: ``playwright-e2e`` failed on a real
+        ``uq_question_bank_paper_question (paper_id, source_question_id)``
+        IntegrityError for ``0625_s88_qp_21#12`` after a day of gate runs.
+
+        These two tags share their first two characters, so they are guaranteed
+        to produce the SAME stem — the previously-fatal case. The
+        ``source_question_id`` values must still be disjoint, because the suffix
+        now carries the whole 12-character tag. Reverting the suffix to a bare
+        ``#{ref}`` fails this test and passes every other one in this class.
+        """
+        tag_a, tag_b = "aa11111111aa", "aa22222222bb"
+        assert build_placement_paper_stem(tag_a) == build_placement_paper_stem(tag_b)
+        ids_a = {row.source_question_id for row in build_placement_bank_questions(tag_a)}
+        ids_b = {row.source_question_id for row in build_placement_bank_questions(tag_b)}
         assert ids_a.isdisjoint(ids_b)
 
     def test_no_prompt_contains_a_figure_dependent_trigger_word(self) -> None:

@@ -71,6 +71,13 @@ export function SubjectsStep({
                 type="button"
                 variant={active ? "accent" : "secondary"}
                 size="sm"
+                // `Button size="sm"` computes to ~31px tall (12.5px text +
+                // `py-2`), under QUALITY-BAR.md:40's 44px floor. Raised at the
+                // call site rather than in the variant, because `sm` is used on
+                // dense teacher surfaces where 44px would break the layout —
+                // changing the shared variant is a cross-portal decision, not a
+                // P4.8 one.
+                className="min-h-[44px]"
                 aria-pressed={active}
                 onClick={() => onQualificationLevel(level.value)}
               >

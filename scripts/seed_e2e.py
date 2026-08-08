@@ -380,23 +380,26 @@ def build_placement_paper_stem(run_tag: str) -> str:
     create the real ``Paper``/``Subject`` rows the placement loader joins
     against — never a hand-inserted ``papers`` row.
 
-    **Why this is a function of ``run_tag`` rather than a constant.** The
-    module docstring promises reruns never collide (no teardown, per-run
-    namespacing throughout). A *fixed* stem would not honour that: rerunning
-    this script inserts the identical 24 ``source_question_id`` values
-    (``"..._qp_21#1"``..``"...#24"``) against the SAME ``papers`` row a first
-    run already created (paper identity has no run-tag component of its
-    own), tripping ``uq_question_bank_paper_question (paper_id,
-    source_question_id)`` on the second run's ``link_past_paper_rows()``
-    call — verified against the live stack: a bare second run of
-    ``python scripts/seed_e2e.py`` raised exactly this ``IntegrityError``
-    before this function existed. Hashing ``run_tag`` into the session-year
-    digits (mirrors :func:`build_phone`'s per-character hashing) mints a
-    genuinely distinct ``papers`` row per run, so the 1..24 suffixes are
-    unique *within* that run's paper rather than colliding across runs. The
-    resulting year is filename shape only, never a claim about a real CAIE
-    sitting — see :func:`build_placement_bank_questions` for why the
-    question text itself is honestly synthetic regardless.
+    **Why this is a function of ``run_tag`` rather than a constant.** A *fixed*
+    stem would put every run's rows on one ``papers`` row; hashing ``run_tag``
+    into the session-year digits (mirrors :func:`build_phone`'s per-character
+    hashing) usually mints a distinct one per run. The resulting year is
+    filename shape only, never a claim about a real CAIE sitting — see
+    :func:`build_placement_bank_questions` for why the question text itself is
+    honestly synthetic regardless.
+
+    **This function is NOT what makes a rerun safe, and an earlier version of
+    this docstring wrongly claimed it was.** It reads only ``run_tag``'s first
+    two characters, so the year has a 100-value namespace: by the birthday
+    bound two runs land on the same ``papers`` row roughly every dozen runs,
+    and then their identical ``#1..#24`` suffixes trip
+    ``uq_question_bank_paper_question (paper_id, source_question_id)`` on the
+    second run's ``link_past_paper_rows()``. That is not hypothetical — it
+    fired for real on ``0625_s88_qp_21#12`` after a day of repeated gate runs,
+    failing ``playwright-e2e``. Uniqueness now lives in the
+    ``source_question_id`` **suffix**, which carries the whole 12-character
+    tag; see :func:`build_placement_bank_questions`. Sharing a ``papers`` row
+    across runs is harmless once the suffixes differ.
     """
     digits = "".join(str(ord(ch) % 10) for ch in run_tag)
     year = (digits[:2] or "00").ljust(2, "0")
@@ -711,7 +714,18 @@ def build_placement_bank_questions(run_tag: str) -> list[NewBankQuestion]:
                     ),
                     total_marks=PLACEMENT_QUESTION_MARKS,
                     topic=topic,
-                    source_question_id=f"{stem}#{ref}",
+                    # The `#` suffix carries the FULL run_tag, and that is what
+                    # actually makes a rerun safe. `build_placement_paper_stem`
+                    # hashes only the tag's first two characters into the
+                    # session-year digits, so it has a 100-value namespace — two
+                    # runs collide on the same `papers` row roughly every dozen
+                    # runs (birthday bound), which is exactly what happened here
+                    # after a day of repeated gate runs: a real
+                    # `uq_question_bank_paper_question` IntegrityError on
+                    # `0625_s88_qp_21#12`. `_paper_identity` splits on the first
+                    # `#` and parses only the stem, so the suffix is opaque to
+                    # the linker and free to carry all 12 hex characters.
+                    source_question_id=f"{stem}#{run_tag}-{ref}",
                     mcq_options=["A", "B", "C", "D"],
                     mcq_answer=PLACEMENT_MCQ_ANSWER,
                 )

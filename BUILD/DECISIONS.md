@@ -3757,3 +3757,101 @@ set fails exactly 5, and reverting `placementInviteSubject` to `enrolledCodes[0]
 3. 224 web unit tests green, `tsc --noEmit` clean.
 
 Gemini spend: **$0.00**.
+
+## D4.16 — Every new screen shipped without an h1, and three gates were passing over it (P4.8 chunk C)
+
+### 1. What happened
+
+Chunk C's whole premise was that `ui-thresholds` had been green on a registry that never
+listed S-01..S-05, so the gate was passing *vacuously*. Sessions 5 and 6 fixed two vacuity
+defects by reading. Session 7 was the first to actually **run** the registry, and the run found
+a defect no amount of reading had surfaced: **all five new screens had no `<h1>` at all.**
+
+Every one of the seven new states reported axe `page-has-heading-one` (**moderate**) while all
+24 Phase-3 routes reported zero violations at any severity. Each screen rendered its page title
+as a styled `<div>` — `font-serif text-display-md` — so the *visual* heading existed and the
+*semantic* one did not.
+
+### 2. Why it survived every gate
+
+MISSION §6 gate 8 sets the axe threshold at "zero serious/critical". `page-has-heading-one` is
+**moderate**. So the gate passed, and would have kept passing forever, even though
+**QUALITY-BAR.md:40's neighbour at line 45 requires "one h1 per page, heading order unbroken,
+landmarks" outright**. The finding sat in the gap between the automated threshold and the
+written bar.
+
+This is the same shape as D3.21's confidently-wrong paper 22 and D4.14's figure-dependent
+stems: it renders perfectly, it screenshots perfectly clean, and the only person who
+experiences the defect is the one using a screen reader — who reached the product's onboarding
+and its first question-rendering surface with nothing to orient by.
+
+### 3. The fix, and the two judgement calls in it
+
+Title `div` → `h1`, same classes plus `m-0`. Tailwind preflight already zeroes heading margins
+and makes headings inherit font size, so this is **visually identical** — confirmed against the
+re-captured screenshots at all three breakpoints, not assumed.
+
+- **`QuestionShell` is safe as the single h1** because `QuestionnaireStep` renders
+  `steps[stepIndex]` — exactly one question at a time. Had all five shells rendered together
+  this would have traded one violation for five.
+- **`QuizTaker` gets an `sr-only` h1 carrying the real `quizTitle`, not a visible one.** The
+  screen has no visible page title *by design*: mid-test the identity a student needs is
+  "Question 3 of 10" and the countdown, and a banner title would push both down the viewport on
+  a 380px phone. The heading still has to exist. It carries `quizTitle` rather than a constant
+  because placement composes this component now and practice/assigned quizzes compose it in
+  P4.9/P5 — the fix lands once for all three.
+- **Loading and error branches get `sr-only` h1s**, following the P3
+  ReviewItem/StudentDetail/QuizResults precedent, because `ErrorState` renders its heading as a
+  non-heading element — the Phase-2.5 report §8 gap, still open.
+
+### 4. The Impeccable audit, and what was deliberately NOT fixed
+
+`/impeccable audit` on the five changed files scored **16/20 (Good)**; detector clean.
+Implementation-integrity **PASS** on real grounds: the honesty states are structural rather
+than cosmetic (discriminated-union views, `showWorkingLevel: false`, "Not enough data yet.",
+"Not set", a class-less placement rendering the *absence* of an affiliation).
+
+**Fixed (P1):** three controls below QUALITY-BAR.md:40's 44×44px floor — `QuizTaker`'s
+flag-for-review (~30px) and two `Button size="sm"` call sites (~31px: 12.5px text + `py-2`).
+All three pass WCAG 2.5.8 AA's 24px minimum, which is exactly why no automated gate caught
+them. Raised **at the call sites, not in the `Button` variant** — `size="sm"` has 33 call sites
+and 11 of the 15 files are teacher screens, where 44px would break dense layouts. Changing the
+shared variant is a cross-portal decision, not a P4.8 one (verified by counting, not assumed).
+
+**Deliberately deferred, recorded rather than smoothed over:**
+1. **The global reduced-motion rule is the blanket kill the audit reference explicitly flags.**
+   `index.css:742` applies `animation-duration: 0.001ms !important` to `*`. On S-05's unmarked
+   state the spinning `CircleNotch` *is* the evidence that marking is in progress, beside copy
+   promising "This page will update on its own" — with reduced-motion on, it freezes and the
+   user cannot distinguish working from stalled. Pre-existing Phase-2.5 behaviour affecting all
+   41 routes; `processing-state.tsx:19` already acknowledges it. Editing the global rule risks
+   visual regression on every route and is out of P4.8's scope.
+2. **Ad-hoc container widths** — `max-w-[560px]` ×3, `max-w-[720px]`, `max-w-[820px]` where a
+   shared token belongs. (`min-h-[44px]` and the slider's `py-9px` are *not* this: both are
+   documented repo-wide touch-target idioms.)
+3. **S-04 re-renders its whole question tree once per second** from the elapsed ticker, with no
+   memoization. Lighthouse perf is 82 so it is not currently measurable — but this exact ticker
+   is what turned an unstable react-query object identity into a duplicate-PUT-per-second bug
+   (D4.15 §1), so the cadence is a standing amplifier for that class of defect.
+
+### 5. Verification
+
+Full 13-gate run **ALL PASS, 0 skipped**. **2307 tests / 6 skipped / 0 failed / 90.30% cov**
+(re-measured, not carried forward — the backend diff since chunk 0 is not empty; earlier
+chunk-C sessions added the placement seed and its tests). Second audit run confirms all seven
+new states at **0/0/0/0 at every severity**, zero nonzero axe counts anywhere in the registry,
+**Lighthouse a11y 100** on all four scored new routes (perf 80–83, at or above §11's student
+floor), zero console errors, zero horizontal-scroll violations; `ui-thresholds` clean across
+**41 routes**.
+
+Spot-checked visually rather than trusted to the string asserts: the `questionnaire-skipped`
+capture shows the thumb at `min` reading **"Not set"** (D4.5 honest on screen), and S-05 renders
+"This is a baseline, not a grade", the working-level refusal, and "Not enough data yet."
+
+**Measurement trap worth not re-deriving:** a bare `.venv/bin/pytest` reports **1 failed** —
+`tests/architecture/test_import_linter.py` shells out to `lint-imports`, absent from PATH unless
+you export `.venv/bin` yourself. A `FileNotFoundError` in the harness, not a broken contract:
+with PATH set the test passes and `lint-imports` exits 0 ("Contracts: 2 kept, 0 broken").
+`check.sh` exports PATH at its line 34, which is why its `pytest` gate is green.
+
+Gemini spend: **$0.00**.
