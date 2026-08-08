@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T01:30:00Z
+last_updated: 2026-08-09T03:00:00Z
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -473,7 +473,27 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         gets an honest `no_signal` refusal, never a plausible-looking invented week (P4.5/P4.6
         precedent). Activity type must be *earned* — do not schedule `flashcards` for a topic
         with no deck or `practice` for a topic the bank cannot serve.
-      - [ ] chunk B — migration **0012** + `lemely/db/study_plan_repo.py`: persist the plan and
+      - [x] chunk B — **done** (`27f6a16`). Migration **0012** (additive: `study_plans`,
+        `study_plan_sessions`) + `lemely/db/models/study_plan.py` + `lemely/db/study_plan_repo.py`
+        (`StudyPlanService`). `alembic check` clean on **upgrade and downgrade**, verified by
+        actually running both, not from the report.
+        **2273 tests / 6 skipped / 0 failed / 90.23% cov** (chunk A baseline 2250 / 90.13%);
+        all 13 gates green, 0 skipped. $0.00 Gemini.
+        **The week is the ISO week (Monday) of the injected clock**; regeneration **supersedes**
+        (stamps `superseded_at`) rather than mutating, so last week stays auditable and a
+        completed session stays a true record. A `no_signal` refusal **is persisted** — "no plan
+        generated yet this week" and "refused a plan this week" are different facts and both
+        stay queryable. D4.12's honesty rule survives the trip to Postgres.
+        **Availability is real, which is the load-bearing part:** practice/past-paper counts come
+        from the bank behind the **same `visible_bank_filter`** `PracticeService` uses, and deck
+        presence from the student's own decks — so chunk A's "activity type must be earned" is
+        enforced against the live bank instead of collapsing every session to `review`.
+        XP correctly left as a seam (`completed_at`); no points/streak column was added.
+        **Fifth handover this phase to report done with its own gate red** — `pytest` failed on
+        `tests/test_db_schema.py::test_all_expected_tables_registered`, the deliberate
+        unregistered-schema-drift guard, which the two new tables were never added to. Caught by
+        the orchestrator's gate run. **Keep running it; the handover's word is still not evidence.**
+      - [ ] chunk B (original plan, kept for the rationale) — migration **0012** + `lemely/db/study_plan_repo.py`: persist the plan and
         its sessions, weekly regeneration (a new week supersedes rather than mutates the old one,
         so last week stays auditable), and per-session completion. **XP is P5 — leave the
         completion record as the seam and build no XP.**
