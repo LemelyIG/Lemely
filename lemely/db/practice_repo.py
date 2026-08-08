@@ -88,7 +88,7 @@ from lemely.db.models.enums import (
     QuizStatus,
 )
 from lemely.db.models.quizzes import QuestionBank, Quiz, QuizAssignment, QuizQuestion
-from lemely.db.question_bank_repo import _to_row, visible_bank_filter
+from lemely.db.question_bank_repo import _to_row, renderable_bank_filter, visible_bank_filter
 from lemely.db.quiz_repo import _snapshot_bank_row
 from lemely.db.student_profile_repo import enrolled_paper_numbers
 from lemely.io.syllabus_topics import get_taxonomy
@@ -502,6 +502,7 @@ class PracticeService:
         clauses: list[ColumnElement[bool]] = [
             QuestionBank.is_active.is_(True),
             visible_bank_filter(student_uuid, ()),
+            renderable_bank_filter(),
             QuestionBank.subject_code == subject_code,
         ]
         if source is not None:

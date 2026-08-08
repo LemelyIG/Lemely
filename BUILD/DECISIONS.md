@@ -3585,3 +3585,80 @@ legacy route and is P4.10's call, because `PlanView` persists no narrative and i
 column for one at route level would have put a Gemini call behind a GET.
 
 Gemini spend: **$0.00**.
+
+---
+
+## D4.14 — A question the bank cannot fully render must not be served (P4.8 chunk 0)
+
+### 1. Found by measuring while scoping S-04, not by a failing test
+
+`question_bank` has **no image/figure column at all** — verified against `information_schema`,
+not assumed. P4.1 excluded 654 figure-bearing leaves at ingest, but exclusion was decided on the
+*source PDF's* structure, so stems that merely **reference** a figure in their prose survived.
+Twenty-five of 273 banked 0625 stems read an existing figure as their source of information
+("The diagram shows a radioactive source, a thick aluminium sheet and a radiation detector…").
+There is no figure. The question is unanswerable.
+
+**Why this outranked the frontend work it was found during.** A 0625 placement assembles ~10
+questions, so a single such draw makes ~10% of the test unanswerable. The student loses those
+marks; the placement then records a weakness they **do not have**; and that false weakness is
+exactly what seeds the P4.7 study plan and P4.5 weakness-targeted practice. The failure
+compounds downstream and is invisible at every gate — the stem renders perfectly, the
+screenshot looks clean, every test passes. Same class as D3.21's confidently-wrong paper 22:
+the number is wrong and nothing in the system is capable of noticing.
+
+### 2. Exclusion from serving, not deletion
+
+`renderable_bank_filter()` in `question_bank_repo.py` — a pure Postgres `~*` predicate over the
+existing `prompt` column. **No migration, no Gemini, $0.00.** The row stays in the bank, stays
+`is_active`, stays auditable; only the read paths that assemble a student-facing pool apply it.
+If a figure column ever lands, the predicate is one function to relax rather than 25 rows to
+re-ingest.
+
+### 3. It is deliberately NOT folded into `visible_bank_filter`, and that is the load-bearing find
+
+The obvious seam was `visible_bank_filter`, which `PracticeService` and `StudyPlanService`
+already share. **`PlacementService` does not call it at all** — `_load_candidates` builds its own
+subject/source/`is_active` filter. Folding the new predicate into `visible_bank_filter` would
+have looked like a clean one-line fix, passed review, and **left placement — the single worst
+affected path, the one that plants the false weakness — completely unfixed.** The two predicates
+also mean different things: one is an owner/school *authorization* check, this is a content
+*completeness* check. Applied explicitly at all four pool sites instead.
+
+### 4. Where the honest line was drawn: 25, not 4 and not 32
+
+A loose `Fig.|figure|diagram|table below|image` match hits 32 of 273. Every one was read
+individually rather than pattern-matched in bulk:
+
+- **Excluded from the exclusion — bare "image" (3).** All the optics sense ("a real image is
+  formed"), a lens question, not a photograph.
+- **Excluded from the exclusion — "draw a diagram of the circuit used" (4).** The student
+  produces this diagram; it is their *answer*, self-contained in prose. Suppressing these would
+  have silently shrunk the pool for a class of question that works fine.
+- **Excluded from serving (25).** Five shapes, all reading an *existing* figure: `"Fig. 8.1
+  shows"`, `"On Fig. 8.1, draw…"`, `"as shown in Fig. 7.1"`, `"in diagram 1"`, `"complete Fig.
+  4.1"`. Note `"On Fig. 8.1, draw…"` **is** a dependency despite containing "draw" — Fig. 8.1
+  already exists and must be seen.
+
+### 5. What the fix cost, measured rather than assumed
+
+Placement breadth is the thing that could have broken, and it did not — but the test **changed**,
+and pretending otherwise would hide a real effect:
+
+| 0625 placement | before | after |
+|---|---|---|
+| questions | 9 | **10** |
+| duration | 15.19 min | **17.06 min** |
+| syllabus topics | 6 | **6** |
+
+Still under the 18-minute ceiling (D4.8), still spanning all six physics topics. It got longer
+because the excluded questions had been counted toward the 15-minute target. Pool 273 → 248 for
+practice. 0580/0606 remain an honest `no_questions` — unchanged, they have zero ingested
+questions (D4.6 §5).
+
+**Latent trap checked, not just reasoned about:** `not_(prompt ~* …)` evaluates to NULL for a
+NULL prompt, which would silently drop the row. `question_bank.prompt` is `NOT NULL` and there
+are zero NULL prompts today, so the three-valued-logic hole cannot bite — recorded because a
+future nullable column would reopen it invisibly.
+
+Gemini spend: **$0.00**.

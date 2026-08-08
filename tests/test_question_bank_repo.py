@@ -53,6 +53,7 @@ from lemely.db.question_bank_repo import (
     classify_bank_topics,
     generated_questions_to_bank_rows,
     import_generated_quiz_files,
+    renderable_bank_filter,
     survey_past_paper_questions,
     visible_bank_filter,
 )
@@ -279,6 +280,60 @@ def test_is_active_excluded_from_count_and_selection(
         None, [], subject_code=subject, band="foundation", count=10
     )
     assert {row.id for row in selected} == {active_id}
+
+
+def test_renderable_bank_filter_excludes_figure_dependent_rows(
+    pg_sessionmaker: sessionmaker[Session], bank_service: QuestionBankService
+) -> None:
+    """P4.8 chunk 0. ``question_bank`` has no image column, so a stem that
+    reads an existing figure ("The diagram shows...") cannot be fully
+    rendered and must be excluded from count/selection — never deleted (the
+    row must still be readable directly off the model).
+
+    Pinned by its inverse: an ordinary prompt in the same subject/band must
+    still be counted and selected, so a predicate that accidentally excluded
+    everything cannot pass this test.
+    """
+    subject = "0625-figures"
+    figure_id = _seed_bank_row(
+        pg_sessionmaker,
+        subject_code=subject,
+        difficulty=QuestionDifficulty.standard,
+        prompt=(
+            "The diagram shows a ray of light in glass incident on the surface between "
+            "the glass and air. What happens at the critical angle?"
+        ),
+    )
+    ordinary_id = _seed_bank_row(
+        pg_sessionmaker,
+        subject_code=subject,
+        difficulty=QuestionDifficulty.standard,
+        prompt="What is the speed of light in a vacuum?",
+    )
+
+    counts = bank_service.count_by_band(None, [], subject_code=subject)
+    assert counts["standard"] == 1
+    selected = bank_service.select_questions(
+        None, [], subject_code=subject, band="standard", count=10
+    )
+    assert {row.id for row in selected} == {ordinary_id}
+
+    # Exclusion from serving, not deletion: the row is still there, active.
+    with pg_sessionmaker() as session:
+        still_there = session.get(QuestionBank, figure_id)
+    assert still_there is not None
+    assert still_there.is_active is True
+
+
+def test_renderable_bank_filter_composes_into_an_arbitrary_select(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Mirrors ``test_visible_bank_filter_composes_into_an_arbitrary_select`` —
+    :func:`renderable_bank_filter` must be a plain composable
+    ``ColumnElement[bool]``, not tied to any particular query shape."""
+    with pg_sessionmaker() as session:
+        stmt = select(QuestionBank.id).where(renderable_bank_filter())
+        session.execute(stmt).all()  # must not raise
 
 
 # ---------------------------------------------------------------------------

@@ -293,6 +293,82 @@ def test_source_filter_excludes_the_other_source(
         assert all(s == QuestionSource.generated for s in bank_sources)
 
 
+def test_figure_dependent_rows_are_never_served_ordinary_rows_still_are(
+    pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    """P4.8 chunk 0's ``renderable_bank_filter``, pinned by its inverse.
+
+    ``question_bank`` has no image column, so a stem that reads an *existing*
+    figure ("The diagram shows...") cannot be fully rendered and must never
+    be served. Seeds one figure-dependent row and one ordinary row in the
+    same topic, requests more than the ordinary-only pool size, and asserts
+    the figure-dependent bank id never appears in what gets persisted — the
+    positive half. The inverse (this test's actual name) is the part that
+    would fail if the predicate over-excluded: an ordinary stem in the same
+    topic, seeded alongside it, must still come back, so a detector that
+    accidentally emptied the whole pool cannot pass silently.
+    """
+    student = _seed_user(pg_sessionmaker)
+    service = QuestionBankService(pg_sessionmaker)
+    service.add_questions(
+        [
+            NewBankQuestion(
+                subject_code="0625",
+                source=QuestionSource.generated,
+                difficulty="standard",  # type: ignore[arg-type]
+                difficulty_source=DifficultySource.declared_by_generator,
+                question_type="mcq",
+                prompt=(
+                    "The diagram shows a radioactive source, a thick aluminium sheet and a "
+                    "radiation detector. Which type of radiation is detected?"
+                ),
+                total_marks=2,
+                topic="1 Motion",
+                mcq_options=["A", "B", "C", "D"],
+                mcq_answer="B",
+            ),
+            NewBankQuestion(
+                subject_code="0625",
+                source=QuestionSource.generated,
+                difficulty="standard",  # type: ignore[arg-type]
+                difficulty_source=DifficultySource.declared_by_generator,
+                question_type="mcq",
+                prompt="What is the SI unit of force?",
+                total_marks=2,
+                topic="1 Motion",
+                mcq_options=["A", "B", "C", "D"],
+                mcq_answer="B",
+            ),
+        ]
+    )
+    with pg_sessionmaker() as session:
+        rows = session.execute(
+            select(QuestionBank.id, QuestionBank.prompt).where(QuestionBank.subject_code == "0625")
+        ).all()
+    figure_id = next(rid for rid, prompt in rows if prompt.startswith("The diagram shows"))
+    ordinary_id = next(rid for rid, prompt in rows if prompt.startswith("What is the SI unit"))
+
+    created = practice_service.create(
+        student, PracticeRequest(subject_code="0625", count=10, topics=("1 Motion",))
+    )
+
+    with pg_sessionmaker() as session:
+        persisted_bank_ids = set(
+            session.scalars(
+                select(QuizQuestion.question_bank_id).where(QuizQuestion.quiz_id == created.quiz_id)
+            ).all()
+        )
+    assert figure_id not in persisted_bank_ids
+    assert ordinary_id in persisted_bank_ids
+
+    # The row itself must still exist in the bank — exclusion from serving,
+    # never deletion (brief's hard constraint 1).
+    with pg_sessionmaker() as session:
+        still_there = session.get(QuestionBank, figure_id)
+    assert still_there is not None
+    assert still_there.is_active is True
+
+
 def test_count_caps_the_persisted_set(
     pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
 ) -> None:

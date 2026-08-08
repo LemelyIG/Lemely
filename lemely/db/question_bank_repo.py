@@ -46,6 +46,28 @@ Four things, matching the chunk-B brief exactly:
    coverage; this survey remains useful as-is for auditing mark-scheme
    corpus shape (topic hints, inferred difficulty distribution) independent
    of stem availability.
+
+P4.8 chunk 0 adds a fifth piece: :func:`renderable_bank_filter` — a
+deterministic, Gemini-free predicate that excludes bank rows whose ``prompt``
+depends on a figure/diagram the bank cannot render. ``question_bank`` has no
+image column at all (P4.1 excluded 654 figure-bearing leaves at ingest, but
+some surviving stems still *reference* one, e.g. ``"The diagram shows a
+radioactive source..."``); serving one of those from placement or practice
+makes the question unanswerable and, for placement specifically, plants a
+false weakness that seeds P4.5/P4.7. Measured against the live 0625 bank: 25
+of 273 past-paper stems read an existing figure as their source of
+information (drawing *their own* diagram, e.g. "draw a diagram of the
+circuit used", is explicitly not this — that is the student's own answer,
+not a dependency on an unseen image). Deliberately **not** the same seam as
+:func:`visible_bank_filter` — that predicate is a pure owner/school
+authorization check, and :class:`~lemely.db.placement_repo.PlacementService`
+turns out not to call it at all (:meth:`~lemely.db.placement_repo.
+PlacementService._load_candidates` builds its own subject/source/is_active
+filter), so folding this into ``visible_bank_filter`` alone would have left
+placement's pool unfixed. Applied everywhere a servable pool is counted or
+selected: :meth:`QuestionBankService._filters`, ``PracticeService.
+_matching_clauses``, ``StudyPlanService._availability``, and
+``PlacementService._load_candidates``.
 """
 
 from __future__ import annotations
@@ -55,7 +77,7 @@ from typing import TYPE_CHECKING, Final, cast
 
 import structlog
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, not_, or_, select
 
 from lemely.core.difficulty import Band, infer_difficulty
 from lemely.core.generation import GeneratedQuiz
@@ -135,6 +157,64 @@ def visible_bank_filter(
     if school_ids:
         clauses.append(QuestionBank.school_id.in_(school_ids))
     return or_(*clauses)
+
+
+#: Postgres advanced-regex (``~*``, case-insensitive) matching a stem that
+#: reads an *existing* figure as its source of information — never a stem
+#: asking the student to produce their own diagram (``"draw a diagram of the
+#: circuit used"`` does not match; ``"On Fig. 8.1, draw..."`` does, because
+#: ``Fig. 8.1`` already exists and must be seen to answer). Five shapes,
+#: derived by inspecting all 32 loose ``Fig.|figure|diagram|table below|image``
+#: hits in the live 0625 bank one at a time (module docstring):
+#:
+#: * ``"Fig. 8.1 shows"`` / ``"The diagram shows"`` / ``"Diagram 1 shows"``
+#: * ``"On Fig. 8.1, draw..."`` / ``"On the diagram, ..."``
+#: * ``"...as shown in Fig. 7.1."``
+#: * ``"...connected as shown in Fig. 7.1"`` / ``"...in diagram 1"``
+#: * ``"complete Fig. 4.1 to show a circuit..."``
+#:
+#: Deliberately excludes bare ``"image"`` (3 hits, all the optics sense of
+#: "real image" — a lens question, not a photo) and "draw a diagram"/"you may
+#: draw a diagram" (4 hits — an experiment-design free-response question
+#: asking the student to sketch their *own* circuit, self-contained in prose,
+#: not a dependency on anything the bank cannot render). Verified against the
+#: live DB (``.venv/bin/python`` + ``lemely.db.session.get_engine``): 25 of
+#: 273 0625 past-paper rows match, all four of the provable IDs among them,
+#: zero rows outside subject 0625 match at all.
+_FIGURE_DEPENDENT_PATTERN: Final = (
+    r"\m(fig\.?|figure|diagram)\s*[0-9]*\.?[0-9]*\s+shows?\M"
+    r"|\mon\s+(fig\.?|figure|diagram)"
+    r"|\mas\s+shown\s+in\s+(fig\.?|figure|diagram)"
+    r"|\min\s+(fig\.?|figure|diagram)\s*[0-9]"
+    r"|\mcomplete\s+(fig\.?|figure)"
+)
+
+
+def renderable_bank_filter() -> ColumnElement[bool]:
+    """Exclude :class:`QuestionBank` rows whose prompt depends on a figure.
+
+    ``question_bank`` has no image/figure column (P4.8 chunk 0 — see module
+    docstring); a stem matching :data:`_FIGURE_DEPENDENT_PATTERN` cannot be
+    fully rendered, so it must never be served by placement or practice. This
+    is an **exclusion from serving, not deletion** — the row stays, stays
+    ``is_active``, and stays auditable; only the read paths that assemble a
+    student-facing pool apply this predicate.
+
+    A pure predicate over the existing ``prompt`` column — no migration, no
+    Gemini call, $0.00. Composed with :func:`visible_bank_filter` at every
+    call site rather than folded into it: ``visible_bank_filter`` is an
+    owner/school authorization check, this is a content-completeness check,
+    and (the reason they cannot share one function) ``PlacementService``
+    does not call ``visible_bank_filter`` at all — it builds its own
+    subject/source/``is_active`` filter in ``_load_candidates`` — so this
+    predicate has to be applied there directly too.
+    """
+    return not_(
+        cast(
+            "ColumnElement[bool]",
+            QuestionBank.prompt.op("~*")(_FIGURE_DEPENDENT_PATTERN),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +656,7 @@ class QuestionBankService:
         clauses: list[ColumnElement[bool]] = [
             QuestionBank.is_active.is_(True),
             visible_bank_filter(caller_id, school_ids),
+            renderable_bank_filter(),
             QuestionBank.subject_code == subject_code,
         ]
         if source is not None:

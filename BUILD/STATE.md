@@ -551,7 +551,31 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
          answer-input surface in the product, and P4.9/P5 will compose it. Build it as a
          reusable component, not as a screen-local one-off.
       **Chunk plan (2026-08-09):**
-      - [ ] **doing** — chunk 0 — **the figure-dependency defect, found by measuring the live
+      - [x] chunk 0 — **done** (D4.14). `renderable_bank_filter()` in `question_bank_repo.py` —
+        a pure Postgres `~*` predicate over the existing `prompt` column, applied at all four
+        pool sites (`QuestionBankService._filters`, `PracticeService._matching_clauses`,
+        `StudyPlanService._availability`, `PlacementService._load_candidates`). **No migration,
+        $0.00, zero Gemini.** Exclusion from *serving*, not deletion — the row stays auditable.
+        **2297 tests / 6 skipped / 0 failed / 90.30% cov** (P4.7 baseline 2292 / 90.29%);
+        all 13 gates green, 0 skipped.
+        **The load-bearing finding, which the obvious fix would have missed:** `PlacementService`
+        **does not call `visible_bank_filter` at all** — it builds its own filter in
+        `_load_candidates`. Folding the predicate into that shared seam would have been a clean
+        one-line change that passed review and left **placement — the worst-affected path, the
+        one that plants the false weakness — completely unfixed.**
+        **Honest line drawn at 25 of 273, not 4 and not 32**, by reading all 32 loose matches
+        individually: bare "image" (3) is the optics sense, and "draw a diagram of the circuit
+        used" (4) is the student's own *answer*, not a dependency. Both kept servable.
+        **Orchestrator-verified independently, not from the report** — the subagent signed off
+        before its own gate run finished, and never measured the thing that could actually
+        break. 25/273 excluded and all four provable IDs confirmed excluded by direct query;
+        the NULL-prompt three-valued-logic trap (`NOT (NULL ~* …)` is NULL → silent drop)
+        checked and closed (`prompt` is `NOT NULL`, zero NULLs).
+        **Placement changed and the change is recorded rather than smoothed over: 0625 went
+        9 q / 15.19 min → 10 q / 17.06 min, still 6 syllabus topics, still under the 18-min
+        ceiling.** It got longer because the excluded questions had been counted toward the
+        15-minute target. Practice pool 273 → 248. 0580/0606 unchanged (`no_questions`).
+      - [ ] chunk 0 (original plan, kept for the rationale) — **the figure-dependency defect, found by measuring the live
         bank while scoping S-04.** `question_bank` has **no image/figure column at all** (verified
         against `information_schema`) — P4.1 excluded 654 figure-bearing leaves, but **4 stems
         that survived still say "The diagram shows …"** and are placement-eligible
@@ -567,7 +591,7 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         Fix as **exclusion from serving, not deletion**: a deterministic detector, no Gemini, so
         placement/practice never draw a question the bank cannot fully render. Must be pinned by
         its inverse (a non-figure stem is still servable) or it will silently empty the pool.
-      - [ ] todo — chunk A — S-01 + S-02: the real multi-step wizard on the **P4.3** backend
+      - [ ] **doing** — chunk A — S-01 + S-02: the real multi-step wizard on the **P4.3** backend
         (`PATCH /api/me/student-profile`, `PUT .../enrolments`, `PUT .../confidence-ratings`,
         `POST .../complete-onboarding`) + the TS types/hooks for them, which do not exist yet
         (`meTypes.ts` covers only `ProfileDTO`). **Replaces** the legacy single-step

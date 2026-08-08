@@ -51,7 +51,7 @@ from lemely.db.models.enums import (
     Role,
 )
 from lemely.db.models.profiles import StudentEnrolmentPaper, StudentSubjectEnrolment
-from lemely.db.models.quizzes import Quiz, QuizQuestion, QuizSubmission
+from lemely.db.models.quizzes import QuestionBank, Quiz, QuizQuestion, QuizSubmission
 from lemely.db.placement_repo import (
     PlacementCreated,
     PlacementNotFoundError,
@@ -249,6 +249,55 @@ def test_availability_false_for_a_subject_with_no_ingested_questions(
     assert result.reason == "no_questions"
     assert result.question_count == 0
     assert result.topic_count == 0
+
+
+def test_load_candidates_excludes_figure_dependent_rows_ordinary_rows_still_load(
+    pg_sessionmaker: sessionmaker[Session], placement_service: PlacementService
+) -> None:
+    """P4.8 chunk 0: ``PlacementService._load_candidates`` builds its own
+    subject/source/``is_active`` filter rather than calling
+    ``visible_bank_filter`` (placement is always direct-to-student), so the
+    figure-dependency exclusion had to be applied there explicitly — this is
+    the "wrong seam" case the brief called out, pinned directly against the
+    exact function that was changed.
+
+    Mutates one seeded row's prompt to a stem that reads an existing figure
+    ("The diagram shows...") and asserts it drops out of the candidate set.
+    The inverse: every *other* seeded row — ordinary prose, never touched —
+    must still come back, so a detector that accidentally excluded the whole
+    pool cannot pass silently.
+    """
+    _seed_placement_bank(pg_sessionmaker, per_topic=6)
+    with pg_sessionmaker() as session:
+        all_ids = set(
+            session.scalars(
+                select(QuestionBank.id).where(QuestionBank.subject_code == "0625")
+            ).all()
+        )
+    assert len(all_ids) == 24, "sanity: 4 topics x 6 per_topic"
+    figure_id = next(iter(all_ids))
+
+    with pg_sessionmaker.begin() as session:
+        row = session.get(QuestionBank, figure_id)
+        assert row is not None
+        row.prompt = (
+            "The diagram shows a radio signal from the Earth being reflected by Pluto "
+            "and returning to the Earth. What is the time taken?"
+        )
+
+    with pg_sessionmaker() as session:
+        candidates = placement_service._load_candidates(session, "0625")
+    candidate_ids = {c.question_bank_id for c in candidates}
+
+    assert figure_id not in candidate_ids
+    assert candidate_ids == all_ids - {figure_id}
+
+    # Exclusion from serving, never deletion (brief's hard constraint 1) —
+    # the row is still in the bank, still active.
+    with pg_sessionmaker() as session:
+        still_there = session.get(QuestionBank, figure_id)
+    assert still_there is not None
+    assert still_there.is_active is True
 
 
 def test_a_paper_the_student_will_not_sit_is_not_drawn_from(

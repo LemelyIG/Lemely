@@ -255,6 +255,7 @@ def _seed_bank_question(
     subject_code: str = "0625",
     topic: str,
     source: QuestionSource = QuestionSource.past_paper,
+    prompt: str = "Question",
 ) -> None:
     with sm.begin() as session:
         session.add(
@@ -265,7 +266,7 @@ def _seed_bank_question(
                 difficulty=QuestionDifficulty.standard,
                 difficulty_source=DifficultySource.inferred_from_marks,
                 question_type="mcq",
-                prompt="Question",
+                prompt=prompt,
                 total_marks=2,
                 mcq_options=["A", "B"],
                 mcq_answer="A",
@@ -517,6 +518,41 @@ def test_bank_availability_is_owner_scoped_to_the_visibility_predicate(
 
     plan = study_plan_service.generate(student, "0625")
     assert all(s.activity_type == StudyPlanActivityType.review for s in plan.sessions)
+
+
+def test_a_figure_dependent_bank_row_does_not_earn_practice_ordinary_rows_still_do(
+    pg_sessionmaker: sessionmaker[Session], study_plan_service: StudyPlanService
+) -> None:
+    """P4.8 chunk 0: ``_availability`` must count the same pool practice would serve.
+
+    A bank row whose prompt reads an existing figure ("The diagram shows...")
+    is excluded by ``renderable_bank_filter``; on its own it must not earn
+    ``past_paper`` (the false-positive this whole chunk exists to prevent —
+    a study plan session pointing at a question the student cannot fully
+    see). The inverse: adding one ordinary row in the same topic must earn
+    ``practice`` (its `source` is ``generated``, not ``past_paper``), proving
+    the predicate did not also swallow the ordinary row.
+    """
+    student = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, student, topic="1 Motion", lost_marks=8, maximum_marks=10)
+    _seed_bank_question(
+        pg_sessionmaker,
+        topic="1 Motion",
+        source=QuestionSource.past_paper,
+        prompt=(
+            "The diagram shows a radio signal from the Earth being reflected by Pluto "
+            "and returning to the Earth. What is the time taken?"
+        ),
+    )
+
+    plan = study_plan_service.generate(student, "0625")
+    assert all(s.activity_type == StudyPlanActivityType.review for s in plan.sessions)
+
+    # Inverse: an ordinary generated-source row in the same topic is not
+    # figure-dependent and must still be counted, earning practice.
+    _seed_bank_question(pg_sessionmaker, topic="1 Motion", source=QuestionSource.generated)
+    plan2 = study_plan_service.generate(student, "0625")
+    assert all(s.activity_type == StudyPlanActivityType.practice for s in plan2.sessions)
 
 
 # ---------------------------------------------------------------------------

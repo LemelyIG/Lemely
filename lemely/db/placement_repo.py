@@ -71,7 +71,7 @@ from lemely.db.models.quizzes import (
     QuizQuestion,
     QuizSubmission,
 )
-from lemely.db.question_bank_repo import _to_row
+from lemely.db.question_bank_repo import _to_row, renderable_bank_filter
 from lemely.db.quiz_repo import _snapshot_bank_row
 from lemely.db.student_profile_repo import enrolled_paper_numbers
 from lemely.io.paper_timing import get_paper_timings
@@ -420,6 +420,15 @@ class PlacementService:
         (unlinked, D4.8 §1) still comes back, with ``paper_number=None``;
         :func:`~lemely.core.placement.assemble` is what excludes it, so
         there is exactly one place that decides "ineligible".
+
+        P4.8 chunk 0 adds :func:`~lemely.db.question_bank_repo.
+        renderable_bank_filter`: this loader builds its own subject/source/
+        ``is_active`` filter rather than calling
+        :func:`~lemely.db.question_bank_repo.visible_bank_filter` (placement
+        is always direct-to-student, never owner/school scoped — see the
+        class docstring), so the figure-dependency exclusion has to be
+        applied here explicitly too, not inherited from a shared visibility
+        seam it never used.
         """
         stmt = (
             select(
@@ -434,6 +443,7 @@ class PlacementService:
                 QuestionBank.subject_code == subject_code,
                 QuestionBank.source == QuestionSource.past_paper,
                 QuestionBank.is_active.is_(True),
+                renderable_bank_filter(),
             )
         )
         return [

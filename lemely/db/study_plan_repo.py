@@ -89,7 +89,7 @@ from lemely.db.models.quizzes import QuestionBank, Quiz, QuizAssignment, QuizSub
 from lemely.db.models.study_plan import StudyPlan as DbStudyPlan
 from lemely.db.models.study_plan import StudyPlanActivityType as DbActivityType
 from lemely.db.models.study_plan import StudyPlanSession as DbStudyPlanSession
-from lemely.db.question_bank_repo import visible_bank_filter
+from lemely.db.question_bank_repo import renderable_bank_filter, visible_bank_filter
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -455,10 +455,12 @@ class StudyPlanService:
         """Real practice/past-paper counts and flashcard-deck presence, per topic.
 
         Built on :func:`~lemely.db.question_bank_repo.visible_bank_filter` —
-        the same §1.3 visibility predicate ``PracticeService`` uses — so
-        "available" here means the same thing it means to the practice
-        surface a scheduled ``practice``/``past_paper`` session would
-        actually route to.
+        the same §1.3 visibility predicate ``PracticeService`` uses — plus
+        :func:`~lemely.db.question_bank_repo.renderable_bank_filter` (P4.8
+        chunk 0), so "available" here means the same thing it means to the
+        practice surface a scheduled ``practice``/``past_paper`` session
+        would actually route to, including never counting a figure-dependent
+        row the practice surface would itself refuse to serve.
         """
         if not topics:
             return {}
@@ -469,6 +471,7 @@ class StudyPlanService:
                 .where(
                     QuestionBank.is_active.is_(True),
                     visible_bank_filter(student_uuid, ()),
+                    renderable_bank_filter(),
                     QuestionBank.subject_code == subject_code,
                     QuestionBank.topic.in_(topics),
                 )
@@ -483,6 +486,7 @@ class StudyPlanService:
                 .where(
                     QuestionBank.is_active.is_(True),
                     visible_bank_filter(student_uuid, ()),
+                    renderable_bank_filter(),
                     QuestionBank.subject_code == subject_code,
                     QuestionBank.source == QuestionSource.past_paper,
                     QuestionBank.topic.in_(topics),
