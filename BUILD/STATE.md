@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-08T21:30:00Z
+last_updated: 2026-08-08T22:10:00Z
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -334,8 +334,30 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
       files — caught by the orchestrator's own gate run, not its report.
       *(Original scope line: topic/difficulty/count/source filtering, persisted practice sets,
       "not enough questions" honesty path, export/print payload; UI spec S-20/S-21.)*
-- [ ] todo — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
-      weakness, SM-2-style spaced repetition, review sessions.
+- [ ] doing — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
+      weakness, SM-2-style spaced repetition, review sessions. (UI spec S-22/S-23.)
+      **Chunk plan (2026-08-08), backend only — no `web/` diff, so gate 8 is not in play:**
+      - [ ] chunk A — schema + the pure scheduler. Migration **0011** (additive): `flashcard_decks`
+        (owner `user_id`, `subject_code`, nullable `topic` in the **P4.2 `"<code> <name>"`
+        vocabulary**, `origin` enum manual/weakness/topic), `flashcards` (deck FK CASCADE, front/back,
+        `source` enum manual/ai, nullable `source_question_id`, and the SM-2 state:
+        `repetitions`/`ease_factor`/`interval_days`/`due_at`/`last_reviewed_at`/`lapses`),
+        `flashcard_reviews` (the audit log a self-graded scheduler needs to be checkable, and P5's
+        XP seam). Plus `lemely/core/spaced_repetition.py` — pure SM-2, **clock injected**, never
+        `datetime.now()` inside, so scheduling is testable by inversion.
+        SM-2 state lives **on the card**, not in a join table, because a deck is owned by exactly
+        one student — there is no shared-deck case to key around in this phase.
+      - [ ] chunk B — `lemely/db/flashcard_repo.py` (`FlashcardService`) + AI generation
+        (`lemely/core/flashcards.py` schemas + `lemely/io/flashcard_generation.py` mirroring
+        `QuestionGenerator`, mocked in tests, $0.00 live spend).
+        **Honesty rules, non-negotiable:** an AI-written card is stored `source='ai'` and stays
+        distinguishable from a student's own card for its whole life; a weakness-generated deck
+        records which topic it targeted; and "no weakness rows" is an honest refusal
+        (`no_weaknesses`) exactly as P4.5 does it, never a silently empty deck.
+      - [ ] chunk C — `lemely/web/routers/flashcards.py` + `schemas_flashcards.py`, student-only
+        and **owner-scoped on every read and write** (decks are per-student; a deck id from another
+        student must 404, not 403-after-probe). S-22's "nothing due today" is a real state carrying
+        the next due date, not an empty list.
 - [ ] todo — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +
       rolling performance; weekly regeneration; concrete sessions (topic, activity type,
       duration); completion + XP hook (XP itself is P5 — leave a seam, do not build it).
