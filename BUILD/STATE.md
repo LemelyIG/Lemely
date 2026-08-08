@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T03:00:00Z
+last_updated: 2026-08-09T06:30:00Z
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -421,7 +421,7 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         and **owner-scoped on every read and write** (decks are per-student; a deck id from another
         student must 404, not 403-after-probe). S-22's "nothing due today" is a real state carrying
         the next due date, not an empty list.
-- [ ] doing — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +
+- [x] done — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +
       rolling performance; weekly regeneration; concrete sessions (topic, activity type,
       duration); completion + XP hook (XP itself is P5 — leave a seam, do not build it).
       **What exists today and why it is not enough:** `lemely/core/study_plan.py`
@@ -497,21 +497,45 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         its sessions, weekly regeneration (a new week supersedes rather than mutates the old one,
         so last week stays auditable), and per-session completion. **XP is P5 — leave the
         completion record as the seam and build no XP.**
-      - [ ] **doing** — chunk C — routes. **Surface decided (D4.13, to be written at chunk
-        close): a new router `lemely/web/routers/study_plan.py` at `/api/student/study-plan`,
-        student-only** — not an extension of `GET/POST /api/student/plan`. Those two are
-        HistoryStore-backed and ephemeral: they carry no plan id, no session ids, no
-        subject selection, no persistence, and therefore cannot express completion or
-        regeneration at all. Reshaping them in place would silently change the contract
-        `StudyPlan.tsx` consumes today. The legacy pair stays until **P4.10** migrates the
-        screen, then is deleted there.
-        Three routes: `GET /{subject_code}` (envelope `generated` + nullable plan, so
-        "no plan yet this week" / "refused (`no_signal`)" / "real plan" stay three distinct
-        wire states — D4.12 §5's gap), `POST ""` (regenerate → 201), and
-        `POST /sessions/{id}/complete`. Both `StudyPlanNotFoundError` and
-        `StudyPlanOwnershipError` render **404** — the service docstring already committed
-        to it (D4.11's existence-oracle precedent; a plan session is private study material).
-- [ ] todo — **P4.8** Frontend S-01..S-05 (onboarding steps + placement in-progress/results).
+      - [x] chunk C — **done** (`5a28431`, D4.13). `lemely/web/routers/study_plan.py` at
+        `/api/student/study-plan` (student-only at router level) + `schemas_study_plan.py`,
+        wired in `deps.py` (`get_study_plan_service`) and `app.py`. Three routes:
+        `GET /{subject_code}`, `POST ""` (201), `POST /sessions/{id}/complete`. No migration
+        (0012 covers it), **no `web/` diff** so gate 8 was not in play, $0.00 Gemini.
+        **2292 tests / 6 skipped / 0 failed / 90.29% cov** (chunk B baseline 2273 / 90.23%);
+        all 13 gates green, 0 skipped.
+        **D4.12 §5's gap is closed — that is the substance of the chunk.** The envelope
+        (`CurrentStudyPlanDTO {generated, plan}`) makes three states distinguishable that
+        previously all arrived as an empty `sessions` list: *no plan generated this ISO week*
+        (`generated: false`), *generated and honestly refused* (`available: false`,
+        `reason: "no_signal"`), and *a real plan* — which may itself legitimately carry
+        `sessions: []`. **None of the three is a 404**; a 404 on state 1 would have conflated
+        "you have no plan yet" with "no such subject" and with a network failure, and S-24
+        would have had to guess. `activityType` and `date` reach the wire for the first time.
+        Both `StudyPlanNotFoundError` and `StudyPlanOwnershipError` render **404 with a
+        byte-identical body** (D4.11's existence-oracle precedent); a malformed non-UUID
+        session id is **422**, not the 500 a bare `ValueError` would have given.
+        **Found on disk uncommitted from a killed session and verified rather than trusted** —
+        the sixth such handover this phase, and the **first to come back clean on every gate
+        including its own `ruff`/`mypy`** (the five before it reported done with their own gate
+        red). Verification was an independent full `check.sh` run plus reading the tests for
+        vacuity: all 15 carry their inverse, including the two scoping pins D4.13 §3b names
+        (another student's plan invisible / one subject's plan not served under another).
+        Nothing needed fixing, which is worth recording precisely because it is the exception.
+        *(Original chunk-C plan retained in git history of this file; D4.13 carries the full
+        rationale.)*
+- [ ] doing — **P4.8** Frontend S-01..S-05 (onboarding steps + placement in-progress/results).
+      **First `web/` diff of Phase 4 — gate 8 comes back into play** (QUALITY-BAR.md,
+      `/impeccable audit` on changed files, `npx impeccable detect` clean, axe zero
+      serious/critical, Lighthouse a11y ≥ 95, screenshots per screen × state × breakpoint).
+      Backends this composes, all landed and route-tested: `/api/me` onboarding (P4.3),
+      `/api/student/placement/*` (P4.4 chunk B-4), and the **existing**
+      `/api/student/quizzes/...` take/resume/submit path placement deliberately reuses.
+      **Honesty states that must reach the screen, not be designed away:** placement
+      availability is a real `not available` + machine-readable `reason` for 0580/0606
+      (they have zero ingested questions — D4.6 §5, not a gap to code around), and every
+      S-02 questionnaire field is skippable, where a skipped answer is `NULL` and must not
+      render as an answer the student gave (D4.5).
 - [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
       current placeholder `StudyPlan.tsx`.
