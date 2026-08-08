@@ -3506,3 +3506,82 @@ the wire until chunk C decides the DTO. `activityType`/`date` are likewise not y
 `hours` is a unit conversion of `duration_minutes`.
 
 Gemini spend: **$0.00**.
+
+---
+
+## D4.13 — The study plan gets its own surface, and "no plan yet" stops looking like "no plan possible" (P4.7 chunk C)
+
+### 1. A new router, not an extension of `/api/student/plan`
+
+`GET`/`POST /api/student/plan` (`routers/student.py`) were the obvious place to put this and
+are the wrong one. They are HistoryStore-backed and **ephemeral**: they rebuild a plan from
+scratch on every request and carry no plan id, no session ids, no subject selection, and no
+persistence. Completion and weekly regeneration — the two things chunk B exists to provide —
+are not expressible in that shape at all. Reshaping them in place would have silently changed
+the contract `web/src/portals/student/screens/StudyPlan.tsx` consumes *today*, in a phase whose
+frontend work (P4.10) has not started.
+
+So: `lemely/web/routers/study_plan.py` at `/api/student/study-plan`, student-only at the router
+level, with `lemely/web/schemas_study_plan.py` for its DTOs — the same "thin router, own DTOs,
+don't grow `student.py`" shape `placement.py` and `flashcards.py` already set. **The legacy pair
+stays untouched and is deleted in P4.10**, when the screen migrates. That ordering is the
+reversible one: two surfaces briefly, rather than a broken screen for two tasks.
+
+### 2. The three states, which is the whole point of the chunk
+
+D4.12 §5 recorded the gap it left: `StudyPlanDTO` had no `available`/`reason`, so chunk A's
+honest `no_signal` refusal and a real-but-empty week both reached the frontend as an empty
+`sessions` list. Persisting the plan (chunk B) added a **third** state on top of those two, and
+all three are things a student is owed a different screen for:
+
+| wire | means | S-24 shows |
+|---|---|---|
+| `{"generated": false, "plan": null}` | no plan generated for this ISO week | route to placement/questionnaire |
+| `generated: true`, `plan.available: false`, `reason: "no_signal"` | a plan was generated and honestly refused | why there is nothing to schedule |
+| `generated: true`, `plan.available: true` | a real plan (possibly `sessions: []`) | the week |
+
+The envelope (`CurrentStudyPlanDTO { generated, plan }`) exists so state 1 does not have to be
+a 404. A 404 would have conflated "you have no plan this week" with "that subject does not
+exist" and with an ordinary network failure, and the frontend would have had to guess. **"No
+plan yet" is a successful answer to a reasonable question**, so it gets a 200.
+
+`activityType` and `date` reach the wire here for the first time (D4.12 §5 named both as
+missing). S-24 requires subject, topic, activity type and duration per session; without those
+two fields the screen could only have rendered the same vague advice the old scheduler emitted.
+
+### 3. Both service errors render 404, and both are still tested
+
+`StudyPlanNotFoundError` and `StudyPlanOwnershipError` become a **404 with a byte-identical
+body**. A study plan belongs to exactly one student and no teacher-visibility story exists in
+this phase, so a 403 on someone else's session id would be an existence oracle over private
+study material for anyone willing to enumerate UUIDs — D4.11's flashcard-deck reasoning,
+applied to the same shape of object. The service keeps raising both typed errors and both are
+still asserted; only the HTTP rendering is flattened. The test asserts a real other-student id
+and a random UUID return identical bodies, then **inverts it** (the owner gets 200 on that same
+id) so the 404 is proven to be a guard rather than a broken route.
+
+A malformed (non-UUID) `session_id` is a **422**, not the 500 `_as_uuid`'s bare `ValueError`
+would otherwise have produced.
+
+### 3b. Two isolation properties pinned that the handover left unpinned
+
+The completion route's 404 was tested; the **read** route's scoping was not. Both properties
+below hold structurally today — `get_current` is passed `auth.user_id` and the path's
+`subject_code`, never a caller-supplied id — so these are regression pins, not bug fixes, and
+each carries its inverse so it cannot pass vacuously:
+
+- `test_another_students_plan_is_invisible` — the guard that matters if a later phase adds a
+  "view this student's plan" selector for teachers and threads it through this route. A plan is
+  private study material and P4 has no teacher-visibility story for it.
+- `test_a_plan_for_one_subject_is_not_returned_for_another` — the path segment **selects** the
+  plan rather than decorating the URL. A student holds one plan per subject per week, and
+  serving the physics plan under `/0580` would schedule maths study against physics weaknesses
+  — wrong in a way an empty-plan bug is not, because it looks entirely plausible on screen.
+
+### 4. What this does not do
+
+No migration (0012 covers it), no `web/` diff, no narration — the AI narrator stays on the
+legacy route and is P4.10's call, because `PlanView` persists no narrative and inventing a
+column for one at route level would have put a Gemini call behind a GET.
+
+Gemini spend: **$0.00**.

@@ -45,6 +45,7 @@ from lemely.db.review_repo import ReviewService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
+from lemely.db.study_plan_repo import StudyPlanService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
@@ -317,6 +318,20 @@ def get_practice_service() -> PracticeService:
     this dependency with a service built on a throwaway Postgres database.
     """
     return PracticeService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_study_plan_service() -> StudyPlanService:
+    """Return the process-wide :class:`StudyPlanService` singleton (P4.7 chunk C).
+
+    Wired with the DB session factory alone, mirroring
+    :func:`get_placement_service`/:func:`get_practice_service` — every
+    signal the service reads (weakness, placement, confidence, bank/deck
+    availability) lives in the same database, and nothing on this path calls
+    Gemini. Tests override this dependency with a service built on a
+    throwaway Postgres database.
+    """
+    return StudyPlanService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
