@@ -29,6 +29,7 @@ from scripts.seed_e2e import (
     DECLINING_SCORES,
     INACTIVE_SCORE,
     PLACEMENT_MCQ_ANSWER,
+    PLACEMENT_PAPER_NUMBER,
     PLACEMENT_QUESTION_MARKS,
     PLACEMENT_QUESTIONS_PER_TOPIC,
     PLACEMENT_SUBJECT_CODE,
@@ -52,6 +53,7 @@ from scripts.seed_e2e import (
     declining_recorded_ats,
     default_run_tag,
     inactive_recorded_at,
+    is_placement_seed_prompt,
     paper_record_for_scenario,
     wrong_mcq_answer,
 )
@@ -320,8 +322,58 @@ class TestBuildPlacementPaperStem:
         stem = build_placement_paper_stem("abcdef123456")
         meta = parse_caie_qp_filename_metadata(f"{stem}.pdf")
         assert meta.subject_code == "0625"
-        assert meta.paper_number == 4
+        assert meta.paper_number == PLACEMENT_PAPER_NUMBER
         assert meta.paper_variant == 1
+
+    def test_the_stem_resolves_to_the_pinned_paper_number(self) -> None:
+        """The stem, the enrolment pin and the reported ``paperNumber`` must
+        all be the same paper, or the eligible pool stops being this seed's own
+        rows — the exact drift ``PLACEMENT_PAPER_NUMBER``'s note describes.
+        """
+        from lemely.io.metadata import parse_caie_qp_filename_metadata
+
+        meta = parse_caie_qp_filename_metadata(f"{build_placement_paper_stem('tag1')}.pdf")
+        assert meta.paper_number == PLACEMENT_PAPER_NUMBER
+
+    def test_the_pinned_paper_is_a_real_non_practical_timed_paper(self) -> None:
+        """Placement excludes practical papers, so pinning to one would empty
+        the pool and turn S-03 into a permanent (and wrong) ``no_questions``.
+        """
+        from lemely.io.paper_timing import get_paper_timings
+
+        timings = get_paper_timings(PLACEMENT_SUBJECT_CODE)
+        assert PLACEMENT_PAPER_NUMBER in timings
+
+
+class TestIsPlacementSeedPrompt:
+    def test_recognises_every_authored_row(self) -> None:
+        for row in build_placement_bank_questions("tag1"):
+            assert is_placement_seed_prompt(row.prompt)
+
+    def test_recognises_another_runs_rows_too(self) -> None:
+        """Earlier runs' rows stay in the bank (no teardown) and are
+        legitimately in the eligible pool, so the guard must accept them —
+        rejecting them would fail the seed on its own second run.
+        """
+        for row in build_placement_bank_questions("f6e5d4c3b2a1"):
+            assert is_placement_seed_prompt(row.prompt)
+
+    def test_rejects_a_real_corpus_prompt(self) -> None:
+        """The inverse, and the failure actually worth catching: a real
+        past-paper stem carries no marker, so :func:`seed` raises instead of
+        answering it — the measured defect (a billed Gemini call per drawn
+        theory question, and a 6/16 S-05 baseline built out of noise).
+        """
+        assert not is_placement_seed_prompt(
+            "A cyclist travels 120 m in 15 s. Calculate the average speed."
+        )
+
+    def test_rejects_the_teacher_authored_quiz_bank_prompts(self) -> None:
+        """The other rows this same script inserts must not be mistaken for
+        placement rows — they are a different fixture with different answers.
+        """
+        for row in build_quiz_bank_questions(_TEACHER_ID):
+            assert not is_placement_seed_prompt(row.prompt)
 
 
 class TestBuildPlacementBankQuestions:
@@ -477,7 +529,7 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
         "empty_parent": {"userId": "ep1", "phone": "+201000000001"},
         "placement": {
             "subjectCode": "0625",
-            "paperNumber": 4,
+            "paperNumber": 2,
             "bankQuestionCount": 24,
             "students": {
                 "unonboarded": {"userId": "pu1"},
@@ -530,7 +582,7 @@ class TestBuildResultPayload:
             "emptyParent": {"userId": "ep1", "phone": "+201000000001"},
             "placement": {
                 "subjectCode": "0625",
-                "paperNumber": 4,
+                "paperNumber": 2,
                 "bankQuestionCount": 24,
                 "students": {
                     "unonboarded": {"userId": "pu1"},

@@ -123,17 +123,17 @@ path::
       "emptyParent": {"userId": "...", "phone": "+20...", "accessToken": "..."},
       "placement": {
         "subjectCode": "0625",
-        "paperNumber": 4,
+        "paperNumber": 2,
         "bankQuestionCount": 24,
         "students": {
           "unonboarded": {"userId": "...", "email": "...", "password": "...",
                           "displayName": "...", "accessToken": "..."},
           "available":   {..., },
           "inProgress":  {..., "quizId": "...", "assignmentId": "...",
-                          "questionCount": 8},
+                          "questionCount": 7},
           "completed":   {..., "quizId": "...", "assignmentId": "...",
-                          "submissionId": "...", "awardedMarks": 14,
-                          "maximumMarks": 16}
+                          "submissionId": "...", "awardedMarks": 12,
+                          "maximumMarks": 14}
         }
       }
     }
@@ -171,6 +171,25 @@ meant to show it available:
   the unmodified quiz-taking/marking repos: S-05 has a real
   ``awardedMarks``/``maximumMarks`` produced by the marking engine, never a
   hand-inserted mark.
+
+All three onboarded accounts have their ``student_enrolment_papers`` pinned to
+0625 **Paper 2**, which is what keeps the assembled placement drawn purely from
+this seed's own 24 synthetic MCQ rows. That is load-bearing, not cosmetic: it
+is what makes the run deterministic, keeps every question on the deterministic
+MCQ marking path, and holds this script's Gemini spend at **$0.00**. See
+:data:`PLACEMENT_PAPER_NUMBER` for the measured failure it fixes, and
+:func:`placement_answer_key` for the per-run guard that re-checks it instead of
+assuming it.
+
+The ``questionCount``/``awardedMarks``/``maximumMarks`` figures shown above are
+the measured result of a real run against the live stack (7 questions x 2 marks,
+one deliberate mistake), not a target. Placement assembles **7** questions here
+rather than the 9-10 the real 0625 corpus yields because Paper 2's transcribed
+rate (45 min / 40 marks) is slower per mark than Paper 4's (75 / 80), so the
+same ~15-minute target buys fewer 2-mark questions. That is above
+``lemely.core.placement.MIN_QUESTIONS`` and spans all four
+:data:`PLACEMENT_TOPICS`; a change that drops it below the floor should be
+treated as a regression in this seed, not as a new baseline to write down.
 
 Usage::
 
@@ -317,17 +336,44 @@ PLACEMENT_TOPICS: list[str] = [
     "4 Electricity and magnetism",
 ]
 
-#: 0625 Paper 4 (Theory, Extended), variant 1 — the exact paper
-#: ``tests/test_placement_repo.py`` uses, whose transcribed rate (75 min / 80
-#: marks, D4.8) is "the measurement that stands". Paper 4 is a real,
-#: non-practical paper carried in ``lemely/data/paper_timing.json`` (Papers
-#: 5/6 are practical and excluded from placement by
+#: 0625 Paper 2 (Multiple Choice, Extended) — a real, non-practical paper
+#: carried in ``lemely/data/paper_timing.json`` (45 min / 40 marks; Papers 5/6
+#: are practical and excluded from placement by
 #: :func:`~lemely.io.paper_timing.get_paper_timings`'s default).
-PLACEMENT_PAPER_NUMBER_VARIANT = "41"
+#:
+#: **Paper 2 is chosen to make this seed hermetic, and that is the whole
+#: point — do not "restore" it to Paper 4.** An earlier revision used Paper 4
+#: (copying ``tests/test_placement_repo.py``'s fixture) and was measured
+#: against the live stack: the assembled placement drew **5 of its 8 questions
+#: from the real ingested 0625 corpus**, not from this seed at all, because
+#: ``PlacementService._load_candidates`` selects every ``source='past_paper'``
+#: row for the subject and this dev database also holds P4.1's 273 real ones.
+#: Two concrete failures followed, both invisible to the suite:
+#:
+#: 1. Three drawn questions were **theory** questions with no ``mcq_answer``,
+#:    so marking routed them to the AI marker — **a live, billed Gemini call
+#:    on every single seed run** (~$0.014 measured, against the hard $8 cap),
+#:    and a hard dependency on a network and an API key in what must be an
+#:    offline-reproducible seeding step.
+#: 2. The uniform :data:`PLACEMENT_MCQ_ANSWER` was simply wrong for the drawn
+#:    corpus questions, so the "one deliberate mistake" student scored
+#:    **6/16 instead of the documented 14/16** and S-05 would have
+#:    screenshotted a near-fail baseline built out of noise, with a weakness
+#:    profile spread across topics the seed never intended to fail.
+#:
+#: Paper 2 has **zero** rows in the real corpus (measured: the ingested 0625
+#: papers are 1, 3, 4, 5 and 6), so pinning both this bank and the seeded
+#: students' ``student_enrolment_papers`` to Paper 2 narrows the eligible pool
+#: to exactly this seed's own MCQ rows. Deterministic, all-MCQ, **$0.00**.
+#: :func:`seed` additionally *verifies* that hermeticity per run rather than
+#: trusting it — see the assembled-pool guard there, which fails loudly the
+#: day someone ingests real Paper 2 questions.
+PLACEMENT_PAPER_NUMBER = 2
+PLACEMENT_PAPER_NUMBER_VARIANT = "21"
 
 
 def build_placement_paper_stem(run_tag: str) -> str:
-    """A per-run CAIE-shaped question-paper filename stem for 0625 Paper 4.
+    """A per-run CAIE-shaped question-paper filename stem for 0625 Paper 2.
 
     Feeding this stem through ``source_question_id`` is what lets
     :meth:`~lemely.db.question_bank_repo.QuestionBankService.link_past_paper_rows`
@@ -338,7 +384,7 @@ def build_placement_paper_stem(run_tag: str) -> str:
     module docstring promises reruns never collide (no teardown, per-run
     namespacing throughout). A *fixed* stem would not honour that: rerunning
     this script inserts the identical 24 ``source_question_id`` values
-    (``"..._qp_41#1"``..``"...#24"``) against the SAME ``papers`` row a first
+    (``"..._qp_21#1"``..``"...#24"``) against the SAME ``papers`` row a first
     run already created (paper identity has no run-tag component of its
     own), tripping ``uq_question_bank_paper_question (paper_id,
     source_question_id)`` on the second run's ``link_past_paper_rows()``
@@ -360,16 +406,28 @@ def build_placement_paper_stem(run_tag: str) -> str:
 #: One 2-mark MCQ per (topic, index) pair, 4 topics x 6 = 24 rows — the exact
 #: per-topic count ``tests/test_placement_repo.py``'s
 #: ``test_availability_true_for_a_viable_0625_bank`` already proves clears
-#: ``assemble``'s 6-question/4-topic floor and lands inside the 12-18 minute
-#: window against Paper 4's rate. Copied rather than re-derived (this
-#: chunk's brief).
+#: ``assemble``'s 6-question/4-topic floor. Copied rather than re-derived
+#: (this chunk's brief).
 PLACEMENT_QUESTIONS_PER_TOPIC = 6
 PLACEMENT_QUESTION_MARKS = 2
 #: Every seeded placement question's correct MCQ answer — uniform, like
 #: :func:`build_quiz_bank_questions`' quiz bank, so :func:`wrong_mcq_answer`
 #: can produce a deliberately-wrong first answer for the "completed" student
 #: (see its use in :func:`seed`) without per-row bookkeeping.
+#:
+#: Uniformity is only safe *because* :data:`PLACEMENT_PAPER_NUMBER` makes the
+#: assembled pool hermetic. :func:`seed` never relies on that assumption
+#: blind: it resolves each served question's expected answer through
+#: :func:`placement_answer_key` and refuses to answer a question this seed
+#: did not author.
 PLACEMENT_MCQ_ANSWER = "B"
+
+#: Embedded verbatim in every seeded placement prompt, and the thing
+#: :func:`is_placement_seed_prompt` recognises. It does double duty: it is the
+#: honesty label a human reading the bank sees (this text is not real CAIE
+#: content), and it is the machine-checkable marker that separates this seed's
+#: rows from the real ingested corpus.
+PLACEMENT_PROMPT_MARKER = "P4.8 chunk C fixture text — not real CAIE content"
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +707,7 @@ def build_placement_bank_questions(run_tag: str) -> list[NewBankQuestion]:
                     question_type="mcq",
                     prompt=(
                         f"Synthetic placement seed item {ref} for topic {topic!r} "
-                        "(P4.8 chunk C fixture text — not real CAIE content)."
+                        f"({PLACEMENT_PROMPT_MARKER})."
                     ),
                     total_marks=PLACEMENT_QUESTION_MARKS,
                     topic=topic,
@@ -660,6 +718,31 @@ def build_placement_bank_questions(run_tag: str) -> list[NewBankQuestion]:
             )
             ref += 1
     return rows
+
+
+def is_placement_seed_prompt(prompt: str) -> bool:
+    """Was this question authored by :func:`build_placement_bank_questions`?
+
+    Pure, and deliberately keyed on ``prompt``: that is the only identifying
+    field of a question which reaches the student-facing take payload —
+    :class:`~lemely.db.quiz_taking_repo.QuizTakeQuestionRow` has no
+    ``mcq_answer`` field at all, so a seed script cannot (and must not) ask the
+    take endpoint what the right answer is. Recognising our own prompt keeps
+    the answer flowing from this module's own data rather than from a
+    privileged read-back.
+
+    **Matches any run's rows, not just the current one, and that is correct.**
+    Prompts carry no run tag, and earlier runs' rows stay in the bank (this
+    script has no teardown), so they are legitimately in the eligible pool and
+    legitimately answerable — every seeded row shares
+    :data:`PLACEMENT_MCQ_ANSWER`. Narrowing this to one run's exact prompts
+    would reject a *previous* run's question, which is not the failure worth
+    catching. The failure worth catching is a **real corpus** question, whose
+    prompt carries no such marker; :func:`seed` treats that as a hard error
+    rather than guessing, because it is exactly what previously spent live
+    Gemini budget and produced a meaningless S-05 baseline.
+    """
+    return PLACEMENT_PROMPT_MARKER in prompt
 
 
 def build_result_payload(
@@ -995,12 +1078,20 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
 
     _log(
         "Onboarding + enrolling in 0625 the three placement accounts that need it — "
-        "placement-unonboarded stays untouched so S-01/S-02 see a genuine first-run state"
+        "placement-unonboarded stays untouched so S-01/S-02 see a genuine first-run state. "
+        f"Papers pinned to [{PLACEMENT_PAPER_NUMBER}] so the eligible pool is this seed's "
+        "own MCQ rows only (see PLACEMENT_PAPER_NUMBER)"
     )
     for account in (placement_available, placement_in_progress, placement_completed):
         account_uuid = uuid.UUID(account["userId"])
         student_profile_service.mark_onboarding_complete(account_uuid)
         student_profile_service.upsert_enrolment(account_uuid, PLACEMENT_SUBJECT_CODE)
+        # D4.9: an empty paper set means "not answered" and imposes NO restriction,
+        # so this call is what actually narrows the pool. Without it the assembled
+        # placement draws from the real ingested corpus too.
+        student_profile_service.set_enrolment_papers(
+            account_uuid, PLACEMENT_SUBJECT_CODE, [PLACEMENT_PAPER_NUMBER]
+        )
 
     _log("Creating (never submitting) placement-in-progress's placement test — S-04")
     in_progress_uuid = uuid.UUID(placement_in_progress["userId"])
@@ -1014,6 +1105,22 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     completed_uuid = uuid.UUID(placement_completed["userId"])
     completed_created = placement_service.create(completed_uuid, PLACEMENT_SUBJECT_CODE)
     take_detail = quiz_taking_service.get_take(completed_uuid, completed_created.assignment_id)
+    foreign = [
+        q.question_ref for q in take_detail.questions if not is_placement_seed_prompt(q.prompt)
+    ]
+    if foreign:
+        # The hermeticity guard PLACEMENT_PAPER_NUMBER's note promises. Answering a
+        # question this seed did not author is what previously (a) billed a live
+        # Gemini call per theory question drawn from the real corpus and (b) scored
+        # the "one deliberate mistake" student 6/16 instead of 14/16. Fail loudly
+        # rather than silently reproduce either.
+        raise RuntimeError(
+            f"Placement assembled {len(foreign)} question(s) this seed did not author "
+            f"({', '.join(foreign)}) — the eligible pool is no longer hermetic. Something "
+            f"has ingested real 0625 Paper {PLACEMENT_PAPER_NUMBER} questions into "
+            "question_bank; see PLACEMENT_PAPER_NUMBER for why that breaks S-05 and costs "
+            "real Gemini budget."
+        )
     for position, question in enumerate(take_detail.questions):
         # First question deliberately wrong, mirroring
         # tests/test_placement_repo.py::test_create_take_submit_mark_end_to_end — a
@@ -1091,7 +1198,9 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     }
     placement_dict = {
         "subjectCode": PLACEMENT_SUBJECT_CODE,
-        "paperNumber": 4,
+        # Derived, never restated: a literal here silently drifted from the constant
+        # that actually drives the paper stem the moment the paper changed.
+        "paperNumber": PLACEMENT_PAPER_NUMBER,
         "bankQuestionCount": len(placement_bank_rows),
         "students": {
             "unonboarded": placement_unonboarded,
