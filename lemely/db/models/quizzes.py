@@ -28,6 +28,7 @@ from lemely.db.models.enums import (
     ExamBoard,
     QuestionDifficulty,
     QuestionSource,
+    QuizKind,
     QuizQuestionStatus,
     QuizStatus,
     QuizSubmissionStatus,
@@ -163,18 +164,48 @@ class Quiz(TimestampMixin, Base):
     """
 
     __tablename__ = "quizzes"
-    __table_args__ = (sa.Index("ix_quizzes_teacher_status", "teacher_id", "status"),)
+    __table_args__ = (
+        sa.Index("ix_quizzes_teacher_status", "teacher_id", "status"),
+        sa.Index("ix_quizzes_student_kind", "student_id", "kind", sa.text("created_at DESC")),
+        sa.CheckConstraint(
+            "(teacher_id IS NULL) <> (student_id IS NULL)",
+            name="ck_quizzes_owner_xor",
+        ),
+        sa.CheckConstraint(
+            "(kind = 'teacher') = (teacher_id IS NOT NULL)",
+            name="ck_quizzes_kind_owner",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=sa.text("gen_random_uuid()"),
     )
-    teacher_id: Mapped[uuid.UUID] = mapped_column(
+    teacher_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
+    """NULL for a platform-assembled, student-owned quiz (D4.6 §1). Exactly one
+    of ``teacher_id``/``student_id`` is set — a database invariant
+    (``ck_quizzes_owner_xor``), not a convention."""
+    student_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    """The owning student for a placement/practice/study-plan quiz; NULL for a
+    teacher-built one. A typed FK rather than a polymorphic ``owner_id`` so
+    ``ON DELETE CASCADE`` still applies — see D4.6 §1."""
+    kind: Mapped[QuizKind] = mapped_column(
+        sa.Enum(QuizKind, name="quizkind"),
+        nullable=False,
+        server_default=sa.text("'teacher'::quizkind"),
+    )
+    """A **label**, never a tenancy filter. Queries scope on the owner
+    predicate; ``kind`` may only narrow an already-owner-scoped query, and only
+    as a positive allowlist (D4.6 §3)."""
     school_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("schools.id", ondelete="SET NULL"),
@@ -307,6 +338,18 @@ class QuizAssignment(TimestampMixin, Base):
     __table_args__ = (
         sa.Index("uq_quiz_assignments", "quiz_id", "class_id", unique=True),
         sa.Index("ix_quiz_assignments_class", "class_id", "assigned_at"),
+        sa.Index(
+            "uq_quiz_assignments_student",
+            "quiz_id",
+            "student_id",
+            unique=True,
+            postgresql_where=sa.text("student_id IS NOT NULL"),
+        ),
+        sa.Index("ix_quiz_assignments_student", "student_id", sa.text("assigned_at DESC")),
+        sa.CheckConstraint(
+            "(class_id IS NULL) <> (student_id IS NULL)",
+            name="ck_quiz_assignments_target_xor",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -319,11 +362,19 @@ class QuizAssignment(TimestampMixin, Base):
         sa.ForeignKey("quizzes.id", ondelete="CASCADE"),
         nullable=False,
     )
-    class_id: Mapped[uuid.UUID] = mapped_column(
+    class_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("classes.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
+    """NULL for a self-assigned, student-targeted quiz (D4.6 §1)."""
+    student_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    """The single targeted student; NULL for a class assignment. Exactly one of
+    ``class_id``/``student_id`` is set (``ck_quiz_assignments_target_xor``)."""
     assigned_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("users.id"),

@@ -180,6 +180,28 @@ class XpSource(enum.Enum):
     study_session_completed = "study_session_completed"
 
 
+class QuizKind(enum.Enum):
+    """What a ``quizzes`` row *is*, and therefore which owner column it uses (D4.6 §1).
+
+    ``teacher`` is the P3.5 quiz a teacher builds and assigns to a class; the
+    other three are platform-assembled and owned by the student they were
+    assembled for. ``ck_quizzes_kind_owner`` ties the two together in the
+    database: ``kind = 'teacher'`` exactly when ``teacher_id`` is set.
+
+    **This is a label, not a tenancy filter** (D4.6 §3). Every query scopes on
+    an owner/target predicate — ``teacher_id = :caller``, ``class_id IN
+    (:enrolled)``, ``student_id = :caller``. ``kind`` may only *narrow* a
+    query that is already owner-scoped, and only as a positive allowlist
+    (``kind IN (...)``): ``kind != 'teacher'`` fails open the day a fifth kind
+    is added.
+    """
+
+    teacher = "teacher"
+    placement = "placement"
+    practice = "practice"
+    study_plan = "study_plan"
+
+
 class QuizStatus(enum.Enum):
     """Lifecycle state of a teacher-built quiz (P3.5, ``docs/quiz-model.md`` §1.1).
 
@@ -303,6 +325,7 @@ __all__ = [
     "QualificationLevel",
     "QuestionDifficulty",
     "QuestionSource",
+    "QuizKind",
     "QuizQuestionStatus",
     "QuizStatus",
     "QuizSubmissionStatus",

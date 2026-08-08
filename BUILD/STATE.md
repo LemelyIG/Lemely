@@ -227,10 +227,26 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         population is the 809 non-MCQ nodes and the fill reaches **52.9%** of them. Each rule
         verified by inversion. 5 new tests + the 4 already written; 21/21 in
         `tests/test_attempt_repo.py`.
-      - chunk B — *blocked on D4.6* — placement assembly/serve/resume/submit. The fork the
-        architect is deciding: `Quiz.teacher_id` and `QuizAssignment.class_id` are both
-        **NOT NULL**, but a placement test has no teacher and no class. MISSION forbids forking
-        the quiz engine; D1.2/D1.3 forbid non-additive schema change. One of the two gives.
+      - chunk B — *doing* — placement assembly/serve/resume/submit, per D4.6. **Unblocked:**
+        the schema fork is decided and **B-1 (the schema half) is landed** — migration
+        **0010**, `QuizKind` enum, `quizzes.student_id` + `kind`, `quiz_assignments.student_id`,
+        both XOR CHECKs, `ck_quizzes_kind_owner`, and the partial unique index. `alembic check`
+        clean **both** directions. `tests/test_placement_quiz_ownership.py` (8 tests) pins the
+        DB invariants *and* the D4.6 §3 fail-closed reads (a placement quiz is invisible to
+        `list_quizzes`, 403s on `get_quiz`, and is absent from `list_assigned`).
+        **Making `teacher_id` nullable produced exactly 5 mypy errors, all on teacher-scoped
+        paths D4.6 §3 predicted** — fixed with explicit narrowing, not casts: `list_assignments`
+        now positively skips student-targeted rows, `assignment_results` 404s a self-assignment
+        (no probe leak), `_to_quiz_row` raises on a NULL teacher owner as an invariant.
+        **Still to do in chunk B (B-2):** the two `quiz_taking_repo` sites D4.6 §3 named —
+        `_load_enrolled`→`_load_permitted` and `get_take`'s unconditional
+        `session.get(SchoolClass, …)`/`session.get(User, …)`, which now receive `None`; plus
+        `QuizTakeHeader.class_name`/`.teacher_name` and the same two on `AssignedQuizRow`
+        becoming `str | None` (S-04 must *render the absence*, not `_display_name`'s empty
+        string). Then assembly/serve/resume/submit and the availability endpoint.
+        **Do not re-derive the availability answer:** 0625 only; 0580/0606 have zero ingested
+        questions, so the honest `not available` path with a machine-readable `reason` is
+        required behaviour, not a gap to code around (D4.6 §5).
       - Assembly constraint already known, do not re-measure: the 0625 bank is 273 rows / 211
         topic-labelled (D4.4), and **0580/0606 have zero ingested questions** — placement is
         un-assemblable for two of three subjects and needs an honest "not available" path.
