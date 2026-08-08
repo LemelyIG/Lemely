@@ -3321,3 +3321,101 @@ good practice *material*. The two services filter differently on purpose.
 **Process note.** The implementing subagent reported done with `ruff format` failing on two
 of its own files; the orchestrator's own gate run caught it. MISSION §5's "verify their
 output yourself — never trust a subagent's claim of success" earned its place again.
+
+---
+
+## D4.11 — Flashcards: an AI card stays an AI card, a private deck denies its own existence, and "nothing due" is a state with information in it (P4.6 chunks B/C)
+
+Closes P4.6. Chunk A (migration 0011 + the pure clock-injected SM-2 scheduler) is recorded
+in STATE; this covers the service, the AI generator, and the routes.
+
+### 1. Three honesty rules, and where each is actually enforced
+
+The chunk plan named three non-negotiables. Stating them in a docstring is not enforcement,
+so each lives in a place where violating it requires a deliberate, visible act:
+
+1. **An AI card stays distinguishable for its whole life.** `edit_card` has **no `source`
+   parameter** — not a validated one, not an ignored one. There is no code path that
+   relabels. On the wire this is stronger still: `ApiModel` is `extra="forbid"`, so a
+   `PATCH` body carrying `"source": "manual"` is a **422**, not a body the server quietly
+   drops. A test pins both halves, because "silently ignored" and "rejected" look identical
+   to a passing assertion that only checks the stored value.
+   `CardDTO.source` is also on the wire for every read: the rule is worth nothing if the
+   screen rendering the card cannot tell which kind it is.
+2. **A weakness deck records the topic it targeted.** `origin='weakness'` resolves the
+   student's own top net-lost-marks `WeaknessRecord` topic (ties broken alphabetically, so
+   the choice is deterministic rather than whatever the query planner returned) and
+   **rejects a caller-supplied topic** rather than ignoring it — accepting one would let a
+   caller label a deck with a topic the weakness engine never flagged, which is the same
+   laundering D4.4 refused when it discarded the 34 `low`-band classifications.
+3. **No weakness rows is an honest refusal.** `no_weaknesses`, reusing **P4.5's exact
+   string** so practice and flashcards speak one machine-readable vocabulary rather than two
+   a frontend would have to reconcile. Verified there is no husk deck left behind.
+   Generation reports `generatedCount` beside `requestedCount` and never pads a short model
+   response.
+
+### 2. Another student's deck id is a 404, not a 403 — a deliberate divergence from P4.5
+
+`practice.py` renders someone else's practice assignment as **403**. This router renders
+someone else's deck as **404**, identical in body to an id that never existed.
+
+The service still raises two distinct typed errors (`FlashcardNotFoundError` vs
+`FlashcardOwnershipError`) and both are still tested — only the HTTP rendering is flattened.
+The reason for the divergence is what the object *is*: a practice assignment is quiz-shaped
+and a teacher may legitimately hold a reference to one, so 403 is informative. A deck exists
+for exactly one owner, so a 403 answers "does this id exist?" for anyone willing to
+enumerate — an existence oracle over another student's private study material, bought for
+nothing. The test asserts the real deck id and a random UUID return **byte-identical**
+bodies, and inverts it (the owner still gets 200) so the 404 is proven to be about identity
+rather than absence.
+
+### 3. `due_session` exists because an empty list is not a state
+
+The chunk plan required S-22's "nothing due today" to carry the next due date. `list_due_cards`
+could only return a list, so a new `due_session` returns `cards` + `total_due` + `next_due_at`.
+Two things it deliberately does **not** do:
+
+- `total_due` is the **real backlog, unaffected by `limit`** — a capped session reporting its
+  own cap as the whole backlog is invented precision (spec §1.4), and pinned by a test that
+  requests 2 of 4.
+- `next_due_at` is `None` when the student owns no cards *or* when everything they own is
+  already due. The second case is not a gap: `cards` is non-empty there, so the screen has
+  something better to say than a date.
+
+### 4. `delete_deck` was missing from the chunk-B handover
+
+`generate_deck` can put a deck a student never asked for in front of them. Without deck
+deletion the only remedy was deleting cards one at a time and keeping the empty husk. Added,
+with the cascade proven at **both** levels (ORM `delete-orphan` and DB `ON DELETE CASCADE`)
+by asserting the card row is actually gone — an ownership check that passes while orphan
+rows survive is a leak, not a delete.
+
+### 5. Two unguarded inputs the orchestrator's own read caught, not the subagent's report
+
+Both were on the wire in the chunk-C handover, both reachable by any authenticated student,
+and neither was covered by the 20 route tests:
+
+1. **`GET /due?limit=-1` was a 500.** `limit` reached SQL as a bare `LIMIT` and Postgres
+   rejects a negative one with an error. Now `Query(ge=1)`, so a plainly malformed request
+   is a 422 at the boundary.
+2. **`POST /decks/generate` took an unbounded `count`** and passed it straight to
+   `FlashcardGenerator.generate` — the size of a **billed** Gemini request, against
+   MISSION §8's hard $8 ceiling, chosen by the caller with no cap anywhere downstream.
+   Now `Field(ge=1, le=50)`. The 50 is a deck-sized ceiling, not a spend calculation; the
+   point is that an arbitrary caller-supplied number cannot reach the model at all.
+
+The `count` test asserts on the **generator mock**, not only the status code — a 422 that
+still called the model would have spent real money before rejecting the request, and a
+status-code-only assertion cannot tell those apart. Both tests carry their inverse
+(`count=50` → 201 and the generator *is* called; `limit=1` → 200).
+
+### 6. Process
+
+The chunk-B implementation was found **already on disk, uncommitted**, from a session that
+died mid-task. Its tests passed and `ruff` was **red on 8 findings** — the identical pattern
+P4.5 hit one task earlier. The handover's word is not evidence; the orchestrator's own gate
+run is. Worth repeating because the failure mode is silent: a killed session leaves work that
+*looks* finished.
+
+Gemini spend for the whole task: **$0.00** — the generator is mocked in every test and no
+live call was made.

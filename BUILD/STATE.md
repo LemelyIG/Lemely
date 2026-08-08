@@ -384,7 +384,33 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         distinguishable from a student's own card for its whole life; a weakness-generated deck
         records which topic it targeted; and "no weakness rows" is an honest refusal
         (`no_weaknesses`) exactly as P4.5 does it, never a silently empty deck.
-      - [ ] chunk C — `lemely/web/routers/flashcards.py` + `schemas_flashcards.py`, student-only
+      - [x] chunk C — **done** (D4.11) — `lemely/web/routers/flashcards.py` +
+        `schemas_flashcards.py`, wired in `deps.py` (`get_flashcard_service`, the only P4
+        service wired with a Gemini client) and `app.py`. Ten routes under
+        `/api/student/flashcards`, student-only at the router level. No migration, no `web/`
+        diff, $0.00 Gemini. 20 route tests + 47 across the P4.6 suite.
+        **Two decisions worth not re-deriving (full text D4.11):**
+        1. **Another student's deck is a 404 here, not P4.5's 403** — a deck exists for
+           exactly one owner, so a 403 is an existence oracle over private study material.
+           The service still raises both typed errors and both are still tested; only the
+           HTTP rendering is flattened. The test asserts the real id and a random UUID return
+           **byte-identical** bodies, then inverts it (owner gets 200).
+        2. **`due_session` had to be added to the service** — the chunk plan requires S-22's
+           "nothing due" to carry the next due date and `list_due_cards` could only return a
+           list. `total_due` is the real backlog **regardless of `limit`**; a capped session
+           reporting its cap as the whole backlog is invented precision.
+        **The AI-relabel guard is stronger on the wire than in the service:** `ApiModel` is
+        `extra="forbid"`, so `PATCH {"source": "manual"}` is a **422**, not a body silently
+        dropped. Both halves pinned — "ignored" and "rejected" look identical to a test that
+        only checks the stored value.
+        **Two unguarded inputs the orchestrator found by reading the handover, not from its
+        report (D4.11 §5) — do not re-derive:** `GET /due?limit=-1` was a **500** (a bare SQL
+        `LIMIT`, which Postgres rejects when negative) → `Query(ge=1)`; and
+        `POST /decks/generate` took an **unbounded `count` straight to a billed Gemini call**
+        against the $8 ceiling → `Field(ge=1, le=50)`. The count test asserts on the
+        **generator mock**, because a 422 that still called the model would already have spent
+        the money. 22 route tests now.
+      - [ ] chunk C (original plan, kept for the rationale) — `lemely/web/routers/flashcards.py` + `schemas_flashcards.py`, student-only
         and **owner-scoped on every read and write** (decks are per-student; a deck id from another
         student must 404, not 403-after-probe). S-22's "nothing due today" is a real state carrying
         the next due date, not an empty list.

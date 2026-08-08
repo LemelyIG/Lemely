@@ -15,6 +15,7 @@ from lemely.web.routers import (
     announcements,
     auth,
     classes,
+    flashcards,
     me,
     meta,
     parent,
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(quiz.student_router)
     app.include_router(placement.router)
     app.include_router(practice.router)
+    app.include_router(flashcards.router)
     app.include_router(student.router)
     app.include_router(school.router)
     app.include_router(parent.router)

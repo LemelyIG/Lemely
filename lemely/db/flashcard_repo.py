@@ -175,6 +175,21 @@ class DeckDetail:
 
 
 @dataclass(frozen=True, slots=True)
+class DueSession:
+    """One review session's worth of due cards (S-22/S-23).
+
+    ``total_due`` is the real backlog size regardless of any ``limit`` the
+    caller applied, and ``next_due_at`` is when the *next* card comes due —
+    both exist so "nothing due today" can be an informative state rather than
+    an empty list.
+    """
+
+    cards: list[CardView]
+    total_due: int
+    next_due_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
 class GeneratedDeckResult:
     """Outcome of :meth:`FlashcardService.generate_deck`."""
 
@@ -456,6 +471,51 @@ class FlashcardService:
                 stmt = stmt.limit(limit)
             cards = session.scalars(stmt).all()
             return [self._to_card_view(c) for c in cards]
+
+    def due_session(
+        self,
+        student_id: uuid.UUID | str,
+        *,
+        subject_code: str | None = None,
+        limit: int | None = None,
+    ) -> DueSession:
+        """A review session: the due cards, the true due total, and the next due time.
+
+        S-23 serves ``cards``; S-22's "nothing due today" is a **real state
+        that carries information**, not an empty list — so this returns
+        ``next_due_at``, the earliest future due time among the caller's
+        remaining cards, letting the screen say *when* rather than just
+        *nothing*. It is ``None`` in the two cases that genuinely differ from
+        "come back later": the student owns no cards at all, or every card
+        they own is already due (in which case ``cards`` is non-empty anyway).
+
+        ``total_due`` is the real count of due cards, unaffected by ``limit``
+        — a capped session must not report its cap as the whole backlog
+        (spec §1.4).
+        """
+        student_uuid = _as_uuid(student_id)
+        moment = self._now()
+        cards = self.list_due_cards(student_id, subject_code=subject_code, limit=limit)
+        with self._sessionmaker() as session:
+            due_filter = (FlashcardDeck.user_id == student_uuid, Flashcard.due_at <= moment)
+            total_stmt = (
+                select(func.count())
+                .select_from(Flashcard)
+                .join(FlashcardDeck, FlashcardDeck.id == Flashcard.deck_id)
+                .where(*due_filter)
+            )
+            next_stmt = (
+                select(func.min(Flashcard.due_at))
+                .select_from(Flashcard)
+                .join(FlashcardDeck, FlashcardDeck.id == Flashcard.deck_id)
+                .where(FlashcardDeck.user_id == student_uuid, Flashcard.due_at > moment)
+            )
+            if subject_code is not None:
+                total_stmt = total_stmt.where(FlashcardDeck.subject_code == subject_code)
+                next_stmt = next_stmt.where(FlashcardDeck.subject_code == subject_code)
+            total_due = session.scalar(total_stmt) or 0
+            next_due_at = session.scalar(next_stmt)
+        return DueSession(cards=cards, total_due=int(total_due), next_due_at=next_due_at)
 
     # -- Card mutation ------------------------------------------------------------
 
@@ -778,6 +838,7 @@ __all__ = [
     "CardView",
     "DeckDetail",
     "DeckSummary",
+    "DueSession",
     "FlashcardError",
     "FlashcardGenerationUnavailableError",
     "FlashcardNotFoundError",

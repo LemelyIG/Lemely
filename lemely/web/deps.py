@@ -29,6 +29,7 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
+from lemely.db.flashcard_repo import FlashcardService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
@@ -45,6 +46,7 @@ from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.storage import HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
@@ -315,6 +317,25 @@ def get_practice_service() -> PracticeService:
     this dependency with a service built on a throwaway Postgres database.
     """
     return PracticeService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_flashcard_service() -> FlashcardService:
+    """Return the process-wide :class:`FlashcardService` singleton (P4.6 chunk C).
+
+    Wired with the DB session factory **and** the process-wide
+    :class:`~lemely.io.gemini.GeminiClient` via a
+    :class:`~lemely.io.flashcard_generation.FlashcardGenerator` — unlike
+    :func:`get_practice_service`, this service has one method
+    (``generate_deck``) that calls the model. The generator is a constructor
+    argument rather than something the service builds, so tests override this
+    dependency with a throwaway Postgres database and a stubbed generator and
+    never make a billed call (MISSION §8; D4.3's suite-wide guard would raise
+    if they tried).
+    """
+    return FlashcardService(
+        get_sessionmaker(get_settings()), FlashcardGenerator(get_gemini_client())
+    )
 
 
 @lru_cache(maxsize=1)
