@@ -13,6 +13,7 @@ import {
   mergeAnswers,
   quizAffiliationLabel,
   readCachedAnswers,
+  refsToRetry,
   remainingSeconds,
   seedAnswers,
   writeCachedAnswers,
@@ -342,5 +343,33 @@ describe("buildRetrySavePayload — resend both fields, the cache's known-true s
   it("a field genuinely never touched (still null) is resent as null, not omitted", () => {
     const payload = buildRetrySavePayload({ answerText: "42", workingText: null })
     expect(payload).toEqual({ answerText: "42", workingText: null })
+  })
+})
+
+describe("refsToRetry — resend the stranded, never duplicate the in-flight", () => {
+  const cached = {
+    q1: { answerText: "a", workingText: null, dirty: true },
+    q2: { answerText: "b", workingText: null, dirty: true },
+    q3: { answerText: "c", workingText: null, dirty: false },
+  }
+
+  it("returns dirty refs that are not already being saved", () => {
+    expect(refsToRetry(cached, new Set(["q2"]))).toEqual(["q1"])
+  })
+
+  it("inverse: with nothing in flight, every dirty ref is retried", () => {
+    expect(refsToRetry(cached, new Set())).toEqual(["q1", "q2"])
+  })
+
+  it("a clean ref is never retried even when nothing is in flight", () => {
+    expect(refsToRetry(cached, new Set())).not.toContain("q3")
+  })
+
+  it("every dirty ref in flight yields nothing to retry — no duplicate PUT", () => {
+    expect(refsToRetry(cached, new Set(["q1", "q2"]))).toEqual([])
+  })
+
+  it("no cache at all yields an empty list, not a crash", () => {
+    expect(refsToRetry(null, new Set(["q1"]))).toEqual([])
   })
 })

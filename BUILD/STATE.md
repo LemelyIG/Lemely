@@ -623,8 +623,46 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         `Onboarding.tsx`, whose own docstring says "there is no multi-step wizard backend yet" —
         there is now. Whether the legacy `POST /api/student/onboarding` route and
         `usePostOnboarding` die here or in P4.11 is a chunk-A decision to record, not assume.
-      - [ ] doing — chunk B (started 2026-08-09). **Code is on disk, uncommitted, gates not yet
-        run by the orchestrator.** New: `web/src/lib/placementTypes.ts`,
+      - [ ] doing — chunk B (started 2026-08-09; resumed 2026-08-09 by a fresh session).
+        **The gaps the previous session recorded below are now closed and the extraction it
+        described is on disk**: `placementData.ts` carries `placementInviteView`/
+        `placementResultView` (both screens switch on the discriminated union rather than
+        re-deriving in JSX) and `quizTakerData.ts` carries the injected-storage answer cache.
+        66 unit tests green across the two files, `marked:false`, `spansMultipleBands:false`,
+        `topic:null` and the reload-merge all pinned with their inverses.
+        **Three real defects the orchestrator found by reading the wiring, not from any report
+        — do not re-derive:**
+        1. **The reconnect-retry effect resent every dirty answer on every render.** `doSave`
+           depended on the whole `saveAnswer` object, and react-query returns
+           `{ ...result, mutate }` — a **fresh object every render** (verified in the installed
+           `node_modules/@tanstack/react-query/build/modern/useMutation.js`, where only `mutate`
+           is `useCallback`-stable). So `doSave`'s identity changed every render, the effect's
+           `[online, doSave]` deps re-fired every render, and every dirty answer was resent.
+           With the 1s elapsed-time ticker already forcing a render a second, that was **a
+           duplicate PUT per dirty answer per second on the ordinary typing path**, not just
+           after a reconnect. Fixed by depending on the stable `saveAnswer.mutate`.
+        2. **A restored-from-cache dirty answer was never resent after a reload.** The whole
+           point of the reload-merge is that an edit which failed to save survives; it came
+           back into the UI but stayed local, because the retry effect keyed only on `online`
+           and `data` is undefined on first mount (the take query is still loading), so the
+           seed never triggered it. Fixed with a `seedVersion` bump in the deps.
+        3. **Submit did not flush unsaved answers.** A student who types and hits submit inside
+           the 600ms debounce had that edit sitting in a timer nothing fired — **the answer
+           exists on screen and on the device while the paper is marked without it**, and an
+           online save failure had no other resend trigger before submit. Same
+           confidently-wrong shape as D3.21. `flushPendingSaves` now awaits every dirty answer
+           and **blocks the submit on failure** rather than submitting a script that is not the
+           one the student wrote.
+        Plus one honesty fix: the save-error text promised "we'll retry automatically" while
+        online, which nothing did; it now states what is actually guaranteed (kept on this
+        device, resent before submit) — true only *because* fix 3 exists.
+        New pure `refsToRetry(cached, inFlight)` excludes in-flight refs from the retry pass
+        (an entry stays dirty for the whole duration of its own save), deliberately **not**
+        consulted by the edit path so a newer edit typed mid-flight is never dropped as a
+        duplicate. 5 tests, **verified by inversion** (removing the exclusion fails exactly 2).
+        Original handover note follows.
+        **Code was on disk, uncommitted, gates not yet run by the orchestrator.** New:
+        `web/src/lib/placementTypes.ts`,
         `lib/hooks/usePlacementApi.ts`, `components/quiz/{QuizTaker.tsx,quizTakerData.ts}`,
         `portals/student/screens/placement/{PlacementInvite,PlacementTest,PlacementResult}.tsx`
         + `placementData.ts`, `tests/unit/{placement,quizTaker}.test.ts`. Changed: `lib/api.ts`

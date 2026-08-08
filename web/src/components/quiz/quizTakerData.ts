@@ -264,6 +264,26 @@ export function dirtyQuestionRefs(cached: CachedAnswers | null): string[] {
     .map(([questionRef]) => questionRef)
 }
 
+/**
+ * Which refs the reconnect/reload retry should actually resend: still
+ * dirty, and not already being saved right now.
+ *
+ * The `inFlight` exclusion is load-bearing rather than tidy. An entry stays
+ * `dirty: true` for the whole duration of its own save (it only flips on
+ * success), so a retry pass that ran while a save was in flight would fire a
+ * duplicate PUT for a question that is already on its way — and with a
+ * second `online` transition or a re-run of the effect, several. The normal
+ * debounced edit path deliberately does NOT consult this: a student who
+ * types while a save is in flight must have that newer edit sent, not
+ * dropped as a duplicate.
+ */
+export function refsToRetry(
+  cached: CachedAnswers | null,
+  inFlight: ReadonlySet<string>,
+): string[] {
+  return dirtyQuestionRefs(cached).filter((questionRef) => !inFlight.has(questionRef))
+}
+
 /** The retry-on-reconnect save payload for one question: both fields,
  * explicitly, from the cache's own known-correct current values — not the
  * single-field payload `buildAnswerSavePayload` sends on a normal edit.

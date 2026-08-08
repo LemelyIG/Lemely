@@ -22,6 +22,7 @@ import {
   mergeAnswers,
   quizAffiliationLabel,
   readCachedAnswers,
+  refsToRetry,
   remainingSeconds,
   seedAnswers,
   writeCachedAnswers,
@@ -160,6 +161,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   const seeded = useRef(false)
+  const [seedVersion, setSeedVersion] = useState(0)
   const debounceTimers = useRef<Record<string, number>>({})
   // The single source of truth for "what's safe to resend" — every entry
   // here is written to `localStorage` too, so it survives a reload as well
@@ -177,6 +179,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     setAnswers(mergeAnswers(server, cached))
     const cachedFlags = readCache<string[]>(storageKey(assignmentId, "flags"))
     if (cachedFlags) setFlagged(new Set(cachedFlags))
+    setSeedVersion((v) => v + 1)
   }, [data, assignmentId])
 
   const questions = useMemo(() => data?.questions ?? [], [data])
@@ -190,23 +193,41 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     [assignmentId],
   )
 
+  // Refs whose save is on the wire right now. Only the retry pass consults
+  // this (see `refsToRetry`) — the debounced edit path must always send a
+  // newer edit, even mid-flight.
+  const inFlightRefs = useRef<Set<string>>(new Set())
+
+  // `saveAnswer.mutate` and NOT `saveAnswer`: react-query returns
+  // `{ ...result, mutate }` — a fresh object every render — while `mutate`
+  // itself is `useCallback`-stable on the observer. Depending on the whole
+  // result object made `doSave` change identity on every render, which made
+  // the retry effect below re-run on every render and resend every dirty
+  // answer each time. With a 1s elapsed-time tick already forcing a render a
+  // second, that was a duplicate PUT per dirty answer per second on the
+  // ordinary typing path, not just after a reconnect.
+  const saveMutate = saveAnswer.mutate
+
   const doSave = useCallback(
     (questionRef: string, body: ReturnType<typeof buildAnswerSavePayload>, entry: LocalAnswer) => {
       setSaveStatus((prev) => ({ ...prev, [questionRef]: "saving" }))
-      saveAnswer.mutate(
+      inFlightRefs.current.add(questionRef)
+      saveMutate(
         { questionRef, body },
         {
           onSuccess: () => {
+            inFlightRefs.current.delete(questionRef)
             persistCacheEntry(questionRef, entry, false)
             setSaveStatus((prev) => ({ ...prev, [questionRef]: "saved" }))
           },
           onError: () => {
+            inFlightRefs.current.delete(questionRef)
             setSaveStatus((prev) => ({ ...prev, [questionRef]: "error" }))
           },
         },
       )
     },
-    [saveAnswer, persistCacheEntry],
+    [saveMutate, persistCacheEntry],
   )
 
   // Resend every question still marked dirty in the cache, once the
@@ -215,14 +236,22 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
   // Uses the full-both-fields retry payload (the cache holds the question's
   // true current state, so this re-asserts reality rather than risking a
   // partial, order-dependent resend of only "the last field touched").
+  // `seedVersion` is in the deps so this also fires once the seeding effect
+  // above has actually run. That is the reload-recovery half: an edit that
+  // failed to save before a reload is restored into the UI by `mergeAnswers`,
+  // but it is still only on this device — without this it would sit dirty
+  // until the student happened to touch that question again or the browser
+  // happened to go offline and back. `data` is usually undefined on the
+  // first mount (the take query is still loading), so an `online`-only dep
+  // list would have missed the seed entirely.
   useEffect(() => {
     if (!online) return
-    for (const questionRef of dirtyQuestionRefs(answerCache.current)) {
+    for (const questionRef of refsToRetry(answerCache.current, inFlightRefs.current)) {
       const entry = answerCache.current[questionRef]
       if (!entry) continue
       doSave(questionRef, buildRetrySavePayload(entry), entry)
     }
-  }, [online, doSave])
+  }, [online, doSave, seedVersion])
 
   function updateAnswer(questionRef: string, field: "answerText" | "workingText", value: string) {
     const prevEntry = answers[questionRef] ?? { answerText: null, workingText: null }
@@ -249,8 +278,51 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
   const liveQuestions = questions.map((q) => answers[q.questionRef] ?? { answerText: q.answerText, workingText: q.workingText })
   const unansweredCount = countUnanswered(liveQuestions)
 
+  /**
+   * Push every still-unsaved answer to the server and wait for it, before
+   * the quiz is submitted.
+   *
+   * Without this, two ordinary sequences silently lose a real answer. A
+   * student who types and hits submit inside the 600ms debounce has that
+   * edit sitting in a timer that `handleSubmit` never fires — the answer
+   * exists only on this device while the paper is marked without it. And an
+   * answer whose save failed while online has no other resend trigger before
+   * submit (the retry effect fires on reconnect and on seed, neither of
+   * which is a submit). Marking a paper against an answer the student can
+   * see on screen but the marker never received is exactly the
+   * confidently-wrong shape D3.21 flagged.
+   *
+   * A failure here therefore blocks the submit rather than being swallowed:
+   * submitting anyway would mark a script that is not the one the student
+   * wrote.
+   */
+  async function flushPendingSaves(): Promise<void> {
+    const timers = debounceTimers.current
+    for (const questionRef of Object.keys(timers)) {
+      window.clearTimeout(timers[questionRef])
+      delete timers[questionRef]
+    }
+    await Promise.all(
+      dirtyQuestionRefs(answerCache.current).map(async (questionRef) => {
+        const entry = answerCache.current[questionRef]
+        if (!entry) return
+        await saveAnswer.mutateAsync({ questionRef, body: buildRetrySavePayload(entry) })
+        persistCacheEntry(questionRef, entry, false)
+      }),
+    )
+  }
+
   async function handleSubmit() {
     setSubmitError(null)
+    try {
+      await flushPendingSaves()
+    } catch {
+      setSubmitError(
+        "We couldn't save your latest answers, so we haven't submitted yet. Check your connection and try again — nothing you've written has been lost.",
+      )
+      setConfirmingSubmit(false)
+      return
+    }
     try {
       const result = await submitQuiz.mutateAsync()
       clearCache(assignmentId)
@@ -434,7 +506,9 @@ function SaveIndicator({ status, online }: { status: SaveStatus; online: boolean
   if (status === "error") {
     return (
       <p className="text-dense-sm text-err" role="status">
-        {online ? "Couldn't save — we'll retry automatically." : "Offline — this will save once you're back online."}
+        {online
+          ? "Couldn't save this answer — it's kept on this device, and we'll send it again before you submit."
+          : "Offline — this will save once you're back online."}
       </p>
     )
   }
