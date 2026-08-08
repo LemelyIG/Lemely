@@ -42,6 +42,14 @@ from lemely.db.models.enums import (
     UploadStatus,
     XpSource,
 )
+from lemely.db.models.flashcards import (
+    CardSource,
+    DeckOrigin,
+    Flashcard,
+    FlashcardDeck,
+    FlashcardReview,
+)
+from lemely.db.models.flashcards import ReviewGrade as FlashcardReviewGrade
 from lemely.db.models.ops import (
     Announcement,
     AtRiskAcknowledgement,
@@ -80,6 +88,7 @@ def import_all_models() -> None:
         attempts,
         billing,
         engagement,
+        flashcards,
         ops,
         orgs,
         profiles,
@@ -97,11 +106,17 @@ __all__ = [
     # Enums and mixins
     "AttemptOrigin",
     "BoundarySource",
+    "CardSource",
     "ClassEnrollment",
     "ConfidenceBand",
+    "DeckOrigin",
     "Device",
     "DifficultySource",
     "ExamBoard",
+    "Flashcard",
+    "FlashcardDeck",
+    "FlashcardReview",
+    "FlashcardReviewGrade",
     "MarkScheme",
     "MarkerSource",
     "MembershipRole",

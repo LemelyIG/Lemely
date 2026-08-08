@@ -72,6 +72,9 @@ EXPECTED_TABLES = {
     "student_subject_enrolments",
     "student_enrolment_papers",
     "student_confidence_ratings",
+    "flashcard_decks",
+    "flashcards",
+    "flashcard_reviews",
 }
 
 
