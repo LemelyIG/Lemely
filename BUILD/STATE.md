@@ -312,8 +312,31 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         topic-labelled (D4.4), and **0580/0606 have zero ingested questions** — placement is
         un-assemblable for two of three subjects and needs an honest "not available" path.
         (Confirmed by the chunk-B-3 measurement above, which is the authoritative one now.)
-- [ ] todo — **P4.5** Practice generator backend: topic/difficulty/count/source filtering,
-      persisted practice sets, "not enough questions" honesty path, export/print payload.
+- [ ] doing — **P4.5** Practice generator backend (started 2026-08-08): topic/difficulty/count/
+      source filtering, persisted practice sets, "not enough questions" honesty path,
+      export/print payload. UI spec S-20/S-21.
+      **Design is already settled by D4.6 — do not re-open it.** A practice set is
+      `Quiz(kind=QuizKind.practice, student_id=caller, teacher_id=None)` + a self-
+      `QuizAssignment`, exactly like placement; the enum member already exists (migration
+      0010 shipped `quizkind` with all four members) so **no migration is needed**.
+      Take/resume/submit stay the existing `/api/student/quizzes/...` endpoints.
+      `lemely/db/placement_repo.py` is the worked example to mirror.
+      **The one site D4.6 §3 explicitly defers to P4.5:** `quiz_taking_repo.list_assigned`
+      currently returns only class-assigned rows, so a practice set is invisible in S-25/S-26.
+      P4.5 adds a second branch scoped by `QuizAssignment.student_id == caller` and narrowed
+      by a **positive** `kind IN (...)` allowlist — never `kind != 'teacher'`, which fails
+      open the day a fifth kind is added. A placement quiz must stay excluded from that list
+      (pinned today by `test_a_placement_quiz_is_not_an_assigned_quiz`).
+      **Targeting weakness is the acceptance criterion, not a nice-to-have** (MISSION §4:
+      "generated practice demonstrably targets seeded weaknesses"). The join vocabulary is
+      P4.2's `"<code> <name>"` labels, which D4.7 made real on the marking side — read weak
+      topics from `WeaknessRecord`, not from a re-derivation.
+      **Honesty path:** when the filtered pool cannot fill the requested count, return what
+      exists **and say so** with a machine-readable reason — never pad, never silently
+      shorten (spec §1.4). The 0625 bank is 273 rows / 211 topic-labelled and 0580/0606 are
+      empty, so this path is the common case, not an edge case.
+      **Carry D4.9's lesson:** narrow to the papers `student_enrolment_papers` names when the
+      student has rows, and do **not** narrow when they have none.
 - [ ] todo — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
       weakness, SM-2-style spaced repetition, review sessions.
 - [ ] todo — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +
