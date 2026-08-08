@@ -234,6 +234,7 @@ module = [
   "lemely.core.integrity_schemas",
   "lemely.core.history",
   "lemely.core.generation",
+  "lemely.core.flashcards",
   "lemely.core.at_risk",
   "lemely.core.class_analytics",
 ]
