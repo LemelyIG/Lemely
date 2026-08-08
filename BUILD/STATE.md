@@ -497,10 +497,20 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         its sessions, weekly regeneration (a new week supersedes rather than mutates the old one,
         so last week stays auditable), and per-session completion. **XP is P5 — leave the
         completion record as the seam and build no XP.**
-      - [ ] chunk C — routes. `GET/POST /api/student/plan` in `routers/student.py` are the
-        existing surface; decide deliberately whether to extend them or add
-        `/api/student/study-plan` and record which in DECISIONS — S-24/S-25 (P4.10) and
-        `web/src/portals/student/screens/StudyPlan.tsx` consume whatever this picks.
+      - [ ] **doing** — chunk C — routes. **Surface decided (D4.13, to be written at chunk
+        close): a new router `lemely/web/routers/study_plan.py` at `/api/student/study-plan`,
+        student-only** — not an extension of `GET/POST /api/student/plan`. Those two are
+        HistoryStore-backed and ephemeral: they carry no plan id, no session ids, no
+        subject selection, no persistence, and therefore cannot express completion or
+        regeneration at all. Reshaping them in place would silently change the contract
+        `StudyPlan.tsx` consumes today. The legacy pair stays until **P4.10** migrates the
+        screen, then is deleted there.
+        Three routes: `GET /{subject_code}` (envelope `generated` + nullable plan, so
+        "no plan yet this week" / "refused (`no_signal`)" / "real plan" stay three distinct
+        wire states — D4.12 §5's gap), `POST ""` (regenerate → 201), and
+        `POST /sessions/{id}/complete`. Both `StudyPlanNotFoundError` and
+        `StudyPlanOwnershipError` render **404** — the service docstring already committed
+        to it (D4.11's existence-oracle precedent; a plan session is private study material).
 - [ ] todo — **P4.8** Frontend S-01..S-05 (onboarding steps + placement in-progress/results).
 - [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
