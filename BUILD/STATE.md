@@ -337,7 +337,24 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
 - [ ] doing — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
       weakness, SM-2-style spaced repetition, review sessions. (UI spec S-22/S-23.)
       **Chunk plan (2026-08-08), backend only — no `web/` diff, so gate 8 is not in play:**
-      - [ ] chunk A — schema + the pure scheduler. Migration **0011** (additive): `flashcard_decks`
+      - [x] chunk A — **done** (`1fb49f7`) — schema + the pure scheduler, as planned below.
+        Migration **0011** applied; `alembic check` clean on **upgrade and downgrade**
+        (note: `alembic check` errors "Target database is not up to date" when the DB sits
+        behind head — that is the check refusing, not a downgrade failure. Don't re-derive it).
+        `lemely/core/spaced_repetition.py` is pure and clock-injected.
+        **Four departures from canonical SM-2 are documented at the point of divergence**, each
+        pinned by a test — do not "correct" them back to the paper without changing the test
+        deliberately: (1) ease is penalised on a lapse (canonical SM-2 leaves EF untouched on
+        q<3) because leaving it means a repeatedly-failed card keeps its optimistic multiplier;
+        (2) `again` reschedules at **+10 min with `interval_days=0`** (a same-session relearning
+        step, what every modern SRS ships) rather than canonical SM-2's 1 day; (3) the
+        four-button grade maps onto 0/3/4/5 with **no invented quality 1 or 2**; (4) rounding is
+        the built-in banker's rounding because SM-2 specifies no tie-break rule.
+        **`ReviewGrade` is declared twice on purpose** — `core` as plain Python, `db` as the
+        Postgres enum — because import-linter forbids `core`→`db`.
+        `tests/test_flashcard_schema.py` pins the two against drift; **do not deduplicate it by
+        importing across the boundary.** 39 tests across the two new files. $0.00 Gemini.
+      - [ ] chunk A (original plan, kept for the rationale) — Migration **0011** (additive): `flashcard_decks`
         (owner `user_id`, `subject_code`, nullable `topic` in the **P4.2 `"<code> <name>"`
         vocabulary**, `origin` enum manual/weakness/topic), `flashcards` (deck FK CASCADE, front/back,
         `source` enum manual/ai, nullable `source_question_id`, and the SM-2 state:
