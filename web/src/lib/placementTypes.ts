@@ -124,9 +124,12 @@ export interface StudentQuizTake {
 /**
  * Body for `PUT /api/student/quizzes/{assignmentId}/answers/{questionRef}`.
  * An omitted field leaves the stored value untouched; `""` explicitly
- * clears it. Never send a field that did not change — build this with only
- * the touched key present (`buildAnswerSavePayload` in
- * `components/quiz/quizTakerData.ts` is the single enforcement point).
+ * clears it. Saves carry **both** fields, read from the answer cache at the
+ * moment the save runs — see `buildRetrySavePayload` in
+ * `components/quiz/quizTakerData.ts`, the single build point. Per-field
+ * payloads were removed with D4.15: saves coalesce per question, so a
+ * queued save has no single "field that changed", and the cache entry
+ * already holds the question's true current state.
  */
 export interface SaveAnswerRequest {
   answerText?: string | null

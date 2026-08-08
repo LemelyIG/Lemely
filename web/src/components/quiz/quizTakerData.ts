@@ -343,9 +343,9 @@ export function isCacheEntryUnchanged(
   return cached.answerText === sent.answerText && cached.workingText === sent.workingText
 }
 
-/** The retry-on-reconnect save payload for one question: both fields,
- * explicitly, from the cache's own known-correct current values — not the
- * single-field payload `buildAnswerSavePayload` sends on a normal edit.
+/** The save payload for one question — used by every save path, edit and
+ * retry alike (D4.15): both fields, explicitly, from the cache's own
+ * known-correct current values.
  * Safe specifically because a cache entry already holds the question's
  * true current state (seeded from the server, then only ever updated by a
  * real edit), so resending both fields re-asserts reality rather than
