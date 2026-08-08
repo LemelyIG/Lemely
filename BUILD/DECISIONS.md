@@ -3419,3 +3419,90 @@ run is. Worth repeating because the failure mode is silent: a killed session lea
 
 Gemini spend for the whole task: **$0.00** — the generator is mocked in every test and no
 live call was made.
+
+## D4.12 — The study plan schedules the week it claims to schedule, and refuses honestly when it has no signal (P4.7 chunk A)
+
+### 1. What the old scheduler actually was
+
+`build_study_plan` split `weekly_hours` across weak topics proportionally to `lost_marks`
+and emitted one `StudySession(week=1, hours=…, focus="Practice and review: {topic}")` per
+topic. That is advice with a number attached, not a plan: `week` was a literal `1`, there was
+no activity type, and a student reading "Waves: 2.4 hours — practice and review" has been told
+nothing they did not already know. MISSION §4 asks for **concrete sessions (topic, activity
+type, duration)**. It also ignored placement and the questionnaire entirely.
+
+### 2. Three signals, weighted, and why a missing one is not a zero
+
+Weakness `lost_marks` **0.5**, placement result **0.3**, S-02 confidence rating **0.2** —
+most-evidential to least: a rolling aggregate over every graded attempt, then real graded
+evidence from a single sitting, then the student's own guess. The weights live in the module
+docstring at the point of divergence, each pinned by a test, following the precedent
+`core/spaced_repetition.py` set for its four SM-2 departures.
+
+The consequential choice is **renormalisation**: a topic missing a signal is scored on the
+signals it does have, not on a zero standing in for the absence. Zero-filling would punish a
+topic for the student not having sat a placement test yet — and since S-02 is answered
+*before* any grading exists, the most common real state at onboarding is confidence-only.
+Zero-filling would have made every brand-new student's plan uniformly flat.
+
+All three are keyed on the P4.2 `"<code> <name>"` topic vocabulary. That shared key is why
+merging them is possible at all; it was built deliberately across D4.2/D4.4/D4.5.
+
+### 3. The defect: a ten-hour week that scheduled four and a half hours
+
+Found by measuring the first implementation against real inputs, not by reading its report.
+Sessions were capped at `MAX_SESSION_MINUTES = 90` and any excess was dropped:
+
+| weak topics | budget | scheduled (before) | scheduled (after) |
+|---|---|---|---|
+| 3 | 600 min | **270** | 585 |
+| 6 | 600 min | 540 | 600 |
+| 10 | 600 min | 600 | 600 |
+
+The three-topic case — a student with a *focused* weakness profile, which is to say a student
+the plan should serve best — lost 55% of its budget. `StudyPlan.weekly_hours` still said 10,
+and `StudyPlan.tsx` renders `{plan.weeklyHours} hours a week` as the S-24 header. The header
+would have described a week the sessions beneath it did not add up to.
+
+The fix is to **split** a topic's allocation into several shorter blocks on **distinct days**
+rather than truncate it to one capped sitting. This is also better teaching — spaced blocks
+beat one 200-minute sitting — so the honest option and the pedagogical one agree. Distinctness
+is enforced (`_day_offsets` spaces blocks `7 // block_count` apart), because splitting a topic
+and then scheduling both halves the same evening defeats the point; verified across 1–10
+topics. Residual drift is only ±5 minutes of per-block rounding.
+
+Block count is capped at seven — one per day — which only binds above 10.5 hours on a *single*
+topic, where the honest answer is that it does not fit in the week.
+
+### 4. Two tests rewritten, and why that is not weakening them
+
+`TestWeighting` read priority off the *position* of a topic's first session. Once sessions are
+laid out by calendar date and a high-priority topic is split across days, position stopped
+being a proxy for priority. They now assert **total minutes per topic**, which is what the
+weighting actually decides — a more direct assertion than position ever was. Nothing was
+skipped, deleted, or loosened; MISSION §5's rule is about not weakening a test to get green,
+and a proxy that has become invalid is a different thing from an inconvenient assertion.
+
+### 5. Honest states, and the one that does not survive the wire yet
+
+Three distinct outcomes, all pinned by inverse-verified tests:
+- **`available=False, reason="no_signal"`** — no weaknesses, no placement, no ratings. A
+  refusal, never an invented week. Reuses `core/placement.py`'s machine-readable-reason shape
+  rather than inventing a third convention (D4.6/D4.10 precedent).
+- **`available=True, sessions=[]`** — there was something to evaluate and nothing to schedule.
+- **A real plan** from any partial combination of signals.
+
+**Activity type must be earned.** `TopicAvailability` is an *input* — chunk B supplies real
+counts — so `practice` is never scheduled for a topic the bank cannot serve, nor `flashcards`
+for a topic with no deck. `review` needs no resource and is the honest floor. A plan that
+told a student to "practice Electric circuits" when the bank holds zero such questions would
+be inventing precision (UI spec §1.4).
+
+**Open gap for chunk C, stated rather than left to be discovered:** `StudyPlanDTO` carries no
+`available`/`reason`, so the refusal and the empty-week state both reach the frontend as an
+empty `sessions` list and are indistinguishable there. This is a gap, not a regression — the
+distinction did not exist before this chunk — but chunk A's central honesty property dies at
+the wire until chunk C decides the DTO. `activityType`/`date` are likewise not yet exposed;
+`hours` is a unit conversion of `duration_minutes`.
+
+Gemini spend: **$0.00**.
