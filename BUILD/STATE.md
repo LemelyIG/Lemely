@@ -524,7 +524,17 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         Nothing needed fixing, which is worth recording precisely because it is the exception.
         *(Original chunk-C plan retained in git history of this file; D4.13 carries the full
         rationale.)*
-- [ ] doing — **P4.8** Frontend S-01..S-05 (onboarding steps + placement in-progress/results).
+- [x] done — **P4.8** Frontend S-01..S-05 (onboarding steps + placement in-progress/results).
+      All four chunks landed (0, A, B, C); decisions D4.14/D4.15/D4.16. **Gate 8 is genuinely
+      satisfied for the first time on Phase-4 screens** — not vacuously: the audit registry now
+      carries 6 entries / 7 states for S-01..S-05 on four seeded accounts, and all 13 gates pass
+      with 0 skipped. 41 route-states, **zero axe violations at any severity**, Lighthouse a11y
+      100 on the four scored new routes, zero console errors, zero horizontal-scroll violations.
+      **Two defects that only a real gate run could find, both fixed here — see D4.16:** every
+      new screen shipped without an `<h1>` (QUALITY-BAR.md:45; axe *moderate*, so gate 8's
+      serious/critical threshold passed over it), and the E2E seed still collided on rerun,
+      failing `playwright-e2e` on a genuine `uq_question_bank_paper_question` IntegrityError.
+      Impeccable audit **16/20 (Good)**, detector clean, three sub-44px touch targets raised.
       **First `web/` diff of Phase 4 — gate 8 comes back into play** (QUALITY-BAR.md,
       `/impeccable audit` on changed files, `npx impeccable detect` clean, axe zero
       serious/critical, Lighthouse a11y ≥ 95, screenshots per screen × state × breakpoint).
@@ -727,7 +737,7 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         `not available` + machine-readable reason** for 0580/0606; S-04 owns answer persistence
         across a lost connection and resume (UI spec §S-04 states both); S-05 is framed as a
         *baseline*, never a grade.
-      - [ ] doing — chunk C (opened 2026-08-09) — the standing UI gate for all five screens
+      - [x] done — chunk C (closed 2026-08-09, session 7 — D4.16) — the standing UI gate for all five screens
         (gate 8: QUALITY-BAR.md, `/impeccable audit` on the changed files, `npx impeccable
         detect` clean, axe zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus for
         every screen × state × breakpoint, no unintended regression against baselines).
@@ -772,9 +782,10 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
         title promotion is visually identical, and the screen really does render "This is a
         baseline, not a grade", the working-level refusal ("we're not estimating a working level
         from it yet") and **"Not enough data yet."** instead of a fabricated weakest topic.
-        **Full 13-gate run: ALL PASS, 0 skipped, exit 0** (foreground, ~19 min incl. the
-        playwright + audit legs). **2307 tests / 6 skipped / 0 failed / 90.30% cov**
-        (chunk-0 baseline 2297 / 90.30% — +10 from `tests/test_seed_e2e.py`, coverage flat).
+        **Full 13-gate run: ALL PASS, 0 skipped, exit 0** — run three times this session, the
+        last after every fix. **2308 passed / 6 skipped / 0 failed / 90.30% cov** (chunk-0
+        baseline 2297 / 90.30% — +11 from `tests/test_seed_e2e.py` incl. the new
+        stem-collision regression; coverage flat).
         Note for whoever reads a raw `pytest` log next: **the backend diff since chunk 0 is NOT
         empty** — earlier chunk-C sessions added `scripts/seed_e2e.py` (+398) and
         `tests/test_seed_e2e.py` (+192), so the carried-forward 2297 figure needed re-measuring
@@ -861,6 +872,28 @@ screen. The placement test and practice sets are quiz-shaped: reuse that engine,
            0606 genuinely have zero ingested questions, and that honest refusal is behaviour
            P4.8 exists to keep on screen. `tests/test_placement_repo.py` already has the
            viable-bank fixture shape to copy from rather than invent.
+### Carried forward from P4.8 chunk C's Impeccable audit (D4.16 §4) — must reach DELIVERY.md
+Recorded rather than smoothed over. None is a regression; all three predate or exceed P4.8.
+- **The global `prefers-reduced-motion` rule is a blanket kill.** `web/src/index.css:742` sets
+  `animation-duration: 0.001ms !important` on `*`. On S-05's unmarked state the spinning
+  `CircleNotch` is the *only* evidence marking is in progress, beside copy promising "This page
+  will update on its own" — with reduced-motion on it freezes and working is indistinguishable
+  from stalled. Affects all 41 routes; `processing-state.tsx:19` already acknowledges it.
+  Deliberately not touched in a frontend chunk: editing the global rule risks visual regression
+  everywhere. **P5 must handle this** — MISSION §4 Phase-5 already requires motion to respect
+  `prefers-reduced-motion` *proven by a test*, and that test cannot honestly pass against a
+  blanket kill.
+- **`Button size="sm"` cannot meet QUALITY-BAR.md:40's 44px floor** (~31px: 12.5px text +
+  `py-2`). Raised at the three new-screen call sites only; **33 call sites exist and 11 of the
+  15 files are teacher screens**, where 44px would break dense layouts (counted, not assumed).
+  The shared variant is a cross-portal decision. Same family as the Phase-2.5 report §8 gap.
+- **Ad-hoc container widths** — `max-w-[560px]` ×3, `max-w-[720px]`, `max-w-[820px]` where a
+  shared token belongs. (`min-h-[44px]` and `slider.tsx`'s `py-9px` are *not* this: both are
+  documented repo-wide touch-target idioms.)
+- **S-04 re-renders its whole question tree once per second** from the elapsed ticker, no
+  memoization. Lighthouse perf 82, so not currently measurable — but this exact ticker is what
+  turned an unstable react-query object identity into a duplicate-PUT-per-second bug (D4.15 §1).
+
 - [ ] todo — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
       current placeholder `StudyPlan.tsx`.

@@ -1251,3 +1251,25 @@ five that were actually red were all caught the same way. Keep running the gates
 **Next.** P4.8 chunk B — S-03/S-04/S-05 on the placement + quiz-taking endpoints. S-04
 owns answer persistence across a lost connection and resume, and is the reusable
 question-rendering surface P4.9 and P5 will compose.
+
+## 2026-08-09 — P4.8 chunk C closed; P4.8 done (session 7)
+
+- **Did:** ran the Phase-4 audit registry for the first time (six prior sessions only read it).
+  Confirmed session 6's two fixes work — the `ready`-driven wizard survives the repeated
+  navigation, and S-04 is genuinely reachable, so the placement seed is real. Then fixed the two
+  defects the run exposed: **no `<h1>` on any of the five new screens** (QUALITY-BAR.md:45; axe
+  rates it *moderate*, so gate 8's serious/critical threshold had been passing over it) and a
+  **seed that still collided on rerun**, failing `playwright-e2e` on a real IntegrityError.
+  Ran `/impeccable audit` (16/20, detector clean) and fixed its P1: three controls under the
+  44px touch floor. All 13 gates green, 0 skipped; 2308 passed / 6 skipped / 0 failed / 90.30%.
+- **Learned:** reading and running find different defect classes, and this chunk is the cleanest
+  evidence of it in the build so far. The `h1` gap screenshots perfectly clean and only harms
+  screen-reader users; the seed collision needed ~18 accumulated runs to surface. Also: a gate
+  threshold looser than the written bar (axe *serious/critical* vs QUALITY-BAR's "one h1 per
+  page") is a permanent blind spot, not a one-off miss — worth checking the bar directly rather
+  than trusting the gate. And a "rerun-safety" helper that hashes 2 of 12 characters is a
+  100-value namespace wearing a uniqueness guarantee's docstring.
+- **Next:** P4.9 — frontend S-20/S-21 (practice) + S-22/S-23 (flashcards) on the P4.5/P4.6
+  backends. Four audit findings deliberately deferred and recorded in STATE + D4.16 §4; the
+  `prefers-reduced-motion` blanket kill is P5's, because Phase 5's own acceptance requires a
+  test that cannot honestly pass against it.

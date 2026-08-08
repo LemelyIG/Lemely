@@ -3836,9 +3836,10 @@ shared variant is a cross-portal decision, not a P4.8 one (verified by counting,
 
 ### 5. Verification
 
-Full 13-gate run **ALL PASS, 0 skipped**. **2307 tests / 6 skipped / 0 failed / 90.30% cov**
-(re-measured, not carried forward — the backend diff since chunk 0 is not empty; earlier
-chunk-C sessions added the placement seed and its tests). Second audit run confirms all seven
+Full 13-gate run **ALL PASS, 0 skipped** — run three times this session, the last after every
+fix in this record. **2308 passed / 6 skipped / 0 failed / 90.30% cov** (re-measured, not
+carried forward — the backend diff since chunk 0 is not empty; earlier chunk-C sessions added
+the placement seed and its tests). Second audit run confirms all seven
 new states at **0/0/0/0 at every severity**, zero nonzero axe counts anywhere in the registry,
 **Lighthouse a11y 100** on all four scored new routes (perf 80–83, at or above §11's student
 floor), zero console errors, zero horizontal-scroll violations; `ui-thresholds` clean across
@@ -3855,3 +3856,45 @@ with PATH set the test passes and `lint-imports` exits 0 ("Contracts: 2 kept, 0 
 `check.sh` exports PATH at its line 34, which is why its `pytest` gate is green.
 
 Gemini spend: **$0.00**.
+
+### 6. The second defect the same gate run found: the seed still collided on rerun
+
+`playwright-e2e` failed on a genuine `uq_question_bank_paper_question (paper_id,
+source_question_id)` IntegrityError for `0625_s88_qp_21#12`.
+
+`build_placement_paper_stem` was added earlier in this chunk (`b9d610a`) specifically to make
+reruns safe, by hashing `run_tag` into the session-year digits. **It reads only the tag's first
+two characters.** The year therefore has a 100-value namespace, so by the birthday bound two
+runs share a `papers` row roughly every dozen runs — and their identical `#1..#24` suffixes then
+collide on the second run's `link_past_paper_rows()`. After a day of repeated gate runs, it
+fired. Its docstring asserted it was the rerun-safety guarantee; it was not, and the existing
+test that "proved" this picked two tags which also differ in the *stem*, so it passed throughout.
+
+**Uniqueness moved to where it can carry the whole tag:** `source_question_id` is now
+`f"{stem}#{run_tag}-{ref}"`. `_paper_identity` splits on the first `#` and parses only the stem
+(`question_bank_repo.py:241-243` — checked, not assumed), so the suffix is opaque to the linker
+and free to hold all 12 hex characters. The stem hash stays, because a distinct `papers` row per
+run is closer to reality and sharing one is harmless once suffixes differ — but it is no longer
+load-bearing, and both misleading docstrings now say so explicitly.
+
+**Why the fix is not "purge and reseed":** the module contract is no teardown, per-run
+namespacing throughout, and 184 `quiz_questions` rows from prior runs reference the linked bank
+rows. Deleting them would break that contract and those references.
+
+Verified three ways: the new test
+`test_source_question_ids_differ_even_when_the_paper_stem_collides` uses two tags that provably
+share a stem and is **verified by inversion** (reverting the suffix fails exactly this test and
+none of the other 57); two real seed runs *forced onto the same stem* (`0625_s77_qp_21`) both
+exit 0 with zero IntegrityErrors; and the full 13-gate run then passed.
+
+**Local-state cleanup, done deliberately and only after looking:** 48 unlinked seed rows had
+accumulated from the two runs that aborted at the link step. Confirmed **zero** `quiz_questions`
+referenced them and that 24 of them duplicated an already-linked row's `source_question_id` —
+the collision itself — before deleting. Local dev DB only; nothing committed, and re-running the
+seed restores an equivalent state.
+
+**The general lesson, which is the point of this whole chunk:** three sessions fixed vacuity
+defects in this registry by *reading* it, and the two worst defects — a missing `h1` on every
+new screen and a seed that could not run twice — were both found in the first ten minutes of
+actually *running* it. Reading finds what is wrong with the code you are looking at; running
+finds what you did not think to look at.
