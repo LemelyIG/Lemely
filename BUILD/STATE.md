@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T23:59:00Z   # P4.9 chunk A DOING (S-20/S-21 frontend), scoped by measurement.
+last_updated: 2026-08-10T02:40:00Z   # P4.9 chunk A closed, 13 gates green. Next: chunk B (S-22/S-23 flashcards).
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -987,7 +987,41 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         S-05 polls placement) and `GET /api/student/practice/{subject_code}/topics` (distinct
         servable topics + **real** per-topic counts through the same clauses `_preview` uses).
         Both pinned by their inverses or they will silently offer/return nothing.
-      - [ ] doing — chunk A — S-20 + S-21 frontend. `QuizTaker` is **composed, not forked** (its
+      - [x] chunk A — **done** (verified 2026-08-09, sixth session). The two wip commits
+        (`dd37966`, `137e83d`) were on disk with gates never run; the orchestrator ran them.
+        **All 13 gates PASS, 0 skipped, exit 0** — foreground-equivalent serial run, the audit
+        leg included. **249 web unit tests / 6 files, green** (chunk-B-of-P4.8 baseline 224).
+        **Zero backend diff** — `git diff --stat aa4daf2..HEAD -- lemely tests alembic scripts`
+        is empty, so chunk 0's **2331 passed / 6 skipped / 0 failed / 90.37% cov** still stand
+        and were not re-measured. $0.00 Gemini.
+        Four screens + the plumbing: `screens/practice/` (`PracticeGenerator` S-20,
+        `PracticeSet` S-21 working view, `PracticeResult` S-21 summary, `PracticePrint`,
+        `practiceData.ts` pure logic), `lib/practiceTypes.ts`, `lib/hooks/usePracticeApi.ts`
+        (one hook per endpoint, no `fallback`, `result` polls while `marked === false`), four
+        routes + nav item + crumbs.
+        **Every constraint the chunk plan named was verified by the orchestrator, not taken
+        from the handover:** `QuizTaker`'s prop interface is **byte-unchanged** (`PracticeSet`
+        is a 21-line wrapper, the same shape as `PlacementTest` — the composition seam held for
+        its second caller, which was the test); topic chips nest by `syllabusGroup`;
+        `untopicedCount` renders as prose, never as a selectable topic; the weak-topic prefill
+        reads the **server's** `weakTopics`; and every screen carries an `<h1>` (`PracticeSet`
+        inherits `QuizTaker`'s own `sr-only` one — D4.16's defect is not repeated).
+        **The substantive fix of the chunk is `137e83d`, and it is not cosmetic:**
+        `weakTopics` and `topics` are resolved **independently** server-side — the first from
+        `WeaknessRecord` rows, the second from the servable bank pool — so neither is a subset
+        of the other. **Measured live: 8 of 15 recorded weakness topics have no servable bank
+        topic**, including the weakness engine's own `"unknown"` fallback label and
+        older-vocabulary labels like `"Electricity"`. Prefilling verbatim would have applied a
+        filter **with no checkbox on the screen**: sent to `preview`/`create`, narrowing or
+        emptying the pool, with no chip checked and no way to clear it — rendering as a flat
+        "no practice material" with no visible cause, on the majority of real students. The
+        prefill is now the intersection, and the dropped labels are **named on screen** rather
+        than silently swallowed. Same defect class as P4.8 chunk 0 and P4.4 chunk B-3 §2: it
+        screenshots perfectly and no gate can see it.
+        **Fact 6 honoured — the photo-answer route is still deliberately not built** (no image
+        field exists anywhere on the quiz answer path), and fact 4's reveal-answer likewise.
+        30 unit tests in `web/tests/unit/practice.test.ts`, each carrying its inverse.
+      - [ ] chunk A (original plan, kept for the rationale) — S-20 + S-21 frontend. `QuizTaker` is **composed, not forked** (its
         own docstring names P4.9 as a caller); the finish summary reads chunk 0's result route.
         **Scoped by measurement 2026-08-09 (fifth session) — do not re-derive:**
         - The composition seam is already exactly right and needs no change: `QuizTaker` takes
