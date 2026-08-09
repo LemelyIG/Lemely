@@ -135,6 +135,16 @@ path::
                           "submissionId": "...", "awardedMarks": 12,
                           "maximumMarks": 14}
         }
+      },
+      "practice": {
+        "subjectCode": "0625",
+        "students": {
+          "active":  {..., "unsubmittedAssignmentId": "...",
+                      "markingAssignmentId": "...", "markedAssignmentId": "...",
+                      "deckId": "..."},
+          "settled": {..., "deckId": "..."},
+          "bare":    {...}
+        }
       }
     }
 
@@ -191,6 +201,45 @@ same ~15-minute target buys fewer 2-mark questions. That is above
 :data:`PLACEMENT_TOPICS`; a change that drops it below the floor should be
 treated as a regression in this seed, not as a new baseline to write down.
 
+``practice`` (P4.9 chunk C) is additive on top of all of the above, backing
+S-20/S-21 (practice) and S-22/S-23 (flashcards). Unlike ``placement`` it
+needs no new bank — it draws from the exact same hermetic 0625 Paper 2 pool
+:data:`PLACEMENT_PAPER_NUMBER` already seeded. Three accounts, not four,
+because the trap here is different from placement's: a student with
+recorded weaknesses cannot also demonstrate the honest ``no_weaknesses``
+refusal, and a student with cards due today cannot also demonstrate
+flashcards' "nothing due today" — so no account wears two hats:
+
+* ``active`` — onboarded, enrolled in 0625 (papers pinned to
+  :data:`PLACEMENT_PAPER_NUMBER`), with three practice sets covering S-21's
+  three submission states plus one manual flashcard deck due now:
+
+  - a **marked** set (one deliberately wrong answer, then submitted and
+    marked through the unmodified quiz-taking/marking repos) — S-21's
+    ``marked`` capture, and the same trick :data:`PLACEMENT_MCQ_ANSWER`'s
+    placement ``completed`` account uses to produce a real
+    ``WeaknessRecord``, which is what S-20's weak-topic prefill needs.
+  - an **unsubmitted** set (created, never touched) — S-21's working view
+    and its ``not_submitted`` result.
+  - a **submitted-but-unmarked** set (answered and submitted, but
+    :meth:`~lemely.db.quiz_marking_repo.QuizMarkingService.mark_submission`
+    deliberately never called) — S-21's ``marking`` state. Seedable at all
+    only because :meth:`~lemely.db.quiz_taking_repo.QuizTakingService.submit`
+    does not mark; the real HTTP route marks on a background thread, which
+    is a race this direct service call sidesteps.
+* ``settled`` — onboarded, enrolled in 0625, one manual deck whose every
+  card has been reviewed :attr:`~lemely.db.models.flashcards.ReviewGrade.good`
+  through :meth:`~lemely.db.flashcard_repo.FlashcardService.record_review` —
+  a real SM-2 scheduler outcome that pushes ``due_at`` into the future,
+  never a hand-written date. :func:`seed` asserts
+  :meth:`~lemely.db.flashcard_repo.FlashcardService.due_session` reports zero
+  due and a real ``next_due_at`` immediately afterward. S-22/S-23's "nothing
+  due today".
+* ``bare`` — onboarded, enrolled in 0625, and nothing else: no weakness
+  rows, no decks. S-20's honest ``no_weaknesses`` refusal, S-22's genuinely
+  empty deck list, and S-22's weakness-generate 409 (free — ``generate_deck``
+  resolves the topic, and raises, before ever calling the generator).
+
 Usage::
 
     python scripts/seed_e2e.py [--json-out PATH] [--run-tag TAG]
@@ -232,6 +281,8 @@ from lemely.db.models.enums import (
     QuizQuestionStatus,
     Role,
 )
+from lemely.db.models.flashcards import DeckOrigin, ReviewGrade
+from lemely.db.practice_repo import PracticeRequest
 from lemely.db.question_bank_repo import NewBankQuestion
 from lemely.web import deps
 
@@ -431,6 +482,23 @@ PLACEMENT_MCQ_ANSWER = "B"
 #: content), and it is the machine-checkable marker that separates this seed's
 #: rows from the real ingested corpus.
 PLACEMENT_PROMPT_MARKER = "P4.8 chunk C fixture text — not real CAIE content"
+
+
+# ---------------------------------------------------------------------------
+# P4.9 chunk C additions: three student accounts for S-20/S-21 (practice) and
+# S-22/S-23 (flashcards). No new bank — these accounts draw from the same
+# hermetic 0625 Paper 2 pool PLACEMENT_PAPER_NUMBER already seeds. See this
+# module's docstring for the full contract these additions extend.
+# ---------------------------------------------------------------------------
+
+#: How many questions each of ``practice-active``'s three sets requests —
+#: comfortably inside the hermetic 24-row Paper 2 bank (6 rows/topic x 4
+#: topics), so ``PracticeService.create`` never reports ``insufficient_pool``
+#: for a set *this seed* builds. That reason IS deliberately exercised — but
+#: through S-20's own live preview query at its frontend default count,
+#: against the single weak topic set A's own marking narrows the pool to,
+#: never through what this script requests here.
+PRACTICE_SET_COUNT = 6
 
 
 # ---------------------------------------------------------------------------
@@ -773,6 +841,7 @@ def build_result_payload(
     empty_teacher: dict[str, Any],
     empty_parent: dict[str, Any],
     placement: dict[str, Any],
+    practice: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the documented output contract from already-computed pieces.
 
@@ -780,8 +849,8 @@ def build_result_payload(
     feeds fake ids/tokens and asserts the nesting, independent of ever
     touching Postgres or GoTrue. ``reviewItem``/``quiz``/``emptyTeacher``/
     ``emptyParent`` are additive (P3.10 chunk e1); ``placement`` is additive
-    on top of those (P4.8 chunk C) — every key present before it is
-    unchanged.
+    on top of those (P4.8 chunk C); ``practice`` is additive on top of all of
+    it (P4.9 chunk C) — every key present before it is unchanged.
     """
     return {
         "runTag": run_tag,
@@ -796,6 +865,7 @@ def build_result_payload(
         "emptyTeacher": empty_teacher,
         "emptyParent": empty_parent,
         "placement": placement,
+        "practice": practice,
     }
 
 
@@ -924,6 +994,8 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     quiz_marking_service = deps.get_quiz_marking_service()
     placement_service = deps.get_placement_service()
     student_profile_service = deps.get_student_profile_service()
+    practice_service = deps.get_practice_service()
+    flashcard_service = deps.get_flashcard_service()
 
     teacher = _signup_account("teacher", Role.teacher, run_tag)
     school_admin = _signup_account("admin", Role.school_admin, run_tag)
@@ -1236,6 +1308,164 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         },
     }
 
+    # -------------------------------------------------------------------
+    # P4.9 chunk C: the S-20..S-23 practice/flashcard accounts. No new bank
+    # — these draw from the same hermetic 0625 Paper 2 pool the placement
+    # block above already seeded and linked. See this module's docstring
+    # for the full contract.
+    # -------------------------------------------------------------------
+    _log(
+        "Signing up the three P4.9 practice/flashcard accounts — active/settled/bare, each "
+        "the only one that can demonstrate its own mutually exclusive state"
+    )
+    practice_active = _signup_account("practice-active", Role.student, run_tag)
+    practice_settled = _signup_account("practice-settled", Role.student, run_tag)
+    practice_bare = _signup_account("practice-bare", Role.student, run_tag)
+
+    _log(
+        "Onboarding + enrolling all three in 0625, papers pinned to "
+        f"[{PLACEMENT_PAPER_NUMBER}] so their pool is the same hermetic bank placement uses"
+    )
+    for account in (practice_active, practice_settled, practice_bare):
+        account_uuid = uuid.UUID(account["userId"])
+        student_profile_service.mark_onboarding_complete(account_uuid)
+        student_profile_service.upsert_enrolment(account_uuid, PLACEMENT_SUBJECT_CODE)
+        student_profile_service.set_enrolment_papers(
+            account_uuid, PLACEMENT_SUBJECT_CODE, [PLACEMENT_PAPER_NUMBER]
+        )
+
+    active_uuid = uuid.UUID(practice_active["userId"])
+    practice_request = PracticeRequest(
+        subject_code=PLACEMENT_SUBJECT_CODE, count=PRACTICE_SET_COUNT
+    )
+
+    def _answer_practice_set(assignment_id: uuid.UUID, *, one_deliberate_mistake: bool) -> None:
+        """Answer every question of a just-created practice set, MCQ-only.
+
+        Reuses the identical hermeticity guard the placement block above
+        uses: refuses to answer a question this seed did not author, rather
+        than silently drawing on the real ingested corpus (see
+        PLACEMENT_PAPER_NUMBER's note on why that both costs live Gemini
+        budget and produces a meaningless baseline).
+        """
+        take_detail = quiz_taking_service.get_take(active_uuid, assignment_id)
+        foreign = [
+            q.question_ref for q in take_detail.questions if not is_placement_seed_prompt(q.prompt)
+        ]
+        if foreign:
+            raise RuntimeError(
+                f"Practice set {assignment_id} assembled {len(foreign)} question(s) this seed "
+                f"did not author ({', '.join(foreign)}) — the hermetic pool has been "
+                "contaminated; see PLACEMENT_PAPER_NUMBER."
+            )
+        for position, question in enumerate(take_detail.questions):
+            answer = (
+                wrong_mcq_answer(PLACEMENT_MCQ_ANSWER)
+                if one_deliberate_mistake and position == 0
+                else PLACEMENT_MCQ_ANSWER
+            )
+            quiz_taking_service.save_answer(
+                active_uuid, assignment_id, question.question_ref, answer_text=answer
+            )
+
+    _log(
+        "Creating practice-active's set A: answered (one deliberate mistake), submitted, and "
+        "marked — S-21's 'marked' capture, and the WeaknessRecord S-20's weak-topic prefill needs"
+    )
+    set_a = practice_service.create(active_uuid, practice_request)
+    _answer_practice_set(set_a.assignment_id, one_deliberate_mistake=True)
+    set_a_submit = quiz_taking_service.submit(active_uuid, set_a.assignment_id)
+    set_a_mark = quiz_marking_service.mark_submission(set_a_submit.submission_id)
+    if set_a_mark.status.value != "marked":
+        raise RuntimeError(
+            f"Practice set A submission {set_a_submit.submission_id} did not mark "
+            f"(status={set_a_mark.status.value}, error={set_a_mark.marking_error!r}) — S-21's "
+            "'marked' capture and S-20's weak-topic prefill both need a real marked result."
+        )
+
+    _log(
+        "Creating practice-active's set B: created only, never answered or submitted — "
+        "S-21's working view (QuizTaker) and its not_submitted result"
+    )
+    set_b = practice_service.create(active_uuid, practice_request)
+
+    _log(
+        "Creating practice-active's set C: answered and submitted, deliberately NOT marked — "
+        "S-21's marking state. Seedable at all only because "
+        "quiz_taking_service.submit does not mark; the real HTTP route marks on a "
+        "background thread, which is the race this direct service call sidesteps."
+    )
+    set_c = practice_service.create(active_uuid, practice_request)
+    _answer_practice_set(set_c.assignment_id, one_deliberate_mistake=False)
+    quiz_taking_service.submit(active_uuid, set_c.assignment_id)
+    # Deliberately no quiz_marking_service.mark_submission call here — see the
+    # log line above for why that omission is what makes this state seedable.
+
+    _log("Creating practice-active's manual flashcard deck (3 cards, due now — S-22/S-23 default)")
+    active_deck = flashcard_service.create_deck(
+        active_uuid,
+        subject_code=PLACEMENT_SUBJECT_CODE,
+        title=f"P4.9 Seed Deck {run_tag}",
+        origin=DeckOrigin.manual,
+    )
+    for i in range(1, 4):
+        flashcard_service.add_card(
+            active_uuid,
+            active_deck.id,
+            front=f"P4.9 seed card {i} — front ({run_tag})",
+            back=f"P4.9 seed card {i} — back ({run_tag})",
+        )
+
+    _log(
+        "Creating practice-settled's manual deck and reviewing every card 'good' — a real SM-2 "
+        "scheduler outcome that pushes due_at into the future, never a hand-written date"
+    )
+    settled_uuid = uuid.UUID(practice_settled["userId"])
+    settled_deck = flashcard_service.create_deck(
+        settled_uuid,
+        subject_code=PLACEMENT_SUBJECT_CODE,
+        title=f"P4.9 Seed Deck {run_tag}",
+        origin=DeckOrigin.manual,
+    )
+    settled_cards = [
+        flashcard_service.add_card(
+            settled_uuid,
+            settled_deck.id,
+            front=f"P4.9 settled card {i} — front ({run_tag})",
+            back=f"P4.9 settled card {i} — back ({run_tag})",
+        )
+        for i in range(1, 4)
+    ]
+    for card in settled_cards:
+        flashcard_service.record_review(settled_uuid, card.id, ReviewGrade.good)
+
+    settled_due = flashcard_service.due_session(settled_uuid, subject_code=PLACEMENT_SUBJECT_CODE)
+    if settled_due.total_due != 0 or settled_due.next_due_at is None:
+        raise RuntimeError(
+            "Expected practice-settled to have zero due cards and a real next_due_at after "
+            f"grading every card 'good', got total_due={settled_due.total_due} "
+            f"next_due_at={settled_due.next_due_at!r} — ReviewGrade.good may no longer push "
+            "due_at into the future from initial_schedule's baseline."
+        )
+
+    practice_dict = {
+        "subjectCode": PLACEMENT_SUBJECT_CODE,
+        "students": {
+            "active": {
+                **practice_active,
+                "unsubmittedAssignmentId": str(set_b.assignment_id),
+                "markingAssignmentId": str(set_c.assignment_id),
+                "markedAssignmentId": str(set_a.assignment_id),
+                "deckId": str(active_deck.id),
+            },
+            "settled": {
+                **practice_settled,
+                "deckId": str(settled_deck.id),
+            },
+            "bare": practice_bare,
+        },
+    }
+
     _log("Seeding complete")
     return build_result_payload(
         run_tag=run_tag,
@@ -1250,6 +1480,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         empty_teacher=empty_teacher,
         empty_parent=empty_parent_dict,
         placement=placement_dict,
+        practice=practice_dict,
     )
 
 

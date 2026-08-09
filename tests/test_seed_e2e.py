@@ -34,6 +34,7 @@ from scripts.seed_e2e import (
     PLACEMENT_QUESTIONS_PER_TOPIC,
     PLACEMENT_SUBJECT_CODE,
     PLACEMENT_TOPICS,
+    PRACTICE_SET_COUNT,
     QUIZ_BANK_ANSWERS,
     QUIZ_BANK_BANDS,
     QUIZ_REQUESTED_COUNT,
@@ -474,6 +475,24 @@ class TestBuildPlacementBankQuestions:
 
 
 # ---------------------------------------------------------------------------
+# PRACTICE_SET_COUNT — P4.9 chunk C's practice-set request size. Must stay
+# inside the per-topic pool build_placement_bank_questions actually seeds, or
+# PracticeService.create would report insufficient_pool for a set the seed
+# itself builds (only S-20's own live preview should ever exercise that
+# reason — see PRACTICE_SET_COUNT's docstring).
+# ---------------------------------------------------------------------------
+
+
+class TestPracticeSetCount:
+    def test_fits_within_a_single_topics_seeded_row_count(self) -> None:
+        assert PRACTICE_SET_COUNT <= PLACEMENT_QUESTIONS_PER_TOPIC
+
+    def test_fits_comfortably_within_the_whole_hermetic_bank(self) -> None:
+        rows = build_placement_bank_questions("tag1")
+        assert PRACTICE_SET_COUNT <= len(rows)
+
+
+# ---------------------------------------------------------------------------
 # wrong_mcq_answer — the seeded quiz submission's deliberately-incorrect answers.
 # ---------------------------------------------------------------------------
 
@@ -574,6 +593,20 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
                 },
             },
         },
+        "practice": {
+            "subjectCode": "0625",
+            "students": {
+                "active": {
+                    "userId": "pra1",
+                    "unsubmittedAssignmentId": "prb-as1",
+                    "markingAssignmentId": "prc-as1",
+                    "markedAssignmentId": "pra-as1",
+                    "deckId": "deck1",
+                },
+                "settled": {"userId": "prs1", "deckId": "deck2"},
+                "bare": {"userId": "prz1"},
+            },
+        },
     }
     base.update(overrides)
     return base
@@ -625,6 +658,20 @@ class TestBuildResultPayload:
                         "awardedMarks": 5,
                         "maximumMarks": 10,
                     },
+                },
+            },
+            "practice": {
+                "subjectCode": "0625",
+                "students": {
+                    "active": {
+                        "userId": "pra1",
+                        "unsubmittedAssignmentId": "prb-as1",
+                        "markingAssignmentId": "prc-as1",
+                        "markedAssignmentId": "pra-as1",
+                        "deckId": "deck1",
+                    },
+                    "settled": {"userId": "prs1", "deckId": "deck2"},
+                    "bare": {"userId": "prz1"},
                 },
             },
         }
