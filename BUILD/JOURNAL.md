@@ -1464,3 +1464,41 @@ lowering the floor to stay green is the dishonest gate that comment warns agains
 
 **Next.** P4.12: Phase-4 report, merge to develop, push, update PR #3, ntfy. Carry
 D4.25 and the standing Phase-3 limitations into the report and DELIVERY.md.
+
+## 2026-08-09 — thirty-ninth session — P4.12, and Phase 4 is complete
+
+**Did.** Wrote `reports/phase-4/REPORT.md` and captured the committed phase-4
+baseline the report hangs off — `LEMELY_REPORT_DIR=reports/phase-4` for both the
+Playwright and Puppeteer legs, which is the explicit re-baseline `check.sh:20-25`
+demands precisely so a gate run can never overwrite the reference it compares
+against. Merged to develop (`321fdfc`), pushed both branches, retitled PR #3 to
+"Phases 0–4" with a full Phase-4 section appended, left open. Pruned STATE.md per
+MISSION §8b: 2206 → 229 lines.
+
+**Learned — the gate evidence was already earned, and saying so precisely mattered
+more than re-earning it.** No source file changed this session, so the tree is
+byte-identical to `bf74b89` — the tree chunk E's run took through all 13 gates.
+Re-running check.sh would have cost ~25 minutes to produce the same result on the
+same bytes. What genuinely needed doing was the *baseline*, which is a different
+artifact, and the report says which run each number came from rather than implying
+one run produced them all.
+
+**Learned — two more hand-copied mirrors drifted, which is now a pattern with three
+instances.** `gemini_spend_usd` read 0.1612 while the ledger that actually enforces
+the $8 cap read **0.18429**; `SeedContract` had drifted the same way (P4.11 chunk A);
+`STATE.md`'s own chunk-D path reference had drifted earlier in the phase. Every one
+is a value copied by hand from an authoritative source with nothing generating one
+from the other. Re-read the source before quoting it.
+
+**Learned — the compare's `changed` count is not a regression signal and never can
+be.** The seed's `run_tag` is random per run, so every screen rendering a class name
+differs on every re-baseline. `0 removed` is what carries the gate. Verifying the 78
+changed captures by *opening* them found the phase's best artifact rather than a
+defect: `T-06/default--1440.png` shows all three MISSION at-risk rules firing at
+once, each labelled — impossible before P4.3 supplied targets and P4.11 seeded the
+scenario.
+
+**Next.** Phase 5, the engagement layer. XP has no schema at all (only the
+`completed_at` seam), students still cannot see announcements, and
+`notification_preferences` is written and read by nothing — all three are P5's, and
+none has a helper waiting from Phase 3 or 4.
