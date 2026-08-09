@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T13:40:00Z   # **Twenty-ninth session — P4.11 chunk A is DONE and COMMITTED (`9cbbf42`).** Its gate run finished **all 13 gates green, 0 skipped** (`/tmp/p411a_gate.log`), and attribution was checked by mtime rather than assumed: both files were last written 11:50:49/11:51:33, the run started 11:54:07, and nothing was edited mid-run. `pre-commit` was red on exactly the one hook the environment note predicts (`lint-imports` "Executable not found"); `check.sh` ran it green on the same tree. **Next: P4.11 chunk B**, which is fully scoped read-only in the chunk plan below — do not re-derive its routes, ready-strings, accounts or the three inherited traps.
+last_updated: 2026-08-09T12:35:00Z   # **Twenty-ninth session — P4.11 chunk A is DONE and COMMITTED (`9cbbf42`).** Its gate run finished **all 13 gates green, 0 skipped** (`/tmp/p411a_gate.log`), and attribution was checked by mtime rather than assumed: both files were last written 11:50:49/11:51:33, the run started 11:54:07, and nothing was edited mid-run. `pre-commit` was red on exactly the one hook the environment note predicts (`lint-imports` "Executable not found"); `check.sh` ran it green on the same tree. **P4.11 chunk B is WRITTEN and gating** — see its checklist entry below for the gate PID/log, the inversion evidence, and the S-05 "Weakest topics" finding. **Next after it goes green: commit chunk B, then chunk C.**
 #                                    **Chunk A, do not re-derive — the full rationale is in `9cbbf42`'s commit message.** `SeedContract` now declares all **14** top-level keys (the three Phase-4 groups *and* the four P3.10-era ones, undeclared since chunk e1), read out of `build_result_payload` rather than the docstring — which is missing that `practice` and `studyPlan` each carry `subjectCode`. The substantive half is the new `web/e2e/seed-contract.spec.ts` (3 tests), verified non-vacuous by real inversion against `seed_e2e.py` and reverted immediately.
 #                                    **Two facts established this session that chunk B needs.** (1) **`audit.mjs` runs its OWN `seed_e2e.py` invocation** (`:568`), separate from Playwright's `globalSetup` — so a Playwright spec that mutates a seeded account cannot poison the later `puppeteer-audit` leg of the same `check.sh` run, even though playwright-e2e runs first. (2) **`/student/onboard` does not redirect an already-onboarded student**: `Onboarding.tsx` always mounts at `wizardStep: "subjects"` and its seeding effect restores only the answers, so the onboard leg is safe to re-run and safe under Playwright retry. **The S-01/S-02/S-03/S-04/S-05 accounts still must not be collapsed** — that reason is unchanged and recorded in `seed.ts`.
 gemini_spend_usd: 0.1612
@@ -1766,7 +1766,33 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `awardedMarks`/`maximumMarks`/`questionCount`/`bankQuestionCount`/`paperNumber`/
         `activeSessionCount`/`completedSessionCount` are **numbers**; every id is a
         `str(...)`-stringified UUID.
-      - [ ] chunk B — **SCOPED READ-ONLY 2026-08-09 (twenty-eighth session) while chunk A's
+      - [ ] chunk B — **WRITTEN, 5/5 green locally, gate run IN FLIGHT** (PID 2551860, log
+        `/tmp/p411b_gate.log`, started 12:30:28, `pwdx`-verified at the repo root; the spec was
+        last written 12:25:51, before the run). **Do not edit any gated file until it reads
+        "All gates passed"; then commit and start chunk C.** The file is
+        `web/e2e/phase4-journey.spec.ts`, **5 tests, one per leg, not one linear journey** —
+        the four placement accounts cannot be collapsed (availability excludes a student's own
+        prior placement questions), so the journey is expressed over the accounts the seed
+        builds for it. Every ready-string and the S-02 drive were inherited from `audit.mjs`
+        rather than re-derived, including all three of its traps.
+        **Proven non-vacuous by inverting the PRODUCT, not by construction** — four sites broken
+        in one round (`QuestionnaireStep`'s `unsetLabel`, `placementData`'s refusal heading,
+        `rankTopics`' no-overlap filter, `StudyPlanWeek`'s "done"), which failed **exactly** the
+        four predicted tests while untouched S-04 stayed green; then S-04 alone inverted
+        (`QuizTaker`'s `{total}`) and it failed too. All reverted, `git diff web/src` clean.
+        **One finding worth not re-deriving: S-05's "Weakest topics" card is legitimately EMPTY
+        and that is correct, not a defect.** The seed's one deliberately-wrong answer does
+        produce a real `WeaknessRecord` — verified directly against the DB, `1 Motion, forces
+        and energy`, 2 of 4 marks lost, accuracy 0.5 — but `rankTopics`
+        (`web/src/portals/student/screens/placement/placementData.ts:119`) refuses to show the
+        same topic as both a strength and a weakness when the breakdown is smaller than
+        `2 * limit`, so a single-topic breakdown fills **Strongest** and leaves Weakest on its
+        honest empty state. The spec pins both sides. **The seed's own comment at
+        `seed_e2e.py:1262` ("S-05's topic breakdown needs one") is accurate but easy to misread
+        as promising a populated *Weakest* card — it does not.** Also note `seed_e2e.py` checks
+        `result.marked` but never that the breakdown is non-empty.
+        *(Original read-only scoping follows, still accurate.)*
+        - [ ] chunk B (scoping) — **SCOPED READ-ONLY 2026-08-09 (twenty-eighth session) while chunk A's
         gate ran — do not re-derive any of the following.** Every route, account and
         ready-string chunk B needs already exists in `web/scripts/audit.mjs`'s registry,
         which drives these exact screens on these exact seeded accounts every gate pass.
