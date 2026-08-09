@@ -4388,3 +4388,236 @@ gate actually asserts.
 (`teacher-review`) and student-route a11y **100**, **zero** console errors,
 **zero** responsive/horizontal-scroll violations, screenshot corpus across 39
 screen directories.
+
+---
+
+## D5.1 — The XP, streak and leaderboard specification (P5.1, written before any implementation)
+
+MISSION §4 Phase 5 requires this spec to exist *before* the code. It governs
+P5.2 (XP engine), P5.3 (leaderboards) and P5.4 (friends). Everything below is a
+decision, not a sketch — where a later task disagrees with this document, the
+disagreement gets recorded as its own D5.x rather than silently drifting.
+
+### 0. The constraint that outranks every other rule here
+
+**XP must never be a function of how well a student did.** Not their marks, not
+their percentage, not their predicted grade, not their accuracy on a quiz.
+
+This is not a style preference. MISSION §3 fixes "leaderboards show XP (effort),
+never grades", and UI spec §1.4 makes grades private to the student, their
+parents and their teachers. A leaderboard is the one public surface in this
+product. If XP correlated with performance, the leaderboard would be a grade
+ranking wearing a costume — and it would leak *precisely* the information the
+product promises to keep private, to *precisely* the audience (classmates) the
+student would least want to have it.
+
+So: a student who scores 18/80 and a student who scores 76/80 on the same paper
+earn **identical XP**. XP answers "did you do the work", never "were you good at
+it". Two structural consequences, both binding on P5.2/P5.3:
+
+- **The XP award functions take no mark, score, grade or accuracy argument.**
+  Not "ignore it" — do not plumb it in. An argument that does not exist cannot
+  be used by a later well-meaning change.
+- **The leaderboard query must not join to any marking table** (`attempts`,
+  `question_results`, `papers`, `weakness_records`). P5.3 carries a test that
+  asserts this over the emitted SQL, so the rule survives a refactor that
+  nobody reads carefully. A comment saying "don't join marks here" is not a
+  control; a failing test is.
+
+### 1. What already exists (do not rebuild it)
+
+`xp_events` and `streaks` were created in **migration 0002**, Phase 1's core
+schema — see the corrected Phase-4 limitation in STATE.md. `xp_events` carries
+`(user_id, source, amount, awarded_on, metadata)` with an index on
+`(user_id, awarded_on)`; `streaks` carries `(user_id UNIQUE, current_length,
+longest_length, last_active_on, freezes_available)`. The `xpsource` enum holds
+exactly four values and they are exactly MISSION's four sources:
+`paper_corrected`, `quiz_completed`, `flashcard_reviewed`,
+`study_session_completed`.
+
+**Adding a fifth XP source requires an enum migration.** The four are the scope;
+P5 does not invent a fifth.
+
+### 2. Award amounts
+
+Effort-proportional, weighted by how much real work each act represents:
+
+| Source | XP | Unit |
+|---|---|---|
+| `paper_corrected` | **50** | per paper reaching a completed marking |
+| `quiz_completed` | **30** | per quiz/practice/placement assignment submitted |
+| `study_session_completed` | **20** | per study-plan session marked complete |
+| `flashcard_reviewed` | **1** | per card graded in a review |
+
+The ratios matter more than the absolute numbers. Correcting a past paper is the
+product's core loop and its hardest single act, so it dominates. A flashcard is
+one keypress, so it is worth one point — which is also what makes the daily caps
+in §3 defensible rather than arbitrary.
+
+### 3. Anti-farming caps
+
+The cheapest action to repeat is the one that needs the tightest bound. Caps are
+**per user per streak-day** (§4's day, not a UTC day):
+
+| Source | Daily cap | Effective XP ceiling |
+|---|---|---|
+| `flashcard_reviewed` | 60 cards | 60 |
+| `quiz_completed` | 3 | 90 |
+| `paper_corrected` | 5 | 250 |
+| `study_session_completed` | 4 | 80 |
+| **Global** | — | **250 XP/day** |
+
+Two rules on how a cap behaves, because the wrong choice here is a support
+burden:
+
+- **A capped action still succeeds.** Hitting the flashcard cap does not block
+  the 61st review — it reviews normally and awards 0 XP. The learning activity
+  is never gated on the gamification layer. (If the two ever conflict, the
+  learning wins; that is the whole product.)
+- **A capped award writes no `xp_events` row**, rather than a row with
+  `amount = 0`. Zero-rows would inflate the "XP earned this week broken down by
+  source" breakdown on S-31 with entries that contributed nothing.
+
+### 4. The streak day, and why it is not UTC
+
+**A streak day is a civil date in `Africa/Cairo`.**
+
+The codebase's convention everywhere else is aware-UTC-now with an injectable
+clock (`lemely/db/flashcard_repo.py`), and P5 keeps that for *timestamps*. But a
+streak is a claim about *which day a human was working*, and Cairo is UTC+2/+3.
+A UTC day boundary falls at **02:00–03:00 Cairo**, so a student revising at 1am
+— the single most likely hour for this cohort to be doing flashcards — has that
+work credited to *yesterday*. That silently breaks today's streak while
+double-counting yesterday's. Both failure modes are invisible to a test written
+in UTC and infuriating to the student.
+
+Consequences, and one trap worth naming loudly:
+
+- **`xp_events.awarded_on` holds a Cairo civil date, NOT a UTC date.** The
+  column type is `Date` and gives no hint. Anything comparing it against
+  `datetime.now(UTC).date()` is wrong for two to three hours out of every
+  twenty-four. P5.2 converts through a single helper and nothing else computes
+  a streak date inline.
+- Egypt has not observed DST continuously; the helper uses `ZoneInfo`, never a
+  fixed `+02:00` offset, so a reinstated DST rule is a tzdata update rather than
+  a code change.
+- The timezone is a **launch-market default, not a per-user setting.** MISSION
+  §1 scopes v1 to Egypt. Per-user timezones are a real feature with real edge
+  cases (a student who moves mid-streak) and are out of scope; the helper takes
+  the zone as a parameter so that adding them later is a wiring change.
+
+### 5. Streaks and the freeze
+
+`current_length` counts consecutive streak-days on which the user earned **any**
+XP at all. Any source counts — one flashcard keeps a streak alive. The streak
+rewards showing up, and the caps in §3 already stop showing up from being
+farmed into a leaderboard win.
+
+**Everything is computed lazily on read.** There is no scheduler, cron or
+background worker in this build, so a streak must resolve correctly no matter
+how long the user was away — including the case where they return after 40 days
+and three freezes should have been consumed. P5.2 evaluates from
+`last_active_on` and the clock at every read and every award; it never assumes
+a nightly job ran.
+
+**Freeze grant.** One freeze per 7 consecutive active days, capped at **2 held**.
+Not purchasable — payments are out of scope (MISSION §1), and a purchasable
+streak protection is the exact mechanic UI spec S-31 warns against.
+
+**Freeze consume.** On the first missed day, automatically and silently: one
+freeze is spent, `current_length` is *preserved but not incremented*, and the
+streak survives. A second consecutive missed day with no freeze left resets
+`current_length` to 0. `longest_length` is never reduced.
+
+**The kindness rule is a design constraint, not a copy note.** UI spec S-31 asks
+for a streak that feels worth protecting "without being manipulative — a
+streak-freeze that's offered kindly beats a guilt-trip". So a freeze is reported
+**after** it saves the student ("your streak was protected"), never sold to them
+beforehand as urgency. The "streak about to break" push in MISSION §4 stays,
+because a factual reminder before the fact is different from a manufactured
+panic — but it is one notification, it respects quiet hours, and it is
+suppressible from G-12 like everything else.
+
+### 6. The weekly leaderboard window
+
+**ISO week: Monday 00:00 Cairo through Sunday 23:59:59 Cairo**, matching §4's
+day so a student never sees their streak and their weekly XP disagree about what
+day it is.
+
+**Weekly totals are computed by summing `xp_events`, never denormalized into a
+running column.** This build has now been burned three times by a hand-written
+mirror that nothing regenerates (`gemini_spend_usd`, the `SeedContract`, and the
+XP-schema limitation this very phase corrected). A `weekly_xp` column would be a
+fourth, and it would drift silently in the direction that flatters the user. The
+existing `ix_xp_events_user_id_awarded_on` index is exactly the right shape for
+the sum, and the row counts here are trivial — the caps in §3 bound a user to at
+most a few dozen rows per week.
+
+### 7. Per-subject XP needs a column that does not exist
+
+S-29 requires boards "for basis — total XP or per-subject XP", and `xp_events`
+has **no subject attribution at all**. Two additive changes, which together are
+the only XP-related schema work P5 does:
+
+1. **`xp_events.subject_id`, nullable, FK to `subjects`.** Nullable because not
+   every award has a subject — a flashcard review does, a future account-level
+   award might not. Per-subject boards filter on it; total boards ignore it.
+   Storing it in the `metadata` JSONB instead was rejected: it is a real foreign
+   key with real referential integrity, and it must be indexable.
+2. **A uniqueness constraint for idempotency** — see §8.
+
+Additive-only, consistent with D1.2/D1.3.
+
+### 8. Idempotency is enforced by the database, not by care
+
+A paper can be re-marked. A teacher can override a result. A plan session can be
+un-completed and completed again. None of those may re-award XP, and "we only
+call the award function once" is not a control that survives a year.
+
+Every award carries a **`dedupe_key`** derived from the identity of the thing
+that caused it (the paper id, the assignment id, the plan-session id, the
+flashcard-review id), and a **unique index over `(user_id, source, dedupe_key)`**
+makes a double award a database error rather than a leaderboard anomaly. The
+award path treats a uniqueness violation as a no-op success, not a failure —
+re-marking a paper is a legitimate act that simply earns nothing new.
+
+This is also what makes the caps in §3 safe to evaluate optimistically: the
+worst case of a race is a rejected insert, not a double count.
+
+### 9. Opt-out
+
+**`student_profiles.leaderboard_opt_out`, boolean, not null, default false**
+(additive; `student_profiles` arrived in migration 0009, and leaderboards are a
+student-only surface so the flag belongs with the student profile rather than
+with `users`).
+
+Semantics:
+
+- An opted-out student is **absent from every board**, including boards their
+  own friends see. There is no "hidden but still ranked" halfway state.
+- They **keep earning XP**, keep their streak, and still see their own totals on
+  S-31. Opting out is about being *ranked publicly*, not about leaving the
+  system, and it must be losslessly reversible — no XP history is deleted, so
+  opting back in restores their position exactly.
+- Their own S-29 shows their XP without ranks, and says plainly that they have
+  opted out with a route to undo it. A blank screen would read as a bug.
+- **Enforced in the query's WHERE clause, not filtered in the DTO layer.** A row
+  that never leaves Postgres cannot leak through a serialization bug, a logging
+  statement, or a future endpoint that reuses the repo function and forgets the
+  filter. Same reasoning as §0's no-join rule: put the guarantee where it is
+  structural.
+
+### 10. What this spec deliberately does not decide
+
+Named so a later task does not read the silence as an oversight:
+
+- **Achievements/milestones** (UI spec S-31) — the screen mentions them; no
+  schema exists and MISSION §4's Phase-5 bullet does not list them. Out of scope
+  unless P5.8 finds the screen unbuildable without them, in which case it gets
+  its own decision record.
+- **Level thresholds.** S-31 says "total XP and level". The mapping from XP to
+  level is a display concern with no schema implication; P5.8 fixes it and
+  records it, so long as it is a pure function of total XP.
+- **XP for a *teacher* or *parent*.** `xp_events.user_id` is a `users` FK, so the
+  schema permits it. The product does not: engagement mechanics are a student
+  surface. P5 awards XP to students only.

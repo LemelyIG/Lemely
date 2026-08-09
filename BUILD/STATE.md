@@ -223,15 +223,21 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
 
 ### Task checklist
 - [x] done — **P5.0** Reconnaissance + phase plan (this section); Phase-4 XP limitation corrected.
-- [ ] doing — **P5.1** XP + streak + leaderboard **spec** recorded in `BUILD/DECISIONS.md` (D5.1)
+- [x] done — **P5.1** XP + streak + leaderboard **spec** recorded in `BUILD/DECISIONS.md` (D5.1)
       **before any implementation** — MISSION §4 Phase 5 mandates this ordering explicitly. Must
       fix: per-source award amounts, anti-farming caps, the streak day boundary + timezone,
       streak-freeze grant/consume rules, the weekly leaderboard window + reset, and opt-out
       semantics. Constrained by UI spec §1.4 (XP public / grades private) and MISSION §3
       ("leaderboards show XP, never grades").
-- [ ] todo — **P5.2** XP engine backend on the existing tables: repo + clock-injected service
+- [ ] doing — **P5.2** XP engine backend on the existing tables: repo + clock-injected service
       (follow P4.6's SM-2 clock injection), award call sites at the four seams, anti-farm caps,
-      idempotency so a re-marked paper cannot double-award.
+      idempotency so a re-marked paper cannot double-award. **Implements D5.1 — read it first.**
+      Needs ONE additive migration (0013): `xp_events.subject_id` FK + the
+      `(user_id, source, dedupe_key)` unique index. D5.1 §7/§8 fix both.
+      Traps D5.1 names: `awarded_on` is a **Cairo** civil date not a UTC one (§4); award
+      functions must take **no mark/score/grade argument at all** (§0); a capped action still
+      succeeds and writes **no row** rather than a zero row (§3); streaks resolve **lazily on
+      read** because this build has no scheduler (§5).
 - [ ] todo — **P5.3** Leaderboards backend: friends/class/school/global × total/per-subject,
       weekly window, opt-out, own-row pinning. Grades must be structurally unreachable here.
 - [ ] todo — **P5.4** Friends backend + migration (requests in/out, accept, remove, privacy).
