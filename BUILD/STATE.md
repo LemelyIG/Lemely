@@ -1508,6 +1508,22 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         path) and **`:2161-2164`** (a runtime `log()` whose text reads "P4/P5 screens still
         on mock data"; it prints to the operator, so the comment fix alone leaves the lie in
         the output).
+        **Seed-call 1's "pick the session whose topic is the seeded weak topic" has an exact
+        source and must not be hardcoded (same session, read-only).** `PracticeService` has a
+        **public** `topics(student_id, subject_code) -> PracticeTopicsResult`, and that result
+        carries `.weak_topics` — it is the very list `GET /practice/{code}/topics` returns and
+        therefore the very list S-25's frontend joins against for its *provable*
+        recorded-weakness arm. So the seed picks the first session whose `.topic` is in
+        `practice_service.topics(active_uuid, PLACEMENT_SUBJECT_CODE).weak_topics` and
+        **raises if none matches**, in the existing `RuntimeError`-with-a-diagnosis style the
+        practice block already uses (`seed_e2e.py:1475`). Hardcoding a topic string, or
+        taking `sessions[0]` on the assumption that `active`'s only signal is weakness, would
+        both silently capture the *honest-absence* arm under a screenshot named for the
+        provable one — the exact "capture that lies about which state it is" D4.18 rules out.
+        Account variables already in the file: `practice_active`/`practice_settled`/
+        `practice_bare` + `active_uuid`/`settled_uuid`, `placement_completed`/`completed_uuid`
+        (**note: there is no `bare_uuid`** — derive it), `practice_dict` (1482-1498) and
+        `placement_dict` (1316).
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
