@@ -1432,3 +1432,35 @@ the thing to do before writing the seed, not after.
   docstring defects (`:20-23` false, `:18` mis-numbered). Then chunk E, whose blocking finding —
   the seeded stems are pure ASCII, so item 6's screenshot inspection would pass vacuously — is
   already recorded and must not be budgeted as a pure evidence pass.
+
+## 2026-08-09 — thirty-eighth session (P4.11 chunks D + E; P4.11 COMPLETE)
+
+**Did.** Inherited chunk D's gate run mid-flight, confirmed all 13 gates PASS /
+0 skipped and checked attribution by mtime before committing (`bdfc9bf`) — at-risk
+rule 2 is now pinned by a seeded scenario for the first time since D3.3 wrote it.
+Then wrote and landed chunk E (`5983af5`), closing P4.11.
+
+**Learned — chunk E was not the evidence pass it was scoped as.** The two screens
+that render a question stem (S-04, S-21) are both fed by the E2E seed, and every
+seeded stem was pure ASCII on a single line. So MISSION §4's "verify the maths
+renders, do not assume" would have been a **vacuous pass against the existing
+corpus** — it could not fail, and it looks identical to a real one. Seeded a
+verbatim corpus sample (`0625_w23_qp_42#1c`) and then actually opened the
+captures: newlines render as line breaks, `1.1 × 10⁵ J` renders correctly at
+380px where the wrap splits it.
+
+**Learned — two checks that were assumed rather than run.** `ruff` caught the `×`
+as an ambiguous character (RUF001/RUF003) *before* a 25-minute gate was spent, and
+`_FIGURE_DEPENDENT_PATTERN` turned out to be a **Postgres** regex that raises
+`PatternError` under Python `re` — so figure-safety had to be evaluated in
+Postgres, with a positive control to prove the check itself was not vacuous.
+
+**Learned — D4.25, the finding I did not go looking for.** Reading the Lighthouse
+numbers instead of the PASS line: `check_ui_gates.py` enforces a11y ≥ 95 and has
+**no performance check at all**, while MISSION §11 and `audit.mjs:218` both state
+performance ≥ 80 is gated. `student-flashcards-due` is at 79 and passes. Recorded,
+deliberately not fixed — the remedy is frontend perf work outside P4.11, and
+lowering the floor to stay green is the dishonest gate that comment warns against.
+
+**Next.** P4.12: Phase-4 report, merge to develop, push, update PR #3, ntfy. Carry
+D4.25 and the standing Phase-3 limitations into the report and DELIVERY.md.
