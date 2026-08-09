@@ -1911,6 +1911,30 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         Unicode maths (`Ω α β γ ρ θ ² ³ ⁵ × °`) and the `white-space: pre-line` newlines
         render, per item 6. That inspection is MISSION §4's "verified visually in
         screenshots, not assumed", and it is a human-eyes-on-artifact step, not an assertion.
+        **BLOCKING FINDING for chunk E, found read-only 2026-08-09 (thirty-second session)
+        while chunk B's gate ran — do not re-derive, and do not assume the existing corpus
+        satisfies item 6.** The two screens that render a `question_bank.prompt` are **S-04**
+        (`QuizTaker`, registry `audit.mjs:1486`) and **S-21** (practice set/export,
+        `:1586-1655`), captured to `reports/.scratch/screens/<screenId>/<state>--<bp>.png`
+        (`SCREENS_DIR`, `audit.mjs:424`; `LEMELY_REPORT_DIR` defaults to `reports/.scratch`).
+        **But every stem the E2E harness renders is pure ASCII synthetic text.** Both
+        `prompt=` sites in `scripts/seed_e2e.py` are `"Seed MCQ question {i} ({band})"`
+        (`:719`) and `"Synthetic placement seed item {ref} for topic {topic!r}
+        (<marker>)."` (`:796`) — no non-ASCII character and **no newline** anywhere. So the
+        committed S-04/S-21 captures contain **neither the Unicode maths nor the
+        `white-space: pre-line` newlines item 6 asks a human to look at**, and "inspect the
+        captured stems" against the current corpus would be a **vacuous pass** — the same
+        shape of defect as trap 2 above (asserting on a string that renders on the wrong
+        screen). The real corpus is where the maths lives (P4.8 measured 21 distinct
+        non-ASCII chars across 273 stems, 1 LaTeX-shaped); the seed is not.
+        **So chunk E is not purely an evidence pass and must not be budgeted as one.** It
+        needs the seeded stem to carry a real Unicode-maths + embedded-newline sample before
+        the capture is worth inspecting — an **additive** change to the two `prompt=` strings
+        (or one added seed item), which touches `scripts/seed_e2e.py`, hence a gated chunk.
+        Take the sample verbatim from a real banked 0625 stem rather than authoring maths by
+        hand, so the screenshot proves the product renders *corpus* text, not text written to
+        make the screenshot pass. Check first whether any existing spec or `audit.mjs` entry
+        asserts on the current prompt strings before editing them.
 - [ ] todo — **P4.12** Phase-4 report, merge to develop, push, update PR #3, ntfy.
 
 ### Environment facts worth not re-deriving (cost real work to find)
