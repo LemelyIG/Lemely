@@ -324,9 +324,25 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       `lemely/db/leaderboard_repo.py` once the friendships table exists. Everything else it
       needs is built — follow the existing `_membership_subquery` shape, keep the opt-out in
       the WHERE clause, and extend the D5.1 §0 emitted-SQL guard test to the new scope.
-      - [ ] **chunk A** — migration 0015 (`friendships` + `users.friend_code`) +
-            `lemely/db/friend_repo.py` + `LeaderboardScope.friends` + tests.
-      - [ ] **chunk B** — `routers/friends.py` + `schemas_friends.py` + deps + tests.
+      **Resume note (forty-first session):** both chunks were found already COMMITTED with a
+      clean tree — the fortieth session died after committing chunk B but before running
+      `./scripts/check.sh` and before updating this file. Nothing was re-implemented; the only
+      outstanding work is the full-gate verification, which is running now. Do not re-plan the
+      chunks; read the two commit messages (`7397df0`, `71d1a9b`) for what they contain and why.
+      - [x] **chunk A** (`7397df0`) — migration 0015 (`friendships` + `users.friend_code`) +
+            `lemely/db/friend_repo.py` (`FriendService`) + `LeaderboardScope.friends` + tests.
+            D5.6 recorded. One friendship is one row (canonical `pair_low`/`pair_high`, unique
+            index + three CHECKs), so the reciprocal row is a database error, pinned by a test
+            that inserts through the session rather than the service.
+      - [x] **chunk B** (`71d1a9b`) — `GET/POST/DELETE /api/student/friends` in its own thin
+            router mirroring P5.3's `leaderboard.py`; `schemas_friends.py`; deps; tests.
+            Identity is structurally the token's `sub` on every route — no caller-supplied user
+            id exists on this router. Two defects found while wiring: `POST /requests` derived
+            the other party from `addressee_id`, which is the *caller* in the crossed-requests
+            case (now derived from whichever end the caller is not on, and the response reports
+            `accepted` there); and `accept` matched the returned row against the raw path string,
+            but `uuid.UUID` accepts uppercase/braces/`urn:uuid:` forms that normalise
+            differently — those would have accepted and then fallen through to a 500.
       Design fixed before implementation (to be recorded as D5.6): **`users` has no
       `username` column**, so S-30's "add by username" is unbuildable as written; a
       nullable-unique `users.friend_code` (8 chars, ambiguity-free alphabet, minted lazily)
