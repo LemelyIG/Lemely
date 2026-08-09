@@ -3898,3 +3898,43 @@ defects in this registry by *reading* it, and the two worst defects — a missin
 new screen and a seed that could not run twice — were both found in the first ten minutes of
 actually *running* it. Reading finds what is wrong with the code you are looking at; running
 finds what you did not think to look at.
+
+## D4.17 — S-23's end-of-session summary ships with no XP, and that is a spec override
+
+**Context.** P4.9 chunk B built S-22/S-23 (flashcards) on the ten P4.6 routes.
+`docs/LEMELY_UI_SPEC.md` §S-23 specifies the review session's end-of-session summary as
+"a card with a reveal interaction, a self-grade control …, session progress, and an
+end-of-session summary **with XP**".
+
+**The conflict.** XP is Phase 5. It does not exist: P4.7 chunk B deliberately left
+`study_plans.completed_at` as the XP seam and added no points or streak column, and there is
+no XP table, service or route anywhere in the codebase. So the spec asks a Phase-4 screen to
+display a quantity that has no source.
+
+**Decision — the summary reports real session facts and no XP.** Cards reviewed, the
+again/hard/good/easy distribution, the `intervalBeforeDays`→`intervalAfterDays` change
+`ReviewResultDTO` already returns, and the remaining backlog (`totalDue` minus reviewed).
+No XP number, no placeholder, no zero.
+
+**Why this is not a shortfall.** The authority order in MISSION §10 puts the UI spec above
+skill opinion, but the spec's own §1.4 product principle — never invent precision — is
+higher still, and the two collide here. Any XP figure this screen could render would be
+fabricated: there is no rule that says what a flashcard review is worth, because designing
+the XP scheme is explicitly a Phase-5 task that MISSION §4 requires be recorded in
+DECISIONS.md *before* implementation. Rendering `0 XP` is worse than rendering nothing —
+it is a real-looking number that says the student earned nothing for real work. Inventing a
+rate here would also pre-empt the Phase-5 design and quietly become the de-facto scheme.
+
+**How it is pinned, so P5 cannot drift into it by accident.** `summarizeSession` is
+asserted to return exactly `["reviewed", "gradeCounts", "intervalChanges"]`, with
+`"xp"`/`"points"`/`"streak"` explicitly absent from the shape. When P5 adds XP it must
+change that test deliberately — which is the point. The seam is the review audit log
+(`flashcard_reviews`, P4.6 chunk A, built precisely as P5's XP seam); no schema change is
+needed to add XP later.
+
+**Same family as the two other deliberate non-builds in P4.9:** fact 4 (reveal-answer is not
+built, because no route returns a model answer and adding one would put marking material on
+a student surface) and fact 6 (the photo-answer route is not built, because no image field
+exists anywhere on the quiz answer path and a camera affordance would silently discard the
+student's work). In all three the honest move was to leave it unbuilt and say so, not to
+build a convincing shell.

@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-10T02:40:00Z   # P4.9 chunk A closed, 13 gates green. Next: chunk B (S-22/S-23 flashcards).
+last_updated: 2026-08-10T04:15:00Z   # P4.9 chunk B closed, 13 gates green. Next: chunk C (gate 8 for all four screens).
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -1052,7 +1052,46 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
           (S-21 working view), `practice/result/:assignmentId` (S-21 summary), in
           `portals/student/index.tsx`; nav item + `crumbs` entry in `portals/student/data.ts`.
         - `<h1>` on every new screen (D4.16's defect — it shipped five screens without one).
-      - [ ] doing — chunk B — S-22 + S-23 frontend on the existing 10 flashcard routes. No backend
+      - [x] chunk B — **done** (2026-08-10, sixth session). `web/src/lib/flashcardTypes.ts`,
+        `lib/hooks/useFlashcardApi.ts` (10 hooks, one per route), `screens/flashcards/`
+        (`FlashcardDecks` S-22, `FlashcardReview` S-23, `flashcardData.ts` pure logic), two
+        routes + nav + crumbs, `web/tests/unit/flashcards.test.ts`.
+        **All 13 gates PASS, 0 skipped, exit 0.** **279 web unit tests / 7 files** (chunk A
+        baseline 249). **Zero backend diff** — `git status --porcelain -- lemely tests alembic
+        scripts` empty, so chunk 0's **2331 / 6 skipped / 0 failed / 90.37% cov** stand
+        unmeasured. $0.00 Gemini (generation is behind a live Gemini client but no live call
+        was made).
+        **Two defects the orchestrator found in the handover, neither self-reported as a
+        defect — do not re-derive:**
+        1. **`useEditCard` was defined and called nowhere**, so S-22's spec'd "edit" action
+           could add and delete cards but never **reword** one. The hook was dead code and the
+           action was half-built. Wired as an in-place row editor (`CardRow` owns its own draft
+           state — a shared parent draft would carry one card's text into the next row opened).
+           **The source chip stays rendered while the row is in edit mode**, deliberately: the
+           label describes who *wrote* the card, and editing text is not authorship, so an AI
+           card a student rewrites stays chipped AI-written.
+        2. **A hand-made deck was being sent as `origin: "topic"` the moment the student typed
+           a topic** — which renders as "Topic-generated", claiming a model wrote a deck the
+           student built by hand. The backend never required it: `create_deck`'s own docstring
+           is "`origin=manual`: `topic` is whatever the caller passes". Same honesty class as
+           rule 1 (`source` on a card), one level up — provenance, and it screenshots
+           perfectly. Fixed, and the decision **hoisted out of JSX into
+           `manualDeckRequest`** in the pure module so a test pins it rather than a human
+           reading JSX (chunk A's `onboardingData.ts` precedent). 4 tests with inverses; a
+           blank topic is `null`, never `""`, which would read back as a topic the student chose.
+        **The XP conflict below was honoured:** `summarizeSession` is pinned by a test asserting
+        `Object.keys(summary)` is exactly `["reviewed", "gradeCounts", "intervalChanges"]` and
+        that `"xp"`/`"points"`/`"streak"` are all absent — so P5 adding XP is a deliberate
+        change to that test, not a silent drift.
+        30 unit tests in `flashcards.test.ts`, each with its inverse; `<h1>` verified present in
+        **every** render branch of both screens (5 and 3 respectively), not just the happy path.
+        **Two API-shape limits worth carrying, both honest reflections of the backend rather
+        than gaps to code around:** `GET /due` has **no `deck_id` filter** (only
+        `subject_code`/`limit`), so "review due cards" is subject-scoped and there is no
+        per-deck review entry point; and S-22's "edit" is an inline expansion, not a new
+        S-numbered screen, because the spec lists it as one of S-22's actions.
+        *(Original scoping block retained below.)*
+      - [ ] chunk B (scoping, kept for the rationale) — S-22 + S-23 frontend on the existing 10 flashcard routes. No backend
         work expected. `source: "ai"` must stay visible on the card for its whole life, and
         `generatedCount` (not `requestedCount`) is what the screen reports.
         **Scoped by measurement 2026-08-10 (sixth session) — do not re-derive:**
