@@ -53,6 +53,7 @@ from lemely.db.models.flashcards import (
 from lemely.db.models.flashcards import ReviewGrade as FlashcardReviewGrade
 from lemely.db.models.ops import (
     Announcement,
+    AnnouncementRead,
     AtRiskAcknowledgement,
     Notification,
     NotificationPreference,
@@ -106,6 +107,7 @@ __all__ = [
     "SESSION_MONTH_LABELS",
     # Models
     "Announcement",
+    "AnnouncementRead",
     "AtRiskAcknowledgement",
     "Attempt",
     # Enums and mixins

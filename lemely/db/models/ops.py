@@ -101,6 +101,44 @@ class Announcement(TimestampMixin, Base):
     publish_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
 
+class AnnouncementRead(TimestampMixin, Base):
+    """A read receipt: this user opened this announcement, at this time.
+
+    The receipt **is** the row. There is no "unread" row and no boolean —
+    ``announcements`` holds one row per audience rather than per recipient
+    (a class-wide post is a single row hundreds of students see), so unread
+    can only be expressed as the absence of a receipt. See migration
+    ``0016_announcement_reads`` for why that shape was chosen over a flag.
+
+    ``uq_announcement_reads_pair`` is what makes marking-as-read idempotent
+    under concurrency; ``read_at`` is the *first* read and is never moved by
+    a re-open.
+    """
+
+    __tablename__ = "announcement_reads"
+    __table_args__ = (
+        sa.UniqueConstraint("announcement_id", "user_id", name="uq_announcement_reads_pair"),
+        sa.Index("ix_announcement_reads_user_id_announcement_id", "user_id", "announcement_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    announcement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("announcements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    read_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+
 class Notification(TimestampMixin, Base):
     """An in-app notification delivered to a specific user."""
 
