@@ -233,6 +233,7 @@ module = [
   "lemely.web.schemas_parent",
   "lemely.web.schemas_me",
   "lemely.web.schemas_announcements",
+  "lemely.web.schemas_announcements_student",
   "lemely.web.schemas_student_profile",
   "lemely.web.schemas_study_plan",
   "lemely.web.schemas_leaderboard",

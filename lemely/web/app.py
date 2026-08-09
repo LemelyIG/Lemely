@@ -27,6 +27,7 @@ from lemely.web.routers import (
     review,
     school,
     student,
+    student_announcements,
     study_plan,
     teacher,
 )
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(study_plan.router)
     app.include_router(leaderboard.router)
     app.include_router(friends.router)
+    app.include_router(student_announcements.router)
     app.include_router(student.router)
     app.include_router(school.router)
     app.include_router(parent.router)
