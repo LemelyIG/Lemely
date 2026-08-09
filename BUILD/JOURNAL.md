@@ -1373,3 +1373,33 @@ the thing to do before writing the seed, not after.
   three traps are already measured: deleting the routes silently shrinks the RBAC matrix
   (replacements must land in the same commit), there are two different `StudentProfileDTO`
   classes, and `lemely/io/study_plan_ai.py` must survive for the CLI.
+
+## 2026-08-09 — twenty-eighth session (P4.10 closed, P4.11 chunk A)
+
+- **Did:** confirmed the twenty-seventh session's gate run (all 13 green, 0 skipped) and
+  committed the two replacement IDOR pins (`65c846c`), which closes P4.10 entirely. Then wrote
+  **P4.11 chunk A**: `SeedContract` extended to all 14 top-level keys, plus a new
+  `web/e2e/seed-contract.spec.ts` drift pin. Scoped chunk B read-only while the gate ran.
+- **Learned (1), and it is why chunk A is not just a types edit:** the mirror is protected by
+  *nothing*. `readSeed()` is an unchecked `as SeedContract` cast, **and `web/e2e/` is in no
+  tsconfig `include` (D3.20)** — so neither the cast nor `web-typecheck` can see a Python-side
+  rename. It typechecks, arrives `undefined`, and surfaces inside whichever spec dereferenced
+  it; on a `SeedAccount` field that means a login form filled with `undefined`, which fails as
+  a bad credential and reads as an auth bug. The pin re-reads the JSON as `unknown` —
+  deliberately not through `readSeed()`, whose cast is the thing under test.
+- **Learned (2):** the same missing typecheck meant the new spec could not be verified by
+  typechecking it, only by running it — so it was, and then inverted for real: renaming
+  `"studyPlan"` and one nested `"deckId"` in `seed_e2e.py` failed 2 of 3 tests with named
+  messages, and the third correctly stayed green because it covers other fields. Reverted;
+  `git diff` on `seed_e2e.py` clean.
+- **Learned (3):** the twenty-fifth session's read-only shape note was right in substance but
+  wrong in two details — it said "11 top-level keys" while enumerating 14, and it missed the
+  `subjectCode` on both `practice` and `studyPlan`. Both were caught only because the shapes
+  were re-read out of `build_result_payload` rather than trusted, and the note itself said to
+  read the emitting code and not the docstring. **A prior session's "do not re-derive" covers
+  the expensive discovery, not the arithmetic around it.**
+- **Next:** P4.11 chunk B, the greenfield onboard → placement → plan acceptance journey. It is
+  scoped in STATE with every route, seeded account and identifying string taken from
+  `audit.mjs`, plus its three inherited traps: `waitForText` strings are regexes, S-05 must not
+  be identified by a phrase `PlacementInvite` also renders, and the onboarding wizard's step is
+  component state so S-02 cannot be deep-linked.
