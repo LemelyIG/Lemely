@@ -3,7 +3,8 @@
 Pure unit tests: no DB, no network, no wall clock — every scenario supplies
 its own fixed ``now`` so the rules are deterministic. Scenarios are named
 after the acceptance-criteria bullets in the P3.2 brief / BUILD/DECISIONS.md
-D3.3, so a failing test names exactly which rule regressed.
+D3.3, and — for rule 2's subject-keyed ``targets`` mapping — D4.5 (P4.3
+chunk C), so a failing test names exactly which rule/behaviour regressed.
 """
 
 from __future__ import annotations
@@ -24,10 +25,16 @@ from lemely.core.schemas import ExamMetadata
 
 _NOW = datetime(2026, 8, 6, 12, 0, 0, tzinfo=UTC)
 
+# The subject code every ``_record``/``_quiz`` in this file carries, unless a
+# test explicitly builds a different-subject record (see
+# ``TestBelowTargetSubjectKeying``). Named so ``targets={_SUBJECT: "A"}``
+# reads as "this student's subject", not a magic string repeated everywhere.
+_SUBJECT = "0625"
 
-def _meta(paper_number: int = 1) -> ExamMetadata:
+
+def _meta(paper_number: int = 1, *, subject_code: str = _SUBJECT) -> ExamMetadata:
     return ExamMetadata(
-        subject_code="0625",
+        subject_code=subject_code,
         paper_number=paper_number,
         paper_variant=1,
         session_month="May/June",
@@ -41,10 +48,11 @@ def _record(
     grade: str = "B",
     recorded_at: str | None = None,
     origin: PaperOrigin = "past_paper",
+    subject_code: str = _SUBJECT,
 ) -> PaperRecord:
     return PaperRecord(
         student_id="alice",
-        metadata=_meta(),
+        metadata=_meta(subject_code=subject_code),
         awarded_marks=int(percentage * 80 / 100),
         maximum_marks=80,
         percentage=percentage,
@@ -119,6 +127,9 @@ class TestDecliningTrend:
 
 # ---------------------------------------------------------------------------
 # Rule 2 — predicted >= 2 grades below target (ladder A* A B C D E U).
+#
+# ``targets`` is the subject-keyed mapping (D4.5): {"0625": "<grade>"} unless
+# a test is specifically exercising cross-subject/absent-target behaviour.
 # ---------------------------------------------------------------------------
 
 
@@ -126,7 +137,7 @@ class TestBelowTarget:
     def test_fires_two_positions_below(self) -> None:
         """Target A, predicted C: 2 ladder positions below — fires."""
         history = _history(_record(60.0, grade="C"))
-        result = assess_at_risk(history, now=_NOW, target_grade="A")
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "A"})
         assert result.target_rule_status == TargetRuleStatus.FIRED
         flag = next(f for f in result.flags if f.reason == AtRiskReason.BELOW_TARGET)
         assert isinstance(flag.evidence, BelowTargetEvidence)
@@ -137,54 +148,118 @@ class TestBelowTarget:
     def test_does_not_fire_one_position_below(self) -> None:
         """Target A, predicted B: only 1 position below — does not fire."""
         history = _history(_record(70.0, grade="B"))
-        result = assess_at_risk(history, now=_NOW, target_grade="A")
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "A"})
         assert result.target_rule_status == TargetRuleStatus.NOT_FIRED
         assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
 
     def test_fires_three_positions_below(self) -> None:
         """Target A, predicted D: 3 positions below — fires."""
         history = _history(_record(40.0, grade="D"))
-        result = assess_at_risk(history, now=_NOW, target_grade="A")
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "A"})
         assert result.target_rule_status == TargetRuleStatus.FIRED
         flag = next(f for f in result.flags if f.reason == AtRiskReason.BELOW_TARGET)
         assert isinstance(flag.evidence, BelowTargetEvidence)
         assert flag.evidence.positions_below == 3
 
-    def test_no_target_is_not_evaluable_not_a_pass(self) -> None:
-        """No target grade recorded: distinguishable from 'evaluated, did not fire'."""
+    def test_no_targets_mapping_is_not_evaluable_not_a_pass(self) -> None:
+        """No ``targets`` mapping at all: distinguishable from 'evaluated, did not fire'."""
         history = _history(_record(40.0, grade="D"))
-        result = assess_at_risk(history, now=_NOW, target_grade=None)
+        result = assess_at_risk(history, now=_NOW, targets=None)
         status = result.target_rule_status
         assert status != TargetRuleStatus.NOT_FIRED  # not the same as "checked and clean"
         assert status == TargetRuleStatus.NOT_EVALUABLE
         assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
 
-    def test_target_with_no_papers_yet_does_not_fire(self) -> None:
-        """A target but zero papers: nothing to compare, so the rule cannot fire.
+    def test_empty_targets_mapping_is_not_evaluable_not_a_pass(self) -> None:
+        """An empty (but present) mapping is exactly as not-evaluable as ``None``."""
+        history = _history(_record(40.0, grade="D"))
+        result = assess_at_risk(history, now=_NOW, targets={})
+        assert result.target_rule_status == TargetRuleStatus.NOT_EVALUABLE
+        assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
 
-        The rule is still *evaluable* (a target was supplied) — it simply has
-        no predicted grade to measure against, so it reports NOT_FIRED rather
-        than raising on the empty history.
+    def test_target_with_no_papers_yet_is_not_evaluable(self) -> None:
+        """A ``targets`` mapping but zero grade-bearing records: nothing to key off.
+
+        Rule 2 resolves the target for the *subject of the latest
+        grade-bearing record* (D4.5) — with no such record there is no
+        subject to resolve, so the rule honestly reports not-evaluable rather
+        than a scalar-target-era 'checked, nothing to compare' NOT_FIRED.
         """
-        result = assess_at_risk(_history(), now=_NOW, target_grade="A")
-        assert result.target_rule_status == TargetRuleStatus.NOT_FIRED
+        result = assess_at_risk(_history(), now=_NOW, targets={_SUBJECT: "A"})
+        assert result.target_rule_status == TargetRuleStatus.NOT_EVALUABLE
         assert result.flags == []
 
     def test_unrecognised_grade_string_does_not_raise(self) -> None:
         """Bad/foreign grade data must not crash a teacher dashboard.
 
-        Both directions are covered: an off-ladder *predicted* grade and an
-        off-ladder *target*. The documented behaviour is "does not fire" — not
-        a third state, and not an exception.
+        An off-ladder *predicted* grade fails ``is_grade_bearing`` (it checks
+        membership on :data:`~lemely.core.history.GRADE_ORDER`), so such a
+        record is excluded from the grade-bearing records this rule considers
+        at all — with none left, there is no subject to resolve the target
+        against, so this is NOT_EVALUABLE (same reasoning as the zero-papers
+        case), not the third state ``_check_below_target``'s own defensive
+        ``predicted_grade not in GRADE_ORDER`` guard exists for. An off-ladder
+        *target* is the genuinely reachable defensive case: the record is
+        grade-bearing and the subject resolves, but the resolved target string
+        itself is foreign — "does not fire", never an exception.
         """
         off_ladder_predicted = _history(_record(40.0, grade="Ungraded"))
-        result = assess_at_risk(off_ladder_predicted, now=_NOW, target_grade="A")
-        assert result.target_rule_status == TargetRuleStatus.NOT_FIRED
+        result = assess_at_risk(off_ladder_predicted, now=_NOW, targets={_SUBJECT: "A"})
+        assert result.target_rule_status == TargetRuleStatus.NOT_EVALUABLE
         assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
 
         on_ladder = _history(_record(40.0, grade="D"))
-        result = assess_at_risk(on_ladder, now=_NOW, target_grade="First Class")
+        result = assess_at_risk(on_ladder, now=_NOW, targets={_SUBJECT: "First Class"})
         assert result.target_rule_status == TargetRuleStatus.NOT_FIRED
+        assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
+
+
+# ---------------------------------------------------------------------------
+# Rule 2 — subject keying (D4.5, P4.3 chunk C).
+#
+# The whole point of the ``targets: Mapping[str, str]`` signature: a target
+# for a different subject than the one the latest record actually belongs to
+# must never be used to judge that record.
+# ---------------------------------------------------------------------------
+
+
+class TestBelowTargetSubjectKeying:
+    def test_a_target_for_a_different_subject_leaves_the_rule_not_evaluable(self) -> None:
+        """A maths target must never flag a physics paper (D4.5's core case).
+
+        The student's latest grade-bearing record is subject "0625"; the only
+        target on record is for "0580" (a different subject). Even though the
+        predicted grade is far below what *would* fire against that "0580"
+        target, this student's "0625" performance was never checked against
+        it — rule 2 must report NOT_EVALUABLE, not fire and not clear.
+        """
+        history = _history(_record(40.0, grade="D", subject_code="0625"))
+        result = assess_at_risk(history, now=_NOW, targets={"0580": "A"})
+        assert result.target_rule_status == TargetRuleStatus.NOT_EVALUABLE
+        assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
+
+    def test_a_real_per_subject_target_fires_for_the_matching_subject(self) -> None:
+        """A multi-subject targets mapping resolves to the *matching* entry."""
+        history = _history(_record(40.0, grade="D", subject_code="0625"))
+        result = assess_at_risk(history, now=_NOW, targets={"0580": "A", "0625": "A", "9709": "B"})
+        assert result.target_rule_status == TargetRuleStatus.FIRED
+        flag = next(f for f in result.flags if f.reason == AtRiskReason.BELOW_TARGET)
+        assert isinstance(flag.evidence, BelowTargetEvidence)
+        assert flag.evidence.target_grade == "A"
+
+    def test_resolves_against_the_subject_of_the_latest_grade_bearing_record(self) -> None:
+        """Interleaved subjects: only the *latest* record's subject is checked.
+
+        An earlier maths paper must not leak its subject into the resolution
+        once a later physics paper is the latest grade-bearing record — even
+        though a maths target exists and would fire if wrongly applied here.
+        """
+        history = _history(
+            _record(90.0, grade="A", subject_code="0580", recorded_at="2026-01-01T00:00:00+00:00"),
+            _record(40.0, grade="D", subject_code="0625", recorded_at="2026-02-01T00:00:00+00:00"),
+        )
+        result = assess_at_risk(history, now=_NOW, targets={"0580": "A"})
+        assert result.target_rule_status == TargetRuleStatus.NOT_EVALUABLE
         assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
 
 
@@ -263,7 +338,7 @@ class TestCombination:
             _record(65.0, grade="C"),
             _record(58.0, grade="D", recorded_at=stale),
         )
-        result = assess_at_risk(history, now=_NOW, target_grade="A")
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "A"})
         reasons = {f.reason for f in result.flags}
         assert reasons == {
             AtRiskReason.DECLINING_TREND,
@@ -274,7 +349,7 @@ class TestCombination:
 
     def test_no_rule_fires_for_a_healthy_student(self) -> None:
         history = _history(_record(85.0, grade="A"), _record(88.0, grade="A"))
-        result = assess_at_risk(history, now=_NOW, target_grade="A")
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "A"})
         assert result.flags == []
         assert result.is_at_risk is False
 
@@ -362,11 +437,17 @@ class TestFlagFingerprint:
     def test_below_target_fingerprint_from_target_predicted_pair(self) -> None:
         """Two flags carrying the same target/predicted pair fingerprint
         identically regardless of any other field; a different pair differs."""
-        same_a = assess_at_risk(_history(_record(60.0, grade="C")), now=_NOW, target_grade="A")
-        same_b = assess_at_risk(
-            _history(_record(60.0, grade="C")), now=_NOW + timedelta(days=5), target_grade="A"
+        same_a = assess_at_risk(
+            _history(_record(60.0, grade="C")), now=_NOW, targets={_SUBJECT: "A"}
         )
-        different = assess_at_risk(_history(_record(40.0, grade="D")), now=_NOW, target_grade="A")
+        same_b = assess_at_risk(
+            _history(_record(60.0, grade="C")),
+            now=_NOW + timedelta(days=5),
+            targets={_SUBJECT: "A"},
+        )
+        different = assess_at_risk(
+            _history(_record(40.0, grade="D")), now=_NOW, targets={_SUBJECT: "A"}
+        )
 
         flag_a = next(f for f in same_a.flags if f.reason == AtRiskReason.BELOW_TARGET)
         flag_b = next(f for f in same_b.flags if f.reason == AtRiskReason.BELOW_TARGET)
@@ -446,17 +527,18 @@ class TestQuizAttemptsAreNotGradeBearing:
             _record(35.0, grade="D", recorded_at="2026-01-01T00:00:00+00:00"),
             _quiz(80.0, recorded_at="2026-02-01T00:00:00+00:00"),
         )
-        result = assess_at_risk(history, now=_NOW, target_grade="B")
+        result = assess_at_risk(history, now=_NOW, targets={_SUBJECT: "B"})
         assert result.target_rule_status == TargetRuleStatus.FIRED
         flag = next(f for f in result.flags if f.reason == AtRiskReason.BELOW_TARGET)
         assert isinstance(flag.evidence, BelowTargetEvidence)
         assert flag.evidence.predicted_grade == "D"
 
-    def test_below_target_not_fired_when_only_quizzes_exist(self) -> None:
-        """A quiz-only student has no predicted grade at all. The rule is still
-        evaluable (a target was supplied) but has nothing to measure."""
-        result = assess_at_risk(_history(_quiz(20.0)), now=_NOW, target_grade="A")
-        assert result.target_rule_status == TargetRuleStatus.NOT_FIRED
+    def test_below_target_not_evaluable_when_only_quizzes_exist(self) -> None:
+        """A quiz-only student has no grade-bearing record, hence no subject to
+        resolve the target against — not evaluable, same reasoning as the
+        zero-papers case above."""
+        result = assess_at_risk(_history(_quiz(20.0)), now=_NOW, targets={_SUBJECT: "A"})
+        assert result.target_rule_status == TargetRuleStatus.NOT_EVALUABLE
         assert AtRiskReason.BELOW_TARGET not in {f.reason for f in result.flags}
 
     def test_inactivity_counts_a_quiz_as_activity(self) -> None:

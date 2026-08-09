@@ -56,7 +56,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from lemely.db.models.enums import QuizQuestionStatus, QuizStatus, QuizSubmissionStatus
+from lemely.db.models.enums import QuizKind, QuizQuestionStatus, QuizStatus, QuizSubmissionStatus
 from lemely.db.models.orgs import SchoolClass
 from lemely.db.models.quizzes import Quiz, QuizAnswer, QuizAssignment, QuizQuestion, QuizSubmission
 from lemely.db.models.users import User
@@ -91,6 +91,16 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+_STUDENT_ASSIGNED_KINDS = (QuizKind.practice, QuizKind.study_plan)
+"""The positive allowlist :meth:`QuizTakingService._student_assigned_rows` narrows on.
+
+Deliberately excludes ``QuizKind.placement`` — a placement test is governed
+by its own S-03/S-04/S-05 flow, not the assigned-work list
+(``test_a_placement_quiz_is_not_an_assigned_quiz`` pins this). Never written
+as ``!= QuizKind.teacher``: that form fails open the day a fifth kind is
+added (D4.6 §3)."""
+
+
 @dataclass(frozen=True, slots=True)
 class AssignedQuizRow:
     """One row of ``GET /api/student/quizzes`` — an assignment the student can see."""
@@ -98,8 +108,12 @@ class AssignedQuizRow:
     assignment_id: uuid.UUID
     quiz_title: str
     subject_code: str
-    class_name: str
-    teacher_name: str
+    class_name: str | None
+    """``None`` for a class-less assignment (a placement/practice quiz targeted
+    directly at the student, D4.6 §3). S-04 renders the absence — it must not be
+    flattened to an empty string, which reads as a class whose name is blank."""
+    teacher_name: str | None
+    """``None`` for a student-owned quiz, which has no teacher. See ``class_name``."""
     assigned_at: datetime
     due_at: datetime | None
     closes_at: datetime | None
@@ -141,8 +155,10 @@ class QuizTakeHeader:
 
     quiz_title: str
     subject_code: str
-    class_name: str
-    teacher_name: str
+    class_name: str | None
+    """``None`` for a class-less assignment — see :class:`AssignedQuizRow`."""
+    teacher_name: str | None
+    """``None`` for a student-owned quiz — see :class:`AssignedQuizRow`."""
     due_at: datetime | None
     closes_at: datetime | None
     time_limit_minutes: int | None
@@ -216,54 +232,122 @@ class QuizTakingService:
     # -- Discovery ----------------------------------------------------------
 
     def list_assigned(self, student_id: uuid.UUID | str) -> list[AssignedQuizRow]:
-        """Assignments for classes the student is enrolled in.
+        """Assignments the student can see: class quizzes, plus their own practice/study-plan sets.
+
+        Two independently owner-scoped queries, never one query narrowed by
+        ``kind`` alone (D4.6 §3 — the site that section explicitly deferred
+        to P4.5). :meth:`_class_assigned_rows` is unchanged from P3.5/P4.4:
+        ``QuizAssignment.class_id IN (:enrolled)``, which already excludes a
+        NULL-``class_id`` placement/practice/study-plan row by SQL
+        three-valued logic (``NULL IN (...)`` is NULL, never true).
+        :meth:`_student_assigned_rows` is the new branch, scoped by
+        ``QuizAssignment.student_id == caller`` and narrowed by a
+        **positive** ``kind IN (...)`` allowlist
+        (:data:`_STUDENT_ASSIGNED_KINDS`) — never ``kind != 'teacher'``,
+        which would surface a placement quiz here too and fail open the day
+        a fifth kind is added. ``placement`` is deliberately absent from
+        that allowlist: a placement test is governed by its own
+        S-03/S-04/S-05 flow, not this assigned-work list
+        (``test_a_placement_quiz_is_not_an_assigned_quiz`` pins this).
 
         Only quizzes whose status is ``assigned`` or ``closed`` are included
         — a ``draft``/``archived`` quiz was never (or is no longer) a live
-        assignment. Newest assigned first.
+        assignment. Newest assigned first, across both branches.
         """
         student_uuid = _as_uuid(student_id)
+        now = self._now()
+        with self._sessionmaker() as session:
+            rows = self._class_assigned_rows(session, student_uuid, now)
+            rows.extend(self._student_assigned_rows(session, student_uuid, now))
+            rows.sort(key=lambda row: row.assigned_at, reverse=True)
+            return rows
+
+    def _class_assigned_rows(
+        self, session: Session, student_uuid: uuid.UUID, now: datetime
+    ) -> list[AssignedQuizRow]:
+        """Assignments for classes the student is enrolled in."""
         class_ids = self._class_service.enrolled_class_ids(student_uuid)
         if not class_ids:
             return []
-        now = self._now()
-        with self._sessionmaker() as session:
-            stmt = (
-                select(QuizAssignment, Quiz, SchoolClass, User)
-                .join(Quiz, Quiz.id == QuizAssignment.quiz_id)
-                .join(SchoolClass, SchoolClass.id == QuizAssignment.class_id)
-                .join(User, User.id == Quiz.teacher_id)
-                .where(
-                    QuizAssignment.class_id.in_(class_ids),
-                    Quiz.status.in_((QuizStatus.assigned, QuizStatus.closed)),
-                )
-                .order_by(QuizAssignment.assigned_at.desc())
+        stmt = (
+            select(QuizAssignment, Quiz, SchoolClass, User)
+            .join(Quiz, Quiz.id == QuizAssignment.quiz_id)
+            .join(SchoolClass, SchoolClass.id == QuizAssignment.class_id)
+            .join(User, User.id == Quiz.teacher_id)
+            .where(
+                QuizAssignment.class_id.in_(class_ids),
+                Quiz.status.in_((QuizStatus.assigned, QuizStatus.closed)),
             )
-            rows: list[AssignedQuizRow] = []
-            for assignment, quiz, school_class, teacher in session.execute(stmt).all():
-                question_count = self._included_question_count(session, quiz.id)
-                submission = self._find_submission(session, assignment.id, student_uuid)
-                closed = _is_closed(quiz.status, assignment.closes_at, now)
-                rows.append(
-                    AssignedQuizRow(
-                        assignment_id=assignment.id,
-                        quiz_title=quiz.title,
-                        subject_code=quiz.subject_code,
-                        class_name=school_class.name,
-                        teacher_name=_display_name(teacher),
-                        assigned_at=assignment.assigned_at,
-                        due_at=assignment.due_at,
-                        closes_at=assignment.closes_at,
-                        question_count=question_count,
-                        time_limit_minutes=quiz.time_limit_minutes,
-                        submission_status=(
-                            submission.status if submission else QuizSubmissionStatus.not_started
-                        ),
-                        is_open=not closed,
-                        is_overdue=_is_overdue(assignment.due_at, closed, now),
-                    )
-                )
-            return rows
+            .order_by(QuizAssignment.assigned_at.desc())
+        )
+        return [
+            self._to_assigned_row(
+                session,
+                assignment,
+                quiz,
+                student_uuid,
+                now,
+                class_name=school_class.name,
+                teacher_name=_display_name(teacher),
+            )
+            for assignment, quiz, school_class, teacher in session.execute(stmt).all()
+        ]
+
+    def _student_assigned_rows(
+        self, session: Session, student_uuid: uuid.UUID, now: datetime
+    ) -> list[AssignedQuizRow]:
+        """The caller's own practice/study-plan sets (P4.5).
+
+        Never placement — see :meth:`list_assigned`'s docstring.
+        """
+        stmt = (
+            select(QuizAssignment, Quiz)
+            .join(Quiz, Quiz.id == QuizAssignment.quiz_id)
+            .where(
+                QuizAssignment.student_id == student_uuid,
+                Quiz.kind.in_(_STUDENT_ASSIGNED_KINDS),
+                Quiz.status.in_((QuizStatus.assigned, QuizStatus.closed)),
+            )
+            .order_by(QuizAssignment.assigned_at.desc())
+        )
+        return [
+            self._to_assigned_row(
+                session, assignment, quiz, student_uuid, now, class_name=None, teacher_name=None
+            )
+            for assignment, quiz in session.execute(stmt).all()
+        ]
+
+    def _to_assigned_row(
+        self,
+        session: Session,
+        assignment: QuizAssignment,
+        quiz: Quiz,
+        student_uuid: uuid.UUID,
+        now: datetime,
+        *,
+        class_name: str | None,
+        teacher_name: str | None,
+    ) -> AssignedQuizRow:
+        question_count = self._included_question_count(session, quiz.id)
+        submission = self._find_submission(session, assignment.id, student_uuid)
+        closed = _is_closed(quiz.status, assignment.closes_at, now)
+        return AssignedQuizRow(
+            assignment_id=assignment.id,
+            quiz_title=quiz.title,
+            subject_code=quiz.subject_code,
+            class_name=class_name,
+            teacher_name=teacher_name,
+            assigned_at=assignment.assigned_at,
+            due_at=assignment.due_at,
+            closes_at=assignment.closes_at,
+            question_count=question_count,
+            time_limit_minutes=quiz.time_limit_minutes,
+            submission_status=(
+                submission.status if submission else QuizSubmissionStatus.not_started
+            ),
+            is_open=not closed,
+            is_overdue=_is_overdue(assignment.due_at, closed, now),
+        )
 
     # -- Take (S-26) ----------------------------------------------------------
 
@@ -281,19 +365,24 @@ class QuizTakingService:
         Raises:
             QuizTakingNotFoundError: No assignment exists with
                 ``assignment_id``, anywhere (404).
-            QuizTakingOwnershipError: The student is not enrolled in the
-                assignment's class (403).
+            QuizTakingOwnershipError: The assignment belongs to another
+                student, or to a class the caller is not enrolled in (403).
         """
         student_uuid = _as_uuid(student_id)
         assignment_uuid = _as_uuid(assignment_id)
         now = self._now()
         with self._sessionmaker() as session, session.begin():
-            assignment = self._load_enrolled(session, student_uuid, assignment_uuid)
+            assignment = self._load_permitted(session, student_uuid, assignment_uuid)
             quiz = self._require_quiz(session, assignment.quiz_id)
-            school_class = session.get(SchoolClass, assignment.class_id)
-            if school_class is None:  # pragma: no cover - FK guarantees the row exists
-                raise QuizTakingError(f"Unknown class: {assignment.class_id}")
-            teacher = session.get(User, quiz.teacher_id)
+            # Both are absent on a student-owned assignment (D4.6 §3): placement
+            # has no class and no teacher. Resolve each only when its id is set,
+            # and carry the absence through as None rather than as a blank name.
+            school_class = None
+            if assignment.class_id is not None:
+                school_class = session.get(SchoolClass, assignment.class_id)
+                if school_class is None:  # pragma: no cover - FK guarantees the row exists
+                    raise QuizTakingError(f"Unknown class: {assignment.class_id}")
+            teacher = session.get(User, quiz.teacher_id) if quiz.teacher_id is not None else None
 
             closed = _is_closed(quiz.status, assignment.closes_at, now)
             submission = self._find_submission(
@@ -349,8 +438,8 @@ class QuizTakingService:
             header = QuizTakeHeader(
                 quiz_title=quiz.title,
                 subject_code=quiz.subject_code,
-                class_name=school_class.name,
-                teacher_name=_display_name(teacher),
+                class_name=school_class.name if school_class is not None else None,
+                teacher_name=_display_name(teacher) if teacher is not None else None,
                 due_at=assignment.due_at,
                 closes_at=assignment.closes_at,
                 time_limit_minutes=quiz.time_limit_minutes,
@@ -394,7 +483,7 @@ class QuizTakingService:
         assignment_uuid = _as_uuid(assignment_id)
         now = self._now()
         with self._sessionmaker() as session, session.begin():
-            assignment = self._load_enrolled(session, student_uuid, assignment_uuid)
+            assignment = self._load_permitted(session, student_uuid, assignment_uuid)
             quiz = self._require_quiz(session, assignment.quiz_id)
             if _is_closed(quiz.status, assignment.closes_at, now):
                 raise QuizTakingValidationError(
@@ -478,7 +567,7 @@ class QuizTakingService:
         assignment_uuid = _as_uuid(assignment_id)
         now = self._now()
         with self._sessionmaker() as session, session.begin():
-            assignment = self._load_enrolled(session, student_uuid, assignment_uuid)
+            assignment = self._load_permitted(session, student_uuid, assignment_uuid)
             quiz = self._require_quiz(session, assignment.quiz_id)
             submission = self._find_submission(
                 session, assignment_uuid, student_uuid, for_update=True
@@ -521,25 +610,42 @@ class QuizTakingService:
 
     # -- Internals ----------------------------------------------------------
 
-    def _load_enrolled(
+    def _load_permitted(
         self, session: Session, student_uuid: uuid.UUID, assignment_uuid: uuid.UUID
     ) -> QuizAssignment:
-        """Load an assignment, enforcing the 403-vs-404 split every owner-scoped route uses.
+        """Load an assignment the student may take, by whichever target column is set.
 
-        An assignment id that maps to nothing anywhere is a 404; one that
-        exists but whose class the student is not enrolled in is a 403 —
-        never data, mirroring :class:`~lemely.db.class_repo.ClassService`'s
-        accepted existence-oracle trade-off.
+        ``quiz_assignments`` carries an XOR CHECK (D4.6 §1) so exactly one of
+        ``student_id``/``class_id`` is populated: a direct-to-student
+        assignment (placement, and later practice/study-plan) or a
+        class assignment. The branch is selected by which one it is, never by
+        ``kind`` — ``kind`` is a label, ownership is the filter (D4.6 §3).
+
+        Fail-closed by construction: there are exactly two ``return``
+        statements, one guarded by an equality on ``student_id`` and one by
+        membership in the enrolled class set, and no trailing fallthrough.
+
+        The 403-vs-404 split every owner-scoped route uses is preserved: an
+        assignment id that maps to nothing anywhere is a 404; one that exists
+        but belongs to someone else is a 403 — never data, mirroring
+        :class:`~lemely.db.class_repo.ClassService`'s accepted
+        existence-oracle trade-off.
         """
         assignment = session.get(QuizAssignment, assignment_uuid)
         if assignment is None:
             raise QuizTakingNotFoundError(f"Unknown assignment: {assignment_uuid}")
+        if assignment.student_id is not None:
+            if assignment.student_id != student_uuid:
+                raise QuizTakingOwnershipError(
+                    f"Assignment {assignment_uuid} is not assigned to student {student_uuid}"
+                )
+            return assignment
         enrolled_ids = self._class_service.enrolled_class_ids(student_uuid)
-        if assignment.class_id not in enrolled_ids:
-            raise QuizTakingOwnershipError(
-                f"Student {student_uuid} is not enrolled in class {assignment.class_id}"
-            )
-        return assignment
+        if assignment.class_id in enrolled_ids:
+            return assignment
+        raise QuizTakingOwnershipError(
+            f"Student {student_uuid} is not enrolled in class {assignment.class_id}"
+        )
 
     def _require_quiz(self, session: Session, quiz_id: uuid.UUID) -> Quiz:
         """Load a quiz by id, defensively.

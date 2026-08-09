@@ -15,9 +15,20 @@ const BASE = "/api"
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /**
+   * The raw `detail` value from a FastAPI error body, when present —
+   * structured (e.g. placement's 409, whose `detail` is a full
+   * `PlacementAvailabilityDTO` object, not a string) as well as scalar. A
+   * caller that needs the machine-readable shape (P4.8's "start now" retry,
+   * which must render the same honest unavailable-reason panel S-03 shows
+   * on load, not a generic failure) reads this instead of parsing `message`.
+   * `undefined` when the body wasn't JSON or carried no `detail` key.
+   */
+  detail?: unknown
+  constructor(status: number, message: string, detail?: unknown) {
     super(message)
     this.status = status
+    this.detail = detail
   }
 }
 
@@ -57,21 +68,24 @@ export async function request<T>(
       // status text when the body isn't JSON or carries no `detail` string
       // (e.g. a 204, or a non-FastAPI failure upstream).
       let message = `${res.status} ${res.statusText}`
+      let detail: unknown
       try {
         const body: unknown = await res.clone().json()
-        if (
-          body &&
-          typeof body === "object" &&
-          "detail" in body &&
-          typeof (body as { detail: unknown }).detail === "string" &&
-          (body as { detail: string }).detail.length > 0
-        ) {
-          message = (body as { detail: string }).detail
+        if (body && typeof body === "object" && "detail" in body) {
+          detail = (body as { detail: unknown }).detail
+          if (typeof detail === "string" && detail.length > 0) {
+            message = detail
+          } else if (detail !== undefined && detail !== null) {
+            // A structured detail (e.g. placement's 409 `PlacementAvailabilityDTO`)
+            // — no human-readable string to show verbatim, but callers that
+            // care read `ApiError.detail` directly rather than parsing this.
+            message = `${res.status} ${res.statusText}`
+          }
         }
       } catch {
         // Body wasn't JSON (or empty) — keep the generic status text.
       }
-      throw new ApiError(res.status, message)
+      throw new ApiError(res.status, message, detail)
     }
     // A 204 (e.g. `DELETE /classes/{id}`) has no body — `res.json()` would
     // throw on the empty string. `T` is `void` at every such call site.

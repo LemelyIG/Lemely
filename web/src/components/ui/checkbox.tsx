@@ -29,7 +29,18 @@ export function Checkbox({ className, label, ...props }: CheckboxProps) {
     <label
       className={cn(
         "inline-flex items-center gap-2 cursor-pointer select-none",
-        props.disabled && "cursor-not-allowed opacity-50",
+        // `has-disabled:` (`:has(:disabled)`), not `props.disabled`, because a
+        // checkbox is just as often disabled by an ancestor `<fieldset disabled>`
+        // as by its own prop — and in that case React never passes `disabled`
+        // down, so a prop-keyed rule renders a fully-active-looking control that
+        // cannot be operated. `appearance-none` means the browser draws no
+        // disabled affordance of its own here, so this rule is the only one.
+        // P4.9 chunk C: S-20 had worked around the gap with `opacity-50` on the
+        // whole enclosing Card, which dimmed that card's heading and prose too
+        // and put them at 2.28:1 — a serious axe violation. Dimming the label of
+        // a genuinely disabled control is exempt from WCAG 1.4.3; dimming a
+        // section heading is not.
+        "has-disabled:cursor-not-allowed has-disabled:opacity-50",
         className,
       )}
     >

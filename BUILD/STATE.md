@@ -2,8 +2,18 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-07T00:00:00Z
-gemini_spend_usd: 0.1586
+last_updated: 2026-08-09T14:25:00Z   # **Thirty-eighth session — P4.11 chunk D is DONE, COMMITTED and GREEN.** The gate run inherited from the previous session (PID 2723542, `/tmp/p411d_gate3.log`, 13:56:03→14:20) finished **all 13 gates PASS, 0 skipped**, and attribution was checked by mtime rather than assumed: every gated file was last written 13:51:50 or earlier and nothing was edited mid-run. `pre-commit` red on exactly the two hooks the environment note predicts (`mypy`, `import-linter`, "Executable not found"). **At-risk rule 2 is now pinned by a real seeded scenario for the first time** — it has been describable but untestable since D3.3. Decision D4.23. **P4.11 is DONE — all five chunks (A–E) committed and green.** Chunk E closed it: all 13 gates PASS / 0 skipped (`/tmp/p411e_gate.log`), the seeded stems now carry a corpus-verbatim Unicode-maths + newline sample (D4.24), and **the S-04/S-21 captures were opened and inspected by eye** — newlines render as line breaks and `1.1 × 10⁵ J` renders correctly even where the 380px wrap splits it. That inspection is MISSION §4's "verified visually, not assumed", and before chunk E it could only have been vacuous. **Both halves of §4's named acceptance now exist as real Playwright behaviour** (onboard→placement→plan; practice-targets-seeded-weakness), and at-risk rule 2 is pinned for the first time. **Next: P4.12** — the phase report, merge to develop, push, update PR #3, ntfy. **Carry D4.25 into the report and DELIVERY.md**: `check_ui_gates.py` enforces a11y ≥ 95 only and has no performance check, while MISSION §11 and `audit.mjs:218` both claim performance ≥ 80 is gated — `student-flashcards-due` sits at **79** and the gate passes. Recorded, deliberately not fixed inside P4.11. Previous header follows. **Thirty-fifth session — P4.11 chunk D is WRITTEN and GATING (re-run).** The thirty-fourth session wrote chunk D in full and died mid-gate: `/tmp/p411d_gate.log` caught a real `ruff-format` red on `scripts/seed_e2e.py` + `tests/test_seed_e2e.py`, it was fixed (both files last written **13:51:50**), and the re-run `/tmp/p411d_gate2.log` was killed with the session at the `import-linter` line. **Nothing was committed, so the tree is chunk D's work and only that** (5 code/spec files + the two BUILD docs). This session re-verified before spending a gate: `ruff format --check` clean on both files, and the two literals the new E2E leg asserts were checked against the product rather than trusted — the T-06 sentence is `at_risk.py:311`'s exact summary string, and `classId`/`className` really are on the at-risk response (`teacher.py:1841-1842`) and really are rendered per row (`AtRiskList.tsx:221,392`). **Fresh full gate run: PID 2723542, log `/tmp/p411d_gate3.log`, started 13:56:03**, `pwdx`-verified at the repo root, every gated file last written 13:51:50 or earlier so attribution is clean. **Do not edit any gated file until the log reads "All gates passed"; then commit chunk D and start chunk E**, whose BLOCKING FINDING is recorded below and must not be budgeted as a pure evidence pass. Previous header follows. **Thirty-third session — chunks B (`32cd131`) and C (`0a78b3b`) are both DONE, COMMITTED and GREEN** (13/13 gates, 0 skipped, on their own separate foreground runs; both attributions mtime-checked). **Both halves of MISSION §4's named Phase-4 acceptance now exist as real Playwright behaviour** — onboard→placement→plan, and practice-targets-seeded-weakness. **Next: chunk D** (the two carried items — the seeded below-target at-risk scenario + the stale/mis-numbered `seed_e2e.py` docstring), already scoped read-only below; then chunk E, whose BLOCKING FINDING is recorded below and must not be budgeted as a pure evidence pass. Previous header follows. **Chunk B was DONE and COMMITTED (`32cd131`).** Its gate run finished **all 13 gates PASS, 0 skipped** (`/tmp/p411b_gate.log`, exit 0, foreground), and attribution was checked by mtime rather than assumed: the spec was last written 12:25:51, the run ran 12:30:28→12:54:36, nothing edited mid-run. `pre-commit` red on exactly the two hooks the environment note predicts (`mypy`, `import-linter`, "Executable not found"). **P4.11 chunk C is WRITTEN and gating** — `web/e2e/phase4-practice.spec.ts`, 3 tests, **3/3 green locally** and proven non-vacuous by two rounds of product inversion (see its checklist entry). Gate run **PID 2618949, log `/tmp/p411c_gate.log`, started 13:01:33**, `pwdx`-verified at the repo root; the spec was last written before it. **Do not edit any gated file until the log reads "All gates passed"; then commit chunk C and start chunk D** (already scoped read-only below). Working tree holds only that one untracked spec — deliberately, it is the file under gate.
+#                                    Previous header follows. **Twenty-ninth session — P4.11 chunk A is DONE and COMMITTED (`9cbbf42`).** Its gate run finished **all 13 gates green, 0 skipped** (`/tmp/p411a_gate.log`), and attribution was checked by mtime rather than assumed: both files were last written 11:50:49/11:51:33, the run started 11:54:07, and nothing was edited mid-run. `pre-commit` was red on exactly the one hook the environment note predicts (`lint-imports` "Executable not found"); `check.sh` ran it green on the same tree. **P4.11 chunk B is WRITTEN and gating** — see its checklist entry below for the gate PID/log, the inversion evidence, and the S-05 "Weakest topics" finding. **Next after it goes green: commit chunk B, then chunk C.**
+#                                    **Chunk A, do not re-derive — the full rationale is in `9cbbf42`'s commit message.** `SeedContract` now declares all **14** top-level keys (the three Phase-4 groups *and* the four P3.10-era ones, undeclared since chunk e1), read out of `build_result_payload` rather than the docstring — which is missing that `practice` and `studyPlan` each carry `subjectCode`. The substantive half is the new `web/e2e/seed-contract.spec.ts` (3 tests), verified non-vacuous by real inversion against `seed_e2e.py` and reverted immediately.
+#                                    **Two facts established this session that chunk B needs.** (1) **`audit.mjs` runs its OWN `seed_e2e.py` invocation** (`:568`), separate from Playwright's `globalSetup` — so a Playwright spec that mutates a seeded account cannot poison the later `puppeteer-audit` leg of the same `check.sh` run, even though playwright-e2e runs first. (2) **`/student/onboard` does not redirect an already-onboarded student**: `Onboarding.tsx` always mounts at `wizardStep: "subjects"` and its seeding effect restores only the answers, so the onboard leg is safe to re-run and safe under Playwright retry. **The S-01/S-02/S-03/S-04/S-05 accounts still must not be collapsed** — that reason is unchanged and recorded in `seed.ts`.
+gemini_spend_usd: 0.18429   # MEASURED from the real ledger `outputs/gemini_spend.json`
+# (cumulative_usd 0.18428610, updated 2026-08-09T12:01:17Z), not carried forward. This field
+# had drifted: it read **0.1612** at the start of the thirty-ninth session while the ledger —
+# the Phase-0 persistent tracker that actually enforces the $8 cap — read 0.18429. The field
+# is a hand-copied mirror of the ledger and nothing generates one from the other, so it is the
+# field that was wrong, never the ledger. Phase 3 closed at $0.1586, so **Phase 4 spent
+# $0.0257** across the whole phase (every automated test mocks Gemini; D4.3 made that
+# structural). Re-read the ledger rather than this line before quoting a spend figure.
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
@@ -99,8 +109,9 @@ assume:
 - **The question bank is empty and corpus growth cannot change that (D3.7).** A mark scheme
   holds marking points; the question *stem* lives in the question paper and no stem extractor
   exists. This is a **P4 prerequisite**, not an assumption — do not re-run the measurement.
-- **At-risk rule 2 cannot fire until P4 supplies target grades (D3.3)** — the engine reports
-  it as *not evaluable*, never as a pass, and it is absent from the T-06 reason filter.
+- ~~**At-risk rule 2 cannot fire until P4 supplies target grades (D3.3)**~~ — **CLOSED by P4.3**
+  (D4.5). Targets are real and per-subject, the rule fires, and `below_target` is now in the T-06
+  reason filter. The *not evaluable* state survives and got stricter, not weaker.
 - **Teacher-route Lighthouse performance floors at 67** (`teacher-quiz-detail`). MISSION §11's
   ≥80 floor covers the student routes (met, floor 82) and never covered these.
 - **Lighthouse runs on `default` states only**; axe runs on all 34 (deliberate, D3.17).
@@ -123,10 +134,2036 @@ assume:
       (D3.1–D3.21), `BUILD/BLOCKERS.md` (B1–B3), or this file's git history.
 - [x] done — **P3.11** Phase-3 report, merge to develop, push, update PR #3, ntfy.
 
-## Phase 4 — Content generation + study plans — NOT STARTED
-See MISSION §4. Read the Phase-3 limitations above before planning: the question-stem
+## Phase 4 — Content generation + study plans — IN PROGRESS (started 2026-08-07)
+Branch: `feature/phase-4-content-study-plans`. See MISSION §4 + UI spec §4.2 (S-01..S-05),
+§4.5 (S-20..S-25). Read the Phase-3 limitations above before planning: the question-stem
 extractor and the target-grade column are both P4 prerequisites that P3 established, not
 open questions.
+
+**What Phase 3 already left that P4 composes rather than rebuilds:** `QuestionBank` +
+`QuestionBankService` (`lemely/db/question_bank_repo.py`, incl. `survey_past_paper_questions`),
+the quiz take/submit/auto-mark path (`quiz_taking_repo`/`quiz_marking_repo`), `core/difficulty.py`,
+`core/generation.py` (`GeneratedQuestion`), `io/question_generation.py`, `core/study_plan.py`
+(a naive proportional scheduler) + `io/study_plan_ai.py` narration, and the `StudyPlan.tsx`
+screen. The placement test and practice sets are quiz-shaped: reuse that engine, do not fork it.
+
+### Task checklist
+- [x] done — **P4.1** Question-stem extractor (D4.1) + all five content defects closed (D4.2).
+      `lemely/io/det/question_papers.py` (deterministic, zero Gemini) + the new shared
+      `lemely/io/det/symbols.py` (Adobe SymbolEncoding recovery, also wired into `tables.py`
+      so the **marking engine** stops reading mangled mark points) + `lemely/io/question_papers.py`
+      pairing/writer + `lemely question-bank ingest-question-papers`.
+      **Orchestrator-measured yield (0625): 72 papers → 2018 leaves → 273 banked**, 654
+      figure/unmapped-excluded, re-ingest idempotent. Bank is no longer empty — D3.7 closed.
+      Yield fell 298 → 273 **deliberately**: leaves with unmappable glyphs are now excluded
+      rather than banked corrupt. All six quality counters are now 0 (see D4.2 table).
+      **Ceiling worth knowing:** only 32/72 0625 mark schemes parse deterministically, and a
+      stem needs its scheme to be bankable — mark-scheme parse coverage, not stem extraction,
+      is what caps bank size. Improving the det mark-scheme parser is the highest-leverage
+      way to grow the bank.
+      Re-measure any time with `/tmp/p41_quality.py` (purge `question_bank where
+      source='past_paper'` first — ingest is idempotent and will skip).
+      **Also fixed here (D4.3):** the test suite could make *billed* Gemini calls when a key
+      was exported — `tests/conftest.py` now blocks real client construction suite-wide.
+- [x] done — **P4.2** Syllabus topic taxonomy + classification of bank questions (D4.4).
+      `lemely/data/syllabus_topics.json` (topic/subtopic **codes and names transcribed from
+      the three official CAIE syllabus PDFs**, not from memory — 0625 2023-25 `595430`,
+      0580 2025-27 `662466`, 0606 2025-27 `662470`; matching vocabulary is authored and the
+      file says so) + `lemely/core/topics.py` (pure classifier) + `lemely/io/syllabus_topics.py`
+      (loader) + `classify_bank_topics` in `question_bank_repo.py` + `lemely question-bank
+      classify-topics [--subject|--reclassify|--dry-run]`. Deterministic, **$0.00, zero Gemini**.
+      **Measured: 245/273 (89.7%) classified, 211/273 (77.3%) written** — 108 high, 103 medium,
+      across 29 distinct topics spanning all 6 physics topics. **D3.7's empty-topic gap is closed.**
+      The 34 `low`-band matches are counted and **discarded**: `question_bank.topic` has no
+      companion confidence column, so writing them would launder a guess into apparent fact
+      (hand-check found e.g. an alpha/beta/gamma question labelled "4.2 Electrical quantities").
+      Label format is `"<code> <name>"`, e.g. `"4.3 Electric circuits"`.
+      Two real defects the corpus exposed and one measurement worth keeping: hyphens never
+      matched (`double-insulated` vs `double insulated`); including `mcq_options` in the
+      classified text moved coverage 78.8% → 89.4%.
+      **P4.4 MUST also fill the marking side.** `CorrectedQuestion.topic` comes from
+      `topic_hint`, which is `None` on **all 637 questions across all 33** parsed 0625 schemes
+      — so the weakness engine reports no topics for real papers, and **practice-targets-weakness
+      (P4.5) does not join up until both sides use this vocabulary.** Not done in P4.2 because
+      `core.topics` cannot import the `io` loader without a layering violation; the fill belongs
+      at the db/io boundary where a `CorrectionResult` is persisted. See D4.4 §6.
+- [x] done — **P4.3** Student profile + onboarding data model (D4.5). Migration **0009**, four
+      additive tables (`student_profiles`, `student_subject_enrolments`,
+      `student_enrolment_papers`, `student_confidence_ratings`) + `QualificationLevel` enum +
+      `lemely/db/student_profile_repo.py` + student-only onboarding routes on `/api/me`.
+      Every S-02-skippable field is nullable: a skipped answer is `NULL`, never a defaulted
+      sentinel that would read back as an answer the student gave. Confidence ratings are keyed
+      on the **P4.2 topic-label vocabulary**, so questionnaire/bank/weakness engine share one
+      language. Commits `189a292` (schema+service+routes) and `99bf086` (chunk C).
+      **At-risk rule 2 is live — it has never once been able to fire before now.** `assess_at_risk`
+      took a scalar `target_grade`; it now takes `targets: Mapping[str, str]` (subject code →
+      grade) and resolves against the subject of the latest grade-bearing record. That keying is
+      the point: a scalar would have compared a physics paper against a maths target the moment a
+      student enrolled in two subjects — a false at-risk flag on a teacher's dashboard. All nine
+      call sites (teacher×5, classes×2, parent×2) pass real targets via
+      `StudentProfileService.target_grades_for{,_many}`; the multi-student routes use the bulk
+      form so a class overview is not N+1. `below_target` added to the T-06 reason filter and
+      given a real rendering branch in the parent `ChildOverview`.
+      **The tri-state got sharper, not looser:** `NOT_EVALUABLE` now also covers "targets supplied
+      but none for this student's subject" — an enrolled student with no target there is
+      *not checked*, never *cleared*. Orchestrator-verified by direct execution, not from the
+      subagent's report: no-targets / empty / wrong-subject all → `not_evaluable`; right-subject
+      2 grades below → `fired`; right-subject 1 grade below → `not_fired`.
+      All 13 gates green, 0 skipped; `alembic check` clean upgrade **and** downgrade; coverage
+      **89.57%** (pre-chunk baseline 89.56%, Phase-3 89.42% — flat, no regression). $0.00 Gemini.
+      **Stale docstring left for whoever owns E2E next:** `web/e2e/at-risk-flags.spec.ts:21` still
+      says rule 2 "cannot fire in Phase 3". Seeding a real below-target scenario in
+      `scripts/seed_e2e.py` is a P4.11 job, not silently done here.
+- [x] done — **P4.4** Placement test backend (chunks A, B-1, B-2, B-3, B-4 — D4.6/D4.7/D4.8/D4.9): ~15-min per-subject assembly from the bank across
+      topics, serve/resume/submit, mark through the existing engine, initialise weakness profile.
+      **Includes the marking-side topic fill carried over from P4.2 (D4.4 §6)** — classify
+      `CorrectedQuestion.topic` at the db/io persistence boundary when `topic_hint` is absent,
+      so weakness topics and bank topics share one vocabulary. Re-verify the accuracy harness
+      (MISSION §6 gate 5) since it touches the marking output.
+      **Chunk plan (2026-08-08):**
+      - [x] chunk A — **done** — marking-side topic fill (D4.4 §6, now **D4.7**).
+        `fill_correction_topics` + `_resolve_topic_labels` in `lemely/db/attempt_repo.py`,
+        called from `grade_paper` and `QuizMarkingService.mark_submission` **before**
+        `summarize_weaknesses` (the flagged trap — filling only in `_persist` would fix the
+        column and leave the grouping on `"unknown"`). Deterministic, $0.00, zero Gemini.
+        **Orchestrator-measured on the real corpus, not from a subagent report:** the first
+        implementation classified each node's own fields only and reached **108/1329 marked
+        nodes (8.1%)** — two structural defects found by measuring: it ignored the `parts`
+        subtree (parents carry no prose of their own) and had no ancestor inheritance.
+        Both fixed → **428 nodes (32.2%) across 26 topics spanning all six 0625 topics**.
+        **Do not re-measure and do not read the 32.2% as a shortfall:** 520 of the 1329 nodes
+        are MCQ and a CAIE MCQ scheme carries only the answer letter, so they are
+        unclassifiable *from a mark scheme* at any depth (D3.7's wall). The reachable
+        population is the 809 non-MCQ nodes and the fill reaches **52.9%** of them. Each rule
+        verified by inversion. 5 new tests + the 4 already written; 21/21 in
+        `tests/test_attempt_repo.py`.
+      - [x] chunk B-1 — **done** (`3c765e3`) — the ownership schema. Details below, kept
+        because B-2/B-3 build directly on them.
+      - [x] chunk B-2 — **done** (`fce3231`) — the two `quiz_taking_repo` sites D4.6 §3 named.
+        `_load_enrolled` → `_load_permitted` (two-branch predicate on whichever target column
+        the XOR CHECK left populated; exactly two returns, no fallthrough), `get_take` resolves
+        `SchoolClass`/`User` conditionally, and `QuizTakeHeader`/`AssignedQuizRow`
+        `class_name`/`teacher_name` + their wire DTOs became `str | None` — S-04 renders the
+        absence, not `_display_name`'s empty string. 11 tests; the 239 existing quiz tests
+        unchanged. **The owning student can now take a class-less assignment at all**, which
+        no code path allowed before.
+      - [x] chunk B-3 — **done** (`5809814` + the paper-link commit) — the assembler and its data.
+        `lemely/data/paper_timing.json` (12 papers × `duration_minutes`/`total_marks`,
+        transcribed from the **Assessment overview** of the same three syllabus PDFs D4.4
+        cites; **no rate is stored** — `minutes_per_mark` is division on read, and a test
+        pins the file's key set so a derived figure cannot creep in), `lemely/io/paper_timing.py`
+        (loader; excludes 0625 practical papers 5/6 from placement — apparatus), and
+        `lemely/core/placement.py` (pure: breadth-first select, 15-min target / 18 ceiling /
+        12 floor, `Unavailable` with a machine-readable reason). 20 tests.
+        **Three real defects the orchestrator found by measuring against the live bank, not
+        from a report — do not re-derive these:**
+        1. **All 273 banked questions had `paper_id IS NULL`**, and `papers`/`subjects` were
+           both empty. P4.1 never created `Paper` rows (its own docstring says so) and nothing
+           needed the link until placement made it load-bearing. Placement returned
+           `no_eligible_questions` for **0625 too**. Fixed by
+           `QuestionBankService.link_past_paper_rows` + `lemely question-bank link-papers`:
+           the identity is *parsed* from `source_question_id` (`"0625_s23_qp_11#22"` → the
+           source PDF's filename) by the same parser the ingest used, never inferred; the
+           `subjects.name` comes from the bundled taxonomy, never invented to satisfy the FK.
+           **Measured: 273 considered → 273 linked, 26 papers, 1 subject, 0 unparseable**;
+           re-run considers 0. Backfill already applied to the local DB.
+        2. **Breadth counted subtopics as topics.** D4.2's classifier writes whichever level
+           it matched, so the bank mixes `"3 Waves"` with `"1.2 Motion"`. First real assembly
+           reported "13 topics" for a set with **nine of 13 questions under physics topic 1**.
+           Breadth is now measured on the top-level code (`_syllabus_group`), depth on the full
+           label, and `Assembly` carries `syllabus_topic_count` separately from `len(topics)`.
+        3. The greedy fill stopped dead on the 15-minute target even when that left it below
+           the 6-question floor, then refused a set one question short of viable.
+        **Measured after all three fixes (the number to quote, not re-derive): 0625 assembles
+        9 questions / 15.2 min / all 6 physics topics / 2 difficulty bands. 0580 and 0606
+        return `no_questions` — correct, they have zero ingested questions (D4.6 §5).**
+      - [x] chunk B-4 — **done** (D4.9) — the DB service + the three routes.
+        `lemely/db/placement_repo.py` (`PlacementService`: availability / create / result),
+        `lemely/web/routers/placement.py` + `schemas_placement.py`, wired in `app.py`/`deps.py`.
+        Take/resume/submit are the **existing** `/api/student/quizzes/...` endpoints — that
+        reuse is the whole point and no parallel set was added. `core/study.py::PlacementResult`
+        deleted per D4.6 §6. No migration (0010 already covers it). $0.00 Gemini.
+        **One real defect the orchestrator found by reading against D4.6 §5, not from the
+        subagent's report — do not re-derive:** the first pass ignored the
+        `student_enrolment_papers` clause entirely, so a 0625 **Core** student (papers 1/3)
+        would have been assembled from **Extended** questions (2/4) — every topic in that
+        sample reporting a weakness the student does not have, and P4.7 builds the study plan
+        out of exactly those `WeaknessRecord` rows. Invisible to the suite, because the seeded
+        bank is single-paper. Fixed by narrowing the **timings** mapping (so `assemble` keeps
+        being the one site that decides "ineligible"), with the empty case deliberately
+        **not** a restriction: every S-02 field is skippable (D4.5), so no rows means "not
+        answered", never "sits no papers". 4 tests, each verified by its inverse.
+        **Live-bank measurement, matching D4.8 exactly:** 0625 → available, 9 questions,
+        **6 syllabus topics** (`syllabus_topic_count`, not `len(topics)`≈13), 15.19 min;
+        0580/0606 → `no_questions`.
+        **2121 tests / 6 skipped / 0 failed / 89.68% cov** (P4.3 baseline 89.57%); all 13
+        gates green, 0 skipped.
+      - chunk B (superseded planning note, kept for the rationale) — per D4.6. **Unblocked:**
+        the schema fork is decided and **B-1 (the schema half) is landed** — migration
+        **0010**, `QuizKind` enum, `quizzes.student_id` + `kind`, `quiz_assignments.student_id`,
+        both XOR CHECKs, `ck_quizzes_kind_owner`, and the partial unique index. `alembic check`
+        clean **both** directions. `tests/test_placement_quiz_ownership.py` (8 tests) pins the
+        DB invariants *and* the D4.6 §3 fail-closed reads (a placement quiz is invisible to
+        `list_quizzes`, 403s on `get_quiz`, and is absent from `list_assigned`).
+        **Making `teacher_id` nullable produced exactly 5 mypy errors, all on teacher-scoped
+        paths D4.6 §3 predicted** — fixed with explicit narrowing, not casts: `list_assignments`
+        now positively skips student-targeted rows, `assignment_results` 404s a self-assignment
+        (no probe leak), `_to_quiz_row` raises on a NULL teacher owner as an invariant.
+        **Still to do in chunk B (B-2):** the two `quiz_taking_repo` sites D4.6 §3 named —
+        `_load_enrolled`→`_load_permitted` and `get_take`'s unconditional
+        `session.get(SchoolClass, …)`/`session.get(User, …)`, which now receive `None`; plus
+        `QuizTakeHeader.class_name`/`.teacher_name` and the same two on `AssignedQuizRow`
+        becoming `str | None` (S-04 must *render the absence*, not `_display_name`'s empty
+        string). Then assembly/serve/resume/submit and the availability endpoint.
+        **Do not re-derive the availability answer:** 0625 only; 0580/0606 have zero ingested
+        questions, so the honest `not available` path with a machine-readable `reason` is
+        required behaviour, not a gap to code around (D4.6 §5).
+      - Assembly constraint already known, do not re-measure: the 0625 bank is 273 rows / 211
+        topic-labelled (D4.4), and **0580/0606 have zero ingested questions** — placement is
+        un-assemblable for two of three subjects and needs an honest "not available" path.
+        (Confirmed by the chunk-B-3 measurement above, which is the authoritative one now.)
+- [x] done — **P4.5** Practice generator backend (D4.10). `lemely/db/practice_repo.py`
+      (`PracticeService`: preview / create / export) + `lemely/web/routers/practice.py` +
+      `schemas_practice.py`; `enrolled_paper_numbers` hoisted into `student_profile_repo` and
+      shared with placement. No migration (0010 already shipped `quizkind`). $0.00 Gemini.
+      **Availability is tri-state, not binary** — a *short* set is not a *failed* set, so
+      `available=True` covers the honest-shortfall case (`reason="insufficient_pool"`, true
+      `available_count`) and `False` is reserved for `no_questions` / `no_weaknesses`. Never
+      padded, never silently shortened. Given the corpus this is the normal path.
+      **`list_assigned` grew the second branch D4.6 §3 deferred here**: owner-scoped on
+      `QuizAssignment.student_id`, narrowed by a **positive** `kind IN (practice, study_plan)`
+      allowlist. Placement stays out — `test_a_placement_quiz_is_not_an_assigned_quiz` passes
+      unmodified. Export excludes `model_answer`/`mark_scheme_points`/`mcq_answer`
+      **structurally** (asserted on the dataclass field set, not one response body).
+      **Live-bank measurement:** 0625 unfiltered → 273 available; `"4.3 Electric circuits"` →
+      10; 0580/0606 → `no_questions`; weak-only with no weakness rows → `no_weaknesses`. The
+      273 (vs placement's 211) is deliberate — an untopiced question is unusable for a
+      weakness *profile* but fine as practice *material*.
+      **2153 tests / 6 skipped / 0 failed / 89.81% cov** (P4.4 baseline 89.68%); all 13 gates
+      green, 0 skipped. The subagent reported done with `ruff format` red on two of its own
+      files — caught by the orchestrator's own gate run, not its report.
+      *(Original scope line: topic/difficulty/count/source filtering, persisted practice sets,
+      "not enough questions" honesty path, export/print payload; UI spec S-20/S-21.)*
+- [x] done — **P4.6** Flashcards backend: decks by subject/topic, AI deck generation from a
+      weakness, SM-2-style spaced repetition, review sessions. (UI spec S-22/S-23.)
+      All three chunks landed (`1fb49f7`, `03fee94`, `b1a44bf`); decisions D4.11.
+      **2229 tests / 6 skipped / 0 failed / 90.08% cov** (P4.5 baseline 2153 / 89.81%);
+      all 13 gates green, 0 skipped. Migration 0011, no `web/` diff, $0.00 Gemini.
+      Chunk C was found **already on disk uncommitted** from a killed session and was
+      verified by an independent gate run rather than trusted — the same pattern P4.5 and
+      chunk B hit. It came back clean this time (`pre-commit run --all-files` exit 0), which
+      is the first handover in this phase that did.
+      **Chunk plan (2026-08-08), backend only — no `web/` diff, so gate 8 is not in play:**
+      - [x] chunk A — **done** (`1fb49f7`) — schema + the pure scheduler, as planned below.
+        Migration **0011** applied; `alembic check` clean on **upgrade and downgrade**
+        (note: `alembic check` errors "Target database is not up to date" when the DB sits
+        behind head — that is the check refusing, not a downgrade failure. Don't re-derive it).
+        `lemely/core/spaced_repetition.py` is pure and clock-injected.
+        **Four departures from canonical SM-2 are documented at the point of divergence**, each
+        pinned by a test — do not "correct" them back to the paper without changing the test
+        deliberately: (1) ease is penalised on a lapse (canonical SM-2 leaves EF untouched on
+        q<3) because leaving it means a repeatedly-failed card keeps its optimistic multiplier;
+        (2) `again` reschedules at **+10 min with `interval_days=0`** (a same-session relearning
+        step, what every modern SRS ships) rather than canonical SM-2's 1 day; (3) the
+        four-button grade maps onto 0/3/4/5 with **no invented quality 1 or 2**; (4) rounding is
+        the built-in banker's rounding because SM-2 specifies no tie-break rule.
+        **`ReviewGrade` is declared twice on purpose** — `core` as plain Python, `db` as the
+        Postgres enum — because import-linter forbids `core`→`db`.
+        `tests/test_flashcard_schema.py` pins the two against drift; **do not deduplicate it by
+        importing across the boundary.** 39 tests across the two new files. $0.00 Gemini.
+      - [ ] chunk A (original plan, kept for the rationale) — Migration **0011** (additive): `flashcard_decks`
+        (owner `user_id`, `subject_code`, nullable `topic` in the **P4.2 `"<code> <name>"`
+        vocabulary**, `origin` enum manual/weakness/topic), `flashcards` (deck FK CASCADE, front/back,
+        `source` enum manual/ai, nullable `source_question_id`, and the SM-2 state:
+        `repetitions`/`ease_factor`/`interval_days`/`due_at`/`last_reviewed_at`/`lapses`),
+        `flashcard_reviews` (the audit log a self-graded scheduler needs to be checkable, and P5's
+        XP seam). Plus `lemely/core/spaced_repetition.py` — pure SM-2, **clock injected**, never
+        `datetime.now()` inside, so scheduling is testable by inversion.
+        SM-2 state lives **on the card**, not in a join table, because a deck is owned by exactly
+        one student — there is no shared-deck case to key around in this phase.
+      - [x] chunk B — **done** (`03fee94`) — `FlashcardService` + AI generation, all three
+        honesty rules pinned by tests. 36 tests, Gemini mocked, $0.00.
+        **Found the chunk B work already on disk uncommitted** from a killed session and
+        verified it rather than trusting it: 38 tests passed but `ruff` was **red on 8 findings**
+        in `flashcard_repo.py` (the same "subagent reports done with its own gate red" pattern
+        P4.5 hit — keep running the orchestrator's own gate pass, the handover's word is not
+        evidence). Fixed, plus one real gap: **there was no `delete_deck`**, so a student handed
+        an unwanted AI deck could only delete cards one at a time and keep the husk. Added with
+        cascade proven at both ORM (`delete-orphan`) and DB (`ON DELETE CASCADE`) level, plus
+        subject-filter and due-limit tests that had no coverage.
+        **Weakness→topic resolution reads `WeaknessRecord` rows verbatim** (D4.10 §2), reduced
+        to a single topic because `FlashcardDeck.topic` is singular; ties broken alphabetically
+        so the choice is deterministic rather than whatever the planner returned.
+      - [ ] chunk B (original plan, kept for the rationale) — `lemely/db/flashcard_repo.py` (`FlashcardService`) + AI generation
+        (`lemely/core/flashcards.py` schemas + `lemely/io/flashcard_generation.py` mirroring
+        `QuestionGenerator`, mocked in tests, $0.00 live spend).
+        **Honesty rules, non-negotiable:** an AI-written card is stored `source='ai'` and stays
+        distinguishable from a student's own card for its whole life; a weakness-generated deck
+        records which topic it targeted; and "no weakness rows" is an honest refusal
+        (`no_weaknesses`) exactly as P4.5 does it, never a silently empty deck.
+      - [x] chunk C — **done** (D4.11) — `lemely/web/routers/flashcards.py` +
+        `schemas_flashcards.py`, wired in `deps.py` (`get_flashcard_service`, the only P4
+        service wired with a Gemini client) and `app.py`. Ten routes under
+        `/api/student/flashcards`, student-only at the router level. No migration, no `web/`
+        diff, $0.00 Gemini. 20 route tests + 47 across the P4.6 suite.
+        **Two decisions worth not re-deriving (full text D4.11):**
+        1. **Another student's deck is a 404 here, not P4.5's 403** — a deck exists for
+           exactly one owner, so a 403 is an existence oracle over private study material.
+           The service still raises both typed errors and both are still tested; only the
+           HTTP rendering is flattened. The test asserts the real id and a random UUID return
+           **byte-identical** bodies, then inverts it (owner gets 200).
+        2. **`due_session` had to be added to the service** — the chunk plan requires S-22's
+           "nothing due" to carry the next due date and `list_due_cards` could only return a
+           list. `total_due` is the real backlog **regardless of `limit`**; a capped session
+           reporting its cap as the whole backlog is invented precision.
+        **The AI-relabel guard is stronger on the wire than in the service:** `ApiModel` is
+        `extra="forbid"`, so `PATCH {"source": "manual"}` is a **422**, not a body silently
+        dropped. Both halves pinned — "ignored" and "rejected" look identical to a test that
+        only checks the stored value.
+        **Two unguarded inputs the orchestrator found by reading the handover, not from its
+        report (D4.11 §5) — do not re-derive:** `GET /due?limit=-1` was a **500** (a bare SQL
+        `LIMIT`, which Postgres rejects when negative) → `Query(ge=1)`; and
+        `POST /decks/generate` took an **unbounded `count` straight to a billed Gemini call**
+        against the $8 ceiling → `Field(ge=1, le=50)`. The count test asserts on the
+        **generator mock**, because a 422 that still called the model would already have spent
+        the money. 22 route tests now.
+      - [ ] chunk C (original plan, kept for the rationale) — `lemely/web/routers/flashcards.py` + `schemas_flashcards.py`, student-only
+        and **owner-scoped on every read and write** (decks are per-student; a deck id from another
+        student must 404, not 403-after-probe). S-22's "nothing due today" is a real state carrying
+        the next due date, not an empty list.
+- [x] done — **P4.7** Adaptive study plan: rebuild the scheduler on placement + questionnaire +
+      rolling performance; weekly regeneration; concrete sessions (topic, activity type,
+      duration); completion + XP hook (XP itself is P5 — leave a seam, do not build it).
+      **What exists today and why it is not enough:** `lemely/core/study_plan.py`
+      (`build_study_plan`) splits `weekly_hours` across weak topics proportionally to
+      `lost_marks` and emits one `StudySession(week=1, hours=…, focus="Practice and review: X")`
+      per topic. That is *vague advice with a number attached* — MISSION §4 requires **concrete
+      sessions (topic, activity type, duration)**. It also ignores placement results, the S-02
+      questionnaire, and rolling performance, has no notion of a week other than the literal
+      constant `1`, and is never persisted: `GET/POST /api/student/plan`
+      (`routers/student.py:790/814`) rebuild it from scratch on every request, so a plan cannot
+      be completed, regenerated, or compared against the previous week.
+      **Chunk plan (2026-08-08):**
+      - [x] chunk A — **done** (`fc4dca9`). `lemely/core/study_plan.py` rewritten pure +
+        clock-injected; `ActivityType`, `StudySession(date, activity_type, duration_minutes)`
+        and `StudyPlanUnavailableReason` added to `core/study.py`. Weights **0.5 weakness /
+        0.3 placement / 0.2 confidence**, documented at the point of divergence and pinned;
+        a missing signal **renormalises** rather than zero-filling, which is what makes
+        "questionnaire only, no placement yet" a real plan instead of a diluted one.
+        All callers migrated in the same commit (`routers/student.py` GET+POST, `cli.py`,
+        the narrator prompt). 28 tests in `tests/test_study_plan.py`; $0.00 Gemini.
+        **2250 tests / 6 skipped / 0 failed / 90.13% cov** (P4.6 baseline 2229 / 90.08%);
+        all 13 gates green, 0 skipped.
+        **The defect the orchestrator found by measuring, not from the subagent's report —
+        do not re-derive:** the first implementation clipped each topic's share to the
+        90-minute session cap and dropped the remainder, so **a three-weak-topic ten-hour
+        week scheduled 270 of 600 minutes** while `weekly_hours` still reported 10 for the
+        S-24 header. Topics over the cap are now **split into several blocks on distinct
+        days** (585/600 for that case, and no topic is ever sat twice in one day).
+        The pre-fix figure is written into the regression test.
+        Two `TestWeighting` tests read priority off session *position*, which stopped being
+        a proxy once sessions sorted by date; rewritten to assert **total minutes per
+        topic** — what the weighting actually decides. Nothing skipped or deleted.
+        **Gap chunk C must close (not a regression — this state did not exist before):**
+        `StudyPlanDTO` carries no `available`/`reason`, so the honest `no_signal` refusal
+        and the real "nothing to schedule this week" both reach the frontend as an empty
+        `sessions` list and are indistinguishable. Chunk A's whole distinction dies at the
+        wire until chunk C decides the DTO. `activityType`/`date` are likewise not exposed
+        yet — `hours` is a unit conversion of `duration_minutes`.
+      - [ ] chunk A (original plan, kept for the rationale) — pure scheduler rewrite in `lemely/core/study_plan.py`: sessions carry an
+        **activity type** (`practice` / `flashcards` / `past_paper` / `review`) and a **duration
+        in minutes**, and are laid out across the days of one week. Inputs become explicit and
+        weighted: weakness `lost_marks` (rolling performance), placement topic results, and the
+        S-02 `student_confidence_ratings` — all three already keyed on the **P4.2
+        `"<code> <name>"` topic vocabulary**, which is the whole reason those three files were
+        made to share it. Pure, **clock-injected** (chunk A of P4.6 set that precedent), no I/O.
+        `build_study_plan`'s current signature is kept working or its callers migrated in the
+        same commit — `routers/student.py` and `io/study_plan_ai.py` both import it.
+        **Honesty rule:** a student with no weakness rows, no placement, and no questionnaire
+        gets an honest `no_signal` refusal, never a plausible-looking invented week (P4.5/P4.6
+        precedent). Activity type must be *earned* — do not schedule `flashcards` for a topic
+        with no deck or `practice` for a topic the bank cannot serve.
+      - [x] chunk B — **done** (`27f6a16`). Migration **0012** (additive: `study_plans`,
+        `study_plan_sessions`) + `lemely/db/models/study_plan.py` + `lemely/db/study_plan_repo.py`
+        (`StudyPlanService`). `alembic check` clean on **upgrade and downgrade**, verified by
+        actually running both, not from the report.
+        **2273 tests / 6 skipped / 0 failed / 90.23% cov** (chunk A baseline 2250 / 90.13%);
+        all 13 gates green, 0 skipped. $0.00 Gemini.
+        **The week is the ISO week (Monday) of the injected clock**; regeneration **supersedes**
+        (stamps `superseded_at`) rather than mutating, so last week stays auditable and a
+        completed session stays a true record. A `no_signal` refusal **is persisted** — "no plan
+        generated yet this week" and "refused a plan this week" are different facts and both
+        stay queryable. D4.12's honesty rule survives the trip to Postgres.
+        **Availability is real, which is the load-bearing part:** practice/past-paper counts come
+        from the bank behind the **same `visible_bank_filter`** `PracticeService` uses, and deck
+        presence from the student's own decks — so chunk A's "activity type must be earned" is
+        enforced against the live bank instead of collapsing every session to `review`.
+        XP correctly left as a seam (`completed_at`); no points/streak column was added.
+        **Fifth handover this phase to report done with its own gate red** — `pytest` failed on
+        `tests/test_db_schema.py::test_all_expected_tables_registered`, the deliberate
+        unregistered-schema-drift guard, which the two new tables were never added to. Caught by
+        the orchestrator's gate run. **Keep running it; the handover's word is still not evidence.**
+      - [ ] chunk B (original plan, kept for the rationale) — migration **0012** + `lemely/db/study_plan_repo.py`: persist the plan and
+        its sessions, weekly regeneration (a new week supersedes rather than mutates the old one,
+        so last week stays auditable), and per-session completion. **XP is P5 — leave the
+        completion record as the seam and build no XP.**
+      - [x] chunk C — **done** (`5a28431`, D4.13). `lemely/web/routers/study_plan.py` at
+        `/api/student/study-plan` (student-only at router level) + `schemas_study_plan.py`,
+        wired in `deps.py` (`get_study_plan_service`) and `app.py`. Three routes:
+        `GET /{subject_code}`, `POST ""` (201), `POST /sessions/{id}/complete`. No migration
+        (0012 covers it), **no `web/` diff** so gate 8 was not in play, $0.00 Gemini.
+        **2292 tests / 6 skipped / 0 failed / 90.29% cov** (chunk B baseline 2273 / 90.23%);
+        all 13 gates green, 0 skipped.
+        **D4.12 §5's gap is closed — that is the substance of the chunk.** The envelope
+        (`CurrentStudyPlanDTO {generated, plan}`) makes three states distinguishable that
+        previously all arrived as an empty `sessions` list: *no plan generated this ISO week*
+        (`generated: false`), *generated and honestly refused* (`available: false`,
+        `reason: "no_signal"`), and *a real plan* — which may itself legitimately carry
+        `sessions: []`. **None of the three is a 404**; a 404 on state 1 would have conflated
+        "you have no plan yet" with "no such subject" and with a network failure, and S-24
+        would have had to guess. `activityType` and `date` reach the wire for the first time.
+        Both `StudyPlanNotFoundError` and `StudyPlanOwnershipError` render **404 with a
+        byte-identical body** (D4.11's existence-oracle precedent); a malformed non-UUID
+        session id is **422**, not the 500 a bare `ValueError` would have given.
+        **Found on disk uncommitted from a killed session and verified rather than trusted** —
+        the sixth such handover this phase, and the **first to come back clean on every gate
+        including its own `ruff`/`mypy`** (the five before it reported done with their own gate
+        red). Verification was an independent full `check.sh` run plus reading the tests for
+        vacuity: all 15 carry their inverse, including the two scoping pins D4.13 §3b names
+        (another student's plan invisible / one subject's plan not served under another).
+        Nothing needed fixing, which is worth recording precisely because it is the exception.
+        *(Original chunk-C plan retained in git history of this file; D4.13 carries the full
+        rationale.)*
+- [x] done — **P4.8** Frontend S-01..S-05 (onboarding steps + placement in-progress/results).
+      All four chunks landed (0, A, B, C); decisions D4.14/D4.15/D4.16. **Gate 8 is genuinely
+      satisfied for the first time on Phase-4 screens** — not vacuously: the audit registry now
+      carries 6 entries / 7 states for S-01..S-05 on four seeded accounts, and all 13 gates pass
+      with 0 skipped. 41 route-states, **zero axe violations at any severity**, Lighthouse a11y
+      100 on the four scored new routes, zero console errors, zero horizontal-scroll violations.
+      **Two defects that only a real gate run could find, both fixed here — see D4.16:** every
+      new screen shipped without an `<h1>` (QUALITY-BAR.md:45; axe *moderate*, so gate 8's
+      serious/critical threshold passed over it), and the E2E seed still collided on rerun,
+      failing `playwright-e2e` on a genuine `uq_question_bank_paper_question` IntegrityError.
+      Impeccable audit **16/20 (Good)**, detector clean, three sub-44px touch targets raised.
+      **First `web/` diff of Phase 4 — gate 8 comes back into play** (QUALITY-BAR.md,
+      `/impeccable audit` on changed files, `npx impeccable detect` clean, axe zero
+      serious/critical, Lighthouse a11y ≥ 95, screenshots per screen × state × breakpoint).
+      Backends this composes, all landed and route-tested: `/api/me` onboarding (P4.3),
+      `/api/student/placement/*` (P4.4 chunk B-4), and the **existing**
+      `/api/student/quizzes/...` take/resume/submit path placement deliberately reuses.
+      **Honesty states that must reach the screen, not be designed away:** placement
+      availability is a real `not available` + machine-readable `reason` for 0580/0606
+      (they have zero ingested questions — D4.6 §5, not a gap to code around), and every
+      S-02 questionnaire field is skippable, where a skipped answer is `NULL` and must not
+      render as an answer the student gave (D4.5).
+      **Two scoping facts established by measurement before any chunk was briefed — do not
+      re-derive:**
+      1. **No maths renderer is needed, and adding one would be speculative work.** MISSION §4
+         requires maths notation to render properly and be *verified in screenshots*. Measured
+         the actual banked corpus: **1 of 273** stems contains anything LaTeX-shaped, and the
+         maths that is present is **plain Unicode** (`Ω α β γ ρ θ ² ³ ⁵ × °`, 21 distinct
+         non-ASCII chars) which every browser renders natively. **Do not add KaTeX/MathJax.**
+         What the stems *do* need is `white-space: pre-line` — they carry real newlines that
+         structure the question, and collapsing them is the actual rendering risk here.
+      2. **No student quiz-taking screen exists anywhere in `web/`.** P3.5 built the take/
+         submit *backend* and P3.8 built only the teacher side (`QuizBuilder`/`QuizResults`).
+         So S-04 is not "reuse the quiz screen" — it is the first question-rendering +
+         answer-input surface in the product, and P4.9/P5 will compose it. Build it as a
+         reusable component, not as a screen-local one-off.
+      **Chunk plan (2026-08-09):**
+      - [x] chunk 0 — **done** (D4.14). `renderable_bank_filter()` in `question_bank_repo.py` —
+        a pure Postgres `~*` predicate over the existing `prompt` column, applied at all four
+        pool sites (`QuestionBankService._filters`, `PracticeService._matching_clauses`,
+        `StudyPlanService._availability`, `PlacementService._load_candidates`). **No migration,
+        $0.00, zero Gemini.** Exclusion from *serving*, not deletion — the row stays auditable.
+        **2297 tests / 6 skipped / 0 failed / 90.30% cov** (P4.7 baseline 2292 / 90.29%);
+        all 13 gates green, 0 skipped.
+        **The load-bearing finding, which the obvious fix would have missed:** `PlacementService`
+        **does not call `visible_bank_filter` at all** — it builds its own filter in
+        `_load_candidates`. Folding the predicate into that shared seam would have been a clean
+        one-line change that passed review and left **placement — the worst-affected path, the
+        one that plants the false weakness — completely unfixed.**
+        **Honest line drawn at 25 of 273, not 4 and not 32**, by reading all 32 loose matches
+        individually: bare "image" (3) is the optics sense, and "draw a diagram of the circuit
+        used" (4) is the student's own *answer*, not a dependency. Both kept servable.
+        **Orchestrator-verified independently, not from the report** — the subagent signed off
+        before its own gate run finished, and never measured the thing that could actually
+        break. 25/273 excluded and all four provable IDs confirmed excluded by direct query;
+        the NULL-prompt three-valued-logic trap (`NOT (NULL ~* …)` is NULL → silent drop)
+        checked and closed (`prompt` is `NOT NULL`, zero NULLs).
+        **Placement changed and the change is recorded rather than smoothed over: 0625 went
+        9 q / 15.19 min → 10 q / 17.06 min, still 6 syllabus topics, still under the 18-min
+        ceiling.** It got longer because the excluded questions had been counted toward the
+        15-minute target. Practice pool 273 → 248. 0580/0606 unchanged (`no_questions`).
+      - [ ] chunk 0 (original plan, kept for the rationale) — **the figure-dependency defect, found by measuring the live
+        bank while scoping S-04.** `question_bank` has **no image/figure column at all** (verified
+        against `information_schema`) — P4.1 excluded 654 figure-bearing leaves, but **4 stems
+        that survived still say "The diagram shows …"** and are placement-eligible
+        (`0625_w24_qp_13#39`, `0625_s24_qp_11#5`, `0625_w24_qp_11#36`, `0625_s24_qp_11#19`;
+        a looser pattern flags up to 18, the 4 are the provable ones).
+        **Why this is not cosmetic and not deferrable behind the frontend:** the 0625 placement
+        assembles exactly **9** questions, so one such draw makes ~11% of the test unanswerable.
+        The student loses those marks, the placement records a weakness they **do not have**, and
+        that false weakness is precisely what seeds the P4.7 study plan and the P4.5
+        weakness-targeted practice. It renders perfectly and screenshots clean — invisible to
+        every gate this build runs, which is why it gets fixed before the screen that would
+        display it. Same class as D3.21's confidently-wrong paper 22.
+        Fix as **exclusion from serving, not deletion**: a deterministic detector, no Gemini, so
+        placement/practice never draw a question the bank cannot fully render. Must be pinned by
+        its inverse (a non-figure stem is still servable) or it will silently empty the pool.
+      - [x] chunk A — **done**. `web/src/portals/student/screens/onboarding/` (`SubjectsStep.tsx`,
+        `QuestionnaireStep.tsx`, `onboardingData.ts` — the pure payload builders, which is what
+        made the honesty rule testable), `Onboarding.tsx` rewritten as the wizard shell,
+        `meTypes.ts` + `useMeApi.ts` grown to cover the four P4.3 endpoints, new
+        `components/ui/slider.tsx` added to the catalogue rather than inlined.
+        **138 web unit tests (3 files) green; all 13 gates green, 0 skipped.** No backend diff,
+        so the 2297/90.30% backend figures from chunk 0 stand. $0.00 Gemini.
+        **D4.5's skip rule is pinned three ways, and the third is the subtle one:** a skipped
+        field is **absent from the payload** (not `0`, not `null` — asserted on the serialised
+        wire, not just the object); an **explicit** `null` on a touched field is preserved, so
+        *clearing* an answer stays distinguishable from *never answering*; and
+        `hasExternalLessons: false` is sent, **not** mistaken for a skip. A falsy-means-skipped
+        bug would have silently discarded every "no" answer in the questionnaire.
+        **Constraint 3 verified by the orchestrator, not from the report:** all 9 confidence
+        topic labels checked against `lemely/data/syllabus_topics.json` — 9/9 are real taxonomy
+        entries, no invented vocabulary. That mattered because an invented label would join
+        against nothing in the bank or the weakness engine and fail silently.
+        **Legacy-route decision:** the frontend `usePostOnboarding` hook and its
+        `OnboardingRequest` type are deleted (their only caller was the screen this replaces);
+        the backend `POST /api/student/onboarding` route **stays** — it is still covered by
+        `tests/test_authz_matrix.py` and `tests/test_web_student.py`, so deleting it here would
+        have been an unrelated backend change inside a frontend chunk. Its removal belongs with
+        the legacy `/api/student/plan` pair in P4.10/P4.11.
+        **Seventh handover this phase to sign off before its own gate run finished** — it was
+        in fact green, but that was verified by the orchestrator's own run, not taken on trust.
+      - [ ] chunk A (original plan, kept for the rationale) — S-01 + S-02: the real multi-step wizard on the **P4.3** backend
+        (`PATCH /api/me/student-profile`, `PUT .../enrolments`, `PUT .../confidence-ratings`,
+        `POST .../complete-onboarding`) + the TS types/hooks for them, which do not exist yet
+        (`meTypes.ts` covers only `ProfileDTO`). **Replaces** the legacy single-step
+        `Onboarding.tsx`, whose own docstring says "there is no multi-step wizard backend yet" —
+        there is now. Whether the legacy `POST /api/student/onboarding` route and
+        `usePostOnboarding` die here or in P4.11 is a chunk-A decision to record, not assume.
+      - [x] chunk B — **done** (verified 2026-08-09, fourth session). The gate run that was
+        "in flight" at the previous checkpoint has now **completed and is green**:
+        **all 13 gates PASS, 0 skipped** (`ruff-check`, `ruff-format`, `mypy`, `import-linter`,
+        `pytest`, `web-typecheck`, `web-lint`, `web-build`, `web-test`, `impeccable-detect`,
+        `playwright-e2e`, `puppeteer-audit`, `ui-thresholds`). Run in the **foreground** per the
+        environment note; exit 0.
+        **Backend figures are unchanged and that is verified, not assumed:**
+        `git diff --stat 27744b5..HEAD -- lemely tests alembic scripts` is **empty**, so chunk B
+        carries **zero backend diff** and chunk 0's **2297 tests / 6 skipped / 0 failed /
+        90.30% cov** still stand. The moving number is **224 web unit tests**, green. $0.00 Gemini.
+        Narrative of what chunk B actually fixed follows.
+        **`a690040` fixes a FOURTH answer-loss defect (D4.15), found by
+        actually running gate 7 — the previous two sessions never ran an orchestrator gate pass
+        at all.** Two saves for one question could be on the wire together (reconnect retry with
+        the cached value, debounced edit with newer text — that overlap was deliberate, so a
+        newer edit is never dropped as a duplicate). But arrival order is not dispatch order and
+        `save_answer` is a last-write-wins upsert with no version guard, so the **older** save
+        could land last at the server, and `onSuccess` then wrote its own captured value into the
+        cache stamped `dirty: false`. The student sees the newer answer on screen; the next
+        reload sees a clean entry, defers to the server, and **the paper is marked against text
+        the student did not write.** D3.21's shape exactly; invisible to every gate.
+        Fixed on two independent lines: saves serialized per question (`saveChains` —
+        **coalescing, not cancelling**, so a queued save reads the cache when its turn comes and
+        carries the newest value) plus `isCacheEntryUnchanged` gating the clean-commit by value
+        equality. `buildAnswerSavePayload` deleted rather than left dead — a coalesced save has
+        no single "field that changed"; both fields now go from the cache, which
+        `SaveAnswerRequestDTO` handles as "set these, leave the rest" (checked against
+        `schemas_quiz.py:312`, not assumed). `flushPendingSaves` — which had **zero coverage**
+        despite being the fix for the worst of the three `c2d444f` defects — now also waits on
+        busy-but-clean refs and blocks submit on the cache being dirty-free.
+        Plus a latent S-02→S-03 routing bug: `Object.keys(drafts)[0]` is not selection order (JS
+        hoists integer-like keys), invisible only because all three syllabus codes have a leading
+        zero. `placementInviteSubject` orders by the S-01 catalogue.
+        11 new tests, **each verified by inversion** (probes fail exactly 5 / 5 / 3).
+        **224 web unit tests green, `tsc --noEmit` clean, `pre-commit run --all-files` clean.**
+        (The full 13-gate run that was in flight at that checkpoint has since completed green —
+        see the chunk-B header above.) $0.00 Gemini.
+        Previous-session narrative follows.
+        **The gaps the previous session recorded below are now closed and the extraction it
+        described is on disk**: `placementData.ts` carries `placementInviteView`/
+        `placementResultView` (both screens switch on the discriminated union rather than
+        re-deriving in JSX) and `quizTakerData.ts` carries the injected-storage answer cache.
+        66 unit tests green across the two files, `marked:false`, `spansMultipleBands:false`,
+        `topic:null` and the reload-merge all pinned with their inverses.
+        **Three real defects the orchestrator found by reading the wiring, not from any report
+        — do not re-derive:**
+        1. **The reconnect-retry effect resent every dirty answer on every render.** `doSave`
+           depended on the whole `saveAnswer` object, and react-query returns
+           `{ ...result, mutate }` — a **fresh object every render** (verified in the installed
+           `node_modules/@tanstack/react-query/build/modern/useMutation.js`, where only `mutate`
+           is `useCallback`-stable). So `doSave`'s identity changed every render, the effect's
+           `[online, doSave]` deps re-fired every render, and every dirty answer was resent.
+           With the 1s elapsed-time ticker already forcing a render a second, that was **a
+           duplicate PUT per dirty answer per second on the ordinary typing path**, not just
+           after a reconnect. Fixed by depending on the stable `saveAnswer.mutate`.
+        2. **A restored-from-cache dirty answer was never resent after a reload.** The whole
+           point of the reload-merge is that an edit which failed to save survives; it came
+           back into the UI but stayed local, because the retry effect keyed only on `online`
+           and `data` is undefined on first mount (the take query is still loading), so the
+           seed never triggered it. Fixed with a `seedVersion` bump in the deps.
+        3. **Submit did not flush unsaved answers.** A student who types and hits submit inside
+           the 600ms debounce had that edit sitting in a timer nothing fired — **the answer
+           exists on screen and on the device while the paper is marked without it**, and an
+           online save failure had no other resend trigger before submit. Same
+           confidently-wrong shape as D3.21. `flushPendingSaves` now awaits every dirty answer
+           and **blocks the submit on failure** rather than submitting a script that is not the
+           one the student wrote.
+        Plus one honesty fix: the save-error text promised "we'll retry automatically" while
+        online, which nothing did; it now states what is actually guaranteed (kept on this
+        device, resent before submit) — true only *because* fix 3 exists.
+        New pure `refsToRetry(cached, inFlight)` excludes in-flight refs from the retry pass
+        (an entry stays dirty for the whole duration of its own save), deliberately **not**
+        consulted by the edit path so a newer edit typed mid-flight is never dropped as a
+        duplicate. 5 tests, **verified by inversion** (removing the exclusion fails exactly 2).
+        Original handover note follows.
+        **Code was on disk, uncommitted, gates not yet run by the orchestrator.** New:
+        `web/src/lib/placementTypes.ts`,
+        `lib/hooks/usePlacementApi.ts`, `components/quiz/{QuizTaker.tsx,quizTakerData.ts}`,
+        `portals/student/screens/placement/{PlacementInvite,PlacementTest,PlacementResult}.tsx`
+        + `placementData.ts`, `tests/unit/{placement,quizTaker}.test.ts`. Changed: `lib/api.ts`
+        (`ApiError` now carries structured `.detail` — needed because placement's 409 detail is a
+        whole `PlacementAvailabilityDTO`, not a string; backward compatible, orchestrator-reviewed),
+        `portals/student/index.tsx` (3 routes), `Onboarding.tsx` (S-02 → S-03 exit).
+        **The eighth handover this phase to sign off before its own gate run finished** — but the
+        first to report its gaps *accurately* when asked instead of claiming green: it had extracted
+        only the pure-logic modules and left `marked:false`, `spansMultipleBands:false`,
+        `topic:null` and the offline/unsaved-answer cache implemented **but untested**.
+        **Component tests are not the fix and must not be added:** `web/vitest.config.ts` records
+        `environment: "node"` as a deliberate decision (D3.20) — no jsdom, no @testing-library,
+        because component behaviour belongs to Playwright against a real browser. Gaps are being
+        closed the repo's way instead: extract the decision out of the JSX into a pure function
+        (the `onboardingData.ts` pattern) and inject storage rather than touching the
+        `localStorage` global (the clock-injection precedent). Highest-value one is the
+        reload-merge: **a local edit that failed to save before a reload must not be silently
+        discarded in favour of the server's older value.**
+        Verified by the orchestrator already: the S-05 "this page will update on its own" promise
+        is backed by a real `refetchInterval` that stops when `marked` flips true (a claim the
+        student can check), and `white-space: pre-line` is on the stem — the actual rendering risk
+        per the P4.8 measurement, no maths renderer added.
+        (original scope line) — S-03 + S-04 + S-05 on `/api/student/placement/*` + the existing
+        `/api/student/quizzes/...` take/resume/submit path. S-03 must render the **honest
+        `not available` + machine-readable reason** for 0580/0606; S-04 owns answer persistence
+        across a lost connection and resume (UI spec §S-04 states both); S-05 is framed as a
+        *baseline*, never a grade.
+      - [x] done — chunk C (closed 2026-08-09, session 7 — D4.16) — the standing UI gate for all five screens
+        (gate 8: QUALITY-BAR.md, `/impeccable audit` on the changed files, `npx impeccable
+        detect` clean, axe zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus for
+        every screen × state × breakpoint, no unintended regression against baselines).
+        **Session 7 (2026-08-09) — the registry actually RAN for the first time, and it found a
+        real defect the previous six sessions could not have found by reading.** Session 6's two
+        fixes were on disk uncommitted; committed as `3bee1c3` after verifying their string
+        matchers against the real components, then the audit leg was run standalone
+        (`cd web && npm run -s audit`, exit 0, ~11 min). **Both session-6 fixes work:** all seven
+        new states loaded, the `ready`-driven wizard survived the repeated navigation
+        `pressToggleOnce` was written for, and S-04 was genuinely reachable — so the
+        placement-eligible seed is real, not just green in isolation.
+        **The defect (`b0e13ea`), which every gate had been passing over: all five new screens
+        shipped without an `<h1>`.** Every one of the seven new states reported
+        `page-has-heading-one` (**moderate**) while all 24 P3 routes reported zero at any
+        severity. Each screen rendered its page title as a styled `<div>` — the visual heading
+        existed, the semantic one did not. **This is a QUALITY-BAR.md:45 failure outright**
+        ("one h1 per page, heading order unbroken, landmarks"), but gate 8's axe threshold only
+        bars *serious/critical*, so `ui-thresholds` passed and would have kept passing forever.
+        Same shape as the vacuous passes this chunk exists to remove: it screenshots perfectly
+        clean, and a screen-reader user reached onboarding and the product's first
+        question-rendering surface with nothing to orient by.
+        Fixed by promoting each title div to `h1` (same classes + `m-0`; Tailwind preflight
+        already zeroes heading margins and makes them inherit size, so it is **visually
+        identical — confirmed against the re-captured screenshots, not assumed**).
+        `QuestionShell` is safe as the single h1 because `steps[stepIndex]` renders exactly one
+        question at a time. `QuizTaker` has no visible page title *by design* (mid-test a student
+        needs "Question 3 of 10" and the countdown, not a banner) so it carries an `sr-only` h1
+        with the real `quizTitle` — it is composed by placement now and practice/assigned quizzes
+        in P4.9/P5, so the fix lands once for all three. Loading/error branches get `sr-only` h1s
+        per the P3 ReviewItem/StudentDetail precedent, because `ErrorState` renders its heading as
+        a non-heading element (the Phase-2.5 report §8 gap, still open).
+        **Verified by a second full audit run, not by the first one's absence of complaint:** all
+        seven new states **0/0/0/0 at every severity**, zero nonzero axe counts anywhere in the
+        registry, **Lighthouse a11y 100** on all four scored new routes (perf 80–83, at/above the
+        §11 student floor of 80), zero console errors, zero horizontal-scroll violations;
+        `ui-thresholds` clean across **41 routes** (was 34 states). 224 web unit tests, typecheck
+        and lint green. $0.00 Gemini.
+        **Visually spot-checked by the orchestrator rather than trusted to the string assert:**
+        the `questionnaire-skipped` capture shows the thumb at `min` with the readout reading
+        **"Not set"**, not "0 hours/week" — D4.5's honesty rendering is real on screen, which is
+        the whole reason that state was given its own capture. S-05 checked the same way: the
+        title promotion is visually identical, and the screen really does render "This is a
+        baseline, not a grade", the working-level refusal ("we're not estimating a working level
+        from it yet") and **"Not enough data yet."** instead of a fabricated weakest topic.
+        **Full 13-gate run: ALL PASS, 0 skipped, exit 0** — run three times this session, the
+        last after every fix. **2308 passed / 6 skipped / 0 failed / 90.30% cov** (chunk-0
+        baseline 2297 / 90.30% — +11 from `tests/test_seed_e2e.py` incl. the new
+        stem-collision regression; coverage flat).
+        Note for whoever reads a raw `pytest` log next: **the backend diff since chunk 0 is NOT
+        empty** — earlier chunk-C sessions added `scripts/seed_e2e.py` (+398) and
+        `tests/test_seed_e2e.py` (+192), so the carried-forward 2297 figure needed re-measuring
+        rather than restating.
+        **One measurement trap worth not re-deriving:** a bare `.venv/bin/pytest` reports
+        **1 failed** — `tests/architecture/test_import_linter.py` shells out to `lint-imports`,
+        which is not on PATH unless you export `.venv/bin` yourself. It is a `FileNotFoundError`
+        in the harness, not a broken contract: with PATH set the test passes and `lint-imports`
+        exits 0 ("Contracts: 2 kept, 0 broken"). `check.sh` exports PATH at its line 34, which is
+        why its `pytest` gate is green. Verified both ways rather than assumed.
+        **Session 5 progress (2026-08-09):** the seed was run standalone against the live stack
+        and is green — exit 0, all four placement accounts created, `bankQuestionCount: 24` on
+        paper 2, and every key `audit.mjs` dereferences (`assignmentId` on inProgress/completed,
+        `subjectCode`) confirmed present in the emitted payload rather than assumed.
+        **One real vacuity found by the orchestrator while reviewing the registry, not from any
+        report — do not re-derive:** S-05's `ready` matched **`"starting picture"`**, which
+        `PlacementInvite` also renders (`"Get a real starting picture in {subject}"`). The entry
+        would have been satisfied by the *invite* screen and passed **without ever loading the
+        result** — the exact vacuous pass this chunk exists to remove, on the one screen whose
+        whole point is the honesty framing. Tightened to `"This is a baseline, not a grade"`,
+        which is unique to `PlacementResult`'s **marked** branch (grep-verified: one hit in
+        `web/src`) and is the UI-spec framing itself, so a regression that dropped it fails the
+        gate instead of hiding. The other five `ready` strings were checked the same way and are
+        each unique to their screen; S-03's refusal heading is specific to the `no_questions`
+        reason alone (`placementData.ts:32`), so a different reason would fail rather than pass.
+        **Session 6 (2026-08-09) — a second defect found by reading the on-disk registry against
+        the runner's contract, before the gate run reached it:** `visitRoute` calls `st.setup`
+        **once**, but then calls `gotoReady(page, url, …)` **again for every breakpoint and once
+        more for axe** — so any state driven through the UI must survive a reload. It does not:
+        `Onboarding.tsx:60` holds `wizardStep` in component state that always remounts as
+        `"subjects"`, and the seeding effect (`:71-100`) restores *answers* from the server but
+        **never which step you were on**. So S-02's `setup`-driven questionnaire state is undone
+        by the first reload and its `ready` ("Which school") cannot match. Fix is to drive the
+        wizard from `ready` (which runs after *every* navigation) rather than `setup`, and to make
+        the drive **tolerant of Physics already being selected** — after the first pass the
+        enrolment is real and the seeding effect restores it, so an unconditional click would
+        *deselect* it and leave `Continue` disabled forever (`SubjectsStep.tsx:92` carries
+        `aria-pressed`, which is how the drive tells the two apart).
+        **Also found: D4.5's honesty rendering is the one thing chunk C's brief names that the
+        on-disk registry does not actually cover.** The S-02 entry stops at the *school* step, but
+        the skipped-field risk lives on the **sliders** — `SkippableSlider` renders `unsetLabel`
+        ("Not set" / "Not rated yet") while the thumb sits at `min`
+        (`QuestionnaireStep.tsx:47-63,173,209`). A regression to `formatValue(min)` would render
+        "0 hours/week" — an answer the student never gave — and screenshot perfectly clean.
+        That state gets its own capture.
+        Plus the runtime summary line (`audit.mjs:1701`) still told a reader `/student/onboard`
+        was "not covered by this registry" — stale in exactly the way the header note it sits
+        beside warns about, and the log is what a human actually reads. Corrected.
+        **`impeccable-detect` and `ui-thresholds` already pass — that is NOT evidence the new
+        screens are covered.** The audit registry is P3.10's 24-route/34-state one (D3.17/D3.18)
+        and predates S-01..S-05; a green `ui-thresholds` on a registry that never lists the new
+        routes is a gate passing *vacuously*. First job of this chunk is to establish, by
+        reading the registry rather than assuming, which of S-01..S-05 are absent from it, and
+        to add them with their **real** states — including the honesty states P4.8 exists to
+        keep on screen: placement `not available` + machine-readable reason for 0580/0606
+        (D4.6 §5), and the skipped-questionnaire-field case where a skipped answer is `NULL`
+        and must not render as an answer the student gave (D4.5).
+        **Four facts established by measurement before briefing — do not re-derive:**
+        1. **The registry does not mention placement or onboarding at all** (zero matches for
+           either in `web/scripts/audit.mjs` and in `web/e2e/*.ts`). `audit.mjs`'s own header
+           still lists `/student/onboard` under "Deliberately still NOT in this registry (P4/P5
+           screens still on mock data)" — **stale since chunk A**, and the header is part of the
+           fix. The five new routes are `/student/onboard`, `/student/placement/:subjectCode`,
+           `/student/placement/test/:assignmentId`, `/student/placement/result/:assignmentId`
+           (`portals/student/index.tsx:227-230`).
+        2. **S-04 and S-05 are unreachable in the E2E DB as seeded today, and this is the real
+           work of the chunk.** `scripts/seed_e2e.py` seeds exactly **5 teacher-authored MCQ
+           `question_bank` rows with `paper_id=None`** (for the T-09/T-10 quiz).
+           `PlacementService._load_candidates` takes only `source='past_paper'` rows,
+           outer-joined to `Paper` for a `paper_number` that must have a `paper_timing.json`
+           entry, and chunk 0's `renderable_bank_filter` applies on top. **Nothing in the seed
+           satisfies any of that**, so every subject returns `no_questions` and there is no
+           placement quiz to take or to have marked.
+        3. **Therefore auditing only S-03's `not available` state would be the vacuous pass
+           again**, in the exact shape `audit.mjs`'s header warns about ("an unlooked-at route
+           is exactly how this gate became vacuous"). S-04 is the product's **first**
+           question-rendering + answer-input surface and owns the answer-persistence behaviour
+           four separate defects were just fixed in (D4.15) — leaving it unaudited is the least
+           acceptable omission available. The seed must grow a genuinely placement-eligible
+           past-paper bank (real `Subject`/`Paper` rows, `source='past_paper'`, topics in the
+           P4.2 vocabulary, a paper number `paper_timing.json` actually carries).
+        4. **Both S-03 states are required, not one or the other.** A subject with a viable bank
+           (available) *and* one without (`no_questions`) are both real product states — 0580/
+           0606 genuinely have zero ingested questions, and that honest refusal is behaviour
+           P4.8 exists to keep on screen. `tests/test_placement_repo.py` already has the
+           viable-bank fixture shape to copy from rather than invent.
+### Carried forward from P4.8 chunk C's Impeccable audit (D4.16 §4) — must reach DELIVERY.md
+Recorded rather than smoothed over. None is a regression; all three predate or exceed P4.8.
+- **The global `prefers-reduced-motion` rule is a blanket kill.** `web/src/index.css:742` sets
+  `animation-duration: 0.001ms !important` on `*`. On S-05's unmarked state the spinning
+  `CircleNotch` is the *only* evidence marking is in progress, beside copy promising "This page
+  will update on its own" — with reduced-motion on it freezes and working is indistinguishable
+  from stalled. Affects all 41 routes; `processing-state.tsx:19` already acknowledges it.
+  Deliberately not touched in a frontend chunk: editing the global rule risks visual regression
+  everywhere. **P5 must handle this** — MISSION §4 Phase-5 already requires motion to respect
+  `prefers-reduced-motion` *proven by a test*, and that test cannot honestly pass against a
+  blanket kill.
+- **`Button size="sm"` cannot meet QUALITY-BAR.md:40's 44px floor** (~31px: 12.5px text +
+  `py-2`). Raised at the three new-screen call sites only; **33 call sites exist and 11 of the
+  15 files are teacher screens**, where 44px would break dense layouts (counted, not assumed).
+  The shared variant is a cross-portal decision. Same family as the Phase-2.5 report §8 gap.
+- **Ad-hoc container widths** — `max-w-[560px]` ×3, `max-w-[720px]`, `max-w-[820px]` where a
+  shared token belongs. (`min-h-[44px]` and `slider.tsx`'s `py-9px` are *not* this: both are
+  documented repo-wide touch-target idioms.)
+- **S-04 re-renders its whole question tree once per second** from the elapsed ticker, no
+  memoization. Lighthouse perf 82, so not currently measurable — but this exact ticker is what
+  turned an unstable react-query object identity into a duplicate-PUT-per-second bug (D4.15 §1).
+
+- [x] done — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards). All four chunks
+      landed (0, A, B, C); decisions D4.17/D4.18. Gate 8 is real for these screens: 13 registry
+      entries / 14 states, 14/14 axe clean at every severity, Lighthouse a11y 100 on the four
+      scored routes, all 13 gates green with 0 skipped.
+      Backends this composes: `/api/student/practice/*` (P4.5, 3 routes: preview / create /
+      export), `/api/student/flashcards/*` (P4.6 chunk C, 10 routes), and the **existing**
+      `/api/student/quizzes/{assignment_id}` take/save/submit path — practice sets are
+      quiz-shaped and `list_assigned` already carries `kind IN (practice, study_plan)`.
+      **Five scoping facts established by measurement before any chunk was briefed — do not
+      re-derive:**
+      1. **A practice set is marked but its result cannot be read.** `POST .../submit`
+         (`quiz.py:837`) triggers `QuizMarkingService.mark_submission` on a background thread
+         for **every** kind, so a submitted practice set really is marked and the marks are in
+         the DB. But `StudentQuizTakeDTO` carries **no score, no per-question marks and no
+         feedback at all** (`schemas_quiz.py:303` — header + questions only), and the only
+         result route in the product, `GET /api/student/placement/{id}/result`, is narrowed by
+         `Quiz.kind == QuizKind.placement` (`placement_repo.py:476`) so a practice assignment
+         404s there. **`practice.py` has exactly three routes and none of them is a result.**
+         So S-21's "finish action producing a short summary" has no backend: a student can
+         generate a set, work it, submit it, and there is nowhere in the product to see how
+         they did. The marking already ran — only the *read* is missing. Same class as P4.8
+         chunk 0: fix the data seam before building the screen that would display it.
+      2. **S-20's topic-selection control has no data source.** There is **no topic-listing
+         endpoint anywhere in `lemely/web/`** (checked every router). `survey_past_paper_
+         questions` is CLI-level and unscoped; `QuestionBankService.count_by_band` is
+         per-band and staff-scoped. The teacher builder (T-09) works around this with
+         **free-text topic entry** plus a live `pool-count` — acceptable for a teacher, wrong
+         for a student, who cannot be expected to type `"4.3 Electric circuits"` exactly.
+         The list must be filtered through the *same* clauses `_preview` uses (enrolled
+         papers, `visible_bank_filter`, chunk-0's `renderable_bank_filter`) or it will offer
+         topics the pool cannot serve.
+      3. **Weak-topic prefill must come from the server, not the client.** S-20 says "topic
+         selection pre-filled with their weak topics", and there are **two different weak-topic
+         vocabularies in this codebase**: `PracticeService._preview` resolves
+         `weak_topics_only` from `WeaknessRecord` rows (D4.10 §2, P4.2 `"<code> <name>"`
+         labels), while the student subject-overview `WeakThreadDTO`
+         (`schemas_student.py:49`) comes from `aggregate_weaknesses_from_history`. Prefilling
+         the chips from the screen's own weakness list would silently join against nothing.
+         `preview` **returns** its resolved `topics` — read them back from there.
+      4. **Reveal-answer (UI spec S-21) cannot be built honestly and is deliberately not
+         built.** No route returns a model answer for a bank question, and
+         `PracticeExportQuestionDTO` excludes `modelAnswer`/`markSchemePoints`/`mcqAnswer`
+         **structurally** on purpose (D3.8). Adding a reveal route would put marking material
+         on a student surface. The spec's "deliberate friction so it isn't the default" is
+         satisfied by submitting and reading the marked result, where the answer arrives
+         attributed and carrying its confidence — not by a raw model-answer dump. Recorded as
+         a scope decision, not a silent omission.
+      5. **The local dev DB has drifted from STATE's recorded figures — measure, do not
+         restate.** `question_bank` now holds **801** `past_paper` 0625 rows (739 topiced, 29
+         distinct topics) plus **745** `generated` and 1 `teacher_upload`, against the 273
+         P4.1 recorded; 528 past-paper and 390 generated rows were added 2026-08-08. Any
+         pool figure quoted for P4.9 must be re-measured live through the service filters,
+         not carried forward from P4.1/P4.5.
+      **Chunk plan (2026-08-09):**
+      - [x] chunk 0 — **done** (`dc0c0ac`). Both read paths landed, plus a third defect the
+        live measurement exposed. No migration, **no `web/` diff** so gate 8 was not in play,
+        $0.00 Gemini. **All 13 gates PASS, 0 skipped, exit 0** (run twice; the second run
+        carries the full diff). **2331 passed / 6 skipped / 0 failed / 90.37% cov**
+        (P4.8 baseline 2308 / 90.30% — coverage up, `practice_repo.py` at 99%).
+        `GET /api/student/practice/{assignment_id}/result` — owner-scoped, `kind` narrowed to
+        practice, following `export`'s existing 404/403 split rather than inventing a third
+        rendering. `marked` is explicit and every score field is `None` while unmarked, never
+        a fabricated `0`; `submissionStatus` keeps "not submitted" distinct from "submitted,
+        being marked". **The confidence is real, not defaulted** — verified
+        `QuestionResult.confidence_band`/`.confidence_score` are both `nullable=False`
+        (`models/attempts.py:162,166`) before making the DTO fields non-nullable, and
+        `effective_marks` (teacher-override-aware) is the accessor used.
+        `GET /api/student/practice/{subject_code}/topics` — reuses `_matching_clauses`, so it
+        cannot drift from what `preview` will actually serve; untopiced rows counted
+        separately rather than given an invented label; weak topics resolved server-side.
+        **The third defect, found by measuring the live bank and not derivable by reading:
+        the bank mixes taxonomy levels.** 0625 returns `"1 Motion, forces and energy"` (152)
+        as a *peer* of `"1.2 Motion"` (6) and `"1.3 Mass and weight"` (5) — D4.2's classifier
+        writes whichever level it matched, so each row carries exactly one label and the sets
+        are **disjoint**. A flat chip list would offer the parent as though it covered its
+        children; a student picking it silently loses them, and the screen would look
+        perfectly correct. Topics now carry `syllabusGroup`, reusing `core.placement`'s
+        helper (promoted to public `syllabus_group`/`topic_sort_key`) rather than a second
+        parser being written client-side. **Same defect class as P4.4 chunk B-3 §2**, which is
+        why the helper already existed. Sorted by syllabus code, so `"10.1"` follows `"2.1"`.
+        **Measured live (quote, do not re-derive): 0625 → 28 topics / 765 topiced / 59
+        untopiced; 0580 and 0606 → 0 topics, correctly** (no ingested questions).
+        **The briefed structural-exclusion test was missing from the handover and was added by
+        the orchestrator** — and deliberately in the stronger form: asserted on the **field
+        sets** of both the dataclass and the wire DTO, because the existing
+        `test_export_route_never_returns_marking_material` asserts on a response *body*, which
+        passes vacuously the moment `questions` comes back empty (exactly what an unmarked set
+        returns). The ninth handover this phase to sign off before its own gate run finished;
+        it was in fact green, but that was established by the orchestrator's run, not trusted.
+      - [ ] chunk 0 (original plan, kept for the rationale) — the two missing read paths.
+        `GET /api/student/practice/{assignment_id}/result` (owner-scoped, `kind` narrowed to
+        practice exactly as placement narrows to placement; must distinguish *not yet marked*
+        from *marked* rather than collapsing both to an empty body — S-21 polls it the way
+        S-05 polls placement) and `GET /api/student/practice/{subject_code}/topics` (distinct
+        servable topics + **real** per-topic counts through the same clauses `_preview` uses).
+        Both pinned by their inverses or they will silently offer/return nothing.
+      - [x] chunk A — **done** (verified 2026-08-09, sixth session). The two wip commits
+        (`dd37966`, `137e83d`) were on disk with gates never run; the orchestrator ran them.
+        **All 13 gates PASS, 0 skipped, exit 0** — foreground-equivalent serial run, the audit
+        leg included. **249 web unit tests / 6 files, green** (chunk-B-of-P4.8 baseline 224).
+        **Zero backend diff** — `git diff --stat aa4daf2..HEAD -- lemely tests alembic scripts`
+        is empty, so chunk 0's **2331 passed / 6 skipped / 0 failed / 90.37% cov** still stand
+        and were not re-measured. $0.00 Gemini.
+        Four screens + the plumbing: `screens/practice/` (`PracticeGenerator` S-20,
+        `PracticeSet` S-21 working view, `PracticeResult` S-21 summary, `PracticePrint`,
+        `practiceData.ts` pure logic), `lib/practiceTypes.ts`, `lib/hooks/usePracticeApi.ts`
+        (one hook per endpoint, no `fallback`, `result` polls while `marked === false`), four
+        routes + nav item + crumbs.
+        **Every constraint the chunk plan named was verified by the orchestrator, not taken
+        from the handover:** `QuizTaker`'s prop interface is **byte-unchanged** (`PracticeSet`
+        is a 21-line wrapper, the same shape as `PlacementTest` — the composition seam held for
+        its second caller, which was the test); topic chips nest by `syllabusGroup`;
+        `untopicedCount` renders as prose, never as a selectable topic; the weak-topic prefill
+        reads the **server's** `weakTopics`; and every screen carries an `<h1>` (`PracticeSet`
+        inherits `QuizTaker`'s own `sr-only` one — D4.16's defect is not repeated).
+        **The substantive fix of the chunk is `137e83d`, and it is not cosmetic:**
+        `weakTopics` and `topics` are resolved **independently** server-side — the first from
+        `WeaknessRecord` rows, the second from the servable bank pool — so neither is a subset
+        of the other. **Measured live: 8 of 15 recorded weakness topics have no servable bank
+        topic**, including the weakness engine's own `"unknown"` fallback label and
+        older-vocabulary labels like `"Electricity"`. Prefilling verbatim would have applied a
+        filter **with no checkbox on the screen**: sent to `preview`/`create`, narrowing or
+        emptying the pool, with no chip checked and no way to clear it — rendering as a flat
+        "no practice material" with no visible cause, on the majority of real students. The
+        prefill is now the intersection, and the dropped labels are **named on screen** rather
+        than silently swallowed. Same defect class as P4.8 chunk 0 and P4.4 chunk B-3 §2: it
+        screenshots perfectly and no gate can see it.
+        **Fact 6 honoured — the photo-answer route is still deliberately not built** (no image
+        field exists anywhere on the quiz answer path), and fact 4's reveal-answer likewise.
+        30 unit tests in `web/tests/unit/practice.test.ts`, each carrying its inverse.
+      - [ ] chunk A (original plan, kept for the rationale) — S-20 + S-21 frontend. `QuizTaker` is **composed, not forked** (its
+        own docstring names P4.9 as a caller); the finish summary reads chunk 0's result route.
+        **Scoped by measurement 2026-08-09 (fifth session) — do not re-derive:**
+        - The composition seam is already exactly right and needs no change: `QuizTaker` takes
+          `{assignmentId, onSubmitted, onExit}` and nothing else (`PlacementTest.tsx` is a
+          21-line wrapper proving it). S-21's working view is that same wrapper with a
+          practice exit. **Adding a prop to `QuizTaker` is a signal the chunk is going wrong.**
+        - **Nothing frontend-side for practice exists yet:** no `practiceTypes.ts`, no
+          `usePracticeApi.ts`, no practice screen, no route, no nav entry, no crumb. Five
+          backend routes are live and un-consumed (`preview`/`topics`/`POST ""`/`export`/
+          `result` — `lemely/web/routers/practice.py`), DTOs in `schemas_practice.py`.
+          Mirror `placementTypes.ts` + `usePlacementApi.ts` conventions (one hook per
+          endpoint, no `fallback` to `request()`, poll `result` while `marked === false`
+          exactly as `usePlacementResult` does).
+        - **Sixth scoping fact, and the one that would otherwise be built as a fiction:**
+          UI spec S-21 names "do it on paper and photograph it" as an answer route.
+          `SaveAnswerRequest` is `{answerText?, workingText?}` — **text only, no image field
+          anywhere on the quiz answer path** (`placementTypes.ts:134`, and the backend PUT
+          matches). There is no route that attaches a photograph to a quiz answer. Building a
+          camera affordance here would either dead-end or silently discard the student's
+          work. **Deliberately not built**, recorded as a scope decision alongside fact 4's
+          reveal-answer, not silently omitted. The photograph route that *does* exist is the
+          S-10..S-14 correction flow, which marks a whole past paper, not a quiz answer.
+        - Topic chips must nest by `syllabusGroup` (chunk 0's third defect — a flat list
+          offers a parent as though it covered its disjoint children), prefill from the
+          `weakTopics` the **server** returns (fact 3), and never render `untopicedCount` as
+          a topic.
+        - Routes/nav to add: `practice/:subjectCode` (S-20), `practice/set/:assignmentId`
+          (S-21 working view), `practice/result/:assignmentId` (S-21 summary), in
+          `portals/student/index.tsx`; nav item + `crumbs` entry in `portals/student/data.ts`.
+        - `<h1>` on every new screen (D4.16's defect — it shipped five screens without one).
+      - [x] chunk B — **done** (2026-08-10, sixth session). `web/src/lib/flashcardTypes.ts`,
+        `lib/hooks/useFlashcardApi.ts` (10 hooks, one per route), `screens/flashcards/`
+        (`FlashcardDecks` S-22, `FlashcardReview` S-23, `flashcardData.ts` pure logic), two
+        routes + nav + crumbs, `web/tests/unit/flashcards.test.ts`.
+        **All 13 gates PASS, 0 skipped, exit 0.** **279 web unit tests / 7 files** (chunk A
+        baseline 249). **Zero backend diff** — `git status --porcelain -- lemely tests alembic
+        scripts` empty, so chunk 0's **2331 / 6 skipped / 0 failed / 90.37% cov** stand
+        unmeasured. $0.00 Gemini (generation is behind a live Gemini client but no live call
+        was made).
+        **Two defects the orchestrator found in the handover, neither self-reported as a
+        defect — do not re-derive:**
+        1. **`useEditCard` was defined and called nowhere**, so S-22's spec'd "edit" action
+           could add and delete cards but never **reword** one. The hook was dead code and the
+           action was half-built. Wired as an in-place row editor (`CardRow` owns its own draft
+           state — a shared parent draft would carry one card's text into the next row opened).
+           **The source chip stays rendered while the row is in edit mode**, deliberately: the
+           label describes who *wrote* the card, and editing text is not authorship, so an AI
+           card a student rewrites stays chipped AI-written.
+        2. **A hand-made deck was being sent as `origin: "topic"` the moment the student typed
+           a topic** — which renders as "Topic-generated", claiming a model wrote a deck the
+           student built by hand. The backend never required it: `create_deck`'s own docstring
+           is "`origin=manual`: `topic` is whatever the caller passes". Same honesty class as
+           rule 1 (`source` on a card), one level up — provenance, and it screenshots
+           perfectly. Fixed, and the decision **hoisted out of JSX into
+           `manualDeckRequest`** in the pure module so a test pins it rather than a human
+           reading JSX (chunk A's `onboardingData.ts` precedent). 4 tests with inverses; a
+           blank topic is `null`, never `""`, which would read back as a topic the student chose.
+        **The XP conflict below was honoured:** `summarizeSession` is pinned by a test asserting
+        `Object.keys(summary)` is exactly `["reviewed", "gradeCounts", "intervalChanges"]` and
+        that `"xp"`/`"points"`/`"streak"` are all absent — so P5 adding XP is a deliberate
+        change to that test, not a silent drift.
+        30 unit tests in `flashcards.test.ts`, each with its inverse; `<h1>` verified present in
+        **every** render branch of both screens (5 and 3 respectively), not just the happy path.
+        **Two API-shape limits worth carrying, both honest reflections of the backend rather
+        than gaps to code around:** `GET /due` has **no `deck_id` filter** (only
+        `subject_code`/`limit`), so "review due cards" is subject-scoped and there is no
+        per-deck review entry point; and S-22's "edit" is an inline expansion, not a new
+        S-numbered screen, because the spec lists it as one of S-22's actions.
+        *(Original scoping block retained below.)*
+      - [ ] chunk B (scoping, kept for the rationale) — S-22 + S-23 frontend on the existing 10 flashcard routes. No backend
+        work expected. `source: "ai"` must stay visible on the card for its whole life, and
+        `generatedCount` (not `requestedCount`) is what the screen reports.
+        **Scoped by measurement 2026-08-10 (sixth session) — do not re-derive:**
+        - **Starting position is identical to chunk A's:** ten routes live and
+          **entirely un-consumed** (`lemely/web/routers/flashcards.py`, DTOs in
+          `schemas_flashcards.py`), and **nothing frontend-side exists** — no
+          `flashcardTypes.ts`, no `useFlashcardApi.ts`, no screen, no route, no nav entry,
+          no crumb. Mirror `practiceTypes.ts` + `usePracticeApi.ts` (one hook per endpoint,
+          no `fallback` to `request()`), which chunk A just established against this exact
+          backend shape.
+        - **The wire contract already encodes the honesty rules — the screens must not
+          undo them, and each is verifiable:** `CardDTO.source` is present on every read
+          while `EditCardRequestDTO` has **no `source` field at all**, so the API offers no
+          relabel path and `ApiModel`'s `extra="forbid"` makes an attempted one a 422 (D4.11);
+          `GenerateDeckResponseDTO` carries `requestedCount` **and** `generatedCount` because
+          the model may return fewer and **nothing pads the difference**; `DueSessionDTO`
+          carries `nextDueAt` and a `totalDue` that is the **whole backlog regardless of
+          `limit`**, so S-22's "nothing due today" says *when* instead of rendering a void.
+        - **`origin="weakness"` refuses with 409 `{"reason": "no_weaknesses"}`** — the same
+          reason vocabulary P4.5/P4.9-chunk-A already render. Reuse that honest-refusal panel
+          rather than inventing a third rendering; do **not** fall back to an untargeted deck.
+        - **Product-truth conflict, decided rather than silently dropped (MISSION §12
+          authority order):** UI spec S-23 says the end-of-session summary shows **XP**. XP is
+          **P5** and does not exist — `study_plan` chunk B deliberately left `completed_at` as
+          the seam and built no points/streak column. **An invented XP number on a student
+          screen is exactly the fabricated precision spec §1.4 forbids**, so the summary
+          reports only real session facts (cards reviewed, the again/hard/good/easy
+          distribution, `intervalBeforeDays`→`intervalAfterDays`, next due time) and **no XP**.
+          Not an omission — recorded here alongside P4.9's fact 4 (reveal-answer) and fact 6
+          (photo answer). P5 adds XP to this summary; leave the seam, build no points.
+        - `ReviewResultDTO` returns `intervalBeforeDays`/`intervalAfterDays` **so the student
+          can see the scheduler's effect rather than trust it** — surface the change, don't
+          discard it as internal.
+        - `<h1>` on every new screen (D4.16), and S-23 must be keyboard-operable: the spec
+          calls it a repeated micro-interaction where friction compounds, so the reveal and
+          the four grade buttons need real key affordances, not mouse-only handlers.
+      - [x] chunk C — **done** (D4.18). 13 registry entries / **14 captured states** across
+        S-20..S-23 on three non-overlapping seeded accounts (`active`/`settled`/`bare`), plus
+        the `practice` block in `scripts/seed_e2e.py` that backs them.
+        **All 13 gates green, 0 skipped, exit 0.** 14/14 axe reports clean **at every
+        severity**, not just serious/critical; 42 screenshots (14 states × 3 breakpoints);
+        Lighthouse a11y **100** on all four newly-scored routes, perf 80–82 (student floor
+        ≥80). 279 web unit tests. $0.00 Gemini.
+        **Three real defects the run found and reading had not — do not re-derive:**
+        1. **S-20 dimmed a whole `<Card>` with `opacity-50`**, dragging its heading and prose
+           to **2.28:1** (serious). Not a token fault — `--t3` is 5.58–7.17:1 everywhere; axe
+           measured it composited at 50%. Root cause one level down: **C-14 `Checkbox`
+           self-dimmed only on its own `disabled` prop**, never on an ancestor
+           `<fieldset disabled>` (React does not propagate it, and `appearance-none` means the
+           browser draws no affordance either). Fixed at the component with `has-disabled:`;
+           the card-wide wash deleted, not tuned.
+        2. **S-23's keyboard hints were `opacity-70`** — white at 70% over `--accent` = 4.17:1
+           (serious). Opacity removed rather than nudged: `text-2xs` already de-emphasises it,
+           and a keyboard affordance is the last thing on that button to make hard to read.
+        3. **The "hermetic 24-row bank" was 96 rows.** `seed_e2e.py` had no teardown, so every
+           run *added* 24; the pool is scoped by subject+paper, never by run. S-20's
+           `insufficient_pool` is the first capture whose truth depends on pool *size*
+           (6 available < 10 requested), so once two runs had accumulated the shortfall panel
+           stopped rendering and that route **timed out, producing no screenshots and no axe
+           report at all** — passing on a virgin DB, failing ever after. Fixed by purging prior
+           runs' fixture rows at seed start (restores the invariant the code already
+           documented). Safe: `question_bank` is referenced only by
+           `quiz_questions.question_bank_id` `ON DELETE SET NULL`, verified against
+           `pg_constraint`. `is_placement_seed_prompt`'s docstring claimed the opposite and was
+           corrected in the same commit.
+        **The lesson worth carrying:** defect 3 was silent because the audit already exited
+        non-zero for defects 1 and 2. It was found only by listing
+        `reports/.scratch/screens/S-20/` and noticing `default--*.png` was absent. **An exit
+        code that already has a reason to be non-zero will hide a second, unrelated failure
+        behind it — verify captures by listing them, never from the summary line.**
+      - [ ] chunk C (original plan, kept for the rationale) — the standing UI gate (gate 8) for all four screens: audit-registry
+        entries with their **real** states (including the honest `no_questions` /
+        `no_weaknesses` / `insufficient_pool` refusals and S-22's "nothing due today"), axe
+        zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus, `<h1>` per screen
+        (D4.16's defect — do not repeat it).
+        **Opened 2026-08-10 (seventh session). The mutually-exclusive-state analysis STATE
+        told this chunk to do BEFORE writing the seed is done — do not re-derive it:**
+        - **Six routes, not four screens' worth** (`portals/student/index.tsx:250-255`):
+          `practice/:subjectCode` (S-20), `practice/set/:assignmentId` (S-21 working),
+          `practice/result/:assignmentId` (S-21 summary), `practice/print/:assignmentId`,
+          `flashcards/:subjectCode` (S-22), `flashcards/review/:subjectCode` (S-23).
+        - **`insufficient_pool` needs no created set — it is a *preview* state.**
+          `PracticeGenerator.tsx:299` renders the shortfall panel ("Only N of M requested
+          questions match") off `previewQuery`, so it is reachable by URL alone and is the
+          **default** state given the small seeded bank. This kills the need to capture the
+          post-create `created` branch, which is component state and could not have survived
+          the runner's per-breakpoint reload anyway.
+        - **Three new accounts, and the exclusivity that forces each one:** a student with
+          weakness rows cannot demonstrate S-20/S-22's `no_weaknesses` refusal, and a student
+          with cards due cannot demonstrate "nothing due today". So:
+          `active` (weaknesses + 3 practice sets in 3 submission states + a deck due now),
+          `settled` (a deck, every card reviewed `good` so `due_at` is in the future — a real
+          scheduler outcome, not a hand-written date), `bare` (enrolled, no weaknesses, no
+          decks). `no_questions` needs no account of its own — it is `/student/practice/0580`
+          on any of them, because 0580 genuinely has zero ingested questions.
+        - **One marked practice set does double duty**: answering one question wrong then
+          submitting *and* marking it produces both S-21's `marked` capture and the
+          `WeaknessRecord` rows S-20's weak-topic prefill needs. Same trick the placement
+          `completed` account already uses; `quiz_taking_service.submit` does **not** mark
+          (the route marks on a background thread), which is what makes the third set's
+          `marking` state seedable at all rather than a race.
+        - **S-22's weakness-generate 409 is free to capture**: `generate_deck`
+          (`flashcard_repo.py:347`) resolves the topic — and raises
+          `FlashcardUnavailableError(no_weaknesses)` — **before** `self._generator.generate`,
+          verified by reading, so the refusal costs $0.00 Gemini against the $8 ceiling.
+        - **Deliberately NOT captured, recorded rather than silently dropped:** S-23's
+          end-of-session summary. Grading a card is irreversible and reschedules it, and
+          `visitRoute` re-navigates for every breakpoint plus axe, so the second visit would
+          render "Nothing due today" under a screenshot named `session-complete`. A capture
+          that lies about which state it is is worse than an absent one. (Same reload
+          constraint session 6 found for the S-02 wizard — the fix there was to drive from
+          `ready`; here no drive is idempotent, so the state is out of scope for this gate.)
+        **Scoped 2026-08-10 (sixth session), enough to start cold — do not re-derive:**
+        - **This chunk has a `scripts/` diff, unlike A and B.** The registry is
+          `web/scripts/audit.mjs` (~line 830 onward builds sessions, then a `return [...]`
+          array of `{screenId, slug, path, session, ready, authed, states?}`); the data behind
+          it is `scripts/seed_e2e.py`, the **one** seeding path for both harnesses. P4.8 chunk
+          C's `// ── P4.8 chunk C · the four S-01..S-05 sessions ──` block is the worked
+          example to copy, comment style included.
+        - **Expect to need distinct seeded student accounts per state, for a reason specific
+          to this data.** P4.8 needed four because `PlacementService.availability` excludes a
+          student's own prior placement questions (D4.6 §4). The analogous traps here: a
+          student with weakness rows cannot also demonstrate S-20's `no_weaknesses` refusal,
+          and a student with cards due cannot demonstrate S-22's "nothing due today". **Work
+          out which states are mutually exclusive before writing the seed**, or the registry
+          will quietly capture the same state twice under two names.
+        - **The refusal states are the point of this chunk, not the happy paths.** Screens
+          that only ever screenshot populated are exactly how D3.21's and P4.8 chunk 0's
+          defect classes survive. Capture: 0580/0606 `no_questions` (real — those subjects
+          have zero ingested questions), `no_weaknesses`, `insufficient_pool` (the *normal*
+          path given this corpus, per D4.10), S-21 not-submitted **and** marking **and**
+          marked, and S-22 nothing-due.
+        - **`<h1>` is already verified present in every render branch of all four screens**
+          (Practice: Generator/Result/Print; Flashcards: Decks 3 branches, Review 5) — checked
+          at chunk close, not assumed. D4.16's defect is not expected to recur here; the thing
+          to watch for instead is what only a *run* finds (D4.16's own lesson: reading finds
+          what is wrong with the code you are looking at, running finds what you did not think
+          to look at). P4.8 chunk C's second defect was a seed that could not run twice.
+        - `LEMELY_REPORT_DIR` re-baselines explicitly; the gates otherwise write to gitignored
+          `reports/.scratch` (D3.2). Never commit into a previous phase's report dir.
+- [x] done — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
+      current placeholder `StudyPlan.tsx`. All four chunks (A, B, C, D) landed and each
+      confirmed green by its own full 13-gate run; decisions D4.19–D4.22. The legacy
+      `GET/POST /api/student/plan` + `POST /api/student/onboarding` surfaces are retired
+      (chunk D, `9a8bf8d`), with their authz-matrix coverage replaced rather than dropped.
+      **Scoped by measurement 2026-08-10 (eighth session), enough to start cold — do not
+      re-derive:**
+      - **`StudyPlan.tsx` (140 lines) is wired to the WRONG backend.** It calls the *legacy*
+        `GET/POST /api/student/plan` via `useStudyPlan`/`usePostStudyPlan` in
+        `lib/hooks/useStudentApi.ts` — the pair `routers/student.py:790/814` rebuilds from
+        scratch on every request and never persists. The real backend is P4.7 chunk C's
+        `/api/student/study-plan` (`routers/study_plan.py`, three routes: `GET /{subject_code}`,
+        `POST ""` 201, `POST /sessions/{id}/complete`), landed and route-tested (D4.13).
+        This is a rewrite onto a different API, not a retrofit.
+      - **Nothing frontend-side exists for it:** no `studyPlanTypes.ts`, no `useStudyPlanApi.ts`
+        — the identical gap P4.9 chunk B hit for flashcards. Mirror `practiceTypes.ts` +
+        `usePracticeApi.ts` (one hook per endpoint, no `fallback` to `request()`).
+      - **The route must gain a subject.** Today it is a bare `{ path: "plan" }`
+        (`portals/student/index.tsx:242`) but the new backend is **subject-scoped**. Follow the
+        established P4.9 shape (`/student/practice/:subjectCode`,
+        `/student/flashcards/:subjectCode`). S-25 needs its own route for the session detail.
+      - **The honesty work is the whole point, and D4.13 already built the wire contract for
+        it:** `CurrentStudyPlanDTO {generated, plan}` makes three states distinguishable that
+        used to arrive identically as an empty `sessions` list — *no plan generated this ISO
+        week* (`generated: false`), *generated and honestly refused* (`available: false`,
+        `reason: "no_signal"`), and *a real plan that legitimately has no sessions*. **None of
+        the three is a 404.** Render all three distinctly or D4.13's substance dies at the
+        screen. `activityType` and `date` are on the wire; `hours` is a unit conversion of
+        `duration_minutes`, not a separate fact.
+      - **XP is P5.** `completed_at` is the seam (P4.7 chunk B); build no points/streak, and do
+        not put an invented XP number on the session-complete affordance (D4.17's precedent —
+        same call was already made for S-23).
+      - Gate 8 applies (this is a `web/` diff). Expect chunk C-shaped work: registry entries for
+        **each of the three states above**, not just the populated week. P4.9's lesson stands —
+        **verify captures by listing `reports/.scratch/screens/<id>/`, never from the exit
+        code** (D4.18).
+      - Legacy cleanup lands here or in P4.11: the `/api/student/plan` GET+POST pair,
+        `useStudyPlan`/`usePostStudyPlan`, and `POST /api/student/onboarding` (left alive by
+        P4.8 chunk A precisely so a frontend chunk would not carry an unrelated backend change).
+      **Chunk plan (2026-08-10, ninth session) — three more facts measured before briefing, do
+      not re-derive:**
+      1. **S-25's "why it was chosen" is not on the wire, and the naive fix would invent it.**
+         `StudyPlanSessionDTO` carries `focus`, and `focus` is `f"{_FOCUS_TEXT[activity]}: {topic}"`
+         (`core/study_plan.py:383`) — a *restatement* of activity+topic, not a rationale. The
+         planner's three real signals (`_weaknesses` / `_placement_results` /
+         `_confidence_ratings`, `study_plan_repo.py:352/411`) are consumed and discarded; nothing
+         per-session records which one drove the session. Rendering `focus` under a "why this
+         session" heading would launder a label into a reason.
+         **The one provable join available:** `GET /student/practice/{subjectCode}/topics`
+         returns `weakTopics`, and its `_weak_topics_for` query (`practice_repo.py:809-811`) is
+         **byte-identical** to the planner's `_weaknesses` query (`study_plan_repo.py:361-363`) —
+         same select, same join, same where. So "this is one of your recorded weak topics" is a
+         *provable* statement about this subject, not an inference. When the session's topic is
+         **absent** from that list, S-25 must say so honestly (the plan also weighs placement and
+         confidence, and which signal drove this session is not recorded) — never fall back to
+         `focus` dressed as a reason.
+      2. **Two S-24 spec affordances have no backend and must be honestly absent, not faked.**
+         The spec asks for reschedule-by-drag/move; the router has exactly three routes and
+         **none of them can move a session** (`GET /{subject_code}`, `POST ""`, `POST
+         /sessions/{id}/complete`). It also asks for "weekly progress … against the time they
+         said they had": `weeklyHours` is on the wire and *is* the questionnaire figure
+         (`generate` defaults it from `StudentProfile.weekly_study_hours`), so that half is real
+         and must be computed from `durationMinutes`, never from a rounded `hours` field.
+         Ship no reschedule control rather than a dead one.
+      3. **Nav follows P4.9's shape exactly:** `data.ts:64-66` already hardcodes
+         `/student/practice/0625` and `/student/flashcards/0625` with a `tag: "0625"`; the plan
+         link becomes `/student/plan/0625` the same way. Two existing screens deep-link to the
+         bare `/student/plan` (`practice/PracticeResult.tsx:135`,
+         `placement/PlacementResult.tsx:162`) and both must be updated in the same chunk or they
+         become dead links.
+      - [x] chunk A — **done, gated green with chunk B** (see the nineteenth-session line at the
+        top of this file: all 13 gates PASS, 0 skipped). `studyPlanTypes.ts` + `useStudyPlanApi.ts` + **S-24** (rewrite
+        `StudyPlan.tsx` onto `/api/student/study-plan`), subject-scoped route, all three D4.13
+        wire states rendered distinctly + the week-fully-complete state, inline completion.
+        **On disk at `94326a1` (wip, gates not yet run by its author).** Orchestrator
+        verification found the wire contract sound (`studyPlanTypes.ts` checked field-by-field
+        against `schemas_study_plan.py`; the three hook URLs against the router's three real
+        paths) and the 22 unit tests non-vacuous. Route/nav/deep-link migration is complete and
+        correct — `data.ts` nav, `index.tsx` route, and both `PracticeResult`/`PlacementResult`
+        deep links all pass a real `data.subjectCode`, never a default.
+        **One real defect found by reading, not from any gate — do not re-derive.** Making the
+        route subject-scoped (`plan` → `plan/:subjectCode`) broke the breadcrumb: `resolveCrumb`
+        did an exact lookup in `crumbs` and then pattern-matched, but P4.9's practice/flashcards
+        arms were never joined by a plan arm, so `/student/plan/0625` **fell through to the bare
+        `"Home"` catch-all** while the now-unreachable `crumbs["/student/plan"]` key sat dead in
+        the map. Invisible to every gate this build runs: a wrong-but-valid breadcrumb is not a
+        type error, not an axe violation, not a console error, and not a horizontal-scroll
+        failure. Same shape as D3.21 and the chunk-0 figure defect — it renders perfectly and
+        screenshots clean.
+        **Fixed with the structural half, not just the arm:** `resolveCrumb` was moved out of
+        `portals/student/index.tsx` into the pure `portals/student/data.ts` and exported,
+        because while it lived in the React module the unit suite could not reach it — which is
+        *why* the P4.9 arms and this one could rot unseen. 5 tests added (27 total in
+        `studyPlan.test.ts`), including the inverse (the plan route must not land on the
+        catch-all) and the pin that the dead `/student/plan` path no longer answers with a plan
+        crumb, so a dead link cannot look live.
+        **Note for chunk C, already measured:** `audit.mjs` lines 72 and 2163 both still list
+        `/student/plan` as "deliberately NOT in this registry (P5 screens still on mock data)".
+        That is false as of this chunk and is exactly the stale-exclusion trap the file's own
+        header comment warns about ("the exclusion note outlives the exclusion"). Both strings
+        must be updated when chunk C adds the registry entries.
+      - [x] chunk B — **done, gated green with chunk A** (nineteenth session: all 13 gates PASS,
+        0 skipped). The run that proved it is also the one that caught the `variant="primary"`
+        defect fixed in `a71f262` — so the "typecheck + oxlint clean" claim below was false when
+        written, the eighth such handover this phase. **S-25** session detail + its route, the fact-1 "why" join, and the
+        session-complete flow from the detail screen. No XP (P5's seam is `completed_at`).
+        **Written and committed (`3b49dca`, wip) 2026-08-10 eleventh session; gate run in
+        flight over chunks A+B together.** All four design facts below were implemented as
+        decided, none re-derived. `StudyPlanSession.tsx` + the pure half in `studyPlanData.ts`
+        (`locateSession`, `sessionRationale`/`rationaleCopy`, `sessionStartAction`), route
+        `plan/:subjectCode/session/:sessionId`, the `resolveCrumb` arm, and a link from each
+        S-24 session row. **47 unit tests (was 27)**, typecheck + oxlint clean.
+        **`locateSession` has three arms, not two** — the refused week is kept separate from
+        the superseded one, because "your plan moved on" is false for a plan that never moved
+        and was declined; that arm renders `planUnavailableMessage`'s own reason instead.
+        **The `unknown` rationale arm is the load-bearing one** and is pinned by the assertion
+        that it is *not* `notRecordedWeakness`: a pending or failed weak-topics fetch answering
+        "not a recorded weakness" would report an absence of evidence as evidence of absence.
+        A test also pins that the `focus` string appears in **none** of the three copies.
+        **Two absences shipped rather than faked**, both matching chunk A's reschedule call:
+        no start button for `review` (no revision surface exists — `sessionStartAction` returns
+        `null`, pinned by its inverse for the other three types) and no XP on completion.
+        **Do not re-derive the gate-attribution decision:** chunk A's own gate run died with
+        the tenth session having only reached `PASS ruff-check/ruff-format/mypy/import-linter`.
+        This session restarted it, then **killed it deliberately** once chunk B's edits were on
+        disk — a run whose backend legs saw one tree and whose web legs saw another cannot
+        attribute a failure to a chunk. A+B are verified by one run instead. Nothing was ever
+        green for A alone; do not read the earlier "in flight" note as a pass.
+        **Design decided by measurement 2026-08-10 (tenth session), before briefing — do not
+        re-derive:**
+        1. **There is no `GET /sessions/{id}` route.** The router has exactly three paths and
+           none fetches a single session. S-25 therefore reads the *week* via
+           `useCurrentStudyPlan(subjectCode)` and locates the session by id in `plan.sessions`.
+           **A session id absent from the current week is a real state, not a 404 and not an
+           error** — a rebuild supersedes the previous plan (P4.7 chunk B stamps
+           `superseded_at` rather than mutating), so a bookmarked or mid-rebuild link lands
+           here legitimately and must say *that*, not "not found".
+        2. **The "why" join, per fact 1 above.** `usePracticeTopics(subjectCode).weakTopics` is
+           the one provable signal (`_weak_topics_for` is byte-identical to the planner's
+           `_weaknesses` query). `sessionRationale` in `studyPlanData.ts` gets **three** arms,
+           and the third is the one that is easy to get wrong: recorded-weakness (provable),
+           not-a-recorded-weakness (honest — the planner also weighs placement and confidence
+           and which signal drove *this* session is not recorded anywhere), and
+           **unknown-while-the-topics-query-is-pending-or-failed** — claiming "not a recorded
+           weakness" on a failed fetch would report an absence of evidence as evidence of
+           absence. `focus` is never rendered as a reason (it is a restatement).
+        3. **Start action → route by `activityType`:** practice → `/student/practice/:code`,
+           flashcards → `/student/flashcards/:code`, past_paper → `/student/correct`,
+           **review → no destination exists in this product** (there is no revision surface),
+           so no button is rendered rather than a dead one — the same call chunk A made for
+           reschedule.
+        4. `resolveCrumb`'s `planMatch` arm is `^/student/plan/([^/]+)$` — **anchored, so the
+           new session route falls through to the bare "Home" catch-all** exactly as the
+           chunk-A defect did. Add the arm and its inverse test in the same commit.
+      - [x] chunk C — **done and CONFIRMED GREEN** (`b444818`, plus the D4.20/D4.21 fixes in
+        `8181f7c` that its first gate run exposed). **All 13 gates PASS, 0 skipped**, log
+        `/tmp/p420_gate.log`, exit 0, run started 10:30 against a clean tree at `4444d15`.
+        Everything the four scoping sessions mapped was implemented as
+        recorded; nothing re-derived. What landed:
+        `scripts/seed_e2e.py` gains a `study_plan` block (the four calls, each **asserted** not
+        trusted) + a `studyPlan` payload key; `build_result_payload` grows one additive param and
+        `tests/test_seed_e2e.py` pins the new shape (60 tests green). `web/scripts/audit.mjs`
+        gains **6 entries / 6 states** for S-24/S-25 plus the `planCompleteSession` binding, and
+        **both** stale `/student/plan` exclusion strings are fixed — the header comment *and* the
+        runtime `log()`, which is the one an operator actually reads.
+        **Validated against the live stack BEFORE gating, which is the part worth keeping:**
+        running the seed directly (exit 0) proved all four assertions in ~1 minute instead of
+        discovering a wrong assumption ~25 minutes into a gate run. Measured: **`active`'s
+        populated week is 7 sessions, `placement.students.completed` is 7 of 7 complete**, and
+        the provable-rationale session is `1 Motion, forces and energy`. Both `ready` predicates
+        read those seeded counts (`0 of 7` / `7 of 7`) rather than a loose `\d+ of \d+`, so a
+        week that came back short or only partly complete **fails the gate instead of
+        screenshotting cleanly under the wrong name** — that was the one failure mode here that
+        would otherwise still render perfectly.
+        S-25's default entry asserts the weak-topic *sentence*, not the `"Why this is in your
+        plan"` heading that all three rationale arms share — matching the heading would have
+        passed on the honest-absence arm and named the capture for a state it is not.
+        **Legacy cleanup deliberately split, decision to honour:** the dead
+        `useStudyPlan`/`usePostStudyPlan` hooks are deleted here (frontend, zero callers,
+        typecheck + oxlint clean), but the `GET/POST /api/student/plan` pair and
+        `POST /api/student/onboarding` are **left live and still route-tested** — deleting them
+        inside this chunk would make a gate failure unattributable, and it also removes the
+        former-IDOR regression pins at `tests/test_authz_matrix.py:425-440`, which deserves its
+        own commit. **That is the remaining P4.10 work after this gate run.**
+        **Open follow-up found by the twenty-sixth session while reviewing chunk D's staged
+        diff, not yet fixed — do not re-derive:** chunk D replaced the two deleted IDOR pins
+        (`test_plan_post_ignores_any_caller_supplied_id`, `test_onboarding_uses_token_identity`)
+        with **role guards only** (401/403 across the new GET/POST/PATCH/PUT families). The
+        property those two tests actually proved — *identity is the token, never the payload*,
+        including that a smuggled `studentId` is a **422** under `ApiModel`'s `extra="forbid"` —
+        has **no replacement anywhere**: checked `tests/test_web_study_plan.py` and
+        `tests/test_web_me.py`, and neither asserts it (their 422s are about malformed UUIDs,
+        quiet-hours pairing and role-disallowed toggles). Same class as chunk D's trap 1, one
+        layer down: the matrix stays green while a real guarantee stops being proven. Land it
+        as its own **backend-only** commit (no `web/` diff, so gate 8 is not in play) after
+        chunk D is committed — chunk D itself is green as gated and must not be re-edited.
+        **→ ACTED ON, twenty-seventh session.** Both pins written and **each verified
+        non-vacuous by inversion before committing**: flipping `ApiModel` to `extra="ignore"`
+        makes both fail (study-plan's smuggle returns 201, me-router's PATCH/PUT return 200),
+        restored immediately. `tests/test_me_router.py` — which the twenty-sixth session's
+        note did not check, and which is where the `/api/me/student-profile/*` HTTP tests
+        actually live — was confirmed to have no such assertion either, so the gap was real on
+        **both** surfaces, not one. Each test carries three inverses: nothing written for the
+        caller, nothing written for the smuggled id, and the identical call *without* the extra
+        field succeeding (so the 422 is provably the smuggled field and not a malformed body).
+        The study-plan one also pins the **write** direction specifically —
+        `test_another_students_plan_is_invisible` already covers the read.
+        `POST /api/me/student-profile/complete-onboarding` is deliberately **not** covered:
+        it declares no body model at all, so identity-from-payload is structurally
+        impossible there and a test would assert FastAPI's behaviour, not the product's.
+        *(Original chunk-C scope + the four sessions' read-only measurements follow, kept
+        because the gate run has not yet confirmed them end-to-end.)*
+        gate 8: audit-registry entries for **each** state (not just the populated
+        week), E2E seed, screenshots — verified by listing `reports/.scratch/screens/<id>/`,
+        never from the exit code (D4.18). Plus the legacy cleanup above.
+        **Measured read-only 2026-08-09 (fifteenth session) while the A+B gate run was in
+        flight — do not re-derive:**
+        1. The two stale exclusion strings are confirmed at `web/scripts/audit.mjs:72` and
+           `:2163` (the file is at `web/scripts/audit.mjs`, **not** `web/audit.mjs`). Both
+           still name `/student/plan` as "still on mock data"; both must change in this chunk.
+        2. **`scripts/seed_e2e.py` seeds no study plans at all** — zero matches for
+           `study_plan`/`StudyPlan`. Every S-24/S-25 state therefore needs new seed work; none
+           of them is reachable on today's seed. What *does* already exist is the three seeded
+           student sessions P4.9 chunk C built (`practiceActiveSession` /
+           `practiceSettledSession` / `practiceBareSession`, `audit.mjs:932-946`), so this
+           chunk composes accounts rather than creating them.
+        3. **The state matrix must be decided before the seed** (P4.9 chunk C's precedent) and
+           has a real conflict to resolve rather than code around: D4.13's `generated: false`
+           (no plan row this ISO week) and its `available: false / no_signal` (a plan row that
+           *is* a persisted refusal) are mutually exclusive **per account per week**, so one
+           account cannot demonstrate both. Assign them to two different seeded students, and
+           check first whether `settled` genuinely has no signal — if it has weakness rows it
+           cannot produce `no_signal` honestly, and forcing it would fake the very refusal the
+           state exists to prove.
+        4. Registry entry shape to copy is the S-20 block at `audit.mjs:1487-1535`: either a
+           bare entry (`screenId`/`slug`/`path`/`session`/`ready`/`authed`) or one with a
+           `states: [{state, slug, lighthouse, ready}]` array for the non-default states.
+        **State matrix RESOLVED read-only 2026-08-09 (sixteenth session), point 3's conflict
+        settled by measurement — do not re-derive.** The question point 3 left open was whether
+        `settled` can honestly produce `no_signal`. It can, and so can `bare`: the planner's
+        three signals are weakness rows, placement results and confidence ratings, and
+        `scripts/seed_e2e.py` writes **zero confidence ratings for any account** (no
+        `confidence_rating`/`ConfidenceRating` match anywhere in the file) and gives neither
+        `settled` nor `bare` a placement or a weakness row (seed docstring lines 230-241 —
+        `settled` has only a fully-reviewed deck, `bare` has "nothing else"). So the mutually
+        exclusive pair splits cleanly across the two accounts that already exist, and **no new
+        account is needed**:
+        - `active` → **the real populated week.** It is the only practice account with a
+          `WeaknessRecord` (seeded via the deliberately-wrong marked set, docstring 218-221),
+          which is exactly the signal `generate` needs. Also carries S-25's *provable*
+          recorded-weakness rationale arm, because the weak topic is real.
+        - `settled` → **the persisted refusal** (`generated: true`, `available: false`,
+          `reason: "no_signal"`). Honest, not forced: it has no signal of any of the three
+          kinds. The seed must call `generate` for it — the refusal is a persisted row, not
+          an absence.
+        - `bare` → **`generated: false`** (no plan row this ISO week). Seed does nothing; the
+          state is the *absence* of a generate call, which is why it cannot share an account
+          with the refusal.
+        **Registry `ready` predicates, read off the built screens (sixteenth session) — the
+        four S-24 branches are distinguishable by heading text, so no test id is needed:**
+        `notGenerated` → `"No plan for this week yet"` (`StudyPlanWeek.tsx:228`); `refused`
+        → `"Not enough to plan from yet"` (`studyPlanData.ts:57`, the `no_signal` arm);
+        the real-but-empty week → `"Nothing scheduled this week"` (`:288`); the populated
+        week → `WeekHeader` (`:272`). The session bindings to reuse are
+        `practiceActiveSession`/`practiceSettledSession`/`practiceBareSession` at
+        `audit.mjs:932-946`, and `practiceSubject` (`:947`) is the subject code for the path.
+        The two stale strings are confirmed verbatim at `audit.mjs:71-73` (header comment)
+        and `:2162-2164` (a runtime `log()` call, **not** a comment — it prints the false
+        claim to the operator, so fixing only the comment leaves the lie in the output).
+        **The last open question — the week-fully-complete state — RESOLVED read-only
+        2026-08-09 (seventeenth session) by measurement, and it needs NO fourth account.**
+        The state needs a populated week with every session `completed_at`-stamped, and
+        `active` cannot also demonstrate it (completing `active`'s sessions would destroy the
+        populated-week capture — do not do that). The account that can is
+        **`placement.students.completed`**, which the P4.9 matrix never claimed:
+        `seed_e2e.py`'s docstring (179-183) and its `_signup_account("placement-completed")`
+        path (1194-1263) show it is onboarded, enrolled in 0625 with papers pinned to
+        `PLACEMENT_PAPER_NUMBER`, and — because its **first placement answer is deliberately
+        wrong** — carries a real `WeaknessRecord` *and* a marked placement result. That is
+        **two** of the planner's three signals, so `generate` produces a genuinely populated
+        week for it; the seed then stamps every session complete. Nothing is forced and no
+        signal is hand-written. Registry binding: a new `planCompleteSession` built from
+        `seed.placement.students.completed`, subject `seed.placement.subjectCode`.
+        S-25's superseded/absent-session arm is still reachable without any new seed data
+        (a session id that is not in the current week).
+        **Consequence to honour, not code around:** this account now also answers S-24 at
+        `/student/plan/0625`, so its plan must be generated *and* completed by the seed —
+        a half-completed week here would silently become the "populated" capture's twin.
+        **Seed spec derived read-only (seventeenth session) — the four calls and where they
+        go, so chunk C does not re-map the file.** `scripts/seed_e2e.py` is 1544 lines; the
+        practice block ends at `practice_dict` (**1482-1498**) and the payload is assembled by
+        `build_result_payload` (**859-872**, shape docstring **124-139**, return type **951**).
+        A new `study_plan` block goes between them and needs its own payload key, because
+        **S-25's route (`plan/:subjectCode/session/:sessionId`) needs a real session id** and
+        no existing key carries one. The four side effects:
+        1. `active` → `StudyPlanService.generate(...)` → the populated week. Capture a session
+           id into the payload (`studyPlan.activeSessionId`) for S-25's detail capture; pick
+           the session whose topic **is** the seeded weak topic so S-25's *provable*
+           recorded-weakness rationale arm is the one that renders.
+        2. `settled` → `generate` → assert `available is False` **and** `reason == "no_signal"`.
+           The refusal is a persisted row, so the call is required; asserting it (rather than
+           trusting it) is what stops a future signal leaking in and silently turning this
+           capture into a populated week.
+        3. `bare` → **no call at all.** The state is the absence of a plan row this ISO week;
+           assert none exists rather than assuming.
+        4. `placement.students.completed` → `generate`, then complete **every** session, then
+           assert every one is `completed_at`-stamped. Partial completion here is the one
+           failure mode that would still screenshot cleanly.
+        Reuse `PLACEMENT_SUBJECT_CODE` throughout; do not introduce a second subject constant.
+        **API surface for those four calls, read off the service (eighteenth session,
+        read-only while the A+B gate run was in flight) — do not re-derive.** The seed
+        constructs every service through `lemely.web.deps` process-wide singletons (the
+        block at `seed_e2e.py:990-1002`, which already ends with `get_practice_service` /
+        `get_flashcard_service`); **`deps.get_study_plan_service` exists** (P4.7 chunk C
+        wired it) so the study-plan block adds exactly one line there and needs no new
+        sessionmaker. Two methods cover all four side effects:
+        `generate(student_id, subject_code, *, weekly_hours=None, now=None) -> PlanView`
+        and `complete_session(student_id, session_id, *, now=None) -> SessionView`;
+        `get_current(student_id, subject_code, *, now=None) -> PlanView | None` is what
+        `bare`'s "assert no plan row exists" assertion calls (**it returns `None`, it does
+        not raise** — assert on the `None`, not on an exception that will never come).
+        `PlanView` carries `.available` / `.reason` / `.sessions` and `SessionView` carries
+        `.id` / `.topic` / `.activity_type` / `.completed_at`, so all four assertions read
+        real fields rather than re-querying. **`complete_session` is idempotent by design**
+        (it leaves an existing `completed_at` untouched), so call 4 cannot be made to lie by
+        a re-run — but it is also why the assertion must be that *every* session is stamped,
+        not that the calls returned.
+        **Registry shapes confirmed verbatim (same session, read-only).** The bare-entry vs
+        `states: [...]` pair is at `audit.mjs:1487-1540` (S-20's default entry, then its
+        `no-questions` and `no_weaknesses` state entries) — copy that, comment style
+        included. The three session bindings and `practiceSubject` are at **`:932-947`**
+        exactly as recorded. The two stale strings are at **`:71-73`** (header comment, and
+        note the surrounding lines already carry P4.8 chunk C's worked apology for letting
+        an exclusion note outlive its exclusion — extend that note, do not just delete the
+        path) and **`:2161-2164`** (a runtime `log()` whose text reads "P4/P5 screens still
+        on mock data"; it prints to the operator, so the comment fix alone leaves the lie in
+        the output).
+        **Seed-call 1's "pick the session whose topic is the seeded weak topic" has an exact
+        source and must not be hardcoded (same session, read-only).** `PracticeService` has a
+        **public** `topics(student_id, subject_code) -> PracticeTopicsResult`, and that result
+        carries `.weak_topics` — it is the very list `GET /practice/{code}/topics` returns and
+        therefore the very list S-25's frontend joins against for its *provable*
+        recorded-weakness arm. So the seed picks the first session whose `.topic` is in
+        `practice_service.topics(active_uuid, PLACEMENT_SUBJECT_CODE).weak_topics` and
+        **raises if none matches**, in the existing `RuntimeError`-with-a-diagnosis style the
+        practice block already uses (`seed_e2e.py:1475`). Hardcoding a topic string, or
+        taking `sessions[0]` on the assumption that `active`'s only signal is weakness, would
+        both silently capture the *honest-absence* arm under a screenshot named for the
+        provable one — the exact "capture that lies about which state it is" D4.18 rules out.
+        Account variables already in the file: `practice_active`/`practice_settled`/
+        `practice_bare` + `active_uuid`/`settled_uuid`, `placement_completed`/`completed_uuid`
+        (**note: there is no `bare_uuid`** — derive it), `practice_dict` (1482-1498) and
+        `placement_dict` (1316).
+      - [x] chunk D — **done and CONFIRMED GREEN** (`9a8bf8d`, twenty-seventh session).
+        **All 13 gates PASS, 0 skipped**, log `/tmp/p410d_gate.log`, "All gates passed".
+        **Attribution verified rather than assumed:** the run started ~10:57:51 and the newest
+        mtime across all eleven gated files in the diff is **10:55:18**, so the gates saw
+        exactly the committed tree; the one commit made while the run was in flight
+        (`736198a`) touches `BUILD/STATE.md` only. Full rationale and every measurement is in
+        **D4.22**; the original read-only scope follows and every trap in it held — nothing
+        needed re-deriving. Original scope: **the legacy-route cleanup
+        chunk C deliberately split out.** Delete the
+        `GET/POST /api/student/plan` pair and `POST /api/student/onboarding`, both superseded and
+        both with zero frontend callers (P4.8 chunk A deleted `usePostOnboarding`, chunk C deleted
+        `useStudyPlan`/`usePostStudyPlan`). **Scoped read-only 2026-08-09 (twentieth session) while
+        the chunk C gate run was in flight — do not re-derive any of it.**
+        **Trap 1, and it is the reason this chunk is not a delete-and-go: `tests/test_authz_matrix.py`
+        has ZERO coverage of either replacement surface.** `grep -n "study-plan\|/api/me\|student-profile"`
+        over that file returns **nothing**. So `/api/student/plan` (in `STUDENT_GET_ROUTES:37` and
+        `STUDENT_POST_ROUTES:41`) and `/api/student/onboarding` (`:42`) are the **only** authz-matrix
+        representation of the study-plan and onboarding surfaces in the product. Deleting those three
+        entries alone **silently shrinks the RBAC matrix and passes all 13 gates** — MISSION §6 gate 6
+        ("anything touching auth/routes: authz matrix updated and green") is what forbids it. The
+        replacements must be **added in the same commit**:
+        - `/api/student/study-plan/*` — router-level guard
+          (`APIRouter(prefix=..., dependencies=[Depends(require_role(Role.student))])`,
+          `routers/study_plan.py:50-52`), so the file's existing "representative spread proves the
+          router" convention (its own comment at `:46-47`) **does** apply: one GET
+          (`/api/student/study-plan/0625`) plus one POST (`""`, body `{"subjectCode": "0625"}`) is
+          sufficient and honest.
+        - `/api/me/student-profile*` — **the shortcut does NOT apply here.** `me.py:57` is a bare
+          `APIRouter(prefix="/api/me")` with **no router-level guard**; each student route carries its
+          own per-route `require_role(Role.student)` (`:250/279/313/355/375`) and two routes
+          (`/api/me/notification-preferences`, `/api/me/profile`) are **deliberately role-agnostic**
+          (`me.py:86` says so). A representative spread would therefore prove nothing about the other
+          routes. Each of the five student-only `/api/me/student-profile*` routes needs its own matrix
+          entry, or its guard stays unproven.
+        Also delete the two explicit former-IDOR pins that die with their routes
+        (`test_plan_post_ignores_any_caller_supplied_id` ~416-433,
+        `test_onboarding_uses_token_identity` ~436-442) and rewrite the module docstring `:8-10`,
+        which names both as live endpoints.
+        **Trap 2 — there are TWO different `StudentProfileDTO` classes.** `schemas_student.py:336`
+        (legacy, used only by the route being deleted) and `schemas_student_profile.py:47` (P4.3,
+        used by `me.py:211/276/373`). A by-name deletion breaks `me.py`'s four routes. `student.py:84`
+        imports the legacy one from `schemas_student`.
+        **Trap 3 — this deletion is a real feature loss on the web surface, and it must be recorded,
+        not smoothed over.** The legacy `POST /api/student/plan` is the **only web path to AI
+        study-plan narration** (`payload.narrate` → `StudyPlanNarrator`, `student.py:857-865`).
+        The replacement `StudyPlanWeekDTO` (`schemas_study_plan.py:37`) has **no `narrative` field
+        at all**, so nothing on the new surface replaces it. Narration survives on the CLI only
+        (`cli.py:582 --use-ai`, `:612-614`) — so **do not delete `lemely/io/study_plan_ai.py`**.
+        Either record the web-side loss in `BUILD/DECISIONS.md` (and it then belongs in DELIVERY.md's
+        limitations, since MISSION §9 inventories the adaptive study plan) or carry narration onto the
+        new route deliberately; do not let it vanish as a side effect of a cleanup commit.
+        **Exact edit sites, measured:**
+        - `lemely/web/routers/student.py`: `_plan_to_dto` (773-795), `student_plan_get` (799-823),
+          `student_plan_post` (826-874), `student_onboarding` (928-965) + the two section headers.
+          Orphaned imports/constants to remove: `build_study_plan` (`:44`), `StudyPlanNarrator`
+          (`:55`), `PlanSessionDTO` (`:81`), `OnboardingRequest` (`:76`), legacy `StudentProfileDTO`
+          (`:84`), `StudyPlanDTO` (`:86`), `StudyPlanRequest` (`:87`), `StudentProfile`+`StudyPlan`
+          (`:43`), `_DEFAULT_WEEKLY_HOURS` (`:104`, sole use is `:819`). **Keep**
+          `aggregate_weaknesses_from_history` (`:32`) — it has two other live uses at `:251` and
+          `:377`. `ruff` F401 will name any I missed.
+        - `lemely/web/schemas_student.py`: `StudyPlanDTO` (257), `StudyPlanRequest` (271),
+          `OnboardingRequest` (323), legacy `StudentProfileDTO` (336), `PlanSessionDTO`, the slider
+          model feeding `OnboardingRequest`, and their `__all__` entries.
+        - `tests/test_web_student.py`: the six plan/onboarding tests at ~443/456/517/545/564/615
+          (`test_plan_get_is_deterministic_without_narrative`, the three `narrate` tests, the
+          no-narrate pair, the onboarding one) + the module docstring `:9` and the `dummy-key`
+          fixture `:56` if nothing else uses it.
+        - `tests/conftest.py:50` names `test_plan_post_narrate_without_key_is_503_not_500` in the
+          D4.3 billed-Gemini-guard rationale. That test dies here. **Keep the guard, fix the
+          reference** — a comment citing a deleted test is the same stale-note trap as the
+          `audit.mjs` exclusion strings.
+        - `web/src/lib/studentTypes.ts:228-240` (legacy `StudyPlanDTO`/`PlanSessionDTO`/request type,
+          now callerless) and the stale comment at `:266`.
+        - **Docstring cross-references that all describe the legacy pair as live** and go stale the
+          moment it dies — this build has already been bitten twice by an outlived note
+          (`audit.mjs:89-91` is its own worked apology): `schemas_study_plan.py:7-8`,
+          `routers/study_plan.py:6`, `schemas_student.py:275/327`, `useStudentApi.ts:53`,
+          `studyPlanTypes.ts:7`, `StudyPlanWeek.tsx:25`, `data.ts:93-94`, `audit.mjs:89-91`.
+        Gate 8 is in play only for the two small `web/` text edits (dead type + comments); no screen
+        changes, so no new captures are expected.
+- [x] done — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
+      targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
+      breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
+      assumed** (MISSION §4 names this explicitly).
+      **Scoped read-only 2026-08-09 (twenty-third session) while the chunk-D gate run was in
+      flight — do not re-derive.** The two halves of "acceptance" are in very different states,
+      and conflating them is the trap here:
+      1. **The UI-gate half is already largely DONE, by the chunk-C work of P4.8/P4.9/P4.10.**
+         The Puppeteer audit registry (`web/scripts/audit.mjs`, 48 `screenId` entries) already
+         carries **S-01..S-05 and S-20..S-25** — so axe, Lighthouse and the screenshot corpus
+         for every Phase-4 screen already run on every gate pass. P4.11 should *verify and
+         report* this, not rebuild it.
+      2. **The Playwright behavioural E2E half is ZERO. Measured, not estimated:**
+         `web/e2e/` is 8 spec files / **14 `test(` blocks**, and a case-insensitive grep for
+         `placement|study-plan|/plan/|practice|flashcard|onboard` across the whole directory
+         returns **no matches at all**. Every existing spec is Phase-2/Phase-3 surface. So
+         MISSION §4's named acceptance — *"new student onboards, takes placement, receives a
+         plan; generated practice demonstrably targets seeded weaknesses"* — is **entirely
+         greenfield**, not an extension of an existing journey. Budget for it accordingly;
+         `student-journey.spec.ts` is 62 lines and 1 test, so there is no scaffold to lean on.
+      3. **Two carried items land here, both already recorded elsewhere and both cheap:**
+         `web/e2e/at-risk-flags.spec.ts:21`'s docstring still says rule 2 "cannot fire in
+         Phase 3" — false since P4.3 (D4.5) — and it needs a seeded below-target scenario in
+         `scripts/seed_e2e.py` to actually pin the rule, which P4.3 deliberately left for here.
+      4. **`web/e2e/seed.ts`'s `SeedContract` is stale and that is the first thing to fix**
+         (found read-only, twenty-fourth session). `scripts/seed_e2e.py` already seeds
+         **three whole additive groups** the TS mirror does not declare — `placement`
+         (`unonboarded`/`available`/`inProgress`/`completed`), `practice`
+         (`active`/`settled`/`bare`) and `studyPlan` — each with its own documented state
+         rationale in that file's module docstring (lines ~124-260). `SeedContract` still
+         lists only `teacher`/`schoolAdmin`/`class`/`students{declining,inactive,control,
+         correctedPaper}`/`parent`. The two sides are **kept in lockstep by hand — nothing
+         generates one from the other** (seed.ts:6-11), so the greenfield Phase-4 specs
+         cannot reach any Phase-4 account until the mirror is extended. **This is why item 2's
+         grep found zero matches and it is not the same finding:** the *data* is seeded and
+         the accounts exist; only the typed accessor is missing. Extending the interface is
+         the cheap half — the specs are still greenfield.
+      5. **The spec idiom to copy is `student-journey.spec.ts` (62 lines):** `readSeed()` +
+         `watchConsole(page)` + a **real UI login** (`/login`, fill Email/Password, click
+         sign in, assert the URL), ending in `expect(errors).toEqual([])`. `injectSession()`
+         (seed.ts:85) is the token-injection shortcut that skips the login UI — use it only
+         where the login itself is not what is under test. Note the file's own warning that
+         Playwright does not share module state across workers, so every spec re-reads the
+         seed file rather than caching.
+      6. **The maths-notation requirement has a decided answer, do not re-open it:** P4.8's
+         measurement (1 of 273 stems is LaTeX-shaped; the rest is plain Unicode) means the
+         verification is a *screenshot inspection* that Unicode maths and `white-space:
+         pre-line` newlines render, **not** the addition of KaTeX/MathJax.
+      **Chunk plan (2026-08-09, twenty-fourth session).** Ordered so the cheap enabling work
+      lands before the expensive greenfield specs, and so nothing waits on a gate run it
+      does not need:
+      - [x] chunk A — **done** (`9cbbf42`, all 13 gates green / 0 skipped) — **the `SeedContract`
+        mirror** (`web/e2e/seed.ts`) + its drift pin (`web/e2e/seed-contract.spec.ts`). Rationale
+        lives in the commit message and the header above; the original plan follows, kept for the
+        shapes it recorded. Extend the interface
+        with the three groups `scripts/seed_e2e.py` already seeds and documents but TS does
+        not declare: `placement` (`subjectCode`/`paperNumber`/`bankQuestionCount` +
+        `students.{unonboarded,available,inProgress,completed}`, the last two carrying
+        `quizId`/`assignmentId` and `submissionId`/`awardedMarks`/`maximumMarks`),
+        `practice` (`students.{active,settled,bare}`, `active` carrying the three
+        assignment ids + `deckId`), and `studyPlan` (`activeSessionId`/`activeSessionTopic`/
+        `activeSessionCount`/`completedSessionCount`). Also the P3.10-era
+        `reviewItem`/`quiz`/`emptyTeacher`/`emptyParent` keys, which are **equally
+        undeclared** — the mirror has been stale since chunk e1, not just since Phase 4.
+        **Types only, no behaviour**: `readSeed()` is an unchecked `as SeedContract` cast, so
+        a wrong field name here fails at runtime in a spec, not at typecheck. Pin the mirror
+        against drift rather than trusting the hand-lockstep comment (`seed.ts:6-11`) — the
+        honest cheap form is one spec that asserts the parsed seed carries every declared
+        top-level group, so a Python-side rename breaks a test instead of silently typing
+        `undefined`.
+        **Shapes read out of the Python side verbatim (twenty-fifth session, read-only while
+        the chunk-D gate ran) — do not re-derive, and do not infer them from the docstring
+        alone; these were cross-checked against the emitting code.** *(Twenty-eighth session
+        corrections, made against `build_result_payload` itself: the count below is **14**,
+        not 11 — the enumeration was right and the number was a miscount — and **`practice`
+        and `studyPlan` each also carry `subjectCode`** (`:1592`/`:1601`), which this note
+        omitted. Everything else below was confirmed exactly as written.)* The contract's 14
+        top-level keys are `runTag`/`generatedAt`/`teacher`/`schoolAdmin`/`class`/`students`/
+        `parent`/`reviewItem`/`quiz`/`emptyTeacher`/`emptyParent`/`placement`/`practice`/
+        `studyPlan` (`seed_e2e.py:878-888`). `reviewItem` = `{itemId, attemptId,
+        studentKey:"inactive"}`; `quiz` = `{quizId, assignmentId, submissionId,
+        submittedBy:"control", status}` — **`status` is a real field, not always `"marked"`**
+        (the seed has a documented non-faked marking-failure branch), so the mirror must type
+        it `string`, never the literal `"marked"`. `emptyTeacher` is a bare `SeedAccount`;
+        `emptyParent` = `{userId, phone, accessToken}` — **no `linkedStudent`**, unlike
+        `parent`. `placement.students.{unonboarded,available}` are bare `SeedAccount`s
+        (`_signup_account`, `:1208-1209`) with **no `expectedAtRiskReasons`** — so they are
+        *not* `SeedStudent`s and typing them as such would be a lie the `as` cast cannot
+        catch. `practice.students.bare` is likewise a bare account (`:1371`).
+        `studyPlan` carries **no student accounts at all** — its four S-24/S-25 states are
+        carried by accounts under `practice`/`placement` (docstring §"The four S-24/S-25
+        states"), so a spec looking for `studyPlan.students` will find nothing; that is by
+        design, not a seed gap.
+        `awardedMarks`/`maximumMarks`/`questionCount`/`bankQuestionCount`/`paperNumber`/
+        `activeSessionCount`/`completedSessionCount` are **numbers**; every id is a
+        `str(...)`-stringified UUID.
+      - [x] chunk B — **done** (`32cd131`, all 13 gates PASS / 0 skipped, `/tmp/p411b_gate.log`,
+        exit 0). Full rationale is in the commit message; the narrative below is kept because
+        chunks C/D reuse its traps and its S-05 finding. The file is
+        `web/e2e/phase4-journey.spec.ts`, **5 tests, one per leg, not one linear journey** —
+        the four placement accounts cannot be collapsed (availability excludes a student's own
+        prior placement questions), so the journey is expressed over the accounts the seed
+        builds for it. Every ready-string and the S-02 drive were inherited from `audit.mjs`
+        rather than re-derived, including all three of its traps.
+        **Proven non-vacuous by inverting the PRODUCT, not by construction** — four sites broken
+        in one round (`QuestionnaireStep`'s `unsetLabel`, `placementData`'s refusal heading,
+        `rankTopics`' no-overlap filter, `StudyPlanWeek`'s "done"), which failed **exactly** the
+        four predicted tests while untouched S-04 stayed green; then S-04 alone inverted
+        (`QuizTaker`'s `{total}`) and it failed too. All reverted, `git diff web/src` clean.
+        **One finding worth not re-deriving: S-05's "Weakest topics" card is legitimately EMPTY
+        and that is correct, not a defect.** The seed's one deliberately-wrong answer does
+        produce a real `WeaknessRecord` — verified directly against the DB, `1 Motion, forces
+        and energy`, 2 of 4 marks lost, accuracy 0.5 — but `rankTopics`
+        (`web/src/portals/student/screens/placement/placementData.ts:119`) refuses to show the
+        same topic as both a strength and a weakness when the breakdown is smaller than
+        `2 * limit`, so a single-topic breakdown fills **Strongest** and leaves Weakest on its
+        honest empty state. The spec pins both sides. **The seed's own comment at
+        `seed_e2e.py:1262` ("S-05's topic breakdown needs one") is accurate but easy to misread
+        as promising a populated *Weakest* card — it does not.** Also note `seed_e2e.py` checks
+        `result.marked` but never that the breakdown is non-empty.
+        *(Original read-only scoping follows, still accurate.)*
+        - [ ] chunk B (scoping) — **SCOPED READ-ONLY 2026-08-09 (twenty-eighth session) while chunk A's
+        gate ran — do not re-derive any of the following.** Every route, account and
+        ready-string chunk B needs already exists in `web/scripts/audit.mjs`'s registry,
+        which drives these exact screens on these exact seeded accounts every gate pass.
+        **Routes** (`web/src/portals/student/index.tsx:205-228`, all under `/student`):
+        `onboard` · `placement/:subjectCode` · `placement/test/:assignmentId` ·
+        `placement/result/:assignmentId` · `plan/:subjectCode` ·
+        `plan/:subjectCode/session/:sessionId`.
+        **The strings each screen is identified by, lifted from the registry** (`audit.mjs`
+        `:1382-1513`, `:1785-1846`): S-01 `"What are you studying?"`; S-02 questionnaire
+        `"Which school"`, and the skipped-answer state reaches `"Not set"` by pressing
+        `^skip$` past `"outside school"` to `"hours can you study each week"`; S-03 available
+        `"Get a real starting picture"`, unavailable (on `/student/placement/0580`)
+        `"No placement test yet for this subject"`; S-04 `"Question 1 of"`; S-05
+        `"This is a baseline, not a grade"`; S-24 populated
+        `` `0 of ${activeSessionCount} sessions? done` ``, refused
+        `"Not enough to plan from yet"`, not-generated `"No plan for this week yet"`,
+        complete `` `${n} of ${n} sessions? done` ``.
+        **Three traps the registry already paid for — inherit them, do not rediscover:**
+        1. **`waitForText` takes a REGEX, not a literal.** `sessions? done` is `s?` making
+           the plural optional against `StudyPlanWeek.tsx:95`'s
+           `{sessionCount === 1 ? "" : "s"} done` — it is not a typo and not a literal `?`.
+           Playwright's equivalent is `getByText(/…/)`; a literal-string port silently
+           never matches.
+        2. **S-05 must NOT be identified by `"starting picture"`** — that phrase also
+           renders on `PlacementInvite`, so the assertion passes without the result screen
+           ever loading. The registry's comment records this as a vacuous pass it caught;
+           the string above is unique to `PlacementResult`'s *marked* branch.
+        3. **The onboarding wizard's step is component state that remounts as `"subjects"`
+           on every load** — `Onboarding.tsx`'s seeding effect restores the *answers* but
+           never the step. So S-02 is unreachable by deep link and must be driven through
+           the real UI (`audit.mjs:728-732`'s `driveToQuestionnaire`: wait
+           `"What are you studying?"` → toggle `Physics` → click `^continue$`). That drive
+           is per-navigation, not once per spec.
+        **Four DISTINCT placement accounts, which must not be collapsed** (the reason is
+        already recorded above and in `seed.ts`): `placement.students.{unonboarded,
+        available,inProgress,completed}`. S-24's populated week is on
+        `practice.students.active`; its three other states are on `practice.students.
+        {settled,bare}` and `placement.students.completed`, because a week is one plan per
+        account by construction.
+        *(Original chunk-B line follows.)* **The MISSION §4 acceptance journey**, greenfield. New spec:
+        onboard (S-01/S-02 on `placement.students.unonboarded`, a **real UI login** per the
+        `student-journey.spec.ts` idiom) → placement available/in-progress/results
+        (S-03/S-04/S-05 across the three purpose-built accounts, which must **not** be
+        collapsed into one: `availability` excludes a student's own prior placement
+        questions for the same subject, so reuse reports the pool exhausted on the very
+        screen meant to show it available) → study plan (S-24 on
+        `practice.students.active`). Ends `expect(errors).toEqual([])`.
+      - [x] chunk C — **done** (`0a78b3b`, all 13 gates PASS / 0 skipped, `/tmp/p411c_gate.log`,
+        exit 0; spec written 12:57:15, run 13:01:33→13:25:21, nothing edited mid-run). Full
+        rationale in the commit message; the inversion narrative below is kept because it is the
+        one finding here worth not re-deriving.
+        The file is `web/e2e/phase4-practice.spec.ts`, **3 tests**: the targeting assertion on
+        `practice.students.active`, its inverse on `.bare`, and the `no_questions` refusal on
+        0580. Strings inherited from `audit.mjs` per the scoping below, not re-derived.
+        **Proven non-vacuous by inverting the PRODUCT, in two rounds — the second round is the
+        one that matters and it is worth not re-deriving why.** Round 1 broke three sites
+        (the prefill disabled, and the `no_questions`/`no_weaknesses` headings **swapped** with
+        each other in `practiceData.ts`) and all three tests failed — but test 1 failed on its
+        *shortfall* wait, before ever reaching the targeting assertion. **That is a real product
+        coupling, not a flaw in the break:** with nothing prefilled the preview is unfiltered,
+        248 questions match a request for 10, and the screen legitimately renders "N questions
+        match" instead of the shortfall panel. So round 1 did not prove the assertion that
+        carries MISSION §4's word *demonstrably*. Round 2 kept the prefill working but pointed it
+        at a servable **non-weak** topic, which leaves the shortfall panel rendering: test 1 then
+        failed exactly on `toBeChecked` at the named topic (line 88), test 2 on its
+        invented-prefill count, and test 3 stayed **green** — the discrimination the pair exists
+        for. All reverted; `git diff web/src` clean.
+        *(Original read-only scoping follows, still accurate.)* Route `/student/practice/{practice.subjectCode}`
+        (`PracticeGenerator`). **Strings lifted from `audit.mjs:1535-1581`:** the populated
+        generator on `practice.students.active` is identified by
+        `"Only \\d+ of \\d+ requested questions match"` (a REGEX — the honest-shortfall panel,
+        which is the normal path for this corpus, D4.10); the `no_questions` refusal is
+        `"No practice material for this filter set"` on `/student/practice/0580`; the
+        `no_weaknesses` refusal is `"No weak topics recorded yet"` on `practice.students.bare`
+        and **only renders once the "Weak topics only" checkbox is actually applied**, so it
+        must be driven live, not deep-linked (`audit.mjs` uses `pressCheckboxOnce`; toggle-once
+        rather than click-blindly keeps it re-run-safe).
+        **The targeting assertion has a name to check against, which is the whole difficulty:**
+        `seed.studyPlan.activeSessionTopic` is provably one of `practice.students.active`'s weak
+        topics — `seed_e2e.py:1528-1536` selects it from
+        `PracticeService.topics(...).weak_topics`, the byte-identical query
+        `GET /practice/{code}/topics` serves, and **raises** if no plan session matches. So the
+        spec can assert the weak-topic prefill names that exact string rather than merely that
+        S-20 rendered. Pair it with the `bare` inverse; without the inverse the assertion passes
+        on a screen that ignores weaknesses entirely.
+        *(Original chunk-C line follows.)* **"practice demonstrably targets seeded weaknesses"**, the second
+        half of §4's named acceptance and the one with a real assertion to get right. The
+        seed's `practice.students.active` has a genuine `WeaknessRecord` produced by
+        marking a deliberately-wrong answer through the unmodified engine. The spec must
+        prove the *targeting*, not merely that S-20 renders: assert the weak-topic prefill
+        names that seeded topic, and pair it with its **inverse** on
+        `practice.students.bare` (no weakness rows → the honest `no_weaknesses` refusal,
+        never an invented set). Without the inverse the assertion passes on a screen that
+        ignores weaknesses entirely.
+      - [x] chunk D — **done** (D4.23; all 13 gates PASS / 0 skipped, `/tmp/p411d_gate3.log`,
+        run 13:56:03→14:20, every gated file last written 13:51:50 or earlier so attribution is
+        clean; `pre-commit` red on exactly the two hooks the environment note predicts).
+        *(Narrative from the gating session follows, still accurate.)* The blocking design
+        question below is **RESOLVED by measurement — option (b), a second class owned by the
+        same teacher.** Both sub-measurements were run read-only before any code was written,
+        and **one of them corrects this file's own note, which was wrong:**
+        (i) `teacher-journey.spec.ts:48`'s "69%" is **class-scoped, not teacher-wide** — the
+        locator is `page.locator("main a").filter({ hasText: seedClass.name })`, a per-class
+        card. (ii) **`classesCells.nth(3)` does NOT index the classes table by row position**,
+        contrary to the note below: the row is selected by
+        `page.locator("tbody tr").filter({ hasText: seedClass.name })` and `.nth(3)` indexes
+        cells *within that filtered row*, so class ordering is irrelevant to it. The new class
+        is still named `"P4.11 Below-Target Class {run_tag}"` (sorts after `"P3.10 Seed
+        Class …"`) so a future positional assertion stays safe, but that is belt-and-braces,
+        not the reason (b) works. **Scope confirmed at the route:** `teacher_at_risk_list`
+        (`lemely/web/routers/teacher.py:1766`) walks `service.list_classes(...)` and every
+        class's roster, so a second class is visible to T-06 while leaving the roster class's
+        three derived figures (3 students / 69% / 2 at risk) untouched.
+        **What landed:** a fifth `students.belowTarget` account — its own class, a `0625`
+        enrolment carrying `target_grade="A"`, and **one recent** attempt graded `D` (3 ladder
+        positions, clear of the 2-position threshold). One record and a recent date are both
+        load-bearing: rule 1 needs a 3-record window and rule 3 needs 14 days of silence, so
+        neither can join and `expectedAtRiskReasons` stays exactly `["below_target"]` —
+        which also keeps `at-risk-flags.spec.ts:56`'s exhaustive `?reason=inactive` list intact.
+        Both docstring defects fixed in the same pass (`scripts/seed_e2e.py`: the false
+        "cannot fire in Phase 3" paragraph, and `inactive` mislabelled rule 2 → rule **3**).
+        Mirror + drift pin extended (`seed.ts`, `seed-contract.spec.ts`), and `at-risk-flags.
+        spec.ts` grew the API assertion, an exhaustive `?reason=below_target` list, the
+        cross-class `classId` check, and the T-06 rendered evidence sentence.
+        **Proven non-vacuous by inverting the FIXTURE, three rounds, all reverted
+        (`git diff` clean):** target `A`→`C` (gap 1) failed exactly the 3 gap-dependent tests
+        while the not-evaluable inverse stayed green; date 1→20 days failed **all 5**
+        (rule 3 joins everywhere); published gap 3→2 failed exactly the one test that
+        publishes it. 5 new hermetic tests in `tests/test_seed_e2e.py` (65/65 green), which is
+        where the no-DB scenario proofs for the other three students already live.
+        *(Original blocking note follows, kept for the parts still accurate.)* The
+        earlier scoping says "additive only, a new account, do not mutate `declining`/`inactive`/
+        `control`". That is necessary but **not sufficient**: a fourth student enrolled in the
+        **seeded class** breaks assertions in a spec that is not the one under test.
+        Measured, not assumed — `web/e2e/teacher-journey.spec.ts` hardcodes the roster's derived
+        numbers: `:48` `toContainText("69%")` on the overview card, `:58`
+        `classesCells.nth(3)` = `"69%"` (average mark) and `:59` `classesCells.nth(5)` = `"2"`
+        (at-risk count). A fourth grade-bearing student moves the average off 69% and the count
+        off 2. `scripts/seed_e2e.py:354`'s own comment already names this trap for the
+        review-queue item and dodges it by reusing an existing attempt — the same trap, one
+        scenario later.
+        **The other two existing at-risk assertions are tolerant and that asymmetry is the useful
+        part:** `at-risk-flags.spec.ts` reads `reasonsById.get(...)`/`.has(...)` per student
+        rather than comparing the whole list, so an *additional* flagged student does not break
+        it; its one exhaustive assertion is `:56`, `?reason=inactive` → exactly
+        `[inactive.userId]`, which a below-target student does not join as long as its attempt is
+        recent. And the T-06 UI test asserts presence/absence per name, also tolerant.
+        **So the choice is between (a) enrolling in the seeded class and updating
+        `teacher-journey.spec.ts`'s three hardcoded numbers — an edit to an unrelated spec, and
+        the numbers must then be re-derived honestly, not fitted to whatever comes out — and
+        (b) a SECOND class owned by the same teacher**, which leaves every class-scoped number
+        untouched while still making the student visible to `/api/teacher/at-risk` (teacher-scoped
+        across own classes).
+        **(b) looks right but is NOT yet safe — measure this before writing any code:** (i) is
+        `teacher-journey.spec.ts:48`'s overview "69%" class-scoped or teacher-wide? If
+        teacher-wide, (b) breaks it too and (a)'s honesty problem returns. (ii) `classesCells.nth(3)`
+        indexes the classes table by **cell position**, so a second class row is only safe if the
+        seeded class still sorts first — check the ordering of the classes list, and name the new
+        class so it cannot sort ahead of `"P3.10 Seed Class {run_tag}"`. Both are one query /
+        one read; neither should be guessed.
+        Everything else in the scoping below is confirmed accurate, including both docstring
+        defects, which were re-read this session: `scripts/seed_e2e.py:20-23` (the false "cannot
+        fire in Phase 3" paragraph) and `:18` (labels `inactive` "rule 2"; `lemely/core/at_risk.py`
+        orders declining/below-target/inactivity, so it is rule **3**).
+        **SCOPED READ-ONLY 2026-08-09 (thirtieth session) while chunk B's gate ran — do not
+        re-derive, and note the first line corrects a wrong path this file has carried since
+        the twenty-third session.** The stale docstring is **`scripts/seed_e2e.py:21-24`**, not
+        `web/e2e/at-risk-flags.spec.ts:21` — that spec's only Phase-3 mention (`:8`) is a correct
+        citation of MISSION §4's acceptance criterion and must be left alone. The seed's text is
+        *"Rule 2 (\"predicted >= 2 grades below target\", D3.3) cannot fire in Phase 3: there is
+        no target-grade column until Phase 4's onboarding questionnaire … not faked, not worked
+        around."* — false since P4.3 (D4.5) shipped `student_profiles`.
+        **A second defect in the same docstring, found while reading it: its rule numbers are
+        wrong.** `lemely/core/at_risk.py` orders the rules declining-trend / below-target /
+        inactivity, so the below-target rule is 2 (correct at `:21`) but `inactive` is rule **3**,
+        yet `:18` also labels it "(rule 2)". Fix both numbers in the same pass — leaving one
+        makes the corrected paragraph read as contradicting the line above it.
+        **What the seeded scenario has to satisfy, read off `assess_at_risk` (`at_risk.py:140-175`,
+        `_resolve_target_for_latest_subject`):** a target is resolved **only** for the subject of
+        the student's *latest grade-bearing record*, so the new account needs (a) a
+        `student_profiles`/enrolment target grade for that exact subject code and (b) a persisted
+        attempt whose predicted grade is ≥2 `GRADE_ORDER` steps below it. A target on any other
+        subject yields `NOT_EVALUABLE`, never a flag — that is the tri-state P4.3 deliberately
+        sharpened, so a mis-keyed seed fails *silently as an unflagged student*, not loudly.
+        **It must be a NEW account, not a mutation of `declining`/`inactive`/`control`.**
+        `at-risk-flags.spec.ts` asserts each existing student's reasons list **exactly** and
+        asserts `control`/`correctedPaper` are **absent** from the response, so adding a target to
+        an existing account would flip an equality assertion in a spec that is not the one under
+        test. Additive only, plus the matching `SeedContract` key in `web/e2e/seed.ts` and the
+        `seed-contract.spec.ts` drift pin chunk A built.
+        *(Original chunk-D line follows.)* Seed a real below-target scenario in
+        `scripts/seed_e2e.py` so the rule is actually *pinned* rather than described. P4.3
+        deliberately left this here. Note the seed's `expectedAtRiskReasons` contract: a new
+        below-target student adds a key, and every account's expected reasons are asserted
+        exactly, so this is an additive seed change with a matching contract update in
+        chunk A's mirror.
+      - [x] chunk E — **done** (D4.24 + D4.25; all 13 gates PASS / 0 skipped,
+        `/tmp/p411e_gate.log`, run 14:27:08→14:51, both gated files last written 14:26:20).
+        **The visual verification MISSION §4 requires is now real and was actually done by
+        eye:** the fresh S-04 and S-21 captures from this run were opened and inspected —
+        the four embedded newlines render as real line breaks (`white-space: pre-line`
+        working), and `1.1 × 10⁵ J` renders correctly including at the 380 breakpoint where
+        the wrap splits `1.1` from `× 10⁵ J.`, which is the case that would have exposed a
+        superscript or glyph fallback problem. Verified on S-04 (default, 1440 + 380) and
+        S-21 (print, 380). Before this chunk that inspection could only have been vacuous.
+        **UI-gate numbers from the same run:** 122 axe route-states, **zero violations at any
+        severity**; 34 Lighthouse routes, a11y floor **96** (`teacher-review`), student-route
+        a11y **100**; **zero** console errors; **zero** responsive violations; screenshot
+        corpus across 39 screen directories.
+        **D4.25 — a real gap the verification surfaced, and it must reach DELIVERY.md:**
+        `scripts/check_ui_gates.py` enforces **only** `ACCESSIBILITY_FLOOR = 95`. It has no
+        performance check at all, yet MISSION §11 claims "performance ≥ 80 on the student
+        routes" is gated and `audit.mjs:218` justifies its own browser-flag choice on the
+        grounds that "the run gates on performance ≥ 80". **`student-flashcards-due` is at
+        79 and `ui-thresholds` passed anyway.** Deliberately NOT fixed inside P4.11: adding
+        the check turns the gate red on a real 79, and the remedy is frontend perf work
+        outside this task's scope — lowering the floor to keep it green would be exactly the
+        dishonest gate that comment warns against. Third instance of the same shape
+        (cf. D3.20, P4.8's unregistered screens): *a gate believed to cover something it
+        never loads reads exactly like one that does.*
+        *(Narrative from the gating session follows.)* The BLOCKING FINDING
+        below was acted on rather than budgeted around: `PLACEMENT_MATHS_SAMPLE` (verbatim
+        from banked stem `0625_w23_qp_42#1c`, `×` + superscript `⁵`, 4 newlines) is appended
+        to the placement pool's prompts at `seed_e2e.py`'s single reaching site, so the S-04
+        and S-21 captures now contain the two properties MISSION §4 asks a human to look at.
+        Decision **D4.24**.
+        **Figure-safety was checked in Postgres, not assumed** — `_FIGURE_DEPENDENT_PATTERN`
+        is a Postgres POSIX regex and raises `PatternError` under Python `re`, so it was
+        evaluated via `SELECT :p ~* :pat` against the assembled prompt with a positive
+        control (`"The diagram shows a circuit."` → match) proving the check itself was not
+        vacuous. A match would have silently emptied the placement pool and surfaced as a
+        `no_eligible_questions` refusal on S-03, not as an error.
+        **2 new tests** (67/67 in `tests/test_seed_e2e.py`), split deliberately: one asserts
+        the *assembled* prompt (a constant-only test would pass with the interpolation
+        deleted), one pins provenance. Proven non-vacuous by inverting the product — removing
+        the interpolation failed exactly the assembled-prompt test while the provenance test
+        stayed green; reverted, `git diff` clean.
+        **`ruff` caught the glyph as RUF001/RUF003 before a gate was spent** — noqa'd at the
+        two load-bearing sites with the prose reworded elsewhere, matching `symbols.py`'s
+        existing per-file rationale. Swapping `×` for ASCII `x` would delete the thing the
+        inspection exists to look at.
+        Gate run **PID 2794857, log `/tmp/p411e_gate.log`, started 14:27:08**,
+        `pwdx`-verified at the repo root; both gated files last written 14:26:20.
+        **Do not edit any gated file until the log reads "All gates passed".** Then: capture
+        the UI-gate numbers from that same run, **look at
+        `reports/.scratch/screens/student-placement-test/` and the S-21 captures** and
+        confirm the maths and newlines actually render (that inspection is the remaining
+        human-eyes step and is what MISSION §4 means by "not assumed"), commit, and move to
+        P4.12.
+        *(Original scoping follows.)* **verify and report the UI-gate half; do not rebuild it.** Confirmed
+        read-only this session: `audit.mjs` carries **48 entries** including all of
+        S-01..S-05 (7 states) and S-20..S-25 (19 states), so axe / Lighthouse / the
+        screenshot corpus already run over every Phase-4 screen on each gate pass. Chunk E
+        is the evidence pass: capture the numbers from a full `check.sh` run, and do the
+        one thing no automated gate can do — **look at the captured stems** and confirm
+        Unicode maths (`Ω α β γ ρ θ ² ³ ⁵ × °`) and the `white-space: pre-line` newlines
+        render, per item 6. That inspection is MISSION §4's "verified visually in
+        screenshots, not assumed", and it is a human-eyes-on-artifact step, not an assertion.
+        **BLOCKING FINDING for chunk E, found read-only 2026-08-09 (thirty-second session)
+        while chunk B's gate ran — do not re-derive, and do not assume the existing corpus
+        satisfies item 6.** The two screens that render a `question_bank.prompt` are **S-04**
+        (`QuizTaker`, registry `audit.mjs:1486`) and **S-21** (practice set/export,
+        `:1586-1655`), captured to `reports/.scratch/screens/<screenId>/<state>--<bp>.png`
+        (`SCREENS_DIR`, `audit.mjs:424`; `LEMELY_REPORT_DIR` defaults to `reports/.scratch`).
+        **But every stem the E2E harness renders is pure ASCII synthetic text.** Both
+        `prompt=` sites in `scripts/seed_e2e.py` are `"Seed MCQ question {i} ({band})"`
+        (`:719`) and `"Synthetic placement seed item {ref} for topic {topic!r}
+        (<marker>)."` (`:796`) — no non-ASCII character and **no newline** anywhere. So the
+        committed S-04/S-21 captures contain **neither the Unicode maths nor the
+        `white-space: pre-line` newlines item 6 asks a human to look at**, and "inspect the
+        captured stems" against the current corpus would be a **vacuous pass** — the same
+        shape of defect as trap 2 above (asserting on a string that renders on the wrong
+        screen). The real corpus is where the maths lives (P4.8 measured 21 distinct
+        non-ASCII chars across 273 stems, 1 LaTeX-shaped); the seed is not.
+        **So chunk E is not purely an evidence pass and must not be budgeted as one.** It
+        needs the seeded stem to carry a real Unicode-maths + embedded-newline sample before
+        the capture is worth inspecting — an **additive** change to the two `prompt=` strings
+        (or one added seed item), which touches `scripts/seed_e2e.py`, hence a gated chunk.
+        Take the sample verbatim from a real banked 0625 stem rather than authoring maths by
+        hand, so the screenshot proves the product renders *corpus* text, not text written to
+        make the screenshot pass. Check first whether any existing spec or `audit.mjs` entry
+        asserts on the current prompt strings before editing them.
+        **That last check is now DONE, read-only, thirty-fifth session — do not re-run it.**
+        Neither prompt string is asserted anywhere outside `scripts/seed_e2e.py` itself:
+        grepping `"Seed MCQ question"` and `"Synthetic placement seed item"` across
+        `web/e2e/`, `web/scripts/` (incl. `audit.mjs`), `scripts/` and `tests/` returns
+        **zero** hits beyond the two `prompt=` definitions. So the additive Unicode-maths +
+        embedded-newline sample can go straight into those strings without touching a spec.
+        **The sample is now PICKED, read-only, thirty-sixth session (query run while chunk
+        D's gate ran) — do not re-query, and do not author maths by hand.** Measured against
+        the live bank: **196** of the 0625 past-paper stems contain a newline, **41** of those
+        also carry a glyph from P4.8's set, and **17** of those are figure-free with ≥2
+        newlines. Two verbatim picks, chosen figure-free so chunk 0's `renderable_bank_filter`
+        exclusion logic is not contradicted by the seed:
+        - **MCQ prompt** (`seed_e2e.py:719`) → `0625_s23_qp_12#36`, 2 newlines, glyph `α`:
+          `"A sample of a radioactive isotope emits 9600 α-particles per second.\nAfter 40
+          hours the rate of emission has fallen to 600 α-particles per second.\nWhat is the
+          half-life of this isotope?"` — a real MCQ stem, so it fits the MCQ seed site.
+        - **Placement item** (`seed_e2e.py:796`) → `0625_w23_qp_42#1c`, 4 newlines, glyphs
+          `×` and superscript `⁵` (the superscript is the harder rendering case and is why
+          this one beats the α/β/γ candidates): `"A car accelerates uniformly in a straight
+          line from rest at time t = 0. At t = 3.2 s, the speed of the car is 13.0 m /
+          s.\n…\nShow that the work done by the car as it decelerates is approximately
+          1.1 × 10⁵ J."` (full text re-readable via `/tmp/p411e_sample2.py`).
+        **Keep the existing `{i}`/`{ref}`/`{band}`/`{topic!r}` interpolations** — they are what
+        make each seeded row distinct, and `uq_question_bank_paper_question` (the collision
+        P4.8 chunk B already paid for) will fire if the prompts collapse to one string. The
+        maths sample is an **addition** to those strings, not a replacement of them.
+        Reject `0625_w23_qp_42#6c` and every other `Fig.`-bearing candidate: seeding a stem
+        that references a figure the bank has no column for would reintroduce D4.14's defect
+        into the harness that is supposed to catch it.
+        **Both picks were checked against the real regex, not eyeballed** — `_FIGURE_DEPENDENT_
+        PATTERN` (`question_bank_repo.py:184-190`) matches `fig/figure/diagram … shows`,
+        `on|in|as shown in fig…`, `complete fig…`; neither pick contains any of them, so
+        `renderable_bank_filter` keeps serving them. This matters because
+        `build_placement_bank_questions`' own docstring (`seed_e2e.py:829-834`) *promises*
+        no seeded prompt matches that pattern — a careless maths sample would have silently
+        emptied the placement pool the seed exists to fill, and the failure mode is a
+        `no_eligible_questions` refusal on S-03, not a visible error.
+        **Note the two prompt sites are now at `seed_e2e.py:771` and `:849`** (chunk D shifted
+        them ~+50 lines from the `:719`/`:796` recorded above); `:771` is the *teacher-quiz*
+        MCQ bank (`source=generated`, owner-scoped) and `:849` is the *placement* pool
+        (`source=past_paper`) — different pools, so chunk E must confirm which of the two
+        actually reaches the S-04/S-21 captures before editing only one.
+        **That confirmation is now DONE, read-only, thirty-seventh session (run while chunk
+        D's gate ran) — do not re-derive. The answer is `:848` ONLY, and it covers BOTH
+        screens.** S-04 (`audit.mjs:1486`, `student-placement-test`) is the placement
+        assignment, drawn from the placement pool. S-21's five captures are practice sets,
+        and `PracticeService.create` draws them from **the same placement pool** — proven by
+        the seed's own hermeticity guard at `seed_e2e.py:1496-1501`, which *raises* if a
+        practice set assembles any question this seed did not author into that pool. So the
+        `:848` `"Synthetic placement seed item …"` string is what renders in all six
+        prompt-bearing captures. **`:771` (`build_quiz_bank_questions`, `source=generated`,
+        teacher-owned) reaches no captured screen at all** — it feeds the P3.10 teacher quiz,
+        and the blocking finding above already established S-04/S-21 are the only two screens
+        that render a `question_bank.prompt`. **Therefore chunk E should edit `:848` and take
+        the `0625_w23_qp_42#1c` pick** (`×` + superscript `⁵`, 4 newlines — the harder
+        rendering case, and the one the picks note already flagged as the reason it beats the
+        α/β/γ candidates). Editing `:771` as well would add corpus text **no screenshot ever
+        looks at**, which is exactly the vacuous-pass shape this chunk exists to avoid; if it
+        is edited anyway, do not claim the MCQ pick was visually verified.
+        Note `:848`'s prompt is `question_type="mcq"` and is answered with
+        `PLACEMENT_MCQ_ANSWER`, so the MCQ-shaped α pick is not needed to keep the site
+        coherent — the stem text is free-form either way.
+- [ ] doing — **P4.12** Phase-4 report, merge to develop, push, update PR #3, ntfy.
+      **Thirty-ninth session.** Tree clean at `bf74b89`, INBOX has no unhandled items, and the
+      chunk-E gate run on this exact tree was **all 13 gates PASS / 0 skipped**
+      (`/tmp/p411e_gate.log`) — so the gate evidence for the report is already earned and does
+      not need re-earning; what P4.12 adds is the **committed phase-4 baseline**.
+      Re-baseline launched per `scripts/check.sh:20-25` (the explicit, reviewable act — the
+      gate's own scratch dir must never overwrite the committed baseline it compares against):
+      **PID 2859312, log `/tmp/p412_capture.log`, started 14:59:47**, `pwdx`-verified at the
+      repo root. Three serial legs, deliberately serial because pytest and check.sh contend on
+      `.coverage` (environment note above): `pytest -q` for the report's counts/coverage, then
+      `LEMELY_REPORT_DIR=reports/phase-4 npm run test:e2e`, then `... npm run audit`.
+      That writes `reports/phase-4/{screens,axe,lighthouse,contact-sheet.html,...}` — the
+      committed baseline Phase 5 will be compared against.
+      **Do not edit any source file while it runs.** Then: write `reports/phase-4/REPORT.md`,
+      merge to develop, push, update PR #3, ntfy.
+      **Must reach the report and DELIVERY.md** (carried, do not silently drop): D4.25 (the
+      performance floor MISSION §11 claims is gated is not enforced — `student-flashcards-due`
+      sits at **79** and `ui-thresholds` passes), D3.20 (`web/e2e/` in no tsconfig `include`),
+      the Phase-2 synthetic accuracy gate still 83.8% vs ≥95%, D3.21's confidently-wrong paper
+      22, and D4.17/D4.19 (S-23 ships with no XP; AI study-plan narration left the web surface).
 
 ### Environment facts worth not re-deriving (cost real work to find)
 - Run gates as `./scripts/check.sh` in the **foreground** — it exports `$HOME/.local/bin`
@@ -134,6 +2171,21 @@ open questions.
   happened repeatedly; the audit leg alone takes ~11 minutes.
 - `pytest -q` emits **no `N passed` line** (a reporter plugin eats it). Count the progress
   characters in the `^[.sFEx]+ +\[ NN%\]` lines, or read the `Total coverage:` line.
+- **Never run `pytest` concurrently with `./scripts/check.sh`.** Both drive `pytest-cov` and
+  they contend on the same `.coverage` data file, so the *coverage figure* comes back badly
+  wrong while the run still exits 0 — a concurrent run reported **89.67% with
+  `practice_repo.py` at 68%**, where a clean serial run of the identical tree reported
+  **90.37% and 99%**. The test counts stayed correct (2331/6/0 both times), which is what
+  makes it convincing: it reads as a real coverage regression to be chased. Re-measure
+  serially before believing any coverage drop.
+- **`pre-commit` is not on PATH and two of its hooks cannot run.** The binary is
+  `.venv/bin/pre-commit` (no bare `pre-commit`, and `$HOME/.local/bin` does not have it).
+  Its `mypy` and `import-linter` hooks then fail with *"Executable not found"* — a defect in
+  the hook environment, **not a code failure**: `./scripts/check.sh` runs both tools directly
+  and they pass on the same tree. Verify there before believing a pre-commit red on those two.
+- **`cd` in one Bash call persists into the next.** A `cd web` for an npx run leaves the
+  following command running from `web/`, where `.venv/` and `.pre-commit-config.yaml` do not
+  exist — which reads as "the venv is gone". Prefix with an absolute `cd /home/sico/Lemely`.
 - `GEMINI_API_KEY` lives in `/home/sico/Lemely/.env` and is **not** exported into a
   non-interactive shell — `set -a && . ./.env && set +a`.
 - The UI gates write to gitignored `reports/.scratch` (D3.2). Re-baseline explicitly with
@@ -141,6 +2193,11 @@ open questions.
 - The E2E backend is `scripts/e2e_server.py` on port 8000 — there is no module-level `app`
   attribute on `lemely.web.app`.
 - `scripts/seed_e2e.py` is the ONE seeding path for both harnesses, all 5 roles.
+- **The past-paper corpus is outside this repo**: `/home/sico/PaperScraper/papers/CAIE/igcse/
+  <subject>-<code>/<year>/<session>/` (648 PDFs, 0580/0606/0625). `Sources/` holds only mark
+  schemes and the 4 solved scripts — no question papers. Read-only from here.
+- Re-parse mark schemes with `lemely parse-mark-schemes <corpus-dir> --output-root
+  outputs/schemes --force --on-error continue` (~54s for 0625; 32/72 parse).
 
 ## Session journal
 See `BUILD/JOURNAL.md` for the dated 3-6 line entries; decisions and rationale live in

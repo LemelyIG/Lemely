@@ -1,6 +1,219 @@
 # Decisions log
 (orchestrator records every non-trivial decision here: what, why, alternatives)
 
+## Phase 4
+
+### D4.7 — The marking-side topic fill lands, and its honest reach is 52.9% of the questions that *can* be classified (P4.4 chunk A)
+
+D4.4 §6 left the marking side of the topic vocabulary open: `CorrectedQuestion.topic` comes
+from `topic_hint`, measured `None` on all 637 questions across the 33 deterministically-parsed
+0625 schemes, so `summarize_weaknesses` grouped every real-paper question under `"unknown"`.
+`fill_correction_topics` (`lemely/db/attempt_repo.py`) closes it by running the *same* P4.2
+deterministic classifier the bank side uses against the mark scheme's own prose. $0.00, zero
+Gemini.
+
+**Where it is called, and why not at persist time.** Both marking paths — `grade_paper`
+(past paper) and `QuizMarkingService.mark_submission` (quiz) — call it immediately after
+`apply_integrity_checks` and **before** `summarize_weaknesses`. This is the trap the P4.4
+chunk plan flagged: both paths compute the `WeaknessReport` *before* calling
+`persist_*_correction`, so filling the topic inside `AttemptRepository._persist` would have
+fixed the `QuestionResult.topic` column while leaving the weakness **grouping** on
+`"unknown"` — and the grouping is the whole point, since P4.5's practice-targets-weakness
+joins on it.
+
+**Two structural rules, both measured rather than assumed** (1329 marked nodes; `correct_paper`
+iterates `all_questions_flat`, so it marks parents *and* leaves, and the fill must resolve the
+same set):
+
+| rule | nodes filled | of all 1329 | of the 809 non-MCQ |
+|---|---|---|---|
+| node's own fields only (first implementation) | 108 | 8.1% | 13.3% |
+| + classify from the node's whole **subtree** | 198 | 14.9% | 24.5% |
+| + inherit the **nearest ancestor's** label | 428 | 32.2% | **52.9%** |
+
+Rule 1 exists because a parent node carries almost no prose of its own — the marking content
+hangs off its `parts`, which the first implementation ignored. Rule 2 is inheritance, not
+guesswork: `3(b)(ii)` whose own mark points read "correct substitution" *is structurally part
+of* question 3, and the ancestor's evidence is a superset of the child's. Both stay gated by
+`is_writable`, so a `low`-band match is still discarded (D4.4 §5 — there is no per-question
+topic-confidence column, so writing a guess would launder it into apparent fact), and a real
+`topic_hint` is never overwritten. Result: **428 nodes across 26 distinct topics spanning all
+six 0625 syllabus topics.**
+
+**The ceiling is structural and is recorded so it is not later mistaken for a defect.**
+520 of the 1329 nodes are MCQ, and a CAIE MCQ mark scheme carries exactly one datum — the
+answer letter. There is no text to classify at any depth, so those nodes are unclassifiable
+*from a mark scheme* by construction; their stems live in the question paper. That is D3.7's
+wall, the same one P4.1's stem extractor exists to climb, and closing it here would mean
+joining marked questions back to banked stems — a larger change than this chunk, deliberately
+not attempted. **The reachable population is the 809 non-MCQ nodes, and the fill reaches 52.9%
+of them.**
+
+Each rule was verified by inversion, not assumed: disabling inheritance fails
+`test_fill_correction_topics_inherits_the_nearest_ancestors_label`, disabling subtree
+recursion fails `test_fill_correction_topics_classifies_a_parent_from_its_parts`, and both
+pass restored. The MCQ ceiling is pinned by its own test so a future reader sees it as
+intended behaviour.
+
+**Layering:** the function lives in `lemely.db`, which is outside the import-linter
+`app > io > core` contract (`exhaustive = false`), because it must compose `lemely.core.topics`
+(pure classifier) with `lemely.io.syllabus_topics` (taxonomy loader); `core.correction` can
+reach neither without a signature change through every marking caller or a layering violation.
+
+### D4.3 — The test suite could make billed Gemini calls; now it structurally cannot (P4.1)
+
+**Found by running the gates, not by looking for it.** `./scripts/check.sh` failed on
+`test_plan_post_narrate_without_key_is_503_not_500` (`assert 200 == 503`), and the captured
+log showed a real `POST generativelanguage.googleapis.com/.../gemini-2.5-flash` in the
+middle of the suite. MISSION §8 requires every automated test to mock Gemini; nothing
+enforced it.
+
+**Three separate defects, all real:**
+
+1. **`tests/conftest.py` neutralises `.env` but deliberately not `os.environ`** ("exactly
+   as in CI"). Sound for env isolation, but STATE.md's own documented way to run the gates
+   is `set -a && . ./.env && set +a` — which exports `GEMINI_API_KEY`. So the "no key" test
+   ran *with* a key, took the narrate path, and spent money against the hard $8 cap.
+2. **`Settings.model_validate(dict)` re-runs the pydantic-settings sources.** The obvious
+   fix — build a settings copy with `gemini_api_key=None` — silently gets the env key
+   reinstated during validation. `model_copy(update=...)` is the form that actually works.
+   Worth not re-deriving: the sibling `_settings_with_key` helper appeared to work only
+   because *any* key satisfies it.
+3. **The first accidental call poisoned the disk cache**, so subsequent runs took a
+   `gemini_cache_hit` and the test kept failing with no network call at all — the symptom
+   outlived its cause and looked like a code bug.
+
+**Fix, in enforcement order.** A session-scoped autouse fixture in `tests/conftest.py`
+raises if anything constructs a real `google-genai` client during the suite. Guarding at
+*client construction* rather than at the key is the decision: tests that legitimately
+exercise "a key is configured" inject `_genai_client=` or a `MagicMock` and never reach
+the guard, so nothing had to change for them; only a genuinely unmocked path trips it, and
+it trips loudly instead of spending. The narrate test then injects the absent key via
+`app.dependency_overrides[get_settings]` rather than hoping the environment is clean.
+**Verified by inversion**, not assumed: a throwaway test constructing a real client raises
+`RuntimeError`, and one passing `_genai_client=<sentinel>` still gets its sentinel back.
+
+**Cost of the leak: $0.0026** (cumulative $0.1586 → **$0.1612** / $8.00). Small, and now
+bounded — but it was unbounded before, and it was a full test-suite run away from being
+much larger.
+
+### D4.2 — All five P4.1 content defects closed; the yield *fell* to 273 and that is the honest number (P4.1)
+
+**Context.** D4.1 closed P4.1 structurally but recorded four content defects (plus a
+CLI no-op) found only by reading banked rows back out of Postgres. This is the fix,
+re-measured the same way.
+
+**Measured, before → after** (`/tmp/p41_quality.py` over the 0625 bank, full purge +
+re-ingest each time, not an incremental run):
+
+| defect | before | after |
+|---|---|---|
+| prompts with private-use-area glyphs | 16 | **0** |
+| MCQ option sets with PUA glyphs | 17 | **0** |
+| mark-point sets with PUA glyphs | 34 | **0** |
+| prompts with `© UCLES` / copyright bleed | 30 | **0** |
+| MCQ rows with a blank (diagram-only) option | 3 | **0** |
+| prompts with a flattened exponent | 4 | **0** (1 residual hit is a verified false positive — "1050 J") |
+
+**Decisions.**
+
+1. **Symbol-glyph recovery is a shared det module, not a question-paper concern.**
+   `lemely/io/det/symbols.py` holds the Adobe SymbolEncoding table and `desymbolize()`;
+   `tables.py` now runs every qualifying mark-scheme cell through it at selection time.
+   That placement is the decision: the 34 mangled mark-point sets were *not* a P4.1 bug,
+   they were the **marking engine** reading the same garbage since Phase 2 — fixing it in
+   the extractor would have cleaned the bank and left the marker broken. Fixed once,
+   upstream, so every consumer benefits.
+2. **Five delimiter codepoints added to the table** (`[ ] { | }`). A corpus scan found
+   113 PUA glyph occurrences in mark points, of which exactly 6 were unmappable — all
+   `0xF07B`/`0xF07D`, SymbolEncoding braceleft/braceright, an identity mapping at their
+   ASCII positions. Adding them takes unmappable to **zero** on this corpus, so nothing
+   is silently dropped from a marking point.
+3. **The end-of-paper block terminates extraction; "BLANK PAGE" does not.** The copyright
+   bleed was not the running footer (already filtered) but the *last page's* notice being
+   appended wholesale to the final question. Anchoring the terminator on "BLANK PAGE" was
+   rejected: CAIE also inserts blank pages **mid-paper** between sections, so that would
+   silently truncate a paper — a failure that looks exactly like a short paper. Pinned by
+   `test_mid_paper_blank_page_does_not_truncate_extraction`.
+4. **A missing `--schemes-dir` now raises instead of reporting zero.** Previously every
+   paper fell through to `papers_no_scheme` and the run printed "0 banked" and exited 0 —
+   indistinguishable from a real finding about the corpus. `click.Path(exists=True)` on
+   the flag plus a `FileNotFoundError` in `ingest_question_papers_dir` for both directories.
+
+**The yield went down, 298 → 273, and the report says so.** Leaves whose text contains a
+glyph this module cannot confidently map are now excluded rather than banked with garbage
+in them — the same policy already applied to figure-dependent stems (UI spec §1.4). 25
+questions moved from "banked, subtly corrupt" to "not banked". That is the right
+direction and the number should not be quoted as a regression.
+
+**Known limitation, not fixed:** 7 of 273 prompts (2.6%) contain an orphaned
+symbol-only line — a raised `°` that pdfplumber bands as its own text line, so
+"100 °C" extracts as "°\n...100  C". The text is correct and readable, the line
+break is wrong. Merging vertically-overlapping line bands risks over-merging real
+lines; deferred and recorded rather than guessed at. Relevant to P4.11's
+"maths notation verified visually in screenshots, not assumed".
+
+**Environment fact worth not re-deriving:** the paperscraper corpus (648 PDFs across
+0580/0606/0625) lives **outside this repo** at
+`/home/sico/PaperScraper/papers/CAIE/igcse/<subject>-<code>/<year>/<session>/`. Nothing
+under `Sources/` holds question papers.
+
+### D4.1 — The question-stem extractor closes D3.7, and the honest yield is about a third of the corpus (P4.1)
+
+**Context.** D3.7 established that `question_bank` ships empty for a *structural*
+reason, not a corpus-size one: a CAIE mark scheme carries marking points but no
+question **stem**, the stem lives in the question paper, and no question-paper
+extractor existed. Phase 4's placement test (S-04) and practice generator (S-20)
+are both meaningless against an empty bank, so this was the first task of the phase.
+
+**Decisions.**
+
+1. **Deterministic, zero-Gemini extraction.** `lemely/io/det/question_papers.py`
+   uses pdfplumber only, mirroring the existing `lemely/io/det/` mark-scheme parser's
+   structure and config conventions. Rejected the obvious alternative (Gemini vision
+   per question) on budget grounds that are not close: the hard cap is $8.00 with
+   $0.1586 spent, and per-question LLM extraction over 312 papers would exhaust it
+   many times over. A deterministic path also re-runs free, which matters because
+   ingestion will be re-run every time the extractor improves.
+
+2. **A stem that depends on an unextractable figure is not banked.** 651 of the 2090
+   leaves examined in the 0625 corpus were excluded on this rule. This is the
+   expensive decision and it is deliberate: text-extracting "Which diagram shows the
+   rod in equilibrium?" and banking it without the four diagrams produces a question
+   no student can answer, which is inventing precision (UI spec §1.4). The ingest
+   reports every exclusion **by reason** rather than reporting a yield.
+
+3. **No marking points, no bank row.** The bank feeds a marking engine, so a stem
+   with no matching mark-scheme entry cannot be marked and is skipped, not banked
+   with an empty scheme.
+
+4. **Topic stays `NULL` here.** Deriving a topic from the extractor would be a guess;
+   classification is P4.2 and is done against a real syllabus taxonomy.
+
+**Measured yield over the real 0625 corpus** (orchestrator-run, not taken from the
+subagent's report): 72 papers → 2090 leaves → **298 banked** (206 MCQ, 92 theory),
+651 figure-excluded, re-ingest idempotent. So roughly a third of the corpus is
+bankable today, and the report says so rather than rounding it up.
+
+**The binding upstream constraint, worth not re-deriving.** Only **32 of 72** 0625
+mark schemes parse deterministically at strict tolerance (`--on-error continue`
+reports 40 failures, mostly `mark_total_mismatch`). Since a stem needs its scheme to
+be bank-eligible, **mark-scheme parse coverage — not stem extraction — is what caps
+the bank size.** Improving the det mark-scheme parser is the highest-leverage way to
+grow the bank; B2's two fixes are precedent that these failures are real extraction
+defects, not a tolerance to relax.
+
+**Verification found four defects the subagent's own tests missed**, all in the
+*content* rather than the structure, and all found only by reading the banked rows
+back out of Postgres: Adobe Symbol-font characters arriving as U+E000–F8FF private-use
+garbage (Δ, × unreadable) in 16 prompts / 34 mark-point sets / 17 option sets; `© UCLES`
+page footers bleeding into 30 stems; 3 diagram-only MCQ questions banked with empty
+option strings (the `has_figure` guard checked the stem but not the *options*); and
+flattened superscripts turning `1.3 × 10⁷ m/s` into `1.3 × 107 m/s`, which does not
+look broken and silently asks a different question. **How to apply:** structural tests
+passing over synthetic PDFs says nothing about extraction fidelity on real documents —
+read the persisted rows back and grep them for corruption before believing a yield.
+
 ## Phase 3
 
 ### D3.21 — Real past-paper accuracy: both totals land inside tolerance, and the MCQ paper is the worrying one (INBOX-2026-08-07-ACC)
@@ -2434,3 +2647,1744 @@ utility (e.g. a real color/spacing value) — a font-size-bundling class must no
 etc. When in doubt, verify empirically before shipping:
 `node -e "console.log(require('tailwind-merge').twMerge('<class A> <candidate class>'))"`
 from `web/` and confirm both classes survive in the output.
+
+### D4.4 — Syllabus topic taxonomy: transcribed from source, and the write policy that follows from measuring it
+
+**P4.2.** `question_bank.topic` was NULL on all 273 past-paper rows (D4.1 §4 left it
+that way deliberately rather than guessing). This is what closed it, and the parts
+worth not re-deriving.
+
+**1. The taxonomy is transcribed, not remembered.** The first instinct was to author
+the topic lists from model knowledge of the CAIE syllabuses. That would have been
+invented precision at the root of the whole phase: CAIE renumbers topics between
+syllabus cycles, and every label Phase 4 emits is only meaningful against a stated
+version. No syllabus PDF was in the repo or in the PaperScraper corpus (which holds
+question papers and mark schemes only), so the three official PDFs were fetched from
+cambridgeinternational.org — the same domain Phase 2 already scrapes for grade
+boundaries (D2.1), so no new source authorisation was involved — and the topic and
+subtopic **codes and names** extracted from their §3 Subject content sections:
+
+| Subject | Syllabus | Structure |
+|---|---|---|
+| 0625 Physics | 2023–2025 (`595430`) | 6 topics, 21 named subtopics |
+| 0580 Mathematics | 2025–2027 (`662466`) | 9 topics, 59 named subtopics |
+| 0606 Additional Mathematics | 2025–2027 (`662470`) | 14 topics, **no** named subtopics |
+
+0606's asymmetry is real, not an omission: that syllabus numbers *learning objectives*
+under each topic rather than naming subtopics, so the classifier can never emit a 0606
+subtopic label. Pinned by `test_0606_is_topic_level_only` so a future session does not
+"fix" it by inventing fourteen subtopic names.
+
+The `strong`/`keywords` arrays in `lemely/data/syllabus_topics.json` are **not** from
+the syllabus — they are Lemely's authored matching vocabulary, and the file says so in
+its own `note` field so the two are never conflated when the file is read back.
+
+**2. Label format is `"<code> <name>"`** — `"4.3 Electric circuits"`, `"14 Calculus"`.
+Self-describing in a UI chip, parseable back to a code, sorts in syllabus order, and
+hierarchically related to its parent by code prefix. Subject scoping comes from the
+row, not the label, so the "Trigonometry" that exists in both 0580 and 0606 is never
+ambiguous — every bank query and every weakness report is already per-subject.
+
+**3. Two defects the real corpus found that no synthetic test would have.**
+- *Hyphens never matched.* CAIE prints `double-insulated` in one paper and `double
+  insulated` in the next. `_normalise` now folds hyphens and all five unicode dashes
+  to spaces, on **both** sides — taxonomy terms are normalised by a pydantic validator
+  at construction, so the invariant holds for hand-built nodes in tests too.
+- *MCQ options carry the signal.* An MCQ stem is deliberately terse ("Which planet is
+  classed as a rocky planet?") and the discriminating vocabulary often lives entirely
+  in the four options, which `question_bank.mcq_options` already stores (197/273 rows).
+  Including them moved coverage **78.8% → 89.4%**. They are part of the question.
+
+**4. Two scoring defects found by writing the tests, fixed in the code not the test.**
+- A tie between two subtopics *of the same parent* was being resolved by file order and
+  reported as a finding. It now falls through to the topic-level label: right topic,
+  undetermined subtopic, which is the true statement. A tie across *different* parents
+  still abstains entirely.
+- `_band` ignored whether anything else claimed the question. "Define specific heat
+  capacity" scores one strong hit and **nothing else in the syllabus scores at all** —
+  thin, but uncontested. An uncontested single strong hit is now `medium`; a contested
+  one at the same raw score stays `low`. The discriminator is competition, not the
+  total, so this is not simply lowering the bar. Verified on the 13 rows it promotes:
+  12 correct on inspection.
+
+**5. The write policy — only `high` and `medium` are persisted (the honest bit).**
+Measured on the real 273-row 0625 bank: scoring produces a match for **245/273 (89.7%)**,
+but a hand-checked orchestrator sample of ~47 classified rows put label accuracy at
+roughly 84%, with errors heavily concentrated in the `low` band — which contained
+outright nonsense, e.g. a question about alpha, beta and gamma emission from radioactive
+nuclei labelled `4.2 Electrical quantities`.
+
+The decisive argument is **not** the error rate. It is that there is nowhere to put the
+caveat: `question_bank.topic` is a bare string with no companion confidence column, so a
+low-confidence label is indistinguishable downstream from a certain one. Writing it
+would launder a guess into apparent fact and silently point a student's practice at the
+wrong syllabus material (UI spec §1.4). So `low` is counted and discarded.
+
+**Final measured yield: 211/273 (77.3%) of past-paper rows carry a topic** — 108 high,
+103 medium — spanning **29 distinct topics across all six** physics topics. 34 rows were
+classified but discarded as low-confidence; 28 had no confident match at all. D3.7's
+empty-topic gap is closed. `TopicClassificationReport` keeps those two rejection buckets
+separate on purpose: they are different failures, and the 34 is exactly what a future
+`topic_confidence` column would reclaim.
+
+**6. Scope boundary — the marking side is NOT wired up, and P4.4 must do it.**
+`CorrectedQuestion.topic` comes from `topic_hint` on the parsed mark scheme, which is
+`None` on **all 637 questions across all 33** deterministically-parsed 0625 schemes in
+`outputs/schemes/` (measured, not assumed). So the weakness engine currently reports no
+topics at all for real papers, and **practice-targets-weakness (P4.5) does not join up
+until both sides speak this vocabulary.** It was not done here because
+`lemely.core.topics` is in `core` and the taxonomy loader is in `io`: `core.correction`
+cannot reach it without either a signature change through every marking caller or a
+layering violation. The fill belongs at the db/io boundary where a `CorrectionResult` is
+persisted and the loader is reachable. P4.4 owns it.
+
+**7. Cost: $0.00.** Deterministic keyword scoring, no Gemini call, no new dependency.
+Re-run any time with `lemely question-bank classify-topics [--subject X] [--reclassify]
+[--dry-run]`; `--reclassify` is the one to use after editing the vocabulary, and it can
+*remove* a label the new vocabulary no longer supports, not only add.
+
+---
+
+## D4.5 — Student profile + onboarding data model, and how target grades activate at-risk rule 2 (P4.3)
+
+**Four additive tables (migration 0009), not one.** D1.2/D1.3's additive-only rule holds:
+no existing column is touched.
+
+1. `student_profiles` — one row per student user (`user_id` PK/FK). The whole-person
+   facts S-02 collects: qualification level, grade level, school name, external-lessons
+   flag, weekly study hours, and `onboarding_completed_at`.
+2. `student_subject_enrolments` — one row per (student, subject). Carries the **target
+   grade** and the exam session being targeted (S-01). Unique on (`user_id`,
+   `subject_code`).
+3. `student_enrolment_papers` — the papers a student will actually sit for an enrolment
+   (0580 P2 + P4). A separate table rather than an array column so a paper is a row a
+   later phase can join practice/plan material against.
+4. `student_confidence_ratings` — one row per (enrolment, topic) self-assessment slider,
+   keyed on the **P4.2 topic label vocabulary** (`"4.3 Electric circuits"`), so the
+   questionnaire, the bank, and the weakness engine speak one language rather than three.
+
+**Everything the spec calls skippable is nullable.** S-02 says "allow *skip for now* on
+everything non-essential", and the study plan must be able to say "we do not know your
+weekly study time" rather than invent a default that then looks like an answer the
+student gave (spec §1.4). A skipped field is `NULL`, never a sentinel or a zero.
+
+**Target grades activate at-risk rule 2 — via a subject-keyed mapping, not a scalar.**
+This is the substantive design call. `assess_at_risk` took `target_grade: str | None`,
+one grade for a whole student. That is wrong now that targets are real: a target grade is
+per *subject*, and `StudentHistory` interleaves subjects. Passing a single grade would
+compare a physics paper against a maths target the moment a student enrols in two
+subjects — a false at-risk flag on a teacher's dashboard, which is the exact failure
+D3.3's tri-state was built to prevent.
+
+So the parameter becomes `targets: Mapping[str, str] | None` (subject code → grade) and
+`_check_below_target` resolves the target for the subject of the **latest grade-bearing
+record** — the same record the rule already compares. One resolution site, inside the
+pure rules engine, so the nine call sites cannot each drift their own way (the D3.5
+shared-helper discipline).
+
+**The tri-state gets sharper, not looser.** `NOT_EVALUABLE` now means either "no targets
+supplied" *or* "targets supplied but none for this student's subject". Both are honestly
+"we did not check", and neither may collapse into `NOT_FIRED`. A student who has enrolled
+in physics but set no target there is still not-evaluable, not cleared.
+
+**The T-06 reason filter gains `below_target`** (`web/src/portals/teacher/screens/AtRiskList.tsx`),
+whose omission was explicitly conditional on the rule being unfirable. It is firable now.
+
+**Implementation note (added after P4.3 landed).** Two things worth not re-deriving:
+
+- `assess_at_risk`'s `targets` mapping is resolved against the **latest grade-bearing** record,
+  not the latest record of any kind. A quiz carries no grade (`docs/quiz-model.md` §5), so it can
+  never be the record that decides which subject's target applies.
+- The multi-student routes (teacher overview, at-risk list, class detail, parent children) use
+  `StudentProfileService.target_grades_for_many`, added for this. Calling the single-student
+  `target_grades_for` inside those loops would have made every teacher dashboard N+1 — the
+  cheapest possible way to turn a correctness fix into a performance regression.
+
+**Measured, not claimed:** no-targets, empty-mapping and wrong-subject-target all resolve to
+`not_evaluable`; a matching subject target 2 grades above the predicted grade `fired`; 1 grade
+above `not_fired`. Verified by the orchestrator running the engine directly rather than from the
+implementing subagent's report (MISSION §5).
+
+---
+
+## D4.6 — Placement tests reuse the quiz engine: NULL-owner rows, an XOR-checked ownership shape, and a marks-derived duration budget (P4.4)
+
+**The obstruction.** MISSION §4 / STATE's Phase-4 header: *"The placement test and
+practice sets are quiz-shaped: reuse that engine, do not fork it."* Two columns block
+that literally — `quizzes.teacher_id` NOT NULL and `quiz_assignments.class_id` NOT NULL.
+A placement test has neither: it is assembled by the platform and self-assigned by a
+student during onboarding (S-03/S-04). Everything downstream of those two columns —
+`QuizQuestion`'s frozen snapshot, `QuizSubmission`'s lifecycle, `QuizAnswer`,
+`QuizTakingService`, `QuizMarkingService` → `correct_paper` → `summarize_weaknesses` →
+`persist_quiz_correction` — is already student-shaped and needs no structural change.
+
+### 1. Schema: relax the two NOT NULLs, add a typed second owner, enforce the shape with XOR CHECKs
+
+**Chosen.** Migration 0010, board-agnostic, no data backfill:
+
+```sql
+CREATE TYPE quizkind AS ENUM ('teacher', 'placement', 'practice', 'study_plan');
+
+ALTER TABLE quizzes ALTER COLUMN teacher_id DROP NOT NULL;
+ALTER TABLE quizzes ADD COLUMN student_id uuid
+    REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE quizzes ADD COLUMN kind quizkind NOT NULL
+    DEFAULT 'teacher'::quizkind;              -- D1.3 cast, in model AND migration
+ALTER TABLE quizzes ADD CONSTRAINT ck_quizzes_owner_xor
+    CHECK ((teacher_id IS NULL) <> (student_id IS NULL));
+ALTER TABLE quizzes ADD CONSTRAINT ck_quizzes_kind_owner
+    CHECK ((kind = 'teacher') = (teacher_id IS NOT NULL));
+CREATE INDEX ix_quizzes_student_kind ON quizzes (student_id, kind, created_at DESC);
+
+ALTER TABLE quiz_assignments ALTER COLUMN class_id DROP NOT NULL;
+ALTER TABLE quiz_assignments ADD COLUMN student_id uuid
+    REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE quiz_assignments ADD CONSTRAINT ck_quiz_assignments_target_xor
+    CHECK ((class_id IS NULL) <> (student_id IS NULL));
+CREATE UNIQUE INDEX uq_quiz_assignments_student
+    ON quiz_assignments (quiz_id, student_id) WHERE student_id IS NOT NULL;
+CREATE INDEX ix_quiz_assignments_student ON quiz_assignments (student_id, assigned_at DESC);
+```
+
+Nothing else changes. `assigned_by` stays NOT NULL and holds the student's own id for a
+self-assignment — "who assigned this" is answered truthfully, not with a sentinel.
+`time_limit_minutes` stays NULL for placement (see §4). `quizzes.school_id` stays NULL
+for placement: a placement result is a personal baseline, not school analytics material,
+and adding it later is additive if a school_admin surface ever wants it.
+
+**Two owner columns rather than one polymorphic `owner_id` + `owner_type`.** A
+polymorphic id cannot carry a foreign key, so it cannot carry `ON DELETE CASCADE`
+either — deleting a student would leave orphaned quizzes holding their answers. Two
+typed FKs plus an XOR CHECK is the boring, referentially-correct version of the same
+idea, and it makes "exactly one owner, always" a database invariant instead of a
+convention.
+
+**Rejected (b), the `self_assessments` side-table.** It was rejected on its own terms,
+before the synthetic-user problem: without a fake `users` row there is no legal value
+for `quizzes.teacher_id`, so (b) *cannot* be built without exactly the sentinel D4.5
+refused. Even granting a way around it, it splits "who owns this attempt" across two
+tables, so every ownership check becomes a join that a future caller can forget — the
+opposite of the fail-closed property §2 buys.
+
+**Rejected (c), the full fork.** Duplicates take/resume/autosave/submit/mark, and with
+it the answer-leak discipline `QuizTakeQuestionRow` encodes (D3.8 — `model_answer`,
+`mark_scheme_points`, `mcq_answer` are excluded *structurally*). A second copy is a
+second place to get that wrong. MISSION forbids it, and MISSION is right.
+
+**Rejected (d), a `quiz_owners` join table.** Correct and general; buys nothing three
+kinds of owner do not, and makes the common teacher query a join.
+
+### 2. The additive-only rule is amended here, deliberately
+
+D1.2 promised Phases 2–5 need only additive migrations. Two `DROP NOT NULL`s break the
+letter of that. **The amended rule, which future phases follow:**
+
+> Migrations may add columns, add ENUM values, add indexes/constraints, and **relax a
+> constraint** (`DROP NOT NULL`, widening a CHECK). They may not drop or rename a
+> column, narrow a type, or tighten a constraint on a populated table without an
+> explicit decision entry.
+
+The justification is that a relaxation is exactly as reversible as an addition and
+strictly safer than the alternative: `DROP NOT NULL` rewrites no rows, takes a brief
+`ACCESS EXCLUSIVE` lock on catalog only, breaks no existing reader (every current row
+still satisfies the old constraint), and is undone by `SET NOT NULL` as long as no NULL
+row has been written. The intent D1.2 was actually protecting — "no migration rewrites
+or invalidates existing data" — is fully preserved. What it costs: `alembic check` drift
+discipline (D1.3) now has to cover nullability as well as defaults, and the down-migration
+is only valid before the first placement row exists, which is why 0010 must ship *before*
+any placement route does.
+
+### 3. How the discriminator propagates — ownership is the filter, `kind` is only a label
+
+**The rule.** *A query is scoped by an owner/target predicate, never by `kind`.* Teacher
+surfaces scope on `teacher_id = :caller`; class surfaces scope on `class_id IN
+(:enrolled)`; student-owned surfaces scope on `student_id = :caller`. `kind` may only
+*narrow* a query that is already owner-scoped ("list my practice sets"), and must be used
+as a positive allowlist (`kind IN (...)`) — never `kind != 'teacher'`, which fails open
+the day a fifth kind is added.
+
+**This fails closed with no code change at six of the eight enumerated sites,** because
+SQL three-valued logic already excludes a NULL owner from an equality or `IN`:
+
+| Site | Predicate | Effect on a placement row |
+|---|---|---|
+| `lemely/db/quiz_repo.py:254` (`list_quizzes`) | `Quiz.teacher_id == teacher_uuid` | NULL ≠ uuid → excluded. **No change.** |
+| `lemely/db/quiz_repo.py:756` (`_load_owned`, ORM-side `quiz.teacher_id != teacher_uuid`) — gates `get_quiz`:268, `patch_draft`:316, `set_status`:354, `generate_questions`:404, `remove_question`:471, `create_assignment`:587, `list_assignments`:676, `delete_assignment`:737 | `None != uuid` → True | raises `QuizOwnershipError` (403). **No change.** |
+| `lemely/db/quiz_repo.py:612` (assignment uniqueness) | `quiz_id AND class_id ==` | teacher path only. **No change.** |
+| `lemely/db/quiz_results_repo.py:228` (`assignment_results`) | delegates to `get_quiz(teacher_id, …)` | 403 before any read. **No change.** |
+| `lemely/db/quiz_taking_repo.py:232-241` (`list_assigned`) | `QuizAssignment.class_id.in_(class_ids)` | `NULL IN (…)` → NULL → excluded. **No change in P4.4** — which is exactly right: a placement test is not "an assigned quiz" in S-25/S-26. P4.5/P4.7 add a second, explicitly `kind`-allowlisted branch for practice/study-plan sets. |
+| `lemely/db/quiz_marking_repo.py:220,230` | keyed on `submission_id`/`quiz_id` only | no tenancy predicate to get wrong; reached only via a submission the taking service already authorised. **No change.** |
+
+**Two sites genuinely change**, both in `lemely/db/quiz_taking_repo.py`:
+
+- `_load_enrolled`:524 — see §4 below; renamed `_load_permitted`.
+- `get_take`:293-296 — `session.get(SchoolClass, assignment.class_id)` and
+  `session.get(User, quiz.teacher_id)` are called with what is now possibly `None`, which
+  raises inside SQLAlchemy. Both become conditional, and `QuizTakeHeader.class_name` /
+  `.teacher_name` (and the same two fields on `AssignedQuizRow`) become `str | None`.
+  A placement test has no teacher and no class; S-04 must render that absence, not the
+  empty string that `_display_name` currently returns for a missing user.
+
+**Do not add `AttemptOrigin.placement`.** A placement mark is persisted by
+`persist_quiz_correction` as `origin=quiz`, unchanged. `lemely/db/review_repo.py:540`
+tests `attempt.origin != AttemptOrigin.quiz` — negative polarity — so a new member would
+fail *open* there and let the first teacher override on a placement attempt invent a grade
+the marking path deliberately never wrote, which is the precise failure that guard exists
+to prevent. (`lemely/core/history.py:69` `is_grade_bearing` is positive-polarity and would
+have been safe; the codebase is mixed, so the safe move is to add no member.) "This attempt
+was a placement test" is recoverable exactly where it belongs:
+`quiz_submissions.attempt_id → quiz_assignments → quizzes.kind = 'placement'`.
+
+### 4. RBAC: the ownership predicate for a class-less assignment
+
+`QuizTakingService._load_enrolled` currently 403s any assignment whose `class_id` is not
+in the caller's enrolled set — so a placement assignment (`class_id IS NULL`) is
+un-takeable today. Replace it with a two-branch predicate selected by *which target
+column is populated*, which the XOR CHECK guarantees is exactly one:
+
+```python
+def _load_permitted(self, session, student_uuid, assignment_uuid) -> QuizAssignment:
+    assignment = session.get(QuizAssignment, assignment_uuid)
+    if assignment is None:
+        raise QuizTakingNotFoundError(f"Unknown assignment: {assignment_uuid}")
+    if assignment.student_id is not None:            # direct-to-student
+        if assignment.student_id != student_uuid:
+            raise QuizTakingOwnershipError(...)
+        return assignment
+    if assignment.class_id in self._class_service.enrolled_class_ids(student_uuid):
+        return assignment                            # class-enrolled
+    raise QuizTakingOwnershipError(...)
+```
+
+Fail-closed by construction: there are exactly two `return` statements, one guarded by an
+equality on `student_id` and one by membership in `class_id`, and no trailing
+`return assignment`. Student B opening student A's placement test hits the first branch's
+inequality → 403; the D3.4 403-vs-404 split is preserved unchanged (an id that exists
+anywhere is a 403, not a 404 — the same accepted existence-oracle trade-off). Every other
+method (`get_take`, `save_answer`, `submit`) already calls this one helper first, so the
+authorisation change lands in one place. All three keep their existing role gate:
+`lemely/web/routers/quiz.py:115` already mounts `/api/student/quizzes` behind
+`require_role(Role.student)`.
+
+**Take/save/submit endpoints are reused verbatim** — `/api/student/quizzes/{assignment_id}`
+and its `PUT .../answers/{ref}` and `POST .../submit`. That reuse *is* the "do not fork"
+payoff, and it is what makes S-04's "connection lost mid-test, answers must survive" free:
+the autosave and lazy-submission machinery is the one that has already been tested.
+Placement adds only three new routes, all thin:
+
+- `GET  /api/student/placement/{subject_code}/availability` → `{available, reason, topicCount, questionCount, estimatedMinutes}` (S-03).
+- `POST /api/student/placement` `{subjectCode}` → 201 `{assignmentId, quizId, questionCount, topicCount, estimatedMinutes}`; **409** carrying the same availability payload when unavailable.
+- `GET  /api/student/placement/{assignment_id}/result` → S-05 (§6).
+
+Retake = a new `quizzes` row with a fresh sample, never a mutation of the old one — the
+same "an assigned quiz is duplicated, never edited" rule the teacher builder already
+follows. Assembly excludes `question_bank_id`s used by this student's prior placement
+quizzes for the same subject where the pool allows it.
+
+### 5. The ~15-minute rule: duration is derived from marks and a *transcribed* paper rate, and there is no new column
+
+There is no per-question duration anywhere in the schema, and there will not be one.
+A nullable `question_bank.estimated_minutes` was rejected because nothing could populate
+it except a guess — it moves the invented number into a column where it acquires the
+authority of a fact, the exact laundering D4.4 §5 refused for low-confidence topics.
+
+**Chosen: a marks-based proxy with a per-paper rate transcribed from source.** New data
+file `lemely/data/paper_timing.json`, keyed `(board, subject_code, paper_number)` →
+`{duration_minutes, total_marks, source}`, transcribed from the **Assessment overview**
+section of the same three syllabus PDFs D4.4 already fetched (each entry's `source` names
+the syllabus document number and cycle, as `syllabus_topics.json` does). The rate is then
+`duration_minutes / total_marks`, **computed, never hardcoded**, and a question's estimate
+is `question_bank.total_marks × rate(its paper)` — resolved via
+`question_bank.paper_id → papers.paper_number/subject_code`, both of which already exist
+and are NOT NULL. P4.4's implementer transcribes these numbers from the PDF; **no
+marks-per-minute figure may be written from memory.** A question whose paper has no
+timing entry, or no `paper_id` at all, is ineligible for placement — not estimated by a
+subject average, which would be a guess wearing a measurement's clothes.
+
+**Budget:** target 15 min, accept 12–18 (±20%). Greedy fill; stop when the next question
+would exceed 18. `quizzes.time_limit_minutes` is left **NULL** — S-03 promises "~15
+minutes", an estimate, and S-04 shows *elapsed* time; a hard cutoff on a baseline test is
+churn at the highest-churn moment in the product (S-05's own framing). The displayed
+estimate is recomputed on read from the frozen `quiz_questions.total_marks`, so it stays
+true if a question is ever removed, and costs no column.
+
+**Topic spread.** Only questions with a non-NULL `topic` are eligible — an untopiced
+question cannot contribute to a topic-keyed weakness profile, which is the entire point of
+the test (this is what makes 62 of the 0625 bank's 273 rows ineligible). Breadth first:
+one question per distinct syllabus topic, in syllabus-code order, across the topics of the
+papers the student's `student_enrolment_papers` rows say they will sit; then a second pass
+adding a second question per topic until the budget fills. Difficulty comes from the
+existing `QuestionBankService.count_by_band`/`select_questions` band filter, preferring a
+mix.
+
+**Viability floor and the honest "not available" path.** Assembly succeeds only if the
+selected set reaches **≥4 distinct topics, ≥6 questions, and ≥12 estimated minutes**.
+Otherwise the API returns unavailable with a machine-readable `reason`
+(`no_questions` / `insufficient_topics` / `insufficient_duration`) and S-03 says so plainly
+per subject — never a silently short test, never a padded one (spec §1.4). **Today this
+means placement is available for 0625 only** (211 topiced rows spanning 29 distinct labels
+across all six topics) and unavailable for **0580 and 0606**, which have no ingested
+questions at all. That is the correct behaviour, not a gap to code around: onboarding must
+route those students straight to S-06 with the questionnaire-derived plan, and the
+availability endpoint is what makes the day the maths corpus lands a data change rather
+than a code change. **S-05's working-level estimate is shown only if the assembled set
+spans ≥2 difficulty bands**; otherwise S-05 shows strongest/weakest topics and states that
+the sample was too narrow to estimate a level.
+
+### 6. Weakness-profile initialisation adds no persistence at all
+
+Marking a placement submission already runs `summarize_weaknesses` and writes
+`WeaknessRecord` rows through `AttemptRepository._persist` — and the topic vocabulary
+already joins up end to end: `_snapshot_bank_row` freezes `question_bank.topic` onto
+`quiz_questions.topic`, and `quiz_question_to_scheme_question`
+(`lemely/db/quiz_marking_repo.py:382`) already passes `topic_hint=qq.topic` into the
+marking engine. So a placement test marked today produces real topic weaknesses keyed on
+the P4.2 label vocabulary, with no new code on the marking side. (D4.4 §6's gap is the
+*past-paper* path, whose `topic_hint` is None on all 637 parsed 0625 questions; it is
+unrelated to this one and still open.)
+
+Therefore: **no `placement_results` table, no `student_weakness_profile` table.** The
+placement result *is* `quiz_submissions.attempt_id` plus that attempt's `WeaknessRecord`
+rows, reached by the join in §3. S-05 reads them; the study plan (P4.7) reads them; a
+second copy could only drift from the first.
+
+`PlacementResult` in `lemely/core/study.py` — `subject_code` + `WeaknessReport`, called by
+nothing — is deleted by P4.4. Both its fields are already persisted (`quizzes.subject_code`,
+`weakness_records`); keeping it would leave a second, unwritten definition of what a
+placement result is.
+
+### 7. Testability
+
+- **Schema:** insert a placement quiz with both owners set, and one with neither, and
+  assert both raise `IntegrityError` on `ck_quizzes_owner_xor`; same for
+  `ck_quiz_assignments_target_xor`. Assert `kind='placement'` with a non-NULL `teacher_id`
+  is rejected by `ck_quizzes_kind_owner`.
+- **Fail-closed regression (the one that matters):** with a placement quiz and a placement
+  assignment in the DB for student A, assert `QuizService.list_quizzes(teacher)` omits it,
+  `get_quiz(teacher, quiz_id)` 403s, and `QuizTakingService.list_assigned(A)` omits it.
+  These are the assertions that catch a future refactor swapping an owner predicate for a
+  `kind` one.
+- **Cross-tenant:** student B calling every one of the four take/save/submit/result routes
+  against A's placement `assignment_id` → 403, no body leakage.
+- **Assembly:** unit-test the budget/spread selector against a synthetic bank; separately
+  run it against the real 0625 bank and assert it yields ≥4 topics and 12–18 minutes, and
+  against 0580 and assert `available=false, reason="no_questions"`.
+- **Duration:** assert `paper_timing.json` covers every `(subject_code, paper_number)`
+  present in `papers` for any subject the availability endpoint reports available, so a
+  new ingest cannot silently make questions ineligible.
+- **Marking:** end-to-end placement → `attempts.origin == quiz`, `grade IS NULL`,
+  `predicted_grade IS NULL`, and ≥1 `WeaknessRecord` whose topic is a P4.2 label.
+- **`alembic check`** reports no drift after 0010 (D1.3), including the new nullability.
+
+---
+
+## D4.8 — Placement assembly: paper links were missing, and breadth was counting subtopics as topics (P4.4 chunk B)
+
+D4.6 §5 designed the marks-derived duration budget on paper. Building it surfaced
+three things that only a measurement against the real bank could have found. All
+three are recorded here because each cost real work and none is re-derivable from
+reading the code.
+
+### 1. `question_bank.paper_id` was NULL on every banked question, and `papers` was empty
+
+D4.6 §5 says the rate is "resolved via `question_bank.paper_id →
+papers.paper_number/subject_code`, both of which already exist and are NOT NULL".
+The `papers` *columns* exist and are NOT NULL. The **link** did not: P4.1 banked
+273 real past-paper questions with `paper_id IS NULL` on all of them — its own
+module docstring records that it "does not create `Paper` rows" — and both
+`papers` and `subjects` were empty tables. Nothing had needed the link before,
+because nothing before placement resolved a bank row back to its paper.
+
+The consequence was total, not marginal: with no paper, no timing; with no
+timing, ineligible; so the first honest run of the assembler returned
+`no_eligible_questions` for **0625 as well as** 0580/0606. Had this not been
+measured, "placement is unavailable for every subject" would have looked exactly
+like the expected 0580/0606 corpus gap.
+
+**Fix: `QuestionBankService.link_past_paper_rows` + `lemely question-bank
+link-papers`.** The paper identity is *parsed*, never inferred: P4.1 already
+builds `source_question_id` as `f"{qp_stem}#{ref}"`, so `"0625_s23_qp_11#22"`
+carries the source PDF's filename, and the same
+`parse_caie_qp_filename_metadata` the ingest used reads it back. A stem that does
+not parse is counted and left unlinked rather than attached to a guessed paper.
+The `subjects` row the FK requires is created with the **transcribed**
+`subject_name` from the bundled taxonomy; a subject with no bundled syllabus is
+skipped rather than given an invented display name to satisfy a foreign key.
+`PaperLinkOutcome` is shaped so `considered == linked + unparseable +
+no_subject_taxonomy`, because a backfill that silently drops rows is the failure
+mode worth designing against.
+
+**Measured: 273 considered → 273 linked, 26 `papers` rows, 1 `subjects` row, 0
+unparseable, 0 skipped.** Re-run considers 0 (idempotent — only NULL rows are
+looked at). Dry run creates nothing.
+
+### 2. Breadth was counting subtopics as topics, and the count was a lie
+
+D4.2's classifier writes whichever level it matched, so the bank holds a mix of
+top-level labels (`"3 Waves"`) and subtopic labels (`"1.2 Motion"`). Treating
+those as peers, the first successful assembly reported **"13 topics"** for a set
+in which **nine of the 13 questions sat under physics topic 1**. The number was
+broad; the test was not. A weakness profile built from it would have been a
+profile of one corner of the syllabus wearing a whole-subject label — the same
+invented-precision failure UI spec §1.4 forbids, arriving through a counter
+rather than through a value.
+
+**Chosen:** breadth is measured on the top-level code (`_syllabus_group`: the
+part before the first `.`), depth on the full label. The round-robin is now two
+levels — across top-level topics on the outer loop, across that topic's subtopics
+on the inner — and `Assembly` carries `syllabus_topic_count` as a field distinct
+from `len(topics)`, with both documented, so a caller cannot pick up the
+flattering number by accident. `MIN_TOPICS` now means four *syllabus topics*.
+
+**Rejected: normalising the bank's labels to top-level.** It throws away real
+information the classifier earned, and subtopic labels are what
+`student_confidence_ratings` (D4.5) is already keyed on.
+
+### 3. The greedy fill refused sets it could have completed
+
+Filling stopped the moment `spent >= target_minutes`, which on a mark-heavy pool
+left the set below `MIN_QUESTIONS` and then refused it — when one more question
+inside the existing 18-minute tolerance would have made it viable. The fill now
+continues past the target, bounded by `max_minutes`, while questions are still
+owed. It is still a refusal when the extra question does not fit: the tolerance
+is a tolerance, not a licence to overrun.
+
+### The measurement that stands (do not re-derive)
+
+After all three: **0625 assembles 9 questions, 15.2 estimated minutes, all six
+physics topics, two difficulty bands.** 0580 and 0606 return `no_questions` —
+correct and required behaviour per D4.6 §5, not a gap to code around. Practical
+papers (0625 Paper 5/6) are excluded from placement by default: their questions
+assume apparatus, so a practical question in an at-home 15-minute test measures
+whether the student owns a ripple tank. Their timings are still transcribed and
+reachable — this is assembly policy, not a claim the data is wrong.
+
+$0.00 Gemini, zero LLM calls: every step here is deterministic.
+
+---
+
+## D4.9 — Placement narrows to the papers the student will sit; the empty case is "not answered", not "sits nothing" (P4.4 chunk B-4)
+
+Chunk B-4 landed `PlacementService` (availability / create / result) and the three
+S-03/S-04/S-05 routes over the already-measured assembler. Everything in D4.6 §1/§3/§4/§6
+was implemented as designed and needs no new decision. One clause of D4.6 §5 was **not**
+implemented in the first pass, and the omission is worth recording because it is invisible
+from the code and would have silently biased every downstream artefact.
+
+### What was missed
+
+D4.6 §5: selection runs *"across the topics of the papers the student's
+`student_enrolment_papers` rows say they will sit"*. The first implementation loaded every
+`source='past_paper'` bank row for the subject and every transcribed timing for it, with no
+reference to the student's enrolment at all.
+
+**Why that is not cosmetic.** 0625 is tiered: Core is papers 1/3, Extended 2/4. A Core
+student assembled against Extended questions is measured on material they will never sit,
+so every topic that sample touches reports a weakness the student does not have — and
+P4.7's adaptive study plan is built out of exactly those `WeaknessRecord` rows. The error
+would have compounded into the plan rather than staying visible at the placement screen.
+Nothing in the test suite would have caught it: the seeded bank is single-paper, so the
+narrowing is unobservable unless a test deliberately enrols the student elsewhere.
+
+### The fix, and where it is applied
+
+`PlacementService._timings_for` narrows the **timings mapping**, not the candidate list.
+A paper the student will not sit therefore has no rate, and a candidate with no rate is
+*already* ineligible in `core.placement.assemble` — so eligibility keeps having exactly
+one deciding site (D4.8's design property), and the reported reason stays
+`no_eligible_questions` rather than a fourth bespoke one.
+
+### The judgment call: a student with no enrolment-paper rows is not narrowed
+
+D4.6 §5 does not say what to do when the student has no rows, and this is the branch that
+matters in practice, because **every S-02 field is skippable (D4.5)**. Empty means *"not
+answered"*, never *"sits no papers"*. Treating it as an empty allowlist would deny
+placement to every student who skipped one onboarding question, while reporting
+`no_eligible_questions` — a defaulted answer wearing a filter's clothes, which is the
+laundering D4.4 §5 and D4.8 §2 both already refused in other forms. So: **rows present →
+narrow; no rows → no restriction.**
+
+Pinned by four tests, each verified by its inverse rather than asserted one-way: the same
+Paper-4 bank is unavailable to a P1/P3 student, available to a P4 student, available to a
+student with an enrolment but no papers, and student B's Core enrolment cannot deny
+student A (the lookup is owner-scoped).
+
+### Measured, not assumed
+
+Run against the **live local bank**, not a fixture, and matching D4.8's standing figure
+exactly: 0625 → `available=True`, 9 questions, **6 syllabus topics**, 15.19 minutes;
+0580 and 0606 → `available=False, reason="no_questions"`. The `topic_count` of 6 is
+`Assembly.syllabus_topic_count`; `len(topics)` for the same set is ~13, which is the
+overstatement D4.8 §2 exists to prevent — the wire payload carries the honest number.
+
+**Gates:** all 13 green, 0 skipped. **2121 tests / 6 skipped / 0 failed**, coverage
+**89.68%** (P4.3 baseline 89.57%). `$0.00` Gemini, zero LLM calls — every path here is
+deterministic, and the end-to-end marking test uses a Gemini stub that raises if called.
+
+### One deviation from the brief, accepted
+
+`test_placement_repo.py` exercises availability against a **seeded** 0625-shaped bank
+rather than the ingested corpus, so the suite does not depend on 273 banked rows existing
+in a fresh checkout. The real-corpus measurement above was made by the orchestrator
+directly and is recorded here instead of being encoded as a test that would fail on a
+clean clone.
+
+---
+
+## D4.10 — Practice sets: the honest-shortfall path is the normal path, and `list_assigned` grows a positive allowlist (P4.5)
+
+P4.5 built the practice generator as the third consumer of the quiz engine, after the
+teacher builder (P3.5) and placement (P4.4). No migration: migration 0010 already shipped
+`quizkind` with all four members, so `kind=practice` needed only code. `$0.00` Gemini —
+selection from an existing bank is deterministic throughout.
+
+### 1. Availability is tri-state, not binary, because a short set is not a failed set
+
+Placement's viability floor is a genuine floor: a four-topic, twelve-minute minimum exists
+because a narrower sample cannot support a weakness profile (D4.6 §5). **Practice has no
+such floor.** A student who asks for 20 questions on one subtopic and can be given 7 has
+been served, not failed — refusing would be the product withholding material it holds.
+
+So `PracticePreview.available` is `True` whenever `create` would succeed *at all*,
+including the shortfall case, and the shortfall carries its own reason
+(`insufficient_pool`) alongside the true `available_count`. `available=False` is reserved
+for the two genuine refusals: `no_questions` (nothing for this subject) and
+`no_weaknesses` (weak-topic mode with no `WeaknessRecord` rows to target).
+
+**The set is never padded and never silently shortened.** The returned count is what the
+bank actually holds after filtering, and the reason says so — the S-20 form is kept honest
+before the student commits rather than after (spec §1.4). Given the corpus, this is the
+*normal* path, not an edge case: 0580 and 0606 refuse outright, and any topic-narrowed
+0625 request is a shortfall long before it is a full set.
+
+### 2. Weak-topic targeting reads `WeaknessRecord`; it does not re-derive weakness
+
+MISSION §4 makes "generated practice demonstrably targets seeded weaknesses" a Phase-4
+acceptance criterion, so the mode has to be real rather than present. The topic filter is
+derived from the caller's own `WeaknessRecord` rows for the subject, in P4.2's
+`"<code> <name>"` vocabulary — the vocabulary D4.7 made real on the marking side, which is
+what makes the join work at all. A second weakness computation here would be a second
+definition that could drift from the first.
+
+A topic with zero net lost marks is not a weakness (mirroring `group_weak_areas`), and is
+excluded — pinned by its own test, because "targeting" that included a perfectly-answered
+topic would be targeting in name only.
+
+### 3. `list_assigned` — the site D4.6 §3 deferred, and the shape it had to take
+
+D4.6 §3 named `quiz_taking_repo.list_assigned` as the one place P4.5 must change: a
+practice set is `class_id IS NULL`, so `class_id IN (:enrolled)` excluded it by SQL
+three-valued logic and it was invisible in S-25/S-26.
+
+**Chosen: two independently owner-scoped queries, unioned and re-sorted** — the class
+branch unchanged, plus a new branch scoped by `QuizAssignment.student_id == caller` and
+narrowed by a **positive** `kind IN (practice, study_plan)` allowlist
+(`_STUDENT_ASSIGNED_KINDS`).
+
+**Never `kind != 'teacher'`.** That form is one character shorter and fails open the day a
+fifth kind is added — and it would *already* be wrong today, because it would surface
+placement tests in the assigned-work list. `placement` is deliberately absent from the
+allowlist: a placement test is governed by its own S-03/S-04/S-05 flow.
+`test_a_placement_quiz_is_not_an_assigned_quiz` (written in chunk B-1, before practice
+existed) still passes unmodified, which is the regression that matters.
+
+### 4. The export/print payload excludes marking material structurally
+
+S-21's printable set reuses D3.8's discipline: `model_answer`, `mark_scheme_points` and
+`mcq_answer` are absent from the export dataclass itself, not omitted by a caller that
+remembers to. A test asserts the *dataclass field set*, not just one response body, so a
+future field addition cannot leak an answer key by being added in the obvious place.
+
+### 5. D4.9's enrolment lesson generalised
+
+`_load_enrolled_paper_numbers` moved out of `placement_repo` into
+`student_profile_repo.enrolled_paper_numbers`, shared by both services: narrow to the
+papers `student_enrolment_papers` names when rows exist, do not narrow when they do not.
+Mirrored by the same four inverse-verified tests D4.9 introduced.
+
+### Measured against the live bank (do not re-derive)
+
+| Request | Result |
+|---|---|
+| 0625, count 20, no filters | `available=True`, 273 available |
+| 0580 / 0606, count 20 | `available=False`, `no_questions`, 0 available |
+| 0625, count 5, topic `"4.3 Electric circuits"` | `available=True`, 10 available |
+| 0625, count 5, `weak_topics_only` (no weakness rows) | `available=False`, `no_weaknesses` |
+
+Note the pool for unfiltered practice is **273**, not the 211 topic-labelled rows placement
+is restricted to: an untopiced question is unusable for a weakness *profile* but perfectly
+good practice *material*. The two services filter differently on purpose.
+
+**Gates:** all 13 green, 0 skipped. **2153 tests / 6 skipped / 0 failed**, coverage
+**89.81%** (P4.4 baseline 89.68%).
+
+**Process note.** The implementing subagent reported done with `ruff format` failing on two
+of its own files; the orchestrator's own gate run caught it. MISSION §5's "verify their
+output yourself — never trust a subagent's claim of success" earned its place again.
+
+---
+
+## D4.11 — Flashcards: an AI card stays an AI card, a private deck denies its own existence, and "nothing due" is a state with information in it (P4.6 chunks B/C)
+
+Closes P4.6. Chunk A (migration 0011 + the pure clock-injected SM-2 scheduler) is recorded
+in STATE; this covers the service, the AI generator, and the routes.
+
+### 1. Three honesty rules, and where each is actually enforced
+
+The chunk plan named three non-negotiables. Stating them in a docstring is not enforcement,
+so each lives in a place where violating it requires a deliberate, visible act:
+
+1. **An AI card stays distinguishable for its whole life.** `edit_card` has **no `source`
+   parameter** — not a validated one, not an ignored one. There is no code path that
+   relabels. On the wire this is stronger still: `ApiModel` is `extra="forbid"`, so a
+   `PATCH` body carrying `"source": "manual"` is a **422**, not a body the server quietly
+   drops. A test pins both halves, because "silently ignored" and "rejected" look identical
+   to a passing assertion that only checks the stored value.
+   `CardDTO.source` is also on the wire for every read: the rule is worth nothing if the
+   screen rendering the card cannot tell which kind it is.
+2. **A weakness deck records the topic it targeted.** `origin='weakness'` resolves the
+   student's own top net-lost-marks `WeaknessRecord` topic (ties broken alphabetically, so
+   the choice is deterministic rather than whatever the query planner returned) and
+   **rejects a caller-supplied topic** rather than ignoring it — accepting one would let a
+   caller label a deck with a topic the weakness engine never flagged, which is the same
+   laundering D4.4 refused when it discarded the 34 `low`-band classifications.
+3. **No weakness rows is an honest refusal.** `no_weaknesses`, reusing **P4.5's exact
+   string** so practice and flashcards speak one machine-readable vocabulary rather than two
+   a frontend would have to reconcile. Verified there is no husk deck left behind.
+   Generation reports `generatedCount` beside `requestedCount` and never pads a short model
+   response.
+
+### 2. Another student's deck id is a 404, not a 403 — a deliberate divergence from P4.5
+
+`practice.py` renders someone else's practice assignment as **403**. This router renders
+someone else's deck as **404**, identical in body to an id that never existed.
+
+The service still raises two distinct typed errors (`FlashcardNotFoundError` vs
+`FlashcardOwnershipError`) and both are still tested — only the HTTP rendering is flattened.
+The reason for the divergence is what the object *is*: a practice assignment is quiz-shaped
+and a teacher may legitimately hold a reference to one, so 403 is informative. A deck exists
+for exactly one owner, so a 403 answers "does this id exist?" for anyone willing to
+enumerate — an existence oracle over another student's private study material, bought for
+nothing. The test asserts the real deck id and a random UUID return **byte-identical**
+bodies, and inverts it (the owner still gets 200) so the 404 is proven to be about identity
+rather than absence.
+
+### 3. `due_session` exists because an empty list is not a state
+
+The chunk plan required S-22's "nothing due today" to carry the next due date. `list_due_cards`
+could only return a list, so a new `due_session` returns `cards` + `total_due` + `next_due_at`.
+Two things it deliberately does **not** do:
+
+- `total_due` is the **real backlog, unaffected by `limit`** — a capped session reporting its
+  own cap as the whole backlog is invented precision (spec §1.4), and pinned by a test that
+  requests 2 of 4.
+- `next_due_at` is `None` when the student owns no cards *or* when everything they own is
+  already due. The second case is not a gap: `cards` is non-empty there, so the screen has
+  something better to say than a date.
+
+### 4. `delete_deck` was missing from the chunk-B handover
+
+`generate_deck` can put a deck a student never asked for in front of them. Without deck
+deletion the only remedy was deleting cards one at a time and keeping the empty husk. Added,
+with the cascade proven at **both** levels (ORM `delete-orphan` and DB `ON DELETE CASCADE`)
+by asserting the card row is actually gone — an ownership check that passes while orphan
+rows survive is a leak, not a delete.
+
+### 5. Two unguarded inputs the orchestrator's own read caught, not the subagent's report
+
+Both were on the wire in the chunk-C handover, both reachable by any authenticated student,
+and neither was covered by the 20 route tests:
+
+1. **`GET /due?limit=-1` was a 500.** `limit` reached SQL as a bare `LIMIT` and Postgres
+   rejects a negative one with an error. Now `Query(ge=1)`, so a plainly malformed request
+   is a 422 at the boundary.
+2. **`POST /decks/generate` took an unbounded `count`** and passed it straight to
+   `FlashcardGenerator.generate` — the size of a **billed** Gemini request, against
+   MISSION §8's hard $8 ceiling, chosen by the caller with no cap anywhere downstream.
+   Now `Field(ge=1, le=50)`. The 50 is a deck-sized ceiling, not a spend calculation; the
+   point is that an arbitrary caller-supplied number cannot reach the model at all.
+
+The `count` test asserts on the **generator mock**, not only the status code — a 422 that
+still called the model would have spent real money before rejecting the request, and a
+status-code-only assertion cannot tell those apart. Both tests carry their inverse
+(`count=50` → 201 and the generator *is* called; `limit=1` → 200).
+
+### 6. Process
+
+The chunk-B implementation was found **already on disk, uncommitted**, from a session that
+died mid-task. Its tests passed and `ruff` was **red on 8 findings** — the identical pattern
+P4.5 hit one task earlier. The handover's word is not evidence; the orchestrator's own gate
+run is. Worth repeating because the failure mode is silent: a killed session leaves work that
+*looks* finished.
+
+Gemini spend for the whole task: **$0.00** — the generator is mocked in every test and no
+live call was made.
+
+## D4.12 — The study plan schedules the week it claims to schedule, and refuses honestly when it has no signal (P4.7 chunk A)
+
+### 1. What the old scheduler actually was
+
+`build_study_plan` split `weekly_hours` across weak topics proportionally to `lost_marks`
+and emitted one `StudySession(week=1, hours=…, focus="Practice and review: {topic}")` per
+topic. That is advice with a number attached, not a plan: `week` was a literal `1`, there was
+no activity type, and a student reading "Waves: 2.4 hours — practice and review" has been told
+nothing they did not already know. MISSION §4 asks for **concrete sessions (topic, activity
+type, duration)**. It also ignored placement and the questionnaire entirely.
+
+### 2. Three signals, weighted, and why a missing one is not a zero
+
+Weakness `lost_marks` **0.5**, placement result **0.3**, S-02 confidence rating **0.2** —
+most-evidential to least: a rolling aggregate over every graded attempt, then real graded
+evidence from a single sitting, then the student's own guess. The weights live in the module
+docstring at the point of divergence, each pinned by a test, following the precedent
+`core/spaced_repetition.py` set for its four SM-2 departures.
+
+The consequential choice is **renormalisation**: a topic missing a signal is scored on the
+signals it does have, not on a zero standing in for the absence. Zero-filling would punish a
+topic for the student not having sat a placement test yet — and since S-02 is answered
+*before* any grading exists, the most common real state at onboarding is confidence-only.
+Zero-filling would have made every brand-new student's plan uniformly flat.
+
+All three are keyed on the P4.2 `"<code> <name>"` topic vocabulary. That shared key is why
+merging them is possible at all; it was built deliberately across D4.2/D4.4/D4.5.
+
+### 3. The defect: a ten-hour week that scheduled four and a half hours
+
+Found by measuring the first implementation against real inputs, not by reading its report.
+Sessions were capped at `MAX_SESSION_MINUTES = 90` and any excess was dropped:
+
+| weak topics | budget | scheduled (before) | scheduled (after) |
+|---|---|---|---|
+| 3 | 600 min | **270** | 585 |
+| 6 | 600 min | 540 | 600 |
+| 10 | 600 min | 600 | 600 |
+
+The three-topic case — a student with a *focused* weakness profile, which is to say a student
+the plan should serve best — lost 55% of its budget. `StudyPlan.weekly_hours` still said 10,
+and `StudyPlan.tsx` renders `{plan.weeklyHours} hours a week` as the S-24 header. The header
+would have described a week the sessions beneath it did not add up to.
+
+The fix is to **split** a topic's allocation into several shorter blocks on **distinct days**
+rather than truncate it to one capped sitting. This is also better teaching — spaced blocks
+beat one 200-minute sitting — so the honest option and the pedagogical one agree. Distinctness
+is enforced (`_day_offsets` spaces blocks `7 // block_count` apart), because splitting a topic
+and then scheduling both halves the same evening defeats the point; verified across 1–10
+topics. Residual drift is only ±5 minutes of per-block rounding.
+
+Block count is capped at seven — one per day — which only binds above 10.5 hours on a *single*
+topic, where the honest answer is that it does not fit in the week.
+
+### 4. Two tests rewritten, and why that is not weakening them
+
+`TestWeighting` read priority off the *position* of a topic's first session. Once sessions are
+laid out by calendar date and a high-priority topic is split across days, position stopped
+being a proxy for priority. They now assert **total minutes per topic**, which is what the
+weighting actually decides — a more direct assertion than position ever was. Nothing was
+skipped, deleted, or loosened; MISSION §5's rule is about not weakening a test to get green,
+and a proxy that has become invalid is a different thing from an inconvenient assertion.
+
+### 5. Honest states, and the one that does not survive the wire yet
+
+Three distinct outcomes, all pinned by inverse-verified tests:
+- **`available=False, reason="no_signal"`** — no weaknesses, no placement, no ratings. A
+  refusal, never an invented week. Reuses `core/placement.py`'s machine-readable-reason shape
+  rather than inventing a third convention (D4.6/D4.10 precedent).
+- **`available=True, sessions=[]`** — there was something to evaluate and nothing to schedule.
+- **A real plan** from any partial combination of signals.
+
+**Activity type must be earned.** `TopicAvailability` is an *input* — chunk B supplies real
+counts — so `practice` is never scheduled for a topic the bank cannot serve, nor `flashcards`
+for a topic with no deck. `review` needs no resource and is the honest floor. A plan that
+told a student to "practice Electric circuits" when the bank holds zero such questions would
+be inventing precision (UI spec §1.4).
+
+**Open gap for chunk C, stated rather than left to be discovered:** `StudyPlanDTO` carries no
+`available`/`reason`, so the refusal and the empty-week state both reach the frontend as an
+empty `sessions` list and are indistinguishable there. This is a gap, not a regression — the
+distinction did not exist before this chunk — but chunk A's central honesty property dies at
+the wire until chunk C decides the DTO. `activityType`/`date` are likewise not yet exposed;
+`hours` is a unit conversion of `duration_minutes`.
+
+Gemini spend: **$0.00**.
+
+---
+
+## D4.13 — The study plan gets its own surface, and "no plan yet" stops looking like "no plan possible" (P4.7 chunk C)
+
+### 1. A new router, not an extension of `/api/student/plan`
+
+`GET`/`POST /api/student/plan` (`routers/student.py`) were the obvious place to put this and
+are the wrong one. They are HistoryStore-backed and **ephemeral**: they rebuild a plan from
+scratch on every request and carry no plan id, no session ids, no subject selection, and no
+persistence. Completion and weekly regeneration — the two things chunk B exists to provide —
+are not expressible in that shape at all. Reshaping them in place would have silently changed
+the contract `web/src/portals/student/screens/StudyPlan.tsx` consumes *today*, in a phase whose
+frontend work (P4.10) has not started.
+
+So: `lemely/web/routers/study_plan.py` at `/api/student/study-plan`, student-only at the router
+level, with `lemely/web/schemas_study_plan.py` for its DTOs — the same "thin router, own DTOs,
+don't grow `student.py`" shape `placement.py` and `flashcards.py` already set. **The legacy pair
+stays untouched and is deleted in P4.10**, when the screen migrates. That ordering is the
+reversible one: two surfaces briefly, rather than a broken screen for two tasks.
+
+### 2. The three states, which is the whole point of the chunk
+
+D4.12 §5 recorded the gap it left: `StudyPlanDTO` had no `available`/`reason`, so chunk A's
+honest `no_signal` refusal and a real-but-empty week both reached the frontend as an empty
+`sessions` list. Persisting the plan (chunk B) added a **third** state on top of those two, and
+all three are things a student is owed a different screen for:
+
+| wire | means | S-24 shows |
+|---|---|---|
+| `{"generated": false, "plan": null}` | no plan generated for this ISO week | route to placement/questionnaire |
+| `generated: true`, `plan.available: false`, `reason: "no_signal"` | a plan was generated and honestly refused | why there is nothing to schedule |
+| `generated: true`, `plan.available: true` | a real plan (possibly `sessions: []`) | the week |
+
+The envelope (`CurrentStudyPlanDTO { generated, plan }`) exists so state 1 does not have to be
+a 404. A 404 would have conflated "you have no plan this week" with "that subject does not
+exist" and with an ordinary network failure, and the frontend would have had to guess. **"No
+plan yet" is a successful answer to a reasonable question**, so it gets a 200.
+
+`activityType` and `date` reach the wire here for the first time (D4.12 §5 named both as
+missing). S-24 requires subject, topic, activity type and duration per session; without those
+two fields the screen could only have rendered the same vague advice the old scheduler emitted.
+
+### 3. Both service errors render 404, and both are still tested
+
+`StudyPlanNotFoundError` and `StudyPlanOwnershipError` become a **404 with a byte-identical
+body**. A study plan belongs to exactly one student and no teacher-visibility story exists in
+this phase, so a 403 on someone else's session id would be an existence oracle over private
+study material for anyone willing to enumerate UUIDs — D4.11's flashcard-deck reasoning,
+applied to the same shape of object. The service keeps raising both typed errors and both are
+still asserted; only the HTTP rendering is flattened. The test asserts a real other-student id
+and a random UUID return identical bodies, then **inverts it** (the owner gets 200 on that same
+id) so the 404 is proven to be a guard rather than a broken route.
+
+A malformed (non-UUID) `session_id` is a **422**, not the 500 `_as_uuid`'s bare `ValueError`
+would otherwise have produced.
+
+### 3b. Two isolation properties pinned that the handover left unpinned
+
+The completion route's 404 was tested; the **read** route's scoping was not. Both properties
+below hold structurally today — `get_current` is passed `auth.user_id` and the path's
+`subject_code`, never a caller-supplied id — so these are regression pins, not bug fixes, and
+each carries its inverse so it cannot pass vacuously:
+
+- `test_another_students_plan_is_invisible` — the guard that matters if a later phase adds a
+  "view this student's plan" selector for teachers and threads it through this route. A plan is
+  private study material and P4 has no teacher-visibility story for it.
+- `test_a_plan_for_one_subject_is_not_returned_for_another` — the path segment **selects** the
+  plan rather than decorating the URL. A student holds one plan per subject per week, and
+  serving the physics plan under `/0580` would schedule maths study against physics weaknesses
+  — wrong in a way an empty-plan bug is not, because it looks entirely plausible on screen.
+
+### 4. What this does not do
+
+No migration (0012 covers it), no `web/` diff, no narration — the AI narrator stays on the
+legacy route and is P4.10's call, because `PlanView` persists no narrative and inventing a
+column for one at route level would have put a Gemini call behind a GET.
+
+Gemini spend: **$0.00**.
+
+---
+
+## D4.14 — A question the bank cannot fully render must not be served (P4.8 chunk 0)
+
+### 1. Found by measuring while scoping S-04, not by a failing test
+
+`question_bank` has **no image/figure column at all** — verified against `information_schema`,
+not assumed. P4.1 excluded 654 figure-bearing leaves at ingest, but exclusion was decided on the
+*source PDF's* structure, so stems that merely **reference** a figure in their prose survived.
+Twenty-five of 273 banked 0625 stems read an existing figure as their source of information
+("The diagram shows a radioactive source, a thick aluminium sheet and a radiation detector…").
+There is no figure. The question is unanswerable.
+
+**Why this outranked the frontend work it was found during.** A 0625 placement assembles ~10
+questions, so a single such draw makes ~10% of the test unanswerable. The student loses those
+marks; the placement then records a weakness they **do not have**; and that false weakness is
+exactly what seeds the P4.7 study plan and P4.5 weakness-targeted practice. The failure
+compounds downstream and is invisible at every gate — the stem renders perfectly, the
+screenshot looks clean, every test passes. Same class as D3.21's confidently-wrong paper 22:
+the number is wrong and nothing in the system is capable of noticing.
+
+### 2. Exclusion from serving, not deletion
+
+`renderable_bank_filter()` in `question_bank_repo.py` — a pure Postgres `~*` predicate over the
+existing `prompt` column. **No migration, no Gemini, $0.00.** The row stays in the bank, stays
+`is_active`, stays auditable; only the read paths that assemble a student-facing pool apply it.
+If a figure column ever lands, the predicate is one function to relax rather than 25 rows to
+re-ingest.
+
+### 3. It is deliberately NOT folded into `visible_bank_filter`, and that is the load-bearing find
+
+The obvious seam was `visible_bank_filter`, which `PracticeService` and `StudyPlanService`
+already share. **`PlacementService` does not call it at all** — `_load_candidates` builds its own
+subject/source/`is_active` filter. Folding the new predicate into `visible_bank_filter` would
+have looked like a clean one-line fix, passed review, and **left placement — the single worst
+affected path, the one that plants the false weakness — completely unfixed.** The two predicates
+also mean different things: one is an owner/school *authorization* check, this is a content
+*completeness* check. Applied explicitly at all four pool sites instead.
+
+### 4. Where the honest line was drawn: 25, not 4 and not 32
+
+A loose `Fig.|figure|diagram|table below|image` match hits 32 of 273. Every one was read
+individually rather than pattern-matched in bulk:
+
+- **Excluded from the exclusion — bare "image" (3).** All the optics sense ("a real image is
+  formed"), a lens question, not a photograph.
+- **Excluded from the exclusion — "draw a diagram of the circuit used" (4).** The student
+  produces this diagram; it is their *answer*, self-contained in prose. Suppressing these would
+  have silently shrunk the pool for a class of question that works fine.
+- **Excluded from serving (25).** Five shapes, all reading an *existing* figure: `"Fig. 8.1
+  shows"`, `"On Fig. 8.1, draw…"`, `"as shown in Fig. 7.1"`, `"in diagram 1"`, `"complete Fig.
+  4.1"`. Note `"On Fig. 8.1, draw…"` **is** a dependency despite containing "draw" — Fig. 8.1
+  already exists and must be seen.
+
+### 5. What the fix cost, measured rather than assumed
+
+Placement breadth is the thing that could have broken, and it did not — but the test **changed**,
+and pretending otherwise would hide a real effect:
+
+| 0625 placement | before | after |
+|---|---|---|
+| questions | 9 | **10** |
+| duration | 15.19 min | **17.06 min** |
+| syllabus topics | 6 | **6** |
+
+Still under the 18-minute ceiling (D4.8), still spanning all six physics topics. It got longer
+because the excluded questions had been counted toward the 15-minute target. Pool 273 → 248 for
+practice. 0580/0606 remain an honest `no_questions` — unchanged, they have zero ingested
+questions (D4.6 §5).
+
+**Latent trap checked, not just reasoned about:** `not_(prompt ~* …)` evaluates to NULL for a
+NULL prompt, which would silently drop the row. `question_bank.prompt` is `NOT NULL` and there
+are zero NULL prompts today, so the three-valued-logic hole cannot bite — recorded because a
+future nullable column would reopen it invisibly.
+
+Gemini spend: **$0.00**.
+
+---
+
+## D4.15 — Saves for one question are serialized, and a save may only mark clean what it actually sent (P4.8 chunk B)
+
+**Found by the MISSION §6 gate-7 adversarial review of the chunk-B diff, after the three
+answer-loss defects in `c2d444f` were already fixed.** A fourth, narrower path to the same
+outcome, in the same class as D3.21: the student sees their answer on screen while the paper
+is marked against different text, and every gate this build runs stays green.
+
+### 1. The defect
+
+Two saves for the same question could be on the wire simultaneously:
+
+- the reconnect/reload retry pass, resending the cached value, and
+- the debounced edit path, sending a just-typed newer one.
+
+That overlap was deliberate, not accidental. `refsToRetry` excludes in-flight refs so the retry
+never duplicates a save; the debounce path deliberately does **not** consult it, because a
+student who types while a save is in flight must have that newer edit sent rather than dropped
+as a duplicate. Both halves are right on their own.
+
+What was missing is that **network arrival order is not dispatch order**, and
+`quiz_taking_repo.save_answer` is a plain last-write-wins upsert with no version or timestamp
+guard. So the older save could land last at the server. Worse, `doSave`'s `onSuccess` wrote the
+value *its own call had captured* back into the cache and stamped it `dirty: false`,
+unconditionally — so the newer answer was overwritten locally too, and marked "confirmed
+saved". On the next reload `mergeAnswers` sees a clean entry, defers to the server's value, and
+the newer answer is gone with no error shown anywhere.
+
+Reachable on the ordinary flaky-connection path this whole subsystem exists to serve.
+
+### 2. Two independent lines, because one would have been enough to look fixed
+
+1. **Serialization.** Each question ref owns a promise chain (`saveChains` in `QuizTaker.tsx`);
+   a save requested while one is in flight is appended rather than dispatched. Two saves for a
+   question can no longer overlap, on the wire or at the server, so ordering ambiguity is gone
+   at the source.
+   **Coalescing, not cancelling** — that distinction is what stops the fix from becoming a
+   fifth loss path. The queued save reads `answerCache` **when its turn comes**, not when it
+   was queued, so it carries the newest value; a newer edit is deferred, never dropped.
+2. **`isCacheEntryUnchanged`.** A completing save may only mark an entry clean if the cache
+   still holds exactly what that save put on the wire. **Value equality, not object identity**,
+   on purpose: a student who types a change and undoes it back to the same text still gets a
+   clean commit rather than a needless resend that would leave the entry dirty and block
+   submit.
+
+Line 2 is redundant given line 1 holds. It is kept because line 1 is an invariant maintained by
+component wiring, and this one is a pure, tested check at the point of the actual write.
+
+### 3. The single-field payload is deleted, not left dead
+
+`buildAnswerSavePayload` ("only send the key that changed", the D4.5 onboarding rule) was
+correct while each edit owned its own save. It stops being *expressible* under coalescing: one
+save now stands for several edits, possibly to both fields, so there is no single "field that
+changed" to name. Every save sends both fields from the cache, which is safe for the reason
+`buildRetrySavePayload` already documented — a cache entry always holds the question's true
+current state — and `SaveAnswerRequestDTO` treats an omitted field as "leave untouched" and a
+present one as "set to this", which is exactly what a both-fields re-assertion wants
+(verified against `lemely/web/schemas_quiz.py:312`, not assumed).
+
+Its three tests were deleted with it. Keeping a tested function nothing calls would have been
+the worse trade.
+
+### 4. Submit now blocks on the cache, not on its own promises
+
+`flushPendingSaves` had **zero test coverage** despite being the fix for the worst of the three
+`c2d444f` defects. Two changes fell out of covering it:
+
+- It waits on refs that are **busy but clean** (`refsToFlush`), not just dirty ones. A save
+  already on the wire may still fail, and a save that fails after submit has gone through marks
+  the paper without an answer the student can see.
+- It decides failure by re-reading the cache for dirty entries rather than by catching its own
+  rejections. Stronger contract: it blocks on *any* unsaved answer, however it got that way,
+  not only the ones this call happened to dispatch.
+
+### 5. `Object.keys` is not selection order (S-02 → S-03 routing)
+
+`Object.keys(drafts)[0]` was documented as "the first subject they enrolled in, in their own
+S-01 selection order". It is not: JS enumerates integer-like string keys first, ascending,
+ahead of every other key's insertion order. Invisible today **only** because all three current
+syllabus codes carry a leading zero (`0625`/`0580`/`0606`) and so are not integer-like — it
+goes live the day a code without one is added. `placementInviteSubject` orders by the
+`SUPPORTED_SUBJECTS` catalogue instead: "the first subject as S-01 presented them", a rule that
+stays true whatever the codes look like. The test pins the trap itself
+(`Object.keys(...)[0] === "9709"`) next to the function avoiding it.
+
+### 6. Verification
+
+11 new unit tests, **each verified by inversion** rather than assumed: probing
+`isCacheEntryUnchanged` to always-true fails exactly 5, reducing `refsToFlush` to the dirty
+set fails exactly 5, and reverting `placementInviteSubject` to `enrolledCodes[0]` fails exactly
+3. 224 web unit tests green, `tsc --noEmit` clean.
+
+Gemini spend: **$0.00**.
+
+## D4.16 — Every new screen shipped without an h1, and three gates were passing over it (P4.8 chunk C)
+
+### 1. What happened
+
+Chunk C's whole premise was that `ui-thresholds` had been green on a registry that never
+listed S-01..S-05, so the gate was passing *vacuously*. Sessions 5 and 6 fixed two vacuity
+defects by reading. Session 7 was the first to actually **run** the registry, and the run found
+a defect no amount of reading had surfaced: **all five new screens had no `<h1>` at all.**
+
+Every one of the seven new states reported axe `page-has-heading-one` (**moderate**) while all
+24 Phase-3 routes reported zero violations at any severity. Each screen rendered its page title
+as a styled `<div>` — `font-serif text-display-md` — so the *visual* heading existed and the
+*semantic* one did not.
+
+### 2. Why it survived every gate
+
+MISSION §6 gate 8 sets the axe threshold at "zero serious/critical". `page-has-heading-one` is
+**moderate**. So the gate passed, and would have kept passing forever, even though
+**QUALITY-BAR.md:40's neighbour at line 45 requires "one h1 per page, heading order unbroken,
+landmarks" outright**. The finding sat in the gap between the automated threshold and the
+written bar.
+
+This is the same shape as D3.21's confidently-wrong paper 22 and D4.14's figure-dependent
+stems: it renders perfectly, it screenshots perfectly clean, and the only person who
+experiences the defect is the one using a screen reader — who reached the product's onboarding
+and its first question-rendering surface with nothing to orient by.
+
+### 3. The fix, and the two judgement calls in it
+
+Title `div` → `h1`, same classes plus `m-0`. Tailwind preflight already zeroes heading margins
+and makes headings inherit font size, so this is **visually identical** — confirmed against the
+re-captured screenshots at all three breakpoints, not assumed.
+
+- **`QuestionShell` is safe as the single h1** because `QuestionnaireStep` renders
+  `steps[stepIndex]` — exactly one question at a time. Had all five shells rendered together
+  this would have traded one violation for five.
+- **`QuizTaker` gets an `sr-only` h1 carrying the real `quizTitle`, not a visible one.** The
+  screen has no visible page title *by design*: mid-test the identity a student needs is
+  "Question 3 of 10" and the countdown, and a banner title would push both down the viewport on
+  a 380px phone. The heading still has to exist. It carries `quizTitle` rather than a constant
+  because placement composes this component now and practice/assigned quizzes compose it in
+  P4.9/P5 — the fix lands once for all three.
+- **Loading and error branches get `sr-only` h1s**, following the P3
+  ReviewItem/StudentDetail/QuizResults precedent, because `ErrorState` renders its heading as a
+  non-heading element — the Phase-2.5 report §8 gap, still open.
+
+### 4. The Impeccable audit, and what was deliberately NOT fixed
+
+`/impeccable audit` on the five changed files scored **16/20 (Good)**; detector clean.
+Implementation-integrity **PASS** on real grounds: the honesty states are structural rather
+than cosmetic (discriminated-union views, `showWorkingLevel: false`, "Not enough data yet.",
+"Not set", a class-less placement rendering the *absence* of an affiliation).
+
+**Fixed (P1):** three controls below QUALITY-BAR.md:40's 44×44px floor — `QuizTaker`'s
+flag-for-review (~30px) and two `Button size="sm"` call sites (~31px: 12.5px text + `py-2`).
+All three pass WCAG 2.5.8 AA's 24px minimum, which is exactly why no automated gate caught
+them. Raised **at the call sites, not in the `Button` variant** — `size="sm"` has 33 call sites
+and 11 of the 15 files are teacher screens, where 44px would break dense layouts. Changing the
+shared variant is a cross-portal decision, not a P4.8 one (verified by counting, not assumed).
+
+**Deliberately deferred, recorded rather than smoothed over:**
+1. **The global reduced-motion rule is the blanket kill the audit reference explicitly flags.**
+   `index.css:742` applies `animation-duration: 0.001ms !important` to `*`. On S-05's unmarked
+   state the spinning `CircleNotch` *is* the evidence that marking is in progress, beside copy
+   promising "This page will update on its own" — with reduced-motion on, it freezes and the
+   user cannot distinguish working from stalled. Pre-existing Phase-2.5 behaviour affecting all
+   41 routes; `processing-state.tsx:19` already acknowledges it. Editing the global rule risks
+   visual regression on every route and is out of P4.8's scope.
+2. **Ad-hoc container widths** — `max-w-[560px]` ×3, `max-w-[720px]`, `max-w-[820px]` where a
+   shared token belongs. (`min-h-[44px]` and the slider's `py-9px` are *not* this: both are
+   documented repo-wide touch-target idioms.)
+3. **S-04 re-renders its whole question tree once per second** from the elapsed ticker, with no
+   memoization. Lighthouse perf is 82 so it is not currently measurable — but this exact ticker
+   is what turned an unstable react-query object identity into a duplicate-PUT-per-second bug
+   (D4.15 §1), so the cadence is a standing amplifier for that class of defect.
+
+### 5. Verification
+
+Full 13-gate run **ALL PASS, 0 skipped** — run three times this session, the last after every
+fix in this record. **2308 passed / 6 skipped / 0 failed / 90.30% cov** (re-measured, not
+carried forward — the backend diff since chunk 0 is not empty; earlier chunk-C sessions added
+the placement seed and its tests). Second audit run confirms all seven
+new states at **0/0/0/0 at every severity**, zero nonzero axe counts anywhere in the registry,
+**Lighthouse a11y 100** on all four scored new routes (perf 80–83, at or above §11's student
+floor), zero console errors, zero horizontal-scroll violations; `ui-thresholds` clean across
+**41 routes**.
+
+Spot-checked visually rather than trusted to the string asserts: the `questionnaire-skipped`
+capture shows the thumb at `min` reading **"Not set"** (D4.5 honest on screen), and S-05 renders
+"This is a baseline, not a grade", the working-level refusal, and "Not enough data yet."
+
+**Measurement trap worth not re-deriving:** a bare `.venv/bin/pytest` reports **1 failed** —
+`tests/architecture/test_import_linter.py` shells out to `lint-imports`, absent from PATH unless
+you export `.venv/bin` yourself. A `FileNotFoundError` in the harness, not a broken contract:
+with PATH set the test passes and `lint-imports` exits 0 ("Contracts: 2 kept, 0 broken").
+`check.sh` exports PATH at its line 34, which is why its `pytest` gate is green.
+
+Gemini spend: **$0.00**.
+
+### 6. The second defect the same gate run found: the seed still collided on rerun
+
+`playwright-e2e` failed on a genuine `uq_question_bank_paper_question (paper_id,
+source_question_id)` IntegrityError for `0625_s88_qp_21#12`.
+
+`build_placement_paper_stem` was added earlier in this chunk (`b9d610a`) specifically to make
+reruns safe, by hashing `run_tag` into the session-year digits. **It reads only the tag's first
+two characters.** The year therefore has a 100-value namespace, so by the birthday bound two
+runs share a `papers` row roughly every dozen runs — and their identical `#1..#24` suffixes then
+collide on the second run's `link_past_paper_rows()`. After a day of repeated gate runs, it
+fired. Its docstring asserted it was the rerun-safety guarantee; it was not, and the existing
+test that "proved" this picked two tags which also differ in the *stem*, so it passed throughout.
+
+**Uniqueness moved to where it can carry the whole tag:** `source_question_id` is now
+`f"{stem}#{run_tag}-{ref}"`. `_paper_identity` splits on the first `#` and parses only the stem
+(`question_bank_repo.py:241-243` — checked, not assumed), so the suffix is opaque to the linker
+and free to hold all 12 hex characters. The stem hash stays, because a distinct `papers` row per
+run is closer to reality and sharing one is harmless once suffixes differ — but it is no longer
+load-bearing, and both misleading docstrings now say so explicitly.
+
+**Why the fix is not "purge and reseed":** the module contract is no teardown, per-run
+namespacing throughout, and 184 `quiz_questions` rows from prior runs reference the linked bank
+rows. Deleting them would break that contract and those references.
+
+Verified three ways: the new test
+`test_source_question_ids_differ_even_when_the_paper_stem_collides` uses two tags that provably
+share a stem and is **verified by inversion** (reverting the suffix fails exactly this test and
+none of the other 57); two real seed runs *forced onto the same stem* (`0625_s77_qp_21`) both
+exit 0 with zero IntegrityErrors; and the full 13-gate run then passed.
+
+**Local-state cleanup, done deliberately and only after looking:** 48 unlinked seed rows had
+accumulated from the two runs that aborted at the link step. Confirmed **zero** `quiz_questions`
+referenced them and that 24 of them duplicated an already-linked row's `source_question_id` —
+the collision itself — before deleting. Local dev DB only; nothing committed, and re-running the
+seed restores an equivalent state.
+
+**The general lesson, which is the point of this whole chunk:** three sessions fixed vacuity
+defects in this registry by *reading* it, and the two worst defects — a missing `h1` on every
+new screen and a seed that could not run twice — were both found in the first ten minutes of
+actually *running* it. Reading finds what is wrong with the code you are looking at; running
+finds what you did not think to look at.
+
+## D4.17 — S-23's end-of-session summary ships with no XP, and that is a spec override
+
+**Context.** P4.9 chunk B built S-22/S-23 (flashcards) on the ten P4.6 routes.
+`docs/LEMELY_UI_SPEC.md` §S-23 specifies the review session's end-of-session summary as
+"a card with a reveal interaction, a self-grade control …, session progress, and an
+end-of-session summary **with XP**".
+
+**The conflict.** XP is Phase 5. It does not exist: P4.7 chunk B deliberately left
+`study_plans.completed_at` as the XP seam and added no points or streak column, and there is
+no XP table, service or route anywhere in the codebase. So the spec asks a Phase-4 screen to
+display a quantity that has no source.
+
+**Decision — the summary reports real session facts and no XP.** Cards reviewed, the
+again/hard/good/easy distribution, the `intervalBeforeDays`→`intervalAfterDays` change
+`ReviewResultDTO` already returns, and the remaining backlog (`totalDue` minus reviewed).
+No XP number, no placeholder, no zero.
+
+**Why this is not a shortfall.** The authority order in MISSION §10 puts the UI spec above
+skill opinion, but the spec's own §1.4 product principle — never invent precision — is
+higher still, and the two collide here. Any XP figure this screen could render would be
+fabricated: there is no rule that says what a flashcard review is worth, because designing
+the XP scheme is explicitly a Phase-5 task that MISSION §4 requires be recorded in
+DECISIONS.md *before* implementation. Rendering `0 XP` is worse than rendering nothing —
+it is a real-looking number that says the student earned nothing for real work. Inventing a
+rate here would also pre-empt the Phase-5 design and quietly become the de-facto scheme.
+
+**How it is pinned, so P5 cannot drift into it by accident.** `summarizeSession` is
+asserted to return exactly `["reviewed", "gradeCounts", "intervalChanges"]`, with
+`"xp"`/`"points"`/`"streak"` explicitly absent from the shape. When P5 adds XP it must
+change that test deliberately — which is the point. The seam is the review audit log
+(`flashcard_reviews`, P4.6 chunk A, built precisely as P5's XP seam); no schema change is
+needed to add XP later.
+
+**Same family as the two other deliberate non-builds in P4.9:** fact 4 (reveal-answer is not
+built, because no route returns a model answer and adding one would put marking material on
+a student surface) and fact 6 (the photo-answer route is not built, because no image field
+exists anywhere on the quiz answer path and a camera affordance would silently discard the
+student's work). In all three the honest move was to leave it unbuilt and say so, not to
+build a convincing shell.
+
+## D4.18 — Gate 8 for S-20..S-23: opacity on text broke two contrast floors, and the seed's "hermetic 24-row bank" was never actually 24 rows (P4.9 chunk C)
+
+P4.9 chunks A and B shipped four screens (S-20/S-21 practice, S-22/S-23 flashcards) with **no
+audit-registry entry at all**, so `ui-thresholds` was green over them without ever loading one
+— the same vacuous pass P4.8 chunk C's own header note warns about. Chunk C adds 13 registry
+entries / 14 captured states on three deliberately non-overlapping seeded accounts
+(`active`/`settled`/`bare`), and the run found three real defects that reading had not.
+
+**1. Two serious axe violations, both `opacity` applied to text, neither a token problem.**
+`--t3` is fine (5.58–7.17:1 on every base surface, per `index.css`'s own history). What axe
+measured was `#b3a7a5` on `#fffcfb` — exactly `--t3` (`#67534f`) composited at 50%.
+- **S-20**: `PracticeGenerator` dimmed the *entire* Topics `<Card>` with `opacity-50` while
+  "Weak topics only" was on. That dragged the card's "Topics" heading and its two explanatory
+  paragraphs down to **2.28:1**. Dimming the label of a genuinely disabled control is exempt
+  from WCAG 1.4.3; dimming a section heading and the prose that explains *why* the section is
+  inactive is not.
+  Root cause was one level down: **C-14 `Checkbox` self-dimmed only on its own `disabled`
+  prop**, but these checkboxes are disabled by an ancestor `<fieldset disabled>`, which React
+  never propagates as a prop. With `appearance-none` the browser draws no disabled affordance
+  either, so the screen had no way to show the state except the card-wide wash. Fixed at the
+  component with `has-disabled:` (`:has(:disabled)`), which covers both the prop and the
+  ancestor case; the card-wide `opacity-50` is then deleted rather than tuned.
+- **S-23**: the keyboard hints (`(2)`/`(3)`/`(4)`) on the three accent grade buttons were
+  `opacity-70` — white at 70% over `--accent` measured **4.17:1**. `opacity-70` removed rather
+  than nudged: `text-2xs` already de-emphasises the hint, and this is a *keyboard affordance*,
+  the one thing on that button that must not be hard to read. Nudging a computed blend is the
+  loop `--t3`'s own comment records failing twice.
+
+**2. The seed's hermetic bank was never hermetic, and it broke a capture silently.**
+`PRACTICE_SET_COUNT` and the placement assembly are both reasoned against a documented
+"hermetic 24-row Paper 2 bank (6 rows/topic × 4 topics)". `seed_e2e.py` had no teardown and
+run-tags its question ids, so every run **added** 24 rows: the live DB held **96**. A student's
+practice pool is scoped by subject+paper, never by run, so the student saw all of them.
+This is invisible until a capture depends on the pool's *size* — and S-20's `insufficient_pool`
+is the first one that does (6 available < 10 requested at the screen's default count). Once two
+runs had accumulated, the weak topic held 12+ rows, the shortfall panel stopped rendering, and
+that route **timed out and produced no screenshots and no axe report at all** while the other
+S-20 states passed. A gate that passed on a virgin database and failed on every run after it.
+Fixed by purging prior runs' fixture rows at seed start, which *restores* the invariant the
+code already documented rather than inventing a new one. Safe because `question_bank` is
+referenced only by `quiz_questions.question_bank_id` `ON DELETE SET NULL` (verified against
+`pg_constraint`, not assumed). `is_placement_seed_prompt`'s docstring asserted the opposite
+("earlier runs' rows stay in the bank") and was corrected in the same commit rather than left
+to mislead.
+
+**Why the third defect is the one worth remembering.** Both axe violations were loud — a gate
+names them. The bank accumulation was *silent*: the audit exited non-zero for the two contrast
+findings, and the missing route was visible only by noticing that `reports/.scratch/screens/S-20/`
+had no `default--*.png` and `axe/` had no `student-practice-generator.json`. An exit code that
+already has a reason to be non-zero will hide a second, unrelated failure behind it. Verified by
+listing the captures, not by reading the summary line.
+
+**Verification.** All 13 gates green, 0 skipped, exit 0. 14/14 axe reports clean at every
+severity (not just serious/critical); 42 screenshots (14 states × 3 breakpoints); Lighthouse
+a11y **100** on all four newly-scored routes, performance 80–82 (student floor is ≥80). Bank
+re-measured after the fix at exactly 6 rows/topic × 4 topics. $0.00 Gemini.
+
+## D4.19 — AI study-plan narration leaves the web surface, and the loss is recorded rather than restored (P4.10 chunk D)
+
+**Context.** P4.10 chunk D deletes the legacy `GET/POST /api/student/plan` pair, superseded by
+P4.7 chunk C's persisted `/api/student/study-plan`. STATE's chunk-D scoping (twentieth session)
+flagged "trap 3": the legacy `POST` is the only web path to AI study-plan narration
+(`payload.narrate` → `StudyPlanNarrator`, `routers/student.py:857-865`), and the replacement
+`StudyPlanWeekDTO` has no `narrative` field, so deleting the route loses the feature on the web.
+It named the fork — record the loss, or carry narration onto the new route — and left it open.
+
+**Correction to that framing, measured before deciding rather than inherited.** The loss is not
+chunk D's to cause: it has already happened. The old `StudyPlan.tsx` called the legacy POST with
+a literal `{weeklyHours, narrate: true}` and rendered `plan.narrative` in a panel
+(`git show 94326a1 -- .../StudyPlan.tsx`, removed lines 78 and 134-138). **P4.10 chunk A deleted
+that screen**, and chunk A shipped green through the A+B gate run. So web narration died at
+`94326a1`; the route has had zero callers ever since, and chunk D removes dead backend, not a
+live feature. This matters because "chunk D loses a feature" invites restoring it inside a
+cleanup commit, and the honest statement is narrower: **Phase 4 replaced the narrated plan
+screen with an unnarrated one, and that is the change to record.**
+
+**Decision — record the loss; do not restore narration in this phase.** `narrative` is not added
+to `StudyPlanWeekDTO`, no Gemini call is added to the study-plan surface, and the web plan ships
+unnarrated. The loss goes into the Phase-4 report's limitations and, per MISSION §9 (the adaptive
+study plan is an inventoried feature), into DELIVERY.md.
+
+**Why not restore it.**
+1. It is new feature work wearing a cleanup commit's clothes: a schema field, a billed Gemini
+   call on a student surface against the $8 ceiling, and an AI-content honesty affordance
+   (D4.11's rule — AI-written content stays distinguishable from the real thing for its whole
+   life — would apply to a narrative panel too). MISSION §8b forbids speculative work, and a
+   deletion chunk is the worst place to hide a feature addition; a gate failure there would be
+   unattributable, which is the same reasoning that split chunk D out of chunk C.
+2. The register is wrong for what Phase 4 built. MISSION §4's stated complaint about the old
+   plan is that it was "vague advice with a number attached" and must become "concrete sessions
+   (topic, activity, duration) not vague advice". The narrator prompt asks for a "2-3 paragraph
+   study guide" and is explicitly forbidden from touching the sessions
+   (`io/prompts/study_plan.py:16-18`). Re-attaching a motivational essay above a schedule of
+   real sessions restores exactly the layer the phase set out to replace, and it would be the
+   one part of S-24 a student could not check against anything.
+3. Nothing is burned. `lemely/io/study_plan_ai.py`, its prompt, and `StudyPlan.narrative` in
+   `core/study.py` all survive intact and stay live on the CLI (`cli.py:582 --use-ai`,
+   `:612-614`) — **so `study_plan_ai.py` must not be deleted by this chunk**. Carrying narration
+   onto the new route later is an additive field plus a route, deliberately decided, in its own
+   commit. Simplest, cheapest, most reversible (MISSION §5).
+
+**What chunk D must therefore do about it**, beyond the deletions STATE already scoped: leave
+`lemely/io/study_plan_ai.py` and the CLI path untouched, and state the web-side loss in the
+Phase-4 report rather than letting it vanish as a side effect of a cleanup diff. The
+already-shipped half (chunk A dropped the rendering) is the part most likely to go unrecorded,
+because no gate in this build can see a feature that stopped being offered.
+
+---
+
+## D4.20 — The placement band assertion was pinning luck, not a rule
+
+**Context.** P4.10 chunk C's gate run failed `pytest` on exactly one test,
+`tests/test_placement_assembly.py::test_a_broad_pool_assembles_inside_the_budget`
+(`assert result.spans_multiple_bands is True` → False). Chunk C's diff is
+`seed_e2e.py` + `test_seed_e2e.py` + `audit.mjs` + two deleted frontend hooks —
+nothing within reach of placement — and the same test passed the A+B run. The
+flake dates to `5809814` (P4.4 chunk B-3), the commit that introduced the test.
+
+**Measured, not assumed.**
+1. **Flake rate: 1 failure in 30 runs** of that test alone (the prediction from
+   reading was "roughly 1 in 20"). After the fix: **60/60 runs of the whole file
+   green.**
+2. **Live 0625 corpus: `spans_multiple_bands` is True.** The corpus had been
+   lost from the local Postgres in a DB reset, so it was re-ingested first
+   (deterministic, $0.00, zero Gemini) and the reconstruction verified against
+   the recorded figures before any conclusion was drawn: 273 banked / 273 linked
+   / 26 papers / 211 classified, 248 servable after the P4.8 chunk-0 renderable
+   filter — every number matching D4.1/D4.2/D4.8/chunk-0 exactly. Placement then
+   assembles **10 questions / 17.06 min / 6 syllabus topics**, matching the
+   chunk-0 measurement, of which **6 are `foundation` and 4 `standard`**. So the
+   real bank does span bands, **S-05 does show a working level, and this is not
+   a Phase-4 limitation.**
+   A first measurement said 8 q / 15.94 min because the DB also held the E2E
+   seed's 24 placement fixture rows; excluding them reproduced 10 q / 17.06 min.
+   *A measurement taken against a seeded DB is not a measurement of the corpus.*
+
+**Two independent defects, and the assertion is the more important one.**
+
+1. **The fixture was random.** `_c` minted `uuid.uuid4()` per candidate, and
+   `assemble` breaks ties on `str(candidate.question_bank_id)`. In `_spread`
+   every candidate carries identical marks, so the primary sort key
+   `abs(estimated_minutes - share)` **ties for every option** and the pick was
+   decided by a random UUID string sort. Fixed with a per-test counter
+   (`uuid.UUID(int=n)`, reset by an autouse fixture so ids never depend on test
+   order). Note `test_assembly_is_deterministic` could never have caught this:
+   it assembles the *same pool object* twice, so it pins determinism within a
+   run, not across runs.
+
+2. **`assemble` has no band-spread rule at all**, so the assertion pinned a
+   behaviour that was never implemented and passed ~97% of runs by luck. It
+   selects breadth-first across top-level topics with a nearest-to-even-share
+   tie-break and **never reads `Candidate.difficulty`**. Worse, the assertion
+   argues against the property's stated design: `spans_multiple_bands` exists
+   precisely to be False sometimes — it is what stops S-05 inventing a
+   working-level estimate from a sample drawn from one band
+   (`placement.py:152-158`).
+
+**Decision: delete the assertion; do not make the fixture deterministic and
+re-pin whatever falls out.** Making the pool deterministic *would* have made the
+assertion pass every time — and that is exactly the trap, because it would have
+laundered a lucky draw into a guarantee the algorithm does not offer. The
+assertion is replaced by `TestBandSpread`, an explicit inverse pair proving the
+real contract (the flag *reports* the bands in the selected set: True for a
+mixed pool, **False for a viable single-band one**), with the live-corpus
+measurement recorded in the docstring as a measurement rather than an assertion.
+
+**Deliberately not done: no band-spread rule was added to `assemble`.** Making
+placement guarantee two bands is a product change to the assembly contract, not
+a test fix, and MISSION §8b forbids speculative work. The corpus currently
+yields a mixed set anyway, so there is no user-visible gap to close.
+
+---
+
+## D4.21 — Every state view in the product overflowed the 380px breakpoint
+
+**Context.** The same chunk C gate run also failed `ui-thresholds`:
+`student-study-plan-week-refused` had horizontal overflow at 380px
+(scrollWidth 418 > clientWidth 380).
+
+**It is not a study-plan bug.** The offender is
+`web/src/components/ui/state-views.tsx`, the shared `StateView` — so the defect
+was in **every empty, error, offline and refusal state in the product**, and the
+S-24 refused state is merely the first one the audit registry drove a browser
+into at that width. Two causes, both fixed at the component:
+
+1. `mx-auto flex max-w-sm …` with **no `w-full`**: `max-w-sm` caps a box at
+   384px but does not make it shrink, so the element kept its intrinsic 384px —
+   4px wider than the 380px breakpoint before its own `px-6` is counted.
+2. The action row (`mt-2 flex items-center gap-2`) could not wrap, and `Button`
+   sets `whitespace-nowrap`. S-24's refused state carries two actions ("Take the
+   placement test" + "Rebuild this week's plan") which cannot sit side by side
+   on a phone. Now `flex-wrap` + `justify-center`. **Wrapping, not truncating**:
+   a clipped label hides what the button does, and this state's whole job is to
+   tell a student what to do next.
+
+Neither change affects wide viewports (`max-w-sm` still caps at 384, `flex-wrap`
+only engages when the row cannot fit), so no baseline is re-based.
+
+**The gate is the regression pin.** The responsive check at 380px is what caught
+it and is what would catch it again; a unit test asserting the presence of a
+utility class would restate the fix rather than test the behaviour.
+
+## D4.22 — Retiring the legacy `/api/student/plan` pair and `/api/student/onboarding` (P4.10 chunk D)
+
+**What was deleted.** `GET`/`POST /api/student/plan` and
+`POST /api/student/onboarding` on `lemely/web/routers/student.py`, plus their
+now-callerless schemas in `schemas_student.py` (`PlanSessionDTO`,
+`StudyPlanDTO`, `StudyPlanRequest`, `OnboardSliderInput`, `OnboardingRequest`,
+and the **legacy** `StudentProfileDTO`), the six route tests in
+`tests/test_web_student.py`, and the three dead TS interfaces in
+`web/src/lib/studentTypes.ts`. All three routes had zero frontend callers:
+P4.8 chunk A deleted `usePostOnboarding`, P4.10 chunk C deleted
+`useStudyPlan`/`usePostStudyPlan`.
+
+**The load-bearing part is the authz matrix, not the deletion.**
+`tests/test_authz_matrix.py` had **zero** coverage of either replacement
+surface — `/api/student/plan` (`STUDENT_GET_ROUTES` + `STUDENT_POST_ROUTES`)
+and `/api/student/onboarding` were the *only* authz-matrix representation of
+the study-plan and onboarding surfaces in the product. Deleting those three
+entries alone would have **silently shrunk the RBAC matrix and still passed all
+13 gates**, which MISSION §6 gate 6 forbids. The replacements were added in the
+same commit, and deliberately **not** symmetrically:
+
+* `/api/student/study-plan/*` carries a **router-level**
+  `require_role(Role.student)` (`routers/study_plan.py:50-52`), so the file's
+  existing representative-spread convention applies: one GET
+  (`/api/student/study-plan/0625`) + one POST (`""`) prove the router.
+* `/api/me/student-profile*` does **not**. `routers/me.py:57` is a bare
+  `APIRouter(prefix="/api/me")` with per-route guards, and two of its routes
+  (`/notification-preferences`, `/profile`) are deliberately role-agnostic — so
+  a spread would prove nothing about the routes it skipped. **All five**
+  student-only routes are listed individually. This needed two new
+  parametrized method families (`STUDENT_PATCH_ROUTES`, `STUDENT_PUT_ROUTES`);
+  the file previously only parametrized GET and POST for the student surface,
+  which is why a PATCH/PUT guard could never have been proven here before.
+
+The two explicit former-IDOR pins (`test_plan_post_ignores_any_caller_supplied_id`,
+`test_onboarding_uses_token_identity`) died with their routes. The property they
+pinned — identity is the token, never the payload — is structural on the
+replacements: `/api/me/student-profile*` takes no student id in any body, and
+`ApiModel` is `extra="forbid"`, so smuggling one is a 422.
+
+**Verified positively, not by absence of failure.** The deletion was confirmed
+against the running app's OpenAPI schema (both paths absent, all three
+replacements present, 88 routes), not merely by the suite staying green — a
+test file that no longer names a route cannot fail when the route survives.
+
+**Feature loss, recorded not smoothed over (extends D4.19).** The legacy
+`POST /api/student/plan` was the only *web* path to AI study-plan narration
+(`payload.narrate` → `StudyPlanNarrator`). `StudyPlanWeekDTO` has no
+`narrative` field, so nothing on the new surface replaces it. Per D4.19 this
+is **recorded, not restored** — restoring it would smuggle a schema field and a
+billed Gemini call into a deletion commit, and the narrator's "2-3 paragraph
+study guide" is exactly the vague-advice register MISSION §4 replaced with
+concrete sessions. Narration survives on the CLI (`cli.py --use-ai`), so
+**`lemely/io/study_plan_ai.py` is deliberately NOT deleted**. This belongs in
+DELIVERY.md's limitations, since MISSION §9 inventories the adaptive study plan.
+
+**Stale-note sweep, the trap this build has been bitten by twice.** Every
+docstring that described the deleted pair as live was rewritten in the same
+commit: `routers/student.py` module docstring, `schemas_study_plan.py:7-8`,
+`routers/study_plan.py:6`, `tests/test_web_student.py:9`,
+`web/src/lib/studentTypes.ts` (header + the P4.8 note that had said the backend
+was "left for P4.11 to formally retire"), `studyPlanTypes.ts:7`,
+`useStudentApi.ts:53`, `StudyPlanWeek.tsx:25`. Also `tests/conftest.py:50`,
+whose D4.3 billed-Gemini-guard rationale cited a test this chunk deletes — the
+**guard stays, the reference was fixed**, since a comment citing a deleted test
+is the same trap as `audit.mjs`'s own worked apology.
+`audit.mjs:89-91` and `data.ts:93-94` were checked and left alone: both
+describe the *frontend* route `/student/plan/:subjectCode`, which still exists,
+and chunk C's history, which is accurately told.
+
+## D4.23 — At-risk rule 2 gets its own class, not a fourth seat in the roster (P4.11 chunk D)
+
+**Context.** Rule 2 of the at-risk engine ("predicted >= 2 grades below target",
+D3.3) has never been pinned by a test. It could not be: there was no
+target-grade column until P4.3 shipped `student_subject_enrolments.target_grade`
+(D4.5), so `scripts/seed_e2e.py` *described* the rule in its docstring instead of
+seeding it. P4.3 deliberately deferred the seeding to P4.11, and chunk D is it.
+
+**The trap, found by measurement rather than hit.** The obvious implementation —
+a fourth student in the seeded class — breaks a spec that is not the one under
+test. `web/e2e/teacher-journey.spec.ts` hardcodes three figures derived from the
+roster: 3 students, a 69% average mark (the mean of 55/75/78), and 2 at risk. A
+fourth grade-bearing student moves all three. `seed_e2e.py`'s own comment at the
+review-queue item already names this trap and dodges it by reusing an existing
+attempt; this is the same trap one scenario later.
+
+**Two measurements decided it, and one corrected a note this build had been
+carrying.**
+
+1. Is `teacher-journey.spec.ts:48`'s "69%" class-scoped or teacher-wide?
+   **Class-scoped.** The locator is
+   `page.locator("main a").filter({ hasText: seedClass.name })` — a per-class
+   card on the overview, not a teacher-wide aggregate.
+2. Does the classes table's `classesCells.nth(3)` index by row position, making a
+   second class row unsafe unless it sorts last? **No — and STATE.md's note
+   claiming it did was wrong.** The row is selected by
+   `page.locator("tbody tr").filter({ hasText: seedClass.name })`; `.nth(3)`
+   indexes cells *within that already-filtered row*. Class ordering is irrelevant
+   to every assertion in that file.
+
+**Decision: a second class owned by the same teacher.** `teacher_at_risk_list`
+(`lemely/web/routers/teacher.py:1766`) walks `service.list_classes(...)` and each
+class's roster, so a second class keeps the student visible to T-06 while leaving
+every roster-derived number the roster's own. The class is named
+`"P4.11 Below-Target Class {run_tag}"` so it sorts after `"P3.10 Seed Class …"` —
+belt-and-braces against a *future* positional assertion, not the reason this
+works.
+
+**The fixture's shape is load-bearing in two ways that are easy to get wrong.**
+The account gets **one** attempt, recorded **recently**. One record means rule 1
+cannot fire (it needs a 3-record window); a recent date means rule 3 cannot fire
+(it needs 14 days of silence). Together they keep `expectedAtRiskReasons` exactly
+`["below_target"]` rather than a superset, which is also what keeps
+`at-risk-flags.spec.ts`'s one exhaustive assertion — `?reason=inactive` returns
+exactly `[inactive.userId]` — intact. The target is keyed on `SUBJECT_CODE`,
+matching the attempt's own metadata: `assess_at_risk` resolves a target only for
+the subject of the *latest grade-bearing record*, so a target on any other subject
+yields `NOT_EVALUABLE` and the seed would fail **silently, as an unflagged
+student**, not loudly. Grade `D` against target `A` is a 3-position gap, chosen to
+clear the 2-position threshold with room rather than sit exactly on it.
+
+**Both docstring defects in `scripts/seed_e2e.py` fixed in the same pass**, since
+correcting one and leaving the other makes the file contradict itself: the false
+"Rule 2 … cannot fire in Phase 3" paragraph, and `inactive` mislabelled "rule 2"
+when `lemely/core/at_risk.py` orders the rules declining / below-target /
+inactivity, making it rule **3**.
+
+**Non-vacuity was proven by inverting the fixture, three rounds, all reverted.**
+Target `A`→`C` (gap 1) failed exactly the three gap-dependent tests while the
+not-evaluable inverse stayed green; date 1→20 days failed **all five** (rule 3
+joins every assertion); the published gap 3→2 failed exactly the one test that
+publishes it. The five new tests live in `tests/test_seed_e2e.py`, beside the
+existing no-DB scenario proofs for the other three students.
+
+## D4.24 — The screenshot corpus gets corpus maths, or MISSION §4's visual check is vacuous (P4.11 chunk E)
+
+**Context.** MISSION §4 requires that question rendering — maths notation and
+diagrams — be *"verified visually in screenshots, not assumed"*. The obvious
+reading is that this is a pure evidence pass: `audit.mjs` already carries 48
+registry entries covering S-01..S-05 and S-20..S-25, so axe, Lighthouse and the
+screenshot corpus already run over every Phase-4 screen on every gate pass, and
+chunk E only has to look at the output and report the numbers.
+
+**That reading is wrong, and the reason is the finding.** The two screens that
+render a `question_bank.prompt` are S-04 (`QuizTaker`) and S-21 (practice
+set/export). Both draw their questions from the E2E seed, and **every stem the
+seed authored was pure ASCII on a single line** — `"Synthetic placement seed
+item {ref} for topic {topic!r} (…)"`. So the committed captures contained
+neither Unicode maths nor an embedded newline. "Inspect the captured stems and
+confirm the maths renders" against that corpus is a **vacuous pass**: it cannot
+fail, and it looks identical to a real one. Same shape as the trap chunk B's
+scoping caught, where an S-05 assertion passed on a string that also renders on
+`PlacementInvite`.
+
+**Decision: seed a corpus-verbatim maths sample, additively.** A new
+`PLACEMENT_MATHS_SAMPLE` is appended to the placement pool's prompts. Four
+constraints shaped it:
+
+1. **Verbatim from the real bank** (`0625_w23_qp_42#1c`), not authored by hand.
+   A screenshot of maths written to make the screenshot pass proves nothing
+   about how the product renders *corpus* text. It carries `×` and a
+   superscript `⁵` — the superscript is the harder rendering case, which is why
+   this pick beat the α/β/γ candidates — plus 4 newlines for `white-space:
+   pre-line` to preserve.
+2. **Figure-free, checked rather than eyeballed.** `_FIGURE_DEPENDENT_PATTERN`
+   is a *Postgres* POSIX regex and is not valid Python `re` (it raises
+   `PatternError` on `\m`), so it was evaluated **in Postgres** against the
+   assembled prompt, with a positive control (`"The diagram shows a circuit."`
+   → match) proving the check was not itself vacuous. A careless pick matching
+   that pattern would be dropped by chunk 0's `renderable_bank_filter`,
+   silently emptying the placement pool this seed exists to fill — and it
+   surfaces as a `no_eligible_questions` refusal on S-03, not as an error.
+3. **One site, not two.** `seed_e2e.py` has two `prompt=` sites; only the
+   placement pool reaches a captured screen. The teacher-quiz bank
+   (`build_quiz_bank_questions`, `source=generated`) feeds the P3.10 teacher
+   quiz and is rendered by no audited screen, so editing it would add corpus
+   text no screenshot ever looks at — the same vacuous shape, one level down.
+4. **Additive, keeping `{ref}`/`{topic!r}` and the honesty marker.** The
+   per-row interpolations are what keep prompts distinct;
+   `uq_question_bank_paper_question` fires if they collapse. The
+   `PLACEMENT_PROMPT_MARKER` substring check `is_placement_seed_prompt` relies
+   on is unaffected, so the seed still refuses to answer a question it did not
+   author.
+
+**Two tests pin it, and the split between them is deliberate.** One asserts on
+the *assembled* prompt (a test reading only the constant would still pass if
+the interpolation appending it were deleted); the other pins the provenance
+wording, because "verbatim from the corpus" is load-bearing evidence rather
+than decoration. Proven non-vacuous by inverting the product — removing the
+interpolation failed exactly the assembled-prompt test while the provenance
+test stayed green.
+
+**No KaTeX/MathJax, and that stays decided.** P4.8 measured the corpus at 21
+distinct non-ASCII characters across 273 stems with 1 LaTeX-shaped; plain
+Unicode is the real case and every browser renders it natively. The rendering
+risk here was always the newlines, not the glyphs.
+
+**`ruff` caught the glyph as an ambiguous character (RUF001/RUF003) — noqa'd at
+the two sites where it is load-bearing, with the prose reworded to avoid it
+elsewhere.** Swapping `×` for ASCII `x` would delete the exact thing the
+inspection exists to look at; the rationale matches the existing per-file
+ignore on `lemely/io/det/symbols.py` ("Α is Alpha, not A — that is the point").
+
+## D4.25 — The performance floor MISSION §11 claims is gated is not actually enforced (P4.11 chunk E)
+
+**Found by doing chunk E's verification honestly instead of assuming.** Chunk E
+was scoped as "verify and report the UI-gate half; do not rebuild it". Reading
+the numbers rather than the PASS line turned up a gap between what this build
+*says* it gates and what it *does*.
+
+`scripts/check_ui_gates.py` enforces exactly one Lighthouse threshold:
+`ACCESSIBILITY_FLOOR = 95`, per route. There is no performance check anywhere in
+it. But MISSION §11 states the standing automated checks include "Lighthouse
+thresholds (accessibility ≥ 95, **performance ≥ 80 on the student routes**)",
+and `audit.mjs:218` justifies not applying frugal browser flags to Lighthouse's
+browser on the grounds that "**the run gates on performance ≥ 80** — a cheaper
+score bought by throttling the browser we measure in would be a dishonest gate".
+Both describe an enforcement that does not exist.
+
+**It is not hypothetical — a student route is already under the floor.** This
+run's scores: `student-flashcards-due` **performance 79**, against MISSION §11's
+≥ 80 student-route floor. `ui-thresholds` passed anyway, because performance is
+never read. Four teacher routes are further down (`teacher-quiz-detail` 65,
+`teacher-class-roster` 73, `teacher-schemes` 75, `teacher-class-analytics` 77),
+but MISSION §11's floor only ever covered the student routes and Phase 3 already
+carries the teacher-route figure as a known limitation.
+
+**Decision: record it, do not fix it inside P4.11.** Adding the missing check is
+one constant and one loop, but it would turn `ui-thresholds` **red on a real
+79** — and the fix for that red is genuine frontend performance work on
+`student-flashcards-due`, which is not P4.11's scope and not something to start
+unattended at phase end. Shipping the check while quietly setting its floor to
+75 to keep the run green would be exactly the dishonest gate `audit.mjs`'s own
+comment warns against. So the number is reported, the discrepancy is recorded,
+and both go into the Phase-4 report and DELIVERY.md as a carried limitation.
+
+**The general shape is worth keeping**, because this build has now hit it three
+times (D3.20's never-typechecked `web/e2e/`, P4.8's screens with no registry
+entry, and this): *a gate that is believed to cover something it never loads
+reads exactly like a gate that does.* A PASS line is evidence only for what the
+gate actually asserts.
+
+**This run's UI-gate numbers, for the phase report:** 122 axe route-states with
+**zero violations at any severity**, 34 Lighthouse routes with **a11y floor 96**
+(`teacher-review`) and student-route a11y **100**, **zero** console errors,
+**zero** responsive/horizontal-scroll violations, screenshot corpus across 39
+screen directories.

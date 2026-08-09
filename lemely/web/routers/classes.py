@@ -54,11 +54,13 @@ from lemely.db.class_repo import (
     StudentNotSeatedError,
 )
 from lemely.db.models.enums import Role
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.web.deps import (
     AuthContext,
     get_at_risk_ack_service,
     get_class_service,
     get_history_store,
+    get_student_profile_service,
     require_role,
 )
 from lemely.web.routers.teacher import (
@@ -172,7 +174,12 @@ def _latest_activity(histories: list[StudentHistory]) -> str | None:
 
 
 def _class_row_to_summary(
-    row: ClassRow, roster: list[RosterEntry], history_store: HistoryStoreProtocol, *, now: datetime
+    row: ClassRow,
+    roster: list[RosterEntry],
+    history_store: HistoryStoreProtocol,
+    profile_service: StudentProfileService,
+    *,
+    now: datetime,
 ) -> ClassSummaryDTO:
     """Convert a :class:`ClassRow` + its roster into the wire summary DTO.
 
@@ -184,11 +191,20 @@ def _class_row_to_summary(
     (``rank_topic_weaknesses``) rather than a third topic aggregation; the
     mean stays in ``_average_for`` so the D3.9 grade-bearing filter has
     exactly one implementation and its regression tests keep guarding the
-    path this route actually takes.
+    path this route actually takes. Target grades (P4.3/D4.5) come from one
+    ``StudentProfileService.target_grades_for_many`` call over this class's
+    whole roster, not one query per student.
     """
     histories = [history_store.load(str(entry.student_id)) for entry in roster]
     average = _average_for(histories)
-    at_risk_count = sum(1 for h in histories if assess_at_risk(h, now=now).flags)
+    targets_by_student = profile_service.target_grades_for_many(
+        str(entry.student_id) for entry in roster
+    )
+    at_risk_count = sum(
+        1
+        for h in histories
+        if assess_at_risk(h, now=now, targets=targets_by_student.get(h.student_id)).flags
+    )
     ranked = rank_topic_weaknesses(histories)
     return ClassSummaryDTO(
         id=str(row.class_id),
@@ -208,6 +224,7 @@ def _class_row_to_detail(
     row: ClassRow,
     roster: list[RosterEntry],
     history_store: HistoryStoreProtocol,
+    profile_service: StudentProfileService,
     *,
     now: datetime,
     acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
@@ -228,9 +245,16 @@ def _class_row_to_detail(
     reads acknowledgement state (D3.5) identically to every other
     at-risk-serving surface, and so the "At risk" stat card and this row's
     per-student flags are evaluated against the same instant rather than a
-    fresh ``datetime.now(UTC)`` per student (the previous shape here).
+    fresh ``datetime.now(UTC)`` per student (the previous shape here). Target
+    grades (P4.3/D4.5) come from one bulk
+    ``StudentProfileService.target_grades_for_many`` call over the whole
+    roster, shared by both the per-row ``_student_row`` calls and the "At
+    risk" stat card below, rather than a query per student.
     """
     histories = [(entry, history_store.load(str(entry.student_id))) for entry in roster]
+    targets_by_student = profile_service.target_grades_for_many(
+        str(entry.student_id) for entry in roster
+    )
     # Grade distribution and the class mean below are grade/percentage claims,
     # so they see each student's latest *paper*, never their latest quiz
     # (``docs/quiz-model.md`` §5). ``all_records`` further down is deliberately
@@ -251,6 +275,7 @@ def _class_row_to_detail(
                 student_id=str(entry.student_id),
                 now=now,
                 acks=acks,
+                targets=targets_by_student.get(str(entry.student_id)),
             )
         )
         is not None
@@ -278,7 +303,13 @@ def _class_row_to_detail(
     # teacher would have no way to resolve. The per-row ``gradeAtRisk`` badge
     # (via ``_student_row``) is deliberately still the grade test — it is a
     # differently-named, differently-meaning signal.
-    at_risk = sum(1 for _, history in histories if assess_at_risk(history, now=now).flags)
+    at_risk = sum(
+        1
+        for _, history in histories
+        if assess_at_risk(
+            history, now=now, targets=targets_by_student.get(history.student_id)
+        ).flags
+    )
     ranked = rank_topic_weaknesses([history for _, history in histories])
     stats = [
         StatCardDTO(
@@ -393,6 +424,7 @@ def list_classes(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ClassListDTO:
     """Return every class the caller may see, scoped by role (D3.1).
 
@@ -408,7 +440,9 @@ def list_classes(
     summaries = []
     for row in rows:
         roster = service.roster(auth.user_id, auth.role, row.class_id)
-        summaries.append(_class_row_to_summary(row, roster, history_store, now=now))
+        summaries.append(
+            _class_row_to_summary(row, roster, history_store, profile_service, now=now)
+        )
     return ClassListDTO(classes=summaries)
 
 
@@ -419,6 +453,7 @@ def get_class(
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ClassDetailDTO:
     """Return mastery, grade distribution, and the roster for one class.
 
@@ -443,7 +478,7 @@ def get_class(
     acks = _acknowledgement_index(
         ack_service, auth, student_ids=[str(entry.student_id) for entry in roster]
     )
-    return _class_row_to_detail(row, roster, history_store, now=now, acks=acks)
+    return _class_row_to_detail(row, roster, history_store, profile_service, now=now, acks=acks)
 
 
 @router.get("/classes/{class_id}/analytics", response_model=ClassAnalyticsDTO)
@@ -491,6 +526,7 @@ def create_class(
     auth: Annotated[AuthContext, Depends(require_role(Role.teacher))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ClassSummaryDTO:
     """Create a class owned by the authenticated teacher.
 
@@ -507,7 +543,7 @@ def create_class(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ClassError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _class_row_to_summary(row, [], history_store, now=datetime.now(UTC))
+    return _class_row_to_summary(row, [], history_store, profile_service, now=datetime.now(UTC))
 
 
 @router.patch("/classes/{class_id}", response_model=ClassSummaryDTO)
@@ -517,6 +553,7 @@ def update_class(
     auth: Annotated[AuthContext, Depends(require_role(Role.teacher))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ClassSummaryDTO:
     """Rename a class and/or change its subject code. Owner-scoped."""
     try:
@@ -528,7 +565,7 @@ def update_class(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _class_row_to_summary(row, roster, history_store, now=datetime.now(UTC))
+    return _class_row_to_summary(row, roster, history_store, profile_service, now=datetime.now(UTC))
 
 
 @router.delete("/classes/{class_id}", status_code=204)

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict
 
 from lemely.web.schemas import ApiModel
 
@@ -242,43 +242,6 @@ class CorrectRequest(ApiModel):
     paperId: str
 
 
-# ── Study plan ────────────────────────────────────────────────────────────────
-
-
-class PlanSessionDTO(ApiModel):
-    """One scheduled study session (mirrors a flattened ``StudySession``)."""
-
-    topic: str
-    subjectCode: str
-    hours: float
-    focus: str
-
-
-class StudyPlanDTO(ApiModel):
-    """Payload for ``GET`` / ``POST`` ``/api/student/plan``.
-
-    ``narrative`` is populated only when an AI narrator ran (POST path with a
-    Gemini client); the GET path returns the deterministic schedule with a null
-    narrative.
-    """
-
-    studentId: str
-    weeklyHours: float
-    sessions: list[PlanSessionDTO]
-    narrative: str | None = None
-
-
-class StudyPlanRequest(ApiModel):
-    """Request body for ``POST /api/student/plan``."""
-
-    # The student is the authenticated caller (auth.user_id); the request carries
-    # no studentId (removing the former IDOR — see student router POST /student/plan).
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    weeklyHours: float = 11.0
-    narrate: bool = False
-
-
 # ── Standings ─────────────────────────────────────────────────────────────────
 
 
@@ -307,42 +270,3 @@ class StandingsDTO(ApiModel):
     subjectRanks: list[SubjectRankDTO]
     paperCount: int
     streakDays: int
-
-
-# ── Onboarding ────────────────────────────────────────────────────────────────
-
-
-class OnboardSliderInput(ApiModel):
-    """One onboarding slider reading (mirrors ``OnboardSlider`` inputs)."""
-
-    label: str
-    code: str = ""
-    pct: int
-
-
-class OnboardingRequest(ApiModel):
-    """Request body for ``POST /api/student/onboarding``."""
-
-    # The student is the authenticated caller (auth.user_id); the request carries
-    # no studentId (removing the former IDOR — see student router POST /student/onboarding).
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    gradeLevel: str = ""
-    school: str | None = None
-    weeklyHours: float
-    sliders: list[OnboardSliderInput] = Field(default_factory=list)
-
-
-class StudentProfileDTO(ApiModel):
-    """Payload returned by ``POST /api/student/onboarding`` (a StudentProfile).
-
-    Every field is data-backed: built directly from the slider inputs via
-    :class:`~lemely.core.study.StudentProfile`.
-    """
-
-    studentId: str
-    gradeLevel: str
-    subjects: list[str]
-    school: str | None = None
-    weeklyStudyHours: float
-    confidenceBySubject: dict[str, float]

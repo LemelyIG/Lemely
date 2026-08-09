@@ -36,11 +36,12 @@ from lemely.db.models import User
 from lemely.db.models.enums import (
     QuestionDifficulty,
     QuestionSource,
+    QuizKind,
     QuizStatus,
     QuizSubmissionStatus,
     Role,
 )
-from lemely.db.models.quizzes import QuestionBank, QuizSubmission
+from lemely.db.models.quizzes import QuestionBank, Quiz, QuizAssignment, QuizSubmission
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_repo import QuizService
 from lemely.db.quiz_taking_repo import (
@@ -204,6 +205,43 @@ def _enroll(
 
         session.add(ClassEnrollment(class_id=class_id, student_id=student))
     return student
+
+
+def _student_owned_quiz(
+    sm: sessionmaker[Session], student_id: uuid.UUID, kind: QuizKind, *, subject_code: str = "0625"
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """A student-owned, self-assigned quiz of any :class:`QuizKind` (P4.5).
+
+    Built by hand rather than through :class:`~lemely.db.practice_repo.PracticeService`
+    / :class:`~lemely.db.placement_repo.PlacementService` so this module can
+    exercise every ``kind`` — including ``placement``, which those services'
+    own tests already cover elsewhere — without importing either service.
+    Returns ``(quiz_id, assignment_id)``.
+    """
+    quiz_id = uuid.uuid4()
+    assignment_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            Quiz(
+                id=quiz_id,
+                teacher_id=None,
+                student_id=student_id,
+                kind=kind,
+                subject_code=subject_code,
+                title=f"{kind.value} set",
+                status=QuizStatus.assigned,
+            )
+        )
+        session.add(
+            QuizAssignment(
+                id=assignment_id,
+                quiz_id=quiz_id,
+                class_id=None,
+                student_id=student_id,
+                assigned_by=student_id,
+            )
+        )
+    return quiz_id, assignment_id
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +460,87 @@ def test_list_assigned_only_for_enrolled_classes(
 
     rows = taking_service.list_assigned(outsider)
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Discovery listing: the student-owned branch P4.5 adds (D4.6 §3's deferred site).
+# ---------------------------------------------------------------------------
+
+
+def test_list_assigned_includes_the_owners_own_practice_set(
+    taking_service: QuizTakingService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    _quiz_id, assignment_id = _student_owned_quiz(pg_sessionmaker, student, QuizKind.practice)
+
+    rows = taking_service.list_assigned(student)
+
+    assert len(rows) == 1
+    assert rows[0].assignment_id == assignment_id
+    assert rows[0].class_name is None
+    assert rows[0].teacher_name is None
+
+
+def test_list_assigned_excludes_another_students_practice_set(
+    taking_service: QuizTakingService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    owner = _seed_user(pg_sessionmaker, Role.student)
+    other = _seed_user(pg_sessionmaker, Role.student)
+    _student_owned_quiz(pg_sessionmaker, owner, QuizKind.practice)
+
+    assert taking_service.list_assigned(other) == []
+
+
+def test_list_assigned_includes_a_study_plan_set(
+    taking_service: QuizTakingService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    _quiz_id, assignment_id = _student_owned_quiz(pg_sessionmaker, student, QuizKind.study_plan)
+
+    rows = taking_service.list_assigned(student)
+
+    assert [r.assignment_id for r in rows] == [assignment_id]
+
+
+def test_list_assigned_still_excludes_a_placement_set_alongside_a_practice_set(
+    taking_service: QuizTakingService, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The allowlist is positive (D4.6 §3), pinned so it would fail under ``kind != 'teacher'``.
+
+    A student who owns both a placement quiz and a practice quiz must see
+    only the practice one. Under a negative-polarity implementation
+    (``kind != QuizKind.teacher``) the placement row would also satisfy the
+    predicate and leak into this list — this test fails exactly that way if
+    someone "simplifies" the allowlist later.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    _student_owned_quiz(pg_sessionmaker, student, QuizKind.placement)
+    _practice_quiz_id, practice_assignment_id = _student_owned_quiz(
+        pg_sessionmaker, student, QuizKind.practice
+    )
+
+    rows = taking_service.list_assigned(student)
+
+    assert [r.assignment_id for r in rows] == [practice_assignment_id]
+
+
+def test_list_assigned_merges_class_and_student_owned_rows(
+    quiz_service: QuizService,
+    class_service: ClassService,
+    taking_service: QuizTakingService,
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    teacher, class_id, class_assignment_id = _assigned_quiz(
+        quiz_service, class_service, pg_sessionmaker
+    )
+    student = _enroll(class_service, pg_sessionmaker, class_id)
+    _quiz_id, practice_assignment_id = _student_owned_quiz(
+        pg_sessionmaker, student, QuizKind.practice
+    )
+
+    rows = taking_service.list_assigned(student)
+
+    assert {r.assignment_id for r in rows} == {class_assignment_id, practice_assignment_id}
 
 
 # ---------------------------------------------------------------------------

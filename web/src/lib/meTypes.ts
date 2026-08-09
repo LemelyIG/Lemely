@@ -15,3 +15,86 @@ export interface Profile {
   email: string
   role: string
 }
+
+// ── Student onboarding profile (P4.3 chunk B, D4.5 / P4.8 chunk A) ─────────
+//
+// Mirrors `lemely/web/schemas_student_profile.py` field-for-field. Every
+// scalar on `StudentProfile` and every optional field on `SubjectEnrolment`
+// is nullable, matching the backend's D4.5 rule: a skipped S-02 answer is
+// `NULL`, never a defaulted sentinel. `StudentProfileUpdate` is a genuine
+// partial update — a key entirely absent from the object is left untouched
+// server-side (`JSON.stringify` drops `undefined`-valued keys, so building
+// the payload with only the touched keys present reproduces the backend's
+// `model_fields_set` semantics without a client-side "was this touched" flag
+// leaking into the wire format); an explicit `null` on a present key clears
+// that field.
+
+/** One (topic, rating) self-assessment pair (mirrors `ConfidenceRatingDTO`).
+ * `topic` is the P4.2 `"<code> <name>"` vocabulary shared with the bank and
+ * the weakness engine — never a free-typed string. `rating` is 1..5. */
+export interface ConfidenceRating {
+  topic: string
+  rating: number
+}
+
+/** One subject enrolment, with its papers and confidence ratings (S-01).
+ * Mirrors `SubjectEnrolmentDTO`. */
+export interface SubjectEnrolment {
+  subjectCode: string
+  targetGrade: string | null
+  sessionMonth: string | null
+  sessionYear: number | null
+  papers: number[]
+  confidenceRatings: ConfidenceRating[]
+}
+
+/** The scalar onboarding fields (S-02) — mirrors `StudentProfileDTO`. */
+export interface StudentProfile {
+  qualificationLevel: string | null
+  gradeLevel: string | null
+  schoolName: string | null
+  hasExternalLessons: boolean | null
+  weeklyStudyHours: number | null
+  onboardingCompletedAt: string | null
+}
+
+/** `GET /api/me/student-profile` response (mirrors `StudentProfileWithEnrolmentsDTO`). */
+export interface StudentProfileWithEnrolments {
+  profile: StudentProfile
+  enrolments: SubjectEnrolment[]
+}
+
+/** Body for `PATCH /api/me/student-profile` (mirrors `StudentProfileUpdateDTO`).
+ * Build with only the keys the student actually touched present — an
+ * omitted key must never be sent as `undefined`, since a defaulted/sent
+ * sentinel is exactly what D4.5 forbids. */
+export interface StudentProfileUpdate {
+  qualificationLevel?: string | null
+  gradeLevel?: string | null
+  schoolName?: string | null
+  hasExternalLessons?: boolean | null
+  weeklyStudyHours?: number | null
+}
+
+/** One item of a `PUT /api/me/student-profile/enrolments` body (mirrors
+ * `EnrolmentUpsertDTO`). Every field here is the enrolment's full desired
+ * state, not a patch — `papers: null`/omitted means "no papers". */
+export interface EnrolmentUpsert {
+  subjectCode: string
+  targetGrade: string | null
+  sessionMonth: string | null
+  sessionYear: number | null
+  papers: number[] | null
+}
+
+/** Body for `PUT /api/me/student-profile/enrolments` (mirrors `EnrolmentListRequestDTO`). */
+export interface EnrolmentListRequest {
+  enrolments: EnrolmentUpsert[]
+}
+
+/** Body for `PUT /api/me/student-profile/enrolments/{subjectCode}/confidence-ratings`
+ * (mirrors `ConfidenceRatingsUpdateDTO`). Full-replace: a topic omitted from
+ * `ratings` has its existing rating deleted. */
+export interface ConfidenceRatingsUpdate {
+  ratings: Record<string, number>
+}

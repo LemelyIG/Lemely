@@ -26,6 +26,7 @@ from lemely.db.models.enums import (
     MembershipRole,
     NotificationType,
     PlanInterval,
+    QualificationLevel,
     QuestionDifficulty,
     QuestionSource,
     QuizQuestionStatus,
@@ -41,6 +42,14 @@ from lemely.db.models.enums import (
     UploadStatus,
     XpSource,
 )
+from lemely.db.models.flashcards import (
+    CardSource,
+    DeckOrigin,
+    Flashcard,
+    FlashcardDeck,
+    FlashcardReview,
+)
+from lemely.db.models.flashcards import ReviewGrade as FlashcardReviewGrade
 from lemely.db.models.ops import (
     Announcement,
     AtRiskAcknowledgement,
@@ -49,6 +58,12 @@ from lemely.db.models.ops import (
     ReviewQueueItem,
 )
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat
+from lemely.db.models.profiles import (
+    StudentConfidenceRating,
+    StudentEnrolmentPaper,
+    StudentProfile,
+    StudentSubjectEnrolment,
+)
 from lemely.db.models.quizzes import (
     QuestionBank,
     Quiz,
@@ -57,6 +72,9 @@ from lemely.db.models.quizzes import (
     QuizQuestion,
     QuizSubmission,
 )
+from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
+from lemely.db.models.study_plan import StudyPlanActivityType
+from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
 from lemely.db.models.users import Device, ParentChildLink, User
 
 
@@ -73,9 +91,12 @@ def import_all_models() -> None:
         attempts,
         billing,
         engagement,
+        flashcards,
         ops,
         orgs,
+        profiles,
         quizzes,
+        study_plan,
         users,
     )
 
@@ -89,11 +110,17 @@ __all__ = [
     # Enums and mixins
     "AttemptOrigin",
     "BoundarySource",
+    "CardSource",
     "ClassEnrollment",
     "ConfidenceBand",
+    "DeckOrigin",
     "Device",
     "DifficultySource",
     "ExamBoard",
+    "Flashcard",
+    "FlashcardDeck",
+    "FlashcardReview",
+    "FlashcardReviewGrade",
     "MarkScheme",
     "MarkerSource",
     "MembershipRole",
@@ -104,6 +131,7 @@ __all__ = [
     "ParentChildLink",
     "PlanInterval",
     "PlanTier",
+    "QualificationLevel",
     "QuestionBank",
     "QuestionDifficulty",
     "QuestionResult",
@@ -127,6 +155,13 @@ __all__ = [
     "SeatStatus",
     "SessionMonth",
     "Streak",
+    "StudentConfidenceRating",
+    "StudentEnrolmentPaper",
+    "StudentProfile",
+    "StudentSubjectEnrolment",
+    "StudyPlanActivityType",
+    "StudyPlanSessionTable",
+    "StudyPlanTable",
     "Subject",
     "Subscription",
     "SubscriptionStatus",

@@ -9,15 +9,11 @@ import { request, streamActivity } from "@/lib/api"
 import type { LinkedParent, ParentLinkList } from "@/lib/parentTypes"
 import type {
   CorrectRequest,
-  OnboardingRequest,
   Overview,
   Result,
   Standings,
   StudentCorrectFrame,
-  StudentProfile,
   StudentUploadResponse,
-  StudyPlan,
-  StudyPlanRequest,
   Subject,
 } from "@/lib/studentTypes"
 
@@ -52,22 +48,19 @@ export function useResult(paperId: string): UseQueryResult<Result, Error> {
   })
 }
 
-export function useStudyPlan(): UseQueryResult<StudyPlan, Error> {
-  return useQuery({
-    queryKey: ["student", "plan"],
-    queryFn: () => request<StudyPlan>("/student/plan"),
-  })
-}
-
-export function usePostStudyPlan(): UseMutationResult<StudyPlan, Error, StudyPlanRequest> {
-  return useMutation({
-    mutationFn: (body: StudyPlanRequest) =>
-      request<StudyPlan>("/student/plan", {
-        method: "POST",
-        body: JSON.stringify(body satisfies StudyPlanRequest),
-      }),
-  })
-}
+/*
+ * `useStudyPlan`/`usePostStudyPlan` lived here and are gone as of P4.10 chunk
+ * C. They wrapped the legacy `GET`/`POST /api/student/plan` pair, which
+ * rebuilt a plan from scratch on every request and never persisted it — so a
+ * plan could not be completed, regenerated, or compared against last week.
+ * P4.10 chunk A rewrote S-24 onto the real, persisted
+ * `/api/student/study-plan` backend (`lib/hooks/useStudyPlanApi.ts`), leaving
+ * these two with no caller at all.
+ *
+ * The backend routes themselves were removed separately in chunk D (D4.22),
+ * deliberately not inside chunk C, so that a gate failure there stayed
+ * attributable to the frontend diff.
+ */
 
 /*
  * Parent links (D3.11). The student is the initiator on both ends — a link row
@@ -115,16 +108,6 @@ export function useStandings(): UseQueryResult<Standings, Error> {
   return useQuery({
     queryKey: ["student", "standings"],
     queryFn: () => request<Standings>("/student/standings"),
-  })
-}
-
-export function usePostOnboarding(): UseMutationResult<StudentProfile, Error, OnboardingRequest> {
-  return useMutation({
-    mutationFn: (body: OnboardingRequest) =>
-      request<StudentProfile>("/student/onboarding", {
-        method: "POST",
-        body: JSON.stringify(body satisfies OnboardingRequest),
-      }),
   })
 }
 

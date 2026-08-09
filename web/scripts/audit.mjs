@@ -36,9 +36,62 @@
  *     entries carry more than one `states[]` capture (see below), so the
  *     actual number of axe passes this run performs is higher than 22 — see
  *     `main()`'s end-of-run log for the honest total.
- * Deliberately still NOT in this registry (P4/P5 screens still on mock data):
- *   /student/subject/:code, /student/plan, /student/board, /student/onboard,
- *   /student/landing, /student/directions.
+ *   - 6 entries / 7 captured states added by P4.8 chunk C for the Phase-4
+ *     onboarding/placement screens, on four distinct seeded student accounts:
+ *     S-01, S-02 (twice — the questionnaire, AND a *skipped* question, which
+ *     is where D4.5's "a skipped answer is NULL and must not render as an
+ *     answer the student gave" is actually visible), S-03 twice (available
+ *     AND the honest `no_questions` refusal), S-04, S-05. These shipped in
+ *     P4.8 chunks A/B with no registry entry at all, so `ui-thresholds`
+ *     passed over them without ever loading one.
+ *     Entry order matters for the two that share the `unonboarded` account:
+ *     S-01 claims a genuinely first-run state (no profile, no enrolment) and
+ *     S-02's drive really persists an enrolment, so S-01 must stay ahead of
+ *     it in this array.
+ *   - 13 entries / 14 captured states added by P4.9 chunk C for the practice
+ *     and flashcard screens (S-20..S-23), on three distinct seeded student
+ *     accounts (`seed.practice.*` — `active`/`settled`/`bare`, none wearing
+ *     two hats: a student with recorded weaknesses cannot also demonstrate
+ *     the honest `no_weaknesses` refusal, and a student with cards due today
+ *     cannot also demonstrate "nothing due today"): S-20 three times (the
+ *     default `insufficient_pool` shortfall — the normal state given this
+ *     seed's small bank, not a corner case — the honest `no_questions`
+ *     refusal on 0580, and `no_weaknesses` driven live through the "Weak
+ *     topics only" checkbox), S-21 five times (working view, `not_submitted`,
+ *     `marking`, `marked`, and print/export — three distinct practice sets
+ *     on the `active` account, per `scripts/seed_e2e.py`'s `practice` block),
+ *     S-22 four times (cards due today, `settled`'s "nothing due", `bare`'s
+ *     genuinely empty deck list, and `bare`'s free `no_weaknesses` 409 driven
+ *     live through the "Generate from a weakness" mode), S-23 twice (a card
+ *     front with the reveal + four grade buttons — never graded, since
+ *     grading is irreversible and would destroy this capture's own
+ *     repeatability — and `settled`'s "nothing due"). These shipped in P4.9
+ *     chunks A/B with no registry entry at all, the same vacuous-pass shape
+ *     P4.8 chunk C's own header note warns about.
+ *   - 6 entries / 6 captured states added by P4.10 chunk C for the study-plan
+ *     screens (S-24/S-25), composing accounts that already exist rather than
+ *     seeding new ones: S-24 four times (the populated week on `active`, the
+ *     persisted `no_signal` refusal on `settled`, the ungenerated week on
+ *     `bare`, and the fully-completed week on
+ *     `placement.students.completed`) and S-25 twice (the session detail on
+ *     its *provable* recorded-weakness rationale, and a session id that is
+ *     not in the current week). The first three S-24 states are mutually
+ *     exclusive per account per week by construction — see the session block
+ *     below — which is why they cannot be collapsed onto one account, and the
+ *     fourth is on a different account again because completing `active`'s
+ *     sessions would destroy the populated-week capture.
+ * Deliberately still NOT in this registry (P5 screens still on mock data):
+ *   /student/subject/:code, /student/board, /student/landing,
+ *   /student/directions.
+ *   (`/student/onboard` was on this list until P4.8 chunk C — chunk A made it
+ *   real, and the list had gone stale, which is precisely how a route stays
+ *   unaudited: the exclusion note outlives the exclusion.
+ *   It happened a second time: `/student/plan` sat on this list through
+ *   P4.10 chunks A and B, which rewrote it onto the real
+ *   `/api/student/study-plan` backend and moved it to `/student/plan/:code`.
+ *   Removed in chunk C, along with the same claim in the run's own closing
+ *   `log()` — fixing only the comment would have left the false statement in
+ *   the operator-facing output, where it is actually read.)
  * Note "no *populated* fixture" is NOT on its own a reason to leave a route
  * out: /teacher/grading and /teacher/schemes are audited in their genuinely
  * empty state, because an unlooked-at route is exactly how this gate became
@@ -271,6 +324,99 @@ async function clickButtonByText(page, pattern, timeout = 15_000) {
   const element = handle.asElement()
   if (!element) throw new Error(`No enabled button matching ${pattern}`)
   await element.click()
+}
+
+/**
+ * Click an `aria-pressed` toggle button ONLY if it is not already pressed.
+ *
+ * This exists because `visitRoute` drives a state once but navigates to it
+ * four times (three breakpoints + axe), so any drive written into `ready`
+ * runs repeatedly against an account whose server-side state the previous
+ * run already changed. S-01's "Continue" really does `PUT /api/me/
+ * student-profile/enrolments`, and Onboarding.tsx's seeding effect restores
+ * that enrolment on the next load — so an unconditional click would
+ * *deselect* Physics on pass two, leaving `Continue` disabled
+ * (`SubjectsStep.tsx`: `disabled={selectedCount === 0}`) and hanging the run
+ * on a timeout that reads as a product defect rather than a harness one.
+ *
+ * `aria-pressed` is what distinguishes the two cases, and it is on the real
+ * button already (`SubjectsStep.tsx:92`) for accessibility reasons — this
+ * reads the product's own state, it does not add a test-only hook.
+ */
+async function pressToggleOnce(page, pattern, timeout = 15_000) {
+  const handle = await page.waitForFunction(
+    (source) => {
+      const re = new RegExp(source, "i")
+      return (
+        Array.from(document.querySelectorAll("button[aria-pressed]")).find(
+          (b) => re.test(b.textContent || "") && !b.disabled,
+        ) ?? null
+      )
+    },
+    { timeout },
+    pattern,
+  )
+  const element = handle.asElement()
+  if (!element) throw new Error(`No enabled aria-pressed button matching ${pattern}`)
+  const alreadyPressed = await element.evaluate((b) => b.getAttribute("aria-pressed") === "true")
+  if (!alreadyPressed) await element.click()
+  await page.waitForFunction(
+    (source) => {
+      const re = new RegExp(source, "i")
+      const b = Array.from(document.querySelectorAll("button[aria-pressed]")).find((el) =>
+        re.test(el.textContent || ""),
+      )
+      return Boolean(b) && b.getAttribute("aria-pressed") === "true"
+    },
+    { timeout },
+    pattern,
+  )
+}
+
+/**
+ * Check a native `<input type="checkbox">` (C-14, `components/ui/checkbox.tsx`)
+ * ONLY if it is not already checked, keyed on the visible `<label>` text
+ * beside it — same idempotent shape as `pressToggleOnce`, for the one
+ * control that renders as a real checkbox input rather than an
+ * `aria-pressed` button (S-20's "Weak topics only").
+ *
+ * `visitRoute` re-navigates for every breakpoint plus axe, so any drive
+ * written into `ready` runs repeatedly. The state this checkbox controls is
+ * local React state (`useState`, `PracticeGenerator.tsx`) rather than
+ * anything the server persists, and every `page.goto` is a real full
+ * navigation that remounts the app from scratch — so in practice a plain
+ * click would be idempotent-safe here too, but this mirrors
+ * `pressToggleOnce`'s defensive check-before-click shape rather than relying
+ * on that distinction staying true.
+ */
+async function pressCheckboxOnce(page, labelPattern, timeout = 15_000) {
+  const handle = await page.waitForFunction(
+    (source) => {
+      const re = new RegExp(source, "i")
+      const label = Array.from(document.querySelectorAll("label")).find((l) =>
+        re.test(l.textContent || ""),
+      )
+      return label ? label.querySelector('input[type="checkbox"]') : null
+    },
+    { timeout },
+    labelPattern,
+  )
+  const element = handle.asElement()
+  if (!element) throw new Error(`No checkbox found under a label matching ${labelPattern}`)
+  const alreadyChecked = await element.evaluate((el) => el.checked)
+  if (!alreadyChecked) await element.click()
+  await page.waitForFunction(
+    (source) => {
+      const re = new RegExp(source, "i")
+      const label = Array.from(document.querySelectorAll("label")).find((l) =>
+        re.test(l.textContent || ""),
+      )
+      const input = label ? label.querySelector('input[type="checkbox"]') : null
+      return Boolean(input) && input.checked
+    },
+    { timeout },
+    labelPattern,
+  )
 }
 
 /** Full-page capture at `$LEMELY_REPORT_DIR/screens/<screenId>/<state>--<bp>.png`
@@ -569,6 +715,22 @@ function errorStateHooks(urlSubstring) {
   }
 }
 
+/**
+ * Drives Onboarding.tsx's real S-01 -> S-02 transition: select Physics, then
+ * Continue (which really calls `PUT /api/me/student-profile/enrolments`).
+ *
+ * Idempotent by construction, because it is called from `ready` and `ready`
+ * runs after EVERY navigation `visitRoute` makes for a state — see
+ * `pressToggleOnce`. Physics specifically because it is the one subject with
+ * a viable placement bank (0625), so the S-02 -> S-03 exit this drive sets up
+ * lands on the available invite rather than the refusal.
+ */
+async function driveToQuestionnaire(page) {
+  await waitForText(page, "What are you studying?")
+  await pressToggleOnce(page, "Physics")
+  await clickButtonByText(page, "^continue$")
+}
+
 /** Drives ReviewItem.tsx's real "Adjust marks instead" -> "Save correction"
  * flow so T-08's `teacher-corrected` state (`isOverridden`) is reached
  * through the actual UI and `ReviewService.resolve`, never a stubbed
@@ -748,6 +910,85 @@ function buildRouteRegistry(seed) {
     userId: seed.emptyParent.userId,
     role: "parent",
   }
+  // ── P4.8 chunk C · the four S-01..S-05 sessions ──────────────────────────
+  // Four DISTINCT student accounts, one per state, because
+  // `PlacementService.availability` excludes a student's own prior placement
+  // questions for the same subject (D4.6 §4): reusing one account across
+  // "invite available" and "already completed" would report the pool
+  // exhausted on the very screen meant to show it available. The seed builds
+  // them that way deliberately — see scripts/seed_e2e.py's `placement` block.
+  const placementUnonboardedSession = {
+    accessToken: seed.placement.students.unonboarded.accessToken,
+    userId: seed.placement.students.unonboarded.userId,
+    role: "student",
+  }
+  const placementAvailableSession = {
+    accessToken: seed.placement.students.available.accessToken,
+    userId: seed.placement.students.available.userId,
+    role: "student",
+  }
+  const placementInProgressSession = {
+    accessToken: seed.placement.students.inProgress.accessToken,
+    userId: seed.placement.students.inProgress.userId,
+    role: "student",
+  }
+  const placementCompletedSession = {
+    accessToken: seed.placement.students.completed.accessToken,
+    userId: seed.placement.students.completed.userId,
+    role: "student",
+  }
+  const placementSubject = seed.placement.subjectCode
+  const placementTestUrl = `/student/placement/test/${seed.placement.students.inProgress.assignmentId}`
+  const placementResultUrl = `/student/placement/result/${seed.placement.students.completed.assignmentId}`
+
+  // ── P4.9 chunk C · the S-20..S-23 sessions ───────────────────────────────
+  // Three DISTINCT student accounts, none wearing two hats: a student with
+  // recorded weaknesses cannot also demonstrate the honest `no_weaknesses`
+  // refusal, and a student with cards due today cannot also demonstrate
+  // "nothing due today". The seed builds them that way deliberately — see
+  // scripts/seed_e2e.py's `practice` block.
+  const practiceActiveSession = {
+    accessToken: seed.practice.students.active.accessToken,
+    userId: seed.practice.students.active.userId,
+    role: "student",
+  }
+  const practiceSettledSession = {
+    accessToken: seed.practice.students.settled.accessToken,
+    userId: seed.practice.students.settled.userId,
+    role: "student",
+  }
+  const practiceBareSession = {
+    accessToken: seed.practice.students.bare.accessToken,
+    userId: seed.practice.students.bare.userId,
+    role: "student",
+  }
+  const practiceSubject = seed.practice.subjectCode
+
+  // ── P4.10 chunk C · the S-24/S-25 sessions ───────────────────────────────
+  // S-24 has four states and two of them provably cannot share an account:
+  // `generated: false` (no plan row this ISO week) and `available: false /
+  // no_signal` (a plan row that IS a persisted refusal) are mutually exclusive
+  // per account per week. The three practice accounts above already split that
+  // way, so no new account is created. The fourth state — a week with every
+  // session complete — goes on `placement.students.completed`, because
+  // completing `active`'s sessions would destroy the populated-week capture.
+  const planCompleteSession = {
+    accessToken: seed.placement.students.completed.accessToken,
+    userId: seed.placement.students.completed.userId,
+    role: "student",
+  }
+  const studyPlanSubject = seed.studyPlan.subjectCode
+  const studyPlanWeekUrl = `/student/plan/${studyPlanSubject}`
+  const studyPlanSessionUrl = `/student/plan/${studyPlanSubject}/session/${seed.studyPlan.activeSessionId}`
+  // A well-formed id that is deliberately not in anyone's current week. The
+  // route must reach S-25's `notInCurrentWeek` arm, not a 422 on the id shape.
+  const studyPlanAbsentSessionUrl = `/student/plan/${studyPlanSubject}/session/00000000-0000-4000-8000-000000000000`
+  const practiceUnsubmittedSetUrl = `/student/practice/set/${seed.practice.students.active.unsubmittedAssignmentId}`
+  const practiceUnsubmittedResultUrl = `/student/practice/result/${seed.practice.students.active.unsubmittedAssignmentId}`
+  const practiceMarkingResultUrl = `/student/practice/result/${seed.practice.students.active.markingAssignmentId}`
+  const practiceMarkedResultUrl = `/student/practice/result/${seed.practice.students.active.markedAssignmentId}`
+  const practiceMarkedPrintUrl = `/student/practice/print/${seed.practice.students.active.markedAssignmentId}`
+
   const classId = seed.class.classId
   // The parent's one linked child (D3.11) is the "declining" student — same
   // account for both sessions above, just wearing a different role's token.
@@ -1131,6 +1372,513 @@ function buildRouteRegistry(seed) {
       session: decliningStudentSession,
       ready: (page) => waitForText(page, "Your parents"),
       authed: true,
+    },
+    // ── Student onboarding + placement (P4.8 chunk C · S-01..S-05) ────────
+    // These five screens shipped in P4.8 chunks A and B with NO registry
+    // entry, so `ui-thresholds` was green over them without ever loading
+    // one — the same vacuous pass this file's header warns about, and the
+    // reason the header's "deliberately NOT in this registry" list is
+    // corrected above rather than left to rot.
+    {
+      // S-01 · the subjects step, on a genuinely un-onboarded account (no
+      // profile, no enrolment) — the real first-run state, not a reset one.
+      screenId: "S-01",
+      slug: "student-onboard-subjects",
+      path: "/student/onboard",
+      session: placementUnonboardedSession,
+      ready: (page) => waitForText(page, "What are you studying?"),
+      authed: true,
+    },
+    {
+      // S-02 · the questionnaire step. Only reachable by actually completing
+      // S-01, so the drive works the real UI (pick Physics, Continue) rather
+      // than deep-linking a state the product cannot get into on its own.
+      // `lighthouse: false` — these are further states of the onboarding
+      // *screen*, not further routes to score.
+      //
+      // The drive lives in `ready`, NOT in `setup`, and that is load-bearing:
+      // `visitRoute` calls `setup` once but then calls `gotoReady` again for
+      // every breakpoint and once more for axe, and `Onboarding.tsx` holds
+      // `wizardStep` in component state that remounts as `"subjects"` on
+      // every load (its seeding effect restores the *answers* from the
+      // server but never which step you were on). A `setup`-driven wizard
+      // state is therefore undone by the first reload, and every capture
+      // after the first would have been the subjects step wearing the
+      // questionnaire's slug. See `pressToggleOnce` for why re-running the
+      // drive against an account the previous pass already mutated is safe.
+      screenId: "S-02",
+      path: "/student/onboard",
+      session: placementUnonboardedSession,
+      authed: true,
+      states: [
+        {
+          state: "questionnaire",
+          slug: "student-onboard-questionnaire",
+          lighthouse: false,
+          ready: async (page) => {
+            await driveToQuestionnaire(page)
+            await waitForText(page, "Which school")
+          },
+        },
+        {
+          // S-02 · a question the student has SKIPPED, which is the one
+          // rendering D4.5 turns on and the one the entry above does not
+          // reach: `SkippableSlider` shows `unsetLabel` ("Not set") while
+          // the thumb sits at `min`, because an untouched field is `NULL`
+          // and must never render as an answer the student gave. A
+          // regression to `formatValue(min)` would print "0 hours/week" —
+          // invented precision that screenshots perfectly clean — so this
+          // state is captured on its own rather than trusted to the unit
+          // tests. Reached by skipping the two questions before it, which
+          // is also how a real student gets here.
+          state: "questionnaire-skipped",
+          slug: "student-onboard-questionnaire-skipped",
+          lighthouse: false,
+          ready: async (page) => {
+            await driveToQuestionnaire(page)
+            await waitForText(page, "Which school")
+            await clickButtonByText(page, "^skip$")
+            await waitForText(page, "outside school")
+            await clickButtonByText(page, "^skip$")
+            await waitForText(page, "hours can you study each week")
+            // The assertion, not decoration: the slider reports "Not set",
+            // not the value its thumb is resting on.
+            await waitForText(page, "Not set")
+          },
+        },
+      ],
+    },
+    {
+      // S-03 · placement invite, AVAILABLE. 0625 is the only subject with a
+      // viable bank, and the seed guarantees it (a pinned Paper-2 bank of its
+      // own MCQ rows — see scripts/seed_e2e.py's PLACEMENT_PAPER_NUMBER).
+      screenId: "S-03",
+      slug: "student-placement-invite",
+      path: `/student/placement/${placementSubject}`,
+      session: placementAvailableSession,
+      ready: (page) => waitForText(page, "Get a real starting picture"),
+      authed: true,
+    },
+    {
+      // S-03 · placement invite, UNAVAILABLE — and this is not a second-class
+      // capture. 0580/0606 genuinely have zero ingested questions (D4.6 §5),
+      // so the honest `no_questions` refusal is real product behaviour P4.8
+      // exists to keep on screen, and auditing only the happy path would be
+      // the vacuous pass again. Same screen, own session-free state.
+      screenId: "S-03",
+      path: "/student/placement/0580",
+      session: placementAvailableSession,
+      authed: true,
+      states: [
+        {
+          state: "unavailable",
+          slug: "student-placement-invite-unavailable",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "No placement test yet for this subject"),
+        },
+      ],
+    },
+    {
+      // S-04 · placement test in progress — the product's FIRST question-
+      // rendering + answer-input surface, and the one that owns the answer-
+      // persistence behaviour four separate defects were fixed in (D4.15).
+      // The seed leaves this assignment created and never submitted.
+      screenId: "S-04",
+      slug: "student-placement-test",
+      path: placementTestUrl,
+      session: placementInProgressSession,
+      ready: (page) => waitForText(page, "Question 1 of"),
+      authed: true,
+    },
+    {
+      // S-05 · placement result, really marked: the seed takes and submits
+      // this one through the unmodified quiz take/submit/mark path, with
+      // exactly one deliberately wrong answer, so the topic breakdown is
+      // backed by a real WeaknessRecord rather than a stubbed payload.
+      //
+      // `ready` deliberately does NOT match "starting picture": that phrase
+      // renders on PlacementInvite too ("Get a real starting picture in X"),
+      // so it would have been satisfied by the invite screen and this entry
+      // would have passed without ever loading the result — the vacuous pass
+      // again, on the one screen whose whole point is the honesty framing.
+      // The string below is unique to PlacementResult's *marked* branch and
+      // is the UI-spec framing itself (a baseline, never a grade), so a
+      // regression that dropped it would fail this gate rather than hide.
+      screenId: "S-05",
+      slug: "student-placement-result",
+      path: placementResultUrl,
+      session: placementCompletedSession,
+      ready: (page) => waitForText(page, "This is a baseline, not a grade"),
+      authed: true,
+    },
+    // ── Student practice + flashcards (P4.9 chunk C · S-20..S-23) ─────────
+    // These four screens shipped in P4.9 chunks A and B with NO registry
+    // entry, so `ui-thresholds` was green over them without ever loading
+    // one — the same vacuous pass P4.8 chunk C's own header note warns
+    // about. Every `ready` string below was grepped across `web/src` before
+    // use to confirm it targets the branch it claims (see the P4.9 chunk C
+    // report for the grep counts); where a heading's literal copy is
+    // deliberately shared across two screens (`"No weak topics recorded
+    // yet"`, S-20 and S-22's own `no_weaknesses` refusals), the two land on
+    // different routes so there is no route-collision risk, only shared
+    // vocabulary.
+    {
+      // S-20 · practice generator, `active` session, DEFAULT route state.
+      // `insufficient_pool` is not a corner case here — it is the state this
+      // seed's small hermetic bank reaches at S-20's own frontend default
+      // count (10), reachable by URL alone with no created set required
+      // (`PracticeGenerator.tsx`'s shortfall panel renders off the live
+      // preview query). Topic chips nested by syllabus group and the
+      // weak-topic prefill (from set A's one deliberate wrong answer) are
+      // both on this same render — see scripts/seed_e2e.py's `practice`
+      // block for how set A produces the WeaknessRecord this prefill reads.
+      screenId: "S-20",
+      slug: "student-practice-generator",
+      path: `/student/practice/${practiceSubject}`,
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Only \\d+ of \\d+ requested questions match"),
+      authed: true,
+    },
+    {
+      // S-20 · the honest `no_questions` refusal — 0580 genuinely has zero
+      // ingested questions, same real product behaviour P4.8 chunk C's S-03
+      // capture already established for placement.
+      screenId: "S-20",
+      path: "/student/practice/0580",
+      session: practiceActiveSession,
+      authed: true,
+      states: [
+        {
+          state: "no-questions",
+          slug: "student-practice-generator-no-questions",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "No practice material for this filter set"),
+        },
+      ],
+    },
+    {
+      // S-20 · the honest `no_weaknesses` refusal, on the `bare` account
+      // that has none. Driven live through the real "Weak topics only"
+      // checkbox (`pressCheckboxOnce` — tolerant of already being checked,
+      // since `visitRoute` re-navigates this same drive four times) rather
+      // than deep-linked, because the refusal only renders once that filter
+      // is actually applied.
+      screenId: "S-20",
+      path: `/student/practice/${practiceSubject}`,
+      session: practiceBareSession,
+      authed: true,
+      states: [
+        {
+          state: "no-weaknesses",
+          slug: "student-practice-generator-no-weaknesses",
+          lighthouse: false,
+          ready: async (page) => {
+            await pressCheckboxOnce(page, "Weak topics only")
+            await waitForText(page, "No weak topics recorded yet")
+          },
+        },
+      ],
+    },
+    {
+      // S-21 · working view — the reusable QuizTaker, same component S-04
+      // already Lighthouse-scores, hence `lighthouse: false` here. Set B is
+      // created but never touched.
+      screenId: "S-21",
+      path: practiceUnsubmittedSetUrl,
+      session: practiceActiveSession,
+      authed: true,
+      states: [
+        {
+          state: "working",
+          slug: "student-practice-set-working",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "Question 1 of"),
+        },
+      ],
+    },
+    {
+      // S-21 · finish summary, `not_submitted` — set B again, this time via
+      // its result route (`submissionStatus` is `not_started`).
+      screenId: "S-21",
+      path: practiceUnsubmittedResultUrl,
+      session: practiceActiveSession,
+      authed: true,
+      states: [
+        {
+          state: "not-submitted",
+          slug: "student-practice-result-not-submitted",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "This practice set hasn't been submitted yet"),
+        },
+      ],
+    },
+    {
+      // S-21 · finish summary, `marking` — set C: answered and submitted,
+      // but scripts/seed_e2e.py deliberately never calls
+      // QuizMarkingService.mark_submission for it (the real HTTP route
+      // marks on a background thread; the service does not, which is what
+      // makes this state seedable rather than a race — see the seed's own
+      // comment at set C).
+      screenId: "S-21",
+      path: practiceMarkingResultUrl,
+      session: practiceActiveSession,
+      authed: true,
+      states: [
+        {
+          state: "marking",
+          slug: "student-practice-result-marking",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "Marking your .*practice set"),
+        },
+      ],
+    },
+    {
+      // S-21 · finish summary, `marked` — set A: one deliberate mistake,
+      // submitted, and marked through the unmodified quiz-taking/marking
+      // repos. The richest of S-21's five captures, so this is the one
+      // Lighthouse-scored (no `states` wrapper -> `lighthouse` defaults
+      // true). The ready string is `"{awarded} of {maximum} marks."`,
+      // deliberately not a heading shared with any other screen's summary
+      // copy (PlacementResult's own "X of Y marks." paragraph is a
+      // different code fragment entirely — grepped to confirm).
+      screenId: "S-21",
+      slug: "student-practice-result-marked",
+      path: practiceMarkedResultUrl,
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "\\d+ of \\d+ marks?\\."),
+      authed: true,
+    },
+    {
+      // S-21 · print/export view for the same marked set — the answer-free
+      // worksheet payload (D3.8: no model answer/mark scheme/MCQ answer
+      // field exists on this DTO by construction).
+      screenId: "S-21",
+      path: practiceMarkedPrintUrl,
+      session: practiceActiveSession,
+      authed: true,
+      states: [
+        {
+          state: "print",
+          slug: "student-practice-print",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "Answer on screen instead"),
+        },
+      ],
+    },
+    {
+      // S-22 · flashcard decks, `active` session — cards due today. The
+      // richest of S-22's four captures (due-today summary AND the new-deck
+      // form both render), so this is the one Lighthouse-scored.
+      screenId: "S-22",
+      slug: "student-flashcards-due",
+      path: `/student/flashcards/${practiceSubject}`,
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "\\d+ cards? due today"),
+      authed: true,
+    },
+    {
+      // S-22 · flashcard decks, `settled` session — "nothing due today"
+      // carrying the real next-due date a genuine SM-2 `good` review
+      // produced (scripts/seed_e2e.py asserts this against `due_session`
+      // itself before ever handing the seed payload to this harness).
+      // Combined with "Decks grouped by topic" (FlashcardDecks' own fixed
+      // intro copy) so this ready string cannot be satisfied by S-23's
+      // identical "Nothing due today" heading on a different route.
+      screenId: "S-22",
+      path: `/student/flashcards/${practiceSubject}`,
+      session: practiceSettledSession,
+      authed: true,
+      states: [
+        {
+          state: "settled",
+          slug: "student-flashcards-settled",
+          lighthouse: false,
+          ready: (page) =>
+            waitForText(page, "(?=[\\s\\S]*Nothing due today)(?=[\\s\\S]*Decks grouped by topic)"),
+        },
+      ],
+    },
+    {
+      // S-22 · flashcard decks, `bare` session — two states of one genuinely
+      // empty account: the empty deck list itself, and the free
+      // `no_weaknesses` 409 driven live through "Generate from a weakness"
+      // (`generate_deck` resolves the topic, and raises, before ever
+      // calling the generator — verified by reading `flashcard_repo.py`, so
+      // this costs $0.00 Gemini). `pressToggleOnce` (already built for
+      // S-02's aria-pressed drive) is reused verbatim for the mode button;
+      // the submit click itself is naturally idempotent — a `bare` account
+      // never gains a weakness, so re-driving it on every `visitRoute` pass
+      // reproduces the identical 409 every time.
+      screenId: "S-22",
+      path: `/student/flashcards/${practiceSubject}`,
+      session: practiceBareSession,
+      authed: true,
+      states: [
+        {
+          state: "empty",
+          slug: "student-flashcards-empty",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "No decks yet for"),
+        },
+        {
+          state: "no-weaknesses",
+          slug: "student-flashcards-no-weaknesses",
+          lighthouse: false,
+          ready: async (page) => {
+            await pressToggleOnce(page, "Generate from a weakness")
+            await clickButtonByText(page, "^Generate deck$")
+            await waitForText(page, "No weak topics recorded yet")
+          },
+        },
+      ],
+    },
+    {
+      // S-23 · flashcard review, `active` session — a card front with the
+      // reveal control and, once revealed, all four grade buttons.
+      // Revealing is local UI state only (no request fired) and always
+      // starts unrevealed on a fresh navigation, so driving it in `ready` is
+      // safe across `visitRoute`'s repeated re-navigation. Grading is
+      // NEVER driven here — it is irreversible (reschedules the card via
+      // real SM-2) and would destroy this capture's own repeatability, plus
+      // S-22 `active`'s "N cards due today" capture depends on these same
+      // cards staying due.
+      screenId: "S-23",
+      slug: "student-flashcard-review",
+      path: `/student/flashcards/review/${practiceSubject}`,
+      session: practiceActiveSession,
+      ready: async (page) => {
+        await waitForText(page, "Reveal answer")
+        await clickButtonByText(page, "^Reveal answer")
+        await waitForText(page, "Again")
+      },
+      authed: true,
+    },
+    {
+      // S-23 · flashcard review, `settled` session — "nothing due today".
+      // Combined with "Back to decks" (rendered in this exact branch, and
+      // in the never-driven end-of-session summary, but never on S-22's own
+      // "nothing due" render) so this ready string cannot be satisfied by
+      // S-22's identical heading on a different route.
+      screenId: "S-23",
+      path: `/student/flashcards/review/${practiceSubject}`,
+      session: practiceSettledSession,
+      authed: true,
+      states: [
+        {
+          state: "settled",
+          slug: "student-flashcard-review-settled",
+          lighthouse: false,
+          ready: (page) =>
+            waitForText(page, "(?=[\\s\\S]*Nothing due today)(?=[\\s\\S]*Back to decks)"),
+        },
+      ],
+    },
+    {
+      // S-24 · the study-plan week, `active` session, DEFAULT route state —
+      // the real populated week. `active` is the only practice account with a
+      // WeaknessRecord (the seed's deliberately-wrong marked set), which is
+      // the signal `generate` needs.
+      //
+      // The ready predicate reads the seeded session count rather than a
+      // loose `\d+ of \d+`, so a week that came back short or partly complete
+      // fails the gate instead of screenshotting cleanly under this name.
+      screenId: "S-24",
+      slug: "student-study-plan-week",
+      path: studyPlanWeekUrl,
+      session: practiceActiveSession,
+      ready: (page) =>
+        waitForText(page, `0 of ${seed.studyPlan.activeSessionCount} sessions? done`),
+      authed: true,
+    },
+    {
+      // S-24 · the persisted honest refusal (`generated: true`,
+      // `available: false`, `reason: "no_signal"`). `settled` has none of the
+      // planner's three signals, so this refusal is real, not forced.
+      // D4.13's whole point is that this is NOT the same state as the one
+      // below it, and both used to arrive as an empty `sessions` list.
+      screenId: "S-24",
+      path: studyPlanWeekUrl,
+      session: practiceSettledSession,
+      authed: true,
+      states: [
+        {
+          state: "refused",
+          slug: "student-study-plan-week-refused",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "Not enough to plan from yet"),
+        },
+      ],
+    },
+    {
+      // S-24 · no plan generated this ISO week (`generated: false`). The seed
+      // deliberately makes no call for `bare` — the state is the absence of
+      // one, which is why it cannot share an account with the refusal above.
+      screenId: "S-24",
+      path: studyPlanWeekUrl,
+      session: practiceBareSession,
+      authed: true,
+      states: [
+        {
+          state: "not-generated",
+          slug: "student-study-plan-week-not-generated",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "No plan for this week yet"),
+        },
+      ],
+    },
+    {
+      // S-24 · every session in the week complete. Asserted as N of N off the
+      // seeded count: a partially-completed week is the one failure mode here
+      // that would still render — and screenshot — as a perfectly good
+      // populated week.
+      screenId: "S-24",
+      path: studyPlanWeekUrl,
+      session: planCompleteSession,
+      authed: true,
+      states: [
+        {
+          state: "week-complete",
+          slug: "student-study-plan-week-complete",
+          lighthouse: false,
+          ready: (page) =>
+            waitForText(
+              page,
+              `${seed.studyPlan.completedSessionCount} of ${seed.studyPlan.completedSessionCount} sessions? done`,
+            ),
+        },
+      ],
+    },
+    {
+      // S-25 · session detail, DEFAULT route state. The seed picks the session
+      // whose topic really is in `active`'s recorded weak topics, so the arm
+      // that renders here is the *provable* one. Asserting the weak-topic
+      // sentence rather than the shared "Why this is in your plan" heading is
+      // the point: all three rationale arms carry that heading, so matching it
+      // would pass on the honest-absence arm too and name the capture for a
+      // state it is not.
+      screenId: "S-25",
+      slug: "student-study-plan-session",
+      path: studyPlanSessionUrl,
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "is one of your recorded weak topics for this subject"),
+      authed: true,
+    },
+    {
+      // S-25 · a session id that is not in the current week. Not a 404 and not
+      // an error: a rebuild supersedes the previous week rather than editing
+      // it, so a bookmarked link lands here legitimately and must say that.
+      screenId: "S-25",
+      path: studyPlanAbsentSessionUrl,
+      session: practiceActiveSession,
+      authed: true,
+      states: [
+        {
+          state: "not-in-current-week",
+          slug: "student-study-plan-session-not-in-week",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "has been rebuilt since this link was made"),
+        },
+      ],
     },
   ]
 }
@@ -1556,8 +2304,8 @@ async function main() {
     }
   }
   log(
-    "Not covered by this registry (P4/P5 screens still on mock data): " +
-      "/student/subject/:code, /student/plan, /student/board, /student/onboard, " +
+    "Not covered by this registry (P5 screens still on mock data): " +
+      "/student/subject/:code, /student/board, " +
       "/student/landing, /student/directions.",
   )
   log(`Contact sheet: ${CONTACT_SHEET_PATH}`)

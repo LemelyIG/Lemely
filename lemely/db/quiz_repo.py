@@ -681,6 +681,13 @@ class QuizService:
             ).all()
             rows: list[QuizAssignmentRow] = []
             for assignment in assignments:
+                if assignment.class_id is None:
+                    # A student-targeted self-assignment (D4.6 §1). This is a
+                    # teacher's *class* assignment list; a self-assigned
+                    # placement/practice row is not one of its entries, and it
+                    # has no roster to size. Skipped positively rather than
+                    # relied on being absent.
+                    continue
                 school_class = session.get(SchoolClass, assignment.class_id)
                 if school_class is None:  # pragma: no cover - FK guarantees the row exists
                     raise QuizError(f"Unknown class: {assignment.class_id}")
@@ -769,6 +776,13 @@ class QuizService:
         return quiz
 
     def _to_quiz_row(self, session: Session, quiz: Quiz) -> QuizRow:
+        if quiz.teacher_id is None:  # pragma: no cover - unreachable via _load_owned
+            # Every path here is teacher-scoped: `_load_owned` compares
+            # `quiz.teacher_id != teacher_uuid`, and NULL fails that for every
+            # caller, so a student-owned quiz (D4.6 §1) 403s long before this.
+            # Raising rather than casting keeps that an invariant instead of an
+            # assumption a future caller can quietly break.
+            raise QuizError(f"Quiz {quiz.id} has no teacher owner")
         count = (
             session.scalar(
                 select(func.count())

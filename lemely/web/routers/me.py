@@ -1,12 +1,12 @@
 """``/api/me`` endpoints — settings shared by every authenticated role.
 
-Currently just notification preferences (G-12, P3.6 chunk B). Unlike the
-rest of the portal routers, which are role-scoped
-(``routers/teacher.py``, ``routers/student.py``, ``routers/parent.py``), this
-router is reachable by **any** authenticated role — storing a notification
-preference is the same work whichever role the caller has, and P5 (not this
-chunk) owns turning a stored preference into an actual delivered/suppressed
-notification.
+Notification preferences (G-12, P3.6 chunk B) and the generic profile GET
+are reachable by **any** authenticated role — that work is identical
+whichever role the caller has. The student-onboarding routes added in P4.3
+chunk B (D4.5) live in this same router, rather than a new file, because
+they are still ``/api/me/*`` settings — but they are gated
+``require_role(Role.student)`` since onboarding is a student-only concept
+(a teacher/parent has no ``student_profiles`` row to view or edit).
 """
 
 from __future__ import annotations
@@ -17,22 +17,41 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.auth.mirror import UserMirror
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import Role, SessionMonth
 from lemely.db.notification_prefs_repo import (
     UNSET,
     NotificationPreferencesRow,
     NotificationPreferencesService,
 )
+from lemely.db.student_profile_repo import (
+    ConfidenceRatingRow,
+    StudentProfileNotFoundError,
+    StudentProfileRow,
+    StudentProfileService,
+    StudentProfileValidationError,
+    SubjectEnrolmentRow,
+)
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_notification_prefs_service,
+    get_student_profile_service,
     get_user_mirror,
+    require_role,
 )
 from lemely.web.schemas_me import (
     NotificationPreferencesDTO,
     NotificationPreferencesUpdateDTO,
     ProfileDTO,
+)
+from lemely.web.schemas_student_profile import (
+    ConfidenceRatingDTO,
+    ConfidenceRatingsUpdateDTO,
+    EnrolmentListRequestDTO,
+    StudentProfileDTO,
+    StudentProfileUpdateDTO,
+    StudentProfileWithEnrolmentsDTO,
+    SubjectEnrolmentDTO,
 )
 
 router = APIRouter(prefix="/api/me")
@@ -182,6 +201,183 @@ def get_profile(
     if user is None:
         raise HTTPException(status_code=404, detail="No profile found for this account.")
     return ProfileDTO(displayName=user.display_name, email=user.email, role=user.role.value)
+
+
+# ---------------------------------------------------------------------------
+# Student onboarding profile (P4.3 chunk B, D4.5)
+# ---------------------------------------------------------------------------
+
+
+def _profile_to_dto(row: StudentProfileRow) -> StudentProfileDTO:
+    return StudentProfileDTO(
+        qualificationLevel=row.qualification_level.value if row.qualification_level else None,
+        gradeLevel=row.grade_level,
+        schoolName=row.school_name,
+        hasExternalLessons=row.has_external_lessons,
+        weeklyStudyHours=row.weekly_study_hours,
+        onboardingCompletedAt=row.onboarding_completed_at,
+    )
+
+
+def _rating_to_dto(row: ConfidenceRatingRow) -> ConfidenceRatingDTO:
+    return ConfidenceRatingDTO(topic=row.topic, rating=row.rating)
+
+
+def _enrolment_to_dto(
+    row: SubjectEnrolmentRow, ratings: list[ConfidenceRatingRow]
+) -> SubjectEnrolmentDTO:
+    return SubjectEnrolmentDTO(
+        subjectCode=row.subject_code,
+        targetGrade=row.target_grade,
+        sessionMonth=row.session_month.value if row.session_month else None,
+        sessionYear=row.session_year,
+        papers=list(row.papers),
+        confidenceRatings=[_rating_to_dto(r) for r in ratings],
+    )
+
+
+def _session_month_from_dto(value: str | None) -> SessionMonth | None:
+    if value is None:
+        return None
+    try:
+        return SessionMonth(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Unknown session month: {value!r}") from exc
+
+
+@router.get("/student-profile", response_model=StudentProfileWithEnrolmentsDTO)
+def get_student_profile(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
+) -> StudentProfileWithEnrolmentsDTO:
+    """Return the caller's onboarding profile plus every subject enrolment.
+
+    Deliberately uses :meth:`~StudentProfileService.get_or_create_profile`
+    (a write on a GET) rather than a read-only variant: unlike
+    ``get_notification_preferences`` (an absent row reads honestly as "every
+    type enabled"), an onboarding profile screen needs a real row to PATCH
+    against and to attach enrolments to — there is no meaningful
+    "all-defaults" onboarding state to render instead. Identity is always
+    ``auth.user_id``, never a caller-supplied id — there is no student-id
+    path parameter on this router, so cross-student access is structurally
+    impossible, not just permission-checked.
+    """
+    profile = service.get_or_create_profile(auth.user_id)
+    enrolments = service.list_enrolments(auth.user_id)
+    dtos = [
+        _enrolment_to_dto(
+            enrolment, service.list_confidence_ratings(auth.user_id, enrolment.subject_code)
+        )
+        for enrolment in enrolments
+    ]
+    return StudentProfileWithEnrolmentsDTO(profile=_profile_to_dto(profile), enrolments=dtos)
+
+
+@router.patch("/student-profile", response_model=StudentProfileDTO)
+def patch_student_profile(
+    payload: StudentProfileUpdateDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
+) -> StudentProfileDTO:
+    """Partially update the caller's onboarding profile scalar fields.
+
+    Only fields present in the request body are changed (``payload.model_fields_set``,
+    the same mechanism ``put_notification_preferences`` uses); an omitted
+    field is left as-is, an explicit ``null`` clears it (every field here is
+    skippable per S-02).
+    """
+    provided = payload.model_fields_set
+    try:
+        row = service.update_profile(
+            auth.user_id,
+            qualification_level=(
+                payload.qualificationLevel if "qualificationLevel" in provided else UNSET
+            ),
+            grade_level=payload.gradeLevel if "gradeLevel" in provided else UNSET,
+            school_name=payload.schoolName if "schoolName" in provided else UNSET,
+            has_external_lessons=(
+                payload.hasExternalLessons if "hasExternalLessons" in provided else UNSET
+            ),
+            weekly_study_hours=(
+                payload.weeklyStudyHours if "weeklyStudyHours" in provided else UNSET
+            ),
+        )
+    except StudentProfileValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _profile_to_dto(row)
+
+
+@router.put("/student-profile/enrolments", response_model=list[SubjectEnrolmentDTO])
+def put_student_profile_enrolments(
+    payload: EnrolmentListRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
+) -> list[SubjectEnrolmentDTO]:
+    """Upsert every enrolment in the request body. Enrolments not mentioned are untouched.
+
+    This is an upsert-each-item operation, not a full-replace-the-set
+    operation: the UI spec's onboarding screen submits whichever subjects
+    the student is editing, and a full-replace semantic would silently
+    delete any subject's enrolment (and, cascading, its confidence ratings)
+    the moment a client's payload merely omitted it — the exact failure mode
+    ``delete_enrolment`` requires an explicit, separate call for. Within one
+    enrolment object, every field is the full desired state for that
+    subject (not a patch) — an explicit ``null`` on ``targetGrade``/
+    ``sessionMonth``/``sessionYear`` clears it.
+    """
+    results: list[SubjectEnrolmentDTO] = []
+    try:
+        for item in payload.enrolments:
+            enrolment = service.upsert_enrolment(
+                auth.user_id,
+                item.subjectCode,
+                target_grade=item.targetGrade,
+                session_month=_session_month_from_dto(item.sessionMonth),
+                session_year=item.sessionYear,
+            )
+            enrolment = service.set_enrolment_papers(
+                auth.user_id, item.subjectCode, item.papers or []
+            )
+            ratings = service.list_confidence_ratings(auth.user_id, item.subjectCode)
+            results.append(_enrolment_to_dto(enrolment, ratings))
+    except StudentProfileValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return results
+
+
+@router.put(
+    "/student-profile/enrolments/{subject_code}/confidence-ratings",
+    response_model=list[ConfidenceRatingDTO],
+)
+def put_student_profile_confidence_ratings(
+    subject_code: str,
+    payload: ConfidenceRatingsUpdateDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
+) -> list[ConfidenceRatingDTO]:
+    """Full-replace the topic->rating map for one subject's enrolment.
+
+    404 if the caller has no enrolment for ``subject_code`` — ratings hang
+    off an enrolment by FK, so there is nothing to rate until the subject is
+    enrolled.
+    """
+    try:
+        rows = service.set_confidence_ratings(auth.user_id, subject_code, payload.ratings)
+    except StudentProfileValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except StudentProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [_rating_to_dto(r) for r in rows]
+
+
+@router.post("/student-profile/complete-onboarding", response_model=StudentProfileDTO)
+def post_complete_onboarding(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
+) -> StudentProfileDTO:
+    """Mark the caller's onboarding as complete (``onboarding_completed_at = now``)."""
+    row = service.mark_onboarding_complete(auth.user_id)
+    return _profile_to_dto(row)
 
 
 __all__ = ["router"]

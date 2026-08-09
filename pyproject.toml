@@ -103,9 +103,14 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
 "lemely/io/parsers.py" = ["TCH"]
 "lemely/io/det/gmp.py" = ["ANN401"]
+# Unicode lookalikes are the entire subject matter here: the module maps Adobe
+# SymbolEncoding bytes to the Greek letters and operators they actually denote,
+# so RUF001/2/3 fire on every correct entry (Α is Alpha, not A — that is the point).
+"lemely/io/det/symbols.py" = ["RUF001", "RUF002", "RUF003"]
 "lemely/io/det/metadata.py" = ["ANN401", "RUF001"]
-"lemely/io/det/tables.py" = ["ANN401"]
+"lemely/io/det/tables.py" = ["ANN401", "RUF002"]
 "lemely/io/det/parser.py" = ["ANN401"]
+"lemely/io/det/question_papers.py" = ["ANN401", "RUF001", "RUF003"]
 "lemely/io/validation.py" = ["RUF001"]
 "lemely/io/correction_ai.py" = ["BLE001", "ANN401", "TCH"]
 "lemely/io/subject.py" = ["TCH"]
@@ -154,6 +159,12 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 # them into TYPE_CHECKING and break those. Mirrors the web/DI exemptions above.
 "lemely/auth/mirror.py" = ["TC001", "TC003"]
 "lemely/auth/tokens.py" = ["TC003"]
+# StudySession.date is a pydantic field (StrictModel): pydantic resolves
+# `from __future__ import annotations` string annotations at class-definition
+# time against the module's runtime namespace, so `datetime` must stay a
+# real import here, not move into TYPE_CHECKING (same reasoning as the ORM
+# and auth exemptions above).
+"lemely/core/study.py" = ["TC003"]
 # Synthetic test-fixture generator: randomness is for visual jitter, not
 # cryptography or security-sensitive selection.
 "lemely/accuracy/synth.py" = ["S311"]
@@ -184,6 +195,8 @@ ignore_errors = true
 module = [
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
+  "lemely.core.question_papers",
+  "lemely.core.topics",
   "lemely.runtime.config",
   "lemely.runtime.logging",
   "lemely.runtime.events",
@@ -199,6 +212,7 @@ module = [
   "lemely.io.det.tables",
   "lemely.io.det.parser",
   "lemely.io.det.gmp",
+  "lemely.io.det.question_papers",
   "lemely.io.study_plan_ai",
   "lemely.web.sse",
   "lemely.web.jobs",
@@ -211,9 +225,14 @@ module = [
   "lemely.web.schemas_classes",
   "lemely.web.schemas_review",
   "lemely.web.schemas_quiz",
+  "lemely.web.schemas_placement",
+  "lemely.web.schemas_practice",
+  "lemely.web.schemas_flashcards",
   "lemely.web.schemas_parent",
   "lemely.web.schemas_me",
   "lemely.web.schemas_announcements",
+  "lemely.web.schemas_student_profile",
+  "lemely.web.schemas_study_plan",
   # httpx `.json()` and pyjwt `decode()` return Any at the trust boundary; these
   # modules parse those payloads defensively into typed dataclasses/Claims.
   "lemely.auth.gotrue",
@@ -223,6 +242,7 @@ module = [
   "lemely.core.integrity_schemas",
   "lemely.core.history",
   "lemely.core.generation",
+  "lemely.core.flashcards",
   "lemely.core.at_risk",
   "lemely.core.class_analytics",
 ]

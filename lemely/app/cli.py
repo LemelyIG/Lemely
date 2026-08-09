@@ -588,6 +588,8 @@ def study_plan_cmd(
     profile: str | None,
     use_ai: bool,
 ) -> None:
+    import datetime
+
     from lemely.core.study import StudentProfile
     from lemely.core.study_plan import build_study_plan
     from lemely.io.history_store import HistoryStore
@@ -596,8 +598,15 @@ def study_plan_cmd(
     store = HistoryStore(settings.paths.output_dir / "history")
     history = store.load(student_id)
     profile_obj = StudentProfile.model_validate(_load_json_file(profile)) if profile else None
+    subject_code = profile_obj.subjects[0] if (profile_obj and profile_obj.subjects) else "unknown"
     weaknesses = aggregate_weaknesses_from_history(history)
-    plan = build_study_plan(profile_obj, weaknesses, weekly_hours=weekly_hours)
+    plan = build_study_plan(
+        student_id,
+        subject_code,
+        weekly_hours=weekly_hours,
+        now=datetime.datetime.now(datetime.UTC),
+        weaknesses=weaknesses.weak_areas,
+    )
     if use_ai:
         from lemely.io.gemini import GeminiClient
         from lemely.io.study_plan_ai import StudyPlanNarrator
@@ -726,6 +735,116 @@ def question_bank_survey_cmd(ctx: click.Context) -> None:
     click.echo(report.explanation())
 
 
+@question_bank_group.command("classify-topics")
+@click.option("--subject", default=None, help="Restrict to one subject code, e.g. 0625.")
+@click.option(
+    "--reclassify",
+    is_flag=True,
+    help="Re-derive rows that already carry a topic (use after editing the taxonomy).",
+)
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+@click.pass_context
+def question_bank_classify_topics_cmd(
+    ctx: click.Context, subject: str | None, reclassify: bool, dry_run: bool
+) -> None:
+    """Backfill ``question_bank.topic`` from the bundled CAIE syllabus taxonomies (P4.2).
+
+    Deterministic and free: keyword scoring against
+    ``lemely/data/syllabus_topics.json``, no Gemini call. Idempotent unless
+    ``--reclassify`` is passed.
+
+    Only ``high``- and ``medium``-confidence matches are written; ``low`` ones
+    are counted and discarded (``lemely.core.topics.WRITABLE_BANDS`` explains
+    why). The printed counters are the honest yield, zeros included.
+    """
+    from lemely.db.question_bank_repo import classify_bank_topics
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    report = classify_bank_topics(
+        get_sessionmaker(settings),
+        subject_code=subject,
+        reclassify=reclassify,
+        dry_run=dry_run,
+    )
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "rowsExamined": report.rows_examined,
+                "alreadyClassified": report.already_classified,
+                "assigned": report.assigned,
+                "skippedLowConfidence": report.skipped_low_confidence,
+                "unclassified": report.unclassified,
+                "noTaxonomy": report.no_taxonomy,
+                "coverage": round(report.coverage, 4),
+                "bandDistribution": report.band_distribution,
+                "labelDistribution": report.label_distribution,
+                "dryRun": dry_run,
+            }
+        )
+        return
+
+    if dry_run:
+        click.echo("DRY RUN — nothing written.")
+    click.echo(f"Rows examined: {report.rows_examined}")
+    click.echo(f"Already classified (left alone): {report.already_classified}")
+    click.echo(f"Assigned: {report.assigned}")
+    click.echo(f"Skipped (low confidence, left NULL): {report.skipped_low_confidence}")
+    click.echo(f"Unclassified (no confident match): {report.unclassified}")
+    if report.no_taxonomy:
+        click.echo(f"Skipped (no bundled syllabus for subject): {report.no_taxonomy}")
+    click.echo(f"Coverage: {report.coverage:.1%}")
+    click.echo(f"Confidence bands (assigned only): {report.band_distribution}")
+    click.echo(f"Distinct topics assigned: {len(report.label_distribution)}")
+
+
+@question_bank_group.command("link-papers")
+@click.option("--dry-run", is_flag=True, help="Report what would change without writing.")
+@click.pass_context
+def question_bank_link_papers_cmd(ctx: click.Context, dry_run: bool) -> None:
+    """Fill ``question_bank.paper_id`` for banked past-paper questions (P4.4).
+
+    P4.1 banked real past-paper questions without creating ``Paper`` rows, so
+    every one of them was left unlinked. P4.4 made that link load-bearing: a
+    placement duration estimate is derived from the paper's transcribed
+    duration and mark total, reachable only through this column (D4.6 §5).
+    Until this runs, placement reports ``no_eligible_questions`` for every
+    subject.
+
+    Deterministic and free — the paper identity is parsed from each row's
+    ``source_question_id`` (which already carries the source PDF's filename),
+    never inferred. Rows whose stem does not parse are counted and left
+    unlinked. Idempotent: only NULL ``paper_id`` rows are considered.
+    """
+    from lemely.db.question_bank_repo import QuestionBankService
+    from lemely.db.session import get_sessionmaker
+
+    settings = _get_settings(ctx)
+    outcome = QuestionBankService(get_sessionmaker(settings)).link_past_paper_rows(dry_run=dry_run)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "considered": outcome.considered,
+                "linked": outcome.linked,
+                "papersCreated": outcome.papers_created,
+                "unparseable": outcome.unparseable,
+                "noSubjectTaxonomy": outcome.no_subject_taxonomy,
+                "dryRun": dry_run,
+            }
+        )
+        return
+
+    if dry_run:
+        click.echo("DRY RUN — nothing written.")
+    click.echo(f"Rows considered (past_paper, paper_id IS NULL): {outcome.considered}")
+    click.echo(f"Linked: {outcome.linked}")
+    click.echo(f"Paper rows created: {outcome.papers_created}")
+    click.echo(f"Unparseable source_question_id (left unlinked): {outcome.unparseable}")
+    click.echo(f"Skipped (no bundled syllabus for subject): {outcome.no_subject_taxonomy}")
+
+
 @question_bank_group.command("import-generated")
 @click.option(
     "--questions-dir",
@@ -767,6 +886,80 @@ def question_bank_import_generated_cmd(ctx: click.Context, questions_dir: str | 
     click.echo(f"Skipped (malformed): {len(result.skipped)}")
     for s in result.skipped:
         click.echo(f"  - {s.path}: {s.reason}")
+
+
+@question_bank_group.command("ingest-question-papers")
+@click.argument("qp_dir", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--schemes-dir",
+    type=click.Path(exists=True, file_okay=False),
+    default=None,
+    help="Directory of parsed MarkScheme JSON (default: <output_dir>/schemes).",
+)
+@click.pass_context
+def question_bank_ingest_question_papers_cmd(
+    ctx: click.Context, qp_dir: str, schemes_dir: str | None
+) -> None:
+    """Deterministically extract question-paper PDFs under QP_DIR and bank them (P4.1).
+
+    Closes the D3.7 prerequisite: pairs each extracted question-paper leaf
+    with its matching mark-scheme question (by ref) from the parsed-scheme
+    cache and writes real `source=past_paper` bank rows. Never invents a
+    question the mark scheme can't grade and never banks a stem that
+    depends on a figure it cannot represent — every exclusion is counted
+    and printed by reason, honestly, not hidden. Safe to re-run.
+    """
+    from lemely.db.question_bank_repo import QuestionBankService
+    from lemely.db.session import get_sessionmaker
+    from lemely.io.question_papers import ingest_question_papers_dir
+
+    settings = _get_settings(ctx)
+    schemes_directory = Path(schemes_dir) if schemes_dir else settings.paths.output_dir / "schemes"
+    service = QuestionBankService(get_sessionmaker(settings))
+    report = ingest_question_papers_dir(service, qp_dir, schemes_directory)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "papersScanned": report.papers_scanned,
+                "papersExtractFailed": report.papers_extract_failed,
+                "papersNoScheme": report.papers_no_scheme,
+                "papersReconcileMismatch": report.papers_reconcile_mismatch,
+                "leavesExamined": report.leaves_examined,
+                "produced": report.produced,
+                "skippedAlreadyBanked": report.skipped_already_banked,
+                "skippedFigure": report.skipped_figure,
+                "skippedNoSchemeMatch": report.skipped_no_scheme_match,
+                "skippedNoMarkingPoints": report.skipped_no_marking_points,
+                "skippedMarksMismatch": report.skipped_marks_mismatch,
+                "extractFailures": report.extract_failures,
+                "noSchemePapers": report.no_scheme_papers,
+                "reconcileMismatchPapers": report.reconcile_mismatch_papers,
+            }
+        )
+        return
+
+    click.echo(f"Question papers scanned: {report.papers_scanned}")
+    click.echo(f"Extraction failures: {report.papers_extract_failed}")
+    click.echo(f"No paired mark scheme found: {report.papers_no_scheme}")
+    click.echo(
+        f"Reconcile mismatch (extracted total != stated total): {report.papers_reconcile_mismatch}"
+    )
+    click.echo(f"Leaves examined: {report.leaves_examined}")
+    click.echo(f"Produced (banked): {report.produced}")
+    click.echo(f"Skipped — already banked: {report.skipped_already_banked}")
+    click.echo(f"Skipped — has_figure: {report.skipped_figure}")
+    click.echo(f"Skipped — no scheme match / container: {report.skipped_no_scheme_match}")
+    click.echo(f"Skipped — no marking points: {report.skipped_no_marking_points}")
+    click.echo(f"Skipped — marks mismatch: {report.skipped_marks_mismatch}")
+    if report.extract_failures:
+        click.echo("Extraction failures:")
+        for line in report.extract_failures:
+            click.echo(f"  - {line}")
+    if report.reconcile_mismatch_papers:
+        click.echo("Reconcile-mismatch papers:")
+        for name in report.reconcile_mismatch_papers:
+            click.echo(f"  - {name}")
 
 
 @cli.command("aggregate-subject")

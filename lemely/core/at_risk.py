@@ -8,11 +8,15 @@ Three independent rules, combined with **OR** (MISSION §4):
    see D3.3 for the full rationale.
 2. **Predicted >= 2 grades below target** — the student's latest recorded
    grade sits 2+ positions below their target grade on :data:`GRADE_ORDER`.
-   There is no target-grade column anywhere in the schema yet (that is
-   Phase 4's onboarding questionnaire, D3.3), so ``target_grade`` is an
-   injected parameter the caller may not have. When it is absent this rule is
-   **not evaluable** — a state kept structurally distinct from "evaluated and
-   did not fire" so a missing target can never masquerade as a passing check.
+   Target grades live in ``student_subject_enrolments`` (P4.3, D4.5), one per
+   (student, subject), so the caller injects them as a ``targets`` mapping of
+   subject code -> target grade rather than a single grade for the whole
+   student — a maths target must never be compared against a physics paper.
+   The rule resolves the target for the subject of the **latest grade-bearing
+   record**. When ``targets`` is absent, or supplied but has no entry for that
+   subject, this rule is **not evaluable** — a state kept structurally
+   distinct from "evaluated and did not fire" so a missing target can never
+   masquerade as a passing check.
 3. **Inactivity** — >= 14 days since the most recent ``recorded_at``. A
    student with zero papers has not started, not stopped, so is never flagged
    inactive (that would flag every new enrolment on day 15).
@@ -32,6 +36,8 @@ from lemely.core.history import GRADE_ORDER, is_grade_bearing
 from lemely.core.schemas import StrictModel
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from lemely.core.history import PaperRecord, StudentHistory
 
 # ``GRADE_ORDER`` — the single source of truth for the grade ladder, best to
@@ -122,7 +128,7 @@ def assess_at_risk(
     history: StudentHistory,
     *,
     now: datetime,
-    target_grade: str | None = None,
+    targets: Mapping[str, str] | None = None,
 ) -> AtRiskAssessment:
     """Run the three D3.3 rules over ``history`` and return every flag that fires.
 
@@ -131,10 +137,12 @@ def assess_at_risk(
         now: the caller-injected clock (this module never calls ``datetime.now()``
             itself). Must be timezone-aware — ``recorded_at`` values are always
             UTC ISO strings (D1.8), so a naive ``now`` would raise on subtraction.
-        target_grade: the student's target grade, on :data:`GRADE_ORDER`. ``None``
-            when no target has been recorded (the only case in Phase 3 — see
-            module docstring), which makes rule 2 not evaluable rather than
-            silently "not fired".
+        targets: subject code -> target grade (on :data:`GRADE_ORDER`), one entry
+            per subject the student has enrolled in (P4.3, D4.5). ``None`` (or a
+            mapping with no entry for the subject of the latest grade-bearing
+            record) makes rule 2 not evaluable rather than silently "not fired" —
+            a target for a different subject must never be used to judge this
+            record.
 
     Returns:
         An :class:`AtRiskAssessment` whose ``flags`` list is the OR of whichever
@@ -148,6 +156,7 @@ def assess_at_risk(
         flags.append(trend_flag)
 
     target_status = TargetRuleStatus.NOT_EVALUABLE
+    target_grade = _resolve_target_for_latest_subject(history, targets)
     if target_grade is not None:
         target_flag = _check_below_target(history, target_grade)
         target_status = (
@@ -165,6 +174,25 @@ def assess_at_risk(
         flags=flags,
         target_rule_status=target_status,
     )
+
+
+def _resolve_target_for_latest_subject(
+    history: StudentHistory, targets: Mapping[str, str] | None
+) -> str | None:
+    """Look up the target grade for the subject of the latest grade-bearing record.
+
+    Returns ``None`` — leaving rule 2 ``NOT_EVALUABLE`` — when ``targets`` is
+    absent, there is no grade-bearing record to key off, or ``targets`` has no
+    entry for that record's subject. Never falls back to any other subject's
+    target: that would be exactly the false-flag failure D4.5 exists to avoid.
+    """
+    if not targets:
+        return None
+    records = [r for r in history.records if is_grade_bearing(r)]
+    if not records:
+        return None
+    subject_code = records[-1].metadata.subject_code
+    return targets.get(subject_code)
 
 
 def flag_fingerprint(flag: AtRiskFlag) -> str:
@@ -255,12 +283,17 @@ def _check_declining_trend(history: StudentHistory) -> AtRiskFlag | None:
 def _check_below_target(history: StudentHistory, target_grade: str) -> AtRiskFlag | None:
     """Rule 2: latest recorded grade is >= 2 ladder positions below target.
 
-    ``target_grade`` being present is handled by the caller (that is what makes
-    this rule evaluable at all). If either grade string is not on
-    :data:`GRADE_ORDER` (bad/foreign data), the rule defensively does not fire
-    rather than raising — a malformed grade string should not crash the
-    dashboard, and D3.3 only defines "not evaluable" for the missing-target
-    case, so an unrecognised grade is treated as "not fired", not a third state.
+    ``target_grade`` is already resolved by :func:`assess_at_risk` (via
+    :func:`_resolve_target_for_latest_subject`) to the target for the *subject
+    of the latest grade-bearing record* — the same record this rule compares
+    against. Whether a target exists at all for that subject is handled by the
+    caller (that is what makes this rule evaluable at all). If either grade
+    string is not on :data:`GRADE_ORDER` (bad/foreign data), the rule
+    defensively does not fire rather than raising — a malformed grade string
+    should not crash the dashboard, and neither D3.3 nor D4.5 defines "not
+    evaluable" for malformed-but-present data (only for a missing/unmatched
+    target, resolved one level up by :func:`assess_at_risk`), so an
+    unrecognised grade is treated as "not fired", not a third state.
 
     Grade-bearing records only (``docs/quiz-model.md`` §5) — a quiz carries no
     grade at all, so it can never be the "latest grade" this rule compares

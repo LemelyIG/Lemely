@@ -70,6 +70,7 @@ from lemely.core.history import (
 from lemely.db.class_repo import ClassService
 from lemely.db.models.enums import Role
 from lemely.db.parent_repo import ChildRow, ParentLinkService
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.det.profiles import get_profile
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.web.deps import (
@@ -77,6 +78,7 @@ from lemely.web.deps import (
     get_class_service,
     get_history_store,
     get_parent_link_service,
+    get_student_profile_service,
     require_role,
 )
 from lemely.web.schemas_parent import (
@@ -321,6 +323,7 @@ def parent_children(
     parent_link_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ChildListDTO:
     """Return P-01: one card per child linked to the authenticated parent.
 
@@ -329,14 +332,22 @@ def parent_children(
     are computed straight from each child's real history — see
     :func:`_status_line`/:func:`_overall_trend`. No children linked returns an
     empty list (the "explain how to link" empty state is a frontend concern).
+    Target grades (P4.3/D4.5) come from one
+    ``StudentProfileService.target_grades_for_many`` call across every linked
+    child, not one query per child.
     """
     children = parent_link_service.linked_children(auth.user_id)
     now = datetime.now(UTC)
+    targets_by_child = profile_service.target_grades_for_many(
+        str(child.child_id) for child in children
+    )
     rows: list[ChildSummaryDTO] = []
     for child in children:
         history = history_store.load(str(child.child_id))
         classes = class_service.student_classes(child.child_id)
-        assessment = assess_at_risk(history, now=now)
+        assessment = assess_at_risk(
+            history, now=now, targets=targets_by_child.get(str(child.child_id))
+        )
         rows.append(
             ChildSummaryDTO(
                 childId=str(child.child_id),
@@ -365,6 +376,7 @@ def parent_child_overview(
     parent_link_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ChildOverviewDTO:
     """Return P-02: per-subject grades, recent papers, weaknesses, activity, at-risk.
 
@@ -411,7 +423,8 @@ def parent_child_overview(
         for r in recent
     ]
 
-    assessment = assess_at_risk(history, now=now)
+    targets = profile_service.target_grades_for(child.child_id)
+    assessment = assess_at_risk(history, now=now, targets=targets)
     return ChildOverviewDTO(
         childId=str(child.child_id),
         displayName=child.display_name,

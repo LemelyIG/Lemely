@@ -5,7 +5,6 @@
  * authTypes.ts's convention: the Python class name with its `DTO` suffix
  * stripped (e.g. `SubjectRowDTO` -> `SubjectRow`); request/response bodies
  * that already have no `DTO` suffix in Python (`CorrectRequest`,
- * `StudyPlanRequest`, `OnboardingRequest`, `OnboardSliderInput`,
  * `StudentUploadResponse`) keep their Python name unchanged.
  *
  * This module is intentionally self-contained — it does not import from
@@ -214,33 +213,6 @@ export interface QuestionResult extends BaseQuestionResult {
   aiDetectionFlagged: boolean
 }
 
-// ── Study plan ────────────────────────────────────────────────────────────
-
-/** One scheduled study session (mirrors `PlanSessionDTO`). */
-export interface PlanSession {
-  topic: string
-  subjectCode: string
-  hours: number
-  focus: string
-}
-
-/**
- * Payload for `GET` / `POST` `/student/plan` (mirrors `StudyPlanDTO`).
- * `narrative` is populated only on the POST path with a Gemini narrator run.
- */
-export interface StudyPlan {
-  studentId: string
-  weeklyHours: number
-  sessions: PlanSession[]
-  narrative: string | null
-}
-
-/** Request body for `POST /student/plan`. */
-export interface StudyPlanRequest {
-  weeklyHours?: number
-  narrate?: boolean
-}
-
 // ── Standings ─────────────────────────────────────────────────────────────
 
 /** A subject's rank line (mirrors `SubjectRankDTO`). */
@@ -259,34 +231,17 @@ export interface Standings {
   streakDays: number
 }
 
-// ── Onboarding ────────────────────────────────────────────────────────────
-
-/** One onboarding slider reading (mirrors `OnboardSliderInput`). */
-export interface OnboardSliderInput {
-  label: string
-  code?: string
-  pct: number
-}
-
-/** Request body for `POST /student/onboarding`. */
-export interface OnboardingRequest {
-  gradeLevel?: string
-  school?: string | null
-  weeklyHours: number
-  sliders?: OnboardSliderInput[]
-}
-
-/** Payload returned by `POST /student/onboarding` (mirrors `StudentProfileDTO`). */
-export interface StudentProfile {
-  studentId: string
-  gradeLevel: string
-  subjects: string[]
-  school: string | null
-  weeklyStudyHours: number
-  confidenceBySubject: Record<string, number>
-}
-
 // ── POST /student/correct SSE frames ─────────────────────────────────────
+//
+// The legacy onboarding types (`OnboardingRequest`, `OnboardSliderInput`,
+// `StudentProfile`) were removed in P4.8 chunk A, and the legacy study-plan
+// types (`StudyPlan`, `PlanSession`, `StudyPlanRequest`) in P4.10 chunk D.
+// Both mirrored superseded backend surface — `POST /api/student/onboarding`
+// and the `GET`/`POST /api/student/plan` pair — which chunk D then deleted
+// outright (D4.22), along with their schemas and tests. The replacements are
+// `/api/me/student-profile/...` (P4.3, `lib/meTypes.ts`) and
+// `/api/student/study-plan/...` (P4.7 chunk C, `lib/studyPlanTypes.ts`).
+// Nothing on either side is dangling now.
 
 /**
  * SSE frames emitted by `POST /student/correct` over the shared event bus

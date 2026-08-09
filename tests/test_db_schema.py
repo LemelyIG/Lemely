@@ -68,6 +68,15 @@ EXPECTED_TABLES = {
     "quiz_assignments",
     "quiz_submissions",
     "quiz_answers",
+    "student_profiles",
+    "student_subject_enrolments",
+    "student_enrolment_papers",
+    "student_confidence_ratings",
+    "flashcard_decks",
+    "flashcards",
+    "flashcard_reviews",
+    "study_plans",
+    "study_plan_sessions",
 }
 
 
@@ -528,4 +537,191 @@ def test_question_bank_paper_question_unique_only_when_paper_set(pg_engine: sa.E
     with Session(pg_engine) as session:
         session.add(_bank_row(None, "1a"))
         session.add(_bank_row(None, "1a"))
+        session.commit()
+
+
+# ---------------------------------------------------------------------------
+# P4.3 chunk A — student profiles / onboarding (D4.5)
+# ---------------------------------------------------------------------------
+
+
+def test_student_profile_round_trip(pg_engine: sa.Engine) -> None:
+    """Insert one row per new P4.3 table and read every one back (D4.5).
+
+    profile -> enrolment -> paper + confidence rating, proving the ORM
+    models and the migration agree end to end (the same chain
+    ``test_quiz_model_round_trip`` walks for P3.5 chunk A).
+    """
+    from lemely.db.models import (
+        StudentConfidenceRating,
+        StudentEnrolmentPaper,
+        StudentProfile,
+        StudentSubjectEnrolment,
+        Subject,
+        User,
+    )
+    from lemely.db.models.enums import QualificationLevel, Role, SessionMonth
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="onboarding@example.com", role=Role.student)
+        session.add(student)
+        subject = Subject(code="0625-sp", name="Physics")
+        session.add(subject)
+        session.flush()
+
+        profile = StudentProfile(
+            user_id=student.id,
+            qualification_level=QualificationLevel.igcse,
+            grade_level="Year 11",
+            weekly_study_hours=10,
+        )
+        session.add(profile)
+        session.flush()
+
+        enrolment = StudentSubjectEnrolment(
+            user_id=student.id,
+            subject_code=subject.code,
+            target_grade="A",
+            session_month=SessionMonth.may_june,
+            session_year=2027,
+        )
+        session.add(enrolment)
+        session.flush()
+
+        paper = StudentEnrolmentPaper(enrolment_id=enrolment.id, paper_number=2)
+        rating = StudentConfidenceRating(
+            enrolment_id=enrolment.id, topic="4.3 Electric circuits", rating=3
+        )
+        session.add_all([paper, rating])
+        session.commit()
+
+        session.refresh(profile)
+        session.refresh(enrolment)
+        session.refresh(paper)
+        session.refresh(rating)
+        assert profile.qualification_level is QualificationLevel.igcse
+        assert profile.onboarding_completed_at is None
+        assert enrolment.target_grade == "A"
+        assert paper.paper_number == 2
+        assert rating.rating == 3
+
+
+def test_student_profile_weekly_study_hours_check_rejects_out_of_range(
+    pg_engine: sa.Engine,
+) -> None:
+    from lemely.db.models import StudentProfile, User
+    from lemely.db.models.enums import Role
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="hours-check@example.com", role=Role.student)
+        session.add(student)
+        session.flush()
+
+        session.add(StudentProfile(user_id=student.id, weekly_study_hours=81))
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        session.add(StudentProfile(user_id=student.id, weekly_study_hours=-1))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_student_confidence_rating_check_rejects_out_of_range(pg_engine: sa.Engine) -> None:
+    from lemely.db.models import StudentSubjectEnrolment, Subject, User
+    from lemely.db.models.enums import Role
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="rating-check@example.com", role=Role.student)
+        session.add(student)
+        subject = Subject(code="0625-rc", name="Physics")
+        session.add(subject)
+        session.flush()
+        enrolment = StudentSubjectEnrolment(user_id=student.id, subject_code=subject.code)
+        session.add(enrolment)
+        session.commit()
+
+        enrolment_id = enrolment.id
+
+    from lemely.db.models import StudentConfidenceRating
+
+    with Session(pg_engine) as session, pytest.raises(IntegrityError):
+        session.add(StudentConfidenceRating(enrolment_id=enrolment_id, topic="4.1 Topic", rating=6))
+        session.commit()
+
+    with Session(pg_engine) as session, pytest.raises(IntegrityError):
+        session.add(StudentConfidenceRating(enrolment_id=enrolment_id, topic="4.1 Topic", rating=0))
+        session.commit()
+
+
+def test_student_subject_enrolment_unique_per_user_and_subject(pg_engine: sa.Engine) -> None:
+    from lemely.db.models import StudentSubjectEnrolment, Subject, User
+    from lemely.db.models.enums import Role
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="uq-enrolment@example.com", role=Role.student)
+        session.add(student)
+        subject = Subject(code="0625-uqe", name="Physics")
+        session.add(subject)
+        session.flush()
+        session.add(StudentSubjectEnrolment(user_id=student.id, subject_code=subject.code))
+        session.commit()
+        student_id, subject_code = student.id, subject.code
+
+    with Session(pg_engine) as session, pytest.raises(IntegrityError):
+        session.add(StudentSubjectEnrolment(user_id=student_id, subject_code=subject_code))
+        session.commit()
+
+
+def test_student_enrolment_paper_unique_per_enrolment_and_paper_number(
+    pg_engine: sa.Engine,
+) -> None:
+    from lemely.db.models import StudentEnrolmentPaper, StudentSubjectEnrolment, Subject, User
+    from lemely.db.models.enums import Role
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="uq-paper@example.com", role=Role.student)
+        session.add(student)
+        subject = Subject(code="0625-uqp", name="Physics")
+        session.add(subject)
+        session.flush()
+        enrolment = StudentSubjectEnrolment(user_id=student.id, subject_code=subject.code)
+        session.add(enrolment)
+        session.commit()
+        enrolment_id = enrolment.id
+        session.add(StudentEnrolmentPaper(enrolment_id=enrolment_id, paper_number=2))
+        session.commit()
+
+    with Session(pg_engine) as session, pytest.raises(IntegrityError):
+        session.add(StudentEnrolmentPaper(enrolment_id=enrolment_id, paper_number=2))
+        session.commit()
+
+
+def test_student_confidence_rating_unique_per_enrolment_and_topic(pg_engine: sa.Engine) -> None:
+    from lemely.db.models import StudentConfidenceRating, StudentSubjectEnrolment, Subject, User
+    from lemely.db.models.enums import Role
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="uq-rating@example.com", role=Role.student)
+        session.add(student)
+        subject = Subject(code="0625-uqr", name="Physics")
+        session.add(subject)
+        session.flush()
+        enrolment = StudentSubjectEnrolment(user_id=student.id, subject_code=subject.code)
+        session.add(enrolment)
+        session.commit()
+        enrolment_id = enrolment.id
+        session.add(
+            StudentConfidenceRating(
+                enrolment_id=enrolment_id, topic="4.3 Electric circuits", rating=3
+            )
+        )
+        session.commit()
+
+    with Session(pg_engine) as session, pytest.raises(IntegrityError):
+        session.add(
+            StudentConfidenceRating(
+                enrolment_id=enrolment_id, topic="4.3 Electric circuits", rating=4
+            )
+        )
         session.commit()

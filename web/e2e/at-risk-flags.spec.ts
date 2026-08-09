@@ -11,6 +11,12 @@ const BACKEND_URL = "http://127.0.0.1:8000"
  * `expectedAtRiskReasons`): the raw backend contract, and T-06's rendering
  * of it — plus the acknowledge/undo round trip D3.5 mandates (never a
  * dismissal: a flag stays listed and tagged, never disappears).
+ *
+ * P4.11 chunk D adds the third rule to that coverage. Rule 2 ("predicted >= 2
+ * grades below target", D3.3) had no target-grade column to read until P4.3
+ * (D4.5), so it was described in the seed rather than pinned by a test. The
+ * `belowTarget` student now exercises it for real, in its own second class so
+ * the roster figures `teacher-journey.spec.ts` hardcodes are untouched.
  */
 
 interface AtRiskApiFlag {
@@ -18,6 +24,7 @@ interface AtRiskApiFlag {
 }
 interface AtRiskApiEntry {
   studentId: string
+  classId: string
   flags: AtRiskApiFlag[]
 }
 interface AtRiskApiList {
@@ -44,6 +51,12 @@ test.describe("at-risk flags reproduce the seeded scenarios", () => {
     expect(reasonsById.get(seed.students.inactive.userId)).toEqual(
       seed.students.inactive.expectedAtRiskReasons,
     )
+    // Rule 2. Exactly `["below_target"]` — the seed gives this account one
+    // recent attempt precisely so rule 1 (3-record window) and rule 3 (>=14
+    // days idle) cannot also fire and turn this into a weaker superset check.
+    expect(reasonsById.get(seed.students.belowTarget.userId)).toEqual(
+      seed.students.belowTarget.expectedAtRiskReasons,
+    )
     // control/correctedPaper carry no flags at all -> absent from the
     // response entirely (the route only ever includes flagged students).
     expect(reasonsById.has(seed.students.control.userId)).toBe(false)
@@ -57,6 +70,20 @@ test.describe("at-risk flags reproduce the seeded scenarios", () => {
       seed.students.inactive.userId,
     ])
 
+    // The same exhaustive check for rule 2. It also pins the scoping claim the
+    // second class rests on: `belowTarget` is in a DIFFERENT class from the
+    // roster, and this route still returns it, because it walks every class
+    // the caller owns rather than one.
+    const belowTargetOnly = await request.get(
+      `${BACKEND_URL}/api/teacher/at-risk?reason=below_target`,
+    )
+    const belowTargetBody = (await belowTargetOnly.json()) as AtRiskApiList
+    expect(belowTargetBody.students.map((s) => s.studentId)).toEqual([
+      seed.students.belowTarget.userId,
+    ])
+    expect(belowTargetBody.students[0].classId).toEqual(seed.students.belowTarget.classId)
+    expect(belowTargetBody.students[0].classId).not.toEqual(seed.class.classId)
+
     await request.dispose()
   })
 
@@ -66,7 +93,7 @@ test.describe("at-risk flags reproduce the seeded scenarios", () => {
     const seed = readSeed()
     const errors = watchConsole(page)
     const { teacher, students } = seed
-    const { declining, inactive, control } = students
+    const { declining, inactive, control, belowTarget } = students
 
     await injectSession(page, {
       accessToken: teacher.accessToken,
@@ -78,6 +105,7 @@ test.describe("at-risk flags reproduce the seeded scenarios", () => {
 
     await expect(page.getByRole("link", { name: declining.displayName })).toBeVisible()
     await expect(page.getByRole("link", { name: inactive.displayName })).toBeVisible()
+    await expect(page.getByRole("link", { name: belowTarget.displayName })).toBeVisible()
     await expect(page.getByRole("link", { name: control.displayName })).toHaveCount(0)
 
     const decliningRow = page.locator("tbody tr").filter({ hasText: declining.displayName })
@@ -86,6 +114,24 @@ test.describe("at-risk flags reproduce the seeded scenarios", () => {
     ).toBeVisible()
     const inactiveRow = page.locator("tbody tr").filter({ hasText: inactive.displayName })
     await expect(inactiveRow.getByText(/No papers submitted in \d+ days/)).toBeVisible()
+
+    // Rule 2 rendered with its own data-derived evidence, not a bare chip —
+    // the same standard the declining sentence above is held to. The numbers
+    // are the seed's own (`BELOW_TARGET_SCORE`/`BELOW_TARGET_GRADE`), read off
+    // the contract rather than re-typed, so a seed change fails here loudly
+    // instead of leaving a stale literal that happens to still match.
+    const belowTargetRow = page
+      .locator("tbody tr")
+      .filter({ hasText: belowTarget.displayName })
+    await expect(
+      belowTargetRow.getByText(
+        `Predicted grade ${belowTarget.predictedGrade} is ${belowTarget.positionsBelow} ` +
+          `grades below target ${belowTarget.targetGrade}.`,
+      ),
+    ).toBeVisible()
+    // T-06 shows which class each flagged student is in; this one is the
+    // second class, which is what keeps the roster's figures the roster's own.
+    await expect(belowTargetRow).toContainText(belowTarget.className)
 
     // ── Acknowledge with a note (D3.5's core interaction) ────────────────────
     await decliningRow.getByRole("button", { name: "Acknowledge" }).click()

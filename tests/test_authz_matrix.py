@@ -5,9 +5,21 @@ Proves the RBAC guarantee for Phase 1: no route serves an unauthenticated caller
 routes require the ``student`` role; every teacher-portal route is staff-only
 (teacher / school_admin / platform_admin) via the router-level guard.
 
-The two former IDOR endpoints (POST /student/plan, POST /student/onboarding) get
-explicit coverage: they no longer accept a caller-supplied id and now require a
-student token, so identity is the authenticated caller alone.
+**P4.10 chunk D (D4.22).** The two former IDOR endpoints (POST /student/plan,
+POST /student/onboarding) were deleted along with their two explicit pins here.
+Their replacements are covered instead, and the coverage is not symmetric
+because the two routers are not guarded the same way:
+
+* ``/api/student/study-plan/*`` carries a **router-level**
+  ``require_role(Role.student)``, so this file's representative-spread
+  convention (see the TEACHER_GET_ROUTES comment below) applies — one GET and
+  one POST prove the guard for the router.
+* ``/api/me/student-profile*`` does **not**. ``routers/me.py`` mounts a bare
+  ``APIRouter(prefix="/api/me")`` and two of its routes
+  (``/notification-preferences``, ``/profile``) are deliberately role-agnostic,
+  so a spread would prove nothing about the routes it skipped. **Every one of
+  the five student-only routes is listed individually**; drop one and its guard
+  is unproven.
 """
 
 from __future__ import annotations
@@ -28,21 +40,32 @@ from lemely.web.deps import AuthContext, get_auth_context, get_history_store, ge
 if TYPE_CHECKING:
     from pathlib import Path
 
-# (method, path) pairs. GET routes carry no body; the two student POSTs carry a
+# (method, path) pairs. GET routes carry no body; every write route carries a
 # minimal valid body so an auth failure (401/403) is never masked by a 422.
 STUDENT_GET_ROUTES = [
     "/api/student/overview",
     "/api/student/subject/0625",
     "/api/student/result/0",
-    "/api/student/plan",
     "/api/student/standings",
+    # Study plan (P4.7 chunk C) — router-level guard, representative spread.
+    "/api/student/study-plan/0625",
+    # Onboarding profile (P4.3) — per-route guards, so every route is listed.
+    "/api/me/student-profile",
 ]
 STUDENT_POST_ROUTES = [
-    ("/api/student/plan", {"weeklyHours": 6.0}),
-    ("/api/student/onboarding", {"weeklyHours": 5.0, "sliders": []}),
     # /student/correct takes no body (the SSE self-mark stream); an empty POST
     # still hits the per-route student guard, so a wrong/absent role is 401/403.
     ("/api/student/correct", None),
+    ("/api/student/study-plan", {"subjectCode": "0625"}),
+    ("/api/me/student-profile/complete-onboarding", None),
+]
+# PATCH/PUT halves of the /api/me/student-profile surface. Listed separately
+# because this file parametrizes by method, and individually because me.py has
+# no router-level guard to generalise from.
+STUDENT_PATCH_ROUTES = [("/api/me/student-profile", {"gradeLevel": "Year 11"})]
+STUDENT_PUT_ROUTES = [
+    ("/api/me/student-profile/enrolments", {"enrolments": []}),
+    ("/api/me/student-profile/enrolments/0625/confidence-ratings", {"ratings": {}}),
 ]
 # Teacher routes are gated at the router level, so proving the guard on a
 # representative spread of GETs proves it for the whole router.
@@ -125,6 +148,24 @@ def test_post_without_token_is_401(
     assert resp.status_code == 401, path
 
 
+@pytest.mark.parametrize(("path", "body"), STUDENT_PATCH_ROUTES)
+def test_student_patch_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object] | None
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).patch(path, json=body)
+    assert resp.status_code == 401, path
+
+
+@pytest.mark.parametrize(("path", "body"), STUDENT_PUT_ROUTES)
+def test_student_put_without_token_is_401(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object] | None
+) -> None:
+    app, _ = app_and_store
+    resp = _client(app).put(path, json=body)
+    assert resp.status_code == 401, path
+
+
 # ── Wrong role → 403 ──────────────────────────────────────────────────────────
 
 
@@ -149,6 +190,30 @@ def test_student_post_rejects_non_student(
         user_id="t1", role=Role.teacher.value
     )
     resp = _client(app).post(path, json=body)
+    assert resp.status_code == 403, path
+
+
+@pytest.mark.parametrize(("path", "body"), STUDENT_PATCH_ROUTES)
+def test_student_patch_rejects_non_student(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object] | None
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="t1", role=Role.teacher.value
+    )
+    resp = _client(app).patch(path, json=body)
+    assert resp.status_code == 403, path
+
+
+@pytest.mark.parametrize(("path", "body"), STUDENT_PUT_ROUTES)
+def test_student_put_rejects_non_student(
+    app_and_store: tuple[object, HistoryStore], path: str, body: dict[str, object] | None
+) -> None:
+    app, _ = app_and_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
+        user_id="t1", role=Role.teacher.value
+    )
+    resp = _client(app).put(path, json=body)
     assert resp.status_code == 403, path
 
 
@@ -408,38 +473,6 @@ def test_student_join_rejects_non_student(
     )
     resp = _client(app).post(path, json=body)
     assert resp.status_code == 403, (path, role)
-
-
-# ── IDOR kill: identity is the token, never the payload ───────────────────────
-
-
-def test_plan_post_ignores_any_caller_supplied_id(
-    app_and_store: tuple[object, HistoryStore],
-) -> None:
-    """A student token drives the plan; a stray studentId in the body is rejected."""
-    app, _ = app_and_store
-    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
-        user_id="victim-id", role=Role.student.value
-    )
-    client = _client(app)
-    ok = client.post("/api/student/plan", json={"weeklyHours": 6.0})
-    assert ok.status_code == 200
-    assert ok.json()["studentId"] == "victim-id"
-    # extra="forbid": smuggling another student's id is a 422, not honoured.
-    smuggle = client.post(
-        "/api/student/plan", json={"studentId": "someone-else", "weeklyHours": 6.0}
-    )
-    assert smuggle.status_code == 422
-
-
-def test_onboarding_uses_token_identity(app_and_store: tuple[object, HistoryStore]) -> None:
-    app, _ = app_and_store
-    app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[attr-defined]
-        user_id="real-student", role=Role.student.value
-    )
-    resp = _client(app).post("/api/student/onboarding", json={"weeklyHours": 5.0, "sliders": []})
-    assert resp.status_code == 200
-    assert resp.json()["studentId"] == "real-student"
 
 
 # ── End-to-end with a real minted token (no override) ─────────────────────────

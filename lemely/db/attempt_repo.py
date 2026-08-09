@@ -23,6 +23,33 @@ Core→DB enum mapping is by ``.value`` (the core :class:`StrEnum`s and the DB
 :class:`enum.Enum`s share their string members), reusing
 :func:`~lemely.db.history_repo.parse_user_id` / ``month_to_enum`` for the two
 impedance mismatches (str id → UUID FK, month label → enum).
+
+**P4.4 — filling ``CorrectedQuestion.topic`` on the marking side.** D4.4 §6:
+``CorrectedQuestion.topic`` comes from ``topic_hint`` on the parsed mark
+scheme, which was measured ``None`` on every one of the 637 questions across
+the 33 deterministically-parsed 0625 schemes in ``outputs/schemes/`` — so the
+weakness engine grouped every real-paper question under ``"unknown"``.
+:func:`fill_correction_topics` closes that gap by running the same
+deterministic keyword classifier the bank side uses
+(:func:`~lemely.db.question_bank_repo.classify_bank_topics`) against the
+marking side's own text. It lives here — in ``lemely.db``, which (unlike
+``lemely.core``) has no import-linter layering contract — because it must
+compose :mod:`lemely.core.topics` (the pure classifier) with
+:mod:`lemely.io.syllabus_topics` (the taxonomy loader), and ``core.correction``
+cannot reach the loader without either a signature change through every
+marking caller or a layering violation.
+
+Both marking paths — :func:`~lemely.web.services.grading.grade_paper` (past
+paper) and :meth:`~lemely.db.quiz_marking_repo.QuizMarkingService.mark_submission`
+(quiz) — call :func:`fill_correction_topics` immediately after
+``apply_integrity_checks`` and **before** ``summarize_weaknesses``, not inside
+:meth:`AttemptRepository._persist`. Both already computed a ``WeaknessReport``
+before calling ``persist_correction``/``persist_quiz_correction``, so filling
+the topic only at ``_persist`` time would have corrected the topic written
+onto each ``QuestionResult`` row without ever changing the topic **grouping**
+``summarize_weaknesses`` already committed to — which is the entire point of
+this fill (P4.5 practice-targets-weakness needs the grouping, not just the
+column).
 """
 
 from __future__ import annotations
@@ -31,11 +58,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
+from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import AttemptOrigin, BoundarySource, MarkerSource, ReviewReason
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.io.syllabus_topics import get_taxonomy
 
 if TYPE_CHECKING:
     import uuid
@@ -43,6 +72,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session, sessionmaker
 
+    from lemely.core.loose_schemas import MarkScheme, Question
     from lemely.core.schemas import (
         AccuracyReport,
         CorrectedQuestion,
@@ -50,6 +80,7 @@ if TYPE_CHECKING:
         GradePrediction,
         WeaknessReport,
     )
+    from lemely.core.topics import SyllabusTaxonomy
 
 # The review threshold now has exactly one definition, in
 # :mod:`lemely.core.schemas` (D2.2) — the marking layer, this repository and the
@@ -355,4 +386,131 @@ def _parse_recorded_at(value: str | None) -> datetime:
     return datetime.fromisoformat(value)
 
 
-__all__ = ["REVIEW_CONFIDENCE_THRESHOLD", "AttemptRepository"]
+def fill_correction_topics(correction: CorrectionResult, mark_scheme: MarkScheme) -> None:
+    """Fill missing ``CorrectedQuestion.topic`` labels via the P4.2 classifier (P4.4).
+
+    Must be called **before** ``summarize_weaknesses`` — see the module
+    docstring's P4.4 section for why the fill has to happen there rather than
+    in :meth:`AttemptRepository._persist`. Mutates ``correction.questions`` in
+    place: ``CorrectedQuestion`` is not a frozen model, and every downstream
+    reader (``summarize_weaknesses``, ``_persist``) reads these same objects.
+
+    Text signal: a mark scheme carries no question stem or MCQ option text
+    (that lives in the question paper, which this function never sees) — see
+    :func:`_classification_text` for what it uses instead. Deliberately
+    **not** ``CorrectedQuestion.student_answer``/``expected_answer``: those
+    are the *answer's* wording, and classifying on it would point a topic
+    label at whatever vocabulary the student happened to use rather than at
+    the question itself (D4.4's "MCQ options carry the signal" finding is
+    about the question's own options, not a candidate's free text).
+
+    Honours the P4.2 write policy (``lemely.core.topics``) exactly:
+
+    * a question that already carries a non-empty ``topic`` (real
+      ``topic_hint`` ground truth from the mark scheme) is never overwritten;
+    * only a ``high``/``medium``-band match (:func:`~lemely.core.topics.is_writable`)
+      is written; a ``low``-band match is discarded, not written — D4.4 §5's
+      reasoning applies identically here: there is no per-question topic
+      confidence column, so writing a guess would launder it into apparent
+      fact;
+    * a subject with no bundled taxonomy, a question absent from the mark
+      scheme, or a question with no confident match is left with
+      ``topic=None`` — never a fallback label.
+
+    Evidence for one question is its **whole subtree**, and a node with no
+    confident match of its own inherits from its nearest ancestor that has
+    one — see :func:`_resolve_topic_labels` for why both are needed and what
+    each is measured to be worth.
+    """
+    taxonomy = get_taxonomy(correction.metadata.subject_code)
+    if taxonomy is None:
+        return
+    labels = _resolve_topic_labels(mark_scheme, taxonomy)
+    for cq in correction.questions:
+        if cq.topic:
+            continue
+        label = labels.get(cq.question_id)
+        if label is not None:
+            cq.topic = label
+
+
+def _resolve_topic_labels(mark_scheme: MarkScheme, taxonomy: SyllabusTaxonomy) -> dict[str, str]:
+    """Map every mark-scheme question id to a writable topic label, or omit it.
+
+    ``correct_paper`` marks **every node** of the scheme tree
+    (``all_questions_flat``), parents and leaves alike, so this resolves the
+    same set. Two structural rules, both measured against the 33
+    deterministically-parsed 0625 schemes in ``outputs/schemes`` (1329 marked
+    nodes) rather than assumed:
+
+    1. **A question is classified from its own subtree**, not from its own
+       fields alone. A parent node carries almost no prose of its own — the
+       marking content hangs off its ``parts`` — so classifying the node
+       in isolation scores 8.1% of nodes and classifying its subtree scores
+       14.9%.
+    2. **A node with no confident match of its own inherits the nearest
+       ancestor's label** (32.2% of all nodes; 52.9% of the non-MCQ ones).
+       This is inheritance, not guesswork: ``3(b)(ii)`` whose own mark points
+       read "correct substitution" *is structurally part of* question 3, and
+       the ancestor's evidence is a superset of the child's. It is still
+       gated by :func:`~lemely.core.topics.is_writable`, so a topic no
+       ancestor could confidently place stays ``None``.
+
+    **The ceiling is structural and is not a defect here.** 520 of those 1329
+    nodes are MCQ, and a CAIE MCQ mark scheme carries exactly one datum — the
+    answer letter. There is no text to classify at any depth, so those nodes
+    are unclassifiable from a mark scheme by construction; their stems live in
+    the question paper (D3.7's wall, the same one P4.1's stem extractor exists
+    to climb). The reachable population is the 809 non-MCQ nodes.
+    """
+    labels: dict[str, str] = {}
+
+    def visit(question: Question, inherited: str | None) -> None:
+        match = classify(_subtree_text(question), taxonomy)
+        label = match.label if match is not None and is_writable(match) else inherited
+        if label is not None:
+            # First occurrence wins, mirroring ``get_question_by_id``'s
+            # depth-first "first match" semantics on duplicated ids.
+            labels.setdefault(question.id, label)
+        for part in question.parts or []:
+            visit(part, label)
+
+    for question in mark_scheme.questions:
+        visit(question, None)
+    return labels
+
+
+def _subtree_text(question: Question) -> str:
+    """:func:`_classification_text` for ``question`` and all of its parts."""
+    texts = [_classification_text(question)]
+    texts.extend(_subtree_text(part) for part in question.parts or [])
+    return "\n".join(text for text in texts if text)
+
+
+def _classification_text(question: Question) -> str:
+    """Everything a mark-scheme ``Question`` carries that signals its topic.
+
+    Mirrors :func:`~lemely.db.question_bank_repo.classification_text`'s shape
+    for the marking side's own source data. A mark scheme has no question
+    stem or MCQ option text — those live in the question paper, which
+    :func:`fill_correction_topics` never has access to — so the signal here is
+    the mark-scheme's own prose: the command word, marking guidance, examiner
+    notes, point-based mark points, indicative-content points, and
+    levels-based descriptor text.
+    """
+    parts: list[str] = []
+    if question.question_command:
+        parts.append(question.question_command)
+    if question.marking_guidance:
+        parts.append(question.marking_guidance)
+    if question.notes:
+        parts.append(question.notes)
+    parts.extend(point.point for point in question.answer_points)
+    for content_point in question.indicative_content or []:
+        parts.append(content_point.point)
+    for level in question.level_descriptors or []:
+        parts.extend(descriptor.text for descriptor in level.descriptors)
+    return "\n".join(p for p in parts if p)
+
+
+__all__ = ["REVIEW_CONFIDENCE_THRESHOLD", "AttemptRepository", "fill_correction_topics"]

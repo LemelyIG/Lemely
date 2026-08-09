@@ -24,6 +24,7 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExtractedAnswers,
 )
+from lemely.db.attempt_repo import fill_correction_topics
 from lemely.io.answer_extraction import GeminiAnswerExtractor
 from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
@@ -98,6 +99,10 @@ def grade_paper(
         gemini_client=gemini_client,
         settings=integrity_settings or IntegritySettings(),
     )
+    # P4.4: fill CorrectedQuestion.topic before summarize_weaknesses groups on
+    # it — see lemely.db.attempt_repo's module docstring for why this must
+    # happen here rather than at persist time.
+    fill_correction_topics(correction, mark_scheme)
 
     store = boundary_store or GradeBoundaryStore()
     boundaries, boundary_source = store.resolve(correction.metadata)

@@ -69,7 +69,11 @@ export function StateView({
   return (
     <div
       className={cn(
-        "mx-auto flex max-w-sm flex-col items-center gap-3 px-6 py-12 text-center",
+        // `w-full` is load-bearing, not decoration: `max-w-sm` alone leaves the
+        // box its intrinsic 384px, which is wider than the 380px breakpoint the
+        // responsive gate checks, so every state view overflowed on the
+        // narrowest phone.
+        "mx-auto flex w-full max-w-sm flex-col items-center gap-3 px-6 py-12 text-center",
         className,
       )}
       {...props}
@@ -87,7 +91,10 @@ export function StateView({
         {body ? <p className="text-body-md text-t2">{body}</p> : null}
       </div>
       {action || secondaryAction ? (
-        <div className="mt-2 flex items-center gap-2">
+        // Two actions with `whitespace-nowrap` labels ("Take the placement
+        // test" + "Rebuild this week's plan") cannot sit side by side at 380px.
+        // Wrapping is the honest fix; truncating would hide what the button does.
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
           {action ? (
             <Button variant="accent" size="sm" onClick={action.onClick}>
               {action.label}

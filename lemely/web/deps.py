@@ -29,10 +29,13 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
+from lemely.db.flashcard_repo import FlashcardService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.parent_repo import ParentLinkService
+from lemely.db.placement_repo import PlacementService
+from lemely.db.practice_repo import PracticeService
 from lemely.db.question_bank_repo import QuestionBankService
 from lemely.db.quiz_marking_repo import QuizMarkingService
 from lemely.db.quiz_repo import QuizService
@@ -41,7 +44,10 @@ from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
+from lemely.db.student_profile_repo import StudentProfileService
+from lemely.db.study_plan_repo import StudyPlanService
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.storage import HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
@@ -291,6 +297,63 @@ def get_quiz_marking_service() -> QuizMarkingService:
 
 
 @lru_cache(maxsize=1)
+def get_placement_service() -> PlacementService:
+    """Return the process-wide :class:`PlacementService` singleton (P4.4 chunk B-4).
+
+    Wired with the DB session factory alone: unlike :class:`QuizTakingService`,
+    placement ownership needs no ``ClassService`` seam — a placement
+    assignment is always direct-to-student (D4.6 §1). Tests override this
+    dependency with a service built on a throwaway Postgres database.
+    """
+    return PlacementService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_practice_service() -> PracticeService:
+    """Return the process-wide :class:`PracticeService` singleton (P4.5).
+
+    Wired with the DB session factory alone, mirroring
+    :func:`get_placement_service` — a practice assignment is always
+    direct-to-student, so no ``ClassService`` seam is needed. Tests override
+    this dependency with a service built on a throwaway Postgres database.
+    """
+    return PracticeService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_study_plan_service() -> StudyPlanService:
+    """Return the process-wide :class:`StudyPlanService` singleton (P4.7 chunk C).
+
+    Wired with the DB session factory alone, mirroring
+    :func:`get_placement_service`/:func:`get_practice_service` — every
+    signal the service reads (weakness, placement, confidence, bank/deck
+    availability) lives in the same database, and nothing on this path calls
+    Gemini. Tests override this dependency with a service built on a
+    throwaway Postgres database.
+    """
+    return StudyPlanService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_flashcard_service() -> FlashcardService:
+    """Return the process-wide :class:`FlashcardService` singleton (P4.6 chunk C).
+
+    Wired with the DB session factory **and** the process-wide
+    :class:`~lemely.io.gemini.GeminiClient` via a
+    :class:`~lemely.io.flashcard_generation.FlashcardGenerator` — unlike
+    :func:`get_practice_service`, this service has one method
+    (``generate_deck``) that calls the model. The generator is a constructor
+    argument rather than something the service builds, so tests override this
+    dependency with a throwaway Postgres database and a stubbed generator and
+    never make a billed call (MISSION §8; D4.3's suite-wide guard would raise
+    if they tried).
+    """
+    return FlashcardService(
+        get_sessionmaker(get_settings()), FlashcardGenerator(get_gemini_client())
+    )
+
+
+@lru_cache(maxsize=1)
 def get_at_risk_ack_service() -> AtRiskAckService:
     """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
 
@@ -326,6 +389,21 @@ def get_notification_prefs_service() -> NotificationPreferencesService:
     Postgres database.
     """
     return NotificationPreferencesService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_student_profile_service() -> StudentProfileService:
+    """Return the process-wide :class:`StudentProfileService` singleton (P4.3 chunk B).
+
+    Wired with the DB session factory alone — mirrors :func:`get_notification_prefs_service`:
+    a student's profile has no cross-tenant ownership question (tenancy is
+    just ``auth.user_id == row.user_id``, enforced at the router layer), so
+    this service needs no composed service or account-creation seam. The
+    clock is left at its default (real UTC now); tests override this
+    dependency with a service built on an injected fake clock and a
+    throwaway Postgres database.
+    """
+    return StudentProfileService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
@@ -482,3 +560,4 @@ def reset_singletons() -> None:
     get_quiz_taking_service.cache_clear()
     get_quiz_marking_service.cache_clear()
     get_announcement_service.cache_clear()
+    get_student_profile_service.cache_clear()

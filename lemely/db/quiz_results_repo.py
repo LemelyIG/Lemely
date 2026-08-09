@@ -260,11 +260,17 @@ class QuizResultsService:
             assignment = session.get(QuizAssignment, assignment_uuid)
             if assignment is None or assignment.quiz_id != quiz_uuid:
                 raise QuizNotFoundError(f"Unknown assignment: {assignment_uuid}")
-            school_class = session.get(SchoolClass, assignment.class_id)
-            if school_class is None:  # pragma: no cover - FK guarantees the row exists
-                raise QuizError(f"Unknown class: {assignment.class_id}")
-            class_name = school_class.name
             class_id = assignment.class_id
+            if class_id is None:
+                # A student-targeted self-assignment (D4.6 §1) has no class and
+                # therefore no class results. Treated as "no such assignment"
+                # rather than a distinct error so a caller cannot use this
+                # endpoint to probe which self-assignments exist.
+                raise QuizNotFoundError(f"Unknown assignment: {assignment_uuid}")
+            school_class = session.get(SchoolClass, class_id)
+            if school_class is None:  # pragma: no cover - FK guarantees the row exists
+                raise QuizError(f"Unknown class: {class_id}")
+            class_name = school_class.name
             due_at = assignment.due_at
             closes_at = assignment.closes_at
             assigned_at = assignment.assigned_at

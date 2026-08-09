@@ -61,7 +61,9 @@ export const navGroups: NavGroup[] = [
     items: [
       { to: "/student", label: "Overview", end: true },
       { to: "/student/subject/0625", label: "Physics", tag: "0625" },
-      { to: "/student/plan", label: "Study plan" },
+      { to: "/student/practice/0625", label: "Practice", tag: "0625" },
+      { to: "/student/flashcards/0625", label: "Flashcards", tag: "0625" },
+      { to: "/student/plan/0625", label: "Study plan", tag: "0625" },
       { to: "/student/board", label: "Standings" },
       { to: "/student/parents", label: "Your parents" },
     ],
@@ -84,14 +86,66 @@ export const navGroups: NavGroup[] = [
 export const crumbs: Record<string, string> = {
   "/student": "Home",
   "/student/subject": "Home / Physics 0625",
+  "/student/practice": "Home / Practice",
+  "/student/flashcards": "Home / Flashcards",
   "/student/result": "Home / Physics / Paper result",
   "/student/correct": "Marking / Correct a paper",
-  "/student/plan": "Home / Study plan",
+  // `/student/plan` is deliberately absent: P4.10 made the route
+  // subject-scoped (`/student/plan/:subjectCode`), so it is resolved by a
+  // pattern arm in `resolveCrumb` alongside practice and flashcards. Leaving
+  // the bare key here would be a lookup no pathname can ever hit.
   "/student/board": "Home / Standings",
   "/student/parents": "Home / Your parents",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
   "/student/directions": "Design directions",
+}
+
+/**
+ * Resolve the breadcrumb for a pathname: exact static lookup first (the
+ * `crumbs` map), falling back to pattern matching for routes with a dynamic
+ * segment that can't be enumerated in that map ahead of time.
+ *
+ * Lives here rather than in `index.tsx` so it is a pure function the unit
+ * suite can exercise. It was unreachable from a test while it sat inside the
+ * React module, which is how P4.10's subject-scoped `/student/plan/:code`
+ * came to fall through every arm and render a bare "Home": a wrong-but-valid
+ * breadcrumb trips no typecheck, no axe rule and no threshold.
+ */
+export function resolveCrumb(pathname: string): string {
+  const exact = crumbs[pathname]
+  if (exact) return exact
+
+  const subjectMatch = pathname.match(/^\/student\/subject\/([^/]+)$/)
+  if (subjectMatch) return `Home / ${subjectMatch[1]}`
+
+  const resultMatch = pathname.match(/^\/student\/result\/([^/]+)$/)
+  if (resultMatch) return `Home / Result ${resultMatch[1]}`
+
+  const practiceGeneratorMatch = pathname.match(/^\/student\/practice\/([^/]+)$/)
+  if (practiceGeneratorMatch) return `Home / Practice / ${practiceGeneratorMatch[1]}`
+
+  if (pathname.match(/^\/student\/practice\/set\//)) return "Home / Practice / Set"
+  if (pathname.match(/^\/student\/practice\/result\//)) return "Home / Practice / Result"
+  if (pathname.match(/^\/student\/practice\/print\//)) return "Home / Practice / Print"
+
+  const flashcardReviewMatch = pathname.match(/^\/student\/flashcards\/review\/([^/]+)$/)
+  if (flashcardReviewMatch) return `Home / Flashcards / Review ${flashcardReviewMatch[1]}`
+
+  const flashcardDecksMatch = pathname.match(/^\/student\/flashcards\/([^/]+)$/)
+  if (flashcardDecksMatch) return `Home / Flashcards / ${flashcardDecksMatch[1]}`
+
+  // The study plan gained a subject segment in P4.10, so it stopped matching
+  // the exact `crumbs` lookup and fell through to the bare "Home" default.
+  // The session route needs its own arm for the same reason: `planMatch` is
+  // anchored, so S-25 would have repeated the chunk-A defect exactly.
+  const planSessionMatch = pathname.match(/^\/student\/plan\/([^/]+)\/session\/([^/]+)$/)
+  if (planSessionMatch) return `Home / Study plan / ${planSessionMatch[1]} / Session`
+
+  const planMatch = pathname.match(/^\/student\/plan\/([^/]+)$/)
+  if (planMatch) return `Home / Study plan / ${planMatch[1]}`
+
+  return "Home"
 }
 
 // `studentName`/`studentMeta` ("Maya Rahman" / "Year 11 - Helwan Science

@@ -22,19 +22,52 @@ Four things, matching the chunk-B brief exactly:
    (today: nothing — ``outputs/questions/`` does not exist, so this is a
    0-row import against the current repo state, and that is the correct,
    honest answer, not a bug).
-4. :func:`survey_past_paper_questions` — **a reporting function, not a
-   writer**. ``BUILD/DECISIONS.md`` D3.7 records the measurement: across the
-   entire parsed corpus, 0 of 122 leaf questions carry prompt text, because
-   :class:`~lemely.core.loose_schemas.Question` has no question-stem field
-   at all — a CAIE mark scheme contains marking points, not the question
-   text (the stem lives in the question paper, which this codebase never
-   parses into structure). Since ``question_bank.prompt`` is ``NOT NULL``,
-   there is no row to construct from a mark scheme today, and there never
-   will be until a question-paper stem extractor exists (out of Phase-3
-   scope). Persisting is therefore not merely deferred here; it is
-   structurally impossible from this input, so this function only counts
-   and reports — it does not gate a persist branch on a field the source
-   schema does not have.
+4. :func:`survey_past_paper_questions` — **a reporting function over
+   mark-scheme payloads, not a writer**. ``BUILD/DECISIONS.md`` D3.7 records
+   the original measurement: across the Phase-3 parsed corpus, 0 of 122 leaf
+   questions carried prompt text, because
+   :class:`~lemely.core.loose_schemas.Question` (the mark-scheme model) has
+   no question-stem field at all — a CAIE mark scheme contains marking
+   points, not the question text; the stem lives in the paired question
+   paper. **P4.1 closed that gap**: ``lemely.io.det.question_papers``
+   deterministically extracts stems from question-paper PDFs, and
+   ``lemely.io.question_papers.ingest_question_papers_dir`` pairs them with
+   parsed mark schemes and writes real ``source=past_paper`` bank rows
+   through :meth:`QuestionBankService.add_questions` — the same writer this
+   module's other three pieces use. Persisting past-paper questions is no
+   longer structurally impossible.
+
+   What did *not* change: this specific function still walks
+   ``mark_schemes.parsed_payload`` rows only, and a mark-scheme payload
+   still never carries a stem — so :func:`survey_past_paper_questions`
+   itself still reports 0 producible from that input, honestly, not because
+   the feature is missing but because this function was never the writer
+   for it. Use ``lemely ingest-question-papers`` (CLI) for real past-paper
+   coverage; this survey remains useful as-is for auditing mark-scheme
+   corpus shape (topic hints, inferred difficulty distribution) independent
+   of stem availability.
+
+P4.8 chunk 0 adds a fifth piece: :func:`renderable_bank_filter` — a
+deterministic, Gemini-free predicate that excludes bank rows whose ``prompt``
+depends on a figure/diagram the bank cannot render. ``question_bank`` has no
+image column at all (P4.1 excluded 654 figure-bearing leaves at ingest, but
+some surviving stems still *reference* one, e.g. ``"The diagram shows a
+radioactive source..."``); serving one of those from placement or practice
+makes the question unanswerable and, for placement specifically, plants a
+false weakness that seeds P4.5/P4.7. Measured against the live 0625 bank: 25
+of 273 past-paper stems read an existing figure as their source of
+information (drawing *their own* diagram, e.g. "draw a diagram of the
+circuit used", is explicitly not this — that is the student's own answer,
+not a dependency on an unseen image). Deliberately **not** the same seam as
+:func:`visible_bank_filter` — that predicate is a pure owner/school
+authorization check, and :class:`~lemely.db.placement_repo.PlacementService`
+turns out not to call it at all (:meth:`~lemely.db.placement_repo.
+PlacementService._load_candidates` builds its own subject/source/is_active
+filter), so folding this into ``visible_bank_filter`` alone would have left
+placement's pool unfixed. Applied everywhere a servable pool is counted or
+selected: :meth:`QuestionBankService._filters`, ``PracticeService.
+_matching_clauses``, ``StudyPlanService._availability``, and
+``PlacementService._load_candidates``.
 """
 
 from __future__ import annotations
@@ -44,15 +77,26 @@ from typing import TYPE_CHECKING, Final, cast
 
 import structlog
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, not_, or_, select
 
 from lemely.core.difficulty import Band, infer_difficulty
 from lemely.core.generation import GeneratedQuiz
 from lemely.core.loose_schemas import MarkScheme as ParsedMarkScheme
 from lemely.core.loose_schemas import QuestionType
+from lemely.core.topics import classify, is_writable
 from lemely.db.models.academic import MarkScheme as MarkSchemeRecord
-from lemely.db.models.enums import DifficultySource, ExamBoard, QuestionDifficulty, QuestionSource
+from lemely.db.models.academic import Paper, Subject
+from lemely.db.models.enums import (
+    SESSION_MONTH_LABELS,
+    DifficultySource,
+    ExamBoard,
+    QuestionDifficulty,
+    QuestionSource,
+    SessionMonth,
+)
 from lemely.db.models.quizzes import QuestionBank
+from lemely.io.metadata import parse_caie_qp_filename_metadata
+from lemely.io.syllabus_topics import get_taxonomy
 
 if TYPE_CHECKING:
     import uuid
@@ -115,9 +159,184 @@ def visible_bank_filter(
     return or_(*clauses)
 
 
+#: Postgres advanced-regex (``~*``, case-insensitive) matching a stem that
+#: reads an *existing* figure as its source of information — never a stem
+#: asking the student to produce their own diagram (``"draw a diagram of the
+#: circuit used"`` does not match; ``"On Fig. 8.1, draw..."`` does, because
+#: ``Fig. 8.1`` already exists and must be seen to answer). Five shapes,
+#: derived by inspecting all 32 loose ``Fig.|figure|diagram|table below|image``
+#: hits in the live 0625 bank one at a time (module docstring):
+#:
+#: * ``"Fig. 8.1 shows"`` / ``"The diagram shows"`` / ``"Diagram 1 shows"``
+#: * ``"On Fig. 8.1, draw..."`` / ``"On the diagram, ..."``
+#: * ``"...as shown in Fig. 7.1."``
+#: * ``"...connected as shown in Fig. 7.1"`` / ``"...in diagram 1"``
+#: * ``"complete Fig. 4.1 to show a circuit..."``
+#:
+#: Deliberately excludes bare ``"image"`` (3 hits, all the optics sense of
+#: "real image" — a lens question, not a photo) and "draw a diagram"/"you may
+#: draw a diagram" (4 hits — an experiment-design free-response question
+#: asking the student to sketch their *own* circuit, self-contained in prose,
+#: not a dependency on anything the bank cannot render). Verified against the
+#: live DB (``.venv/bin/python`` + ``lemely.db.session.get_engine``): 25 of
+#: 273 0625 past-paper rows match, all four of the provable IDs among them,
+#: zero rows outside subject 0625 match at all.
+_FIGURE_DEPENDENT_PATTERN: Final = (
+    r"\m(fig\.?|figure|diagram)\s*[0-9]*\.?[0-9]*\s+shows?\M"
+    r"|\mon\s+(fig\.?|figure|diagram)"
+    r"|\mas\s+shown\s+in\s+(fig\.?|figure|diagram)"
+    r"|\min\s+(fig\.?|figure|diagram)\s*[0-9]"
+    r"|\mcomplete\s+(fig\.?|figure)"
+)
+
+
+def renderable_bank_filter() -> ColumnElement[bool]:
+    """Exclude :class:`QuestionBank` rows whose prompt depends on a figure.
+
+    ``question_bank`` has no image/figure column (P4.8 chunk 0 — see module
+    docstring); a stem matching :data:`_FIGURE_DEPENDENT_PATTERN` cannot be
+    fully rendered, so it must never be served by placement or practice. This
+    is an **exclusion from serving, not deletion** — the row stays, stays
+    ``is_active``, and stays auditable; only the read paths that assemble a
+    student-facing pool apply this predicate.
+
+    A pure predicate over the existing ``prompt`` column — no migration, no
+    Gemini call, $0.00. Composed with :func:`visible_bank_filter` at every
+    call site rather than folded into it: ``visible_bank_filter`` is an
+    owner/school authorization check, this is a content-completeness check,
+    and (the reason they cannot share one function) ``PlacementService``
+    does not call ``visible_bank_filter`` at all — it builds its own
+    subject/source/``is_active`` filter in ``_load_candidates`` — so this
+    predicate has to be applied there directly too.
+    """
+    return not_(
+        cast(
+            "ColumnElement[bool]",
+            QuestionBank.prompt.op("~*")(_FIGURE_DEPENDENT_PATTERN),
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # 2. QuestionBankService — bulk insert + the pool-count/selection helpers
 # ---------------------------------------------------------------------------
+
+
+_SESSION_MONTH_BY_LABEL: Final[dict[str, SessionMonth]] = {
+    label: member for member, label in SESSION_MONTH_LABELS.items()
+}
+"""Inverse of the display map. ``ExamMetadata.session_month`` is the *label*
+(``"May/June"``); the ``papers`` column is the enum. Derived from the one
+mapping rather than restated, so the two cannot drift apart."""
+
+
+def _paper_identity(board: ExamBoard, source_question_id: str | None) -> _PaperIdentity | None:
+    """Parse a bank row's paper identity out of its ``source_question_id``.
+
+    P4.1 builds that value as ``f"{qp_stem}#{ref}"`` — e.g.
+    ``"0625_s23_qp_11#22"`` — so the stem before the ``#`` is the source PDF's
+    filename, and the same parser the ingest used reads it back. Returns
+    ``None`` (never a partial guess) if the stem does not parse.
+    """
+    if not source_question_id or "#" not in source_question_id:
+        return None
+    stem = source_question_id.split("#", 1)[0]
+    try:
+        meta = parse_caie_qp_filename_metadata(f"{stem}.pdf")
+    except ValueError:
+        return None
+    month = _SESSION_MONTH_BY_LABEL.get(meta.session_month)
+    if month is None:
+        return None
+    return _PaperIdentity(
+        board=board,
+        subject_code=meta.subject_code,
+        session_month=month,
+        session_year=meta.session_year,
+        paper_number=meta.paper_number,
+        paper_variant=meta.paper_variant,
+    )
+
+
+def _resolve_paper(session: Session, identity: _PaperIdentity) -> tuple[uuid.UUID, bool] | None:
+    """Get-or-create the ``papers`` row (and the ``subjects`` row it FKs to).
+
+    Returns ``(paper_id, created)``, or ``None`` when the subject has no
+    bundled syllabus taxonomy — ``subjects.name`` is NOT NULL and the only
+    honest source for it is the transcribed ``subject_name`` D4.4 already
+    loads. Inventing a display name to satisfy a foreign key would put a made-up
+    string in front of a user.
+    """
+    existing = session.scalars(
+        select(Paper).where(
+            Paper.board == identity.board,
+            Paper.subject_code == identity.subject_code,
+            Paper.session_month == identity.session_month,
+            Paper.session_year == identity.session_year,
+            Paper.paper_number == identity.paper_number,
+            Paper.paper_variant == identity.paper_variant,
+        )
+    ).first()
+    if existing is not None:
+        return existing.id, False
+
+    # Looked up by `code`, not by primary key: `subjects.id` is a generated
+    # uuid and `code` is the natural key the FK on `papers` actually points at.
+    subject = session.scalars(select(Subject).where(Subject.code == identity.subject_code)).first()
+    if subject is None:
+        taxonomy = get_taxonomy(identity.subject_code, board=identity.board.value)
+        if taxonomy is None:
+            return None
+        subject = Subject(
+            code=identity.subject_code, name=taxonomy.subject_name, board=identity.board
+        )
+        session.add(subject)
+        session.flush()
+
+    paper = Paper(
+        board=identity.board,
+        subject_code=identity.subject_code,
+        session_month=identity.session_month,
+        session_year=identity.session_year,
+        paper_number=identity.paper_number,
+        paper_variant=identity.paper_variant,
+    )
+    session.add(paper)
+    session.flush()
+    return paper.id, True
+
+
+@dataclass(slots=True)
+class PaperLinkOutcome:
+    """Counts from :meth:`QuestionBankService.link_past_paper_rows`.
+
+    Every non-linked row lands in exactly one counter, so ``considered`` always
+    equals ``linked + unparseable + no_subject_taxonomy`` — a backfill that
+    quietly drops rows is the failure mode this shape prevents.
+    """
+
+    considered: int = 0
+    linked: int = 0
+    papers_created: int = 0
+    unparseable: int = 0
+    """``source_question_id`` did not carry a parseable CAIE paper stem. Left
+    unlinked rather than attached to a guessed paper."""
+    no_subject_taxonomy: int = 0
+    """No bundled syllabus for the subject, so no transcribed subject name for
+    the ``subjects`` row the FK needs. Skipped rather than given an invented
+    display name."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PaperIdentity:
+    """The six columns of ``uq_papers_identity``, as a hashable cache key."""
+
+    board: ExamBoard
+    subject_code: str
+    session_month: SessionMonth
+    session_year: int | None
+    paper_number: int
+    paper_variant: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +360,14 @@ class NewBankQuestion:
     owner_id: uuid.UUID | None = None
     school_id: uuid.UUID | None = None
     paper_id: uuid.UUID | None = None
+    """The ``papers`` row this question came from.
+
+    Left ``None`` by the P4.1 past-paper writer, which had no reason to create
+    ``Paper`` rows; :meth:`QuestionBankService.link_past_paper_rows` fills it
+    afterwards from ``source_question_id``. P4.4 made it load-bearing —
+    placement duration estimates resolve through it (D4.6 §5) — so a row
+    without it is placement-ineligible, not merely under-described.
+    """
     source_question_id: str | None = None
     topic: str | None = None
     model_answer: str | None = None
@@ -294,6 +521,92 @@ class QuestionBankService:
             objs = session.scalars(stmt).all()
             return [_to_row(obj) for obj in objs]
 
+    def existing_source_question_ids(self, *, source: QuestionSource) -> set[str]:
+        """All non-null ``source_question_id`` values already banked for ``source``.
+
+        Backs idempotent re-ingest (``lemely.io.question_papers``,
+        P4.1): that writer keys on ``(subject_code, source_question_id)``
+        rather than the DB's own partial unique index (which requires
+        ``paper_id``, and P4.1 does not create ``Paper`` rows — see that
+        module's docstring), so it needs the full existing set up front to
+        skip rows it has already written on a prior run. Includes inactive
+        rows (``is_active`` not filtered) — a row a teacher deactivated must
+        still block a duplicate insert, not silently reappear on the next
+        ingest.
+        """
+        with self._sessionmaker() as session:
+            stmt = select(QuestionBank.source_question_id).where(
+                QuestionBank.source == source,
+                QuestionBank.source_question_id.is_not(None),
+            )
+            return {row for row in session.scalars(stmt).all() if row is not None}
+
+    def link_past_paper_rows(self, *, dry_run: bool = False) -> PaperLinkOutcome:
+        """Fill ``question_bank.paper_id`` for banked past-paper questions.
+
+        **Why this exists.** P4.1 banked 273 real past-paper questions and left
+        every one of them with ``paper_id IS NULL`` — that module's docstring
+        says so plainly ("P4.1 does not create ``Paper`` rows"), and nothing
+        needed the link until now. P4.4 does: a placement estimate is
+        ``total_marks * (paper duration / paper total marks)``, and the only
+        route from a bank row to its paper's number is this column (D4.6 §5).
+        Without it *every* question is ineligible and placement is
+        un-assemblable for 0625 too — which is what an orchestrator measurement
+        against the real bank actually returned, before this method existed.
+
+        The paper identity is not inferred: it is parsed from the
+        ``source_question_id``, which P4.1 already builds as
+        ``f"{qp_stem}#{ref}"`` from the source PDF's filename, by the same
+        :func:`~lemely.io.metadata.parse_caie_qp_filename_metadata` the
+        ingest used. A row whose stem does not parse is left unlinked and
+        counted, never linked to a guessed paper.
+
+        ``Paper`` rows are created on demand (``papers`` is empty today), and
+        so is the ``subjects`` row its FK requires — with the subject *name*
+        taken from the bundled syllabus taxonomy, the same transcribed source
+        D4.4 used. A subject with no bundled taxonomy is skipped rather than
+        given an invented display name; its questions stay unlinked, which the
+        availability path already reports honestly.
+
+        Idempotent: only rows with a NULL ``paper_id`` are considered.
+        """
+        outcome = PaperLinkOutcome()
+        # Not `session.begin()`: a dry run must be able to create Paper rows in
+        # the session (so the *second* row for the same paper takes the cache
+        # path and the counts are the real ones) and then throw them away. The
+        # commit is explicit and only happens on a live run.
+        with self._sessionmaker() as session:
+            rows = session.scalars(
+                select(QuestionBank).where(
+                    QuestionBank.source == QuestionSource.past_paper,
+                    QuestionBank.paper_id.is_(None),
+                    QuestionBank.source_question_id.is_not(None),
+                )
+            ).all()
+            outcome.considered = len(rows)
+            cache: dict[_PaperIdentity, uuid.UUID] = {}
+            for row in rows:
+                identity = _paper_identity(row.board, row.source_question_id)
+                if identity is None:
+                    outcome.unparseable += 1
+                    continue
+                paper_id = cache.get(identity)
+                if paper_id is None:
+                    resolved = _resolve_paper(session, identity)
+                    if resolved is None:
+                        outcome.no_subject_taxonomy += 1
+                        continue
+                    paper_id, created = resolved
+                    cache[identity] = paper_id
+                    outcome.papers_created += int(created)
+                row.paper_id = paper_id
+                outcome.linked += 1
+            if dry_run:
+                session.rollback()
+            else:
+                session.commit()
+        return outcome
+
     def has_inferred_difficulty(
         self,
         caller_id: uuid.UUID | None,
@@ -343,6 +656,7 @@ class QuestionBankService:
         clauses: list[ColumnElement[bool]] = [
             QuestionBank.is_active.is_(True),
             visible_bank_filter(caller_id, school_ids),
+            renderable_bank_filter(),
             QuestionBank.subject_code == subject_code,
         ]
         if source is not None:
@@ -494,11 +808,16 @@ def import_generated_quiz_files(
 class PastPaperSurveyReport:
     """Counts from walking every parsed mark scheme's leaf questions.
 
-    **A survey, not a writer** — see module docstring / ``docs/quiz-model.md``
-    §2 / ``BUILD/DECISIONS.md`` D3.7. ``produced`` is always ``0`` against
-    today's corpus because :class:`~lemely.core.loose_schemas.Question` has
+    **A survey over mark-scheme payloads, not a writer** — see module
+    docstring / ``docs/quiz-model.md`` §2 / ``BUILD/DECISIONS.md`` D3.7.
+    ``produced`` is always ``0`` here because
+    :class:`~lemely.core.loose_schemas.Question` (the mark-scheme model) has
     no question-stem field to read a prompt from; ``skipped_no_prompt``
-    therefore equals ``leaf_questions_seen`` in full, not partially.
+    therefore equals ``leaf_questions_seen`` in full, not partially. This is
+    a property of *this function's input* (mark schemes alone), not a
+    statement that past-paper questions cannot be banked at all — P4.1's
+    ``lemely.io.question_papers.ingest_question_papers_dir`` banks them from
+    question-paper PDFs paired with these same mark schemes instead.
     """
 
     mark_schemes_scanned: int
@@ -519,25 +838,29 @@ class PastPaperSurveyReport:
         if self.mark_schemes_scanned == 0:
             # Distinct from the structural finding below: having examined
             # nothing, this run observed nothing, and saying otherwise would
-            # report a conclusion it did not reach. The structural blocker is
-            # still named, as the standing reason no writer exists — but as
-            # prior knowledge (D3.7), not as this scan's result.
+            # report a conclusion it did not reach.
             return (
                 "0 past-paper questions produced: no parsed mark schemes are "
-                "indexed, so nothing was examined. Independently of that, "
-                "persisting past-paper questions is blocked on a "
-                "question-paper stem extractor that does not exist yet "
-                "(BUILD/DECISIONS.md D3.7) — indexing mark schemes alone "
-                "would not change this count. Use generated questions instead."
+                "indexed, so nothing was examined. A question-paper stem "
+                "extractor now exists (lemely.io.det.question_papers) and "
+                "banks real past-paper questions directly from question-paper "
+                "PDFs paired with a mark scheme — run `lemely "
+                "ingest-question-papers` for that. Indexing mark schemes here "
+                "would not change this survey's own count: it only reads "
+                "mark-scheme payloads, which never carry stem text."
             )
         return (
             "0 past-paper questions produced: loose_schemas.Question carries "
             "marking points, not question-stem text, so no leaf question in "
             f"{self.mark_schemes_scanned} scanned mark scheme(s) carries the "
-            "prompt question_bank.prompt requires. This is structural "
-            "(BUILD/DECISIONS.md D3.7), not a parsing gap — persisting "
-            "past-paper questions needs a question-paper stem extractor, "
-            "which does not exist yet. Use generated questions instead."
+            "prompt question_bank.prompt requires. This is structural to "
+            "mark-scheme payloads, not a parsing gap — and not a dead end: a "
+            "question-paper stem extractor now exists "
+            "(lemely.io.det.question_papers) and banks past-paper questions "
+            "directly from question-paper PDFs via `lemely "
+            "ingest-question-papers`. This survey function only walks "
+            "mark-scheme payloads, which never carry stems, so its own yield "
+            "stays zero regardless."
         )
 
 
@@ -603,6 +926,141 @@ def survey_past_paper_questions(sessionmaker: sessionmaker[Session]) -> PastPape
     )
 
 
+# ---------------------------------------------------------------------------
+# 5. Topic classification (P4.2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TopicClassificationReport:
+    """Outcome of one ``classify-topics`` run, for the CLI and the phase report.
+
+    Every counter is a real observation of this run. ``skipped_low_confidence``
+    is deliberately its own bucket rather than being folded into
+    ``unclassified``: they are different failures. An unclassified question had
+    too little distinctive vocabulary to place at all; a low-confidence one was
+    placed, but not well enough to write (``lemely.core.topics.WRITABLE_BANDS``).
+    Collapsing them would hide the size of the band this policy is discarding,
+    which is exactly the number a future ``topic_confidence`` column would
+    reclaim.
+    """
+
+    rows_examined: int
+    already_classified: int
+    assigned: int
+    skipped_low_confidence: int
+    unclassified: int
+    no_taxonomy: int
+    band_distribution: dict[str, int] = field(default_factory=dict)
+    label_distribution: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def coverage(self) -> float:
+        """Share of examined rows now carrying a topic, 0.0 when none examined."""
+        if self.rows_examined == 0:
+            return 0.0
+        return (self.assigned + self.already_classified) / self.rows_examined
+
+
+def classification_text(row: QuestionBank) -> str:
+    """Everything known about a bank row that carries topic signal.
+
+    The MCQ options matter and are not optional decoration: measured on the
+    real 0625 bank, including them moved coverage from 78.8% to 89.4%. An MCQ
+    stem is deliberately terse ("Which planet is classed as a rocky planet?")
+    and the discriminating vocabulary often lives entirely in the four options.
+    They are part of the question, so they are part of what gets classified.
+    """
+    parts: list[str] = [row.prompt or ""]
+    if row.model_answer:
+        parts.append(row.model_answer)
+    parts.extend(str(option) for option in (row.mcq_options or []))
+    for point in row.mark_scheme_points or []:
+        if isinstance(point, dict):
+            parts.extend(str(v) for v in point.values() if isinstance(v, str))
+        else:
+            parts.append(str(point))
+    return "\n".join(p for p in parts if p)
+
+
+def classify_bank_topics(
+    sessionmaker: sessionmaker[Session],
+    *,
+    subject_code: str | None = None,
+    reclassify: bool = False,
+    dry_run: bool = False,
+) -> TopicClassificationReport:
+    """Backfill ``question_bank.topic`` from the bundled syllabus taxonomies.
+
+    Idempotent by default: a row that already carries a topic is counted in
+    ``already_classified`` and left alone, so re-running after a corpus
+    expansion only touches new rows. ``reclassify=True`` re-derives every row,
+    which is what to use after editing the taxonomy vocabulary.
+
+    ``dry_run=True`` computes the identical report without writing — the
+    intended way to see what a vocabulary change would do before committing to
+    it.
+
+    Rows whose subject has no bundled taxonomy are counted in ``no_taxonomy``
+    and skipped rather than forced against another subject's tree.
+    """
+    report_bands: dict[str, int] = {}
+    report_labels: dict[str, int] = {}
+    examined = already = assigned = low_conf = unclassified = no_taxonomy = 0
+
+    with sessionmaker() as session:
+        statement = select(QuestionBank)
+        if subject_code is not None:
+            statement = statement.where(QuestionBank.subject_code == subject_code)
+        rows = session.scalars(statement).all()
+
+        for row in rows:
+            examined += 1
+            if row.topic and not reclassify:
+                already += 1
+                continue
+            taxonomy = get_taxonomy(row.subject_code, board=row.board.value)
+            if taxonomy is None:
+                no_taxonomy += 1
+                continue
+            match = classify(classification_text(row), taxonomy)
+            if match is None:
+                unclassified += 1
+                if reclassify:
+                    row.topic = None
+                continue
+            if not is_writable(match):
+                low_conf += 1
+                if reclassify:
+                    # A reclassify pass must be able to *remove* a label the
+                    # previous vocabulary asserted and this one no longer
+                    # supports. Leaving it would make the taxonomy edit look
+                    # like it only ever adds.
+                    row.topic = None
+                continue
+            row.topic = match.label
+            assigned += 1
+            band = match.confidence.value
+            report_bands[band] = report_bands.get(band, 0) + 1
+            report_labels[match.label] = report_labels.get(match.label, 0) + 1
+
+        if dry_run:
+            session.rollback()
+        else:
+            session.commit()
+
+    return TopicClassificationReport(
+        rows_examined=examined,
+        already_classified=already,
+        assigned=assigned,
+        skipped_low_confidence=low_conf,
+        unclassified=unclassified,
+        no_taxonomy=no_taxonomy,
+        band_distribution=report_bands,
+        label_distribution=report_labels,
+    )
+
+
 __all__ = [
     "GeneratedImportResult",
     "GeneratedImportSkip",
@@ -610,6 +1068,9 @@ __all__ = [
     "PastPaperSurveyReport",
     "QuestionBankRow",
     "QuestionBankService",
+    "TopicClassificationReport",
+    "classification_text",
+    "classify_bank_topics",
     "generated_questions_to_bank_rows",
     "import_generated_quiz_files",
     "survey_past_paper_questions",

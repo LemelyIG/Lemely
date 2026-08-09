@@ -1091,3 +1091,376 @@ looks at it.
 established by Phase 3, not left open: the question-stem extractor (D3.7 — the bank is
 empty and corpus growth cannot change that) and the target-grade column (D3.3 — at-risk
 rule 2 cannot fire without it).
+
+## 2026-08-08 — P4.1 landed, P4.2 done (topic taxonomy)
+
+**Did.** Committed the P4.1 quality fixes that were sitting staged and ungated from
+the previous session (symbol recovery, corrupt-leaf exclusion, the conftest guard that
+stops the test suite making billed Gemini calls) after verifying all 13 gates green —
+1999431. Then P4.2 end to end: syllabus taxonomy, deterministic classifier, loader,
+bank backfill, CLI, 27 new tests — a05db60, D4.4.
+
+**Learned.**
+- *Don't author reference data from memory when the source is fetchable.* First instinct
+  was to write the CAIE topic lists from knowledge. CAIE renumbers topics between
+  syllabus cycles, so that would have put invented precision at the root of the phase.
+  The three syllabus PDFs were one curl away from a domain Phase 2 already scrapes.
+- *Calibrate on the real corpus before tuning thresholds.* Two defects only the real
+  273 rows could show: hyphens never matched at all (`double-insulated` vs `double
+  insulated`), and `mcq_options` — already in the DB, unused — carried coverage from
+  78.8% to 89.4% on its own. No synthetic fixture would have surfaced either.
+- *Writing the tests found two scoring bugs.* A same-parent subtopic tie was being
+  resolved by file order and reported as a finding; and an *uncontested* single strong
+  hit was banded the same as a contested one. Both fixed in the code, not the test.
+- *The honest yield is 77.3%, not 89.7%.* Scoring places 245/273 but only 211 get
+  written. There is no confidence column on `question_bank.topic`, so a low-confidence
+  label is indistinguishable downstream from a certain one — and the low band contained
+  real nonsense (radioactivity labelled "Electrical quantities").
+
+**Next.** P4.3 — student profile + onboarding data model (migration 0009), which also
+activates target grades and closes at-risk rule 2 (D3.3). Carry into P4.4: the marking
+side still has **no** topics (`topic_hint` is None on all 637 questions in all 33 parsed
+0625 schemes), so practice-targets-weakness does not join up until that fill is done at
+the db/io boundary. D4.4 §6.
+
+## 2026-08-08 — P4.3: the student profile, and the at-risk rule that never fired
+
+**Did.** P4.3 in two chunks. Migration 0009 adds four additive tables (profile,
+per-subject enrolment, papers, confidence ratings) plus a service and student-only
+onboarding routes on `/api/me`. Then the part that actually mattered: at-risk rule 2
+("predicted ≥2 grades below target") has been permanently *not evaluable* since Phase 3
+for want of a target-grade column, and is now live. D4.5 records both.
+
+**Learned.** The tempting shape for `assess_at_risk` was to keep its scalar
+`target_grade` and just start passing a value. That is wrong the moment a student enrols
+in two subjects — it would compare a physics paper against a maths target and put a false
+flag on a teacher's dashboard. Targets had to become a subject-keyed mapping resolved
+against the latest *grade-bearing* record. Worth remembering generally: activating a
+dormant rule is not the same task as filling in its missing input.
+
+**Also.** Two subagents deadlocked waiting on each other's gate run and produced nothing
+for ~20 minutes; I finished that chunk by hand. Watch for the wait-loop pattern — an
+agent that reports "waiting for X" twice is not working.
+
+**Next.** P4.4 — placement-test backend, which also carries P4.2's marking-side topic
+fill (D4.4 §6) and therefore needs the accuracy harness re-verified (MISSION §6 gate 5).
+
+---
+
+## 2026-08-08 — P4.4 chunk B: placement assembly is real, and three defects only measurement could find
+
+**Did.** Committed B-1 (the ownership schema, already written but uncommitted), then
+B-2 (`_load_permitted` — the owning student can now take a class-less assignment at all,
+which no code path previously allowed) and B-3 (the assembler, `paper_timing.json`
+transcribed from the three syllabus PDFs' Assessment overview, and the pure
+`core/placement.py`). D4.8 records the reasoning.
+
+**Learned.** Every one of the three defects in D4.8 was invisible from the code and
+obvious from one query against the real bank. The worst was silent rather than loud:
+`question_bank.paper_id` was NULL on all 273 rows and `papers` was an empty table, so
+placement returned "unavailable" for 0625 — which looks *identical* to the expected
+0580/0606 corpus gap. A designed-in honest-failure path is exactly where a real failure
+hides best. The second worst was a number that was true and meaningless: "13 topics" for
+a set with nine of 13 questions under physics topic 1, because D4.2's classifier writes
+both `"3 Waves"` and `"1.2 Motion"` and nothing had ever had to treat those as different
+levels. Both go in DELIVERY.md's honesty section, not just the report.
+
+**Also.** Wrote the assembler before the wiring, deliberately — it is where the rules
+live, and the DB/route layer around it is now mechanical with no open questions.
+$0.00 Gemini this session; everything here is deterministic.
+
+**Next.** B-4: `PlacementService` + the three routes in D4.6 §4. Take/resume/submit are
+the existing endpoints — reusing them is the point. Then P4.5.
+
+## 2026-08-08 (session 2) — P4.4 finished, P4.5 landed
+
+**Did.** Closed P4.4 with chunk B-4: `PlacementService` (availability/create/result) and
+the three S-03/S-05 routes over the assembler chunk B-3 had already measured (D4.9). Then
+P4.5 end to end: `PracticeService` (preview/create/export), `/api/student/practice`, and
+the `list_assigned` branch D4.6 §3 had explicitly deferred to this task (D4.10). Feature
+branch pushed for the first time.
+
+**Learned — the same lesson twice, from two different subagents.** Neither reported back;
+both had to be verified from the artefacts instead. The placement implementer silently
+dropped one clause of D4.6 §5 (narrow to the papers the student will actually sit), which
+would have measured a 0625 **Core** student on **Extended** questions — inventing a
+weakness in every topic that sample touched, then feeding it into P4.7's study plan. **No
+test could have caught it**: the seeded bank is single-paper, so the narrowing is
+unobservable unless a test deliberately enrols the student elsewhere. Found by reading the
+code against the decision record, not by running anything. The practice implementer
+reported done with `ruff format` red on two of its own files. MISSION §5's "verify their
+output yourself" is not ceremony.
+
+**Also worth keeping:** practice deliberately draws from 273 rows where placement draws
+from 211. An untopiced question cannot support a weakness *profile* but is perfectly good
+practice *material* — the two services filter differently on purpose, and that asymmetry is
+easy to mistake for a bug later.
+
+**Next.** P4.6 flashcards backend (decks by subject/topic, AI generation from a weakness,
+SM-2 review). Then P4.7 study plan, then the four frontend tasks.
+
+## 2026-08-09 — P4.6 closed, P4.7 chunks A and B landed
+
+**Did.** Found P4.6 chunk C uncommitted on disk from a killed session; verified it with my
+own gate run rather than the handover's word and it came back clean — the first one this
+phase that did. Committed (`b1a44bf`). Then P4.7 chunk A (`fc4dca9`): the adaptive scheduler
+rebuilt pure and clock-injected, sessions carrying topic + activity type + duration + a real
+date, three weighted signals (0.5 rolling weakness / 0.3 placement / 0.2 self-report) with
+renormalisation instead of zero-filling. Then chunk B (`27f6a16`): migration 0012,
+persistence, ISO-week regeneration by supersession, per-session completion. D4.12 recorded.
+
+**Learned.** The thing worth carrying forward is *measure the output, don't read the code and
+nod*. Chunk A looked right — good docstrings, honest refusal path, every rule tested — and
+scheduled **270 of 600 minutes** for a student with three weak topics, because sessions capped
+at 90 minutes silently dropped the excess while the header still claimed ten hours a week. No
+test failed. Nothing was obviously wrong on the page. It took running the function over a few
+realistic inputs and looking at the totals. The worst failures in this phase have all been
+this shape: plausible code, invisible to the suite, wrong in a way only arithmetic reveals.
+
+**Also.** Five of five handovers this phase have now reported done with a gate red — this
+time `test_db_schema.py`'s EXPECTED_TABLES registry, the deliberate schema-drift guard the
+two new tables were never added to. It caught the diff exactly as designed. The pattern is
+stable enough that the orchestrator's own `./scripts/check.sh` run should be treated as part
+of the task, not as a formality after it.
+
+**Next.** P4.7 chunk C — the routes, and the DTO decision. `StudyPlanDTO` currently carries
+no `available`/`reason`, so chunk A's honest `no_signal` refusal and a genuine "nothing to
+schedule this week" both arrive at the frontend as an empty list. That distinction is the
+whole point of chunk A and it dies at the wire until chunk C fixes it. Then P4.8–P4.12.
+
+## 2026-08-09 — P4.7 closed, P4.8 opened (chunks 0 + A)
+
+**Did.** Verified and landed P4.7 chunk C (persisted study-plan routes, D4.13) — found
+already on disk from a killed session and, for the first time this phase, clean on every
+gate. Closed P4.7. Opened P4.8 and, while scoping S-04, found a real defect by measuring
+the live bank: 25 of 273 stems reference a figure the bank structurally cannot hold.
+Fixed as chunk 0 (D4.14). Landed chunk A — the real onboarding wizard on the P4.3 backend.
+
+**Learned.** Three things worth not re-deriving. (1) No maths renderer is needed: 1 of 273
+stems is LaTeX-shaped, the rest is plain Unicode; what stems actually need is
+`white-space: pre-line`. (2) There is no student quiz-taking screen anywhere in the
+product — S-04 will be the first, so it must be built reusable. (3) `PlacementService`
+does not use `visible_bank_filter`, which is why the obvious one-line fix for the figure
+defect would have left the worst-affected path unfixed.
+
+**The pattern that keeps paying.** Two more subagent handovers signed off before their own
+gate runs finished. Both happened to be green, but that was established by the
+orchestrator's own run each time. Seven of eight handovers this phase have done this; the
+five that were actually red were all caught the same way. Keep running the gates.
+
+**Next.** P4.8 chunk B — S-03/S-04/S-05 on the placement + quiz-taking endpoints. S-04
+owns answer persistence across a lost connection and resume, and is the reusable
+question-rendering surface P4.9 and P5 will compose.
+
+## 2026-08-09 — P4.8 chunk C closed; P4.8 done (session 7)
+
+- **Did:** ran the Phase-4 audit registry for the first time (six prior sessions only read it).
+  Confirmed session 6's two fixes work — the `ready`-driven wizard survives the repeated
+  navigation, and S-04 is genuinely reachable, so the placement seed is real. Then fixed the two
+  defects the run exposed: **no `<h1>` on any of the five new screens** (QUALITY-BAR.md:45; axe
+  rates it *moderate*, so gate 8's serious/critical threshold had been passing over it) and a
+  **seed that still collided on rerun**, failing `playwright-e2e` on a real IntegrityError.
+  Ran `/impeccable audit` (16/20, detector clean) and fixed its P1: three controls under the
+  44px touch floor. All 13 gates green, 0 skipped; 2308 passed / 6 skipped / 0 failed / 90.30%.
+- **Learned:** reading and running find different defect classes, and this chunk is the cleanest
+  evidence of it in the build so far. The `h1` gap screenshots perfectly clean and only harms
+  screen-reader users; the seed collision needed ~18 accumulated runs to surface. Also: a gate
+  threshold looser than the written bar (axe *serious/critical* vs QUALITY-BAR's "one h1 per
+  page") is a permanent blind spot, not a one-off miss — worth checking the bar directly rather
+  than trusting the gate. And a "rerun-safety" helper that hashes 2 of 12 characters is a
+  100-value namespace wearing a uniqueness guarantee's docstring.
+- **Next:** P4.9 — frontend S-20/S-21 (practice) + S-22/S-23 (flashcards) on the P4.5/P4.6
+  backends. Four audit findings deliberately deferred and recorded in STATE + D4.16 §4; the
+  `prefers-reduced-motion` blanket kill is P5's, because Phase 5's own acceptance requires a
+  test that cannot honestly pass against it.
+
+## 2026-08-09 — P4.9 opened; chunk 0 (backend read paths) done
+- **Did:** scoped P4.9 by measurement before briefing anything, which turned up two missing
+  backend read paths and made them chunk 0 (`dc0c0ac`). A practice set **is** marked on submit
+  — marking fires for every quiz kind — but had **no result route anywhere**: the take DTO
+  carries no marks at all and placement's result route is narrowed to `kind == placement`. And
+  no topic-listing endpoint existed in any router, so S-20's topic selection had no data
+  source. Both added; both filtered/narrowed through the *existing* shared predicates rather
+  than second copies. All 13 gates green, 0 skipped; 2331 / 6 / 0, 90.37% cov.
+- **Learned:** the live bank mixes taxonomy levels — `"1 Motion, forces and energy"` (152) comes
+  back as a **peer** of `"1.2 Motion"` (6) on disjoint row sets, so a flat chip list would offer
+  a parent that silently excludes its own children while looking perfectly correct. Only
+  querying the real bank showed it; reading the code could not. It is the same defect class as
+  P4.4 chunk B-3's breadth bug, which is why the helper to fix it already existed.
+  Second lesson, cheaper to have learned here than during a phase report: **running `pytest`
+  concurrently with `check.sh` corrupts the coverage figure while still exiting 0** — 89.67%
+  concurrent vs 90.37% serial on an identical tree, with test counts identical both times. I
+  spent real effort chasing a regression that did not exist. Recorded in STATE's environment
+  facts.
+  Third: the handover omitted the structural-exclusion test the brief explicitly required, and
+  the existing precedent it would have copied asserts on a response *body* — which passes
+  vacuously the moment `questions` is empty, i.e. exactly the unmarked case. Added in the
+  stronger field-set form.
+- **Next:** P4.9 chunk A — S-20 (practice generator) + S-21 (working view), composing the
+  existing `QuizTaker` rather than forking it, and reading chunk 0's result route for the
+  finish summary. Chunk 0's `syllabusGroup` is what S-20 must nest by. Note S-21's
+  reveal-answer is deliberately **not** built (no route exposes a model answer, and D3.8's
+  structural exclusion is on purpose) — recorded as a scope decision in STATE, not an omission.
+
+## 2026-08-10 (sixth session) — P4.9 chunks A and B closed
+
+**Did.** Verified P4.9 chunk A, which arrived as two wip commits with gates never run: all 13
+gates green, 249 web unit tests, zero backend diff. Then scoped, briefed and verified chunk B
+(S-22/S-23 flashcards on the ten P4.6 routes): 13 gates green, 279 web unit tests, still zero
+backend diff. Recorded D4.17 (S-23 ships with no XP) and scoped chunk C.
+
+**Learned.** The handover-is-not-evidence pattern held for the tenth time this phase, but the
+interesting part is *what kind* of defect keeps surviving. All three found this session render
+perfectly and pass every automated gate: a weak-topic prefill that applied an invisible filter
+(8 of 15 real weakness topics have no servable chip), a dead `useEditCard` leaving S-22's
+spec'd edit action half-built, and a hand-made deck labelled "Topic-generated". None is a
+crash; each is a **provenance or honesty** defect, which is precisely the class this product
+cannot afford and no linter can see. Also: the pure-logic-module split is what makes them
+fixable *and* pinnable — hoisting the origin decision out of JSX into `manualDeckRequest` took
+one edit and bought a real test.
+
+**Next.** P4.9 chunk C — the standing UI gate for all four screens. Unlike A and B it carries a
+`scripts/` diff (seed + registry). Its scoping block in STATE.md is written to start cold; the
+mutually-exclusive-state analysis (a student with weaknesses cannot show `no_weaknesses`) is
+the thing to do before writing the seed, not after.
+
+## 2026-08-10 — P4.9 chunk C closed; P4.9 done
+
+- **Did:** ran the gate over chunk C's on-disk seed + registry (13 entries / 14 states for
+  S-20..S-23). First run failed on two serious axe violations and, silently, a third defect.
+  Fixed all three, re-ran: **all 13 gates green, 0 skipped**. P4.9 closed; D4.18 recorded.
+- **Learned (1):** both contrast failures were `opacity` applied to *text*, not token faults —
+  `--t3` is 5.58–7.17:1 everywhere; axe was measuring it composited at 50%. The S-20 one had a
+  root cause a level down: C-14 `Checkbox` only self-dimmed on its own `disabled` prop, never on
+  an ancestor `<fieldset disabled>`, so the screen had no way to show the state except washing
+  the whole card — heading and prose included. Fixed at the component (`has-disabled:`).
+- **Learned (2), the one that matters:** the seed's documented "hermetic 24-row bank" was
+  **96 rows** — no teardown, 24 added per run, and the student pool is scoped by subject+paper,
+  never by run. S-20's `insufficient_pool` is the first capture that depends on pool *size*, so
+  it passed on a virgin DB and failed on every run after. It was invisible in the summary
+  because the audit already exited non-zero for the axe findings; found only by listing
+  `screens/S-20/` and noticing `default--*.png` was missing. **Verify captures by listing them,
+  never from the exit code.**
+- **Next:** P4.10 — frontend S-24/S-25 (study-plan week view + session detail), replacing the
+  placeholder `StudyPlan.tsx`. Backend is landed and route-tested (P4.7 chunk C, D4.13); the
+  `CurrentStudyPlanDTO {generated, plan}` envelope's three distinguishable states are the thing
+  the screen must render honestly rather than collapse.
+
+## 2026-08-09 — twenty-second session (P4.10, D4.20 + D4.21)
+
+- **Did:** chunk C's gate run had finished and failed **two** gates, neither from chunk C's
+  diff. Fixed both in `8181f7c`: the placement band flake (D4.20) and a 380px horizontal
+  overflow (D4.21). Re-gated; backend + web legs all green, live-stack legs confirmed after.
+- **Learned (1), the trap the last session flagged and it was real:** the failing assertion
+  `spans_multiple_bands is True` had *two* causes, and only one was the flake. The fixture's
+  `uuid.uuid4()` made the tie-break random (measured: **1 failure in 30 runs**) — but
+  `assemble` never reads `Candidate.difficulty` at all, so the assertion pinned a rule that was
+  never implemented. Making the fixture deterministic alone would have made it pass every time
+  and turned a lucky draw into a guarantee. Deleted the assertion instead and replaced it with
+  an inverse pair proving what the flag really is: a *report*, deliberately False sometimes,
+  because that is what stops S-05 inventing a working level from a one-band sample.
+- **Learned (2):** the 273-row 0625 corpus had been lost from the local Postgres in a DB reset —
+  the bank held only E2E seed rows. Re-ingested from PaperScraper ($0.00, deterministic) and
+  **verified the reconstruction against the recorded figures before drawing any conclusion**
+  (273/273/26/211/248 and 10 q / 17.06 min / 6 topics — all exact). The first measurement was
+  still wrong (8 q / 15.94 min) because the seed's 24 fixture rows were also in the bank.
+  **A measurement taken against a seeded DB is not a measurement of the corpus.**
+- **Learned (3):** the responsive failure was reported against one screen but lived in the
+  shared `StateView`, so *every* empty/error/offline/refusal state in the product overflowed at
+  380px. `max-w-sm` caps a box but does not make it shrink — without `w-full` it keeps its
+  intrinsic 384px. The screen named in a gate failure is where it was observed, not where it is.
+- **Next:** P4.10 chunk D — the legacy-route cleanup, fully scoped in STATE and D4.19. Its
+  three traps are already measured: deleting the routes silently shrinks the RBAC matrix
+  (replacements must land in the same commit), there are two different `StudentProfileDTO`
+  classes, and `lemely/io/study_plan_ai.py` must survive for the CLI.
+
+## 2026-08-09 — twenty-eighth session (P4.10 closed, P4.11 chunk A)
+
+- **Did:** confirmed the twenty-seventh session's gate run (all 13 green, 0 skipped) and
+  committed the two replacement IDOR pins (`65c846c`), which closes P4.10 entirely. Then wrote
+  **P4.11 chunk A**: `SeedContract` extended to all 14 top-level keys, plus a new
+  `web/e2e/seed-contract.spec.ts` drift pin. Scoped chunk B read-only while the gate ran.
+- **Learned (1), and it is why chunk A is not just a types edit:** the mirror is protected by
+  *nothing*. `readSeed()` is an unchecked `as SeedContract` cast, **and `web/e2e/` is in no
+  tsconfig `include` (D3.20)** — so neither the cast nor `web-typecheck` can see a Python-side
+  rename. It typechecks, arrives `undefined`, and surfaces inside whichever spec dereferenced
+  it; on a `SeedAccount` field that means a login form filled with `undefined`, which fails as
+  a bad credential and reads as an auth bug. The pin re-reads the JSON as `unknown` —
+  deliberately not through `readSeed()`, whose cast is the thing under test.
+- **Learned (2):** the same missing typecheck meant the new spec could not be verified by
+  typechecking it, only by running it — so it was, and then inverted for real: renaming
+  `"studyPlan"` and one nested `"deckId"` in `seed_e2e.py` failed 2 of 3 tests with named
+  messages, and the third correctly stayed green because it covers other fields. Reverted;
+  `git diff` on `seed_e2e.py` clean.
+- **Learned (3):** the twenty-fifth session's read-only shape note was right in substance but
+  wrong in two details — it said "11 top-level keys" while enumerating 14, and it missed the
+  `subjectCode` on both `practice` and `studyPlan`. Both were caught only because the shapes
+  were re-read out of `build_result_payload` rather than trusted, and the note itself said to
+  read the emitting code and not the docstring. **A prior session's "do not re-derive" covers
+  the expensive discovery, not the arithmetic around it.**
+- **Next:** P4.11 chunk B, the greenfield onboard → placement → plan acceptance journey. It is
+  scoped in STATE with every route, seeded account and identifying string taken from
+  `audit.mjs`, plus its three inherited traps: `waitForText` strings are regexes, S-05 must not
+  be identified by a phrase `PlacementInvite` also renders, and the onboarding wizard's step is
+  component state so S-02 cannot be deep-linked.
+
+## 2026-08-09 — thirty-third session (P4.11 chunks B and C both landed green)
+
+- **Did:** committed **chunk B** (`32cd131`) after its 24-minute foreground gate run came back
+  13/13 green, then wrote, inverted, gated and committed **chunk C** (`0a78b3b`, also 13/13,
+  0 skipped, on its own separate run). Both halves of MISSION §4's named Phase-4 acceptance now
+  exist as real Playwright behaviour: onboard → placement → plan (5 legs), and
+  practice-demonstrably-targets-a-seeded-weakness (3 tests). Attribution for both was checked by
+  mtime against the run window rather than assumed.
+- **Learned (1):** **one round of product inversion is not automatically enough.** Chunk C's
+  round 1 broke three sites and all three tests went red — which looks like proof — but test 1
+  had failed on its *shortfall* wait, several assertions before the one carrying the word
+  *demonstrably*. The break was legitimate (no prefill → unfiltered preview → 248 match a
+  request for 10 → the screen honestly renders "N match" instead of the shortfall panel); the
+  *inference* was not. Round 2 pointed the prefill at a servable non-weak topic so the panel
+  still rendered, and the targeting assertion then failed on its own terms while test 3 stayed
+  green. **Check which assertion the inversion actually reached, not just that the test is red.**
+- **Learned (2):** the scoping for chunk D was necessary but not sufficient. "Additive only, a
+  new account" does not cover the fact that a fourth *enrolled* student moves the seeded class's
+  average off the `"69%"` and its at-risk count off the `"2"` that `teacher-journey.spec.ts`
+  hardcodes at `:48`/`:58`/`:59`. `seed_e2e.py:354` already names this exact trap for the
+  review-queue item and dodges it by reusing an attempt. Recorded in STATE as a design question
+  with the two candidate answers and the two measurements that decide between them.
+- **Next:** P4.11 chunk D — resolve the enrolled-vs-second-class question by measuring first
+  (is the overview "69%" class-scoped or teacher-wide; does the classes table's `nth()` indexing
+  survive a second row), then the seeded below-target scenario plus the two `seed_e2e.py`
+  docstring defects (`:20-23` false, `:18` mis-numbered). Then chunk E, whose blocking finding —
+  the seeded stems are pure ASCII, so item 6's screenshot inspection would pass vacuously — is
+  already recorded and must not be budgeted as a pure evidence pass.
+
+## 2026-08-09 — thirty-eighth session (P4.11 chunks D + E; P4.11 COMPLETE)
+
+**Did.** Inherited chunk D's gate run mid-flight, confirmed all 13 gates PASS /
+0 skipped and checked attribution by mtime before committing (`bdfc9bf`) — at-risk
+rule 2 is now pinned by a seeded scenario for the first time since D3.3 wrote it.
+Then wrote and landed chunk E (`5983af5`), closing P4.11.
+
+**Learned — chunk E was not the evidence pass it was scoped as.** The two screens
+that render a question stem (S-04, S-21) are both fed by the E2E seed, and every
+seeded stem was pure ASCII on a single line. So MISSION §4's "verify the maths
+renders, do not assume" would have been a **vacuous pass against the existing
+corpus** — it could not fail, and it looks identical to a real one. Seeded a
+verbatim corpus sample (`0625_w23_qp_42#1c`) and then actually opened the
+captures: newlines render as line breaks, `1.1 × 10⁵ J` renders correctly at
+380px where the wrap splits it.
+
+**Learned — two checks that were assumed rather than run.** `ruff` caught the `×`
+as an ambiguous character (RUF001/RUF003) *before* a 25-minute gate was spent, and
+`_FIGURE_DEPENDENT_PATTERN` turned out to be a **Postgres** regex that raises
+`PatternError` under Python `re` — so figure-safety had to be evaluated in
+Postgres, with a positive control to prove the check itself was not vacuous.
+
+**Learned — D4.25, the finding I did not go looking for.** Reading the Lighthouse
+numbers instead of the PASS line: `check_ui_gates.py` enforces a11y ≥ 95 and has
+**no performance check at all**, while MISSION §11 and `audit.mjs:218` both state
+performance ≥ 80 is gated. `student-flashcards-due` is at 79 and passes. Recorded,
+deliberately not fixed — the remedy is frontend perf work outside P4.11, and
+lowering the floor to stay green is the dishonest gate that comment warns against.
+
+**Next.** P4.12: Phase-4 report, merge to develop, push, update PR #3, ntfy. Carry
+D4.25 and the standing Phase-3 limitations into the report and DELIVERY.md.

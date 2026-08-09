@@ -76,8 +76,9 @@ from lemely.db.question_bank_repo import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 from lemely.db.review_repo import ReviewService
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.gemini import GeminiClient
 from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_metadata import ScanMetadataExtractor
@@ -93,6 +94,7 @@ from lemely.web.deps import (
     get_question_bank_service,
     get_review_service,
     get_settings,
+    get_student_profile_service,
     require_role,
 )
 from lemely.web.jobs import registry
@@ -1121,6 +1123,7 @@ def _student_row(
     student_id: str,
     now: datetime,
     acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
+    targets: Mapping[str, str] | None = None,
 ) -> StudentRowDTO | None:
     """Build a roster row from a student's history, or ``None`` if empty.
 
@@ -1147,7 +1150,10 @@ def _student_row(
     (``assess_at_risk``) and converts every fired flag through the single
     ``_at_risk_flag_dto`` helper (``now``/``acks`` threaded in for exactly
     that), so this roster's acknowledged state can never drift from T-01/
-    T-05/T-06's reading of the same flag.
+    T-05/T-06's reading of the same flag. ``targets`` (subject code -> target
+    grade, P4.3/D4.5) is this student's own bulk-loaded slice of
+    ``StudentProfileService.target_grades_for_many`` — passed straight through
+    to ``assess_at_risk`` so rule 2 can fire.
     """
     if not history.records:
         return None
@@ -1157,7 +1163,7 @@ def _student_row(
         if latest is not None
         else None
     )
-    assessment = assess_at_risk(history, now=now)
+    assessment = assess_at_risk(history, now=now, targets=targets)
     return StudentRowDTO(
         name=display_name,
         studentId=student_id,
@@ -1237,6 +1243,7 @@ def teacher_overview(
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     review_service: Annotated[ReviewService, Depends(get_review_service)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> OverviewDTO:
     """Return headline stats plus at-risk students, all from history/analytics.
 
@@ -1274,7 +1281,10 @@ def teacher_overview(
     average = _mean([r.percentage for r in latest])
     needs_review = _count_review_items(review_service, auth)
     acks = _acknowledgement_index(ack_service, auth)
-    at_risk_students = _at_risk(histories, now=datetime.now(UTC), acks=acks)
+    targets_by_student = profile_service.target_grades_for_many(visible.keys())
+    at_risk_students = _at_risk(
+        histories, now=datetime.now(UTC), acks=acks, targets_by_student=targets_by_student
+    )
     recent_activity = _recent_activity(histories)
 
     stats = [
@@ -1388,6 +1398,7 @@ def _at_risk(
     *,
     now: datetime,
     acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
+    targets_by_student: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[AtRiskStudentDTO]:
     """Identify at-risk students via the D3.3 rules engine.
 
@@ -1397,12 +1408,15 @@ def _at_risk(
     impossible to regress back to.
 
     Runs ``lemely.core.at_risk.assess_at_risk`` (declining trend / predicted
-    below target / inactive, combined with OR) over each student's history. No
-    ``target_grade`` is passed — the schema has no target-grade column yet
-    (Phase 4 onboarding, D3.3) — so rule 2 is always "not evaluable" in
-    production; that is an honest, recorded limitation, not a bug. Supersedes
-    the old "grade in {D,E,U} or any negative delta" heuristic, which matched
-    none of the three specified rules and carried no reason label.
+    below target / inactive, combined with OR) over each student's history.
+    ``targets_by_student`` (subject code -> target grade, per student id;
+    P4.3/D4.5) is the caller's single bulk load from
+    ``StudentProfileService.target_grades_for_many`` over the whole roster —
+    never one query per student in this loop. A student absent from the
+    mapping, or with no target for their latest subject, simply leaves rule 2
+    ``NOT_EVALUABLE`` for them. Supersedes the old "grade in {D,E,U} or any
+    negative delta" heuristic, which matched none of the three specified
+    rules and carried no reason label.
 
     ``acks`` (D3.5, P3.4b) is the caller's :func:`_acknowledgement_index`,
     threaded through to :func:`_at_risk_flag_dto` so this route reports the
@@ -1412,7 +1426,8 @@ def _at_risk(
     for history, display_name in histories:
         if not history.records:
             continue
-        assessment = assess_at_risk(history, now=now)
+        targets = (targets_by_student or {}).get(history.student_id)
+        assessment = assess_at_risk(history, now=now, targets=targets)
         if not assessment.flags:
             continue
         # ``grade``/``weakTopic`` describe the student's standing, which only a
@@ -1603,6 +1618,7 @@ def _student_detail_dto(
     *,
     now: datetime,
     acks: dict[tuple[str, AtRiskReason], AtRiskAcknowledgementRow],
+    targets: Mapping[str, str] | None = None,
 ) -> StudentDetailDTO:
     """Build the T-05 student-detail DTO from one student's real history.
 
@@ -1612,9 +1628,12 @@ def _student_detail_dto(
     engagement helpers. Integrity signals are deliberately absent: see the
     route docstring. ``acks`` (D3.5, P3.4b) threads the caller's
     :func:`_acknowledgement_index` through to ``_at_risk_flag_dto`` so this
-    screen reports the identical acknowledged state T-01/T-06 do.
+    screen reports the identical acknowledged state T-01/T-06 do. ``targets``
+    (subject code -> target grade, P4.3/D4.5) is this student's own
+    ``StudentProfileService.target_grades_for`` result, passed through to
+    ``assess_at_risk`` so rule 2 can fire.
     """
-    assessment = assess_at_risk(history, now=now)
+    assessment = assess_at_risk(history, now=now, targets=targets)
     student_id = str(entry.student_id)
     # ``attempts``/``trend`` are the paper-history table and the percentage
     # sparkline — both paper-comparison claims, both grade-bearing only
@@ -1657,6 +1676,7 @@ def teacher_student_detail(
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> StudentDetailDTO:
     """Return T-05's full student detail for one student (P3.3).
 
@@ -1701,7 +1721,10 @@ def teacher_student_detail(
     if entry is not None:
         history = history_store.load(student_id)
         acks = _acknowledgement_index(ack_service, auth, student_ids=[student_id])
-        return _student_detail_dto(entry, history, now=datetime.now(UTC), acks=acks)
+        targets = profile_service.target_grades_for(student_id)
+        return _student_detail_dto(
+            entry, history, now=datetime.now(UTC), acks=acks, targets=targets
+        )
     try:
         exists = service.user_exists(student_id)
     except ValueError as exc:
@@ -1746,6 +1769,7 @@ def teacher_at_risk_list(
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
     reason: str | None = None,
     acknowledged: bool | None = None,
 ) -> AtRiskListDTO:
@@ -1767,6 +1791,11 @@ def teacher_at_risk_list(
     carries *every* flag for that student, not just the matching one (D3.5:
     an acknowledged flag is never removed from a response, only tagged).
     Omitting the parameter returns both states, unfiltered.
+
+    Target grades (P4.3/D4.5) are loaded once across every roster via
+    ``StudentProfileService.target_grades_for_many`` — every class's roster is
+    gathered first so this stays a single bulk query for the whole list
+    rather than one per student across potentially many classes.
     """
     try:
         rows = service.list_classes(auth.user_id, auth.role)
@@ -1774,15 +1803,21 @@ def teacher_at_risk_list(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     now = datetime.now(UTC)
     acks = _acknowledgement_index(ack_service, auth)
+    rosters = [(row, service.roster(auth.user_id, auth.role, row.class_id)) for row in rows]
+    all_student_ids = [
+        str(roster_entry.student_id) for _, roster in rosters for roster_entry in roster
+    ]
+    targets_by_student = profile_service.target_grades_for_many(all_student_ids)
     entries: list[AtRiskListEntryDTO] = []
-    for row in rows:
-        roster = service.roster(auth.user_id, auth.role, row.class_id)
+    for row, roster in rosters:
         for roster_entry in roster:
             student_id = str(roster_entry.student_id)
             history = history_store.load(student_id)
             if not history.records:
                 continue
-            assessment = assess_at_risk(history, now=now)
+            assessment = assess_at_risk(
+                history, now=now, targets=targets_by_student.get(student_id)
+            )
             if not assessment.flags:
                 continue
             if reason is not None and reason not in {f.reason.value for f in assessment.flags}:
@@ -1829,6 +1864,7 @@ def acknowledge_at_risk_flag(
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> AtRiskFlagDTO:
     """Acknowledge one currently-firing at-risk flag with an optional note (T-06).
 
@@ -1874,7 +1910,8 @@ def acknowledge_at_risk_flag(
         ) from exc
 
     history = history_store.load(student_id)
-    assessment = assess_at_risk(history, now=datetime.now(UTC))
+    targets = profile_service.target_grades_for(student_id)
+    assessment = assess_at_risk(history, now=datetime.now(UTC), targets=targets)
     flag = next((f for f in assessment.flags if f.reason == reason_enum), None)
     if flag is None:
         raise HTTPException(
