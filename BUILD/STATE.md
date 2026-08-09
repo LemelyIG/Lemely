@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-10T11:20:00Z   # P4.10 chunk A: breadcrumb defect found + fixed. Doing: gate run over the corrected tree.
+last_updated: 2026-08-10T12:05:00Z   # P4.10 chunk A: breadcrumb fix committed (890c7d7), pre-commit clean. Doing: gate run in flight over that tree; chunk B scoped below.
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
