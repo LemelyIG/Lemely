@@ -6,7 +6,14 @@ last_updated: 2026-08-09T14:25:00Z   # **Thirty-eighth session — P4.11 chunk D
 #                                    Previous header follows. **Twenty-ninth session — P4.11 chunk A is DONE and COMMITTED (`9cbbf42`).** Its gate run finished **all 13 gates green, 0 skipped** (`/tmp/p411a_gate.log`), and attribution was checked by mtime rather than assumed: both files were last written 11:50:49/11:51:33, the run started 11:54:07, and nothing was edited mid-run. `pre-commit` was red on exactly the one hook the environment note predicts (`lint-imports` "Executable not found"); `check.sh` ran it green on the same tree. **P4.11 chunk B is WRITTEN and gating** — see its checklist entry below for the gate PID/log, the inversion evidence, and the S-05 "Weakest topics" finding. **Next after it goes green: commit chunk B, then chunk C.**
 #                                    **Chunk A, do not re-derive — the full rationale is in `9cbbf42`'s commit message.** `SeedContract` now declares all **14** top-level keys (the three Phase-4 groups *and* the four P3.10-era ones, undeclared since chunk e1), read out of `build_result_payload` rather than the docstring — which is missing that `practice` and `studyPlan` each carry `subjectCode`. The substantive half is the new `web/e2e/seed-contract.spec.ts` (3 tests), verified non-vacuous by real inversion against `seed_e2e.py` and reverted immediately.
 #                                    **Two facts established this session that chunk B needs.** (1) **`audit.mjs` runs its OWN `seed_e2e.py` invocation** (`:568`), separate from Playwright's `globalSetup` — so a Playwright spec that mutates a seeded account cannot poison the later `puppeteer-audit` leg of the same `check.sh` run, even though playwright-e2e runs first. (2) **`/student/onboard` does not redirect an already-onboarded student**: `Onboarding.tsx` always mounts at `wizardStep: "subjects"` and its seeding effect restores only the answers, so the onboard leg is safe to re-run and safe under Playwright retry. **The S-01/S-02/S-03/S-04/S-05 accounts still must not be collapsed** — that reason is unchanged and recorded in `seed.ts`.
-gemini_spend_usd: 0.1612
+gemini_spend_usd: 0.18429   # MEASURED from the real ledger `outputs/gemini_spend.json`
+# (cumulative_usd 0.18428610, updated 2026-08-09T12:01:17Z), not carried forward. This field
+# had drifted: it read **0.1612** at the start of the thirty-ninth session while the ledger —
+# the Phase-0 persistent tracker that actually enforces the $8 cap — read 0.18429. The field
+# is a hand-copied mirror of the ledger and nothing generates one from the other, so it is the
+# field that was wrong, never the ledger. Phase 3 closed at $0.1586, so **Phase 4 spent
+# $0.0257** across the whole phase (every automated test mocks Gemini; D4.3 made that
+# structural). Re-read the ledger rather than this line before quoting a spend figure.
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
@@ -2137,7 +2144,26 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         Note `:848`'s prompt is `question_type="mcq"` and is answered with
         `PLACEMENT_MCQ_ANSWER`, so the MCQ-shaped α pick is not needed to keep the site
         coherent — the stem text is free-form either way.
-- [ ] todo — **P4.12** Phase-4 report, merge to develop, push, update PR #3, ntfy.
+- [ ] doing — **P4.12** Phase-4 report, merge to develop, push, update PR #3, ntfy.
+      **Thirty-ninth session.** Tree clean at `bf74b89`, INBOX has no unhandled items, and the
+      chunk-E gate run on this exact tree was **all 13 gates PASS / 0 skipped**
+      (`/tmp/p411e_gate.log`) — so the gate evidence for the report is already earned and does
+      not need re-earning; what P4.12 adds is the **committed phase-4 baseline**.
+      Re-baseline launched per `scripts/check.sh:20-25` (the explicit, reviewable act — the
+      gate's own scratch dir must never overwrite the committed baseline it compares against):
+      **PID 2859312, log `/tmp/p412_capture.log`, started 14:59:47**, `pwdx`-verified at the
+      repo root. Three serial legs, deliberately serial because pytest and check.sh contend on
+      `.coverage` (environment note above): `pytest -q` for the report's counts/coverage, then
+      `LEMELY_REPORT_DIR=reports/phase-4 npm run test:e2e`, then `... npm run audit`.
+      That writes `reports/phase-4/{screens,axe,lighthouse,contact-sheet.html,...}` — the
+      committed baseline Phase 5 will be compared against.
+      **Do not edit any source file while it runs.** Then: write `reports/phase-4/REPORT.md`,
+      merge to develop, push, update PR #3, ntfy.
+      **Must reach the report and DELIVERY.md** (carried, do not silently drop): D4.25 (the
+      performance floor MISSION §11 claims is gated is not enforced — `student-flashcards-due`
+      sits at **79** and `ui-thresholds` passes), D3.20 (`web/e2e/` in no tsconfig `include`),
+      the Phase-2 synthetic accuracy gate still 83.8% vs ≥95%, D3.21's confidently-wrong paper
+      22, and D4.17/D4.19 (S-23 ships with no XP; AI study-plan narration left the web surface).
 
 ### Environment facts worth not re-deriving (cost real work to find)
 - Run gates as `./scripts/check.sh` in the **foreground** — it exports `$HOME/.local/bin`
