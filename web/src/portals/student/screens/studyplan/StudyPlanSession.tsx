@@ -172,7 +172,7 @@ export function StudyPlanSession() {
         {/* No start control for `review`: nothing in this product renders
             revision material, so the button would go nowhere. */}
         {start ? (
-          <Button variant="primary" size="md" onClick={() => navigate(start.path)}>
+          <Button variant="accent" size="md" onClick={() => navigate(start.path)}>
             {start.label}
           </Button>
         ) : null}
