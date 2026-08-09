@@ -230,6 +230,23 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       semantics. Constrained by UI spec §1.4 (XP public / grades private) and MISSION §3
       ("leaderboards show XP, never grades").
 - [ ] doing — **P5.2** XP engine backend on the existing tables: repo + clock-injected service
+      - [x] **chunk A DONE** (`e786657`) — migration 0013 + `lemely/db/xp_repo.py` (`XpService`:
+            award / total_xp / xp_breakdown / streak, Cairo civil-date helper, per-source +
+            global daily caps, lazy streak resolution with freeze grant/consume) + 42 tests.
+            D5.2 recorded: the column is **`subject_code`** (String FK to `subjects.code`), not
+            D5.1 §7's `subject_id` UUID — eight other subject-scoped tables key on the code and
+            every award seam already carries one. `alembic check` clean **both directions**.
+            **Trap found and fixed, worth not repeating:** the dev DB had the *pre-amendment*
+            0013 (`subject_id`) applied, so `alembic check` failed while `pytest` passed — the
+            tests build their schema fresh, the dev DB does not. After amending an
+            **uncommitted** migration, drop its artifacts, `alembic stamp` the previous
+            revision, and re-upgrade; otherwise the file and the DB silently disagree.
+      - [ ] **chunk B doing** — the four award call sites. Seams located (do not re-derive):
+            `AttemptService.persist_correction` (`lemely/db/attempt_repo.py:113`) →
+            `paper_corrected`; `QuizTakingService.submit` (`quiz_taking_repo.py:546`) →
+            `quiz_completed`; `StudyPlanService.complete_session` (`study_plan_repo.py:303`) →
+            `study_session_completed`; `FlashcardService.record_review`
+            (`flashcard_repo.py:639`) → `flashcard_reviewed`.
       (follow P4.6's SM-2 clock injection), award call sites at the four seams, anti-farm caps,
       idempotency so a re-marked paper cannot double-award. **Implements D5.1 — read it first.**
       Needs ONE additive migration (0013): `xp_events.subject_id` FK + the
