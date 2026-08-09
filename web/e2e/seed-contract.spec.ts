@@ -56,8 +56,15 @@ const SHAPE: Record<string, "string" | "number"> = {
   ...account("students.inactive"),
   ...account("students.control"),
   ...account("students.correctedPaper"),
+  ...account("students.belowTarget"),
+  "students.belowTarget.targetGrade": "string",
+  "students.belowTarget.predictedGrade": "string",
+  "students.belowTarget.positionsBelow": "number",
+  // This student's own second class, never `class` above.
+  "students.belowTarget.classId": "string",
+  "students.belowTarget.className": "string",
   // `correctedPaperId` is present on `students.correctedPaper` only, and
-  // `expectedAtRiskReasons` is an array on all four — both are checked
+  // `expectedAtRiskReasons` is an array on all five — both are checked
   // separately below, since neither is a primitive leaf.
 
   "parent.userId": "string",
@@ -194,7 +201,7 @@ test("the at-risk reason arrays and the corrected-paper id keep their shapes", (
   // own documented expectations are that `control`/`correctedPaper` are
   // empty; a non-empty one there would mean the seed drifted into flagging a
   // student it documents as clean.
-  for (const key of ["declining", "inactive", "control", "correctedPaper"]) {
+  for (const key of ["declining", "inactive", "control", "correctedPaper", "belowTarget"]) {
     const reasons = resolve(seed, `students.${key}.expectedAtRiskReasons`)
     expect(Array.isArray(reasons), `students.${key}.expectedAtRiskReasons`).toBe(true)
     for (const reason of reasons as unknown[]) {
@@ -205,10 +212,21 @@ test("the at-risk reason arrays and the corrected-paper id keep their shapes", (
   expect(resolve(seed, "students.inactive.expectedAtRiskReasons")).not.toEqual([])
   expect(resolve(seed, "students.control.expectedAtRiskReasons")).toEqual([])
   expect(resolve(seed, "students.correctedPaper.expectedAtRiskReasons")).toEqual([])
+  // Exactly one reason, and specifically rule 2's: this account carries a
+  // single recent attempt precisely so neither rule 1 (needs a 3-record
+  // window) nor rule 3 (needs >=14 days of silence) can join the list.
+  expect(resolve(seed, "students.belowTarget.expectedAtRiskReasons")).toEqual(["below_target"])
 
   // Optional on the interface, and genuinely only on this one student.
   expect(typeof resolve(seed, "students.correctedPaper.correctedPaperId")).toBe("string")
   expect(resolve(seed, "students.declining.correctedPaperId")).toBeUndefined()
+
+  // The below-target student is in its OWN class, not the seeded roster class —
+  // the whole reason a second class exists (see `seed.ts`). If these ever
+  // become equal, `teacher-journey.spec.ts`'s roster figures are about to move.
+  expect(resolve(seed, "students.belowTarget.classId")).not.toEqual(
+    resolve(seed, "class.classId"),
+  )
 
   // The two "key into students" fields must actually resolve to a student.
   for (const dotted of ["reviewItem.studentKey", "quiz.submittedBy"]) {

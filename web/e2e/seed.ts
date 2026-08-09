@@ -42,6 +42,27 @@ export interface SeedContract {
     inactive: SeedStudent
     control: SeedStudent
     correctedPaper: SeedStudent
+    /**
+     * At-risk rule 2 ("predicted >= 2 grades below target", D3.3), seedable
+     * for the first time in Phase 4 — `student_subject_enrolments.target_grade`
+     * did not exist until P4.3 (D4.5), so Phase 3's seed described this rule
+     * instead of pinning it.
+     *
+     * Carries its own `classId`/`className`: this student is in a **second**
+     * class owned by the same teacher, deliberately not in `class` above.
+     * `teacher-journey.spec.ts`'s three hardcoded figures (3 students, 69%
+     * average mark, 2 at risk) are all derived from the three-student roster,
+     * so a fourth grade-bearing student there would move every one of them.
+     * `GET /api/teacher/at-risk` is scoped across all the teacher's classes,
+     * so T-06 still sees this student.
+     */
+    belowTarget: SeedStudent & {
+      targetGrade: string
+      predictedGrade: string
+      positionsBelow: number
+      classId: string
+      className: string
+    }
   }
   parent: { userId: string; phone: string; accessToken: string; linkedStudent: string }
   reviewItem: {

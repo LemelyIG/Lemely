@@ -16,13 +16,21 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from lemely.core.at_risk import AtRiskReason, assess_at_risk
+from lemely.core.at_risk import (
+    AtRiskReason,
+    BelowTargetEvidence,
+    TargetRuleStatus,
+    assess_at_risk,
+)
 from lemely.core.difficulty import allocate_difficulty
-from lemely.core.history import StudentHistory, is_grade_bearing
+from lemely.core.history import GRADE_ORDER, StudentHistory, is_grade_bearing
 from lemely.core.placement import MIN_QUESTIONS, MIN_TOPICS
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, ConfidenceBand
 from lemely.db.models.enums import QuestionSource
 from scripts.seed_e2e import (
+    BELOW_TARGET_GRADE,
+    BELOW_TARGET_POSITIONS_BELOW,
+    BELOW_TARGET_SCORE,
     CONTROL_SCORES,
     CORRECTED_SCORE,
     DECLINING_DAYS_AGO,
@@ -41,6 +49,7 @@ from scripts.seed_e2e import (
     REVIEW_ITEM_CONFIDENCE_SCORE,
     SUBJECT_CODE,
     accuracy_report_for_score,
+    below_target_recorded_at,
     build_email,
     build_empty_parent_phone,
     build_password,
@@ -132,6 +141,11 @@ class TestDateArithmetic:
         at = corrected_recorded_at(_NOW)
         assert (_NOW - at).days < 14
 
+    def test_below_target_recorded_at_is_recent(self) -> None:
+        """Recent is what keeps rule 3 out of this account's flag list."""
+        at = below_target_recorded_at(_NOW)
+        assert (_NOW - at).days < 14
+
 
 # ---------------------------------------------------------------------------
 # Scenario proof — feed the exact scores/dates the real seed persists into
@@ -190,6 +204,62 @@ class TestScenariosFireCorrectly:
             "corrected", CORRECTED_SCORE, corrected_recorded_at(_NOW), paper_number=1
         )
         assert is_grade_bearing(record)
+
+    def _below_target_history(self) -> StudentHistory:
+        record = paper_record_for_scenario(
+            "below-target", BELOW_TARGET_SCORE, below_target_recorded_at(_NOW), paper_number=1
+        )
+        return StudentHistory(student_id="below-target", records=[record])
+
+    def test_below_target_scenario_fires_below_target_only(self) -> None:
+        assessment = assess_at_risk(
+            self._below_target_history(),
+            now=_NOW,
+            targets={SUBJECT_CODE: BELOW_TARGET_GRADE},
+        )
+        reasons = {flag.reason for flag in assessment.flags}
+        assert reasons == {AtRiskReason.BELOW_TARGET}
+        assert assessment.target_rule_status is TargetRuleStatus.FIRED
+
+    def test_below_target_gap_is_the_published_number(self) -> None:
+        """`BELOW_TARGET_POSITIONS_BELOW` is asserted by the E2E spec against the
+        rendered sentence, so it must be what the engine actually computes —
+        not a hand-maintained comment that can drift off the ladder."""
+        assessment = assess_at_risk(
+            self._below_target_history(),
+            now=_NOW,
+            targets={SUBJECT_CODE: BELOW_TARGET_GRADE},
+        )
+        (flag,) = assessment.flags
+        evidence = flag.evidence
+        assert isinstance(evidence, BelowTargetEvidence)
+        assert evidence.positions_below == BELOW_TARGET_POSITIONS_BELOW
+        assert evidence.target_grade == BELOW_TARGET_GRADE
+        assert evidence.predicted_grade == BELOW_TARGET_SCORE[1]
+
+    def test_below_target_scenario_needs_its_target_to_fire(self) -> None:
+        """The inverse. Without a target for THIS subject the rule is not
+        evaluable — never a silent 'checked and clean' — so a seed that keyed
+        the target on the wrong subject would fail as an unflagged student
+        rather than loudly. This is what pins the seed's subject choice."""
+        history = self._below_target_history()
+
+        no_targets = assess_at_risk(history, now=_NOW)
+        assert no_targets.flags == []
+        assert no_targets.target_rule_status is TargetRuleStatus.NOT_EVALUABLE
+
+        wrong_subject = assess_at_risk(history, now=_NOW, targets={"0580": BELOW_TARGET_GRADE})
+        assert wrong_subject.flags == []
+        assert wrong_subject.target_rule_status is TargetRuleStatus.NOT_EVALUABLE
+
+    def test_below_target_gap_clears_the_threshold_with_room(self) -> None:
+        """A target one position closer must still fire; the fixture is not
+        sitting exactly on `_TARGET_GAP_POSITIONS`."""
+        closer_target = GRADE_ORDER[GRADE_ORDER.index(BELOW_TARGET_GRADE) + 1]
+        assessment = assess_at_risk(
+            self._below_target_history(), now=_NOW, targets={SUBJECT_CODE: closer_target}
+        )
+        assert {flag.reason for flag in assessment.flags} == {AtRiskReason.BELOW_TARGET}
 
 
 # ---------------------------------------------------------------------------

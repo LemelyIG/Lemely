@@ -8,20 +8,34 @@ through the exact same singletons ``lemely.web.deps`` hands the FastAPI app —
 :class:`~lemely.db.parent_repo.ParentLinkService`) with every account and
 scenario the Playwright/Puppeteer harnesses need across all 5 roles:
 
-* a **teacher** owning one class,
-* a **roster** of 3 students in that class covering the two at-risk rules
-  that can fire in Phase 3 plus a healthy control:
+* a **teacher** owning two classes (see ``belowTarget`` below for why the
+  second one exists),
+* a **roster** of 3 students in the first class covering two of the three
+  at-risk rules plus a healthy control:
     - ``declining``  — 3 past-paper attempts, strictly decreasing, >=5pp drop
       (D3.3 rule 1). All 3 are the **same subject** deliberately: rule 1 reads
       the last 3 grade-bearing records across ALL subjects, so a second
       subject interleaved into this run would stop the flag firing.
-    - ``inactive``   — 1 past-paper attempt recorded >=14 days ago (rule 2).
+    - ``inactive``   — 1 past-paper attempt recorded >=14 days ago (rule 3).
     - ``control``    — 3 past-paper attempts, not declining, all recent.
       Must NOT be flagged by any rule.
-  Rule 2 ("predicted >= 2 grades below target", D3.3) cannot fire in Phase 3:
-  there is no target-grade column until Phase 4's onboarding questionnaire
-  (decision D3.3/D3.9 note in ``lemely.core.at_risk``), so it is never
-  exercised here — not faked, not worked around.
+* (P4.11 chunk D) a ``belowTarget`` student exercising **rule 2** ("predicted
+  >= 2 grades below target", D3.3). This rule was un-seedable in Phase 3 —
+  there was no target-grade column until Phase 4's onboarding questionnaire
+  shipped ``student_subject_enrolments.target_grade`` (P4.3, D4.5) — so the
+  seed described it instead of pinning it. It is now real: one recent
+  past-paper attempt graded ``D`` against a target of ``A``, three ladder
+  positions apart on ``GRADE_ORDER``, which is >= the rule's 2-position gap.
+  Nothing is faked; the flag comes out of the unmodified ``assess_at_risk``.
+  **The account sits in its own second class**, not in the roster above, and
+  that placement is load-bearing rather than cosmetic: every class-scoped
+  number in ``web/e2e/teacher-journey.spec.ts`` (3 students, 69% average mark,
+  2 at risk) is derived from exactly the three-student roster, so a fourth
+  grade-bearing student enrolled there would move all three. ``GET
+  /api/teacher/at-risk`` is scoped across *all* the caller's classes
+  (``teacher.py``'s ``list_classes`` + per-class roster), so a second class
+  still makes the student visible to T-06 while leaving the first class's
+  derived figures untouched.
 * a standalone **student** (``correctedPaper``, not enrolled in the class)
   with one persisted past-paper attempt, so grade/percentage surfaces on the
   student portal are non-empty without entangling the at-risk assertions.
@@ -110,7 +124,11 @@ path::
         "inactive":  {..., "expectedAtRiskReasons": ["inactive"]},
         "control":   {..., "expectedAtRiskReasons": []},
         "correctedPaper": {..., "expectedAtRiskReasons": [],
-                            "correctedPaperId": "<attempt uuid>"}
+                            "correctedPaperId": "<attempt uuid>"},
+        "belowTarget": {..., "expectedAtRiskReasons": ["below_target"],
+                        "targetGrade": "A", "predictedGrade": "D",
+                        "positionsBelow": 3,
+                        "classId": "...", "className": "..."}
       },
       "parent": {"userId": "...", "phone": "+20...", "accessToken": "...",
                  "linkedStudent": "declining"},
@@ -335,6 +353,29 @@ INACTIVE_DAYS_AGO = 20
 #: The standalone student's one corrected paper (grade/percentage surfaces).
 CORRECTED_SCORE: tuple[float, str] = (88.0, "A")
 CORRECTED_DAYS_AGO = 1
+
+# --- P4.11 chunk D: at-risk rule 2 ("predicted >= 2 grades below target") ---
+# Deliberately ONE attempt, not three: rule 1 needs a 3-record window, so a
+# single record cannot fire it and this account's flag list stays exactly
+# ``["below_target"]``. Deliberately RECENT, so rule 3 (>=14 days) cannot fire
+# either — including in `at-risk-flags.spec.ts`'s one exhaustive assertion,
+# `?reason=inactive` -> exactly `[inactive.userId]`, which this account must
+# not join.
+#: One recent past-paper attempt graded ``D``…
+BELOW_TARGET_SCORE: tuple[float, str] = (52.0, "D")
+BELOW_TARGET_DAYS_AGO = 1
+#: …against this target on ``lemely.core.history.GRADE_ORDER``
+#: (``["A*", "A", "B", "C", "D", "E", "U"]``). ``D`` is index 4, ``A`` index 1,
+#: so the gap is 3 positions — clear of ``_TARGET_GAP_POSITIONS`` (2) rather
+#: than sitting exactly on it, which keeps the fixture from silently going
+#: not-fired if that threshold is ever nudged. The subject is
+#: :data:`SUBJECT_CODE`, matching the attempt's own metadata: `assess_at_risk`
+#: resolves the target for the subject of the *latest grade-bearing record*
+#: only, so a target keyed on any other subject yields ``NOT_EVALUABLE`` and
+#: the seed would fail silently as an unflagged student.
+BELOW_TARGET_GRADE = "A"
+#: The expected gap, asserted rather than recomputed by the consuming spec.
+BELOW_TARGET_POSITIONS_BELOW = 3
 
 EMAIL_DOMAIN = "e2e.lemely.local"
 
@@ -570,6 +611,17 @@ def inactive_recorded_at(now: datetime) -> datetime:
 def corrected_recorded_at(now: datetime) -> datetime:
     """The timestamp for the standalone corrected-paper student's attempt."""
     return now - timedelta(days=CORRECTED_DAYS_AGO)
+
+
+def below_target_recorded_at(now: datetime) -> datetime:
+    """The single, deliberately RECENT timestamp for the below-target student.
+
+    Recent is load-bearing, not incidental: rule 3 flags >=14 days of silence,
+    and a second reason on this account would break both the exact
+    ``expectedAtRiskReasons`` assertion and ``at-risk-flags.spec.ts``'s
+    ``?reason=inactive`` list, which is exhaustive.
+    """
+    return now - timedelta(days=BELOW_TARGET_DAYS_AGO)
 
 
 def paper_record_for_scenario(
@@ -1025,6 +1077,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     inactive = _signup_account("inactive", Role.student, run_tag)
     control = _signup_account("control", Role.student, run_tag)
     corrected = _signup_account("corrected", Role.student, run_tag)
+    below_target = _signup_account("below-target", Role.student, run_tag)
 
     _log("Signing up the empty teacher (no classes) and empty parent (no linked children)")
     empty_teacher = _signup_account("empty-teacher", Role.teacher, run_tag)
@@ -1048,6 +1101,35 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     assert class_row.join_code is not None  # noqa: S101 - always generated, see create_class
     for student in (declining, inactive, control):
         class_service.join_by_code(uuid.UUID(student["userId"]), class_row.join_code)
+
+    _log(
+        "Creating the SECOND class (same teacher) and enrolling the below-target student — "
+        "kept out of the roster class so teacher-journey.spec.ts's derived numbers "
+        "(3 students / 69% average / 2 at risk) stay the roster's own"
+    )
+    # Named "P4.11 …" rather than "P3.10 …" so it can never sort ahead of the
+    # roster class in any list rendered by name. `teacher-journey.spec.ts`
+    # selects its row with `filter({ hasText: seedClass.name })` and indexes
+    # cells *within that row*, so ordering is not actually load-bearing there —
+    # but the classes list is a positional table and a future assertion could
+    # reasonably index it, so the ordering is made deterministic rather than
+    # left to chance.
+    below_target_class_row = class_service.create_class(
+        uuid.UUID(teacher["userId"]), f"P4.11 Below-Target Class {run_tag}"
+    )
+    assert below_target_class_row.join_code is not None  # noqa: S101 - see create_class
+    class_service.join_by_code(uuid.UUID(below_target["userId"]), below_target_class_row.join_code)
+
+    _log(
+        f"Setting the below-target student's {SUBJECT_CODE} target grade to "
+        f"{BELOW_TARGET_GRADE} and persisting one recent {BELOW_TARGET_SCORE[1]}-grade attempt"
+    )
+    below_target_uuid = uuid.UUID(below_target["userId"])
+    student_profile_service.mark_onboarding_complete(below_target_uuid)
+    student_profile_service.upsert_enrolment(
+        below_target_uuid, SUBJECT_CODE, target_grade=BELOW_TARGET_GRADE
+    )
+    _persist_attempts(below_target["userId"], [BELOW_TARGET_SCORE], [below_target_recorded_at(now)])
 
     _log("Persisting the declining-trend run (single subject, 3 papers)")
     _persist_attempts(declining["userId"], DECLINING_SCORES, declining_recorded_ats(now))
@@ -1300,6 +1382,17 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             **corrected,
             "expectedAtRiskReasons": [],
             "correctedPaperId": str(corrected_attempt_ids[0]),
+        },
+        "belowTarget": {
+            **below_target,
+            "expectedAtRiskReasons": [AtRiskReason.BELOW_TARGET.value],
+            "targetGrade": BELOW_TARGET_GRADE,
+            "predictedGrade": BELOW_TARGET_SCORE[1],
+            "positionsBelow": BELOW_TARGET_POSITIONS_BELOW,
+            # This account's own class, NOT `class` above — see the module
+            # docstring for why it is deliberately not in the roster.
+            "classId": str(below_target_class_row.class_id),
+            "className": below_target_class_row.name,
         },
     }
     parent = {

@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T13:27:00Z   # **Thirty-third session — chunks B (`32cd131`) and C (`0a78b3b`) are both DONE, COMMITTED and GREEN** (13/13 gates, 0 skipped, on their own separate foreground runs; both attributions mtime-checked). **Both halves of MISSION §4's named Phase-4 acceptance now exist as real Playwright behaviour** — onboard→placement→plan, and practice-targets-seeded-weakness. **Next: chunk D** (the two carried items — the seeded below-target at-risk scenario + the stale/mis-numbered `seed_e2e.py` docstring), already scoped read-only below; then chunk E, whose BLOCKING FINDING is recorded below and must not be budgeted as a pure evidence pass. Previous header follows. **Chunk B was DONE and COMMITTED (`32cd131`).** Its gate run finished **all 13 gates PASS, 0 skipped** (`/tmp/p411b_gate.log`, exit 0, foreground), and attribution was checked by mtime rather than assumed: the spec was last written 12:25:51, the run ran 12:30:28→12:54:36, nothing edited mid-run. `pre-commit` red on exactly the two hooks the environment note predicts (`mypy`, `import-linter`, "Executable not found"). **P4.11 chunk C is WRITTEN and gating** — `web/e2e/phase4-practice.spec.ts`, 3 tests, **3/3 green locally** and proven non-vacuous by two rounds of product inversion (see its checklist entry). Gate run **PID 2618949, log `/tmp/p411c_gate.log`, started 13:01:33**, `pwdx`-verified at the repo root; the spec was last written before it. **Do not edit any gated file until the log reads "All gates passed"; then commit chunk C and start chunk D** (already scoped read-only below). Working tree holds only that one untracked spec — deliberately, it is the file under gate.
+last_updated: 2026-08-09T14:25:00Z   # **Thirty-eighth session — P4.11 chunk D is DONE, COMMITTED and GREEN.** The gate run inherited from the previous session (PID 2723542, `/tmp/p411d_gate3.log`, 13:56:03→14:20) finished **all 13 gates PASS, 0 skipped**, and attribution was checked by mtime rather than assumed: every gated file was last written 13:51:50 or earlier and nothing was edited mid-run. `pre-commit` red on exactly the two hooks the environment note predicts (`mypy`, `import-linter`, "Executable not found"). **At-risk rule 2 is now pinned by a real seeded scenario for the first time** — it has been describable but untestable since D3.3. Decision D4.23. **Next: chunk E**, the last P4.11 chunk — and it is **NOT a pure evidence pass**: its BLOCKING FINDING below stands, the sample is already picked (`0625_w23_qp_42#1c`), and the edit site is already narrowed to `seed_e2e.py:848` ONLY. Then P4.12 (phase report). Previous header follows. **Thirty-fifth session — P4.11 chunk D is WRITTEN and GATING (re-run).** The thirty-fourth session wrote chunk D in full and died mid-gate: `/tmp/p411d_gate.log` caught a real `ruff-format` red on `scripts/seed_e2e.py` + `tests/test_seed_e2e.py`, it was fixed (both files last written **13:51:50**), and the re-run `/tmp/p411d_gate2.log` was killed with the session at the `import-linter` line. **Nothing was committed, so the tree is chunk D's work and only that** (5 code/spec files + the two BUILD docs). This session re-verified before spending a gate: `ruff format --check` clean on both files, and the two literals the new E2E leg asserts were checked against the product rather than trusted — the T-06 sentence is `at_risk.py:311`'s exact summary string, and `classId`/`className` really are on the at-risk response (`teacher.py:1841-1842`) and really are rendered per row (`AtRiskList.tsx:221,392`). **Fresh full gate run: PID 2723542, log `/tmp/p411d_gate3.log`, started 13:56:03**, `pwdx`-verified at the repo root, every gated file last written 13:51:50 or earlier so attribution is clean. **Do not edit any gated file until the log reads "All gates passed"; then commit chunk D and start chunk E**, whose BLOCKING FINDING is recorded below and must not be budgeted as a pure evidence pass. Previous header follows. **Thirty-third session — chunks B (`32cd131`) and C (`0a78b3b`) are both DONE, COMMITTED and GREEN** (13/13 gates, 0 skipped, on their own separate foreground runs; both attributions mtime-checked). **Both halves of MISSION §4's named Phase-4 acceptance now exist as real Playwright behaviour** — onboard→placement→plan, and practice-targets-seeded-weakness. **Next: chunk D** (the two carried items — the seeded below-target at-risk scenario + the stale/mis-numbered `seed_e2e.py` docstring), already scoped read-only below; then chunk E, whose BLOCKING FINDING is recorded below and must not be budgeted as a pure evidence pass. Previous header follows. **Chunk B was DONE and COMMITTED (`32cd131`).** Its gate run finished **all 13 gates PASS, 0 skipped** (`/tmp/p411b_gate.log`, exit 0, foreground), and attribution was checked by mtime rather than assumed: the spec was last written 12:25:51, the run ran 12:30:28→12:54:36, nothing edited mid-run. `pre-commit` red on exactly the two hooks the environment note predicts (`mypy`, `import-linter`, "Executable not found"). **P4.11 chunk C is WRITTEN and gating** — `web/e2e/phase4-practice.spec.ts`, 3 tests, **3/3 green locally** and proven non-vacuous by two rounds of product inversion (see its checklist entry). Gate run **PID 2618949, log `/tmp/p411c_gate.log`, started 13:01:33**, `pwdx`-verified at the repo root; the spec was last written before it. **Do not edit any gated file until the log reads "All gates passed"; then commit chunk C and start chunk D** (already scoped read-only below). Working tree holds only that one untracked spec — deliberately, it is the file under gate.
 #                                    Previous header follows. **Twenty-ninth session — P4.11 chunk A is DONE and COMMITTED (`9cbbf42`).** Its gate run finished **all 13 gates green, 0 skipped** (`/tmp/p411a_gate.log`), and attribution was checked by mtime rather than assumed: both files were last written 11:50:49/11:51:33, the run started 11:54:07, and nothing was edited mid-run. `pre-commit` was red on exactly the one hook the environment note predicts (`lint-imports` "Executable not found"); `check.sh` ran it green on the same tree. **P4.11 chunk B is WRITTEN and gating** — see its checklist entry below for the gate PID/log, the inversion evidence, and the S-05 "Weakest topics" finding. **Next after it goes green: commit chunk B, then chunk C.**
 #                                    **Chunk A, do not re-derive — the full rationale is in `9cbbf42`'s commit message.** `SeedContract` now declares all **14** top-level keys (the three Phase-4 groups *and* the four P3.10-era ones, undeclared since chunk e1), read out of `build_result_payload` rather than the docstring — which is missing that `practice` and `studyPlan` each carry `subjectCode`. The substantive half is the new `web/e2e/seed-contract.spec.ts` (3 tests), verified non-vacuous by real inversion against `seed_e2e.py` and reverted immediately.
 #                                    **Two facts established this session that chunk B needs.** (1) **`audit.mjs` runs its OWN `seed_e2e.py` invocation** (`:568`), separate from Playwright's `globalSetup` — so a Playwright spec that mutates a seeded account cannot poison the later `puppeteer-audit` leg of the same `check.sh` run, even though playwright-e2e runs first. (2) **`/student/onboard` does not redirect an already-onboarded student**: `Onboarding.tsx` always mounts at `wizardStep: "subjects"` and its seeding effect restores only the answers, so the onboard leg is safe to re-run and safe under Playwright retry. **The S-01/S-02/S-03/S-04/S-05 accounts still must not be collapsed** — that reason is unchanged and recorded in `seed.ts`.
@@ -1887,9 +1887,43 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `practice.students.bare` (no weakness rows → the honest `no_weaknesses` refusal,
         never an invented set). Without the inverse the assertion passes on a screen that
         ignores weaknesses entirely.
-      - [ ] chunk D — **the two carried items** (item 3). **NEXT UP.**
-        **BLOCKING DESIGN QUESTION found by measurement 2026-08-09 (thirty-third session), after
-        chunks B/C landed — resolve this FIRST, it decides where the new account goes.** The
+      - [x] chunk D — **done** (D4.23; all 13 gates PASS / 0 skipped, `/tmp/p411d_gate3.log`,
+        run 13:56:03→14:20, every gated file last written 13:51:50 or earlier so attribution is
+        clean; `pre-commit` red on exactly the two hooks the environment note predicts).
+        *(Narrative from the gating session follows, still accurate.)* The blocking design
+        question below is **RESOLVED by measurement — option (b), a second class owned by the
+        same teacher.** Both sub-measurements were run read-only before any code was written,
+        and **one of them corrects this file's own note, which was wrong:**
+        (i) `teacher-journey.spec.ts:48`'s "69%" is **class-scoped, not teacher-wide** — the
+        locator is `page.locator("main a").filter({ hasText: seedClass.name })`, a per-class
+        card. (ii) **`classesCells.nth(3)` does NOT index the classes table by row position**,
+        contrary to the note below: the row is selected by
+        `page.locator("tbody tr").filter({ hasText: seedClass.name })` and `.nth(3)` indexes
+        cells *within that filtered row*, so class ordering is irrelevant to it. The new class
+        is still named `"P4.11 Below-Target Class {run_tag}"` (sorts after `"P3.10 Seed
+        Class …"`) so a future positional assertion stays safe, but that is belt-and-braces,
+        not the reason (b) works. **Scope confirmed at the route:** `teacher_at_risk_list`
+        (`lemely/web/routers/teacher.py:1766`) walks `service.list_classes(...)` and every
+        class's roster, so a second class is visible to T-06 while leaving the roster class's
+        three derived figures (3 students / 69% / 2 at risk) untouched.
+        **What landed:** a fifth `students.belowTarget` account — its own class, a `0625`
+        enrolment carrying `target_grade="A"`, and **one recent** attempt graded `D` (3 ladder
+        positions, clear of the 2-position threshold). One record and a recent date are both
+        load-bearing: rule 1 needs a 3-record window and rule 3 needs 14 days of silence, so
+        neither can join and `expectedAtRiskReasons` stays exactly `["below_target"]` —
+        which also keeps `at-risk-flags.spec.ts:56`'s exhaustive `?reason=inactive` list intact.
+        Both docstring defects fixed in the same pass (`scripts/seed_e2e.py`: the false
+        "cannot fire in Phase 3" paragraph, and `inactive` mislabelled rule 2 → rule **3**).
+        Mirror + drift pin extended (`seed.ts`, `seed-contract.spec.ts`), and `at-risk-flags.
+        spec.ts` grew the API assertion, an exhaustive `?reason=below_target` list, the
+        cross-class `classId` check, and the T-06 rendered evidence sentence.
+        **Proven non-vacuous by inverting the FIXTURE, three rounds, all reverted
+        (`git diff` clean):** target `A`→`C` (gap 1) failed exactly the 3 gap-dependent tests
+        while the not-evaluable inverse stayed green; date 1→20 days failed **all 5**
+        (rule 3 joins everywhere); published gap 3→2 failed exactly the one test that
+        publishes it. 5 new hermetic tests in `tests/test_seed_e2e.py` (65/65 green), which is
+        where the no-DB scenario proofs for the other three students already live.
+        *(Original blocking note follows, kept for the parts still accurate.)* The
         earlier scoping says "additive only, a new account, do not mutate `declining`/`inactive`/
         `control`". That is necessary but **not sufficient**: a fourth student enrolled in the
         **seeded class** breaks assertions in a spec that is not the one under test.
@@ -1988,6 +2022,68 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         hand, so the screenshot proves the product renders *corpus* text, not text written to
         make the screenshot pass. Check first whether any existing spec or `audit.mjs` entry
         asserts on the current prompt strings before editing them.
+        **That last check is now DONE, read-only, thirty-fifth session — do not re-run it.**
+        Neither prompt string is asserted anywhere outside `scripts/seed_e2e.py` itself:
+        grepping `"Seed MCQ question"` and `"Synthetic placement seed item"` across
+        `web/e2e/`, `web/scripts/` (incl. `audit.mjs`), `scripts/` and `tests/` returns
+        **zero** hits beyond the two `prompt=` definitions. So the additive Unicode-maths +
+        embedded-newline sample can go straight into those strings without touching a spec.
+        **The sample is now PICKED, read-only, thirty-sixth session (query run while chunk
+        D's gate ran) — do not re-query, and do not author maths by hand.** Measured against
+        the live bank: **196** of the 0625 past-paper stems contain a newline, **41** of those
+        also carry a glyph from P4.8's set, and **17** of those are figure-free with ≥2
+        newlines. Two verbatim picks, chosen figure-free so chunk 0's `renderable_bank_filter`
+        exclusion logic is not contradicted by the seed:
+        - **MCQ prompt** (`seed_e2e.py:719`) → `0625_s23_qp_12#36`, 2 newlines, glyph `α`:
+          `"A sample of a radioactive isotope emits 9600 α-particles per second.\nAfter 40
+          hours the rate of emission has fallen to 600 α-particles per second.\nWhat is the
+          half-life of this isotope?"` — a real MCQ stem, so it fits the MCQ seed site.
+        - **Placement item** (`seed_e2e.py:796`) → `0625_w23_qp_42#1c`, 4 newlines, glyphs
+          `×` and superscript `⁵` (the superscript is the harder rendering case and is why
+          this one beats the α/β/γ candidates): `"A car accelerates uniformly in a straight
+          line from rest at time t = 0. At t = 3.2 s, the speed of the car is 13.0 m /
+          s.\n…\nShow that the work done by the car as it decelerates is approximately
+          1.1 × 10⁵ J."` (full text re-readable via `/tmp/p411e_sample2.py`).
+        **Keep the existing `{i}`/`{ref}`/`{band}`/`{topic!r}` interpolations** — they are what
+        make each seeded row distinct, and `uq_question_bank_paper_question` (the collision
+        P4.8 chunk B already paid for) will fire if the prompts collapse to one string. The
+        maths sample is an **addition** to those strings, not a replacement of them.
+        Reject `0625_w23_qp_42#6c` and every other `Fig.`-bearing candidate: seeding a stem
+        that references a figure the bank has no column for would reintroduce D4.14's defect
+        into the harness that is supposed to catch it.
+        **Both picks were checked against the real regex, not eyeballed** — `_FIGURE_DEPENDENT_
+        PATTERN` (`question_bank_repo.py:184-190`) matches `fig/figure/diagram … shows`,
+        `on|in|as shown in fig…`, `complete fig…`; neither pick contains any of them, so
+        `renderable_bank_filter` keeps serving them. This matters because
+        `build_placement_bank_questions`' own docstring (`seed_e2e.py:829-834`) *promises*
+        no seeded prompt matches that pattern — a careless maths sample would have silently
+        emptied the placement pool the seed exists to fill, and the failure mode is a
+        `no_eligible_questions` refusal on S-03, not a visible error.
+        **Note the two prompt sites are now at `seed_e2e.py:771` and `:849`** (chunk D shifted
+        them ~+50 lines from the `:719`/`:796` recorded above); `:771` is the *teacher-quiz*
+        MCQ bank (`source=generated`, owner-scoped) and `:849` is the *placement* pool
+        (`source=past_paper`) — different pools, so chunk E must confirm which of the two
+        actually reaches the S-04/S-21 captures before editing only one.
+        **That confirmation is now DONE, read-only, thirty-seventh session (run while chunk
+        D's gate ran) — do not re-derive. The answer is `:848` ONLY, and it covers BOTH
+        screens.** S-04 (`audit.mjs:1486`, `student-placement-test`) is the placement
+        assignment, drawn from the placement pool. S-21's five captures are practice sets,
+        and `PracticeService.create` draws them from **the same placement pool** — proven by
+        the seed's own hermeticity guard at `seed_e2e.py:1496-1501`, which *raises* if a
+        practice set assembles any question this seed did not author into that pool. So the
+        `:848` `"Synthetic placement seed item …"` string is what renders in all six
+        prompt-bearing captures. **`:771` (`build_quiz_bank_questions`, `source=generated`,
+        teacher-owned) reaches no captured screen at all** — it feeds the P3.10 teacher quiz,
+        and the blocking finding above already established S-04/S-21 are the only two screens
+        that render a `question_bank.prompt`. **Therefore chunk E should edit `:848` and take
+        the `0625_w23_qp_42#1c` pick** (`×` + superscript `⁵`, 4 newlines — the harder
+        rendering case, and the one the picks note already flagged as the reason it beats the
+        α/β/γ candidates). Editing `:771` as well would add corpus text **no screenshot ever
+        looks at**, which is exactly the vacuous-pass shape this chunk exists to avoid; if it
+        is edited anyway, do not claim the MCQ pick was visually verified.
+        Note `:848`'s prompt is `question_type="mcq"` and is answered with
+        `PLACEMENT_MCQ_ANSWER`, so the MCQ-shaped α pick is not needed to keep the site
+        coherent — the stem text is free-form either way.
 - [ ] todo — **P4.12** Phase-4 report, merge to develop, push, update PR #3, ntfy.
 
 ### Environment facts worth not re-deriving (cost real work to find)

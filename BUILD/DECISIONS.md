@@ -4210,3 +4210,67 @@ is the same trap as `audit.mjs`'s own worked apology.
 `audit.mjs:89-91` and `data.ts:93-94` were checked and left alone: both
 describe the *frontend* route `/student/plan/:subjectCode`, which still exists,
 and chunk C's history, which is accurately told.
+
+## D4.23 — At-risk rule 2 gets its own class, not a fourth seat in the roster (P4.11 chunk D)
+
+**Context.** Rule 2 of the at-risk engine ("predicted >= 2 grades below target",
+D3.3) has never been pinned by a test. It could not be: there was no
+target-grade column until P4.3 shipped `student_subject_enrolments.target_grade`
+(D4.5), so `scripts/seed_e2e.py` *described* the rule in its docstring instead of
+seeding it. P4.3 deliberately deferred the seeding to P4.11, and chunk D is it.
+
+**The trap, found by measurement rather than hit.** The obvious implementation —
+a fourth student in the seeded class — breaks a spec that is not the one under
+test. `web/e2e/teacher-journey.spec.ts` hardcodes three figures derived from the
+roster: 3 students, a 69% average mark (the mean of 55/75/78), and 2 at risk. A
+fourth grade-bearing student moves all three. `seed_e2e.py`'s own comment at the
+review-queue item already names this trap and dodges it by reusing an existing
+attempt; this is the same trap one scenario later.
+
+**Two measurements decided it, and one corrected a note this build had been
+carrying.**
+
+1. Is `teacher-journey.spec.ts:48`'s "69%" class-scoped or teacher-wide?
+   **Class-scoped.** The locator is
+   `page.locator("main a").filter({ hasText: seedClass.name })` — a per-class
+   card on the overview, not a teacher-wide aggregate.
+2. Does the classes table's `classesCells.nth(3)` index by row position, making a
+   second class row unsafe unless it sorts last? **No — and STATE.md's note
+   claiming it did was wrong.** The row is selected by
+   `page.locator("tbody tr").filter({ hasText: seedClass.name })`; `.nth(3)`
+   indexes cells *within that already-filtered row*. Class ordering is irrelevant
+   to every assertion in that file.
+
+**Decision: a second class owned by the same teacher.** `teacher_at_risk_list`
+(`lemely/web/routers/teacher.py:1766`) walks `service.list_classes(...)` and each
+class's roster, so a second class keeps the student visible to T-06 while leaving
+every roster-derived number the roster's own. The class is named
+`"P4.11 Below-Target Class {run_tag}"` so it sorts after `"P3.10 Seed Class …"` —
+belt-and-braces against a *future* positional assertion, not the reason this
+works.
+
+**The fixture's shape is load-bearing in two ways that are easy to get wrong.**
+The account gets **one** attempt, recorded **recently**. One record means rule 1
+cannot fire (it needs a 3-record window); a recent date means rule 3 cannot fire
+(it needs 14 days of silence). Together they keep `expectedAtRiskReasons` exactly
+`["below_target"]` rather than a superset, which is also what keeps
+`at-risk-flags.spec.ts`'s one exhaustive assertion — `?reason=inactive` returns
+exactly `[inactive.userId]` — intact. The target is keyed on `SUBJECT_CODE`,
+matching the attempt's own metadata: `assess_at_risk` resolves a target only for
+the subject of the *latest grade-bearing record*, so a target on any other subject
+yields `NOT_EVALUABLE` and the seed would fail **silently, as an unflagged
+student**, not loudly. Grade `D` against target `A` is a 3-position gap, chosen to
+clear the 2-position threshold with room rather than sit exactly on it.
+
+**Both docstring defects in `scripts/seed_e2e.py` fixed in the same pass**, since
+correcting one and leaving the other makes the file contradict itself: the false
+"Rule 2 … cannot fire in Phase 3" paragraph, and `inactive` mislabelled "rule 2"
+when `lemely/core/at_risk.py` orders the rules declining / below-target /
+inactivity, making it rule **3**.
+
+**Non-vacuity was proven by inverting the fixture, three rounds, all reverted.**
+Target `A`→`C` (gap 1) failed exactly the three gap-dependent tests while the
+not-evaluable inverse stayed green; date 1→20 days failed **all five** (rule 3
+joins every assertion); the published gap 3→2 failed exactly the one test that
+publishes it. The five new tests live in `tests/test_seed_e2e.py`, beside the
+existing no-DB scenario proofs for the other three students.
