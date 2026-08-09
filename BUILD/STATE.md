@@ -1459,6 +1459,27 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         **Consequence to honour, not code around:** this account now also answers S-24 at
         `/student/plan/0625`, so its plan must be generated *and* completed by the seed —
         a half-completed week here would silently become the "populated" capture's twin.
+        **Seed spec derived read-only (seventeenth session) — the four calls and where they
+        go, so chunk C does not re-map the file.** `scripts/seed_e2e.py` is 1544 lines; the
+        practice block ends at `practice_dict` (**1482-1498**) and the payload is assembled by
+        `build_result_payload` (**859-872**, shape docstring **124-139**, return type **951**).
+        A new `study_plan` block goes between them and needs its own payload key, because
+        **S-25's route (`plan/:subjectCode/session/:sessionId`) needs a real session id** and
+        no existing key carries one. The four side effects:
+        1. `active` → `StudyPlanService.generate(...)` → the populated week. Capture a session
+           id into the payload (`studyPlan.activeSessionId`) for S-25's detail capture; pick
+           the session whose topic **is** the seeded weak topic so S-25's *provable*
+           recorded-weakness rationale arm is the one that renders.
+        2. `settled` → `generate` → assert `available is False` **and** `reason == "no_signal"`.
+           The refusal is a persisted row, so the call is required; asserting it (rather than
+           trusting it) is what stops a future signal leaking in and silently turning this
+           capture into a populated week.
+        3. `bare` → **no call at all.** The state is the absence of a plan row this ISO week;
+           assert none exists rather than assuming.
+        4. `placement.students.completed` → `generate`, then complete **every** session, then
+           assert every one is `completed_at`-stamped. Partial completion here is the one
+           failure mode that would still screenshot cleanly.
+        Reuse `PLACEMENT_SUBJECT_CODE` throughout; do not introduce a second subject constant.
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
