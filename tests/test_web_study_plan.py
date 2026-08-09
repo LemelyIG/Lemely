@@ -345,6 +345,52 @@ def test_post_with_no_signal_returns_the_real_honest_refusal(
     assert ok_resp.json()["available"] is True
 
 
+def test_post_takes_identity_from_the_token_never_the_payload(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    study_plan_service: StudyPlanService,
+) -> None:
+    """A smuggled ``studentId`` is rejected, not honoured (the retired IDOR pin).
+
+    P4.10 chunk D (D4.22) deleted ``POST /api/student/plan`` and with it
+    ``test_plan_post_ignores_any_caller_supplied_id`` — the only test that
+    pinned *identity is the token, never the payload* on the study-plan
+    surface. Its replacements in ``tests/test_authz_matrix.py`` are role
+    guards (401/403) only, so this guarantee had no owner until now: the
+    matrix stays green while a real property stops being proven.
+
+    ``test_another_students_plan_is_invisible`` covers the *read* direction.
+    What is unique here is the *write*: whose plan a POST creates.
+    """
+    _use_study_plan_service(client, study_plan_service)
+    victim = _seed_user(pg_sessionmaker)
+    attacker = _seed_user(pg_sessionmaker)
+    _seed_weakness(pg_sessionmaker, victim, topic="1 Motion", lost_marks=5)
+    _seed_weakness(pg_sessionmaker, attacker, topic="1 Motion", lost_marks=5)
+    _auth_as(client, victim, Role.student)
+
+    # extra="forbid": smuggling another student's id is a 422, not honoured.
+    smuggled = client.post(
+        "/api/student/study-plan",
+        json={"subjectCode": "0625", "studentId": str(attacker)},
+    )
+    assert smuggled.status_code == 422
+
+    # Inverse 1: rejected outright — no plan was written under either identity.
+    assert client.get("/api/student/study-plan/0625").json()["generated"] is False
+    _auth_as(client, attacker, Role.student)
+    assert client.get("/api/student/study-plan/0625").json()["generated"] is False
+
+    # Inverse 2: the same call without the smuggled id succeeds and the plan
+    # lands on the token's owner, not on the id that was offered.
+    _auth_as(client, victim, Role.student)
+    created = client.post("/api/student/study-plan", json={"subjectCode": "0625"})
+    assert created.status_code == 201
+    assert client.get("/api/student/study-plan/0625").json()["plan"]["id"] == created.json()["id"]
+    _auth_as(client, attacker, Role.student)
+    assert client.get("/api/student/study-plan/0625").json()["generated"] is False
+
+
 # ---------------------------------------------------------------------------
 # Completion — flattened 404, idempotency, malformed id.
 # ---------------------------------------------------------------------------

@@ -187,6 +187,67 @@ def test_student_b_put_enrolments_does_not_touch_student_a(
     assert enrolments[0]["targetGrade"] == "A"  # untouched by B's call
 
 
+def test_identity_comes_from_the_token_never_the_payload(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A smuggled owner id in the body is rejected, not honoured or quietly dropped.
+
+    P4.10 chunk D (D4.22) retired ``POST /api/student/onboarding`` and with it
+    ``test_onboarding_uses_token_identity``, the only test that pinned
+    *identity is the token, never the payload* on the onboarding surface. Its
+    replacements in ``tests/test_authz_matrix.py`` are role guards (401/403)
+    only — those stay green while this guarantee quietly stops being proven,
+    which is the same class of gap as chunk D's own trap 1, one layer down.
+
+    The two halves matter separately: "the field was ignored" and "the request
+    was rejected" look identical to a test that only reads back the stored
+    value. Under ``ApiModel``'s ``extra="forbid"`` this surface does the
+    stricter of the two — 422 — and the inverse pair proves nothing was
+    written for either party before the rejection.
+    """
+    victim = _seed_user(pg_sessionmaker)
+    attacker = _seed_user(pg_sessionmaker)
+    _as(client, victim, Role.student)
+
+    smuggled_patch = client.patch(
+        "/api/me/student-profile",
+        json={"studentId": str(attacker), "schoolName": "Attacker's School"},
+    )
+    smuggled_put = client.put(
+        "/api/me/student-profile/enrolments",
+        json={
+            "studentId": str(attacker),
+            "enrolments": [{"subjectCode": "0625", "targetGrade": "A"}],
+        },
+    )
+
+    assert smuggled_patch.status_code == 422
+    assert smuggled_put.status_code == 422
+
+    # Inverse 1: rejected outright, so nothing landed on the caller either.
+    victim_body = client.get("/api/me/student-profile").json()
+    assert victim_body["profile"]["schoolName"] is None
+    assert victim_body["enrolments"] == []
+
+    # Inverse 2: and nothing landed on the id that was smuggled.
+    _as(client, attacker, Role.student)
+    attacker_body = client.get("/api/me/student-profile").json()
+    assert attacker_body["profile"]["schoolName"] is None
+    assert attacker_body["enrolments"] == []
+
+    # Inverse 3: the same calls without the smuggled id succeed, so the 422 is
+    # the extra field and not something else wrong with these payloads.
+    _as(client, victim, Role.student)
+    assert client.patch("/api/me/student-profile", json={"schoolName": "Real"}).status_code == 200
+    assert (
+        client.put(
+            "/api/me/student-profile/enrolments",
+            json={"enrolments": [{"subjectCode": "0625", "targetGrade": "A"}]},
+        ).status_code
+        == 200
+    )
+
+
 # ---------------------------------------------------------------------------
 # GET / PATCH profile
 # ---------------------------------------------------------------------------
