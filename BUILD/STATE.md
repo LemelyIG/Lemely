@@ -1385,6 +1385,28 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
       - [ ] chunk C — gate 8: audit-registry entries for **each** state (not just the populated
         week), E2E seed, screenshots — verified by listing `reports/.scratch/screens/<id>/`,
         never from the exit code (D4.18). Plus the legacy cleanup above.
+        **Measured read-only 2026-08-09 (fifteenth session) while the A+B gate run was in
+        flight — do not re-derive:**
+        1. The two stale exclusion strings are confirmed at `web/scripts/audit.mjs:72` and
+           `:2163` (the file is at `web/scripts/audit.mjs`, **not** `web/audit.mjs`). Both
+           still name `/student/plan` as "still on mock data"; both must change in this chunk.
+        2. **`scripts/seed_e2e.py` seeds no study plans at all** — zero matches for
+           `study_plan`/`StudyPlan`. Every S-24/S-25 state therefore needs new seed work; none
+           of them is reachable on today's seed. What *does* already exist is the three seeded
+           student sessions P4.9 chunk C built (`practiceActiveSession` /
+           `practiceSettledSession` / `practiceBareSession`, `audit.mjs:932-946`), so this
+           chunk composes accounts rather than creating them.
+        3. **The state matrix must be decided before the seed** (P4.9 chunk C's precedent) and
+           has a real conflict to resolve rather than code around: D4.13's `generated: false`
+           (no plan row this ISO week) and its `available: false / no_signal` (a plan row that
+           *is* a persisted refusal) are mutually exclusive **per account per week**, so one
+           account cannot demonstrate both. Assign them to two different seeded students, and
+           check first whether `settled` genuinely has no signal — if it has weakness rows it
+           cannot produce `no_signal` honestly, and forcing it would fake the very refusal the
+           state exists to prove.
+        4. Registry entry shape to copy is the S-20 block at `audit.mjs:1487-1535`: either a
+           bare entry (`screenId`/`slug`/`path`/`session`/`ready`/`authed`) or one with a
+           `states: [{state, slug, lighthouse, ready}]` array for the non-default states.
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
