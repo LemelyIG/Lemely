@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T10:45:00Z   # **Twenty-second session — both of chunk C's gate failures are FIXED and committed (`8181f7c`), decisions D4.20 + D4.21. A full gate run is in flight; do not edit a gated file until it exits.** Chunk C's run finished after the last session's line was written and failed **two** gates, neither belonging to chunk C's diff: `pytest` (the placement flake) and **`ui-thresholds`** — `student-study-plan-week-refused` overflowing at 380px (scrollWidth 418 > 380). **Do not re-derive any of the following; it is all measured.** (1) **Flake rate reproduced: 1 failure in 30 runs**; after the fix, **60/60 runs of the whole file green.** (2) **The live 0625 corpus yields `spans_multiple_bands` = True** — 6 `foundation` + 4 `standard` — so **S-05 does show a working level and this is NOT a Phase-4 limitation.** The corpus had been lost from the local Postgres in a DB reset and was re-ingested first (deterministic, $0.00, zero Gemini, from `/home/sico/PaperScraper/papers/CAIE/igcse/physics-0625`, 72 papers); the reconstruction was verified against the recorded figures *before* any conclusion was drawn — 273 banked / 273 linked / 26 papers / 211 classified / 248 servable / **10 q / 17.06 min / 6 syllabus topics**, every number matching D4.1/D4.2/D4.8/chunk-0 exactly. **Trap worth keeping: a first measurement read 8 q / 15.94 min because the DB also held the E2E seed's 24 placement fixture rows** (marker `"P4.8 chunk C fixture text — not real CAIE content"`) — a measurement taken against a seeded DB is not a measurement of the corpus. (3) **The assertion was deleted, not re-pinned.** Making the fixture deterministic alone *would* have made it pass every time — that is the trap the last session flagged, and it was not taken. `assemble` never reads `Candidate.difficulty`, so it cannot guarantee two bands; `TestBandSpread` now proves the real contract with an inverse pair (True for a mixed pool, **False for a viable single-band one**). **No band-spread rule was added to `assemble`** — that is a product change to the assembly contract, not a test fix (MISSION §8b). (4) **D4.21 is a shared-component defect, not a study-plan one:** the offender is `web/src/components/ui/state-views.tsx`, so **every empty/error/offline/refusal state in the product** overflowed at 380px — `max-w-sm` without `w-full` kept the box at its intrinsic 384px, and the two-action row could not wrap against `Button`'s `whitespace-nowrap`. Wrapped, not truncated. **Next: confirm this gate run is green, then chunk D** (fully scoped below and by D4.19 — do not re-derive it). Prior update follows. *(Superseded diagnosis, kept because its reasoning was confirmed:* **Diagnosis by reading, not yet reproduced (pytest cannot be run while the live-stack legs hold the local Postgres):** `lemely/core/placement.py:286-287` breaks ties on `str(s.candidate.question_bank_id)`, and the fixture `_c` (`tests/test_placement_assembly.py:41-49`) mints a **random `uuid.uuid4()` per candidate**. Every candidate in `_spread` carries identical marks, so the sort key's first element (`abs(estimated_minutes - share)`) **always ties** and the pick is decided by a random UUID string sort. `_spread` gives each topic 2 `hard` + 1 `easy` (`band="easy" if n % 2 else "hard"`), so the drawn band mix varies run to run; all-one-band is roughly a 1-in-20 draw. Chunk C's diff is `seed_e2e.py` + `test_seed_e2e.py` + `audit.mjs` + two deleted frontend hooks — **nothing within reach of placement**, and this same test passed the A+B run. Flake dates to `5809814` (P4.4 chunk B-3). **The finding under the flake is the substantive one: `assemble` has NO band-spread rule at all** — only breadth-first over topics with a nearest-share tie-break — so the assertion has been pinning a behaviour that was never implemented and passing ~95% of runs by luck. And `spans_multiple_bands` is explicitly a *reporting* flag designed to sometimes be False (`placement.py:152-158`: it is what stops S-05 inventing a working-level estimate from too narrow a sample), so "always True on a broad pool" is asserting against its own stated design. **Do not just make the fixture deterministic and re-pin whatever falls out — that launders luck into a guarantee.** Next session's order: (1) reproduce by running that one test ~30× and record the real rate; (2) measure `spans_multiple_bands` on the **live** 0625 bank, which no session has ever recorded (STATE has 10 q / 17.06 min / 6 topics but not this) — if the real bank yields False, S-05 never shows a level and that is a Phase-4 limitation, not a test bug; (3) decide and record as D4.20, fix, re-gate. **Only then chunk D** — do not start D on top of a red suite.*)* Prior update follows.
+last_updated: 2026-08-09T11:15:00Z   # **Twenty-third session — P4.10 chunk C is CONFIRMED GREEN (all 13 gates, 0 skipped, `/tmp/p420_gate.log`, exit 0) and chunk D is WRITTEN with a gate run in flight** (PID 2342404, log `/tmp/p410d_gate.log`; note `setsid` re-parents, so the PID `$!` reports is the launcher, not `check.sh`). **Attribution is sound: the chunk-C run started 10:30 against a clean tree at `4444d15`, and every chunk-D edit landed after 10:50** — chunk C's green is not borrowed from chunk D's diff. **Chunk D is written but NOT yet committed** — commit only once `/tmp/p410d_gate.log` reads "All gates passed". Decision **D4.22** is recorded. **What chunk D did, do not re-derive:** deleted `GET/POST /api/student/plan` + `POST /api/student/onboarding`, their six schemas (incl. the *legacy* `StudentProfileDTO` — the P4.3 one in `schemas_student_profile.py` is untouched), six tests in `test_web_student.py`, and three dead TS interfaces. **The substantive half was the authz matrix, exactly as trap 1 predicted:** the three deleted entries were the product's *only* authz-matrix coverage of the study-plan and onboarding surfaces, so deleting them alone would have shrunk the RBAC matrix and still passed all 13 gates. Replacements added in the same commit and **deliberately asymmetric** — `/api/student/study-plan/*` gets a representative GET+POST spread (router-level guard), `/api/me/student-profile*` gets **all five routes listed individually** (bare router, per-route guards, two role-agnostic siblings). That needed two **new** parametrized families, `STUDENT_PATCH_ROUTES` + `STUDENT_PUT_ROUTES` — the file had only ever parametrized GET/POST for the student surface, so a PATCH/PUT guard was previously unprovable here. 78 authz tests pass; 163 across the five affected modules. **Deletion verified positively against the running app's OpenAPI schema** (both paths absent, all three replacements present, 88 routes) rather than by the suite merely staying green — a test file that no longer names a route cannot fail when the route survives. `lemely/io/study_plan_ai.py` deliberately **kept** (CLI `--use-ai`); the web-narration loss is recorded per D4.19 and belongs in DELIVERY.md. `audit.mjs:89-91` and `data.ts:93-94` were checked and correctly left alone — both describe the still-live *frontend* route `/student/plan/:subjectCode`. **Next: confirm the chunk-D gate run, commit, then P4.11.** Prior update follows. *(Twenty-second session:* both of chunk C's gate failures were FIXED and committed (`8181f7c`), decisions D4.20 + D4.21. Chunk C's run finished after the last session's line was written and failed **two** gates, neither belonging to chunk C's diff: `pytest` (the placement flake) and **`ui-thresholds`** — `student-study-plan-week-refused` overflowing at 380px (scrollWidth 418 > 380). **Do not re-derive any of the following; it is all measured.** (1) **Flake rate reproduced: 1 failure in 30 runs**; after the fix, **60/60 runs of the whole file green.** (2) **The live 0625 corpus yields `spans_multiple_bands` = True** — 6 `foundation` + 4 `standard` — so **S-05 does show a working level and this is NOT a Phase-4 limitation.** The corpus had been lost from the local Postgres in a DB reset and was re-ingested first (deterministic, $0.00, zero Gemini, from `/home/sico/PaperScraper/papers/CAIE/igcse/physics-0625`, 72 papers); the reconstruction was verified against the recorded figures *before* any conclusion was drawn — 273 banked / 273 linked / 26 papers / 211 classified / 248 servable / **10 q / 17.06 min / 6 syllabus topics**, every number matching D4.1/D4.2/D4.8/chunk-0 exactly. **Trap worth keeping: a first measurement read 8 q / 15.94 min because the DB also held the E2E seed's 24 placement fixture rows** (marker `"P4.8 chunk C fixture text — not real CAIE content"`) — a measurement taken against a seeded DB is not a measurement of the corpus. (3) **The assertion was deleted, not re-pinned.** Making the fixture deterministic alone *would* have made it pass every time — that is the trap the last session flagged, and it was not taken. `assemble` never reads `Candidate.difficulty`, so it cannot guarantee two bands; `TestBandSpread` now proves the real contract with an inverse pair (True for a mixed pool, **False for a viable single-band one**). **No band-spread rule was added to `assemble`** — that is a product change to the assembly contract, not a test fix (MISSION §8b). (4) **D4.21 is a shared-component defect, not a study-plan one:** the offender is `web/src/components/ui/state-views.tsx`, so **every empty/error/offline/refusal state in the product** overflowed at 380px — `max-w-sm` without `w-full` kept the box at its intrinsic 384px, and the two-action row could not wrap against `Button`'s `whitespace-nowrap`. Wrapped, not truncated. That gate run is the one confirmed green above.*) Prior update follows. *(Superseded diagnosis, kept because its reasoning was confirmed:* **Diagnosis by reading, not yet reproduced (pytest cannot be run while the live-stack legs hold the local Postgres):** `lemely/core/placement.py:286-287` breaks ties on `str(s.candidate.question_bank_id)`, and the fixture `_c` (`tests/test_placement_assembly.py:41-49`) mints a **random `uuid.uuid4()` per candidate**. Every candidate in `_spread` carries identical marks, so the sort key's first element (`abs(estimated_minutes - share)`) **always ties** and the pick is decided by a random UUID string sort. `_spread` gives each topic 2 `hard` + 1 `easy` (`band="easy" if n % 2 else "hard"`), so the drawn band mix varies run to run; all-one-band is roughly a 1-in-20 draw. Chunk C's diff is `seed_e2e.py` + `test_seed_e2e.py` + `audit.mjs` + two deleted frontend hooks — **nothing within reach of placement**, and this same test passed the A+B run. Flake dates to `5809814` (P4.4 chunk B-3). **The finding under the flake is the substantive one: `assemble` has NO band-spread rule at all** — only breadth-first over topics with a nearest-share tie-break — so the assertion has been pinning a behaviour that was never implemented and passing ~95% of runs by luck. And `spans_multiple_bands` is explicitly a *reporting* flag designed to sometimes be False (`placement.py:152-158`: it is what stops S-05 inventing a working-level estimate from too narrow a sample), so "always True on a broad pool" is asserting against its own stated design. **Do not just make the fixture deterministic and re-pin whatever falls out — that launders luck into a guarantee.** Next session's order: (1) reproduce by running that one test ~30× and record the real rate; (2) measure `spans_multiple_bands` on the **live** 0625 bank, which no session has ever recorded (STATE has 10 q / 17.06 min / 6 topics but not this) — if the real bank yields False, S-05 never shows a level and that is a Phase-4 limitation, not a test bug; (3) decide and record as D4.20, fix, re-gate. **Only then chunk D** — do not start D on top of a red suite.*)* Prior update follows.
 #                                    (Twenty-first session, update 1.) **Twenty-first session — chunk C's gate run is STILL ALIVE and mid-`pytest`** (PID 2208218, started 09:56, log `/tmp/p410c_gate1.log`, backend gates 1-4 PASS). Do not edit any gated file until it exits; a monitor is armed on it. This session did BUILD-only work meanwhile and **resolved chunk D's one open fork as D4.19** (`9f56cb8`). **Correction to chunk D's trap 3, measured not inherited: the web narration loss is NOT chunk D's to cause — it already shipped in chunk A.** The old `StudyPlan.tsx` passed `{weeklyHours, narrate: true}` and rendered `plan.narrative` (`git show 94326a1 -- .../StudyPlan.tsx`, removed lines 78/134-138); chunk A deleted that screen and went green. So the legacy route has had zero callers since `94326a1` and chunk D deletes dead backend, not a live feature. Decision: **record the loss, do not restore narration** — it would smuggle a schema field + a billed Gemini call into a deletion commit, and the narrator's "2-3 paragraph study guide" is the vague-advice register MISSION §4 replaced with concrete sessions. **`lemely/io/study_plan_ai.py` must NOT be deleted** (CLI `--use-ai` still uses it), and the loss belongs in the Phase-4 report + DELIVERY.md. **Chunk D's two traps re-verified independently this session, both hold:** `tests/test_authz_matrix.py` has zero matches for `study-plan|/api/me|student-profile` (so deleting `:37/:41/:42` alone silently shrinks the RBAC matrix — MISSION §6 gate 6 forbids it), and there really are two `StudentProfileDTO` classes (`schemas_student_profile.py:47` live, `schemas_student.py:336` legacy). Chunk D is ready to start the moment the gate run exits; nothing about it needs re-deriving. Prior-session line follows.
 #                                    (Nineteenth session.) **P4.10 chunks A+B are GREEN: all 13 gates PASS, 0 skipped — P4.10 chunks A+B are GREEN: all 13 gates PASS, 0 skipped**, on the ninth attempt and the first run this phase to reach the end. Log `/tmp/p410_ab_gate6.log`, exit 0, `puppeteer-audit` and `ui-thresholds` both passed after the tail this file last recorded. **Attribution verified rather than assumed:** the run started 09:22:50, seven seconds after `a71f262` landed, and `git diff --stat a71f262..HEAD -- lemely tests alembic scripts web` is **empty** — every commit since is `chore(build)` on this file, so the tree the gates saw is HEAD's tree. Chunks A and B are now ticked. Next is **chunk C**, which is fully scoped read-only below (seed spec, registry shapes, state matrix, the two stale `audit.mjs` strings) — do not re-derive any of it; it was mapped across four sessions precisely so chunk C could start cold. Prior-session narrative follows, kept for the two method facts it established.
 #                                    (Seventeenth session, superseded above.) **The A+B gate question is answered and the answer is a real defect, not an environment quirk.** The fourteenth session's detached run (PID 2104905) survived two more sessions and **completed its backend leg: all 5 backend gates PASS, including `pytest`.** That closes the "dies at gate 5" theory permanently — it was only ever session reaping, exactly as the sixteenth session concluded. It then failed on **`web-typecheck` and `web-build`, both on the same line**: `StudyPlanSession.tsx:175` used `variant="primary"`, which is not in the `Button` union (`ink | accent | secondary | ghost`; the student primary CTA is `accent`). Fixed in `a71f262` and **both gates independently re-run green before committing**. That run was then killed deliberately rather than left to finish: every remaining live-stack gate is downstream of `web-build`, so it had no information left to give. **Chunk B's STATE entry claims "typecheck + oxlint clean" — that claim was false**, the eighth handover this phase to report its own gate green when it was red; keep running the orchestrator's own gate pass. A full run was then launched detached (`setsid nohup`, log `/tmp/p410_ab_gate6.log`) — **it completed green, see the nineteenth-session line above.** Method note kept: `setsid nohup` is the correct way to run gates here and supersedes the "run gates in the foreground" environment note below, which stands only for its original subject, a plain `&`.
@@ -1390,9 +1390,10 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         4. `resolveCrumb`'s `planMatch` arm is `^/student/plan/([^/]+)$` — **anchored, so the
            new session route falls through to the bare "Home" catch-all** exactly as the
            chunk-A defect did. Add the arm and its inverse test in the same commit.
-      - [~] chunk C — **written and committed (`b444818`); full gate run IN FLIGHT** (nineteenth
-        session, `setsid nohup`, log `/tmp/p410c_gate1.log`). **Do not edit any gated file while
-        it is in flight.** Everything the four scoping sessions mapped was implemented as
+      - [x] chunk C — **done and CONFIRMED GREEN** (`b444818`, plus the D4.20/D4.21 fixes in
+        `8181f7c` that its first gate run exposed). **All 13 gates PASS, 0 skipped**, log
+        `/tmp/p420_gate.log`, exit 0, run started 10:30 against a clean tree at `4444d15`.
+        Everything the four scoping sessions mapped was implemented as
         recorded; nothing re-derived. What landed:
         `scripts/seed_e2e.py` gains a `study_plan` block (the four calls, each **asserted** not
         trusted) + a `studyPlan` payload key; `build_result_payload` grows one additive param and
@@ -1562,7 +1563,13 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `practice_bare` + `active_uuid`/`settled_uuid`, `placement_completed`/`completed_uuid`
         (**note: there is no `bare_uuid`** — derive it), `practice_dict` (1482-1498) and
         `placement_dict` (1316).
-      - [ ] chunk D — **the legacy-route cleanup chunk C deliberately split out.** Delete the
+      - [~] chunk D — **WRITTEN, gate run in flight, NOT yet committed** (twenty-third session,
+        log `/tmp/p410d_gate.log`, PID 2342404). Full rationale and every measurement is in
+        **D4.22**; the original read-only scope follows and every trap in it held. Backend
+        static gates + the five affected test modules (163 tests) + `tsc --noEmit` all pass
+        locally, and the deletion is confirmed against the app's OpenAPI schema. **Commit only
+        when the log reads "All gates passed".** Original scope: **the legacy-route cleanup
+        chunk C deliberately split out.** Delete the
         `GET/POST /api/student/plan` pair and `POST /api/student/onboarding`, both superseded and
         both with zero frontend callers (P4.8 chunk A deleted `usePostOnboarding`, chunk C deleted
         `useStudyPlan`/`usePostStudyPlan`). **Scoped read-only 2026-08-09 (twentieth session) while
@@ -1638,6 +1645,125 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
       assumed** (MISSION §4 names this explicitly).
+      **Scoped read-only 2026-08-09 (twenty-third session) while the chunk-D gate run was in
+      flight — do not re-derive.** The two halves of "acceptance" are in very different states,
+      and conflating them is the trap here:
+      1. **The UI-gate half is already largely DONE, by the chunk-C work of P4.8/P4.9/P4.10.**
+         The Puppeteer audit registry (`web/scripts/audit.mjs`, 48 `screenId` entries) already
+         carries **S-01..S-05 and S-20..S-25** — so axe, Lighthouse and the screenshot corpus
+         for every Phase-4 screen already run on every gate pass. P4.11 should *verify and
+         report* this, not rebuild it.
+      2. **The Playwright behavioural E2E half is ZERO. Measured, not estimated:**
+         `web/e2e/` is 8 spec files / **14 `test(` blocks**, and a case-insensitive grep for
+         `placement|study-plan|/plan/|practice|flashcard|onboard` across the whole directory
+         returns **no matches at all**. Every existing spec is Phase-2/Phase-3 surface. So
+         MISSION §4's named acceptance — *"new student onboards, takes placement, receives a
+         plan; generated practice demonstrably targets seeded weaknesses"* — is **entirely
+         greenfield**, not an extension of an existing journey. Budget for it accordingly;
+         `student-journey.spec.ts` is 62 lines and 1 test, so there is no scaffold to lean on.
+      3. **Two carried items land here, both already recorded elsewhere and both cheap:**
+         `web/e2e/at-risk-flags.spec.ts:21`'s docstring still says rule 2 "cannot fire in
+         Phase 3" — false since P4.3 (D4.5) — and it needs a seeded below-target scenario in
+         `scripts/seed_e2e.py` to actually pin the rule, which P4.3 deliberately left for here.
+      4. **`web/e2e/seed.ts`'s `SeedContract` is stale and that is the first thing to fix**
+         (found read-only, twenty-fourth session). `scripts/seed_e2e.py` already seeds
+         **three whole additive groups** the TS mirror does not declare — `placement`
+         (`unonboarded`/`available`/`inProgress`/`completed`), `practice`
+         (`active`/`settled`/`bare`) and `studyPlan` — each with its own documented state
+         rationale in that file's module docstring (lines ~124-260). `SeedContract` still
+         lists only `teacher`/`schoolAdmin`/`class`/`students{declining,inactive,control,
+         correctedPaper}`/`parent`. The two sides are **kept in lockstep by hand — nothing
+         generates one from the other** (seed.ts:6-11), so the greenfield Phase-4 specs
+         cannot reach any Phase-4 account until the mirror is extended. **This is why item 2's
+         grep found zero matches and it is not the same finding:** the *data* is seeded and
+         the accounts exist; only the typed accessor is missing. Extending the interface is
+         the cheap half — the specs are still greenfield.
+      5. **The spec idiom to copy is `student-journey.spec.ts` (62 lines):** `readSeed()` +
+         `watchConsole(page)` + a **real UI login** (`/login`, fill Email/Password, click
+         sign in, assert the URL), ending in `expect(errors).toEqual([])`. `injectSession()`
+         (seed.ts:85) is the token-injection shortcut that skips the login UI — use it only
+         where the login itself is not what is under test. Note the file's own warning that
+         Playwright does not share module state across workers, so every spec re-reads the
+         seed file rather than caching.
+      6. **The maths-notation requirement has a decided answer, do not re-open it:** P4.8's
+         measurement (1 of 273 stems is LaTeX-shaped; the rest is plain Unicode) means the
+         verification is a *screenshot inspection* that Unicode maths and `white-space:
+         pre-line` newlines render, **not** the addition of KaTeX/MathJax.
+      **Chunk plan (2026-08-09, twenty-fourth session).** Ordered so the cheap enabling work
+      lands before the expensive greenfield specs, and so nothing waits on a gate run it
+      does not need:
+      - [ ] chunk A — **the `SeedContract` mirror** (`web/e2e/seed.ts`). Extend the interface
+        with the three groups `scripts/seed_e2e.py` already seeds and documents but TS does
+        not declare: `placement` (`subjectCode`/`paperNumber`/`bankQuestionCount` +
+        `students.{unonboarded,available,inProgress,completed}`, the last two carrying
+        `quizId`/`assignmentId` and `submissionId`/`awardedMarks`/`maximumMarks`),
+        `practice` (`students.{active,settled,bare}`, `active` carrying the three
+        assignment ids + `deckId`), and `studyPlan` (`activeSessionId`/`activeSessionTopic`/
+        `activeSessionCount`/`completedSessionCount`). Also the P3.10-era
+        `reviewItem`/`quiz`/`emptyTeacher`/`emptyParent` keys, which are **equally
+        undeclared** — the mirror has been stale since chunk e1, not just since Phase 4.
+        **Types only, no behaviour**: `readSeed()` is an unchecked `as SeedContract` cast, so
+        a wrong field name here fails at runtime in a spec, not at typecheck. Pin the mirror
+        against drift rather than trusting the hand-lockstep comment (`seed.ts:6-11`) — the
+        honest cheap form is one spec that asserts the parsed seed carries every declared
+        top-level group, so a Python-side rename breaks a test instead of silently typing
+        `undefined`.
+        **Shapes read out of the Python side verbatim (twenty-fifth session, read-only while
+        the chunk-D gate ran) — do not re-derive, and do not infer them from the docstring
+        alone; these were cross-checked against the emitting code:** the contract's 11
+        top-level keys are `runTag`/`generatedAt`/`teacher`/`schoolAdmin`/`class`/`students`/
+        `parent`/`reviewItem`/`quiz`/`emptyTeacher`/`emptyParent`/`placement`/`practice`/
+        `studyPlan` (`seed_e2e.py:878-888`). `reviewItem` = `{itemId, attemptId,
+        studentKey:"inactive"}`; `quiz` = `{quizId, assignmentId, submissionId,
+        submittedBy:"control", status}` — **`status` is a real field, not always `"marked"`**
+        (the seed has a documented non-faked marking-failure branch), so the mirror must type
+        it `string`, never the literal `"marked"`. `emptyTeacher` is a bare `SeedAccount`;
+        `emptyParent` = `{userId, phone, accessToken}` — **no `linkedStudent`**, unlike
+        `parent`. `placement.students.{unonboarded,available}` are bare `SeedAccount`s
+        (`_signup_account`, `:1208-1209`) with **no `expectedAtRiskReasons`** — so they are
+        *not* `SeedStudent`s and typing them as such would be a lie the `as` cast cannot
+        catch. `practice.students.bare` is likewise a bare account (`:1371`).
+        `studyPlan` carries **no student accounts at all** — its four S-24/S-25 states are
+        carried by accounts under `practice`/`placement` (docstring §"The four S-24/S-25
+        states"), so a spec looking for `studyPlan.students` will find nothing; that is by
+        design, not a seed gap.
+        `awardedMarks`/`maximumMarks`/`questionCount`/`bankQuestionCount`/`paperNumber`/
+        `activeSessionCount`/`completedSessionCount` are **numbers**; every id is a
+        `str(...)`-stringified UUID.
+      - [ ] chunk B — **the MISSION §4 acceptance journey**, greenfield. New spec:
+        onboard (S-01/S-02 on `placement.students.unonboarded`, a **real UI login** per the
+        `student-journey.spec.ts` idiom) → placement available/in-progress/results
+        (S-03/S-04/S-05 across the three purpose-built accounts, which must **not** be
+        collapsed into one: `availability` excludes a student's own prior placement
+        questions for the same subject, so reuse reports the pool exhausted on the very
+        screen meant to show it available) → study plan (S-24 on
+        `practice.students.active`). Ends `expect(errors).toEqual([])`.
+      - [ ] chunk C — **"practice demonstrably targets seeded weaknesses"**, the second
+        half of §4's named acceptance and the one with a real assertion to get right. The
+        seed's `practice.students.active` has a genuine `WeaknessRecord` produced by
+        marking a deliberately-wrong answer through the unmodified engine. The spec must
+        prove the *targeting*, not merely that S-20 renders: assert the weak-topic prefill
+        names that seeded topic, and pair it with its **inverse** on
+        `practice.students.bare` (no weakness rows → the honest `no_weaknesses` refusal,
+        never an invented set). Without the inverse the assertion passes on a screen that
+        ignores weaknesses entirely.
+      - [ ] chunk D — **the two carried items** (item 3): correct
+        `web/e2e/at-risk-flags.spec.ts:21`'s docstring, which still says rule 2 "cannot fire
+        in Phase 3" — false since P4.3 (D4.5) — and seed a real below-target scenario in
+        `scripts/seed_e2e.py` so the rule is actually *pinned* rather than described. P4.3
+        deliberately left this here. Note the seed's `expectedAtRiskReasons` contract: a new
+        below-target student adds a key, and every account's expected reasons are asserted
+        exactly, so this is an additive seed change with a matching contract update in
+        chunk A's mirror.
+      - [ ] chunk E — **verify and report the UI-gate half; do not rebuild it.** Confirmed
+        read-only this session: `audit.mjs` carries **48 entries** including all of
+        S-01..S-05 (7 states) and S-20..S-25 (19 states), so axe / Lighthouse / the
+        screenshot corpus already run over every Phase-4 screen on each gate pass. Chunk E
+        is the evidence pass: capture the numbers from a full `check.sh` run, and do the
+        one thing no automated gate can do — **look at the captured stems** and confirm
+        Unicode maths (`Ω α β γ ρ θ ² ³ ⁵ × °`) and the `white-space: pre-line` newlines
+        render, per item 6. That inspection is MISSION §4's "verified visually in
+        screenshots, not assumed", and it is a human-eyes-on-artifact step, not an assertion.
 - [ ] todo — **P4.12** Phase-4 report, merge to develop, push, update PR #3, ntfy.
 
 ### Environment facts worth not re-deriving (cost real work to find)
