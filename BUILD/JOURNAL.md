@@ -1581,3 +1581,33 @@ none has a helper waiting from Phase 3 or 4.
 - **Next:** P5.5 — announcements. Student-facing read (there is no student route at all today),
   read-receipts (needs migration 0016), the school-admin whole-school audience, and
   auto-populated official CAIE session dates. Backend only; the screens are P5.8/P5.9.
+
+## 2026-08-10 — forty-third session (continued) — P5.5 chunk A
+
+- **Did:** started P5.5 (announcements). Committed chunk A (`446e7fa`): migration 0016
+  (`announcement_reads`) plus the student read path on `AnnouncementService`
+  (`list_for_student`, `unread_count_for_student`, `mark_read`) and 17 tests. `alembic check`
+  clean both directions, ruff/format/mypy clean, related suites green. The full `check.sh` has
+  **not** been run since.
+- **Learned — P5.0's reconnaissance was wrong about a whole bullet.** It recorded the
+  school-admin → whole-school audience as absent. It has been fully built since P3.8/D3.14:
+  `create` takes `school_wide` + `school_id`, restricts to `school_admin`, validates through
+  `ClassService.member_school_ids`, and the router exposes it. I nearly built it a second time.
+  **Fifth instance in Phase 5** of a note paraphrasing the codebase from memory and being wrong
+  (D5.2–D5.5). The rule keeps paying: read the code, not the note about the code.
+- **The interesting design call: `publish_at` had been inert since P3.8.** Teachers could
+  schedule an announcement and nothing ever read the column back — harmless while no student
+  surface existed. This chunk is its first consumer, so honouring it was not optional: shipping
+  the read path without the filter would have turned a control that did nothing into a control
+  that actively lied. The author's own list stays unfiltered, since a teacher must see what they
+  queued.
+- **Both guards verified by inversion rather than asserted** (D5.7's lesson). Swapping the school
+  arm to `SchoolMembership` makes the seated student see an *empty list* — the exact
+  "reads as a data problem, not a defect" shape D5.4 warns about. Replacing the `publish_at`
+  predicate with `sa.true()` fails two tests.
+- **Applied this morning's own lesson:** `announcement_reads` went into `EXPECTED_TABLES` in the
+  same commit as the `create_table`, not ten minutes into a gate run.
+- **Next:** P5.5 chunk B — student announcement endpoints (thin router at
+  `/api/student/announcements`, own schemas module, deps + `reset_singletons`), then chunk C, the
+  exam calendar, which must ship honestly empty because no CAIE timetable data exists anywhere
+  on this machine.

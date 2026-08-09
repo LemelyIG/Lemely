@@ -5,7 +5,8 @@ current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 
 last_updated: 2026-08-10T00:00:00Z   # **Forty-third session — P5.4 (friends backend) is COMPLETE.** Its three code chunks were already committed by the two prior sessions; the only outstanding work was the gate run, and nothing was re-implemented. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, 2532 tests / 6 live-only skips / 0 failures, coverage 90.48%** (develop 90.18% — no drop); `alembic check` clean. 5/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
 #                                    **The gate run found one real defect** (`72330b8`): `tests/test_db_schema.py` asserts exact set equality against a hand-maintained `EXPECTED_TABLES`, and migration 0015's `friendships` was never added to it. Fixed by extending the set — exact equality is what forces a new table to be acknowledged deliberately. **The generalisable form: a new table costs two edits, the migration and that set.** 0013 and 0014 added only columns, so P5.4 was the first chance in this phase for the trap to fire, and it fires ~10 minutes into the run. Make the `EXPECTED_TABLES` edit in the same chunk as the `create_table`.
 #                                    **Method note worth keeping:** `check.sh` suppresses output for gates that pass, so a green log contains no pytest counts at all — read coverage with `.venv/bin/coverage report --precision=2` off the run it just did, and get the test count from `pytest --collect-only -q --no-cov`. Never re-run the suite for a number; a second run costs ~10 minutes and risks the concurrent-`.coverage` corruption noted below.
-#                                    **Next: P5.5** (announcements: student read + read-receipts + school-admin audience + CAIE session dates). Read its checklist line and the P5.0 reconnaissance section before starting — it needs migration 0016.
+#                                    **Then continued into P5.5 (announcements), chunk A of three committed as `446e7fa`.** Two things a resuming session must not redo. **(1) P5.0's recon was wrong: the school-admin whole-school audience is NOT missing** — it has been fully built since P3.8/D3.14 (`school_wide`/`school_id`, `school_admin`-only, exposed on the teacher POST). Verified by reading `announcement_repo.py` and `routers/announcements.py`, so P5.5 is three parts, not four. That is the **fifth** Phase-5 instance of a note paraphrasing the codebase from memory and being wrong — D5.2, D5.3, D5.4, D5.5 are the others, and the standing rule holds: *read the model; where a note restates the code, the code wins.* **(2) There is no CAIE timetable data anywhere on this machine** (checked `Sources/` and the PaperScraper corpus), so the exam calendar ships as table + ingestion path + honest empty state, never invented dates.
+#                                    **Resume at P5.5 chunk B** — the student announcement endpoints. The service layer is built and tested; chunk B is router/DTO/deps wiring. Read the P5.5 checklist lines, which carry the full brief. `./scripts/check.sh` has NOT been run since chunk A — run it before P5.5 is marked done.
 gemini_spend_usd: 0.18429   # MEASURED from the real ledger `outputs/gemini_spend.json`
 # (cumulative_usd 0.18428610, updated 2026-08-09T12:01:17Z), not carried forward. This field
 # had drifted: it read **0.1612** at the start of the thirty-ninth session while the ledger —
@@ -393,30 +394,47 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       What P5.0 got right, re-verified: `announcements`/`notifications` exist, the router mounts
       only at `/api/teacher/announcements` with exactly POST/GET/DELETE, and there is genuinely
       **no student-facing read route at all**.
-      **Chunk A — migration 0016 + the student read path.** Read-receipts are one of the four
-      genuinely-absent tables, so a migration is needed. The audience resolution is the real work
-      and it must mirror the two seams already established, not invent a third: a student sees a
-      `class_id` row when enrolled via `class_enrollments`, and a `school_id` row when they hold a
-      non-revoked `Seat` in that school — **`Seat`, not `SchoolMembership`, which is staff-only
-      (D5.4 — the identical trap already cost P5.3 a chunk).**
-      **`publish_at` stops being inert here and that is the subtle part.** `announcement_repo`'s
-      docstring (lines 57-65) records that nothing in the codebase reads the column back, so a
-      "scheduled for later" announcement is currently stored and ignored. The student read route
-      is its **first consumer**: a future-dated row must not be visible to a student, or the
-      teacher-facing scheduling control becomes an outright lie. `NULL` means publish immediately.
-      This needs an injected clock — the service currently has none, deliberately, and its
-      docstring says so; that docstring must be corrected in the same chunk rather than left
-      contradicting the code.
-      **Chunk B — the exam calendar, and it must not invent dates.** *Measured, do not
-      re-derive:* there is **no CAIE timetable data anywhere** — not in `Sources/` (only
-      AdditionalMathematics/Mathematics/Physics mark schemes) and not in the PaperScraper corpus
-      (`find -iname "*timetable*" -o -iname "*calendar*"` returns nothing), and the scraper fetches
-      papers and grade boundaries, never timetables. Real exam dates are published in a separate
-      official CAIE timetable PDF that this build has no path to. **Therefore: build the table and
-      the ingestion path, and ship the surface honestly empty** — the tri-state-availability
-      pattern P4.5 already established (D4.10). Inventing plausible exam dates would violate UI
-      spec §1.4 ("never invent precision") on the one screen whose whole point is a countdown a
-      student will plan around. Record as D5.8 and carry it as a Phase-5 limitation.
+      - [x] **chunk A** (`446e7fa`) — migration 0016 (`announcement_reads`) + the student read
+            path on `AnnouncementService` (`list_for_student`, `unread_count_for_student`,
+            `mark_read`, `StudentAnnouncementRow`, `DEFAULT_STUDENT_LIMIT`) + 17 tests.
+            `alembic check` clean **both directions**; ruff/format/mypy(195 files) clean; the
+            three related test files pass (57 tests). **Not yet run: the full suite / `check.sh`.**
+            The school arm keys on **`Seat`, not `SchoolMembership`** (D5.4), and `publish_at`
+            is now honoured for students but deliberately **not** for the author's own list.
+            **Both guards verified by inversion, not asserted:** swapping the school arm back to
+            `SchoolMembership` fails `test_school_wide_announcement_reaches_a_seated_student`
+            with the student seeing an *empty list* — the exact "reads as a data problem"
+            shape D5.4 warns about; replacing the `publish_at` predicate with `sa.true()` fails
+            2 tests. `announcement_reads` went into `EXPECTED_TABLES` in the same commit.
+            The clock is now injected (`now=`) and the docstring that asserted its absence was
+            corrected rather than left contradicting the code.
+      - [ ] **chunk B — NEXT, start here.** The student announcement endpoints. Mirror P5.3's
+            `routers/leaderboard.py` / P5.4's `routers/friends.py` exactly: a thin
+            student-role-only router of its own at prefix `/api/student/announcements`, a
+            `lemely/web/schemas_announcements_student.py` (do **not** widen the existing
+            `schemas_announcements.py` — it is the teacher composer's wire contract), a
+            `get_student_announcement_service()`-shaped entry in `deps.py` **plus the matching
+            line in `reset_singletons()`** (both P5.3 and P5.4 needed that pair), and tests in
+            `tests/test_web_announcements_student.py`. Routes: `GET ""` (list, honours `limit`),
+            `GET "/unread-count"`, `POST "/{announcement_id}/read"`. Identity must be the token's
+            `sub` on every route — **no caller-supplied user id anywhere on this router**, which
+            is what made P5.4 chunk B structurally safe. The service already exists and is
+            tested; this chunk is wiring, DTOs, and authz. Note `AnnouncementService` is already
+            constructed in `deps.py` for the teacher router — reuse that singleton rather than
+            building a second one with a different clock.
+      - [ ] **chunk C — the exam calendar, and it must not invent dates.** *Measured this
+            session, do not re-derive:* there is **no CAIE timetable data anywhere** — not in
+            `Sources/` (which holds only AdditionalMathematics/Mathematics/Physics mark schemes)
+            and not in the PaperScraper corpus (`find -iname "*timetable*" -o -iname "*calendar*"`
+            over both returns nothing). The scraper fetches papers and grade boundaries, never
+            timetables; real dates live in a separate official CAIE timetable PDF this build has
+            no path to. **Therefore: build the table and the ingestion path, and ship the surface
+            honestly empty** — the tri-state-availability pattern P4.5 established (D4.10).
+            Inventing plausible exam dates would violate UI spec §1.4 ("never invent precision")
+            on the one screen whose entire purpose is a countdown a student plans around, and a
+            wrong exam date is materially worse than a missing one. Record as **D5.8** and carry
+            it into the Phase-5 limitations list. The student's papers come from
+            `student_enrolment_papers` (P4.3).
 - [ ] todo — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable transport,
       and make `notification_preferences` actually gate delivery.
 - [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
