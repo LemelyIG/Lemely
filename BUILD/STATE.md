@@ -1420,6 +1420,18 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         inside this chunk would make a gate failure unattributable, and it also removes the
         former-IDOR regression pins at `tests/test_authz_matrix.py:425-440`, which deserves its
         own commit. **That is the remaining P4.10 work after this gate run.**
+        **Open follow-up found by the twenty-sixth session while reviewing chunk D's staged
+        diff, not yet fixed — do not re-derive:** chunk D replaced the two deleted IDOR pins
+        (`test_plan_post_ignores_any_caller_supplied_id`, `test_onboarding_uses_token_identity`)
+        with **role guards only** (401/403 across the new GET/POST/PATCH/PUT families). The
+        property those two tests actually proved — *identity is the token, never the payload*,
+        including that a smuggled `studentId` is a **422** under `ApiModel`'s `extra="forbid"` —
+        has **no replacement anywhere**: checked `tests/test_web_study_plan.py` and
+        `tests/test_web_me.py`, and neither asserts it (their 422s are about malformed UUIDs,
+        quiet-hours pairing and role-disallowed toggles). Same class as chunk D's trap 1, one
+        layer down: the matrix stays green while a real guarantee stops being proven. Land it
+        as its own **backend-only** commit (no `web/` diff, so gate 8 is not in play) after
+        chunk D is committed — chunk D itself is green as gated and must not be re-edited.
         *(Original chunk-C scope + the four sessions' read-only measurements follow, kept
         because the gate run has not yet confirmed them end-to-end.)*
         gate 8: audit-registry entries for **each** state (not just the populated
