@@ -324,11 +324,27 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       `lemely/db/leaderboard_repo.py` once the friendships table exists. Everything else it
       needs is built — follow the existing `_membership_subquery` shape, keep the opt-out in
       the WHERE clause, and extend the D5.1 §0 emitted-SQL guard test to the new scope.
-      **Resume note (forty-first session):** both chunks were found already COMMITTED with a
-      clean tree — the fortieth session died after committing chunk B but before running
-      `./scripts/check.sh` and before updating this file. Nothing was re-implemented; the only
-      outstanding work is the full-gate verification, which is running now. Do not re-plan the
-      chunks; read the two commit messages (`7397df0`, `71d1a9b`) for what they contain and why.
+      **Resume note (forty-second session):** the forty-first session died mid-task leaving an
+      UNCOMMITTED but complete third change — the D5.7 race fix from the adversarial review.
+      It is now committed as `63a4bbc` (see below). Both original chunks were already committed
+      by the fortieth session. Nothing has been re-implemented in either session; the only
+      outstanding work remains the full-gate verification, running now. Do not re-plan the
+      chunks; read the three commit messages (`7397df0`, `71d1a9b`, `63a4bbc`).
+      - [x] **D5.7 fix** (`63a4bbc`) — `FriendService.request`'s genuinely-new-pair INSERT had no
+            `IntegrityError` handling, and sat bare inside `with session.begin()`, so a lost race
+            on `uq_friendships_pair` surfaced at COMMIT — after `request()` returned, outside any
+            frame `routers/friends.py` can catch. Two tabs POSTing the same first-ever friend code:
+            one 201, one raw **500**. Now `session.begin_nested()` + catch, resolving the winner
+            through the *same* `_resolve_existing_pair` helper the sequential path uses so the two
+            cannot drift. Not an integrity defect — the constraint always won (D5.6 holds).
+            **The prior session's inversion claim was wrong and D5.7 is corrected in place:**
+            re-running it here (savepoint → `if True:`) fails both tests, but the `IntegrityError`
+            never reaches COMMIT — the failing `flush()` **poisons the enclosing transaction**, so
+            the recovery SELECT dies first with `InvalidRequestError`. Same 500; the lesson is
+            different and worth keeping: **a savepoint is what makes the error recoverable, not
+            merely catchable.** Once the outer transaction is poisoned there is nothing left to
+            re-read with. *Verify an inherited "proven by inversion" note before repeating it —
+            a claim about a test is not the test.*
       - [x] **chunk A** (`7397df0`) — migration 0015 (`friendships` + `users.friend_code`) +
             `lemely/db/friend_repo.py` (`FriendService`) + `LeaderboardScope.friends` + tests.
             D5.6 recorded. One friendship is one row (canonical `pair_low`/`pair_high`, unique
