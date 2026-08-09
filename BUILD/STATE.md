@@ -2,10 +2,10 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-09T22:10:00Z   # **Fortieth session, continued — P5.3 (leaderboards backend) is COMPLETE.** Both chunks committed (`e5c945b` chunk A, `3a2c445` chunk B) after a full **foreground** `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, coverage 90.43%** (develop 90.18% — no drop). 4/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
-#                                    **Two defects were caught by reading the model/spec rather than trusting the orchestrator's brief, and both are the same failure mode.** D5.4: the brief scoped the school board on `school_memberships`, which is **staff-only** — no student ever has a row there, so the board would have been permanently empty and read as a data problem rather than a code defect. Students reach a school through `Seat`. D5.5: `display_names_for()` copied the codebase-wide `display_name or email` fallback, which is safe where the audience is one class but broadcasts a real contact address to the whole platform on the **global** board. Neither would have failed a gate. Together with D5.2 (`subject_id` vs `subject_code`) and D5.3 (the paper-seam dedupe key) that is **four in Phase 5 alone**: *a brief that paraphrases the schema or the spec from memory is not a source of truth about either — read the model, and where a brief restates a spec, the spec wins.*
-#                                    **Method note worth keeping:** `pytest --collect-only` still runs the coverage plugin unless given `--no-cov`, and it will clobber `.coverage` if you forget. Read the precise coverage figure off the run `check.sh` just did with `.venv/bin/coverage report --precision=2` rather than re-running pytest — a second run costs ~10 minutes and risks the concurrent-`.coverage` corruption noted below.
-#                                    **Next: P5.4** (friends backend + migration), which also owns the leaderboard's fourth scope. Read the P5.3 and P5.4 checklist lines before starting.
+last_updated: 2026-08-10T00:00:00Z   # **Forty-third session — P5.4 (friends backend) is COMPLETE.** Its three code chunks were already committed by the two prior sessions; the only outstanding work was the gate run, and nothing was re-implemented. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, 2532 tests / 6 live-only skips / 0 failures, coverage 90.48%** (develop 90.18% — no drop); `alembic check` clean. 5/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
+#                                    **The gate run found one real defect** (`72330b8`): `tests/test_db_schema.py` asserts exact set equality against a hand-maintained `EXPECTED_TABLES`, and migration 0015's `friendships` was never added to it. Fixed by extending the set — exact equality is what forces a new table to be acknowledged deliberately. **The generalisable form: a new table costs two edits, the migration and that set.** 0013 and 0014 added only columns, so P5.4 was the first chance in this phase for the trap to fire, and it fires ~10 minutes into the run. Make the `EXPECTED_TABLES` edit in the same chunk as the `create_table`.
+#                                    **Method note worth keeping:** `check.sh` suppresses output for gates that pass, so a green log contains no pytest counts at all — read coverage with `.venv/bin/coverage report --precision=2` off the run it just did, and get the test count from `pytest --collect-only -q --no-cov`. Never re-run the suite for a number; a second run costs ~10 minutes and risks the concurrent-`.coverage` corruption noted below.
+#                                    **Next: P5.5** (announcements: student read + read-receipts + school-admin audience + CAIE session dates). Read its checklist line and the P5.0 reconnaissance section before starting — it needs migration 0016.
 gemini_spend_usd: 0.18429   # MEASURED from the real ledger `outputs/gemini_spend.json`
 # (cumulative_usd 0.18428610, updated 2026-08-09T12:01:17Z), not carried forward. This field
 # had drifted: it read **0.1612** at the start of the thirty-ninth session while the ledger —
@@ -319,17 +319,26 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
         consuming screen waits on P5.8. `web/src/portals/student/screens/Standings.tsx`
         (`student/board`) is still on `GET /student/standings`, whose `StandingsDTO` has no
         `boards` field — nothing frontend changed this task.
-- [ ] **doing** — **P5.4** Friends backend + migration (requests in/out, accept, remove, privacy).
+- [x] done — **P5.4** Friends backend + migration (requests in/out, accept, remove, privacy).
+      **Full `./scripts/check.sh` on the committed tree: all 13 gates PASS, 0 skipped;
+      2532 tests, 6 live-only skips, 0 failures; coverage 90.48%** (develop 90.18%,
+      P5.3 90.43% — no drop). `alembic check` clean.
+      **One defect the gate run found, fixed as `72330b8`:** `tests/test_db_schema.py`
+      asserts *exact set equality* between `Base.metadata.tables` and a hand-maintained
+      `EXPECTED_TABLES`; migration 0015's `friendships` was never added to it, so the
+      suite failed on `Extra items in the left set: 'friendships'`. Fixed by extending the
+      set, not by loosening the assertion — exact equality is the whole point of that test.
+      **Worth not re-learning: a new table costs two edits, the migration and this set.**
+      P5.2's and P5.3's migrations (0013, 0014) added only *columns*, so this is the first
+      time in Phase 5 the trap could fire, and it fires ~10 minutes into the gate run.
+      Add the table to `EXPECTED_TABLES` in the same chunk that writes the `create_table`.
       **Also lands the leaderboard's fourth scope**: add `LeaderboardScope.friends` to
       `lemely/db/leaderboard_repo.py` once the friendships table exists. Everything else it
       needs is built — follow the existing `_membership_subquery` shape, keep the opt-out in
       the WHERE clause, and extend the D5.1 §0 emitted-SQL guard test to the new scope.
-      **Resume note (forty-second session):** the forty-first session died mid-task leaving an
-      UNCOMMITTED but complete third change — the D5.7 race fix from the adversarial review.
-      It is now committed as `63a4bbc` (see below). Both original chunks were already committed
-      by the fortieth session. Nothing has been re-implemented in either session; the only
-      outstanding work remains the full-gate verification, running now. Do not re-plan the
-      chunks; read the three commit messages (`7397df0`, `71d1a9b`, `63a4bbc`).
+      Three code chunks, all committed by earlier sessions and none re-implemented since:
+      `7397df0` (chunk A), `71d1a9b` (chunk B), `63a4bbc` (the D5.7 race fix). The
+      forty-third session ran the outstanding gates and closed the task.
       - [x] **D5.7 fix** (`63a4bbc`) — `FriendService.request`'s genuinely-new-pair INSERT had no
             `IntegrityError` handling, and sat bare inside `with session.begin()`, so a lost race
             on `uq_friendships_pair` surfaced at COMMIT — after `request()` returned, outside any
@@ -370,6 +379,13 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       (D5.1 §8's reasoning applied to a second table).
 - [ ] todo — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
       auto-populated official CAIE session dates for the exam calendar.
+      **Read the P5.0 reconnaissance lines above before planning.** Measured, do not re-derive:
+      `announcements` and `notifications` tables already exist;
+      `lemely/web/routers/announcements.py` mounts at `/api/teacher/announcements` and exposes
+      exactly POST / GET / DELETE, with **no student-facing read route at all** and no
+      school-admin → whole-school audience. Read-receipts are one of the four tables P5.0
+      measured as genuinely absent, so this task **does** need a migration (0016).
+      Backend only — the consuming screens are P5.8/P5.9.
 - [ ] todo — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable transport,
       and make `notification_preferences` actually gate delivery.
 - [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).

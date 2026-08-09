@@ -1550,3 +1550,34 @@ none has a helper waiting from Phase 3 or 4.
   knows it was seen, not missed.
 - **Next:** P5.4 — friends backend + migration, which also lands the leaderboard's fourth scope
   (`LeaderboardScope.friends`) and must extend the D5.1 §0 emitted-SQL guard test to cover it.
+
+## 2026-08-10 — forty-third session — P5.4 closed by its gate run
+
+- **Did:** resumed with a clean tree, no unhandled INBOX items and no open blockers. P5.4's three
+  code chunks (`7397df0`, `71d1a9b`, `63a4bbc`) were already committed by the two prior sessions,
+  so the only outstanding work was the verification the forty-first session died before finishing.
+  Ran the full `./scripts/check.sh` twice: **all 13 gates PASS, 0 skipped, 2532 tests / 6
+  live-only skips / 0 failures, coverage 90.48%** (develop 90.18% — no drop), `alembic check`
+  clean. Nothing was re-implemented or re-planned.
+- **Learned — the one defect, and it is a class not an incident.** The first run failed on
+  `tests/test_db_schema.py::test_all_expected_tables_registered`: migration 0015 created
+  `friendships` but the hand-maintained `EXPECTED_TABLES` set was never extended, so the suite
+  died on `Extra items in the left set`. Fixed by adding the table (`72330b8`), **not** by
+  loosening the assertion — exact set equality is precisely what forces a new table to be
+  acknowledged deliberately instead of arriving by accident. The generalisable form: **a new
+  table costs two edits, the migration and that set.** Phase 5's earlier migrations (0013, 0014)
+  added only columns, which is why this could not fire until now, and it fires roughly ten
+  minutes into a gate run — make the `EXPECTED_TABLES` edit in the same chunk as the
+  `create_table`.
+- **Also worth not re-deriving:** `check.sh` suppresses output for every gate that passes, so a
+  fully green log contains no pytest counts whatsoever — the counts I could quote from the *first*
+  run existed only because pytest failed there. Read coverage with
+  `.venv/bin/coverage report --precision=2` off the run that just happened, and get the test
+  count from `pytest --collect-only -q --no-cov`. Never re-run the suite for a number.
+- **Confirmed rather than assumed:** `.venv/bin/pre-commit run --all-files` still fails its
+  `mypy` and `import-linter` hooks with *"Executable not found"* — the already-recorded hook
+  environment defect, not a code failure; both tools pass directly inside `check.sh` on the same
+  tree.
+- **Next:** P5.5 — announcements. Student-facing read (there is no student route at all today),
+  read-receipts (needs migration 0016), the school-admin whole-school audience, and
+  auto-populated official CAIE session dates. Backend only; the screens are P5.8/P5.9.
