@@ -1128,11 +1128,39 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         - `<h1>` on every new screen (D4.16), and S-23 must be keyboard-operable: the spec
           calls it a repeated micro-interaction where friction compounds, so the reveal and
           the four grade buttons need real key affordances, not mouse-only handlers.
-      - [ ] chunk C — the standing UI gate (gate 8) for all four screens: audit-registry
+      - [ ] doing — chunk C — the standing UI gate (gate 8) for all four screens: audit-registry
         entries with their **real** states (including the honest `no_questions` /
         `no_weaknesses` / `insufficient_pool` refusals and S-22's "nothing due today"), axe
         zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus, `<h1>` per screen
         (D4.16's defect — do not repeat it).
+        **Scoped 2026-08-10 (sixth session), enough to start cold — do not re-derive:**
+        - **This chunk has a `scripts/` diff, unlike A and B.** The registry is
+          `web/scripts/audit.mjs` (~line 830 onward builds sessions, then a `return [...]`
+          array of `{screenId, slug, path, session, ready, authed, states?}`); the data behind
+          it is `scripts/seed_e2e.py`, the **one** seeding path for both harnesses. P4.8 chunk
+          C's `// ── P4.8 chunk C · the four S-01..S-05 sessions ──` block is the worked
+          example to copy, comment style included.
+        - **Expect to need distinct seeded student accounts per state, for a reason specific
+          to this data.** P4.8 needed four because `PlacementService.availability` excludes a
+          student's own prior placement questions (D4.6 §4). The analogous traps here: a
+          student with weakness rows cannot also demonstrate S-20's `no_weaknesses` refusal,
+          and a student with cards due cannot demonstrate S-22's "nothing due today". **Work
+          out which states are mutually exclusive before writing the seed**, or the registry
+          will quietly capture the same state twice under two names.
+        - **The refusal states are the point of this chunk, not the happy paths.** Screens
+          that only ever screenshot populated are exactly how D3.21's and P4.8 chunk 0's
+          defect classes survive. Capture: 0580/0606 `no_questions` (real — those subjects
+          have zero ingested questions), `no_weaknesses`, `insufficient_pool` (the *normal*
+          path given this corpus, per D4.10), S-21 not-submitted **and** marking **and**
+          marked, and S-22 nothing-due.
+        - **`<h1>` is already verified present in every render branch of all four screens**
+          (Practice: Generator/Result/Print; Flashcards: Decks 3 branches, Review 5) — checked
+          at chunk close, not assumed. D4.16's defect is not expected to recur here; the thing
+          to watch for instead is what only a *run* finds (D4.16's own lesson: reading finds
+          what is wrong with the code you are looking at, running finds what you did not think
+          to look at). P4.8 chunk C's second defect was a seed that could not run twice.
+        - `LEMELY_REPORT_DIR` re-baselines explicitly; the gates otherwise write to gitignored
+          `reports/.scratch` (D3.2). Never commit into a previous phase's report dir.
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
       current placeholder `StudyPlan.tsx`.
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice

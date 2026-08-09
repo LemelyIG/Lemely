@@ -1301,3 +1301,25 @@ question-rendering surface P4.9 and P5 will compose.
   finish summary. Chunk 0's `syllabusGroup` is what S-20 must nest by. Note S-21's
   reveal-answer is deliberately **not** built (no route exposes a model answer, and D3.8's
   structural exclusion is on purpose) — recorded as a scope decision in STATE, not an omission.
+
+## 2026-08-10 (sixth session) — P4.9 chunks A and B closed
+
+**Did.** Verified P4.9 chunk A, which arrived as two wip commits with gates never run: all 13
+gates green, 249 web unit tests, zero backend diff. Then scoped, briefed and verified chunk B
+(S-22/S-23 flashcards on the ten P4.6 routes): 13 gates green, 279 web unit tests, still zero
+backend diff. Recorded D4.17 (S-23 ships with no XP) and scoped chunk C.
+
+**Learned.** The handover-is-not-evidence pattern held for the tenth time this phase, but the
+interesting part is *what kind* of defect keeps surviving. All three found this session render
+perfectly and pass every automated gate: a weak-topic prefill that applied an invisible filter
+(8 of 15 real weakness topics have no servable chip), a dead `useEditCard` leaving S-22's
+spec'd edit action half-built, and a hand-made deck labelled "Topic-generated". None is a
+crash; each is a **provenance or honesty** defect, which is precisely the class this product
+cannot afford and no linter can see. Also: the pure-logic-module split is what makes them
+fixable *and* pinnable — hoisting the origin decision out of JSX into `manualDeckRequest` took
+one edit and bought a real test.
+
+**Next.** P4.9 chunk C — the standing UI gate for all four screens. Unlike A and B it carries a
+`scripts/` diff (seed + registry). Its scoping block in STATE.md is written to start cold; the
+mutually-exclusive-state analysis (a student with weaknesses cannot show `no_weaknesses`) is
+the thing to do before writing the seed, not after.
