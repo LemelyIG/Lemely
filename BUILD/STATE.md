@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T12:40:00Z   # **Thirty-first session — resumed; chunk B's gate run is STILL genuinely in flight** (PID 2551860 alive, 6m34s elapsed at 12:36, log `/tmp/p411b_gate.log` sitting at `PASS import-linter` with `pytest -q` the live child). Verified by `ps`, not inferred from the log's mtime. **Nothing gated has been touched this session**; `web/e2e/phase4-journey.spec.ts` is deliberately still untracked (it is the file under gate — a wip commit of it before the verdict would be exactly the "reported done with its own gate red" pattern this phase has hit seven times). A blocking waiter is armed on the PID. **On green: commit chunk B, then chunk C** (already scoped read-only below).
+last_updated: 2026-08-09T13:02:00Z   # **Thirty-third session — chunk B is DONE and COMMITTED (`32cd131`).** Its gate run finished **all 13 gates PASS, 0 skipped** (`/tmp/p411b_gate.log`, exit 0, foreground), and attribution was checked by mtime rather than assumed: the spec was last written 12:25:51, the run ran 12:30:28→12:54:36, nothing edited mid-run. `pre-commit` red on exactly the two hooks the environment note predicts (`mypy`, `import-linter`, "Executable not found"). **P4.11 chunk C is WRITTEN and gating** — `web/e2e/phase4-practice.spec.ts`, 3 tests, **3/3 green locally** and proven non-vacuous by two rounds of product inversion (see its checklist entry). Gate run **PID 2618949, log `/tmp/p411c_gate.log`, started 13:01:33**, `pwdx`-verified at the repo root; the spec was last written before it. **Do not edit any gated file until the log reads "All gates passed"; then commit chunk C and start chunk D** (already scoped read-only below). Working tree holds only that one untracked spec — deliberately, it is the file under gate.
 #                                    Previous header follows. **Twenty-ninth session — P4.11 chunk A is DONE and COMMITTED (`9cbbf42`).** Its gate run finished **all 13 gates green, 0 skipped** (`/tmp/p411a_gate.log`), and attribution was checked by mtime rather than assumed: both files were last written 11:50:49/11:51:33, the run started 11:54:07, and nothing was edited mid-run. `pre-commit` was red on exactly the one hook the environment note predicts (`lint-imports` "Executable not found"); `check.sh` ran it green on the same tree. **P4.11 chunk B is WRITTEN and gating** — see its checklist entry below for the gate PID/log, the inversion evidence, and the S-05 "Weakest topics" finding. **Next after it goes green: commit chunk B, then chunk C.**
 #                                    **Chunk A, do not re-derive — the full rationale is in `9cbbf42`'s commit message.** `SeedContract` now declares all **14** top-level keys (the three Phase-4 groups *and* the four P3.10-era ones, undeclared since chunk e1), read out of `build_result_payload` rather than the docstring — which is missing that `practice` and `studyPlan` each carry `subjectCode`. The substantive half is the new `web/e2e/seed-contract.spec.ts` (3 tests), verified non-vacuous by real inversion against `seed_e2e.py` and reverted immediately.
 #                                    **Two facts established this session that chunk B needs.** (1) **`audit.mjs` runs its OWN `seed_e2e.py` invocation** (`:568`), separate from Playwright's `globalSetup` — so a Playwright spec that mutates a seeded account cannot poison the later `puppeteer-audit` leg of the same `check.sh` run, even though playwright-e2e runs first. (2) **`/student/onboard` does not redirect an already-onboarded student**: `Onboarding.tsx` always mounts at `wizardStep: "subjects"` and its seeding effect restores only the answers, so the onboard leg is safe to re-run and safe under Playwright retry. **The S-01/S-02/S-03/S-04/S-05 accounts still must not be collapsed** — that reason is unchanged and recorded in `seed.ts`.
@@ -1767,10 +1767,9 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `awardedMarks`/`maximumMarks`/`questionCount`/`bankQuestionCount`/`paperNumber`/
         `activeSessionCount`/`completedSessionCount` are **numbers**; every id is a
         `str(...)`-stringified UUID.
-      - [ ] chunk B — **WRITTEN, 5/5 green locally, gate run IN FLIGHT** (PID 2551860, log
-        `/tmp/p411b_gate.log`, started 12:30:28, `pwdx`-verified at the repo root; the spec was
-        last written 12:25:51, before the run). **Do not edit any gated file until it reads
-        "All gates passed"; then commit and start chunk C.** The file is
+      - [x] chunk B — **done** (`32cd131`, all 13 gates PASS / 0 skipped, `/tmp/p411b_gate.log`,
+        exit 0). Full rationale is in the commit message; the narrative below is kept because
+        chunks C/D reuse its traps and its S-05 finding. The file is
         `web/e2e/phase4-journey.spec.ts`, **5 tests, one per leg, not one linear journey** —
         the four placement accounts cannot be collapsed (availability excludes a student's own
         prior placement questions), so the journey is expressed over the accounts the seed
@@ -1841,8 +1840,27 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         questions for the same subject, so reuse reports the pool exhausted on the very
         screen meant to show it available) → study plan (S-24 on
         `practice.students.active`). Ends `expect(errors).toEqual([])`.
-      - [ ] chunk C — **SCOPED READ-ONLY 2026-08-09 (twenty-ninth session) while chunk B's gate
-        ran — do not re-derive.** Route `/student/practice/{practice.subjectCode}`
+      - [ ] chunk C — **WRITTEN, 3/3 green locally, gate run IN FLIGHT** (PID 2618949, log
+        `/tmp/p411c_gate.log`, started 13:01:33, `pwdx`-verified at the repo root; the spec was
+        last written before the run and nothing has been touched since). **Do not edit any gated
+        file until it reads "All gates passed"; then commit and start chunk D.**
+        The file is `web/e2e/phase4-practice.spec.ts`, **3 tests**: the targeting assertion on
+        `practice.students.active`, its inverse on `.bare`, and the `no_questions` refusal on
+        0580. Strings inherited from `audit.mjs` per the scoping below, not re-derived.
+        **Proven non-vacuous by inverting the PRODUCT, in two rounds — the second round is the
+        one that matters and it is worth not re-deriving why.** Round 1 broke three sites
+        (the prefill disabled, and the `no_questions`/`no_weaknesses` headings **swapped** with
+        each other in `practiceData.ts`) and all three tests failed — but test 1 failed on its
+        *shortfall* wait, before ever reaching the targeting assertion. **That is a real product
+        coupling, not a flaw in the break:** with nothing prefilled the preview is unfiltered,
+        248 questions match a request for 10, and the screen legitimately renders "N questions
+        match" instead of the shortfall panel. So round 1 did not prove the assertion that
+        carries MISSION §4's word *demonstrably*. Round 2 kept the prefill working but pointed it
+        at a servable **non-weak** topic, which leaves the shortfall panel rendering: test 1 then
+        failed exactly on `toBeChecked` at the named topic (line 88), test 2 on its
+        invented-prefill count, and test 3 stayed **green** — the discrimination the pair exists
+        for. All reverted; `git diff web/src` clean.
+        *(Original read-only scoping follows, still accurate.)* Route `/student/practice/{practice.subjectCode}`
         (`PracticeGenerator`). **Strings lifted from `audit.mjs:1535-1581`:** the populated
         generator on `practice.students.active` is identified by
         `"Only \\d+ of \\d+ requested questions match"` (a REGEX — the honest-shortfall panel,
