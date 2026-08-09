@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-10T12:05:00Z   # P4.10 chunk A: breadcrumb fix committed (890c7d7), pre-commit clean. Doing: gate run in flight over that tree; chunk B scoped below.
+last_updated: 2026-08-10T14:20:00Z   # Eleventh session. Chunk B written and committed (3b49dca). Doing: ONE gate run over chunks A+B together — chunk A was never independently green (its run died with the previous session), so there is nothing to lose by combining and the audit leg costs ~11 min either way.
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -1334,6 +1334,28 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         must be updated when chunk C adds the registry entries.
       - [ ] chunk B — **S-25** session detail + its route, the fact-1 "why" join, and the
         session-complete flow from the detail screen. No XP (P5's seam is `completed_at`).
+        **Written and committed (`3b49dca`, wip) 2026-08-10 eleventh session; gate run in
+        flight over chunks A+B together.** All four design facts below were implemented as
+        decided, none re-derived. `StudyPlanSession.tsx` + the pure half in `studyPlanData.ts`
+        (`locateSession`, `sessionRationale`/`rationaleCopy`, `sessionStartAction`), route
+        `plan/:subjectCode/session/:sessionId`, the `resolveCrumb` arm, and a link from each
+        S-24 session row. **47 unit tests (was 27)**, typecheck + oxlint clean.
+        **`locateSession` has three arms, not two** — the refused week is kept separate from
+        the superseded one, because "your plan moved on" is false for a plan that never moved
+        and was declined; that arm renders `planUnavailableMessage`'s own reason instead.
+        **The `unknown` rationale arm is the load-bearing one** and is pinned by the assertion
+        that it is *not* `notRecordedWeakness`: a pending or failed weak-topics fetch answering
+        "not a recorded weakness" would report an absence of evidence as evidence of absence.
+        A test also pins that the `focus` string appears in **none** of the three copies.
+        **Two absences shipped rather than faked**, both matching chunk A's reschedule call:
+        no start button for `review` (no revision surface exists — `sessionStartAction` returns
+        `null`, pinned by its inverse for the other three types) and no XP on completion.
+        **Do not re-derive the gate-attribution decision:** chunk A's own gate run died with
+        the tenth session having only reached `PASS ruff-check/ruff-format/mypy/import-linter`.
+        This session restarted it, then **killed it deliberately** once chunk B's edits were on
+        disk — a run whose backend legs saw one tree and whose web legs saw another cannot
+        attribute a failure to a chunk. A+B are verified by one run instead. Nothing was ever
+        green for A alone; do not read the earlier "in flight" note as a pass.
         **Design decided by measurement 2026-08-10 (tenth session), before briefing — do not
         re-derive:**
         1. **There is no `GET /sessions/{id}` route.** The router has exactly three paths and
@@ -1382,6 +1404,14 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
   **90.37% and 99%**. The test counts stayed correct (2331/6/0 both times), which is what
   makes it convincing: it reads as a real coverage regression to be chased. Re-measure
   serially before believing any coverage drop.
+- **`pre-commit` is not on PATH and two of its hooks cannot run.** The binary is
+  `.venv/bin/pre-commit` (no bare `pre-commit`, and `$HOME/.local/bin` does not have it).
+  Its `mypy` and `import-linter` hooks then fail with *"Executable not found"* — a defect in
+  the hook environment, **not a code failure**: `./scripts/check.sh` runs both tools directly
+  and they pass on the same tree. Verify there before believing a pre-commit red on those two.
+- **`cd` in one Bash call persists into the next.** A `cd web` for an npx run leaves the
+  following command running from `web/`, where `.venv/` and `.pre-commit-config.yaml` do not
+  exist — which reads as "the venv is gone". Prefix with an absolute `cd /home/sico/Lemely`.
 - `GEMINI_API_KEY` lives in `/home/sico/Lemely/.env` and is **not** exported into a
   non-interactive shell — `set -a && . ./.env && set +a`.
 - The UI gates write to gitignored `reports/.scratch` (D3.2). Re-baseline explicitly with
