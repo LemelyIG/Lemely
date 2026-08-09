@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T23:55:00Z   # P4.9 chunk 0 DONE (13 gates green). Next: P4.9 chunk A (S-20/S-21 frontend).
+last_updated: 2026-08-09T23:59:00Z   # P4.9 chunk A DOING (S-20/S-21 frontend), scoped by measurement.
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -987,8 +987,37 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         S-05 polls placement) and `GET /api/student/practice/{subject_code}/topics` (distinct
         servable topics + **real** per-topic counts through the same clauses `_preview` uses).
         Both pinned by their inverses or they will silently offer/return nothing.
-      - [ ] chunk A — S-20 + S-21 frontend. `QuizTaker` is **composed, not forked** (its own
-        docstring names P4.9 as a caller); the finish summary reads chunk 0's result route.
+      - [ ] doing — chunk A — S-20 + S-21 frontend. `QuizTaker` is **composed, not forked** (its
+        own docstring names P4.9 as a caller); the finish summary reads chunk 0's result route.
+        **Scoped by measurement 2026-08-09 (fifth session) — do not re-derive:**
+        - The composition seam is already exactly right and needs no change: `QuizTaker` takes
+          `{assignmentId, onSubmitted, onExit}` and nothing else (`PlacementTest.tsx` is a
+          21-line wrapper proving it). S-21's working view is that same wrapper with a
+          practice exit. **Adding a prop to `QuizTaker` is a signal the chunk is going wrong.**
+        - **Nothing frontend-side for practice exists yet:** no `practiceTypes.ts`, no
+          `usePracticeApi.ts`, no practice screen, no route, no nav entry, no crumb. Five
+          backend routes are live and un-consumed (`preview`/`topics`/`POST ""`/`export`/
+          `result` — `lemely/web/routers/practice.py`), DTOs in `schemas_practice.py`.
+          Mirror `placementTypes.ts` + `usePlacementApi.ts` conventions (one hook per
+          endpoint, no `fallback` to `request()`, poll `result` while `marked === false`
+          exactly as `usePlacementResult` does).
+        - **Sixth scoping fact, and the one that would otherwise be built as a fiction:**
+          UI spec S-21 names "do it on paper and photograph it" as an answer route.
+          `SaveAnswerRequest` is `{answerText?, workingText?}` — **text only, no image field
+          anywhere on the quiz answer path** (`placementTypes.ts:134`, and the backend PUT
+          matches). There is no route that attaches a photograph to a quiz answer. Building a
+          camera affordance here would either dead-end or silently discard the student's
+          work. **Deliberately not built**, recorded as a scope decision alongside fact 4's
+          reveal-answer, not silently omitted. The photograph route that *does* exist is the
+          S-10..S-14 correction flow, which marks a whole past paper, not a quiz answer.
+        - Topic chips must nest by `syllabusGroup` (chunk 0's third defect — a flat list
+          offers a parent as though it covered its disjoint children), prefill from the
+          `weakTopics` the **server** returns (fact 3), and never render `untopicedCount` as
+          a topic.
+        - Routes/nav to add: `practice/:subjectCode` (S-20), `practice/set/:assignmentId`
+          (S-21 working view), `practice/result/:assignmentId` (S-21 summary), in
+          `portals/student/index.tsx`; nav item + `crumbs` entry in `portals/student/data.ts`.
+        - `<h1>` on every new screen (D4.16's defect — it shipped five screens without one).
       - [ ] chunk B — S-22 + S-23 frontend on the existing 10 flashcard routes. No backend
         work expected. `source: "ai"` must stay visible on the card for its whole life, and
         `generatedCount` (not `requestedCount`) is what the screen reports.
