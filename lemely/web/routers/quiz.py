@@ -29,7 +29,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError
-from lemely.db.models.enums import QuestionSource, QuizStatus, Role
+from lemely.db.models.enums import QuestionSource, QuizStatus, Role, XpSource
 from lemely.db.quiz_marking_repo import QuizMarkingError, QuizMarkingService
 from lemely.db.quiz_repo import (
     PoolCountResult,
@@ -56,12 +56,14 @@ from lemely.db.quiz_taking_repo import (
     QuizTakingValidationError,
     SubmitResultRow,
 )
+from lemely.db.xp_repo import XpService
 from lemely.web.deps import (
     AuthContext,
     get_quiz_marking_service,
     get_quiz_results_service,
     get_quiz_service,
     get_quiz_taking_service,
+    get_xp_service,
     require_role,
 )
 from lemely.web.schemas_analytics import TopicWeaknessDTO
@@ -92,6 +94,7 @@ from lemely.web.schemas_quiz import (
     SubmitQuizResponseDTO,
     UpdateQuizDraftRequestDTO,
 )
+from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
     import uuid
@@ -840,6 +843,7 @@ def submit_student_quiz(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[QuizTakingService, Depends(get_quiz_taking_service)],
     marking_service: Annotated[QuizMarkingService, Depends(get_quiz_marking_service)],
+    xp_service: Annotated[XpService, Depends(get_xp_service)],
 ) -> SubmitQuizResponseDTO:
     """Submit: ``status=submitted``, then trigger marking in the background.
 
@@ -849,6 +853,13 @@ def submit_student_quiz(
     background thread so a multi-question Gemini round trip never sits inside
     this request (``docs/quiz-model.md`` §4.2); the student sees "being
     marked" until a later read observes ``marked``.
+
+    P5.2 chunk B, D5.1: ``quiz_completed`` XP is awarded here, at *submit*
+    time, not after marking — the act being rewarded is finishing the quiz,
+    never the score it earns (marking hasn't even run yet when this fires).
+    Deduped on the assignment id, so a second submit attempt (already
+    rejected above as 422) can never double-award even if this route were
+    ever retried.
     """
     try:
         result = service.submit(auth.user_id, assignment_id)
@@ -856,6 +867,14 @@ def submit_student_quiz(
         _raise_for_taking(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    award_xp_safely(
+        xp_service,
+        user_id=auth.user_id,
+        source=XpSource.quiz_completed,
+        dedupe_key=str(assignment_id),
+        subject_code=result.subject_code,
+        seam="quiz_completed",
+    )
     _trigger_marking_in_background(marking_service, result.submission_id)
     return _submit_to_dto(result)
 

@@ -37,9 +37,10 @@ from lemely.db.flashcard_repo import (
     FlashcardService,
     FlashcardUnavailableError,
 )
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import Role, XpSource
 from lemely.db.models.flashcards import DeckOrigin, ReviewGrade
-from lemely.web.deps import AuthContext, get_flashcard_service, require_role
+from lemely.db.xp_repo import XpService
+from lemely.web.deps import AuthContext, get_flashcard_service, get_xp_service, require_role
 from lemely.web.schemas_flashcards import (
     AddCardRequestDTO,
     CardDTO,
@@ -53,6 +54,7 @@ from lemely.web.schemas_flashcards import (
     ReviewCardRequestDTO,
     ReviewResultDTO,
 )
+from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
     from lemely.db.flashcard_repo import (
@@ -361,11 +363,18 @@ def review_card(
     body: ReviewCardRequestDTO,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[FlashcardService, Depends(get_flashcard_service)],
+    xp_service: Annotated[XpService, Depends(get_xp_service)],
 ) -> ReviewResultDTO:
     """Grade one card and reschedule it through the SM-2 scheduler.
 
     The response returns the interval before and after so the effect of the
     grade is visible rather than something the student has to take on trust.
+
+    P5.2 chunk B, D5.1: ``flashcard_reviewed`` XP is deduped on the new
+    review-audit-row id, not the card id — every graded review is a distinct
+    act (unlike the other three seams, a card can be reviewed again and again
+    on purpose), so the per-source daily cap (D5.1 §3), not dedupe, is what
+    stops this from being farmed.
     """
     try:
         outcome = service.record_review(auth.user_id, card_id, _parse_grade(body.grade))
@@ -373,6 +382,14 @@ def review_card(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    award_xp_safely(
+        xp_service,
+        user_id=auth.user_id,
+        source=XpSource.flashcard_reviewed,
+        dedupe_key=str(outcome.review_id),
+        subject_code=outcome.subject_code,
+        seam="flashcard_reviewed",
+    )
     return _review_to_dto(outcome)
 
 

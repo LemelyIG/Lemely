@@ -4663,3 +4663,65 @@ a migration docstring instead of as an inconsistency discovered months later.
 A spec written above the code is worth having; it is not automatically right
 about the code, and the brief that lets an implementer say "this is wrong" is
 what makes the difference.
+
+---
+
+## D5.3 — The `paper_corrected` dedupe key is the upload id, not the attempt id (P5.2 chunk B)
+
+P5.2 chunk B wired the four XP award seams. Three were uncontroversial. The
+`paper_corrected` seam shipped its first implementation keyed on
+**`str(attempt_id)`** — the id `AttemptRepository.persist_correction` returns —
+because that is what the implementation brief's table said to use. **The brief
+was wrong, and D5.1 §8 already said so.**
+
+§8 opens: *"A paper can be re-marked. A teacher can override a result. A plan
+session can be un-completed and completed again. None of those may re-award
+XP."* It then names the dedupe identity as **"the paper id"**.
+
+`persist_correction` inserts a **fresh `Attempt` row on every call**. So an
+attempt-keyed dedupe key is re-minted on every re-correction, the partial
+unique index over `(user_id, source, dedupe_key)` never fires, and a student
+re-running `/student/correct` on the same uploaded paper earns another 50 XP
+every time — bounded only by the 5/day `paper_corrected` cap, i.e. **250 XP/day
+from one PDF**. That is the exact leaderboard anomaly §8 exists to prevent, and
+it is the cheapest farm in the whole system: re-marking costs the student one
+click.
+
+**Corrected to `str(owned.id)`, the `student_uploads` row** — the stable
+identity of "this paper" that the endpoint has already resolved and
+ownership-checked before streaming starts. Re-marking still works, still
+persists a second attempt, and now earns nothing new, which is precisely what
+§8 asks for.
+
+**Two things worth keeping from how this was caught.**
+
+1. The implementer **flagged it rather than silently following the brief**,
+   as the same standing instruction that produced D5.2 required — it reported
+   that the seam "is not idempotency-safe by construction" and declined to
+   change the key unilaterally, calling it a product decision. It was right
+   that it was a decision and wrong that it was out of scope: D5.1 §8 had
+   already made it. A flag that names the defect precisely is worth more than
+   a silent fix, because it arrived with the reasoning attached.
+2. **The regression test was verified by inversion**, not assumed. With the
+   key reverted to `attempt_id`, `test_re_correcting_the_same_paper_does_not_re_award`
+   fails on `2 != 1` xp_events rows and `test_paper_corrected_awards_xp` fails
+   on the dedupe-key assertion; both pass with `owned.id` restored. The test
+   also asserts that **two `Attempt` rows exist** after the second correction,
+   so it cannot pass vacuously by the pipeline having refused to re-run — a
+   green from "nothing happened" would be worthless here.
+
+**The general lesson, which is the same one as D5.2 from the opposite
+direction.** D5.2 was the spec being wrong about the code. This is the *brief*
+being wrong about the spec: the orchestrator's task table paraphrased D5.1 §8
+and lost its meaning, while the authoritative sentence sat in DECISIONS.md
+unchanged. A restated requirement is a copy that can drift. Where a brief
+paraphrases a spec, the spec wins, and the implementer should be reading it —
+which is why the brief pointed at D5.1 by line number rather than only
+summarizing it.
+
+**`flashcard_reviewed` is deliberately NOT analogous** and was left alone. Each
+review mints a genuinely new review id because reviewing a card again is a real,
+repeatable act the SM-2 scheduler depends on; two reviews of one card correctly
+award twice. Its anti-farming control is the 60-cards/day cap in D5.1 §3, not
+dedupe. `tests/test_web_xp_awards.py::test_flashcard_reviewed_two_reviews_of_the_same_card_both_award`
+pins that reading so a later reader does not "fix" it into the paper seam's shape.

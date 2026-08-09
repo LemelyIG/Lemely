@@ -46,9 +46,10 @@ from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
-from lemely.db.models.enums import Role, UploadStatus
+from lemely.db.models.enums import Role, UploadStatus, XpSource
 from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.db.xp_repo import XpService
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
@@ -65,6 +66,7 @@ from lemely.web.deps import (
     get_settings,
     get_storage_backend,
     get_student_upload_repo,
+    get_xp_service,
     require_role,
 )
 from lemely.web.schemas import question_to_dto
@@ -91,6 +93,7 @@ from lemely.web.schemas_student import (
 )
 from lemely.web.services.grading import extract_answers, grade_paper
 from lemely.web.upload_utils import check_upload_cap, safe_upload_name
+from lemely.web.xp_awards import award_xp_safely
 
 router = APIRouter(prefix="/api")
 
@@ -635,6 +638,7 @@ def student_correct(
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     settings: Annotated[Settings, Depends(get_settings)],
     storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
+    xp_service: Annotated[XpService, Depends(get_xp_service)],
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
@@ -710,6 +714,32 @@ def student_correct(
                     user_id=auth.user_id, report=report, upload_id=owned.id
                 )
                 upload_repo.set_status(owned.id, UploadStatus.complete)
+                # P5.2 chunk B, D5.1: XP for the *act* of correcting a paper,
+                # never for how well it was corrected — no mark/score/grade
+                # is read here or passed to XpService.award. The attempt is
+                # already persisted and the upload already marked complete
+                # above, so a failure inside this call is caught and logged
+                # by award_xp_safely and never turns this already-successful
+                # correction into an error frame (D5.1 §3, "the learning
+                # wins").
+                #
+                # The dedupe key is the **upload** id, not the attempt id.
+                # D5.1 §8 names "the paper id" and opens with "a paper can be
+                # re-marked ... none of those may re-award XP".
+                # ``persist_correction`` inserts a fresh ``Attempt`` on every
+                # run, so keying on the attempt would mint a new key each
+                # time and award again for every re-correction of the same
+                # paper — the precise anomaly §8 exists to prevent. The
+                # upload is the stable identity of "this paper", so a student
+                # re-running the pipeline on it earns nothing new (D5.3).
+                award_xp_safely(
+                    xp_service,
+                    user_id=auth.user_id,
+                    source=XpSource.paper_corrected,
+                    dedupe_key=str(owned.id),
+                    subject_code=report.correction.metadata.subject_code,
+                    seam="paper_corrected",
+                )
                 # ``report.correction.metadata`` (an ``ExamMetadata``, derived from
                 # ``mark_scheme.metadata`` by ``core.correction._exam_metadata``) —
                 # not the separately-detected ``metadata`` variable above, which

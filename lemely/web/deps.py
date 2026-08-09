@@ -47,6 +47,7 @@ from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.storage import HttpStorageBackend, StorageBackend
@@ -354,6 +355,23 @@ def get_flashcard_service() -> FlashcardService:
 
 
 @lru_cache(maxsize=1)
+def get_xp_service() -> XpService:
+    """Return the process-wide :class:`XpService` singleton (P5.2 chunk B).
+
+    Wired with the DB session factory alone, mirroring
+    :func:`get_study_plan_service`/:func:`get_placement_service` — the clock
+    and streak-day zone are left at their defaults (real UTC now,
+    ``Africa/Cairo``); tests override this dependency with a service built on
+    an injected fake clock and a throwaway Postgres database. Composed with
+    each of the four award call sites only through
+    :func:`~lemely.web.xp_awards.award_xp_safely`, never called directly from
+    a repo service (D5.1: awarding is a router-layer concern, not nested
+    inside another service's own transaction).
+    """
+    return XpService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_at_risk_ack_service() -> AtRiskAckService:
     """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
 
@@ -561,3 +579,4 @@ def reset_singletons() -> None:
     get_quiz_marking_service.cache_clear()
     get_announcement_service.cache_clear()
     get_student_profile_service.cache_clear()
+    get_xp_service.cache_clear()

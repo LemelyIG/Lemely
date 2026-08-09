@@ -206,6 +206,11 @@ class SubmitResultRow:
     submission_status: QuizSubmissionStatus
     answered_count: int
     unanswered_count: int
+    subject_code: str
+    """The submitted quiz's subject (P5.2 chunk B) — not part of the wire
+    response (the router does not serialise it, mirroring ``submission_id``
+    above); it exists so the web layer can award ``quiz_completed`` XP with
+    the right subject attribution (D5.1 §7/D5.2) without a second query."""
 
 
 class QuizTakingService:
@@ -606,6 +611,7 @@ class QuizTakingService:
                 submission_status=submission.status,
                 answered_count=int(answered),
                 unanswered_count=total - int(answered),
+                subject_code=quiz.subject_code,
             )
 
     # -- Internals ----------------------------------------------------------
