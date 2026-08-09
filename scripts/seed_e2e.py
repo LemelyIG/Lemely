@@ -541,6 +541,39 @@ PLACEMENT_MCQ_ANSWER = "B"
 #: rows from the real ingested corpus.
 PLACEMENT_PROMPT_MARKER = "P4.8 chunk C fixture text — not real CAIE content"
 
+#: Appended to every seeded placement prompt so the screenshot corpus contains
+#: the two rendering properties MISSION §4 requires be *verified visually, not
+#: assumed*: Unicode maths notation (here a multiplication sign and a
+#: superscript five) and the embedded newlines that ``white-space: pre-line``
+#: is responsible for preserving.
+#:
+#: **Copied verbatim from a real banked stem** (``0625_w23_qp_42#1c``) rather
+#: than authored by hand. That is the whole point: a screenshot of maths
+#: written to make the screenshot pass proves nothing about how the product
+#: renders *corpus* text. P4.8 measured the corpus at 21 distinct non-ASCII
+#: characters across 273 stems (1 LaTeX-shaped), so plain Unicode is the real
+#: case and no KaTeX/MathJax is involved — see D4.24.
+#:
+#: This sample was picked figure-free and checked against the real
+#: :data:`~lemely.db.question_bank_repo._FIGURE_DEPENDENT_PATTERN`, not
+#: eyeballed. A careless pick matching that pattern would be dropped by chunk
+#: 0's :func:`~lemely.db.question_bank_repo.renderable_bank_filter`, silently
+#: emptying the very placement pool this seed exists to fill — and the failure
+#: surfaces as a ``no_eligible_questions`` refusal on S-03, not as an error.
+PLACEMENT_MATHS_SAMPLE = (
+    "A car accelerates uniformly in a straight line from rest at time t = 0. "
+    "At t = 3.2 s, the speed of the car\nis 13.0 m / s.\n"
+    "The car decelerates from 13.0 m / s to 0 m / s at a constant "
+    "deceleration. The mass of the car is\n1350 kg. The car travels 13 m in "
+    "2.0 s as it decelerates.\n"
+    "Show that the work done by the car as it decelerates is approximately "
+    # RUF001: the MULTIPLICATION SIGN is the point of this constant, not a typo
+    # for the letter x — swapping it for ASCII would delete the very glyph the
+    # screenshot inspection exists to look at. Same rationale as the per-file
+    # ignore on `lemely/io/det/symbols.py`.
+    "1.1 × 10⁵ J."  # noqa: RUF001
+)
+
 
 # ---------------------------------------------------------------------------
 # P4.9 chunk C additions: three student accounts for S-20/S-21 (practice) and
@@ -831,7 +864,13 @@ def build_placement_bank_questions(run_tag: str) -> list[NewBankQuestion]:
     "diagram"/"figure ... shows"), so none is dropped by chunk 0's
     :func:`~lemely.db.question_bank_repo.renderable_bank_filter` — the point
     of this seed is a placement test that actually assembles, not one that
-    silently loses rows to the same filter it exists to prove works.
+    silently loses rows to the same filter it exists to prove works. That
+    promise now covers the appended :data:`PLACEMENT_MATHS_SAMPLE` too, and it
+    was checked rather than asserted: the pattern uses **Postgres** POSIX
+    word-boundary escapes and is not valid Python :mod:`re`, so it was
+    evaluated in Postgres against the assembled prompt, with a positive
+    control (``"The diagram shows a circuit."`` → match) proving the check
+    itself was not vacuous.
     """
     stem = build_placement_paper_stem(run_tag)
     rows: list[NewBankQuestion] = []
@@ -847,7 +886,8 @@ def build_placement_bank_questions(run_tag: str) -> list[NewBankQuestion]:
                     question_type="mcq",
                     prompt=(
                         f"Synthetic placement seed item {ref} for topic {topic!r} "
-                        f"({PLACEMENT_PROMPT_MARKER})."
+                        f"({PLACEMENT_PROMPT_MARKER}).\n"
+                        f"{PLACEMENT_MATHS_SAMPLE}"
                     ),
                     total_marks=PLACEMENT_QUESTION_MARKS,
                     topic=topic,

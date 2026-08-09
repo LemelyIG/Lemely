@@ -36,6 +36,7 @@ from scripts.seed_e2e import (
     DECLINING_DAYS_AGO,
     DECLINING_SCORES,
     INACTIVE_SCORE,
+    PLACEMENT_MATHS_SAMPLE,
     PLACEMENT_MCQ_ANSWER,
     PLACEMENT_PAPER_NUMBER,
     PLACEMENT_QUESTION_MARKS,
@@ -542,6 +543,49 @@ class TestBuildPlacementBankQuestions:
         assert len({r.prompt for r in rows}) == len(rows)
         for row in rows:
             assert "synthetic" in row.prompt.lower() or "not real" in row.prompt.lower()
+
+    def test_every_prompt_carries_unicode_maths_and_a_newline(self) -> None:
+        """The two properties MISSION §4 asks a human to verify in screenshots.
+
+        S-04 and S-21 are the only screens that render a ``question_bank.
+        prompt``, and both draw from this pool — so if the sample is ever
+        stripped from these prompts the captures go back to pure ASCII
+        single-line text and "inspect the stems for maths rendering" becomes a
+        **vacuous pass**, indistinguishable from a real one. That is precisely
+        the shape of defect chunk E exists to close, so it is pinned here
+        rather than left to the next reader's care.
+
+        Asserted on the *assembled* prompt, not on
+        :data:`PLACEMENT_MATHS_SAMPLE` itself: a test that only reads the
+        constant would still pass if the interpolation that appends it were
+        deleted.
+        """
+        rows = build_placement_bank_questions("tag1")
+        assert rows
+        for row in rows:
+            assert "\n" in row.prompt, f"no newline for pre-line to preserve: {row.prompt!r}"
+            # RUF001: the MULTIPLICATION SIGN is deliberate — asserting on
+            # ASCII "x" here would pass against a prompt with no maths in it.
+            assert "×" in row.prompt and "⁵" in row.prompt, (  # noqa: RUF001
+                f"no Unicode maths to inspect: {row.prompt!r}"
+            )
+
+    def test_maths_sample_is_corpus_verbatim_not_hand_authored(self) -> None:
+        """Pins the provenance claim the docstring and D4.24 both make.
+
+        The sample is copied verbatim from banked stem ``0625_w23_qp_42#1c``.
+        A screenshot of maths *written to make the screenshot pass* proves
+        nothing about how the product renders corpus text, so the specific
+        wording is load-bearing evidence, not decoration. Checked against the
+        recorded text rather than the live DB so the suite stays hermetic.
+        """
+        assert PLACEMENT_MATHS_SAMPLE.startswith(
+            "A car accelerates uniformly in a straight line from rest at time t = 0."
+        )
+        assert PLACEMENT_MATHS_SAMPLE.endswith(
+            "Show that the work done by the car as it decelerates is approximately 1.1 × 10⁵ J."  # noqa: RUF001 — corpus-verbatim glyph, not ASCII "x"
+        )
+        assert PLACEMENT_MATHS_SAMPLE.count("\n") == 4
 
 
 # ---------------------------------------------------------------------------

@@ -4274,3 +4274,117 @@ not-evaluable inverse stayed green; date 1→20 days failed **all five** (rule 3
 joins every assertion); the published gap 3→2 failed exactly the one test that
 publishes it. The five new tests live in `tests/test_seed_e2e.py`, beside the
 existing no-DB scenario proofs for the other three students.
+
+## D4.24 — The screenshot corpus gets corpus maths, or MISSION §4's visual check is vacuous (P4.11 chunk E)
+
+**Context.** MISSION §4 requires that question rendering — maths notation and
+diagrams — be *"verified visually in screenshots, not assumed"*. The obvious
+reading is that this is a pure evidence pass: `audit.mjs` already carries 48
+registry entries covering S-01..S-05 and S-20..S-25, so axe, Lighthouse and the
+screenshot corpus already run over every Phase-4 screen on every gate pass, and
+chunk E only has to look at the output and report the numbers.
+
+**That reading is wrong, and the reason is the finding.** The two screens that
+render a `question_bank.prompt` are S-04 (`QuizTaker`) and S-21 (practice
+set/export). Both draw their questions from the E2E seed, and **every stem the
+seed authored was pure ASCII on a single line** — `"Synthetic placement seed
+item {ref} for topic {topic!r} (…)"`. So the committed captures contained
+neither Unicode maths nor an embedded newline. "Inspect the captured stems and
+confirm the maths renders" against that corpus is a **vacuous pass**: it cannot
+fail, and it looks identical to a real one. Same shape as the trap chunk B's
+scoping caught, where an S-05 assertion passed on a string that also renders on
+`PlacementInvite`.
+
+**Decision: seed a corpus-verbatim maths sample, additively.** A new
+`PLACEMENT_MATHS_SAMPLE` is appended to the placement pool's prompts. Four
+constraints shaped it:
+
+1. **Verbatim from the real bank** (`0625_w23_qp_42#1c`), not authored by hand.
+   A screenshot of maths written to make the screenshot pass proves nothing
+   about how the product renders *corpus* text. It carries `×` and a
+   superscript `⁵` — the superscript is the harder rendering case, which is why
+   this pick beat the α/β/γ candidates — plus 4 newlines for `white-space:
+   pre-line` to preserve.
+2. **Figure-free, checked rather than eyeballed.** `_FIGURE_DEPENDENT_PATTERN`
+   is a *Postgres* POSIX regex and is not valid Python `re` (it raises
+   `PatternError` on `\m`), so it was evaluated **in Postgres** against the
+   assembled prompt, with a positive control (`"The diagram shows a circuit."`
+   → match) proving the check was not itself vacuous. A careless pick matching
+   that pattern would be dropped by chunk 0's `renderable_bank_filter`,
+   silently emptying the placement pool this seed exists to fill — and it
+   surfaces as a `no_eligible_questions` refusal on S-03, not as an error.
+3. **One site, not two.** `seed_e2e.py` has two `prompt=` sites; only the
+   placement pool reaches a captured screen. The teacher-quiz bank
+   (`build_quiz_bank_questions`, `source=generated`) feeds the P3.10 teacher
+   quiz and is rendered by no audited screen, so editing it would add corpus
+   text no screenshot ever looks at — the same vacuous shape, one level down.
+4. **Additive, keeping `{ref}`/`{topic!r}` and the honesty marker.** The
+   per-row interpolations are what keep prompts distinct;
+   `uq_question_bank_paper_question` fires if they collapse. The
+   `PLACEMENT_PROMPT_MARKER` substring check `is_placement_seed_prompt` relies
+   on is unaffected, so the seed still refuses to answer a question it did not
+   author.
+
+**Two tests pin it, and the split between them is deliberate.** One asserts on
+the *assembled* prompt (a test reading only the constant would still pass if
+the interpolation appending it were deleted); the other pins the provenance
+wording, because "verbatim from the corpus" is load-bearing evidence rather
+than decoration. Proven non-vacuous by inverting the product — removing the
+interpolation failed exactly the assembled-prompt test while the provenance
+test stayed green.
+
+**No KaTeX/MathJax, and that stays decided.** P4.8 measured the corpus at 21
+distinct non-ASCII characters across 273 stems with 1 LaTeX-shaped; plain
+Unicode is the real case and every browser renders it natively. The rendering
+risk here was always the newlines, not the glyphs.
+
+**`ruff` caught the glyph as an ambiguous character (RUF001/RUF003) — noqa'd at
+the two sites where it is load-bearing, with the prose reworded to avoid it
+elsewhere.** Swapping `×` for ASCII `x` would delete the exact thing the
+inspection exists to look at; the rationale matches the existing per-file
+ignore on `lemely/io/det/symbols.py` ("Α is Alpha, not A — that is the point").
+
+## D4.25 — The performance floor MISSION §11 claims is gated is not actually enforced (P4.11 chunk E)
+
+**Found by doing chunk E's verification honestly instead of assuming.** Chunk E
+was scoped as "verify and report the UI-gate half; do not rebuild it". Reading
+the numbers rather than the PASS line turned up a gap between what this build
+*says* it gates and what it *does*.
+
+`scripts/check_ui_gates.py` enforces exactly one Lighthouse threshold:
+`ACCESSIBILITY_FLOOR = 95`, per route. There is no performance check anywhere in
+it. But MISSION §11 states the standing automated checks include "Lighthouse
+thresholds (accessibility ≥ 95, **performance ≥ 80 on the student routes**)",
+and `audit.mjs:218` justifies not applying frugal browser flags to Lighthouse's
+browser on the grounds that "**the run gates on performance ≥ 80** — a cheaper
+score bought by throttling the browser we measure in would be a dishonest gate".
+Both describe an enforcement that does not exist.
+
+**It is not hypothetical — a student route is already under the floor.** This
+run's scores: `student-flashcards-due` **performance 79**, against MISSION §11's
+≥ 80 student-route floor. `ui-thresholds` passed anyway, because performance is
+never read. Four teacher routes are further down (`teacher-quiz-detail` 65,
+`teacher-class-roster` 73, `teacher-schemes` 75, `teacher-class-analytics` 77),
+but MISSION §11's floor only ever covered the student routes and Phase 3 already
+carries the teacher-route figure as a known limitation.
+
+**Decision: record it, do not fix it inside P4.11.** Adding the missing check is
+one constant and one loop, but it would turn `ui-thresholds` **red on a real
+79** — and the fix for that red is genuine frontend performance work on
+`student-flashcards-due`, which is not P4.11's scope and not something to start
+unattended at phase end. Shipping the check while quietly setting its floor to
+75 to keep the run green would be exactly the dishonest gate `audit.mjs`'s own
+comment warns against. So the number is reported, the discrepancy is recorded,
+and both go into the Phase-4 report and DELIVERY.md as a carried limitation.
+
+**The general shape is worth keeping**, because this build has now hit it three
+times (D3.20's never-typechecked `web/e2e/`, P4.8's screens with no registry
+entry, and this): *a gate that is believed to cover something it never loads
+reads exactly like a gate that does.* A PASS line is evidence only for what the
+gate actually asserts.
+
+**This run's UI-gate numbers, for the phase report:** 122 axe route-states with
+**zero violations at any severity**, 34 Lighthouse routes with **a11y floor 96**
+(`teacher-review`) and student-route a11y **100**, **zero** console errors,
+**zero** responsive/horizontal-scroll violations, screenshot corpus across 39
+screen directories.
