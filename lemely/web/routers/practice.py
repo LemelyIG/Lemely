@@ -149,7 +149,11 @@ def _topics_to_dto(row: PracticeTopicsResult) -> PracticeTopicsDTO:
     return PracticeTopicsDTO(
         subjectCode=row.subject_code,
         topics=[
-            PracticeTopicCountDTO(topic=t.topic, availableCount=t.available_count)
+            PracticeTopicCountDTO(
+                topic=t.topic,
+                availableCount=t.available_count,
+                syllabusGroup=t.syllabus_group,
+            )
             for t in row.topics
         ],
         weakTopics=row.weak_topics,

@@ -141,7 +141,7 @@ class Assembly:
     writes — so ``len(topics)`` is a count of labels, not of syllabus topics."""
     syllabus_topic_count: int
     """Distinct **top-level** syllabus topics covered (see
-    :func:`_syllabus_group`). This is the number that means "how broad is this
+    :func:`syllabus_group`). This is the number that means "how broad is this
     test"; ``len(topics)`` overstates it whenever subtopics are involved."""
 
     @property
@@ -173,7 +173,7 @@ class Unavailable:
     estimated_minutes: float
 
 
-def _topic_sort_key(topic: str) -> tuple[list[int], str]:
+def topic_sort_key(topic: str) -> tuple[list[int], str]:
     """Order topics by syllabus code, numerically.
 
     Labels are ``"<code> <name>"`` (D4.4), e.g. ``"4.3 Electric circuits"``.
@@ -189,7 +189,7 @@ def _topic_sort_key(topic: str) -> tuple[list[int], str]:
     return ([10**6], topic)
 
 
-def _syllabus_group(topic: str) -> str:
+def syllabus_group(topic: str) -> str:
     """The top-level syllabus topic a label belongs to.
 
     D4.2's classifier writes whichever level it matched, so the bank holds a
@@ -264,14 +264,14 @@ def assemble(
         return Unavailable(UnavailableReason.no_eligible_questions, 0, 0, 0.0)
 
     # Breadth is measured across top-level syllabus topics, depth across the
-    # subtopic labels inside one — see :func:`_syllabus_group`. Grouping first
+    # subtopic labels inside one — see :func:`syllabus_group`. Grouping first
     # is what stops "1.1", "1.2", ..., "1.8" from reading as eight topics.
     labels_by_group: dict[str, list[str]] = {}
     for label in by_topic:
-        labels_by_group.setdefault(_syllabus_group(label), []).append(label)
+        labels_by_group.setdefault(syllabus_group(label), []).append(label)
     for labels in labels_by_group.values():
-        labels.sort(key=_topic_sort_key)
-    groups_in_order = sorted(labels_by_group, key=lambda g: _topic_sort_key(labels_by_group[g][0]))
+        labels.sort(key=topic_sort_key)
+    groups_in_order = sorted(labels_by_group, key=lambda g: topic_sort_key(labels_by_group[g][0]))
 
     if len(groups_in_order) < min_topics:
         return Unavailable(
@@ -339,7 +339,7 @@ def assemble(
             if not _keep_going():
                 break
 
-    covered_groups = {_syllabus_group(s.candidate.topic or "") for s in selected}
+    covered_groups = {syllabus_group(s.candidate.topic or "") for s in selected}
     if len(covered_groups) < min_topics:
         return Unavailable(
             UnavailableReason.insufficient_topics, eligible_count, len(groups_in_order), spent
@@ -355,11 +355,9 @@ def assemble(
 
     ordered = sorted(
         selected,
-        key=lambda s: (_topic_sort_key(s.candidate.topic or ""), str(s.candidate.question_bank_id)),
+        key=lambda s: (topic_sort_key(s.candidate.topic or ""), str(s.candidate.question_bank_id)),
     )
-    covered = sorted(
-        {s.candidate.topic for s in selected if s.candidate.topic}, key=_topic_sort_key
-    )
+    covered = sorted({s.candidate.topic for s in selected if s.candidate.topic}, key=topic_sort_key)
     return Assembly(
         selected=ordered,
         estimated_minutes=spent,

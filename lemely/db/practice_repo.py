@@ -78,6 +78,7 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 from sqlalchemy import func, select
 
+from lemely.core.placement import syllabus_group, topic_sort_key
 from lemely.db.models.academic import Paper
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import (
@@ -299,10 +300,26 @@ class PracticeResultRow:
 
 @dataclass(frozen=True, slots=True)
 class PracticeTopicCount:
-    """One servable topic and its real, unpadded available count."""
+    """One servable topic and its real, unpadded available count.
+
+    :attr:`syllabus_group` is the top-level syllabus topic this label sits
+    under (:func:`~lemely.core.placement.syllabus_group`), and S-20 needs it
+    because **the bank mixes levels**: D4.2's classifier writes whichever
+    level it matched, so an orchestrator measurement against the live 0625
+    bank returned ``"1 Motion, forces and energy"`` (152 rows) as a *peer* of
+    ``"1.2 Motion"`` (6) and ``"1.3 Mass and weight"`` (5). Those rows are
+    disjoint — a row carries exactly one label — so a student who picks the
+    parent chip silently gets none of the children. Rendering the list flat
+    would present that as a plain menu and quietly mislead; the group key is
+    what lets S-20 nest the children under their parent instead. This is the
+    same defect P4.4 chunk B-3 hit when breadth counted subtopics as topics,
+    which is why the helper it produced is reused here rather than a second
+    parser being written for the frontend.
+    """
 
     topic: str
     available_count: int
+    syllabus_group: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -632,10 +649,14 @@ class PracticeService:
                 subject_code=subject_code,
                 topics=sorted(
                     (
-                        PracticeTopicCount(topic=topic, available_count=count)
+                        PracticeTopicCount(
+                            topic=topic,
+                            available_count=count,
+                            syllabus_group=syllabus_group(topic),
+                        )
                         for topic, count in topic_rows
                     ),
-                    key=lambda t: t.topic,
+                    key=lambda t: topic_sort_key(t.topic),
                 ),
                 weak_topics=weak_topics,
                 untopiced_count=untopiced_count,

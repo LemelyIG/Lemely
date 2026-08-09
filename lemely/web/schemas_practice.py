@@ -122,10 +122,18 @@ class PracticeResultDTO(ApiModel):
 
 
 class PracticeTopicCountDTO(ApiModel):
-    """One servable topic and its real, unpadded available count."""
+    """One servable topic, its real unpadded count, and the group it sits under.
+
+    ``syllabusGroup`` exists because the bank **mixes levels**: measured
+    live, 0625 returns ``"1 Motion, forces and energy"`` (152) alongside
+    ``"1.2 Motion"`` (6) as peers, and the rows are disjoint — picking the
+    parent chip does not include the children. S-20 nests by this key rather
+    than rendering a flat menu that would quietly mislead.
+    """
 
     topic: str
     availableCount: int
+    syllabusGroup: str
 
 
 class PracticeTopicsDTO(ApiModel):

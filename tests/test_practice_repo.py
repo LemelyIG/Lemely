@@ -890,6 +890,50 @@ def test_result_end_to_end_marked_carries_per_question_marks_and_confidence(
 # ---------------------------------------------------------------------------
 
 
+def test_topics_carries_the_group_so_a_parent_and_its_subtopics_are_not_peers(
+    pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
+) -> None:
+    """A parent label and its subtopics are disjoint row sets, not a hierarchy.
+
+    Measured live against the 0625 bank: ``"1 Motion, forces and energy"``
+    (152 rows) comes back alongside ``"1.2 Motion"`` (6) and
+    ``"1.3 Mass and weight"`` (5), because D4.2's classifier writes whichever
+    level it matched and each row carries exactly one label. Rendered flat,
+    S-20 would offer the parent as though it covered the children — it does
+    not, and a student picking it silently loses them. ``syllabus_group`` is
+    what lets the screen nest them; without it the topic list is misleading
+    rather than merely terse.
+    """
+    student = _seed_user(pg_sessionmaker)
+    _seed_rows(
+        pg_sessionmaker,
+        topics=["1 Motion, forces and energy", "1.2 Motion", "10.1 Late", "2.1 Thermal"],
+        per_topic=2,
+    )
+
+    result = practice_service.topics(student, "0625")
+
+    groups = {t.topic: t.syllabus_group for t in result.topics}
+    assert groups["1 Motion, forces and energy"] == "1"
+    assert groups["1.2 Motion"] == "1"
+    assert groups["2.1 Thermal"] == "2"
+    assert groups["10.1 Late"] == "10"
+
+    # The parent does not absorb the child's rows — they are genuinely disjoint,
+    # which is the whole reason the group key has to reach the screen.
+    by_topic = {t.topic: t.available_count for t in result.topics}
+    assert by_topic["1 Motion, forces and energy"] == 2
+    assert by_topic["1.2 Motion"] == 2
+
+    # Syllabus-code order, not string order: "10.1" sorts after "2.1", not before it.
+    assert [t.topic for t in result.topics] == [
+        "1 Motion, forces and energy",
+        "1.2 Motion",
+        "2.1 Thermal",
+        "10.1 Late",
+    ]
+
+
 def test_topics_returns_real_counts_and_a_separate_untopiced_count(
     pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
 ) -> None:

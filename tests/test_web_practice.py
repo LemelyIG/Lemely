@@ -24,11 +24,17 @@ from lemely.db.base import Base
 from lemely.db.models import User
 from lemely.db.models.enums import DifficultySource, QuestionSource, QuizKind, QuizStatus, Role
 from lemely.db.models.quizzes import Quiz, QuizAssignment
-from lemely.db.practice_repo import PracticeRequest, PracticeService
+from lemely.db.practice_repo import (
+    PracticeRequest,
+    PracticeResultQuestion,
+    PracticeResultRow,
+    PracticeService,
+)
 from lemely.db.question_bank_repo import NewBankQuestion, QuestionBankService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
 from lemely.web.deps import AuthContext, get_auth_context, get_practice_service
+from lemely.web.schemas_practice import PracticeResultDTO, PracticeResultQuestionDTO
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -230,6 +236,25 @@ def test_create_route_409_payload_equals_the_preview_payload(
 # ---------------------------------------------------------------------------
 # Export — answer-free payload, cross-tenant 403/no-body-leakage.
 # ---------------------------------------------------------------------------
+
+
+def test_result_payload_structurally_cannot_carry_marking_material() -> None:
+    """S-21's result DTO has no scheme-material field *at all* (D3.8).
+
+    Asserted on the **field set** of both the service dataclass and the wire
+    DTO, not on one response body: a body assertion passes vacuously the
+    moment ``questions`` comes back empty (which is exactly what an unmarked
+    set returns), so it cannot prove the absence it claims to. This one holds
+    with no database and no request. Needs no inverse probe — adding any of
+    the three names to either class fails it directly.
+    """
+    banned = {"modelAnswer", "markSchemePoints", "mcqAnswer"}
+    banned |= {"model_answer", "mark_scheme_points", "mcq_answer"}
+
+    assert not banned & set(PracticeResultQuestionDTO.model_fields)
+    assert not banned & set(PracticeResultDTO.model_fields)
+    assert not banned & set(PracticeResultQuestion.__dataclass_fields__)
+    assert not banned & set(PracticeResultRow.__dataclass_fields__)
 
 
 def test_export_route_never_returns_marking_material(
@@ -451,7 +476,7 @@ def test_topics_route_shape(
     assert resp.status_code == 200
     body = resp.json()
     assert body["subjectCode"] == "0625"
-    assert {"topic": "1 Motion", "availableCount": 5} in body["topics"]
+    assert {"topic": "1 Motion", "availableCount": 5, "syllabusGroup": "1"} in body["topics"]
     assert body["weakTopics"] == []
     assert body["untopicedCount"] == 0
 
