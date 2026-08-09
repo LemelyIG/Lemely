@@ -222,6 +222,18 @@ three and must not assume Phase 3 or 4 left it a helper.
   schemes and the 4 solved scripts — no question papers. Read-only from here.
 - Re-parse mark schemes with `lemely parse-mark-schemes <corpus-dir> --output-root
   outputs/schemes --force --on-error continue` (~54s for 0625; 32/72 parse).
+- **The ntfy server has attachments DISABLED — do not keep retrying them.** MISSION §7 says to
+  PUT a file with a `Filename:` header; that endpoint returns **HTTP 400 `{"code":40014,
+  "error":"invalid request: attachments not allowed"}`** on this instance (server-side config,
+  not a request the orchestrator can fix). The JSON publish endpoint itself works fine (200).
+  So: put the substance **in the message body** and use `click`/`actions` to link the artifact
+  on GitHub instead of attaching it.
+- **`pytest --collect-only` still runs the coverage plugin** and will clobber `.coverage` —
+  pass `--no-cov`. Its `-q` output is one `path: N` line per file, so the total is
+  `... | grep -E "^tests/.*: [0-9]+$" | awk -F': ' '{s+=$2} END {print s}'` (2350 at Phase 4).
+- **The visual compare can never be pixel-clean**: `scripts/seed_e2e.py`'s `run_tag` is random
+  per run, so every screen rendering a class name changes on every re-baseline. Read **`removed`**
+  (must be 0), not `changed`, as the regression signal.
 
 ## Session journal
 See `BUILD/JOURNAL.md` for the dated 3-6 line entries; decisions and rationale live in
