@@ -167,8 +167,19 @@ Full text in `reports/phase-4/REPORT.md` §7. The ones that change what a later 
   no route exposes them for `kind=practice`. Only the *read* is missing.
 - **`web/e2e/` + `playwright.config.ts` are still in no tsconfig `include` (D3.20)** — now
   covering 25 test blocks, none of them ever typechecked.
-- **XP is entirely P5's and the seam is `completed_at`** (D4.17/D4.19). No points or streak
-  column exists; S-23 and S-25 deliberately ship with no XP number. Do not assume P4 left a helper.
+- **XP is entirely P5's and the seam is `completed_at`** (D4.17/D4.19). S-23 and S-25 deliberately
+  ship with no XP number. ~~No points or streak column exists~~ — **CORRECTED 2026-08-09 at P5.0
+  by reading the migrations rather than trusting this line: the schema DOES exist.** `xp_events`
+  (user_id, source, amount, awarded_on, metadata, indexed on user_id+awarded_on) and `streaks`
+  (current_length, longest_length, last_active_on, freezes_available, unique per user) were both
+  created in **migration 0002**, Phase 1's core schema, with an `xpsource` enum whose four values
+  — `paper_corrected`, `quiz_completed`, `flashcard_reviewed`, `study_session_completed` — are
+  exactly MISSION §4 Phase-5's four XP sources. `lemely/db/models/engagement.py` maps both and
+  `models/__init__.py` exports them. **What is genuinely absent is every line of behaviour**: no
+  repo, no service, no route, no award call site, nothing reads or writes either table. So P5 needs
+  no migration for core XP/streak, and the accurate form of this limitation is *"XP has schema and
+  zero behaviour."* Same failure mode as the `gemini_spend_usd` and `SeedContract` drifts — a
+  hand-written mirror of a fact that nothing regenerates. Verify against the migrations.
 - **Phase 2's synthetic accuracy gate is unchanged** (83.8% vs ≥95%) and **D3.21's paper 22 is
   still confidently wrong** (40/40 marks at confidence 1.0, zero flags, 3 marks of pure
   vision/transcription error).
@@ -183,11 +194,59 @@ Full text in `reports/phase-4/REPORT.md` §7. The ones that change what a later 
       `reports/phase-4/REPORT.md`, `BUILD/DECISIONS.md` (D4.1–D4.25), or this file's git history.
 - [x] done — **P4.12** Phase-4 report, merge to develop, push, update PR #3, ntfy.
 
-## Phase 5 — Engagement layer — NOT STARTED
-See MISSION §4 (Phase 5) + UI spec. Read Phase 4's limitations above before planning:
-XP has no schema at all (only the `completed_at` seam), students still cannot see
-announcements, and `notification_preferences` is written and read by nothing — P5 owns all
-three and must not assume Phase 3 or 4 left it a helper.
+## Phase 5 — Engagement layer — IN PROGRESS (started 2026-08-09, fortieth session)
+See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12.
+
+### What P5.0 reconnaissance established (measured, not assumed — do not re-derive)
+- **XP/streak schema already exists** (migration 0002) — see the corrected Phase-4 limitation
+  above. Tables `xp_events` + `streaks`, enum `xpsource` with exactly the four MISSION sources.
+  Zero behaviour attached. **No migration needed for core XP or streaks.**
+- **Tables that exist and P5 can build on:** `announcements`, `notifications`, `devices`,
+  `xp_events`, `streaks`, plus the `notification_preferences` work from migration 0008.
+- **Tables that genuinely do NOT exist and P5 must add:** friendships, push subscriptions,
+  leaderboard opt-out flag, announcement read-receipts. (`grep create_table` over
+  `lemely/db/migrations/versions/` is the cheap way to re-check this.)
+- **Announcements are teacher-write-only today.** `lemely/web/routers/announcements.py` mounts
+  at prefix `/api/teacher/announcements` and exposes exactly POST / GET / DELETE. There is **no
+  student-facing read route at all** — that is what "students cannot see announcements" means.
+  School-admin → whole-school audience is also absent.
+- **`notification_preferences` is wired to a service and a DTO but gates nothing.**
+  `NotificationPreferencesService` exists (`lemely/db/notification_prefs_repo.py`), `deps.py`
+  provides it, `routers/me.py` reads/writes it. What is missing is any *consumer* — no send path
+  consults it, because no send path exists.
+- **The student leaderboard screen already exists and is honestly empty.**
+  `web/src/portals/student/screens/Standings.tsx` (route `student/board`) is wired to
+  `GET /student/standings`; its header comment records that the friends/school/global boards and
+  the 28-cell streak heatmap were *deliberately removed* rather than mocked, because
+  `StandingsDTO` has no `boards` field and no backend existed. **P5 fills that gap; it does not
+  start from a mock.** Subject standings there is already real.
+
+### Task checklist
+- [x] done — **P5.0** Reconnaissance + phase plan (this section); Phase-4 XP limitation corrected.
+- [ ] doing — **P5.1** XP + streak + leaderboard **spec** recorded in `BUILD/DECISIONS.md` (D5.1)
+      **before any implementation** — MISSION §4 Phase 5 mandates this ordering explicitly. Must
+      fix: per-source award amounts, anti-farming caps, the streak day boundary + timezone,
+      streak-freeze grant/consume rules, the weekly leaderboard window + reset, and opt-out
+      semantics. Constrained by UI spec §1.4 (XP public / grades private) and MISSION §3
+      ("leaderboards show XP, never grades").
+- [ ] todo — **P5.2** XP engine backend on the existing tables: repo + clock-injected service
+      (follow P4.6's SM-2 clock injection), award call sites at the four seams, anti-farm caps,
+      idempotency so a re-marked paper cannot double-award.
+- [ ] todo — **P5.3** Leaderboards backend: friends/class/school/global × total/per-subject,
+      weekly window, opt-out, own-row pinning. Grades must be structurally unreachable here.
+- [ ] todo — **P5.4** Friends backend + migration (requests in/out, accept, remove, privacy).
+- [ ] todo — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
+      auto-populated official CAIE session dates for the exam calendar.
+- [ ] todo — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable transport,
+      and make `notification_preferences` actually gate delivery.
+- [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
+- [ ] todo — **P5.8** Screens S-28, S-29, S-30, S-31.
+- [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
+- [ ] todo — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
+      Phase-5 acceptance names this explicitly).
+- [ ] todo — **P5.11** Acceptance + UI-gate pass: E2E for XP accrual, leaderboard ordering, push
+      delivery (mock), announcement flow; axe/Lighthouse/screenshots/visual compare.
+- [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
 
 ### Environment facts worth not re-deriving (cost real work to find)
 - Run gates as `./scripts/check.sh` in the **foreground** — it exports `$HOME/.local/bin`
