@@ -1840,7 +1840,26 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         questions for the same subject, so reuse reports the pool exhausted on the very
         screen meant to show it available) → study plan (S-24 on
         `practice.students.active`). Ends `expect(errors).toEqual([])`.
-      - [ ] chunk C — **"practice demonstrably targets seeded weaknesses"**, the second
+      - [ ] chunk C — **SCOPED READ-ONLY 2026-08-09 (twenty-ninth session) while chunk B's gate
+        ran — do not re-derive.** Route `/student/practice/{practice.subjectCode}`
+        (`PracticeGenerator`). **Strings lifted from `audit.mjs:1535-1581`:** the populated
+        generator on `practice.students.active` is identified by
+        `"Only \\d+ of \\d+ requested questions match"` (a REGEX — the honest-shortfall panel,
+        which is the normal path for this corpus, D4.10); the `no_questions` refusal is
+        `"No practice material for this filter set"` on `/student/practice/0580`; the
+        `no_weaknesses` refusal is `"No weak topics recorded yet"` on `practice.students.bare`
+        and **only renders once the "Weak topics only" checkbox is actually applied**, so it
+        must be driven live, not deep-linked (`audit.mjs` uses `pressCheckboxOnce`; toggle-once
+        rather than click-blindly keeps it re-run-safe).
+        **The targeting assertion has a name to check against, which is the whole difficulty:**
+        `seed.studyPlan.activeSessionTopic` is provably one of `practice.students.active`'s weak
+        topics — `seed_e2e.py:1528-1536` selects it from
+        `PracticeService.topics(...).weak_topics`, the byte-identical query
+        `GET /practice/{code}/topics` serves, and **raises** if no plan session matches. So the
+        spec can assert the weak-topic prefill names that exact string rather than merely that
+        S-20 rendered. Pair it with the `bare` inverse; without the inverse the assertion passes
+        on a screen that ignores weaknesses entirely.
+        *(Original chunk-C line follows.)* **"practice demonstrably targets seeded weaknesses"**, the second
         half of §4's named acceptance and the one with a real assertion to get right. The
         seed's `practice.students.active` has a genuine `WeaknessRecord` produced by
         marking a deliberately-wrong answer through the unmodified engine. The spec must
