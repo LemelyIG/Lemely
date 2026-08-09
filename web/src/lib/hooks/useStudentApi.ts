@@ -14,8 +14,6 @@ import type {
   Standings,
   StudentCorrectFrame,
   StudentUploadResponse,
-  StudyPlan,
-  StudyPlanRequest,
   Subject,
 } from "@/lib/studentTypes"
 
@@ -50,22 +48,19 @@ export function useResult(paperId: string): UseQueryResult<Result, Error> {
   })
 }
 
-export function useStudyPlan(): UseQueryResult<StudyPlan, Error> {
-  return useQuery({
-    queryKey: ["student", "plan"],
-    queryFn: () => request<StudyPlan>("/student/plan"),
-  })
-}
-
-export function usePostStudyPlan(): UseMutationResult<StudyPlan, Error, StudyPlanRequest> {
-  return useMutation({
-    mutationFn: (body: StudyPlanRequest) =>
-      request<StudyPlan>("/student/plan", {
-        method: "POST",
-        body: JSON.stringify(body satisfies StudyPlanRequest),
-      }),
-  })
-}
+/*
+ * `useStudyPlan`/`usePostStudyPlan` lived here and are gone as of P4.10 chunk
+ * C. They wrapped the legacy `GET`/`POST /api/student/plan` pair, which
+ * rebuilt a plan from scratch on every request and never persisted it — so a
+ * plan could not be completed, regenerated, or compared against last week.
+ * P4.10 chunk A rewrote S-24 onto the real, persisted
+ * `/api/student/study-plan` backend (`lib/hooks/useStudyPlanApi.ts`), leaving
+ * these two with no caller at all.
+ *
+ * The backend routes themselves are still live and still route-tested; they
+ * are removed separately rather than inside this chunk, so that a gate failure
+ * here is attributable to the frontend diff. See BUILD/STATE.md P4.10.
+ */
 
 /*
  * Parent links (D3.11). The student is the initiator on both ends — a link row

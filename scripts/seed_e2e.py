@@ -145,8 +145,21 @@ path::
           "settled": {..., "deckId": "..."},
           "bare":    {...}
         }
+      },
+      "studyPlan": {
+        "subjectCode": "0625",
+        "activeSessionId": "...", "activeSessionTopic": "1.2 Motion",
+        "activeSessionCount": 3, "completedSessionCount": 3
       }
     }
+
+The four S-24/S-25 states are carried by accounts documented above rather than
+by ``studyPlan`` keys: ``practice.students.active`` holds the populated week,
+``practice.students.settled`` the persisted ``no_signal`` refusal,
+``practice.students.bare`` the ungenerated week, and
+``placement.students.completed`` the fully-completed one.
+``activeSessionId`` exists because S-25's route needs a real session id and no
+other key carries one.
 
 ``expectedAtRiskReasons`` values are :class:`~lemely.core.at_risk.AtRiskReason`
 string values — later chunks assert ``GET /api/teacher/at-risk`` (or
@@ -846,6 +859,7 @@ def build_result_payload(
     empty_parent: dict[str, Any],
     placement: dict[str, Any],
     practice: dict[str, Any],
+    study_plan: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the documented output contract from already-computed pieces.
 
@@ -854,7 +868,8 @@ def build_result_payload(
     touching Postgres or GoTrue. ``reviewItem``/``quiz``/``emptyTeacher``/
     ``emptyParent`` are additive (P3.10 chunk e1); ``placement`` is additive
     on top of those (P4.8 chunk C); ``practice`` is additive on top of all of
-    it (P4.9 chunk C) — every key present before it is unchanged.
+    it (P4.9 chunk C); ``studyPlan`` is additive on top of that (P4.10 chunk C)
+    — every key present before it is unchanged.
     """
     return {
         "runTag": run_tag,
@@ -870,6 +885,7 @@ def build_result_payload(
         "emptyParent": empty_parent,
         "placement": placement,
         "practice": practice,
+        "studyPlan": study_plan,
     }
 
 
@@ -1000,6 +1016,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     student_profile_service = deps.get_student_profile_service()
     practice_service = deps.get_practice_service()
     flashcard_service = deps.get_flashcard_service()
+    study_plan_service = deps.get_study_plan_service()
 
     teacher = _signup_account("teacher", Role.teacher, run_tag)
     school_admin = _signup_account("admin", Role.school_admin, run_tag)
@@ -1479,6 +1496,107 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             "due_at into the future from initial_schedule's baseline."
         )
 
+    # -- Study plans (P4.10 chunk C) ------------------------------------------
+    # S-24 has four states and two of them cannot share an account: D4.13's
+    # ``generated: false`` (no plan row this ISO week) and its
+    # ``available: false / reason="no_signal"`` (a plan row that *is* a
+    # persisted refusal) are mutually exclusive per account per week. They are
+    # therefore split across accounts that already exist rather than seeded
+    # onto a new one. Every state below is produced by calling the real
+    # service; none is hand-written.
+
+    _log("Generating practice-active's study plan — the real populated week")
+    active_plan = study_plan_service.generate(active_uuid, PLACEMENT_SUBJECT_CODE)
+    if not active_plan.available or not active_plan.sessions:
+        raise RuntimeError(
+            "Expected practice-active to generate a populated study plan — it is the only "
+            "practice account carrying a WeaknessRecord, which is the signal `generate` needs. "
+            f"Got available={active_plan.available} reason={active_plan.reason!r} "
+            f"sessions={len(active_plan.sessions)}. If the seeded deliberately-wrong marked "
+            "set stopped producing a weakness row, this state is no longer reachable."
+        )
+
+    # S-25's *provable* rationale arm ("this is one of your recorded weak
+    # topics") only renders when the session's topic really is in the weak-topic
+    # list the screen joins against. That list has a public source —
+    # ``PracticeService.topics().weak_topics`` is the very list
+    # ``GET /practice/{code}/topics`` returns, and its query is byte-identical
+    # to the planner's — so it is read here rather than hardcoded. Taking
+    # ``sessions[0]`` instead would assume weakness is active's only signal and
+    # could silently capture the *honest-absence* arm under a screenshot named
+    # for the provable one.
+    active_weak_topics = set(
+        practice_service.topics(active_uuid, PLACEMENT_SUBJECT_CODE).weak_topics
+    )
+    active_session = next((s for s in active_plan.sessions if s.topic in active_weak_topics), None)
+    if active_session is None:
+        raise RuntimeError(
+            "No session in practice-active's study plan targets one of its own recorded weak "
+            f"topics. Plan topics={sorted({s.topic for s in active_plan.sessions})!r}; "
+            f"weak topics={sorted(active_weak_topics)!r}. S-25's provable recorded-weakness "
+            "rationale would not render, so the capture would be named for a state it is not."
+        )
+
+    _log("Generating practice-settled's study plan — the persisted honest refusal")
+    settled_plan = study_plan_service.generate(settled_uuid, PLACEMENT_SUBJECT_CODE)
+    if settled_plan.available or settled_plan.reason != "no_signal":
+        raise RuntimeError(
+            "Expected practice-settled to generate a persisted refusal (available=False, "
+            f"reason='no_signal'), got available={settled_plan.available} "
+            f"reason={settled_plan.reason!r}. The account has none of the planner's three "
+            "signals (no weakness rows, no placement, no confidence ratings); if one has "
+            "leaked in, this capture has silently become a populated week."
+        )
+
+    # practice-bare gets no call at all: its state *is* the absence of a plan
+    # row this week. Asserted rather than assumed — and note `get_current`
+    # returns None, it does not raise.
+    bare_uuid = uuid.UUID(practice_bare["userId"])
+    if study_plan_service.get_current(bare_uuid, PLACEMENT_SUBJECT_CODE) is not None:
+        raise RuntimeError(
+            "Expected practice-bare to have no study plan row for this ISO week — its S-24 "
+            "state is `generated: false`, the absence of a generate call. Something else in "
+            "this seed is now generating a plan for it."
+        )
+
+    _log("Generating and fully completing placement-completed's study plan — the finished week")
+    complete_plan = study_plan_service.generate(completed_uuid, PLACEMENT_SUBJECT_CODE)
+    if not complete_plan.available or not complete_plan.sessions:
+        raise RuntimeError(
+            "Expected placement-completed to generate a populated study plan — its "
+            "deliberately-wrong first placement answer leaves it both a WeaknessRecord and a "
+            f"marked placement result, two of the planner's three signals. Got "
+            f"available={complete_plan.available} reason={complete_plan.reason!r} "
+            f"sessions={len(complete_plan.sessions)}."
+        )
+    for session_view in complete_plan.sessions:
+        study_plan_service.complete_session(completed_uuid, session_view.id)
+    # Re-read rather than trusting the return values: a partially-completed week
+    # is the one failure mode here that would still screenshot cleanly, silently
+    # becoming the populated week's twin.
+    completed_plan = study_plan_service.get_current(completed_uuid, PLACEMENT_SUBJECT_CODE)
+    if completed_plan is None or not completed_plan.sessions:
+        raise RuntimeError(
+            "placement-completed's study plan vanished between generation and read-back; "
+            f"got {completed_plan!r}."
+        )
+    unfinished = [s.id for s in completed_plan.sessions if s.completed_at is None]
+    if unfinished:
+        raise RuntimeError(
+            f"{len(unfinished)} of {len(completed_plan.sessions)} sessions in "
+            f"placement-completed's week are not completed_at-stamped: {unfinished!r}. "
+            "A half-complete week renders as the populated week, not the finished one."
+        )
+
+    study_plan_dict = {
+        "subjectCode": PLACEMENT_SUBJECT_CODE,
+        # S-25's route needs a real session id and no existing payload key carries one.
+        "activeSessionId": str(active_session.id),
+        "activeSessionTopic": active_session.topic,
+        "activeSessionCount": len(active_plan.sessions),
+        "completedSessionCount": len(completed_plan.sessions),
+    }
+
     practice_dict = {
         "subjectCode": PLACEMENT_SUBJECT_CODE,
         "students": {
@@ -1512,6 +1630,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         empty_parent=empty_parent_dict,
         placement=placement_dict,
         practice=practice_dict,
+        study_plan=study_plan_dict,
     )
 
 

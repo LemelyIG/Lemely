@@ -68,12 +68,30 @@
  *     repeatability — and `settled`'s "nothing due"). These shipped in P4.9
  *     chunks A/B with no registry entry at all, the same vacuous-pass shape
  *     P4.8 chunk C's own header note warns about.
+ *   - 6 entries / 6 captured states added by P4.10 chunk C for the study-plan
+ *     screens (S-24/S-25), composing accounts that already exist rather than
+ *     seeding new ones: S-24 four times (the populated week on `active`, the
+ *     persisted `no_signal` refusal on `settled`, the ungenerated week on
+ *     `bare`, and the fully-completed week on
+ *     `placement.students.completed`) and S-25 twice (the session detail on
+ *     its *provable* recorded-weakness rationale, and a session id that is
+ *     not in the current week). The first three S-24 states are mutually
+ *     exclusive per account per week by construction — see the session block
+ *     below — which is why they cannot be collapsed onto one account, and the
+ *     fourth is on a different account again because completing `active`'s
+ *     sessions would destroy the populated-week capture.
  * Deliberately still NOT in this registry (P5 screens still on mock data):
- *   /student/subject/:code, /student/plan, /student/board,
- *   /student/landing, /student/directions.
+ *   /student/subject/:code, /student/board, /student/landing,
+ *   /student/directions.
  *   (`/student/onboard` was on this list until P4.8 chunk C — chunk A made it
  *   real, and the list had gone stale, which is precisely how a route stays
- *   unaudited: the exclusion note outlives the exclusion.)
+ *   unaudited: the exclusion note outlives the exclusion.
+ *   It happened a second time: `/student/plan` sat on this list through
+ *   P4.10 chunks A and B, which rewrote it onto the real
+ *   `/api/student/study-plan` backend and moved it to `/student/plan/:code`.
+ *   Removed in chunk C, along with the same claim in the run's own closing
+ *   `log()` — fixing only the comment would have left the false statement in
+ *   the operator-facing output, where it is actually read.)
  * Note "no *populated* fixture" is NOT on its own a reason to leave a route
  * out: /teacher/grading and /teacher/schemes are audited in their genuinely
  * empty state, because an unlooked-at route is exactly how this gate became
@@ -945,6 +963,26 @@ function buildRouteRegistry(seed) {
     role: "student",
   }
   const practiceSubject = seed.practice.subjectCode
+
+  // ── P4.10 chunk C · the S-24/S-25 sessions ───────────────────────────────
+  // S-24 has four states and two of them provably cannot share an account:
+  // `generated: false` (no plan row this ISO week) and `available: false /
+  // no_signal` (a plan row that IS a persisted refusal) are mutually exclusive
+  // per account per week. The three practice accounts above already split that
+  // way, so no new account is created. The fourth state — a week with every
+  // session complete — goes on `placement.students.completed`, because
+  // completing `active`'s sessions would destroy the populated-week capture.
+  const planCompleteSession = {
+    accessToken: seed.placement.students.completed.accessToken,
+    userId: seed.placement.students.completed.userId,
+    role: "student",
+  }
+  const studyPlanSubject = seed.studyPlan.subjectCode
+  const studyPlanWeekUrl = `/student/plan/${studyPlanSubject}`
+  const studyPlanSessionUrl = `/student/plan/${studyPlanSubject}/session/${seed.studyPlan.activeSessionId}`
+  // A well-formed id that is deliberately not in anyone's current week. The
+  // route must reach S-25's `notInCurrentWeek` arm, not a 422 on the id shape.
+  const studyPlanAbsentSessionUrl = `/student/plan/${studyPlanSubject}/session/00000000-0000-4000-8000-000000000000`
   const practiceUnsubmittedSetUrl = `/student/practice/set/${seed.practice.students.active.unsubmittedAssignmentId}`
   const practiceUnsubmittedResultUrl = `/student/practice/result/${seed.practice.students.active.unsubmittedAssignmentId}`
   const practiceMarkingResultUrl = `/student/practice/result/${seed.practice.students.active.markingAssignmentId}`
@@ -1735,6 +1773,113 @@ function buildRouteRegistry(seed) {
         },
       ],
     },
+    {
+      // S-24 · the study-plan week, `active` session, DEFAULT route state —
+      // the real populated week. `active` is the only practice account with a
+      // WeaknessRecord (the seed's deliberately-wrong marked set), which is
+      // the signal `generate` needs.
+      //
+      // The ready predicate reads the seeded session count rather than a
+      // loose `\d+ of \d+`, so a week that came back short or partly complete
+      // fails the gate instead of screenshotting cleanly under this name.
+      screenId: "S-24",
+      slug: "student-study-plan-week",
+      path: studyPlanWeekUrl,
+      session: practiceActiveSession,
+      ready: (page) =>
+        waitForText(page, `0 of ${seed.studyPlan.activeSessionCount} sessions? done`),
+      authed: true,
+    },
+    {
+      // S-24 · the persisted honest refusal (`generated: true`,
+      // `available: false`, `reason: "no_signal"`). `settled` has none of the
+      // planner's three signals, so this refusal is real, not forced.
+      // D4.13's whole point is that this is NOT the same state as the one
+      // below it, and both used to arrive as an empty `sessions` list.
+      screenId: "S-24",
+      path: studyPlanWeekUrl,
+      session: practiceSettledSession,
+      authed: true,
+      states: [
+        {
+          state: "refused",
+          slug: "student-study-plan-week-refused",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "Not enough to plan from yet"),
+        },
+      ],
+    },
+    {
+      // S-24 · no plan generated this ISO week (`generated: false`). The seed
+      // deliberately makes no call for `bare` — the state is the absence of
+      // one, which is why it cannot share an account with the refusal above.
+      screenId: "S-24",
+      path: studyPlanWeekUrl,
+      session: practiceBareSession,
+      authed: true,
+      states: [
+        {
+          state: "not-generated",
+          slug: "student-study-plan-week-not-generated",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "No plan for this week yet"),
+        },
+      ],
+    },
+    {
+      // S-24 · every session in the week complete. Asserted as N of N off the
+      // seeded count: a partially-completed week is the one failure mode here
+      // that would still render — and screenshot — as a perfectly good
+      // populated week.
+      screenId: "S-24",
+      path: studyPlanWeekUrl,
+      session: planCompleteSession,
+      authed: true,
+      states: [
+        {
+          state: "week-complete",
+          slug: "student-study-plan-week-complete",
+          lighthouse: false,
+          ready: (page) =>
+            waitForText(
+              page,
+              `${seed.studyPlan.completedSessionCount} of ${seed.studyPlan.completedSessionCount} sessions? done`,
+            ),
+        },
+      ],
+    },
+    {
+      // S-25 · session detail, DEFAULT route state. The seed picks the session
+      // whose topic really is in `active`'s recorded weak topics, so the arm
+      // that renders here is the *provable* one. Asserting the weak-topic
+      // sentence rather than the shared "Why this is in your plan" heading is
+      // the point: all three rationale arms carry that heading, so matching it
+      // would pass on the honest-absence arm too and name the capture for a
+      // state it is not.
+      screenId: "S-25",
+      slug: "student-study-plan-session",
+      path: studyPlanSessionUrl,
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "is one of your recorded weak topics for this subject"),
+      authed: true,
+    },
+    {
+      // S-25 · a session id that is not in the current week. Not a 404 and not
+      // an error: a rebuild supersedes the previous week rather than editing
+      // it, so a bookmarked link lands here legitimately and must say that.
+      screenId: "S-25",
+      path: studyPlanAbsentSessionUrl,
+      session: practiceActiveSession,
+      authed: true,
+      states: [
+        {
+          state: "not-in-current-week",
+          slug: "student-study-plan-session-not-in-week",
+          lighthouse: false,
+          ready: (page) => waitForText(page, "has been rebuilt since this link was made"),
+        },
+      ],
+    },
   ]
 }
 
@@ -2159,8 +2304,8 @@ async function main() {
     }
   }
   log(
-    "Not covered by this registry (P4/P5 screens still on mock data): " +
-      "/student/subject/:code, /student/plan, /student/board, " +
+    "Not covered by this registry (P5 screens still on mock data): " +
+      "/student/subject/:code, /student/board, " +
       "/student/landing, /student/directions.",
   )
   log(`Contact sheet: ${CONTACT_SHEET_PATH}`)

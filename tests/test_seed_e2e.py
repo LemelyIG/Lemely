@@ -607,6 +607,13 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
                 "bare": {"userId": "prz1"},
             },
         },
+        "study_plan": {
+            "subjectCode": "0625",
+            "activeSessionId": "sp-sess1",
+            "activeSessionTopic": "1.2 Motion",
+            "activeSessionCount": 3,
+            "completedSessionCount": 3,
+        },
     }
     base.update(overrides)
     return base
@@ -673,6 +680,13 @@ class TestBuildResultPayload:
                     "settled": {"userId": "prs1", "deckId": "deck2"},
                     "bare": {"userId": "prz1"},
                 },
+            },
+            "studyPlan": {
+                "subjectCode": "0625",
+                "activeSessionId": "sp-sess1",
+                "activeSessionTopic": "1.2 Motion",
+                "activeSessionCount": 3,
+                "completedSessionCount": 3,
             },
         }
 
