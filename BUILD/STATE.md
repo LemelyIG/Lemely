@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-10T09:10:00Z   # P4.10 chunk plan recorded (3 facts measured). Doing: chunk A (S-24 onto /api/student/study-plan).
+last_updated: 2026-08-10T11:20:00Z   # P4.10 chunk A: breadcrumb defect found + fixed. Doing: gate run over the corrected tree.
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -1305,6 +1305,33 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
       - [ ] chunk A — `studyPlanTypes.ts` + `useStudyPlanApi.ts` + **S-24** (rewrite
         `StudyPlan.tsx` onto `/api/student/study-plan`), subject-scoped route, all three D4.13
         wire states rendered distinctly + the week-fully-complete state, inline completion.
+        **On disk at `94326a1` (wip, gates not yet run by its author).** Orchestrator
+        verification found the wire contract sound (`studyPlanTypes.ts` checked field-by-field
+        against `schemas_study_plan.py`; the three hook URLs against the router's three real
+        paths) and the 22 unit tests non-vacuous. Route/nav/deep-link migration is complete and
+        correct — `data.ts` nav, `index.tsx` route, and both `PracticeResult`/`PlacementResult`
+        deep links all pass a real `data.subjectCode`, never a default.
+        **One real defect found by reading, not from any gate — do not re-derive.** Making the
+        route subject-scoped (`plan` → `plan/:subjectCode`) broke the breadcrumb: `resolveCrumb`
+        did an exact lookup in `crumbs` and then pattern-matched, but P4.9's practice/flashcards
+        arms were never joined by a plan arm, so `/student/plan/0625` **fell through to the bare
+        `"Home"` catch-all** while the now-unreachable `crumbs["/student/plan"]` key sat dead in
+        the map. Invisible to every gate this build runs: a wrong-but-valid breadcrumb is not a
+        type error, not an axe violation, not a console error, and not a horizontal-scroll
+        failure. Same shape as D3.21 and the chunk-0 figure defect — it renders perfectly and
+        screenshots clean.
+        **Fixed with the structural half, not just the arm:** `resolveCrumb` was moved out of
+        `portals/student/index.tsx` into the pure `portals/student/data.ts` and exported,
+        because while it lived in the React module the unit suite could not reach it — which is
+        *why* the P4.9 arms and this one could rot unseen. 5 tests added (27 total in
+        `studyPlan.test.ts`), including the inverse (the plan route must not land on the
+        catch-all) and the pin that the dead `/student/plan` path no longer answers with a plan
+        crumb, so a dead link cannot look live.
+        **Note for chunk C, already measured:** `audit.mjs` lines 72 and 2163 both still list
+        `/student/plan` as "deliberately NOT in this registry (P5 screens still on mock data)".
+        That is false as of this chunk and is exactly the stale-exclusion trap the file's own
+        header comment warns about ("the exclusion note outlives the exclusion"). Both strings
+        must be updated when chunk C adds the registry entries.
       - [ ] chunk B — **S-25** session detail + its route, the fact-1 "why" join, and the
         session-complete flow from the detail screen. No XP (P5's seam is `completed_at`).
       - [ ] chunk C — gate 8: audit-registry entries for **each** state (not just the populated

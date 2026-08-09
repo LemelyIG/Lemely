@@ -9,7 +9,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useProfile } from "@/lib/hooks/useMeApi"
-import { crumbs, navGroups } from "./data"
+import { navGroups, resolveCrumb } from "./data"
 import { Overview } from "./screens/Overview"
 import { Subject } from "./screens/Subject"
 import { PaperResult } from "./screens/PaperResult"
@@ -146,37 +146,6 @@ function Sidebar() {
       </div>
     </aside>
   )
-}
-
-/**
- * Resolve the breadcrumb for a pathname: exact static lookup first (the
- * `crumbs` map), falling back to pattern matching for routes with a dynamic
- * segment that can't be enumerated in that map ahead of time.
- */
-function resolveCrumb(pathname: string): string {
-  const exact = crumbs[pathname]
-  if (exact) return exact
-
-  const subjectMatch = pathname.match(/^\/student\/subject\/([^/]+)$/)
-  if (subjectMatch) return `Home / ${subjectMatch[1]}`
-
-  const resultMatch = pathname.match(/^\/student\/result\/([^/]+)$/)
-  if (resultMatch) return `Home / Result ${resultMatch[1]}`
-
-  const practiceGeneratorMatch = pathname.match(/^\/student\/practice\/([^/]+)$/)
-  if (practiceGeneratorMatch) return `Home / Practice / ${practiceGeneratorMatch[1]}`
-
-  if (pathname.match(/^\/student\/practice\/set\//)) return "Home / Practice / Set"
-  if (pathname.match(/^\/student\/practice\/result\//)) return "Home / Practice / Result"
-  if (pathname.match(/^\/student\/practice\/print\//)) return "Home / Practice / Print"
-
-  const flashcardReviewMatch = pathname.match(/^\/student\/flashcards\/review\/([^/]+)$/)
-  if (flashcardReviewMatch) return `Home / Flashcards / Review ${flashcardReviewMatch[1]}`
-
-  const flashcardDecksMatch = pathname.match(/^\/student\/flashcards\/([^/]+)$/)
-  if (flashcardDecksMatch) return `Home / Flashcards / ${flashcardDecksMatch[1]}`
-
-  return "Home"
 }
 
 function Header() {

@@ -13,6 +13,7 @@ import {
   studyPlanView,
   weekProgress,
 } from "@/portals/student/screens/studyplan/studyPlanData"
+import { resolveCrumb } from "@/portals/student/data"
 
 /*
  * Unit tests for S-24's pure decision logic (`studyPlanData.ts`). Every
@@ -209,5 +210,44 @@ describe("labels and formatting", () => {
 
   it("returns the raw string for an unparseable date rather than Invalid Date", () => {
     expect(formatDayHeading("not-a-date")).toBe("not-a-date")
+  })
+})
+
+// ── The breadcrumb arm for the subject-scoped plan route ─────────────────
+//
+// `resolveCrumb` was moved out of `portals/student/index.tsx` into the pure
+// `data.ts` in P4.10 chunk A specifically so these can exist. While it sat in
+// the React module it was unreachable from this suite, and that is exactly how
+// the new `/student/plan/:subjectCode` route came to fall through every arm and
+// render a bare "Home": the crumb map still held the pre-P4.10 `/student/plan`
+// key, which no pathname can hit any more. A wrong-but-valid breadcrumb trips
+// no typecheck, no axe rule and no threshold, so only a test catches it.
+
+describe("resolveCrumb", () => {
+  it("names the study plan for the subject-scoped route", () => {
+    expect(resolveCrumb("/student/plan/0625")).toBe("Home / Study plan / 0625")
+  })
+
+  it("does not fall through to the bare Home default for the plan route", () => {
+    // The inverse of the arm above, stated separately: the defect was not a
+    // wrong label, it was silently landing on the catch-all.
+    expect(resolveCrumb("/student/plan/0580")).not.toBe("Home")
+  })
+
+  it("no longer resolves the pre-P4.10 subjectless plan path to a plan crumb", () => {
+    // `/student/plan` is not a route any more. It must not keep answering with
+    // a plan breadcrumb, or a dead link would look live.
+    expect(resolveCrumb("/student/plan")).toBe("Home")
+  })
+
+  it("still resolves the exact-match routes and the other dynamic arms", () => {
+    expect(resolveCrumb("/student")).toBe("Home")
+    expect(resolveCrumb("/student/correct")).toBe("Marking / Correct a paper")
+    expect(resolveCrumb("/student/practice/0625")).toBe("Home / Practice / 0625")
+    expect(resolveCrumb("/student/flashcards/0625")).toBe("Home / Flashcards / 0625")
+  })
+
+  it("returns Home for an unknown path rather than throwing", () => {
+    expect(resolveCrumb("/student/nothing/here/at/all")).toBe("Home")
   })
 })
