@@ -24,6 +24,8 @@ import { PracticeGenerator } from "./screens/practice/PracticeGenerator"
 import { PracticeSet } from "./screens/practice/PracticeSet"
 import { PracticeResult } from "./screens/practice/PracticeResult"
 import { PracticePrint } from "./screens/practice/PracticePrint"
+import { FlashcardDecks } from "./screens/flashcards/FlashcardDecks"
+import { FlashcardReview } from "./screens/flashcards/FlashcardReview"
 import { Landing } from "./screens/Landing"
 import { Directions } from "./screens/Directions"
 import { Parents } from "./screens/Parents"
@@ -168,6 +170,12 @@ function resolveCrumb(pathname: string): string {
   if (pathname.match(/^\/student\/practice\/result\//)) return "Home / Practice / Result"
   if (pathname.match(/^\/student\/practice\/print\//)) return "Home / Practice / Print"
 
+  const flashcardReviewMatch = pathname.match(/^\/student\/flashcards\/review\/([^/]+)$/)
+  if (flashcardReviewMatch) return `Home / Flashcards / Review ${flashcardReviewMatch[1]}`
+
+  const flashcardDecksMatch = pathname.match(/^\/student\/flashcards\/([^/]+)$/)
+  if (flashcardDecksMatch) return `Home / Flashcards / ${flashcardDecksMatch[1]}`
+
   return "Home"
 }
 
@@ -243,6 +251,8 @@ export const studentRoute: RouteObject = {
     { path: "practice/set/:assignmentId", element: <PracticeSet /> },
     { path: "practice/result/:assignmentId", element: <PracticeResult /> },
     { path: "practice/print/:assignmentId", element: <PracticePrint /> },
+    { path: "flashcards/:subjectCode", element: <FlashcardDecks /> },
+    { path: "flashcards/review/:subjectCode", element: <FlashcardReview /> },
     { path: "landing", element: <Landing /> },
     { path: "directions", element: <Directions /> },
   ],
