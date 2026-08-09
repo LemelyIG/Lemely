@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-10T07:45:00Z   # P4.9 closed (chunk C, D4.18) — 13 gates green, 0 skipped. Next: P4.10 (S-24/S-25 study-plan screens).
+last_updated: 2026-08-10T09:10:00Z   # P4.10 chunk plan recorded (3 facts measured). Doing: chunk A (S-24 onto /api/student/study-plan).
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -1271,6 +1271,45 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
       - Legacy cleanup lands here or in P4.11: the `/api/student/plan` GET+POST pair,
         `useStudyPlan`/`usePostStudyPlan`, and `POST /api/student/onboarding` (left alive by
         P4.8 chunk A precisely so a frontend chunk would not carry an unrelated backend change).
+      **Chunk plan (2026-08-10, ninth session) — three more facts measured before briefing, do
+      not re-derive:**
+      1. **S-25's "why it was chosen" is not on the wire, and the naive fix would invent it.**
+         `StudyPlanSessionDTO` carries `focus`, and `focus` is `f"{_FOCUS_TEXT[activity]}: {topic}"`
+         (`core/study_plan.py:383`) — a *restatement* of activity+topic, not a rationale. The
+         planner's three real signals (`_weaknesses` / `_placement_results` /
+         `_confidence_ratings`, `study_plan_repo.py:352/411`) are consumed and discarded; nothing
+         per-session records which one drove the session. Rendering `focus` under a "why this
+         session" heading would launder a label into a reason.
+         **The one provable join available:** `GET /student/practice/{subjectCode}/topics`
+         returns `weakTopics`, and its `_weak_topics_for` query (`practice_repo.py:809-811`) is
+         **byte-identical** to the planner's `_weaknesses` query (`study_plan_repo.py:361-363`) —
+         same select, same join, same where. So "this is one of your recorded weak topics" is a
+         *provable* statement about this subject, not an inference. When the session's topic is
+         **absent** from that list, S-25 must say so honestly (the plan also weighs placement and
+         confidence, and which signal drove this session is not recorded) — never fall back to
+         `focus` dressed as a reason.
+      2. **Two S-24 spec affordances have no backend and must be honestly absent, not faked.**
+         The spec asks for reschedule-by-drag/move; the router has exactly three routes and
+         **none of them can move a session** (`GET /{subject_code}`, `POST ""`, `POST
+         /sessions/{id}/complete`). It also asks for "weekly progress … against the time they
+         said they had": `weeklyHours` is on the wire and *is* the questionnaire figure
+         (`generate` defaults it from `StudentProfile.weekly_study_hours`), so that half is real
+         and must be computed from `durationMinutes`, never from a rounded `hours` field.
+         Ship no reschedule control rather than a dead one.
+      3. **Nav follows P4.9's shape exactly:** `data.ts:64-66` already hardcodes
+         `/student/practice/0625` and `/student/flashcards/0625` with a `tag: "0625"`; the plan
+         link becomes `/student/plan/0625` the same way. Two existing screens deep-link to the
+         bare `/student/plan` (`practice/PracticeResult.tsx:135`,
+         `placement/PlacementResult.tsx:162`) and both must be updated in the same chunk or they
+         become dead links.
+      - [ ] chunk A — `studyPlanTypes.ts` + `useStudyPlanApi.ts` + **S-24** (rewrite
+        `StudyPlan.tsx` onto `/api/student/study-plan`), subject-scoped route, all three D4.13
+        wire states rendered distinctly + the week-fully-complete state, inline completion.
+      - [ ] chunk B — **S-25** session detail + its route, the fact-1 "why" join, and the
+        session-complete flow from the detail screen. No XP (P5's seam is `completed_at`).
+      - [ ] chunk C — gate 8: audit-registry entries for **each** state (not just the populated
+        week), E2E seed, screenshots — verified by listing `reports/.scratch/screens/<id>/`,
+        never from the exit code (D4.18). Plus the legacy cleanup above.
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
