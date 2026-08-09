@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-09T22:10:00Z   # P4.9 opened, scoped by measurement. Next: P4.9 chunk 0 (backend read paths).
+last_updated: 2026-08-09T23:55:00Z   # P4.9 chunk 0 DONE (13 gates green). Next: P4.9 chunk A (S-20/S-21 frontend).
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -945,7 +945,42 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
          pool figure quoted for P4.9 must be re-measured live through the service filters,
          not carried forward from P4.1/P4.5.
       **Chunk plan (2026-08-09):**
-      - [ ] chunk 0 — backend, the two missing read paths. No migration, $0.00, zero Gemini.
+      - [x] chunk 0 — **done** (`dc0c0ac`). Both read paths landed, plus a third defect the
+        live measurement exposed. No migration, **no `web/` diff** so gate 8 was not in play,
+        $0.00 Gemini. **All 13 gates PASS, 0 skipped, exit 0** (run twice; the second run
+        carries the full diff). **2331 passed / 6 skipped / 0 failed / 90.37% cov**
+        (P4.8 baseline 2308 / 90.30% — coverage up, `practice_repo.py` at 99%).
+        `GET /api/student/practice/{assignment_id}/result` — owner-scoped, `kind` narrowed to
+        practice, following `export`'s existing 404/403 split rather than inventing a third
+        rendering. `marked` is explicit and every score field is `None` while unmarked, never
+        a fabricated `0`; `submissionStatus` keeps "not submitted" distinct from "submitted,
+        being marked". **The confidence is real, not defaulted** — verified
+        `QuestionResult.confidence_band`/`.confidence_score` are both `nullable=False`
+        (`models/attempts.py:162,166`) before making the DTO fields non-nullable, and
+        `effective_marks` (teacher-override-aware) is the accessor used.
+        `GET /api/student/practice/{subject_code}/topics` — reuses `_matching_clauses`, so it
+        cannot drift from what `preview` will actually serve; untopiced rows counted
+        separately rather than given an invented label; weak topics resolved server-side.
+        **The third defect, found by measuring the live bank and not derivable by reading:
+        the bank mixes taxonomy levels.** 0625 returns `"1 Motion, forces and energy"` (152)
+        as a *peer* of `"1.2 Motion"` (6) and `"1.3 Mass and weight"` (5) — D4.2's classifier
+        writes whichever level it matched, so each row carries exactly one label and the sets
+        are **disjoint**. A flat chip list would offer the parent as though it covered its
+        children; a student picking it silently loses them, and the screen would look
+        perfectly correct. Topics now carry `syllabusGroup`, reusing `core.placement`'s
+        helper (promoted to public `syllabus_group`/`topic_sort_key`) rather than a second
+        parser being written client-side. **Same defect class as P4.4 chunk B-3 §2**, which is
+        why the helper already existed. Sorted by syllabus code, so `"10.1"` follows `"2.1"`.
+        **Measured live (quote, do not re-derive): 0625 → 28 topics / 765 topiced / 59
+        untopiced; 0580 and 0606 → 0 topics, correctly** (no ingested questions).
+        **The briefed structural-exclusion test was missing from the handover and was added by
+        the orchestrator** — and deliberately in the stronger form: asserted on the **field
+        sets** of both the dataclass and the wire DTO, because the existing
+        `test_export_route_never_returns_marking_material` asserts on a response *body*, which
+        passes vacuously the moment `questions` comes back empty (exactly what an unmarked set
+        returns). The ninth handover this phase to sign off before its own gate run finished;
+        it was in fact green, but that was established by the orchestrator's run, not trusted.
+      - [ ] chunk 0 (original plan, kept for the rationale) — the two missing read paths.
         `GET /api/student/practice/{assignment_id}/result` (owner-scoped, `kind` narrowed to
         practice exactly as placement narrows to placement; must distinguish *not yet marked*
         from *marked* rather than collapsing both to an empty body — S-21 polls it the way
@@ -976,6 +1011,13 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
   happened repeatedly; the audit leg alone takes ~11 minutes.
 - `pytest -q` emits **no `N passed` line** (a reporter plugin eats it). Count the progress
   characters in the `^[.sFEx]+ +\[ NN%\]` lines, or read the `Total coverage:` line.
+- **Never run `pytest` concurrently with `./scripts/check.sh`.** Both drive `pytest-cov` and
+  they contend on the same `.coverage` data file, so the *coverage figure* comes back badly
+  wrong while the run still exits 0 — a concurrent run reported **89.67% with
+  `practice_repo.py` at 68%**, where a clean serial run of the identical tree reported
+  **90.37% and 99%**. The test counts stayed correct (2331/6/0 both times), which is what
+  makes it convincing: it reads as a real coverage regression to be chased. Re-measure
+  serially before believing any coverage drop.
 - `GEMINI_API_KEY` lives in `/home/sico/Lemely/.env` and is **not** exported into a
   non-interactive shell — `set -a && . ./.env && set +a`.
 - The UI gates write to gitignored `reports/.scratch` (D3.2). Re-baseline explicitly with
