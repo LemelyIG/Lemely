@@ -377,15 +377,46 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       `pair_low`/`pair_high` with a unique index + three CHECK constraints, so a duplicate or
       reciprocal friendship is a database error rather than a service-layer convention
       (D5.1 §8's reasoning applied to a second table).
-- [ ] todo — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
+- [ ] **doing** — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
       auto-populated official CAIE session dates for the exam calendar.
-      **Read the P5.0 reconnaissance lines above before planning.** Measured, do not re-derive:
-      `announcements` and `notifications` tables already exist;
-      `lemely/web/routers/announcements.py` mounts at `/api/teacher/announcements` and exposes
-      exactly POST / GET / DELETE, with **no student-facing read route at all** and no
-      school-admin → whole-school audience. Read-receipts are one of the four tables P5.0
-      measured as genuinely absent, so this task **does** need a migration (0016).
-      Backend only — the consuming screens are P5.8/P5.9.
+      Backend only — the consuming screens are P5.8/P5.9. UI spec §S-28 (line 725) is the
+      product truth for what the student surface must eventually hold.
+      **P5.0's reconnaissance was WRONG on one of the three bullets — corrected here by reading
+      the code, and this is the fifth instance in Phase 5 of the same failure mode.** P5.0 wrote
+      that the "school-admin → whole-school audience is also absent". **It is not: it has been
+      fully built since P3.8/D3.14.** `AnnouncementService.create` takes `school_wide` +
+      `school_id`, restricts it to `Role.school_admin`, validates the target through
+      `ClassService.member_school_ids`, and writes the `school_id`-set/`class_id`-NULL row; the
+      router exposes it as `schoolWide`/`schoolId` on `POST /api/teacher/announcements`. Do not
+      rebuild it. Verified in `lemely/db/announcement_repo.py:141-230` and
+      `lemely/web/routers/announcements.py:100-134`. **So P5.5 is a three-part task, not four.**
+      What P5.0 got right, re-verified: `announcements`/`notifications` exist, the router mounts
+      only at `/api/teacher/announcements` with exactly POST/GET/DELETE, and there is genuinely
+      **no student-facing read route at all**.
+      **Chunk A — migration 0016 + the student read path.** Read-receipts are one of the four
+      genuinely-absent tables, so a migration is needed. The audience resolution is the real work
+      and it must mirror the two seams already established, not invent a third: a student sees a
+      `class_id` row when enrolled via `class_enrollments`, and a `school_id` row when they hold a
+      non-revoked `Seat` in that school — **`Seat`, not `SchoolMembership`, which is staff-only
+      (D5.4 — the identical trap already cost P5.3 a chunk).**
+      **`publish_at` stops being inert here and that is the subtle part.** `announcement_repo`'s
+      docstring (lines 57-65) records that nothing in the codebase reads the column back, so a
+      "scheduled for later" announcement is currently stored and ignored. The student read route
+      is its **first consumer**: a future-dated row must not be visible to a student, or the
+      teacher-facing scheduling control becomes an outright lie. `NULL` means publish immediately.
+      This needs an injected clock — the service currently has none, deliberately, and its
+      docstring says so; that docstring must be corrected in the same chunk rather than left
+      contradicting the code.
+      **Chunk B — the exam calendar, and it must not invent dates.** *Measured, do not
+      re-derive:* there is **no CAIE timetable data anywhere** — not in `Sources/` (only
+      AdditionalMathematics/Mathematics/Physics mark schemes) and not in the PaperScraper corpus
+      (`find -iname "*timetable*" -o -iname "*calendar*"` returns nothing), and the scraper fetches
+      papers and grade boundaries, never timetables. Real exam dates are published in a separate
+      official CAIE timetable PDF that this build has no path to. **Therefore: build the table and
+      the ingestion path, and ship the surface honestly empty** — the tri-state-availability
+      pattern P4.5 already established (D4.10). Inventing plausible exam dates would violate UI
+      spec §1.4 ("never invent precision") on the one screen whose whole point is a countdown a
+      student will plan around. Record as D5.8 and carry it as a Phase-5 limitation.
 - [ ] todo — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable transport,
       and make `notification_preferences` actually gate delivery.
 - [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
