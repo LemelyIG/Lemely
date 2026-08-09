@@ -1767,7 +1767,47 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `awardedMarks`/`maximumMarks`/`questionCount`/`bankQuestionCount`/`paperNumber`/
         `activeSessionCount`/`completedSessionCount` are **numbers**; every id is a
         `str(...)`-stringified UUID.
-      - [ ] chunk B — **the MISSION §4 acceptance journey**, greenfield. New spec:
+      - [ ] chunk B — **SCOPED READ-ONLY 2026-08-09 (twenty-eighth session) while chunk A's
+        gate ran — do not re-derive any of the following.** Every route, account and
+        ready-string chunk B needs already exists in `web/scripts/audit.mjs`'s registry,
+        which drives these exact screens on these exact seeded accounts every gate pass.
+        **Routes** (`web/src/portals/student/index.tsx:205-228`, all under `/student`):
+        `onboard` · `placement/:subjectCode` · `placement/test/:assignmentId` ·
+        `placement/result/:assignmentId` · `plan/:subjectCode` ·
+        `plan/:subjectCode/session/:sessionId`.
+        **The strings each screen is identified by, lifted from the registry** (`audit.mjs`
+        `:1382-1513`, `:1785-1846`): S-01 `"What are you studying?"`; S-02 questionnaire
+        `"Which school"`, and the skipped-answer state reaches `"Not set"` by pressing
+        `^skip$` past `"outside school"` to `"hours can you study each week"`; S-03 available
+        `"Get a real starting picture"`, unavailable (on `/student/placement/0580`)
+        `"No placement test yet for this subject"`; S-04 `"Question 1 of"`; S-05
+        `"This is a baseline, not a grade"`; S-24 populated
+        `` `0 of ${activeSessionCount} sessions? done` ``, refused
+        `"Not enough to plan from yet"`, not-generated `"No plan for this week yet"`,
+        complete `` `${n} of ${n} sessions? done` ``.
+        **Three traps the registry already paid for — inherit them, do not rediscover:**
+        1. **`waitForText` takes a REGEX, not a literal.** `sessions? done` is `s?` making
+           the plural optional against `StudyPlanWeek.tsx:95`'s
+           `{sessionCount === 1 ? "" : "s"} done` — it is not a typo and not a literal `?`.
+           Playwright's equivalent is `getByText(/…/)`; a literal-string port silently
+           never matches.
+        2. **S-05 must NOT be identified by `"starting picture"`** — that phrase also
+           renders on `PlacementInvite`, so the assertion passes without the result screen
+           ever loading. The registry's comment records this as a vacuous pass it caught;
+           the string above is unique to `PlacementResult`'s *marked* branch.
+        3. **The onboarding wizard's step is component state that remounts as `"subjects"`
+           on every load** — `Onboarding.tsx`'s seeding effect restores the *answers* but
+           never the step. So S-02 is unreachable by deep link and must be driven through
+           the real UI (`audit.mjs:728-732`'s `driveToQuestionnaire`: wait
+           `"What are you studying?"` → toggle `Physics` → click `^continue$`). That drive
+           is per-navigation, not once per spec.
+        **Four DISTINCT placement accounts, which must not be collapsed** (the reason is
+        already recorded above and in `seed.ts`): `placement.students.{unonboarded,
+        available,inProgress,completed}`. S-24's populated week is on
+        `practice.students.active`; its three other states are on `practice.students.
+        {settled,bare}` and `placement.students.completed`, because a week is one plan per
+        account by construction.
+        *(Original chunk-B line follows.)* **The MISSION §4 acceptance journey**, greenfield. New spec:
         onboard (S-01/S-02 on `placement.students.unonboarded`, a **real UI login** per the
         `student-journey.spec.ts` idiom) → placement available/in-progress/results
         (S-03/S-04/S-05 across the three purpose-built accounts, which must **not** be
