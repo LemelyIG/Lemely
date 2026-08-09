@@ -229,8 +229,11 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       streak-freeze grant/consume rules, the weekly leaderboard window + reset, and opt-out
       semantics. Constrained by UI spec §1.4 (XP public / grades private) and MISSION §3
       ("leaderboards show XP, never grades").
-- [ ] doing — **P5.2** XP engine backend on the existing tables: repo + clock-injected service
-      - [x] **chunk A DONE** (`e786657`) — migration 0013 + `lemely/db/xp_repo.py` (`XpService`:
+- [x] done — **P5.2** XP engine backend, both chunks. **Full suite on the committed tree:
+      exit 0, 6 live-only skips, 90.30% cov** (develop 90.18% — no drop); ruff, ruff format,
+      mypy (186 files), lint-imports, `alembic check` all clean. `xp_repo.py` and
+      `xp_awards.py` both 100% covered.
+      - [x] **chunk A** (`e786657`) — migration 0013 + `lemely/db/xp_repo.py` (`XpService`:
             award / total_xp / xp_breakdown / streak, Cairo civil-date helper, per-source +
             global daily caps, lazy streak resolution with freeze grant/consume) + 42 tests.
             D5.2 recorded: the column is **`subject_code`** (String FK to `subjects.code`), not
@@ -241,22 +244,50 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             tests build their schema fresh, the dev DB does not. After amending an
             **uncommitted** migration, drop its artifacts, `alembic stamp` the previous
             revision, and re-upgrade; otherwise the file and the DB silently disagree.
-      - [ ] **chunk B doing** — the four award call sites. Seams located (do not re-derive):
-            `AttemptService.persist_correction` (`lemely/db/attempt_repo.py:113`) →
-            `paper_corrected`; `QuizTakingService.submit` (`quiz_taking_repo.py:546`) →
-            `quiz_completed`; `StudyPlanService.complete_session` (`study_plan_repo.py:303`) →
-            `study_session_completed`; `FlashcardService.record_review`
-            (`flashcard_repo.py:639`) → `flashcard_reviewed`.
-      (follow P4.6's SM-2 clock injection), award call sites at the four seams, anti-farm caps,
-      idempotency so a re-marked paper cannot double-award. **Implements D5.1 — read it first.**
-      Needs ONE additive migration (0013): `xp_events.subject_id` FK + the
-      `(user_id, source, dedupe_key)` unique index. D5.1 §7/§8 fix both.
-      Traps D5.1 names: `awarded_on` is a **Cairo** civil date not a UTC one (§4); award
-      functions must take **no mark/score/grade argument at all** (§0); a capped action still
-      succeeds and writes **no row** rather than a zero row (§3); streaks resolve **lazily on
-      read** because this build has no scheduler (§5).
-- [ ] todo — **P5.3** Leaderboards backend: friends/class/school/global × total/per-subject,
+      - [x] **chunk B** (`8fc3bc4`) — the four award seams, all wired at the **router** layer
+            (not inside the repo services: `XpService` owns its own sessionmaker and would
+            otherwise interleave transactions with a service that has just committed;
+            `quiz.py` already composed two services per endpoint, so this follows the house
+            pattern). Every seam goes through the single fail-open helper
+            `lemely/web/xp_awards.py::award_xp_safely`, which logs and swallows an XP failure
+            so an already-committed student action can never be turned into an error response
+            (D5.1 §3, "the learning wins") — proven with an injected failing double.
+            `get_xp_service()` added to `deps.py` + `reset_singletons()`. Three internal
+            service dataclasses (`SubmitResultRow`, `SessionView`, `ReviewOutcome`) grew a
+            `subject_code` field; **no wire DTO changed**, so the frontend is untouched.
+            **D5.3 — the defect worth remembering.** The paper seam's first cut deduped on the
+            *attempt* id. `persist_correction` inserts a fresh `Attempt` every call, so that key
+            is re-minted on every re-correction and the unique index never fires: a student
+            re-running `/student/correct` on one PDF could farm **250 XP/day** (the 5/day cap),
+            which is exactly what D5.1 §8 ("a paper can be re-marked … none of those may
+            re-award XP") exists to prevent. Now keyed on `owned.id`, the **upload**. Verified
+            by inversion — reverting the key fails both regression tests on `2 != 1` xp_events
+            rows, and those tests also assert two `Attempt` rows exist so they cannot pass by
+            the pipeline having declined to re-run. **The brief, not the spec, was wrong:** the
+            orchestrator's task table paraphrased §8 and lost its meaning. Where a brief
+            restates a spec, the spec wins.
+            `flashcard_reviewed` is deliberately NOT deduped between two reviews of one card
+            (repeat review is the point of SM-2); its control is the 60/day cap. Pinned by a
+            test so nobody "fixes" it into the paper seam's shape.
+- [ ] doing — **P5.3** Leaderboards backend: friends/class/school/global × total/per-subject,
       weekly window, opt-out, own-row pinning. Grades must be structurally unreachable here.
+      **Read D5.1 §0, §6 and §9 first — they are binding and specific:**
+      - §0 requires a test asserting **over the emitted SQL** that the leaderboard query joins
+        no marking table (`attempts`, `question_results`, `papers`, `weakness_records`).
+        "A comment saying don't join marks here is not a control; a failing test is."
+      - §6: ISO week **Monday 00:00 → Sunday 23:59:59 Cairo**, matching the streak day. Sum
+        `xp_events` every time — **no denormalized `weekly_xp` column** (this build has been
+        burned four times now by a hand-written mirror nothing regenerates).
+      - §9: opt-out is `student_profiles.leaderboard_opt_out` (bool, not null, default false)
+        — **needs an additive migration 0014**, and must be enforced in the query's WHERE
+        clause, never filtered in the DTO layer.
+      Ready to build on: `XpService.total_xp` / `xp_breakdown` exist and are 100% covered;
+      `xp_events.subject_code` (migration 0013) is the per-subject axis. The friends board
+      depends on P5.4's table — build the other three scopes first and let friends land with
+      P5.4 rather than blocking on it.
+      The consuming screen already exists and is honestly empty:
+      `web/src/portals/student/screens/Standings.tsx` (`student/board`) → `GET /student/standings`,
+      whose `StandingsDTO` has no `boards` field yet. Subject standings there is already real.
 - [ ] todo — **P5.4** Friends backend + migration (requests in/out, accept, remove, privacy).
 - [ ] todo — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
       auto-populated official CAIE session dates for the exam calendar.

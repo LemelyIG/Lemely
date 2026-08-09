@@ -1502,3 +1502,26 @@ scenario.
 `completed_at` seam), students still cannot see announcements, and
 `notification_preferences` is written and read by nothing — all three are P5's, and
 none has a helper waiting from Phase 3 or 4.
+
+## 2026-08-09 — fortieth session (P5.2 complete)
+
+- **Did:** resumed on a dirty tree carrying an uncommitted P5.2 chunk A (XP engine + migration
+  0013 + 42 tests); verified it rather than trusting it, committed it, then wired chunk B — the
+  four XP award seams — and closed P5.2. Full suite green on the committed tree: 0 failed, 6
+  live-only skips, 90.30% cov (develop 90.18%).
+- **Learned (schema):** `alembic check` can fail while `pytest` passes, because tests build
+  their schema fresh and the dev DB does not. Chunk A's migration had been *amended* after being
+  applied, so the file said `subject_code` and the DB still said `subject_id`. After amending an
+  uncommitted migration: drop its artifacts, `alembic stamp` the prior revision, re-upgrade.
+- **Learned (process), the one that mattered:** the paper seam originally deduped on the attempt
+  id, which `persist_correction` re-mints on every call — a re-marked paper would have re-awarded
+  every time, 250 XP/day farmable from a single PDF. D5.1 §8 had already forbidden exactly this;
+  my *brief* to the implementer paraphrased it and lost the meaning. The implementer flagged the
+  seam as "not idempotency-safe by construction" instead of quietly shipping it, which is the
+  same instruction that produced D5.2 last session. A restated requirement is a copy that drifts;
+  point briefs at the spec by line number.
+- **Also:** proved the regression tests by inversion before believing them — with the old key
+  restored they fail 2 != 1 on xp_events rows, and they assert two Attempt rows exist so they
+  cannot pass vacuously. Caught a phantom coverage gap that was just me editing a file mid-run.
+- **Next:** P5.3 leaderboards. Its hardest requirement is D5.1 §0's test asserting over the
+  *emitted SQL* that no marking table is reachable, plus migration 0014 for `leaderboard_opt_out`.
