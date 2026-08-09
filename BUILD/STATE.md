@@ -1480,6 +1480,34 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
            assert every one is `completed_at`-stamped. Partial completion here is the one
            failure mode that would still screenshot cleanly.
         Reuse `PLACEMENT_SUBJECT_CODE` throughout; do not introduce a second subject constant.
+        **API surface for those four calls, read off the service (eighteenth session,
+        read-only while the A+B gate run was in flight) — do not re-derive.** The seed
+        constructs every service through `lemely.web.deps` process-wide singletons (the
+        block at `seed_e2e.py:990-1002`, which already ends with `get_practice_service` /
+        `get_flashcard_service`); **`deps.get_study_plan_service` exists** (P4.7 chunk C
+        wired it) so the study-plan block adds exactly one line there and needs no new
+        sessionmaker. Two methods cover all four side effects:
+        `generate(student_id, subject_code, *, weekly_hours=None, now=None) -> PlanView`
+        and `complete_session(student_id, session_id, *, now=None) -> SessionView`;
+        `get_current(student_id, subject_code, *, now=None) -> PlanView | None` is what
+        `bare`'s "assert no plan row exists" assertion calls (**it returns `None`, it does
+        not raise** — assert on the `None`, not on an exception that will never come).
+        `PlanView` carries `.available` / `.reason` / `.sessions` and `SessionView` carries
+        `.id` / `.topic` / `.activity_type` / `.completed_at`, so all four assertions read
+        real fields rather than re-querying. **`complete_session` is idempotent by design**
+        (it leaves an existing `completed_at` untouched), so call 4 cannot be made to lie by
+        a re-run — but it is also why the assertion must be that *every* session is stamped,
+        not that the calls returned.
+        **Registry shapes confirmed verbatim (same session, read-only).** The bare-entry vs
+        `states: [...]` pair is at `audit.mjs:1487-1540` (S-20's default entry, then its
+        `no-questions` and `no_weaknesses` state entries) — copy that, comment style
+        included. The three session bindings and `practiceSubject` are at **`:932-947`**
+        exactly as recorded. The two stale strings are at **`:71-73`** (header comment, and
+        note the surrounding lines already carry P4.8 chunk C's worked apology for letting
+        an exclusion note outlive its exclusion — extend that note, do not just delete the
+        path) and **`:2161-2164`** (a runtime `log()` whose text reads "P4/P5 screens still
+        on mock data"; it prints to the operator, so the comment fix alone leaves the lie in
+        the output).
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
