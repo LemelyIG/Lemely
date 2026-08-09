@@ -489,7 +489,7 @@ class TestPracticeSetCount:
 
     def test_fits_comfortably_within_the_whole_hermetic_bank(self) -> None:
         rows = build_placement_bank_questions("tag1")
-        assert PRACTICE_SET_COUNT <= len(rows)
+        assert len(rows) >= PRACTICE_SET_COUNT
 
 
 # ---------------------------------------------------------------------------
