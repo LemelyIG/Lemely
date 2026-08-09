@@ -1052,9 +1052,43 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
           (S-21 working view), `practice/result/:assignmentId` (S-21 summary), in
           `portals/student/index.tsx`; nav item + `crumbs` entry in `portals/student/data.ts`.
         - `<h1>` on every new screen (D4.16's defect — it shipped five screens without one).
-      - [ ] chunk B — S-22 + S-23 frontend on the existing 10 flashcard routes. No backend
+      - [ ] doing — chunk B — S-22 + S-23 frontend on the existing 10 flashcard routes. No backend
         work expected. `source: "ai"` must stay visible on the card for its whole life, and
         `generatedCount` (not `requestedCount`) is what the screen reports.
+        **Scoped by measurement 2026-08-10 (sixth session) — do not re-derive:**
+        - **Starting position is identical to chunk A's:** ten routes live and
+          **entirely un-consumed** (`lemely/web/routers/flashcards.py`, DTOs in
+          `schemas_flashcards.py`), and **nothing frontend-side exists** — no
+          `flashcardTypes.ts`, no `useFlashcardApi.ts`, no screen, no route, no nav entry,
+          no crumb. Mirror `practiceTypes.ts` + `usePracticeApi.ts` (one hook per endpoint,
+          no `fallback` to `request()`), which chunk A just established against this exact
+          backend shape.
+        - **The wire contract already encodes the honesty rules — the screens must not
+          undo them, and each is verifiable:** `CardDTO.source` is present on every read
+          while `EditCardRequestDTO` has **no `source` field at all**, so the API offers no
+          relabel path and `ApiModel`'s `extra="forbid"` makes an attempted one a 422 (D4.11);
+          `GenerateDeckResponseDTO` carries `requestedCount` **and** `generatedCount` because
+          the model may return fewer and **nothing pads the difference**; `DueSessionDTO`
+          carries `nextDueAt` and a `totalDue` that is the **whole backlog regardless of
+          `limit`**, so S-22's "nothing due today" says *when* instead of rendering a void.
+        - **`origin="weakness"` refuses with 409 `{"reason": "no_weaknesses"}`** — the same
+          reason vocabulary P4.5/P4.9-chunk-A already render. Reuse that honest-refusal panel
+          rather than inventing a third rendering; do **not** fall back to an untargeted deck.
+        - **Product-truth conflict, decided rather than silently dropped (MISSION §12
+          authority order):** UI spec S-23 says the end-of-session summary shows **XP**. XP is
+          **P5** and does not exist — `study_plan` chunk B deliberately left `completed_at` as
+          the seam and built no points/streak column. **An invented XP number on a student
+          screen is exactly the fabricated precision spec §1.4 forbids**, so the summary
+          reports only real session facts (cards reviewed, the again/hard/good/easy
+          distribution, `intervalBeforeDays`→`intervalAfterDays`, next due time) and **no XP**.
+          Not an omission — recorded here alongside P4.9's fact 4 (reveal-answer) and fact 6
+          (photo answer). P5 adds XP to this summary; leave the seam, build no points.
+        - `ReviewResultDTO` returns `intervalBeforeDays`/`intervalAfterDays` **so the student
+          can see the scheduler's effect rather than trust it** — surface the change, don't
+          discard it as internal.
+        - `<h1>` on every new screen (D4.16), and S-23 must be keyboard-operable: the spec
+          calls it a repeated micro-interaction where friction compounds, so the reveal and
+          the four grade buttons need real key affordances, not mouse-only handlers.
       - [ ] chunk C — the standing UI gate (gate 8) for all four screens: audit-registry
         entries with their **real** states (including the honest `no_questions` /
         `no_weaknesses` / `insufficient_pool` refusals and S-22's "nothing due today"), axe
