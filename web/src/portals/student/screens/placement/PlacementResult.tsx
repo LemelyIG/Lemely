@@ -159,7 +159,9 @@ export function PlacementResult() {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Button variant="accent" size="lg" onClick={() => navigate("/student/plan")}>
+        {/* Subject-scoped since P4.10 — `data.subjectCode` is the subject this
+            placement was actually taken in. */}
+        <Button variant="accent" size="lg" onClick={() => navigate(`/student/plan/${data.subjectCode}`)}>
           See your study plan
         </Button>
         <Button variant="ghost" size="lg" onClick={() => navigate("/student")}>

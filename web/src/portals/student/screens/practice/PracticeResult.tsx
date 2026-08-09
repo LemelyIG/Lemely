@@ -132,7 +132,9 @@ export function PracticeResult() {
       </Card>
 
       <div className="flex flex-wrap gap-3">
-        <Button variant="accent" size="lg" onClick={() => navigate("/student/plan")}>
+        {/* Subject-scoped since P4.10: the study plan is per-subject, and
+            `data.subjectCode` is this set's real subject — never a default. */}
+        <Button variant="accent" size="lg" onClick={() => navigate(`/student/plan/${data.subjectCode}`)}>
           See your study plan
         </Button>
         <Button variant="ghost" size="lg" onClick={() => navigate("/student")}>
