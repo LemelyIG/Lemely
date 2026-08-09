@@ -20,6 +20,10 @@ import { Onboarding } from "./screens/Onboarding"
 import { PlacementInvite } from "./screens/placement/PlacementInvite"
 import { PlacementTest } from "./screens/placement/PlacementTest"
 import { PlacementResult } from "./screens/placement/PlacementResult"
+import { PracticeGenerator } from "./screens/practice/PracticeGenerator"
+import { PracticeSet } from "./screens/practice/PracticeSet"
+import { PracticeResult } from "./screens/practice/PracticeResult"
+import { PracticePrint } from "./screens/practice/PracticePrint"
 import { Landing } from "./screens/Landing"
 import { Directions } from "./screens/Directions"
 import { Parents } from "./screens/Parents"
@@ -157,6 +161,13 @@ function resolveCrumb(pathname: string): string {
   const resultMatch = pathname.match(/^\/student\/result\/([^/]+)$/)
   if (resultMatch) return `Home / Result ${resultMatch[1]}`
 
+  const practiceGeneratorMatch = pathname.match(/^\/student\/practice\/([^/]+)$/)
+  if (practiceGeneratorMatch) return `Home / Practice / ${practiceGeneratorMatch[1]}`
+
+  if (pathname.match(/^\/student\/practice\/set\//)) return "Home / Practice / Set"
+  if (pathname.match(/^\/student\/practice\/result\//)) return "Home / Practice / Result"
+  if (pathname.match(/^\/student\/practice\/print\//)) return "Home / Practice / Print"
+
   return "Home"
 }
 
@@ -228,6 +239,10 @@ export const studentRoute: RouteObject = {
     { path: "placement/:subjectCode", element: <PlacementInvite /> },
     { path: "placement/test/:assignmentId", element: <PlacementTest /> },
     { path: "placement/result/:assignmentId", element: <PlacementResult /> },
+    { path: "practice/:subjectCode", element: <PracticeGenerator /> },
+    { path: "practice/set/:assignmentId", element: <PracticeSet /> },
+    { path: "practice/result/:assignmentId", element: <PracticeResult /> },
+    { path: "practice/print/:assignmentId", element: <PracticePrint /> },
     { path: "landing", element: <Landing /> },
     { path: "directions", element: <Directions /> },
   ],

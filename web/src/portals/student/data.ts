@@ -61,6 +61,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { to: "/student", label: "Overview", end: true },
       { to: "/student/subject/0625", label: "Physics", tag: "0625" },
+      { to: "/student/practice/0625", label: "Practice", tag: "0625" },
       { to: "/student/plan", label: "Study plan" },
       { to: "/student/board", label: "Standings" },
       { to: "/student/parents", label: "Your parents" },
@@ -84,6 +85,7 @@ export const navGroups: NavGroup[] = [
 export const crumbs: Record<string, string> = {
   "/student": "Home",
   "/student/subject": "Home / Physics 0625",
+  "/student/practice": "Home / Practice",
   "/student/result": "Home / Physics / Paper result",
   "/student/correct": "Marking / Correct a paper",
   "/student/plan": "Home / Study plan",
