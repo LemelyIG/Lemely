@@ -1345,3 +1345,31 @@ the thing to do before writing the seed, not after.
   placeholder `StudyPlan.tsx`. Backend is landed and route-tested (P4.7 chunk C, D4.13); the
   `CurrentStudyPlanDTO {generated, plan}` envelope's three distinguishable states are the thing
   the screen must render honestly rather than collapse.
+
+## 2026-08-09 — twenty-second session (P4.10, D4.20 + D4.21)
+
+- **Did:** chunk C's gate run had finished and failed **two** gates, neither from chunk C's
+  diff. Fixed both in `8181f7c`: the placement band flake (D4.20) and a 380px horizontal
+  overflow (D4.21). Re-gated; backend + web legs all green, live-stack legs confirmed after.
+- **Learned (1), the trap the last session flagged and it was real:** the failing assertion
+  `spans_multiple_bands is True` had *two* causes, and only one was the flake. The fixture's
+  `uuid.uuid4()` made the tie-break random (measured: **1 failure in 30 runs**) — but
+  `assemble` never reads `Candidate.difficulty` at all, so the assertion pinned a rule that was
+  never implemented. Making the fixture deterministic alone would have made it pass every time
+  and turned a lucky draw into a guarantee. Deleted the assertion instead and replaced it with
+  an inverse pair proving what the flag really is: a *report*, deliberately False sometimes,
+  because that is what stops S-05 inventing a working level from a one-band sample.
+- **Learned (2):** the 273-row 0625 corpus had been lost from the local Postgres in a DB reset —
+  the bank held only E2E seed rows. Re-ingested from PaperScraper ($0.00, deterministic) and
+  **verified the reconstruction against the recorded figures before drawing any conclusion**
+  (273/273/26/211/248 and 10 q / 17.06 min / 6 topics — all exact). The first measurement was
+  still wrong (8 q / 15.94 min) because the seed's 24 fixture rows were also in the bank.
+  **A measurement taken against a seeded DB is not a measurement of the corpus.**
+- **Learned (3):** the responsive failure was reported against one screen but lived in the
+  shared `StateView`, so *every* empty/error/offline/refusal state in the product overflowed at
+  380px. `max-w-sm` caps a box but does not make it shrink — without `w-full` it keeps its
+  intrinsic 384px. The screen named in a gate failure is where it was observed, not where it is.
+- **Next:** P4.10 chunk D — the legacy-route cleanup, fully scoped in STATE and D4.19. Its
+  three traps are already measured: deleting the routes silently shrinks the RBAC matrix
+  (replacements must land in the same commit), there are two different `StudentProfileDTO`
+  classes, and `lemely/io/study_plan_ai.py` must survive for the CLI.
