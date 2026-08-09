@@ -1133,6 +1133,43 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `no_weaknesses` / `insufficient_pool` refusals and S-22's "nothing due today"), axe
         zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus, `<h1>` per screen
         (D4.16's defect — do not repeat it).
+        **Opened 2026-08-10 (seventh session). The mutually-exclusive-state analysis STATE
+        told this chunk to do BEFORE writing the seed is done — do not re-derive it:**
+        - **Six routes, not four screens' worth** (`portals/student/index.tsx:250-255`):
+          `practice/:subjectCode` (S-20), `practice/set/:assignmentId` (S-21 working),
+          `practice/result/:assignmentId` (S-21 summary), `practice/print/:assignmentId`,
+          `flashcards/:subjectCode` (S-22), `flashcards/review/:subjectCode` (S-23).
+        - **`insufficient_pool` needs no created set — it is a *preview* state.**
+          `PracticeGenerator.tsx:299` renders the shortfall panel ("Only N of M requested
+          questions match") off `previewQuery`, so it is reachable by URL alone and is the
+          **default** state given the small seeded bank. This kills the need to capture the
+          post-create `created` branch, which is component state and could not have survived
+          the runner's per-breakpoint reload anyway.
+        - **Three new accounts, and the exclusivity that forces each one:** a student with
+          weakness rows cannot demonstrate S-20/S-22's `no_weaknesses` refusal, and a student
+          with cards due cannot demonstrate "nothing due today". So:
+          `active` (weaknesses + 3 practice sets in 3 submission states + a deck due now),
+          `settled` (a deck, every card reviewed `good` so `due_at` is in the future — a real
+          scheduler outcome, not a hand-written date), `bare` (enrolled, no weaknesses, no
+          decks). `no_questions` needs no account of its own — it is `/student/practice/0580`
+          on any of them, because 0580 genuinely has zero ingested questions.
+        - **One marked practice set does double duty**: answering one question wrong then
+          submitting *and* marking it produces both S-21's `marked` capture and the
+          `WeaknessRecord` rows S-20's weak-topic prefill needs. Same trick the placement
+          `completed` account already uses; `quiz_taking_service.submit` does **not** mark
+          (the route marks on a background thread), which is what makes the third set's
+          `marking` state seedable at all rather than a race.
+        - **S-22's weakness-generate 409 is free to capture**: `generate_deck`
+          (`flashcard_repo.py:347`) resolves the topic — and raises
+          `FlashcardUnavailableError(no_weaknesses)` — **before** `self._generator.generate`,
+          verified by reading, so the refusal costs $0.00 Gemini against the $8 ceiling.
+        - **Deliberately NOT captured, recorded rather than silently dropped:** S-23's
+          end-of-session summary. Grading a card is irreversible and reschedules it, and
+          `visitRoute` re-navigates for every breakpoint plus axe, so the second visit would
+          render "Nothing due today" under a screenshot named `session-complete`. A capture
+          that lies about which state it is is worse than an absent one. (Same reload
+          constraint session 6 found for the S-02 wizard — the fix there was to drive from
+          `ready`; here no drive is idempotent, so the state is out of scope for this gate.)
         **Scoped 2026-08-10 (sixth session), enough to start cold — do not re-derive:**
         - **This chunk has a `scripts/` diff, unlike A and B.** The registry is
           `web/scripts/audit.mjs` (~line 830 onward builds sessions, then a `return [...]`
