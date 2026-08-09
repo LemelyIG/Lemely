@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-10T14:20:00Z   # Eleventh session. Chunk B written and committed (3b49dca). Doing: ONE gate run over chunks A+B together — chunk A was never independently green (its run died with the previous session), so there is nothing to lose by combining and the audit leg costs ~11 min either way.
+last_updated: 2026-08-10T14:20:00Z   # Twelfth session. Chunks A+B are committed but STILL NOT GREEN — b0f55e4's subject line ("A+B verified by one gate run") describes the plan, not a result: that run died three minutes in, having logged only `PASS ruff-check/ruff-format/mypy/import-linter` (/tmp/p410_ab_gate.log), the same four legs the tenth session reached. Doing: re-running ./scripts/check.sh over A+B (log /tmp/p410_ab_gate2.log). Nothing in P4.10 has ever passed gates 5-13. Do not read any earlier commit subject as evidence of a pass.
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
