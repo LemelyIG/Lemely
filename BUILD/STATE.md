@@ -1868,9 +1868,34 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `practice.students.bare` (no weakness rows → the honest `no_weaknesses` refusal,
         never an invented set). Without the inverse the assertion passes on a screen that
         ignores weaknesses entirely.
-      - [ ] chunk D — **the two carried items** (item 3): correct
-        `web/e2e/at-risk-flags.spec.ts:21`'s docstring, which still says rule 2 "cannot fire
-        in Phase 3" — false since P4.3 (D4.5) — and seed a real below-target scenario in
+      - [ ] chunk D — **the two carried items** (item 3).
+        **SCOPED READ-ONLY 2026-08-09 (thirtieth session) while chunk B's gate ran — do not
+        re-derive, and note the first line corrects a wrong path this file has carried since
+        the twenty-third session.** The stale docstring is **`scripts/seed_e2e.py:21-24`**, not
+        `web/e2e/at-risk-flags.spec.ts:21` — that spec's only Phase-3 mention (`:8`) is a correct
+        citation of MISSION §4's acceptance criterion and must be left alone. The seed's text is
+        *"Rule 2 (\"predicted >= 2 grades below target\", D3.3) cannot fire in Phase 3: there is
+        no target-grade column until Phase 4's onboarding questionnaire … not faked, not worked
+        around."* — false since P4.3 (D4.5) shipped `student_profiles`.
+        **A second defect in the same docstring, found while reading it: its rule numbers are
+        wrong.** `lemely/core/at_risk.py` orders the rules declining-trend / below-target /
+        inactivity, so the below-target rule is 2 (correct at `:21`) but `inactive` is rule **3**,
+        yet `:18` also labels it "(rule 2)". Fix both numbers in the same pass — leaving one
+        makes the corrected paragraph read as contradicting the line above it.
+        **What the seeded scenario has to satisfy, read off `assess_at_risk` (`at_risk.py:140-175`,
+        `_resolve_target_for_latest_subject`):** a target is resolved **only** for the subject of
+        the student's *latest grade-bearing record*, so the new account needs (a) a
+        `student_profiles`/enrolment target grade for that exact subject code and (b) a persisted
+        attempt whose predicted grade is ≥2 `GRADE_ORDER` steps below it. A target on any other
+        subject yields `NOT_EVALUABLE`, never a flag — that is the tri-state P4.3 deliberately
+        sharpened, so a mis-keyed seed fails *silently as an unflagged student*, not loudly.
+        **It must be a NEW account, not a mutation of `declining`/`inactive`/`control`.**
+        `at-risk-flags.spec.ts` asserts each existing student's reasons list **exactly** and
+        asserts `control`/`correctedPaper` are **absent** from the response, so adding a target to
+        an existing account would flip an equality assertion in a spec that is not the one under
+        test. Additive only, plus the matching `SeedContract` key in `web/e2e/seed.ts` and the
+        `seed-contract.spec.ts` drift pin chunk A built.
+        *(Original chunk-D line follows.)* Seed a real below-target scenario in
         `scripts/seed_e2e.py` so the rule is actually *pinned* rather than described. P4.3
         deliberately left this here. Note the seed's `expectedAtRiskReasons` contract: a new
         below-target student adds a key, and every account's expected reasons are asserted
