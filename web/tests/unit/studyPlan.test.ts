@@ -9,7 +9,11 @@ import {
   formatDayHeading,
   formatDuration,
   groupSessionsByDay,
+  locateSession,
   planUnavailableMessage,
+  rationaleCopy,
+  sessionRationale,
+  sessionStartAction,
   studyPlanView,
   weekProgress,
 } from "@/portals/student/screens/studyplan/studyPlanData"
@@ -213,6 +217,145 @@ describe("labels and formatting", () => {
   })
 })
 
+// ── S-25 · locating a session with no route that fetches one ─────────────
+
+describe("locateSession", () => {
+  const target = session({ id: "sess-42", topic: "4.3 Electric circuits" })
+
+  it("finds a session that is in the current week", () => {
+    const current: CurrentStudyPlanDTO = {
+      generated: true,
+      plan: week({ sessions: [session({ id: "other" }), target] }),
+    }
+    const located = locateSession(current, "sess-42")
+    expect(located.kind).toBe("found")
+    expect(located.kind === "found" && located.session.topic).toBe("4.3 Electric circuits")
+  })
+
+  it("reports notInCurrentWeek — not an error — for an id the week does not hold", () => {
+    // A rebuild supersedes rather than mutates, so a bookmarked link lands
+    // here legitimately. The inverse of the test above: same plan, different
+    // id, and the difference must show up in the arm.
+    const current: CurrentStudyPlanDTO = { generated: true, plan: week({ sessions: [target] }) }
+    expect(locateSession(current, "sess-99").kind).toBe("notInCurrentWeek")
+  })
+
+  it("reports noCurrentPlan when the week was never generated", () => {
+    expect(locateSession({ generated: false, plan: null }, "sess-42").kind).toBe("noCurrentPlan")
+  })
+
+  it("reports noCurrentPlan — carrying the refusal — for a refused week", () => {
+    // Kept distinct from notInCurrentWeek so the screen can render the
+    // planner's own reason instead of "your plan moved on", which would be
+    // false here: it never moved, it was refused.
+    const located = locateSession(
+      { generated: true, plan: week({ available: false, reason: "no_signal" }) },
+      "sess-42",
+    )
+    expect(located.kind).toBe("noCurrentPlan")
+    expect(located.kind === "noCurrentPlan" && located.view.kind).toBe("refused")
+  })
+
+  it("does not find a session in a refused plan even if the id matches", () => {
+    // A refused plan carries no sessions today, but keying the search off the
+    // sessions array alone would silently resurrect one if it ever did.
+    const located = locateSession(
+      { generated: true, plan: week({ available: false, reason: "no_signal", sessions: [target] }) },
+      "sess-42",
+    )
+    expect(located.kind).not.toBe("found")
+  })
+})
+
+// ── S-25 · the "why", and the absence-of-evidence trap ───────────────────
+
+describe("sessionRationale", () => {
+  it("calls a topic a recorded weakness when it is in the weak-topic list", () => {
+    expect(sessionRationale("1.2 Motion", ["1.2 Motion", "4.3 Electric circuits"]).kind).toBe(
+      "recordedWeakness",
+    )
+  })
+
+  it("says not-a-recorded-weakness when the list is known and excludes the topic", () => {
+    expect(sessionRationale("1.2 Motion", ["4.3 Electric circuits"]).kind).toBe(
+      "notRecordedWeakness",
+    )
+  })
+
+  it("says not-a-recorded-weakness for a known-but-empty list", () => {
+    // An empty list is an answer ("you have no recorded weak topics"), not a
+    // missing one. Folding it into `unknown` would refuse to say something
+    // true.
+    expect(sessionRationale("1.2 Motion", []).kind).toBe("notRecordedWeakness")
+  })
+
+  it("says unknown — never not-a-weakness — when the list has not arrived", () => {
+    // The load-bearing one. `undefined` is pending-or-failed; answering
+    // "not a recorded weakness" there reports an absence of evidence as
+    // evidence of absence, about a student who may well have that weakness.
+    expect(sessionRationale("1.2 Motion", undefined).kind).toBe("unknown")
+    expect(sessionRationale("1.2 Motion", undefined).kind).not.toBe("notRecordedWeakness")
+  })
+
+  it("matches the taxonomy label exactly rather than loosely", () => {
+    // Both sides come from the P4.2 `"<code> <name>"` vocabulary (D4.4), so a
+    // fuzzy match could only ever manufacture agreement — e.g. claiming a
+    // session on "1.2 Motion" is covered by a weakness on "1 Motion, forces…".
+    expect(sessionRationale("1.2 Motion", ["1 Motion, forces and energy"]).kind).toBe(
+      "notRecordedWeakness",
+    )
+  })
+})
+
+describe("rationaleCopy", () => {
+  it("never renders the session's focus string as a reason", () => {
+    // `focus` is `"<activity label>: <topic>"` server-side — a restatement of
+    // two fields already on screen. Putting it under a "why this session"
+    // heading would launder a label into a rationale.
+    const focus = session().focus
+    for (const kind of ["recordedWeakness", "notRecordedWeakness", "unknown"] as const) {
+      const copy = rationaleCopy({ kind }, "1.2 Motion")
+      expect(copy.body).not.toContain(focus)
+    }
+  })
+
+  it("does not name a driving signal when the topic is not a recorded weakness", () => {
+    // The planner weighs placement and confidence too and does not record
+    // which one produced a session. The copy must say that, not pick one.
+    const body = rationaleCopy({ kind: "notRecordedWeakness" }, "1.2 Motion").body
+    expect(body).toContain("not recorded")
+  })
+
+  it("gives the unknown arm its own copy rather than reusing either answer", () => {
+    const unknown = rationaleCopy({ kind: "unknown" }, "1.2 Motion").body
+    expect(unknown).not.toBe(rationaleCopy({ kind: "notRecordedWeakness" }, "1.2 Motion").body)
+    expect(unknown).not.toBe(rationaleCopy({ kind: "recordedWeakness" }, "1.2 Motion").body)
+  })
+})
+
+// ── S-25 · the start action, including the one that must not exist ───────
+
+describe("sessionStartAction", () => {
+  it("routes practice and flashcards to their subject-scoped screens", () => {
+    expect(sessionStartAction("practice", "0625")?.path).toBe("/student/practice/0625")
+    expect(sessionStartAction("flashcards", "0625")?.path).toBe("/student/flashcards/0625")
+  })
+
+  it("routes past_paper to the correction screen, which is not subject-scoped", () => {
+    expect(sessionStartAction("past_paper", "0625")?.path).toBe("/student/correct")
+  })
+
+  it("returns null for review — this product has no revision surface", () => {
+    // The inverse of the three above. A button here would navigate nowhere;
+    // shipping none is the same call chunk A made for reschedule.
+    expect(sessionStartAction("review", "0625")).toBeNull()
+  })
+
+  it("returns null for an activity type this build does not know", () => {
+    expect(sessionStartAction("meditation", "0625")).toBeNull()
+  })
+})
+
 // ── The breadcrumb arm for the subject-scoped plan route ─────────────────
 //
 // `resolveCrumb` was moved out of `portals/student/index.tsx` into the pure
@@ -245,6 +388,26 @@ describe("resolveCrumb", () => {
     expect(resolveCrumb("/student/correct")).toBe("Marking / Correct a paper")
     expect(resolveCrumb("/student/practice/0625")).toBe("Home / Practice / 0625")
     expect(resolveCrumb("/student/flashcards/0625")).toBe("Home / Flashcards / 0625")
+  })
+
+  it("names the S-25 session route instead of falling through", () => {
+    // `planMatch` is anchored, so the session route would have repeated the
+    // chunk-A defect exactly: a wrong-but-valid breadcrumb that no gate sees.
+    expect(resolveCrumb("/student/plan/0625/session/abc-123")).toBe(
+      "Home / Study plan / 0625 / Session",
+    )
+  })
+
+  it("does not land the session route on the bare Home default", () => {
+    expect(resolveCrumb("/student/plan/0625/session/abc-123")).not.toBe("Home")
+  })
+
+  it("keeps the week route and the session route on different crumbs", () => {
+    // Both are real screens. A shared crumb would tell the student they had
+    // not moved.
+    expect(resolveCrumb("/student/plan/0625/session/abc-123")).not.toBe(
+      resolveCrumb("/student/plan/0625"),
+    )
   })
 
   it("returns Home for an unknown path rather than throwing", () => {

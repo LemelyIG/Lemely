@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
@@ -130,10 +130,12 @@ function WeekHeader({
 
 function SessionRow({
   session,
+  subjectCode,
   onComplete,
   completing,
 }: {
   session: StudyPlanSessionDTO
+  subjectCode: string
   onComplete: (sessionId: string) => void
   completing: boolean
 }) {
@@ -141,7 +143,12 @@ function SessionRow({
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border px-5 py-3.5 first:border-t-0">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-body-md font-medium text-t1">{session.topic}</span>
+        <Link
+          to={`/student/plan/${subjectCode}/session/${session.id}`}
+          className="text-body-md font-medium text-t1 no-underline hover:underline focus-visible:underline"
+        >
+          {session.topic}
+        </Link>
         <span className="text-dense text-t2">
           {activityLabel(session.activityType)} · {formatDuration(session.durationMinutes)}
         </span>
@@ -292,6 +299,7 @@ export function StudyPlanWeek() {
                   <SessionRow
                     key={session.id}
                     session={session}
+                    subjectCode={subjectCode}
                     onComplete={(sessionId) => complete.mutate({ sessionId, subjectCode })}
                     completing={complete.isPending && complete.variables?.sessionId === session.id}
                   />

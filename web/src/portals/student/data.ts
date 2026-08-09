@@ -137,6 +137,11 @@ export function resolveCrumb(pathname: string): string {
 
   // The study plan gained a subject segment in P4.10, so it stopped matching
   // the exact `crumbs` lookup and fell through to the bare "Home" default.
+  // The session route needs its own arm for the same reason: `planMatch` is
+  // anchored, so S-25 would have repeated the chunk-A defect exactly.
+  const planSessionMatch = pathname.match(/^\/student\/plan\/([^/]+)\/session\/([^/]+)$/)
+  if (planSessionMatch) return `Home / Study plan / ${planSessionMatch[1]} / Session`
+
   const planMatch = pathname.match(/^\/student\/plan\/([^/]+)$/)
   if (planMatch) return `Home / Study plan / ${planMatch[1]}`
 

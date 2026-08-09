@@ -139,6 +139,143 @@ export function groupSessionsByDay(sessions: readonly StudyPlanSessionDTO[]): St
     .map((date) => ({ date, sessions: byDate.get(date)! }))
 }
 
+// ── S-25: locating one session inside the week ──────────────────────────
+
+/**
+ * Where a session id resolves to, given the current week.
+ *
+ * **There is no `GET /sessions/{id}` route** — the router has exactly three
+ * paths and none fetches a single session. S-25 therefore reads the week and
+ * locates the session in it, which makes "not in this week" a state this
+ * function has to name rather than something the network reports.
+ *
+ * `"notInCurrentWeek"` is **not an error and not a 404.** Regeneration
+ * supersedes (P4.7 chunk B stamps `superseded_at` rather than mutating), so a
+ * bookmarked link, an open tab from last week, or a link followed while a
+ * rebuild was in flight all land here legitimately. Rendering it as "not
+ * found" would tell the student their data is missing when in fact their plan
+ * moved on.
+ */
+export type SessionLocation =
+  | { kind: "found"; session: StudyPlanSessionDTO; plan: StudyPlanWeekDTO }
+  /** A real plan exists for this week and this id is not one of its sessions. */
+  | { kind: "notInCurrentWeek"; plan: StudyPlanWeekDTO }
+  /** No usable plan this week at all — never generated, or generated and
+   * refused. Kept separate from the arm above because the honest next step
+   * differs: there is a plan to go back to in one case and not in the other. */
+  | { kind: "noCurrentPlan"; view: StudyPlanView }
+
+export function locateSession(current: CurrentStudyPlanDTO, sessionId: string): SessionLocation {
+  const view = studyPlanView(current)
+  if (view.kind !== "plan") return { kind: "noCurrentPlan", view }
+  const session = view.plan.sessions.find((s) => s.id === sessionId)
+  if (!session) return { kind: "notInCurrentWeek", plan: view.plan }
+  return { kind: "found", session, plan: view.plan }
+}
+
+// ── S-25: the one provable "why this session" ───────────────────────────
+
+/**
+ * Why this session is in the plan — or an honest statement that this build
+ * cannot say.
+ *
+ * **Nothing per-session records which signal produced it.** The planner reads
+ * three (`_weaknesses` / `_placement_results` / `_confidence_ratings`,
+ * `study_plan_repo.py`), weights them, and discards them; `focus` is
+ * `f"{activity label}: {topic}"` — a restatement of two fields already on
+ * screen, not a rationale. Rendering `focus` under a "why this session"
+ * heading would launder a label into a reason.
+ *
+ * The one thing that *is* provable: `GET /student/practice/{code}/topics`
+ * returns `weakTopics`, and its `_weak_topics_for` query is byte-identical to
+ * the planner's `_weaknesses` query (same select, same join, same where). So
+ * "this is one of your recorded weak topics for this subject" is a fact about
+ * the same rows the planner read, not an inference about this session.
+ *
+ * Hence three arms, and the third is the one that is easy to get wrong:
+ * when the weak-topics list has not arrived (pending) or failed to load,
+ * the answer is `"unknown"` — asserting `"notWeakness"` there would report an
+ * absence of evidence as evidence of absence.
+ *
+ * @param weakTopics the student's recorded weak topics, or `undefined` when
+ *   that list is not (yet) known. Matching is exact: both sides come from the
+ *   P4.2 `"<code> <name>"` taxonomy and share one vocabulary by construction
+ *   (D4.4), so a fuzzy match here would only ever manufacture agreement.
+ */
+export type SessionRationale =
+  | { kind: "recordedWeakness" }
+  | { kind: "notRecordedWeakness" }
+  | { kind: "unknown" }
+
+export function sessionRationale(
+  topic: string,
+  weakTopics: readonly string[] | undefined,
+): SessionRationale {
+  if (weakTopics === undefined) return { kind: "unknown" }
+  return weakTopics.includes(topic)
+    ? { kind: "recordedWeakness" }
+    : { kind: "notRecordedWeakness" }
+}
+
+export interface RationaleCopy {
+  heading: string
+  body: string
+}
+
+export function rationaleCopy(rationale: SessionRationale, topic: string): RationaleCopy {
+  switch (rationale.kind) {
+    case "recordedWeakness":
+      return {
+        heading: "Why this is in your plan",
+        body: `${topic} is one of your recorded weak topics for this subject — you have lost marks on it in work that has been marked. That is one of the three signals the planner weighs.`,
+      }
+    case "notRecordedWeakness":
+      return {
+        heading: "Why this is in your plan",
+        // Deliberately does not guess. Placement and confidence are real
+        // inputs, and which one drove *this* session is not recorded.
+        body: `${topic} is not one of your recorded weak topics, so this session came from one of the planner's other two signals — your placement result or the confidence rating you gave it during onboarding. Which of the two is not recorded, so this page will not guess.`,
+      }
+    case "unknown":
+      return {
+        heading: "Why this is in your plan",
+        body: "Your recorded weak topics could not be loaded, so this page cannot say whether this session came from a weakness, your placement result, or a confidence rating.",
+      }
+  }
+}
+
+// ── S-25: the start action ──────────────────────────────────────────────
+
+export interface SessionStartAction {
+  label: string
+  path: string
+}
+
+/**
+ * Where "start this session" goes, or `null` when nothing in this product can
+ * serve the activity.
+ *
+ * `review` returns `null`: there is **no revision surface** — no route renders
+ * notes or a topic write-up — so a button would be dead. Shipping no control
+ * is the same call chunk A made for reschedule, and for the same reason: a
+ * control that cannot do what it says is worse than an absent one.
+ */
+export function sessionStartAction(
+  activityType: string,
+  subjectCode: string,
+): SessionStartAction | null {
+  switch (activityType) {
+    case "practice":
+      return { label: "Go to practice", path: `/student/practice/${subjectCode}` }
+    case "flashcards":
+      return { label: "Go to flashcards", path: `/student/flashcards/${subjectCode}` }
+    case "past_paper":
+      return { label: "Correct a past paper", path: "/student/correct" }
+    default:
+      return null
+  }
+}
+
 // ── Labels ──────────────────────────────────────────────────────────────
 
 const ACTIVITY_LABELS: Record<ActivityType, string> = {
