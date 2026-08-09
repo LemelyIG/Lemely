@@ -3995,3 +3995,53 @@ listing the captures, not by reading the summary line.
 severity (not just serious/critical); 42 screenshots (14 states × 3 breakpoints); Lighthouse
 a11y **100** on all four newly-scored routes, performance 80–82 (student floor is ≥80). Bank
 re-measured after the fix at exactly 6 rows/topic × 4 topics. $0.00 Gemini.
+
+## D4.19 — AI study-plan narration leaves the web surface, and the loss is recorded rather than restored (P4.10 chunk D)
+
+**Context.** P4.10 chunk D deletes the legacy `GET/POST /api/student/plan` pair, superseded by
+P4.7 chunk C's persisted `/api/student/study-plan`. STATE's chunk-D scoping (twentieth session)
+flagged "trap 3": the legacy `POST` is the only web path to AI study-plan narration
+(`payload.narrate` → `StudyPlanNarrator`, `routers/student.py:857-865`), and the replacement
+`StudyPlanWeekDTO` has no `narrative` field, so deleting the route loses the feature on the web.
+It named the fork — record the loss, or carry narration onto the new route — and left it open.
+
+**Correction to that framing, measured before deciding rather than inherited.** The loss is not
+chunk D's to cause: it has already happened. The old `StudyPlan.tsx` called the legacy POST with
+a literal `{weeklyHours, narrate: true}` and rendered `plan.narrative` in a panel
+(`git show 94326a1 -- .../StudyPlan.tsx`, removed lines 78 and 134-138). **P4.10 chunk A deleted
+that screen**, and chunk A shipped green through the A+B gate run. So web narration died at
+`94326a1`; the route has had zero callers ever since, and chunk D removes dead backend, not a
+live feature. This matters because "chunk D loses a feature" invites restoring it inside a
+cleanup commit, and the honest statement is narrower: **Phase 4 replaced the narrated plan
+screen with an unnarrated one, and that is the change to record.**
+
+**Decision — record the loss; do not restore narration in this phase.** `narrative` is not added
+to `StudyPlanWeekDTO`, no Gemini call is added to the study-plan surface, and the web plan ships
+unnarrated. The loss goes into the Phase-4 report's limitations and, per MISSION §9 (the adaptive
+study plan is an inventoried feature), into DELIVERY.md.
+
+**Why not restore it.**
+1. It is new feature work wearing a cleanup commit's clothes: a schema field, a billed Gemini
+   call on a student surface against the $8 ceiling, and an AI-content honesty affordance
+   (D4.11's rule — AI-written content stays distinguishable from the real thing for its whole
+   life — would apply to a narrative panel too). MISSION §8b forbids speculative work, and a
+   deletion chunk is the worst place to hide a feature addition; a gate failure there would be
+   unattributable, which is the same reasoning that split chunk D out of chunk C.
+2. The register is wrong for what Phase 4 built. MISSION §4's stated complaint about the old
+   plan is that it was "vague advice with a number attached" and must become "concrete sessions
+   (topic, activity, duration) not vague advice". The narrator prompt asks for a "2-3 paragraph
+   study guide" and is explicitly forbidden from touching the sessions
+   (`io/prompts/study_plan.py:16-18`). Re-attaching a motivational essay above a schedule of
+   real sessions restores exactly the layer the phase set out to replace, and it would be the
+   one part of S-24 a student could not check against anything.
+3. Nothing is burned. `lemely/io/study_plan_ai.py`, its prompt, and `StudyPlan.narrative` in
+   `core/study.py` all survive intact and stay live on the CLI (`cli.py:582 --use-ai`,
+   `:612-614`) — **so `study_plan_ai.py` must not be deleted by this chunk**. Carrying narration
+   onto the new route later is an additive field plus a route, deliberately decided, in its own
+   commit. Simplest, cheapest, most reversible (MISSION §5).
+
+**What chunk D must therefore do about it**, beyond the deletions STATE already scoped: leave
+`lemely/io/study_plan_ai.py` and the CLI path untouched, and state the web-side loss in the
+Phase-4 report rather than letting it vanish as a side effect of a cleanup diff. The
+already-shipped half (chunk A dropped the rendering) is the part most likely to go unrecorded,
+because no gate in this build can see a feature that stopped being offered.
