@@ -55,6 +55,47 @@ export function groupTopicsBySyllabusGroup(
   return order.map((syllabusGroup) => ({ syllabusGroup, topics: byGroup.get(syllabusGroup)! }))
 }
 
+export interface WeakTopicPrefill {
+  /** The weak topics that actually have a chip on this screen. */
+  selected: string[]
+  /** Weak topics with no servable chip, dropped from the prefill. */
+  dropped: string[]
+}
+
+/**
+ * Resolve S-20's weak-topic prefill against the topics the screen actually
+ * renders a control for.
+ *
+ * `PracticeTopicsDTO.weakTopics` and `.topics` are resolved **independently**
+ * server-side — `weakTopics` from the student's `WeaknessRecord` rows,
+ * `topics` from the servable bank pool through `_matching_clauses` — so
+ * nothing guarantees the first is a subset of the second. Measured against
+ * the live DB: 8 of 15 recorded weakness topics have no servable bank topic,
+ * including the weakness engine's own `"unknown"` fallback label and
+ * older-vocabulary labels like `"Electricity"`.
+ *
+ * Prefilling those verbatim would put a topic into the filter set that has
+ * **no checkbox on the screen**: it is sent to `preview`/`create`, narrows
+ * or empties the pool, and the student sees no chip checked and no way to
+ * clear it — a filter applied invisibly, which can render as a flat "no
+ * practice material" with no visible cause. So the prefill is the
+ * intersection, and what was dropped is returned rather than discarded, so
+ * the screen can say so instead of silently showing a shorter list.
+ */
+export function weakTopicPrefill(
+  weakTopics: readonly string[],
+  servableTopics: readonly PracticeTopicCount[],
+): WeakTopicPrefill {
+  const servable = new Set(servableTopics.map((t) => t.topic))
+  const selected: string[] = []
+  const dropped: string[] = []
+  for (const topic of weakTopics) {
+    if (servable.has(topic)) selected.push(topic)
+    else dropped.push(topic)
+  }
+  return { selected, dropped }
+}
+
 // ── S-20: tri-state availability (spec §1.4 — honest shortfall, still
 // creatable; a hard refusal is not a rendering choice) ───────────────────
 

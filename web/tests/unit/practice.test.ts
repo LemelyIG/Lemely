@@ -6,6 +6,7 @@ import {
   practiceMarkState,
   practiceResultView,
   practiceUnavailableMessage,
+  weakTopicPrefill,
 } from "@/portals/student/screens/practice/practiceData"
 import type { PracticePreview, PracticeResult, PracticeTopicCount } from "@/lib/practiceTypes"
 
@@ -40,6 +41,41 @@ describe("groupTopicsBySyllabusGroup — nesting keeps parent and child distinct
 
   it("an empty topic list yields no groups, never a placeholder group", () => {
     expect(groupTopicsBySyllabusGroup([])).toEqual([])
+  })
+})
+
+describe("weakTopicPrefill — never prefills a filter with no control on the screen", () => {
+  const servable = [
+    topicCount({ topic: "4.3 Electric circuits", syllabusGroup: "4 Electricity and magnetism" }),
+    topicCount({ topic: "1.2 Motion", syllabusGroup: "1 Motion, forces and energy" }),
+  ]
+
+  it("a weak topic with no servable chip is dropped from the prefill, not selected invisibly", () => {
+    // Measured live: 8 of 15 recorded weakness topics have no servable bank
+    // topic — "unknown" is the weakness engine's own fallback label, and
+    // "Electricity" is the older free-text vocabulary. Selecting either
+    // would apply a filter the student can neither see nor clear.
+    const result = weakTopicPrefill(["4.3 Electric circuits", "unknown", "Electricity"], servable)
+    expect(result.selected).toEqual(["4.3 Electric circuits"])
+    expect(result.dropped).toEqual(["unknown", "Electricity"])
+  })
+
+  it("inverse: weak topics that are all servable are prefilled in full, nothing dropped", () => {
+    const result = weakTopicPrefill(["4.3 Electric circuits", "1.2 Motion"], servable)
+    expect(result.selected).toEqual(["4.3 Electric circuits", "1.2 Motion"])
+    expect(result.dropped).toEqual([])
+  })
+
+  it("every prefilled topic has a chip — the invariant the screen depends on", () => {
+    const result = weakTopicPrefill(["4.3 Electric circuits", "unknown"], servable)
+    const chips = new Set(servable.map((t) => t.topic))
+    for (const topic of result.selected) expect(chips.has(topic)).toBe(true)
+  })
+
+  it("no weak topics, or no servable topics at all, yields an empty selection rather than crashing", () => {
+    expect(weakTopicPrefill([], servable).selected).toEqual([])
+    // Nothing servable: every weak topic is dropped, none silently selected.
+    expect(weakTopicPrefill(["1.2 Motion"], [])).toEqual({ selected: [], dropped: ["1.2 Motion"] })
   })
 })
 

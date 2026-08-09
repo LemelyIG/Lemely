@@ -14,6 +14,7 @@ import {
   groupTopicsBySyllabusGroup,
   practiceAvailabilityView,
   practiceUnavailableMessage,
+  weakTopicPrefill,
 } from "./practiceData"
 
 /*
@@ -49,12 +50,19 @@ export function PracticeGenerator() {
   // the moment they arrive — a `ref` (not a `useEffect` on every render)
   // so a student who has already deselected a weak topic never has that
   // choice silently reverted by a background refetch.
+  //
+  // Only the weak topics that actually have a chip here are prefilled:
+  // `weakTopics` and `topics` are resolved independently server-side and the
+  // first is not a subset of the second, so prefilling verbatim would apply
+  // a filter with no visible control (see `weakTopicPrefill`). What was
+  // dropped is kept and shown rather than silently swallowed.
   const weakPrefilled = useRef(false)
+  const [droppedWeakTopics, setDroppedWeakTopics] = useState<string[]>([])
   if (!weakPrefilled.current && topicsQuery.data) {
     weakPrefilled.current = true
-    if (topicsQuery.data.weakTopics.length > 0) {
-      setSelectedTopics(new Set(topicsQuery.data.weakTopics))
-    }
+    const prefill = weakTopicPrefill(topicsQuery.data.weakTopics, topicsQuery.data.topics)
+    if (prefill.selected.length > 0) setSelectedTopics(new Set(prefill.selected))
+    if (prefill.dropped.length > 0) setDroppedWeakTopics(prefill.dropped)
   }
 
   const filters: PracticeFilterSet = {
@@ -237,6 +245,13 @@ export function PracticeGenerator() {
               ))}
             </fieldset>
           )}
+          {droppedWeakTopics.length > 0 ? (
+            <p className="text-dense-sm text-t3">
+              {droppedWeakTopics.length === 1 ? "One of your weak topics" : `${droppedWeakTopics.length} of your weak topics`}{" "}
+              ({droppedWeakTopics.join(", ")}) {droppedWeakTopics.length === 1 ? "isn't" : "aren't"} in
+              the question bank for this subject yet, so {droppedWeakTopics.length === 1 ? "it wasn't" : "they weren't"} pre-selected.
+            </p>
+          ) : null}
           {untopicedCount > 0 ? (
             <p className="text-dense-sm text-t3">
               {untopicedCount} more question{untopicedCount === 1 ? "" : "s"} in the bank {untopicedCount === 1 ? "isn't" : "aren't"} tagged to a topic — included automatically when no topic filter is set.
