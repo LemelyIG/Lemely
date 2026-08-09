@@ -22,6 +22,7 @@ from lemely.db.models.enums import (
     ConfidenceBand,
     DifficultySource,
     ExamBoard,
+    FriendshipStatus,
     MarkerSource,
     MembershipRole,
     NotificationType,
@@ -75,7 +76,7 @@ from lemely.db.models.quizzes import (
 from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
-from lemely.db.models.users import Device, ParentChildLink, User
+from lemely.db.models.users import Device, Friendship, ParentChildLink, User
 
 
 def import_all_models() -> None:
@@ -121,6 +122,8 @@ __all__ = [
     "FlashcardDeck",
     "FlashcardReview",
     "FlashcardReviewGrade",
+    "Friendship",
+    "FriendshipStatus",
     "MarkScheme",
     "MarkerSource",
     "MembershipRole",

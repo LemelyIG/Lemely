@@ -19,13 +19,23 @@ failing test is (D5.1 §0's own words).
 hand-written mirror nothing regenerates; a ``weekly_xp`` column would be a
 fifth.
 
-**Scopes.** Exactly three: ``class``, ``school``, ``global`` — see
-:class:`LeaderboardScope`. **The ``friends`` scope is deliberately absent.**
-It depends on P5.4's not-yet-existing friendship table; this module does not
-stub a fake branch for it, per the brief. Add it in P5.4 by adding a fourth
-:class:`LeaderboardScope` member and a fourth membership-subquery branch in
-:func:`_membership_subquery` — the ranking/opt-out/window machinery below is
-already scope-agnostic and needs no other change.
+**Scopes.** Four: ``class``, ``school``, ``global``, ``friends`` — see
+:class:`LeaderboardScope`. **``friends`` (P5.4 chunk A) reads the
+``friendships`` table directly**, in :func:`_membership_subquery`, rather
+than calling into :class:`~lemely.db.friend_repo.FriendService` — the same
+choice this module already made for ``class``/``school`` (it reads
+``ClassEnrollment``/``Seat`` directly rather than going through a
+class/seat service). The membership set is the union of "everyone the viewer
+has an *accepted* friendship with" and **the viewer's own id**: a student
+must appear on their own friends board (the other three scopes get this for
+free because class/school/global membership always includes the viewer by
+construction; ``friends`` does not, since nobody is their own friend row).
+A friends board with zero friends is therefore an honest board of one — the
+viewer, alone — never a fabricated ``LeaderboardUnavailableReason``: "too few
+friends to rank" is a *display* state S-29 handles by looking at
+``len(rows)``, not a backend refusal this module invents. The
+ranking/opt-out/window machinery below is unchanged and fully scope-agnostic;
+adding ``friends`` cost exactly one new membership-subquery branch.
 
 **Opt-out is enforced in the query's WHERE clause (D5.1 §9), never in
 Python.** :func:`_ranked_subquery` left-outer-joins ``student_profiles`` (a
@@ -72,12 +82,13 @@ from typing import TYPE_CHECKING, cast
 
 import sqlalchemy as sa
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 from lemely.db.models.engagement import XpEvent
-from lemely.db.models.enums import Role, SeatStatus
+from lemely.db.models.enums import FriendshipStatus, Role, SeatStatus
 from lemely.db.models.orgs import ClassEnrollment, Seat
 from lemely.db.models.profiles import StudentProfile
-from lemely.db.models.users import User
+from lemely.db.models.users import Friendship, User
 from lemely.db.xp_repo import DEFAULT_ZONE, civil_date_in_zone
 
 if TYPE_CHECKING:
@@ -104,11 +115,12 @@ def _utcnow() -> datetime:
 
 
 class LeaderboardScope(StrEnum):
-    """The three ranking scopes this module implements (D5.1; ``friends`` is P5.4's)."""
+    """The four ranking scopes this module implements (D5.1)."""
 
     class_ = "class"
     school = "school"
     global_ = "global"
+    friends = "friends"
 
 
 class LeaderboardUnavailableReason(StrEnum):
@@ -190,7 +202,11 @@ def _week_bounds(today: date) -> tuple[date, date]:
 
 
 def _membership_subquery(
-    scope: LeaderboardScope, *, class_id: uuid.UUID | None, school_id: uuid.UUID | None
+    scope: LeaderboardScope,
+    *,
+    class_id: uuid.UUID | None,
+    school_id: uuid.UUID | None,
+    viewer_id: uuid.UUID,
 ) -> Select[tuple[uuid.UUID]] | None:
     """The set of user ids eligible for ``scope``, or ``None`` for no restriction (``global``)."""
     if scope is LeaderboardScope.class_:
@@ -207,6 +223,28 @@ def _membership_subquery(
                 Seat.status != SeatStatus.revoked,
                 Seat.assigned_user_id.is_not(None),
             ),
+        )
+    if scope is LeaderboardScope.friends:
+        # Union of both directions of an *accepted* friendship, plus the
+        # viewer's own id (P5.4 chunk A). The other three scopes include the
+        # viewer for free because class/school/global membership is defined
+        # in terms of something the viewer already belongs to; a friendship
+        # row never names the viewer as their own counterparty, so it has to
+        # be added explicitly or a student would be unranked on their own
+        # friends board (D5.1 §9's own-totals guarantee, extended here to
+        # the fourth scope).
+        via_outgoing = select(Friendship.addressee_id).where(
+            Friendship.requester_id == viewer_id,
+            Friendship.status == FriendshipStatus.accepted,
+        )
+        via_incoming = select(Friendship.requester_id).where(
+            Friendship.addressee_id == viewer_id,
+            Friendship.status == FriendshipStatus.accepted,
+        )
+        self_row = select(sa.literal(viewer_id, type_=PG_UUID(as_uuid=True)))
+        return cast(
+            "Select[tuple[uuid.UUID]]",
+            sa.union(via_outgoing, via_incoming, self_row),
         )
     return None
 
@@ -300,8 +338,8 @@ class LeaderboardService:
         Args:
             viewer_id: The student viewing the board. Must resolve to a
                 ``users`` row with ``role=Role.student`` (D5.1 §10).
-            scope: ``class``, ``school`` or ``global`` (``friends`` is P5.4's
-                — see the module docstring).
+            scope: ``class``, ``school``, ``global`` or ``friends`` — see the
+                module docstring for how ``friends`` membership is built.
             subject_code: ``None`` for a total-XP board (all subjects); a
                 syllabus code to filter to a per-subject board. Total boards
                 ignore this entirely; per-subject boards filter
@@ -380,7 +418,9 @@ class LeaderboardService:
                         viewer_opted_out=viewer_opted_out,
                     )
 
-            membership = _membership_subquery(scope, class_id=class_uuid, school_id=school_uuid)
+            membership = _membership_subquery(
+                scope, class_id=class_uuid, school_id=school_uuid, viewer_id=viewer_uuid
+            )
             ranked = _ranked_subquery(
                 window_start=week_start,
                 window_end=week_end,

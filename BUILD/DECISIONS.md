@@ -4813,3 +4813,132 @@ top-N by a few XP. Left as-is deliberately — it self-corrects on the next
 request, a leaderboard is an inherently stale read, and a REPEATABLE READ
 transaction would be real cost for a discrepancy no user can perceive.
 Recorded so a future reader knows it was seen and judged, not missed.
+
+---
+
+## D5.6 — The friends model: a friend code, one canonical row per pair, and no tombstone (P5.4 chunk A)
+
+D5.1 governs P5.4 but says nothing about the friendship *table* — §10 lists
+what the spec deliberately leaves open and friends is not among the listed
+omissions, so these are P5.4's decisions to make and record.
+
+### 1. S-30's "add by username" is unbuildable as written
+
+UI spec S-30 asks for "add by username or invite link". **`users` has no
+`username` column** — checked against the model, not assumed. The two
+obvious substitutes are both wrong:
+
+- **Search by `display_name`.** Not unique, so a lookup is ambiguous, and
+  worse, it lets any student type a common name and enumerate strangers.
+- **Search by email.** This is precisely the leak D5.5 closed on the
+  leaderboard three days ago, re-opened in a new place.
+
+So: **`users.friend_code`**, `String(8)`, **nullable**, **unique**, minted
+lazily on first read by `FriendService.friend_code_for`. It serves both of
+S-30's affordances — type the code, or share a link containing it — and it is
+non-enumerable, which a display name is not.
+
+Details that are decisions, not incidentals:
+
+- **Alphabet `ABCDEFGHJKMNPQRSTUVWXYZ23456789`** (no `0/O`, no `1/I/L`). A
+  friend code is read aloud or typed off a screenshot, and those are exactly
+  the pairs where transcription fails.
+- **`secrets.choice`, never `random`.** The code is a lookup key handed to
+  strangers.
+- **Nullable, minted lazily, not backfilled.** A `NOT NULL` backfill would
+  have to invent a code for every teacher, parent and admin who will never
+  hold one.
+- **Honest limitation:** there is no rate limit on code lookup. 8 characters
+  from a 31-symbol alphabet is ~2^40 of space, which makes blind enumeration
+  impractical, but the real control for a guessing attack is rate limiting
+  and this build has none anywhere. Recorded rather than papered over.
+
+### 2. One row per pair, enforced by Postgres
+
+`friendships` stores one direction of *record* (`requester_id`,
+`addressee_id` — who asked whom is real information S-30 needs for "requests
+in and out") plus a second, order-independent representation of the same two
+parties: `pair_low`/`pair_high`, always the smaller/larger id.
+
+"A and B are friends" must be unique regardless of who asked, and a unique
+constraint on `(requester_id, addressee_id)` admits both A→B and B→A. The
+natural fix — a unique index on `(LEAST(...), GREATEST(...))` — is not
+available, because Postgres will not index a non-`IMMUTABLE` expression. So
+the canonical pair is materialised into two real columns, with
+`uq_friendships_pair` unique over them and **three CHECK constraints**
+(`ck_friendships_no_self`, `ck_friendships_pair_ordered`,
+`ck_friendships_pair_matches_parties`) making it impossible for the pair
+columns to disagree with the parties.
+
+This is **D5.1 §8's principle applied to a second table**: "idempotency is
+enforced by the database, not by care". `tests/test_friend_repo.py` pins it
+by inserting the reciprocal row *directly through the session* and asserting
+an `IntegrityError` — the guarantee is worthless if only the service layer
+respects it.
+
+The same structure answers the crossed-requests case: if both students press
+"add" before either sees the other's request, `FriendService.request`
+**accepts the existing reverse-pending row** rather than attempting a second
+insert the unique index would reject anyway. Two people who both ask to be
+friends must end up friends, not deadlocked on whoever called the API second.
+
+### 3. Two statuses, and no tombstone
+
+`friendshipstatus` has exactly `pending` and `accepted`. Decline, cancel and
+unfriend are all the same database act — deleting the row — so
+`FriendService.remove` is one method covering all three, and separate ones
+would have differed only in the word used in an error message.
+
+**Consequence, stated rather than discovered later:** a removed friendship
+leaves nothing behind, so a declined request can be re-sent immediately.
+That is deliberate (re-friending after a mistaken decline must work), and it
+means **P5 ships no block/mute**. Blocking is a moderation feature; it is not
+in MISSION §4's Phase-5 bullet, and S-30's "blocked/removed" state list is
+the only place in the spec that mentions it. Carrying it forward as a known
+limitation is honest; a `blocked` enum value with no enforcement anywhere
+would not be.
+
+### 4. Errors never confirm what the caller cannot see
+
+`accept` and `remove` raise the **same** `FriendRequestNotFoundError` whether
+the friendship does not exist or exists between two other people — and the
+requester trying to accept their own request gets that same error, not a
+distinct one. Same reasoning as P5.3's `LeaderboardClassAccessError`
+collapsing "no such class" into "not your class": an error that distinguishes
+the two is an existence oracle.
+
+### 5. Opt-out on a friends *list* is not opt-out on a *board*
+
+D5.1 §9 says an opted-out student is absent from every board, **including
+boards their own friends see**. The friends leaderboard honours that
+unchanged — the opt-out lives in `_ranked_subquery`'s WHERE clause and the
+new `friends` scope inherits it for free.
+
+A friends *list* is not a board. It has no ranks, and the relationship is
+mutual and consented to by both parties, unlike a leaderboard that shows a
+student to classmates who never opted into being compared with them. Removing
+an opted-out friend from the list would also make them **unremovable** — you
+cannot unfriend someone you cannot see.
+
+So `list_friends` keeps them, and returns `xp=None, streak=None,
+opted_out=True`. The UI states the fact instead of rendering a fabricated
+`0`, which UI spec §1.4 forbids. Note this is the *stricter* reading on the
+numbers and the *looser* one on presence, and both follow from the same
+question: what did this student actually consent to?
+
+### 6. Smaller calls made here
+
+- **The friends board includes the viewer's own id explicitly.** The other
+  three scopes get the viewer for free — class/school/global membership is
+  defined in terms of something the viewer already belongs to — but no
+  friendship row names the viewer as their own counterparty, so without the
+  extra union term a student would be unranked on their own board.
+- **An empty friends board is an honest board of one, not `unavailable`.**
+  S-29's "too few friends to rank" is a display state read off `len(rows)`;
+  a new `LeaderboardUnavailableReason` would push a presentation decision
+  into the query engine.
+- **`friends` XP is lifetime, not weekly.** S-30 asks for "XP and streak"
+  with no window, unlike S-29's explicitly weekly board.
+- **The leaderboard reads `friendships` directly** rather than calling
+  `FriendService`, matching what that module already does with
+  `ClassEnrollment`/`Seat`.

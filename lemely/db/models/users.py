@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lemely.db.base import Base
-from lemely.db.models.enums import Role, TimestampMixin
+from lemely.db.models.enums import FriendshipStatus, Role, TimestampMixin
 
 
 class User(TimestampMixin, Base):
@@ -41,6 +41,15 @@ class User(TimestampMixin, Base):
     phone: Mapped[str | None] = mapped_column(sa.String, nullable=True)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.false())
     locale: Mapped[str] = mapped_column(sa.String, nullable=False, server_default=sa.literal("en"))
+    friend_code: Mapped[str | None] = mapped_column(sa.String(8), nullable=True, unique=True)
+    """Migration ``0015`` (P5.4 chunk A). ``users`` has no ``username`` column,
+    so UI spec S-30's "add a friend by username or invite link" is
+    unbuildable as written; a friend code serves both (type it, or share a
+    link containing it). Nullable because it is minted lazily on first read
+    (:meth:`~lemely.db.friend_repo.FriendService.friend_code_for`) rather than
+    backfilled — a backfill would have to invent a code for every teacher,
+    parent and admin who will never use one. Unique so a lookup by code is
+    unambiguous."""
 
     # Relationships (back-references populated by child models)
     devices: Mapped[list[Device]] = relationship(
@@ -96,6 +105,78 @@ class ParentChildLink(TimestampMixin, Base):
     )
 
 
+class Friendship(TimestampMixin, Base):
+    """One friendship request/relationship between two students (P5.4, D5.1).
+
+    ``requester_id``/``addressee_id`` record who asked whom — one row, one
+    direction of record. ``pair_low``/``pair_high`` are a *second*, derived
+    representation of the same two parties, always the smaller/larger of the
+    two ids: the canonical, order-independent pair.
+
+    **Why both representations exist.** "A and B are friends" must be unique
+    regardless of who asked — a plain unique constraint on
+    ``(requester_id, addressee_id)`` would happily admit both an A→B and a
+    B→A row for the same pair. The natural fix, a unique index on
+    ``(LEAST(requester_id, addressee_id), GREATEST(requester_id,
+    addressee_id))``, is not available: Postgres cannot index the output of
+    ``LEAST()``/``GREATEST()`` because they are not ``IMMUTABLE`` over
+    arbitrary types in an index expression. Storing the canonical pair in two
+    real columns sidesteps that, and ``uq_friendships_pair`` (migration
+    ``0015``) makes the reciprocal row a rejected insert rather than a
+    leaderboard-style anomaly. Three ``CHECK`` constraints
+    (``ck_friendships_no_self``, ``ck_friendships_pair_ordered``,
+    ``ck_friendships_pair_matches_parties``) make it impossible for
+    ``pair_low``/``pair_high`` to disagree with ``requester_id``/
+    ``addressee_id`` — this is D5.1 §8's "idempotency is enforced by the
+    database, not by care" applied to a second table.
+
+    ``status``/``responded_at``: ``pending`` until the addressee accepts;
+    ``responded_at`` is set only on acceptance. There is no ``declined``
+    status — see :class:`~lemely.db.models.enums.FriendshipStatus`.
+    """
+
+    __tablename__ = "friendships"
+    __table_args__ = (
+        sa.CheckConstraint("requester_id <> addressee_id", name="ck_friendships_no_self"),
+        sa.CheckConstraint("pair_low < pair_high", name="ck_friendships_pair_ordered"),
+        sa.CheckConstraint(
+            "(pair_low = requester_id AND pair_high = addressee_id) OR "
+            "(pair_low = addressee_id AND pair_high = requester_id)",
+            name="ck_friendships_pair_matches_parties",
+        ),
+        sa.Index("uq_friendships_pair", "pair_low", "pair_high", unique=True),
+        sa.Index("ix_friendships_addressee_id_status", "addressee_id", "status"),
+        sa.Index("ix_friendships_requester_id_status", "requester_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    requester_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    addressee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[FriendshipStatus] = mapped_column(
+        sa.Enum(FriendshipStatus, name="friendshipstatus"),
+        nullable=False,
+        server_default=FriendshipStatus.pending.value,
+    )
+    pair_low: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    """``min(requester_id, addressee_id)`` — see class docstring."""
+    pair_high: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    """``max(requester_id, addressee_id)`` — see class docstring."""
+    responded_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """Set only when ``status`` transitions to ``accepted``; ``NULL`` while pending."""
+
+
 class Device(TimestampMixin, Base):
     """Session/device registry entry for a user.
 
@@ -132,4 +213,4 @@ class Device(TimestampMixin, Base):
     user: Mapped[User] = relationship("User", back_populates="devices")
 
 
-__all__ = ["Device", "ParentChildLink", "User"]
+__all__ = ["Device", "Friendship", "ParentChildLink", "User"]

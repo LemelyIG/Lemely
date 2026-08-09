@@ -45,10 +45,10 @@ from lemely.db.leaderboard_repo import (
 )
 from lemely.db.models.academic import Subject
 from lemely.db.models.engagement import XpEvent
-from lemely.db.models.enums import MembershipRole, Role, SeatStatus, XpSource
+from lemely.db.models.enums import FriendshipStatus, MembershipRole, Role, SeatStatus, XpSource
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat
 from lemely.db.models.profiles import StudentProfile
-from lemely.db.models.users import User
+from lemely.db.models.users import Friendship, User
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -175,6 +175,27 @@ def _enrol(sm: sessionmaker[Session], class_id: uuid.UUID, student_id: uuid.UUID
         session.add(ClassEnrollment(class_id=class_id, student_id=student_id))
 
 
+def _befriend(
+    sm: sessionmaker[Session],
+    a: uuid.UUID,
+    b: uuid.UUID,
+    *,
+    status: FriendshipStatus = FriendshipStatus.accepted,
+) -> None:
+    """Seed a friendship row directly, bypassing FriendService."""
+    low, high = (a, b) if a < b else (b, a)
+    with sm.begin() as session:
+        session.add(
+            Friendship(
+                requester_id=a,
+                addressee_id=b,
+                status=status,
+                pair_low=low,
+                pair_high=high,
+            )
+        )
+
+
 # A fixed moment (Cairo noon), clear of any day boundary.
 _NOON_UTC = datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC)  # 2026-08-05 is a Wednesday
 
@@ -199,7 +220,9 @@ class TestSqlGuard:
 
     @staticmethod
     def _membership_for(scope: LeaderboardScope) -> sa.Select[tuple[uuid.UUID]] | None:
-        return _membership_subquery(scope, class_id=uuid.uuid4(), school_id=uuid.uuid4())
+        return _membership_subquery(
+            scope, class_id=uuid.uuid4(), school_id=uuid.uuid4(), viewer_id=uuid.uuid4()
+        )
 
     @pytest.mark.parametrize("scope", list(LeaderboardScope))
     @pytest.mark.parametrize("subject_code", [None, "0625"])
@@ -523,6 +546,80 @@ class TestSchoolScope:
 
         result = service.board(viewer, LeaderboardScope.school)
         assert result.status == "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Friends scope (P5.4 chunk A)
+# ---------------------------------------------------------------------------
+
+
+class TestFriendsScope:
+    def test_friends_board_ranks_viewer_plus_accepted_friends_only(
+        self, pg_sessionmaker: sessionmaker[Session], service: LeaderboardService
+    ) -> None:
+        viewer = _seed_student(pg_sessionmaker)
+        friend = _seed_student(pg_sessionmaker)
+        stranger = _seed_student(pg_sessionmaker)
+        _befriend(pg_sessionmaker, viewer, friend)
+
+        _award(pg_sessionmaker, viewer, 10, date(2026, 8, 5))
+        _award(pg_sessionmaker, friend, 20, date(2026, 8, 5))
+        _award(pg_sessionmaker, stranger, 999, date(2026, 8, 5))
+
+        result = service.board(viewer, LeaderboardScope.friends)
+        ids = {row.user_id for row in result.rows}
+        assert ids == {viewer, friend}
+        assert stranger not in ids
+
+    def test_friends_board_includes_viewer_with_zero_friends(
+        self, pg_sessionmaker: sessionmaker[Session], service: LeaderboardService
+    ) -> None:
+        viewer = _seed_student(pg_sessionmaker)
+        _award(pg_sessionmaker, viewer, 5, date(2026, 8, 5))
+
+        result = service.board(viewer, LeaderboardScope.friends)
+        assert result.status == "ok"
+        ids = {row.user_id for row in result.rows}
+        assert ids == {viewer}
+
+    def test_friends_board_excludes_pending_request(
+        self, pg_sessionmaker: sessionmaker[Session], service: LeaderboardService
+    ) -> None:
+        viewer = _seed_student(pg_sessionmaker)
+        pending_friend = _seed_student(pg_sessionmaker)
+        _befriend(pg_sessionmaker, viewer, pending_friend, status=FriendshipStatus.pending)
+        _award(pg_sessionmaker, pending_friend, 50, date(2026, 8, 5))
+
+        result = service.board(viewer, LeaderboardScope.friends)
+        ids = {row.user_id for row in result.rows}
+        assert pending_friend not in ids
+
+    def test_friends_board_excludes_opted_out_friend(
+        self, pg_sessionmaker: sessionmaker[Session], service: LeaderboardService
+    ) -> None:
+        viewer = _seed_student(pg_sessionmaker)
+        opted_out_friend = _seed_student(pg_sessionmaker)
+        _befriend(pg_sessionmaker, viewer, opted_out_friend)
+        _opt_out(pg_sessionmaker, opted_out_friend, opted_out=True)
+        _award(pg_sessionmaker, opted_out_friend, 50, date(2026, 8, 5))
+
+        result = service.board(viewer, LeaderboardScope.friends)
+        ids = {row.user_id for row in result.rows}
+        assert opted_out_friend not in ids
+
+    def test_friends_board_works_regardless_of_request_direction(
+        self, pg_sessionmaker: sessionmaker[Session], service: LeaderboardService
+    ) -> None:
+        """The viewer may be either the requester or the addressee of the accepted row."""
+        viewer = _seed_student(pg_sessionmaker)
+        friend = _seed_student(pg_sessionmaker)
+        # friend is the requester, viewer is the addressee.
+        _befriend(pg_sessionmaker, friend, viewer)
+        _award(pg_sessionmaker, friend, 30, date(2026, 8, 5))
+
+        result = service.board(viewer, LeaderboardScope.friends)
+        ids = {row.user_id for row in result.rows}
+        assert friend in ids
 
 
 # Silence "unused import" for models only referenced via SQLAlchemy metadata
