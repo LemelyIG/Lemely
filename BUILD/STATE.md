@@ -1,12 +1,11 @@
 # BUILD STATE — single source of truth
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
-current_phase: 5            # Phase 4 complete, merged (321fdfc) and reported; Phase 5 not started
-last_updated: 2026-08-09T15:40:00Z   # **Thirty-ninth session — PHASE 4 IS COMPLETE. P4.12 is DONE.** `reports/phase-4/REPORT.md` written and committed (`3bc5b8b`), merged to develop (`321fdfc`), both branches pushed, PR #3 retitled "Phases 0-4" with a full Phase-4 section appended and **left open, not merged**. This file is pruned per MISSION 8b: Phase 4's ~2030 lines of task detail collapsed to the summary below (2206 -> 229 lines) — the rationale lives in the report, `BUILD/DECISIONS.md` (D4.1-D4.25) and this file's git history.
-#                                    **The report's numbers were measured this session, not carried forward from the chunk lines:** 2350 tests / 2344 passed / 6 skipped / 0 failed / **90.18% cov**; 122 axe route-states with **zero violations at any severity**; Lighthouse a11y floor 96; console errors 0; horizontal-scroll violations 0; 212 PNGs / 39 screen dirs; cross-phase compare **81 added / 0 removed / 78 changed / 53 unchanged**. Playwright 29/29. **No source file changed this session** — the tree is byte-identical to `bf74b89`, the tree the chunk-E gate run validated all 13 gates on, so that evidence genuinely covers the report's gate claim rather than being reused loosely.
-#                                    **Three things found while assembling the report rather than assumed, each already acted on.** (1) `gemini_spend_usd` had **drifted to 0.1612** against a real ledger reading **0.18429** — same hand-copied-mirror failure mode as the `SeedContract` drift P4.11 chunk A fixed. Corrected in place with a note; **re-read `outputs/gemini_spend.json` before quoting a spend figure, never this field.** (2) The visual compare **can never be pixel-clean**: the seed's `run_tag` is random per run, so every screen rendering a class name changes on every re-baseline. **`0 removed` is the number that carries the gate**; a nonzero `changed` count is not by itself a regression signal. (3) The 78 changed captures were verified by **opening representative pairs**, not inferred from the diffstat — and `T-06/default--1440.png` turned out to be the best evidence in the phase: three at-risk students side by side, each labelled with a different rule, which is the **first image in the project's history where all three MISSION at-risk rules fire at once** (rule 2 had no target column until P4.3 and no seeded scenario until P4.11).
-#                                    **Method note worth keeping:** `pytest --collect-only` still runs the coverage plugin unless given `--no-cov`, and it will clobber `.coverage` if you forget. The count above came from a clean serial `pytest` run captured before that.
-#                                    **Next: Phase 5 (engagement layer).** Read the Phase-4 limitations below before planning — XP has no schema at all (only the `completed_at` seam), students still cannot see announcements, and `notification_preferences` is written and read by nothing. All three are P5's and none of them has a helper waiting.
+current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
+last_updated: 2026-08-09T22:10:00Z   # **Fortieth session, continued — P5.3 (leaderboards backend) is COMPLETE.** Both chunks committed (`e5c945b` chunk A, `3a2c445` chunk B) after a full **foreground** `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, coverage 90.43%** (develop 90.18% — no drop). 4/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
+#                                    **Two defects were caught by reading the model/spec rather than trusting the orchestrator's brief, and both are the same failure mode.** D5.4: the brief scoped the school board on `school_memberships`, which is **staff-only** — no student ever has a row there, so the board would have been permanently empty and read as a data problem rather than a code defect. Students reach a school through `Seat`. D5.5: `display_names_for()` copied the codebase-wide `display_name or email` fallback, which is safe where the audience is one class but broadcasts a real contact address to the whole platform on the **global** board. Neither would have failed a gate. Together with D5.2 (`subject_id` vs `subject_code`) and D5.3 (the paper-seam dedupe key) that is **four in Phase 5 alone**: *a brief that paraphrases the schema or the spec from memory is not a source of truth about either — read the model, and where a brief restates a spec, the spec wins.*
+#                                    **Method note worth keeping:** `pytest --collect-only` still runs the coverage plugin unless given `--no-cov`, and it will clobber `.coverage` if you forget. Read the precise coverage figure off the run `check.sh` just did with `.venv/bin/coverage report --precision=2` rather than re-running pytest — a second run costs ~10 minutes and risks the concurrent-`.coverage` corruption noted below.
+#                                    **Next: P5.4** (friends backend + migration), which also owns the leaderboard's fourth scope. Read the P5.3 and P5.4 checklist lines before starting.
 gemini_spend_usd: 0.18429   # MEASURED from the real ledger `outputs/gemini_spend.json`
 # (cumulative_usd 0.18428610, updated 2026-08-09T12:01:17Z), not carried forward. This field
 # had drifted: it read **0.1612** at the start of the thirty-ninth session while the ledger —
@@ -269,35 +268,62 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             `flashcard_reviewed` is deliberately NOT deduped between two reviews of one card
             (repeat review is the point of SM-2); its control is the 60/day cap. Pinned by a
             test so nobody "fixes" it into the paper seam's shape.
-- [ ] doing — **P5.3** Leaderboards backend (chunk A committed `e5c945b`; **chunk B — the web
-      layer — is written and green on its own tests (97 passed) but NOT yet committed**: new
-      `lemely/web/routers/leaderboard.py` + `schemas_leaderboard.py`, `display_names_for()` on
-      the service, `leaderboard_opt_out` threaded through `student_profile_repo` → `me.py` →
-      `StudentProfileDTO`, `get_leaderboard_service()` in `deps.py`, router mounted in `app.py`,
-      plus `tests/test_web_leaderboard.py` (648 lines) and `tests/test_schemas_leaderboard.py`.
-      D5.4 and D5.5 are also written but uncommitted. Migration 0014 landed with chunk A.
-      Full `./scripts/check.sh` was running when this line was written — commit only on its
-      exit 0.) Remaining after chunk B: friends scope, which waits on P5.4's table.
-      Original brief:
-      weekly window, opt-out, own-row pinning. Grades must be structurally unreachable here.
-      **Read D5.1 §0, §6 and §9 first — they are binding and specific:**
-      - §0 requires a test asserting **over the emitted SQL** that the leaderboard query joins
-        no marking table (`attempts`, `question_results`, `papers`, `weakness_records`).
-        "A comment saying don't join marks here is not a control; a failing test is."
-      - §6: ISO week **Monday 00:00 → Sunday 23:59:59 Cairo**, matching the streak day. Sum
-        `xp_events` every time — **no denormalized `weekly_xp` column** (this build has been
-        burned four times now by a hand-written mirror nothing regenerates).
-      - §9: opt-out is `student_profiles.leaderboard_opt_out` (bool, not null, default false)
-        — **needs an additive migration 0014**, and must be enforced in the query's WHERE
-        clause, never filtered in the DTO layer.
-      Ready to build on: `XpService.total_xp` / `xp_breakdown` exist and are 100% covered;
-      `xp_events.subject_code` (migration 0013) is the per-subject axis. The friends board
-      depends on P5.4's table — build the other three scopes first and let friends land with
-      P5.4 rather than blocking on it.
-      The consuming screen already exists and is honestly empty:
-      `web/src/portals/student/screens/Standings.tsx` (`student/board`) → `GET /student/standings`,
-      whose `StandingsDTO` has no `boards` field yet. Subject standings there is already real.
+- [x] done — **P5.3** Leaderboards backend, both chunks. **Full `./scripts/check.sh` on the
+      committed tree: all 13 gates PASS, 0 skipped; coverage 90.43%** (develop 90.18% — no
+      drop). `routers/leaderboard.py` and `schemas_leaderboard.py` 100% covered,
+      `leaderboard_repo.py` 98%.
+      - [x] **chunk A** (`e5c945b`) — migration 0014 (`student_profiles.leaderboard_opt_out`)
+            + `lemely/db/leaderboard_repo.py`: the weekly window (D5.1 §6, Monday 00:00 →
+            Sunday 23:59:59 Cairo, summed from `xp_events` every time — no denormalized
+            column), class/school/global scopes, per-subject basis on
+            `xp_events.subject_code`, own-row pinning, opt-out in the query's WHERE clause.
+            The D5.1 §0 guard test compiles the emitted SQL and asserts it joins no marking
+            table. **D5.4 — the brief was wrong about the schema:** it specified the school
+            scope on `school_memberships`, which is *staff only* (`MembershipRole` has exactly
+            `teacher`/`school_admin`); no student ever has such a row, so the school board
+            would have been permanently empty and read as a data problem, not a defect.
+            Students reach a school through `Seat` (`school_id` + `assigned_user_id`, status
+            not `revoked`), as `class_repo`/`seat_repo` already do. Same failure mode as D5.2.
+            Two smaller catches in the same chunk: `RANK() OVER (ORDER BY xp DESC, user_id)`
+            broke ties into 1 and 2 — the tiebreak moved to the outer `order_by` so equal
+            effort reads as equal standing; and the opt-out join must be an **outer** join
+            with `coalesce(..., false)`, since a student who never onboarded has no
+            `student_profiles` row and an inner join would have erased exactly them.
+      - [x] **chunk B** (`3a2c445`) — `GET /api/student/leaderboard`
+            (`scope=class|school|global`, `basis=total|<subject code>`, `class_id`, `limit`),
+            student-role-only, in its own thin router; `leaderboard_opt_out` threaded through
+            `student_profile_repo` → `me.py` → `StudentProfileDTO`; `get_leaderboard_service()`
+            in `deps.py` + `reset_singletons()`.
+            **The DTOs are structurally answer-only (D5.1 §0)** — no field shaped like a mark,
+            grade or percentage *exists* on them, and `tests/test_schemas_leaderboard.py`
+            introspects the field sets, so a well-meaning future addition fails a test instead
+            of reaching the wire. `leaderboard_opt_out` is NOT NULL on the model, so an
+            explicit `null` in `PATCH /me/profile` is a 422, never a coerced `False`.
+            **D5.5 — the defect worth remembering.** `display_names_for()` first copied the
+            codebase-wide `display_name or email` fallback (`quiz_taking_repo` and siblings
+            each re-declare it). `users.display_name` is nullable at signup, so it fires for
+            real users. That fallback is safe where the audience is one class; the **global
+            board's audience is every student on the platform**, so the identical line
+            broadcasts a real contact address to strangers. The query no longer selects
+            `users.email` at all — unnamed students rank normally as `"Student"`. Pinned by a
+            test asserting over the **response body** that no `@` appears anywhere in it.
+            Errors: not-enrolled-in-the-requested-class is **403 and never an existence
+            oracle** (the service checks enrolment only, so "no such class" and "not your
+            class" are indistinguishable); school-scope-with-no-school is a **successful
+            `unavailable`** response, never a 404 and never a falsely empty board, which would
+            assert the untrue "nobody scored this week".
+            Judged and deliberately not fixed: `board()`'s three queries are not pinned to one
+            snapshot, so a concurrent award can make the viewer's row disagree with the top-N
+            by a few XP. Self-corrects next request; a leaderboard is an inherently stale read.
+      - **Not done here, by design:** the **friends** scope waits on P5.4's table, and the
+        consuming screen waits on P5.8. `web/src/portals/student/screens/Standings.tsx`
+        (`student/board`) is still on `GET /student/standings`, whose `StandingsDTO` has no
+        `boards` field — nothing frontend changed this task.
 - [ ] todo — **P5.4** Friends backend + migration (requests in/out, accept, remove, privacy).
+      **Also lands the leaderboard's fourth scope**: add `LeaderboardScope.friends` to
+      `lemely/db/leaderboard_repo.py` once the friendships table exists. Everything else it
+      needs is built — follow the existing `_membership_subquery` shape, keep the opt-out in
+      the WHERE clause, and extend the D5.1 §0 emitted-SQL guard test to the new scope.
 - [ ] todo — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
       auto-populated official CAIE session dates for the exam calendar.
 - [ ] todo — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable transport,

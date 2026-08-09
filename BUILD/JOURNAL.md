@@ -1525,3 +1525,28 @@ none has a helper waiting from Phase 3 or 4.
   cannot pass vacuously. Caught a phantom coverage gap that was just me editing a file mid-run.
 - **Next:** P5.3 leaderboards. Its hardest requirement is D5.1 §0's test asserting over the
   *emitted SQL* that no marking table is reachable, plus migration 0014 for `leaderboard_opt_out`.
+
+## 2026-08-09 (fortieth session, continued) — P5.3 leaderboards backend, done
+
+- **Did:** committed P5.3 chunk B (`3a2c445`) — `GET /api/student/leaderboard` over the chunk-A
+  query engine, plus the `leaderboard_opt_out` control on the student profile. Verified before
+  committing rather than after: a full foreground `./scripts/check.sh` came back **all 13 gates
+  PASS, 0 skipped**, coverage **90.43%** against develop's 90.18%. P5.3 is now done end to end;
+  4/12 Phase-5 tasks complete.
+- **Learned, and it is the fourth instance of one pattern:** D5.4 and D5.5 were both defects the
+  gates could not have caught. The school scope was briefed onto `school_memberships` — a
+  staff-only table, so the board would have been silently, permanently empty for every real
+  student and looked like missing data. And `display_names_for()` inherited the codebase's
+  `display_name or email` fallback, which is fine when a class sees its own quiz results and is
+  an email leak to strangers on a *global* board. With D5.2 and D5.3 that is four in this phase:
+  **a brief paraphrasing the schema or the spec is not a source of truth about either.** Neither
+  an empty board nor a leaked address is a test failure; only reading the model catches them.
+- **Also worth not re-deriving:** read the coverage number off the run `check.sh` just did
+  (`.venv/bin/coverage report --precision=2`). Re-running pytest to get it costs ~10 minutes and
+  risks the concurrent-`.coverage` corruption already recorded in STATE.
+- **Judged and not fixed:** `board()`'s three queries are not snapshot-pinned, so a concurrent
+  award can put the viewer's own row a few XP out of step with the top-N. A leaderboard is an
+  inherently stale read and it self-corrects next request; recorded in D5.5 so a later reader
+  knows it was seen, not missed.
+- **Next:** P5.4 — friends backend + migration, which also lands the leaderboard's fourth scope
+  (`LeaderboardScope.friends`) and must extend the D5.1 §0 emitted-SQL guard test to cover it.
