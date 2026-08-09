@@ -1428,6 +1428,17 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         - `bare` → **`generated: false`** (no plan row this ISO week). Seed does nothing; the
           state is the *absence* of a generate call, which is why it cannot share an account
           with the refusal.
+        **Registry `ready` predicates, read off the built screens (sixteenth session) — the
+        four S-24 branches are distinguishable by heading text, so no test id is needed:**
+        `notGenerated` → `"No plan for this week yet"` (`StudyPlanWeek.tsx:228`); `refused`
+        → `"Not enough to plan from yet"` (`studyPlanData.ts:57`, the `no_signal` arm);
+        the real-but-empty week → `"Nothing scheduled this week"` (`:288`); the populated
+        week → `WeekHeader` (`:272`). The session bindings to reuse are
+        `practiceActiveSession`/`practiceSettledSession`/`practiceBareSession` at
+        `audit.mjs:932-946`, and `practiceSubject` (`:947`) is the subject code for the path.
+        The two stale strings are confirmed verbatim at `audit.mjs:71-73` (header comment)
+        and `:2162-2164` (a runtime `log()` call, **not** a comment — it prints the false
+        claim to the operator, so fixing only the comment leaves the lie in the output).
         **Still undecided and cheaper to decide at write time:** the week-fully-complete state
         chunk A renders needs every session of a populated week `completed_at`-stamped, which
         `active` cannot also demonstrate. Either add a fourth account or capture it as a second
