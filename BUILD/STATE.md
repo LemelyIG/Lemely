@@ -1887,7 +1887,42 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `practice.students.bare` (no weakness rows → the honest `no_weaknesses` refusal,
         never an invented set). Without the inverse the assertion passes on a screen that
         ignores weaknesses entirely.
-      - [ ] chunk D — **the two carried items** (item 3).
+      - [ ] chunk D — **the two carried items** (item 3). **NEXT UP.**
+        **BLOCKING DESIGN QUESTION found by measurement 2026-08-09 (thirty-third session), after
+        chunks B/C landed — resolve this FIRST, it decides where the new account goes.** The
+        earlier scoping says "additive only, a new account, do not mutate `declining`/`inactive`/
+        `control`". That is necessary but **not sufficient**: a fourth student enrolled in the
+        **seeded class** breaks assertions in a spec that is not the one under test.
+        Measured, not assumed — `web/e2e/teacher-journey.spec.ts` hardcodes the roster's derived
+        numbers: `:48` `toContainText("69%")` on the overview card, `:58`
+        `classesCells.nth(3)` = `"69%"` (average mark) and `:59` `classesCells.nth(5)` = `"2"`
+        (at-risk count). A fourth grade-bearing student moves the average off 69% and the count
+        off 2. `scripts/seed_e2e.py:354`'s own comment already names this trap for the
+        review-queue item and dodges it by reusing an existing attempt — the same trap, one
+        scenario later.
+        **The other two existing at-risk assertions are tolerant and that asymmetry is the useful
+        part:** `at-risk-flags.spec.ts` reads `reasonsById.get(...)`/`.has(...)` per student
+        rather than comparing the whole list, so an *additional* flagged student does not break
+        it; its one exhaustive assertion is `:56`, `?reason=inactive` → exactly
+        `[inactive.userId]`, which a below-target student does not join as long as its attempt is
+        recent. And the T-06 UI test asserts presence/absence per name, also tolerant.
+        **So the choice is between (a) enrolling in the seeded class and updating
+        `teacher-journey.spec.ts`'s three hardcoded numbers — an edit to an unrelated spec, and
+        the numbers must then be re-derived honestly, not fitted to whatever comes out — and
+        (b) a SECOND class owned by the same teacher**, which leaves every class-scoped number
+        untouched while still making the student visible to `/api/teacher/at-risk` (teacher-scoped
+        across own classes).
+        **(b) looks right but is NOT yet safe — measure this before writing any code:** (i) is
+        `teacher-journey.spec.ts:48`'s overview "69%" class-scoped or teacher-wide? If
+        teacher-wide, (b) breaks it too and (a)'s honesty problem returns. (ii) `classesCells.nth(3)`
+        indexes the classes table by **cell position**, so a second class row is only safe if the
+        seeded class still sorts first — check the ordering of the classes list, and name the new
+        class so it cannot sort ahead of `"P3.10 Seed Class {run_tag}"`. Both are one query /
+        one read; neither should be guessed.
+        Everything else in the scoping below is confirmed accurate, including both docstring
+        defects, which were re-read this session: `scripts/seed_e2e.py:20-23` (the false "cannot
+        fire in Phase 3" paragraph) and `:18` (labels `inactive` "rule 2"; `lemely/core/at_risk.py`
+        orders declining/below-target/inactivity, so it is rule **3**).
         **SCOPED READ-ONLY 2026-08-09 (thirtieth session) while chunk B's gate ran — do not
         re-derive, and note the first line corrects a wrong path this file has carried since
         the twenty-third session.** The stale docstring is **`scripts/seed_e2e.py:21-24`**, not

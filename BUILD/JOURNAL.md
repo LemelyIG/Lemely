@@ -1403,3 +1403,32 @@ the thing to do before writing the seed, not after.
   `audit.mjs`, plus its three inherited traps: `waitForText` strings are regexes, S-05 must not
   be identified by a phrase `PlacementInvite` also renders, and the onboarding wizard's step is
   component state so S-02 cannot be deep-linked.
+
+## 2026-08-09 — thirty-third session (P4.11 chunks B and C both landed green)
+
+- **Did:** committed **chunk B** (`32cd131`) after its 24-minute foreground gate run came back
+  13/13 green, then wrote, inverted, gated and committed **chunk C** (`0a78b3b`, also 13/13,
+  0 skipped, on its own separate run). Both halves of MISSION §4's named Phase-4 acceptance now
+  exist as real Playwright behaviour: onboard → placement → plan (5 legs), and
+  practice-demonstrably-targets-a-seeded-weakness (3 tests). Attribution for both was checked by
+  mtime against the run window rather than assumed.
+- **Learned (1):** **one round of product inversion is not automatically enough.** Chunk C's
+  round 1 broke three sites and all three tests went red — which looks like proof — but test 1
+  had failed on its *shortfall* wait, several assertions before the one carrying the word
+  *demonstrably*. The break was legitimate (no prefill → unfiltered preview → 248 match a
+  request for 10 → the screen honestly renders "N match" instead of the shortfall panel); the
+  *inference* was not. Round 2 pointed the prefill at a servable non-weak topic so the panel
+  still rendered, and the targeting assertion then failed on its own terms while test 3 stayed
+  green. **Check which assertion the inversion actually reached, not just that the test is red.**
+- **Learned (2):** the scoping for chunk D was necessary but not sufficient. "Additive only, a
+  new account" does not cover the fact that a fourth *enrolled* student moves the seeded class's
+  average off the `"69%"` and its at-risk count off the `"2"` that `teacher-journey.spec.ts`
+  hardcodes at `:48`/`:58`/`:59`. `seed_e2e.py:354` already names this exact trap for the
+  review-queue item and dodges it by reusing an attempt. Recorded in STATE as a design question
+  with the two candidate answers and the two measurements that decide between them.
+- **Next:** P4.11 chunk D — resolve the enrolled-vs-second-class question by measuring first
+  (is the overview "69%" class-scoped or teacher-wide; does the classes table's `nth()` indexing
+  survive a second row), then the seeded below-target scenario plus the two `seed_e2e.py`
+  docstring defects (`:20-23` false, `:18` mis-numbered). Then chunk E, whose blocking finding —
+  the seeded stems are pure ASCII, so item 6's screenshot inspection would pass vacuously — is
+  already recorded and must not be budgeted as a pure evidence pass.
