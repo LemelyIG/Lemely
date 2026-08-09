@@ -319,11 +319,23 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
         consuming screen waits on P5.8. `web/src/portals/student/screens/Standings.tsx`
         (`student/board`) is still on `GET /student/standings`, whose `StandingsDTO` has no
         `boards` field — nothing frontend changed this task.
-- [ ] todo — **P5.4** Friends backend + migration (requests in/out, accept, remove, privacy).
+- [ ] **doing** — **P5.4** Friends backend + migration (requests in/out, accept, remove, privacy).
       **Also lands the leaderboard's fourth scope**: add `LeaderboardScope.friends` to
       `lemely/db/leaderboard_repo.py` once the friendships table exists. Everything else it
       needs is built — follow the existing `_membership_subquery` shape, keep the opt-out in
       the WHERE clause, and extend the D5.1 §0 emitted-SQL guard test to the new scope.
+      - [ ] **chunk A** — migration 0015 (`friendships` + `users.friend_code`) +
+            `lemely/db/friend_repo.py` + `LeaderboardScope.friends` + tests.
+      - [ ] **chunk B** — `routers/friends.py` + `schemas_friends.py` + deps + tests.
+      Design fixed before implementation (to be recorded as D5.6): **`users` has no
+      `username` column**, so S-30's "add by username" is unbuildable as written; a
+      nullable-unique `users.friend_code` (8 chars, ambiguity-free alphabet, minted lazily)
+      serves both the typed code and the invite link, and avoids the two bad alternatives —
+      searching by `display_name` (not unique, and lets a student enumerate strangers) and
+      searching by email (the exact leak D5.5 killed). One row per pair, canonicalised into
+      `pair_low`/`pair_high` with a unique index + three CHECK constraints, so a duplicate or
+      reciprocal friendship is a database error rather than a service-layer convention
+      (D5.1 §8's reasoning applied to a second table).
 - [ ] todo — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
       auto-populated official CAIE session dates for the exam calendar.
 - [ ] todo — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable transport,
