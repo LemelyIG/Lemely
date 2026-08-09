@@ -1237,6 +1237,40 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
           `reports/.scratch` (D3.2). Never commit into a previous phase's report dir.
 - [ ] todo — **P4.10** Frontend S-24/S-25 (study-plan week view + session detail), replacing the
       current placeholder `StudyPlan.tsx`.
+      **Scoped by measurement 2026-08-10 (eighth session), enough to start cold — do not
+      re-derive:**
+      - **`StudyPlan.tsx` (140 lines) is wired to the WRONG backend.** It calls the *legacy*
+        `GET/POST /api/student/plan` via `useStudyPlan`/`usePostStudyPlan` in
+        `lib/hooks/useStudentApi.ts` — the pair `routers/student.py:790/814` rebuilds from
+        scratch on every request and never persists. The real backend is P4.7 chunk C's
+        `/api/student/study-plan` (`routers/study_plan.py`, three routes: `GET /{subject_code}`,
+        `POST ""` 201, `POST /sessions/{id}/complete`), landed and route-tested (D4.13).
+        This is a rewrite onto a different API, not a retrofit.
+      - **Nothing frontend-side exists for it:** no `studyPlanTypes.ts`, no `useStudyPlanApi.ts`
+        — the identical gap P4.9 chunk B hit for flashcards. Mirror `practiceTypes.ts` +
+        `usePracticeApi.ts` (one hook per endpoint, no `fallback` to `request()`).
+      - **The route must gain a subject.** Today it is a bare `{ path: "plan" }`
+        (`portals/student/index.tsx:242`) but the new backend is **subject-scoped**. Follow the
+        established P4.9 shape (`/student/practice/:subjectCode`,
+        `/student/flashcards/:subjectCode`). S-25 needs its own route for the session detail.
+      - **The honesty work is the whole point, and D4.13 already built the wire contract for
+        it:** `CurrentStudyPlanDTO {generated, plan}` makes three states distinguishable that
+        used to arrive identically as an empty `sessions` list — *no plan generated this ISO
+        week* (`generated: false`), *generated and honestly refused* (`available: false`,
+        `reason: "no_signal"`), and *a real plan that legitimately has no sessions*. **None of
+        the three is a 404.** Render all three distinctly or D4.13's substance dies at the
+        screen. `activityType` and `date` are on the wire; `hours` is a unit conversion of
+        `duration_minutes`, not a separate fact.
+      - **XP is P5.** `completed_at` is the seam (P4.7 chunk B); build no points/streak, and do
+        not put an invented XP number on the session-complete affordance (D4.17's precedent —
+        same call was already made for S-23).
+      - Gate 8 applies (this is a `web/` diff). Expect chunk C-shaped work: registry entries for
+        **each of the three states above**, not just the populated week. P4.9's lesson stands —
+        **verify captures by listing `reports/.scratch/screens/<id>/`, never from the exit
+        code** (D4.18).
+      - Legacy cleanup lands here or in P4.11: the `/api/student/plan` GET+POST pair,
+        `useStudyPlan`/`usePostStudyPlan`, and `POST /api/student/onboarding` (left alive by
+        P4.8 chunk A precisely so a frontend chunk would not carry an unrelated backend change).
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
