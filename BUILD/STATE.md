@@ -1388,7 +1388,38 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         4. `resolveCrumb`'s `planMatch` arm is `^/student/plan/([^/]+)$` — **anchored, so the
            new session route falls through to the bare "Home" catch-all** exactly as the
            chunk-A defect did. Add the arm and its inverse test in the same commit.
-      - [ ] chunk C — gate 8: audit-registry entries for **each** state (not just the populated
+      - [~] chunk C — **written and committed (`b444818`); full gate run IN FLIGHT** (nineteenth
+        session, `setsid nohup`, log `/tmp/p410c_gate1.log`). **Do not edit any gated file while
+        it is in flight.** Everything the four scoping sessions mapped was implemented as
+        recorded; nothing re-derived. What landed:
+        `scripts/seed_e2e.py` gains a `study_plan` block (the four calls, each **asserted** not
+        trusted) + a `studyPlan` payload key; `build_result_payload` grows one additive param and
+        `tests/test_seed_e2e.py` pins the new shape (60 tests green). `web/scripts/audit.mjs`
+        gains **6 entries / 6 states** for S-24/S-25 plus the `planCompleteSession` binding, and
+        **both** stale `/student/plan` exclusion strings are fixed — the header comment *and* the
+        runtime `log()`, which is the one an operator actually reads.
+        **Validated against the live stack BEFORE gating, which is the part worth keeping:**
+        running the seed directly (exit 0) proved all four assertions in ~1 minute instead of
+        discovering a wrong assumption ~25 minutes into a gate run. Measured: **`active`'s
+        populated week is 7 sessions, `placement.students.completed` is 7 of 7 complete**, and
+        the provable-rationale session is `1 Motion, forces and energy`. Both `ready` predicates
+        read those seeded counts (`0 of 7` / `7 of 7`) rather than a loose `\d+ of \d+`, so a
+        week that came back short or only partly complete **fails the gate instead of
+        screenshotting cleanly under the wrong name** — that was the one failure mode here that
+        would otherwise still render perfectly.
+        S-25's default entry asserts the weak-topic *sentence*, not the `"Why this is in your
+        plan"` heading that all three rationale arms share — matching the heading would have
+        passed on the honest-absence arm and named the capture for a state it is not.
+        **Legacy cleanup deliberately split, decision to honour:** the dead
+        `useStudyPlan`/`usePostStudyPlan` hooks are deleted here (frontend, zero callers,
+        typecheck + oxlint clean), but the `GET/POST /api/student/plan` pair and
+        `POST /api/student/onboarding` are **left live and still route-tested** — deleting them
+        inside this chunk would make a gate failure unattributable, and it also removes the
+        former-IDOR regression pins at `tests/test_authz_matrix.py:425-440`, which deserves its
+        own commit. **That is the remaining P4.10 work after this gate run.**
+        *(Original chunk-C scope + the four sessions' read-only measurements follow, kept
+        because the gate run has not yet confirmed them end-to-end.)*
+        gate 8: audit-registry entries for **each** state (not just the populated
         week), E2E seed, screenshots — verified by listing `reports/.scratch/screens/<id>/`,
         never from the exit code (D4.18). Plus the legacy cleanup above.
         **Measured read-only 2026-08-09 (fifteenth session) while the A+B gate run was in
