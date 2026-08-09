@@ -22,6 +22,7 @@ from lemely.db.notification_prefs_repo import (
     UNSET,
     NotificationPreferencesRow,
     NotificationPreferencesService,
+    _UnsetType,
 )
 from lemely.db.student_profile_repo import (
     ConfidenceRatingRow,
@@ -216,6 +217,7 @@ def _profile_to_dto(row: StudentProfileRow) -> StudentProfileDTO:
         hasExternalLessons=row.has_external_lessons,
         weeklyStudyHours=row.weekly_study_hours,
         onboardingCompletedAt=row.onboarding_completed_at,
+        leaderboardOptOut=row.leaderboard_opt_out,
     )
 
 
@@ -284,9 +286,19 @@ def patch_student_profile(
     Only fields present in the request body are changed (``payload.model_fields_set``,
     the same mechanism ``put_notification_preferences`` uses); an omitted
     field is left as-is, an explicit ``null`` clears it (every field here is
-    skippable per S-02).
+    skippable per S-02) -- except ``leaderboardOptOut``, which is not
+    nullable on the model (D5.1 §9): an explicit ``null`` for it is a 422,
+    not a silent no-op or a coerced ``False``.
     """
     provided = payload.model_fields_set
+    leaderboard_opt_out: bool | _UnsetType = UNSET
+    if "leaderboardOptOut" in provided:
+        if payload.leaderboardOptOut is None:
+            raise HTTPException(
+                status_code=422,
+                detail="leaderboardOptOut cannot be null; omit it to leave unchanged",
+            )
+        leaderboard_opt_out = payload.leaderboardOptOut
     try:
         row = service.update_profile(
             auth.user_id,
@@ -301,6 +313,7 @@ def patch_student_profile(
             weekly_study_hours=(
                 payload.weeklyStudyHours if "weeklyStudyHours" in provided else UNSET
             ),
+            leaderboard_opt_out=leaderboard_opt_out,
         )
     except StudentProfileValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

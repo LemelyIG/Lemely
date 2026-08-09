@@ -71,6 +71,9 @@ class StudentProfileRow:
     has_external_lessons: bool | None
     weekly_study_hours: int | None
     onboarding_completed_at: datetime | None
+    leaderboard_opt_out: bool
+    """D5.1 §9: mirrors :attr:`~lemely.db.models.profiles.StudentProfile.leaderboard_opt_out`
+    verbatim -- ``False`` unless the student has explicitly opted out."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +166,7 @@ class StudentProfileService:
         school_name: str | None | _UnsetType = UNSET,
         has_external_lessons: bool | None | _UnsetType = UNSET,
         weekly_study_hours: int | None | _UnsetType = UNSET,
+        leaderboard_opt_out: bool | _UnsetType = UNSET,
     ) -> StudentProfileRow:
         """Partially update ``user_id``'s profile. Keywords left at :data:`UNSET` are untouched.
 
@@ -170,6 +174,14 @@ class StudentProfileService:
         first-ever PATCH from a brand-new user still lands. An explicit
         ``None`` clears a field (every field here is nullable/skippable per
         S-02); omission (:data:`UNSET`) leaves it as-is.
+
+        ``leaderboard_opt_out`` is boolean, never nullable (D5.1 §9 — the
+        column itself is ``NOT NULL``), so it takes no ``None`` branch: an
+        explicit request either sets it ``True``/``False`` or omits it
+        entirely. Losslessly reversible — no XP history is touched by this
+        call, so flipping it back restores the exact previous ranked
+        position (``lemely.db.leaderboard_repo`` reads the flag live on
+        every board, never a snapshot).
 
         Raises:
             StudentProfileValidationError: ``weekly_study_hours`` is supplied
@@ -211,6 +223,8 @@ class StudentProfileService:
                 row.has_external_lessons = has_external_lessons
             if not isinstance(weekly_study_hours, _UnsetType):
                 row.weekly_study_hours = weekly_study_hours
+            if not isinstance(leaderboard_opt_out, _UnsetType):
+                row.leaderboard_opt_out = leaderboard_opt_out
             session.flush()
             return _profile_row(row)
 
@@ -500,6 +514,7 @@ def _profile_row(model: StudentProfile) -> StudentProfileRow:
         has_external_lessons=model.has_external_lessons,
         weekly_study_hours=model.weekly_study_hours,
         onboarding_completed_at=model.onboarding_completed_at,
+        leaderboard_opt_out=model.leaderboard_opt_out,
     )
 
 

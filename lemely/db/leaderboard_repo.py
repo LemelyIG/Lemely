@@ -81,7 +81,7 @@ from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, civil_date_in_zone
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from zoneinfo import ZoneInfo
 
     from sqlalchemy import Select
@@ -90,6 +90,12 @@ if TYPE_CHECKING:
 #: Default number of ranked rows a board returns (S-29 does not fix a number;
 #: this is a generous, still-bounded default — callers may pass their own).
 DEFAULT_TOP_N = 50
+
+#: Shown in place of a student who has never set a ``display_name`` (it is
+#: nullable at signup). Never their email — see
+#: :meth:`LeaderboardService.display_names_for` for why a leaderboard cannot
+#: reuse the ``display_name or email`` fallback the rest of the codebase uses.
+ANONYMOUS_DISPLAY_NAME = "Student"
 
 
 def _utcnow() -> datetime:
@@ -427,6 +433,38 @@ class LeaderboardService:
                 viewer_opted_out=viewer_opted_out,
             )
 
+    def display_names_for(self, user_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """Batch-resolve display identity for a board.
+
+        P5.3 chunk B's addition, not part of the ranking machinery above: it
+        plays no part in :func:`_ranked_subquery`/:func:`_membership_subquery`
+        (the SQL the guard test in ``tests/test_leaderboard_repo.py`` compiles
+        and inspects is unchanged by this method) and reads only ``users``.
+        Lives here rather than as a raw query in the router because the web
+        layer talks to services, never a SQLAlchemy session, in this
+        codebase's layering.
+
+        **It deliberately does NOT fall back to ``email``**, unlike the
+        ``display_name or email`` pattern that ``lemely.db.quiz_taking_repo``
+        and friends re-declare locally. That fallback is defensible where it
+        is used — a quiz result list is seen only by the class that sat the
+        quiz. A leaderboard is not that: ``LeaderboardScope.global_`` shows
+        every ranked student on the platform to every other student, so the
+        same fallback would broadcast the real email address of every user
+        who never set a display name (it is nullable at signup) to an
+        audience of strangers. D5.1 §0 makes the leaderboard the one public
+        surface in this product and reasons about it from exactly that
+        premise; leaking a contact address there would undercut it just as
+        surely as leaking a mark, and it is not information the ranking needs.
+        Unnamed students therefore rank normally under a neutral placeholder.
+        """
+        ids = list(user_ids)
+        if not ids:
+            return {}
+        with self._sessionmaker() as session:
+            rows = session.execute(select(User.id, User.display_name).where(User.id.in_(ids))).all()
+        return {row.id: (row.display_name or ANONYMOUS_DISPLAY_NAME) for row in rows}
+
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
     """Coerce a str/UUID to :class:`uuid.UUID`, raising ``ValueError`` if invalid."""
@@ -439,6 +477,7 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "ANONYMOUS_DISPLAY_NAME",
     "DEFAULT_TOP_N",
     "LeaderboardClassAccessError",
     "LeaderboardError",

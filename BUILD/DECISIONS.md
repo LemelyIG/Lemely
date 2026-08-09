@@ -4725,3 +4725,91 @@ repeatable act the SM-2 scheduler depends on; two reviews of one card correctly
 award twice. Its anti-farming control is the 60-cards/day cap in D5.1 §3, not
 dedupe. `tests/test_web_xp_awards.py::test_flashcard_reviewed_two_reviews_of_the_same_card_both_award`
 pins that reading so a later reader does not "fix" it into the paper seam's shape.
+
+---
+
+## D5.4 — Students belong to a school through a `Seat`, not a `SchoolMembership` (P5.3 chunk A)
+
+The P5.3 brief specified the school leaderboard scope as "students holding a
+`school_memberships` row for the viewer's school". **That is not what the table
+means.** `SchoolMembership`'s docstring says "Staff member (teacher or
+school_admin) association with a school", and `MembershipRole` has exactly two
+values — `teacher` and `school_admin`. **No student ever gets a
+`SchoolMembership` row.**
+
+Scoping the school board on that table would have compiled, typechecked, passed
+lint, and returned an empty board for every real student forever — the school
+scope would have reported itself permanently "unavailable" and looked like a
+data problem rather than a code defect.
+
+Students are linked to a school through **`Seat`** (`seats.school_id` +
+`seats.assigned_user_id`, status not `revoked`), which is how
+`lemely/db/class_repo.py` and `lemely/db/seat_repo.py` already resolve the same
+question. The leaderboard's school scope uses that.
+
+**This is the same failure mode as D5.2** (`subject_id` vs `subject_code`) and
+worth naming as a pattern rather than a one-off: *an orchestrator brief that
+paraphrases the schema from memory is not a source of truth about the schema.*
+D5.3 recorded the spec-level version of this ("where a brief restates a spec,
+the spec wins"); this is the model-level version. **Read the model before
+keying a query on it.** Both times the implementing agent caught it by reading
+the table rather than trusting the brief, and both times the brief was wrong in
+a way that no gate would have caught — an empty board is not a test failure.
+
+### Two smaller calls made in the same chunk
+
+- **`RANK()` ties.** The first cut ranked with
+  `RANK() OVER (ORDER BY xp DESC, user_id ASC)`. Postgres decides ties over the
+  *whole* `ORDER BY` tuple, so two students on equal XP received ranks 1 and 2
+  instead of 1 and 1. The tiebreak now lives in the outer query's `order_by`,
+  where it fixes display order without touching rank values. D5.1 §0's spirit
+  applies: equal effort must read as equal standing.
+- **The opt-out join must be an outer join.** `student_profiles` rows are
+  created on first touch, so a student who never completed onboarding has no
+  row. An inner join for the `leaderboard_opt_out` filter would have erased
+  exactly those students from every board — the null-safe
+  `coalesce(leaderboard_opt_out, false) = false` predicate treats "no profile"
+  as "has not opted out", which is the only correct reading. Pinned by a test.
+
+---
+
+## D5.5 — A leaderboard never falls back to a student's email (P5.3, from adversarial review)
+
+The rest of this codebase resolves display identity as `display_name or email`
+— `lemely/db/quiz_taking_repo._display_name` and several siblings each
+re-declare it locally. P5.3's `LeaderboardService.display_names_for()` copied
+that pattern, and the adversarial review caught it.
+
+`users.display_name` is **nullable at signup** (`lemely/web/routers/auth.py`),
+so the fallback fires for real users, not hypothetical ones. The reason it is
+safe everywhere else is audience: a quiz result list is seen only by the class
+that sat the quiz. **A leaderboard is the one surface in this product where
+that assumption does not hold.** `LeaderboardScope.global_` shows every ranked
+student on the platform to every other student, so the identical line
+broadcasts a real contact address to an audience of strangers.
+
+D5.1 §0 reasons about the leaderboard from exactly this premise — it is the one
+public surface, which is why it must not carry a mark. A contact address is not
+a mark, so this does not violate §0 literally; it undercuts the same premise
+§0 protects, and it is not information a ranking needs in order to rank.
+
+**Decision: an unnamed student ranks normally under a neutral placeholder**
+(`ANONYMOUS_DISPLAY_NAME = "Student"`). Anonymity is not exclusion — they keep
+their rank, their XP and their position. `display_names_for()` no longer
+selects `users.email` at all, so the address cannot leak through a later
+serialization change either; the column is simply absent from the query. This
+is the same "make it structurally unreachable rather than carefully handled"
+reasoning as D5.1 §9's opt-out-in-the-WHERE-clause rule.
+
+Pinned by `tests/test_web_leaderboard.py::test_a_student_without_a_display_name_is_never_shown_by_email`,
+which asserts over the **response body** (what actually leaves the server, not
+what the repo intended) and includes the strong form: no `@` anywhere in the
+payload.
+
+**Not adopted from the same review:** `board()` issues three queries (top rows,
+viewer XP, viewer rank) without pinning them to one snapshot, so a concurrent
+award mid-request can make the viewer's own row disagree with the returned
+top-N by a few XP. Left as-is deliberately — it self-corrects on the next
+request, a leaderboard is an inherently stale read, and a REPEATABLE READ
+transaction would be real cost for a discrepancy no user can perceive.
+Recorded so a future reader knows it was seen and judged, not missed.

@@ -31,6 +31,7 @@ from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.flashcard_repo import FlashcardService
 from lemely.db.history_repo import DbHistoryStore
+from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.parent_repo import ParentLinkService
@@ -372,6 +373,18 @@ def get_xp_service() -> XpService:
 
 
 @lru_cache(maxsize=1)
+def get_leaderboard_service() -> LeaderboardService:
+    """Return the process-wide :class:`LeaderboardService` singleton (P5.3 chunk B).
+
+    Wired with the DB session factory alone, mirroring :func:`get_xp_service`
+    — the clock and week-boundary zone are left at their defaults (real UTC
+    now, ``Africa/Cairo``). Tests override this dependency with a service
+    built on an injected fake clock and a throwaway Postgres database.
+    """
+    return LeaderboardService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_at_risk_ack_service() -> AtRiskAckService:
     """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
 
@@ -580,3 +593,4 @@ def reset_singletons() -> None:
     get_announcement_service.cache_clear()
     get_student_profile_service.cache_clear()
     get_xp_service.cache_clear()
+    get_leaderboard_service.cache_clear()

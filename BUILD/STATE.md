@@ -269,7 +269,16 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             `flashcard_reviewed` is deliberately NOT deduped between two reviews of one card
             (repeat review is the point of SM-2); its control is the 60/day cap. Pinned by a
             test so nobody "fixes" it into the paper seam's shape.
-- [ ] doing — **P5.3** Leaderboards backend: friends/class/school/global × total/per-subject,
+- [ ] doing — **P5.3** Leaderboards backend (chunk A committed `e5c945b`; **chunk B — the web
+      layer — is written and green on its own tests (97 passed) but NOT yet committed**: new
+      `lemely/web/routers/leaderboard.py` + `schemas_leaderboard.py`, `display_names_for()` on
+      the service, `leaderboard_opt_out` threaded through `student_profile_repo` → `me.py` →
+      `StudentProfileDTO`, `get_leaderboard_service()` in `deps.py`, router mounted in `app.py`,
+      plus `tests/test_web_leaderboard.py` (648 lines) and `tests/test_schemas_leaderboard.py`.
+      D5.4 and D5.5 are also written but uncommitted. Migration 0014 landed with chunk A.
+      Full `./scripts/check.sh` was running when this line was written — commit only on its
+      exit 0.) Remaining after chunk B: friends scope, which waits on P5.4's table.
+      Original brief:
       weekly window, opt-out, own-row pinning. Grades must be structurally unreachable here.
       **Read D5.1 §0, §6 and §9 first — they are binding and specific:**
       - §0 requires a test asserting **over the emitted SQL** that the leaderboard query joins
