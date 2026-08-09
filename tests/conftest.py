@@ -47,9 +47,11 @@ def _forbid_live_gemini_calls() -> Iterator[None]:
     protocol. Nothing enforced that, and the ``.env``-neutralising fixture
     above deliberately leaves ``os.environ`` alone — so running the gates the
     documented way (``set -a && . ./.env``) put a real key in the environment
-    and ``test_plan_post_narrate_without_key_is_503_not_500`` made a **billed**
-    ``gemini-2.5-flash`` call against the hard $8 cap, then failed on the 200
-    it got back instead of the expected 503.
+    and a study-plan narration test in ``tests/test_web_student.py`` made a
+    **billed** ``gemini-2.5-flash`` call against the hard $8 cap, then failed
+    on the 200 it got back instead of the expected 503. (That test and the
+    route it covered were retired in P4.10 chunk D — D4.22 — but the guard is
+    suite-wide and protects every unmocked path, so it stays.)
 
     Guarding at client *construction* rather than at the key is deliberate:
     tests that legitimately exercise "a key is configured" inject a fake

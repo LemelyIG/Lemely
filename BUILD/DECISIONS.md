@@ -4140,3 +4140,73 @@ only engages when the row cannot fit), so no baseline is re-based.
 **The gate is the regression pin.** The responsive check at 380px is what caught
 it and is what would catch it again; a unit test asserting the presence of a
 utility class would restate the fix rather than test the behaviour.
+
+## D4.22 — Retiring the legacy `/api/student/plan` pair and `/api/student/onboarding` (P4.10 chunk D)
+
+**What was deleted.** `GET`/`POST /api/student/plan` and
+`POST /api/student/onboarding` on `lemely/web/routers/student.py`, plus their
+now-callerless schemas in `schemas_student.py` (`PlanSessionDTO`,
+`StudyPlanDTO`, `StudyPlanRequest`, `OnboardSliderInput`, `OnboardingRequest`,
+and the **legacy** `StudentProfileDTO`), the six route tests in
+`tests/test_web_student.py`, and the three dead TS interfaces in
+`web/src/lib/studentTypes.ts`. All three routes had zero frontend callers:
+P4.8 chunk A deleted `usePostOnboarding`, P4.10 chunk C deleted
+`useStudyPlan`/`usePostStudyPlan`.
+
+**The load-bearing part is the authz matrix, not the deletion.**
+`tests/test_authz_matrix.py` had **zero** coverage of either replacement
+surface — `/api/student/plan` (`STUDENT_GET_ROUTES` + `STUDENT_POST_ROUTES`)
+and `/api/student/onboarding` were the *only* authz-matrix representation of
+the study-plan and onboarding surfaces in the product. Deleting those three
+entries alone would have **silently shrunk the RBAC matrix and still passed all
+13 gates**, which MISSION §6 gate 6 forbids. The replacements were added in the
+same commit, and deliberately **not** symmetrically:
+
+* `/api/student/study-plan/*` carries a **router-level**
+  `require_role(Role.student)` (`routers/study_plan.py:50-52`), so the file's
+  existing representative-spread convention applies: one GET
+  (`/api/student/study-plan/0625`) + one POST (`""`) prove the router.
+* `/api/me/student-profile*` does **not**. `routers/me.py:57` is a bare
+  `APIRouter(prefix="/api/me")` with per-route guards, and two of its routes
+  (`/notification-preferences`, `/profile`) are deliberately role-agnostic — so
+  a spread would prove nothing about the routes it skipped. **All five**
+  student-only routes are listed individually. This needed two new
+  parametrized method families (`STUDENT_PATCH_ROUTES`, `STUDENT_PUT_ROUTES`);
+  the file previously only parametrized GET and POST for the student surface,
+  which is why a PATCH/PUT guard could never have been proven here before.
+
+The two explicit former-IDOR pins (`test_plan_post_ignores_any_caller_supplied_id`,
+`test_onboarding_uses_token_identity`) died with their routes. The property they
+pinned — identity is the token, never the payload — is structural on the
+replacements: `/api/me/student-profile*` takes no student id in any body, and
+`ApiModel` is `extra="forbid"`, so smuggling one is a 422.
+
+**Verified positively, not by absence of failure.** The deletion was confirmed
+against the running app's OpenAPI schema (both paths absent, all three
+replacements present, 88 routes), not merely by the suite staying green — a
+test file that no longer names a route cannot fail when the route survives.
+
+**Feature loss, recorded not smoothed over (extends D4.19).** The legacy
+`POST /api/student/plan` was the only *web* path to AI study-plan narration
+(`payload.narrate` → `StudyPlanNarrator`). `StudyPlanWeekDTO` has no
+`narrative` field, so nothing on the new surface replaces it. Per D4.19 this
+is **recorded, not restored** — restoring it would smuggle a schema field and a
+billed Gemini call into a deletion commit, and the narrator's "2-3 paragraph
+study guide" is exactly the vague-advice register MISSION §4 replaced with
+concrete sessions. Narration survives on the CLI (`cli.py --use-ai`), so
+**`lemely/io/study_plan_ai.py` is deliberately NOT deleted**. This belongs in
+DELIVERY.md's limitations, since MISSION §9 inventories the adaptive study plan.
+
+**Stale-note sweep, the trap this build has been bitten by twice.** Every
+docstring that described the deleted pair as live was rewritten in the same
+commit: `routers/student.py` module docstring, `schemas_study_plan.py:7-8`,
+`routers/study_plan.py:6`, `tests/test_web_student.py:9`,
+`web/src/lib/studentTypes.ts` (header + the P4.8 note that had said the backend
+was "left for P4.11 to formally retire"), `studyPlanTypes.ts:7`,
+`useStudentApi.ts:53`, `StudyPlanWeek.tsx:25`. Also `tests/conftest.py:50`,
+whose D4.3 billed-Gemini-guard rationale cited a test this chunk deletes — the
+**guard stays, the reference was fixed**, since a comment citing a deleted test
+is the same trap as `audit.mjs`'s own worked apology.
+`audit.mjs:89-91` and `data.ts:93-94` were checked and left alone: both
+describe the *frontend* route `/student/plan/:subjectCode`, which still exists,
+and chunk C's history, which is accurately told.

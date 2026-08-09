@@ -5,8 +5,7 @@
  * authTypes.ts's convention: the Python class name with its `DTO` suffix
  * stripped (e.g. `SubjectRowDTO` -> `SubjectRow`); request/response bodies
  * that already have no `DTO` suffix in Python (`CorrectRequest`,
- * `StudyPlanRequest`, `StudentUploadResponse`) keep their Python name
- * unchanged.
+ * `StudentUploadResponse`) keep their Python name unchanged.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/student/data.ts` (the mock shapes these DTOs were modeled
@@ -214,33 +213,6 @@ export interface QuestionResult extends BaseQuestionResult {
   aiDetectionFlagged: boolean
 }
 
-// ── Study plan ────────────────────────────────────────────────────────────
-
-/** One scheduled study session (mirrors `PlanSessionDTO`). */
-export interface PlanSession {
-  topic: string
-  subjectCode: string
-  hours: number
-  focus: string
-}
-
-/**
- * Payload for `GET` / `POST` `/student/plan` (mirrors `StudyPlanDTO`).
- * `narrative` is populated only on the POST path with a Gemini narrator run.
- */
-export interface StudyPlan {
-  studentId: string
-  weeklyHours: number
-  sessions: PlanSession[]
-  narrative: string | null
-}
-
-/** Request body for `POST /student/plan`. */
-export interface StudyPlanRequest {
-  weeklyHours?: number
-  narrate?: boolean
-}
-
 // ── Standings ─────────────────────────────────────────────────────────────
 
 /** A subject's rank line (mirrors `SubjectRankDTO`). */
@@ -262,15 +234,14 @@ export interface Standings {
 // ── POST /student/correct SSE frames ─────────────────────────────────────
 //
 // The legacy onboarding types (`OnboardingRequest`, `OnboardSliderInput`,
-// `StudentProfile`) that used to live here were removed in P4.8 chunk A: the
-// backend `POST /api/student/onboarding` route + `OnboardingRequest` schema
-// they mirrored are the pre-P4.3 IDOR-hardened onboarding endpoint, superseded
-// by the real `/api/me/student-profile/...` surface (P4.3, `lib/meTypes.ts`).
-// The frontend hook (`usePostOnboarding`) and its only caller
-// (`screens/Onboarding.tsx`) are both gone; the backend route/schema and its
-// two test files (`tests/test_authz_matrix.py`, `tests/test_web_student.py`)
-// are backend surface this chunk doesn't touch — left for P4.11 to formally
-// retire, recorded rather than silently deleted or silently left dangling.
+// `StudentProfile`) were removed in P4.8 chunk A, and the legacy study-plan
+// types (`StudyPlan`, `PlanSession`, `StudyPlanRequest`) in P4.10 chunk D.
+// Both mirrored superseded backend surface — `POST /api/student/onboarding`
+// and the `GET`/`POST /api/student/plan` pair — which chunk D then deleted
+// outright (D4.22), along with their schemas and tests. The replacements are
+// `/api/me/student-profile/...` (P4.3, `lib/meTypes.ts`) and
+// `/api/student/study-plan/...` (P4.7 chunk C, `lib/studyPlanTypes.ts`).
+// Nothing on either side is dangling now.
 
 /**
  * SSE frames emitted by `POST /student/correct` over the shared event bus

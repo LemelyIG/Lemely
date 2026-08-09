@@ -21,8 +21,9 @@ import {
 
 /*
  * S-24 · Study plan, week view. Wired to the *persisted* study-plan surface
- * (`/api/student/study-plan`, P4.7 chunk C), not the legacy stateless
- * `/api/student/plan` pair the previous version of this screen called.
+ * (`/api/student/study-plan`, P4.7 chunk C). The legacy stateless
+ * `/api/student/plan` pair the previous version of this screen called was
+ * deleted in P4.10 chunk D (D4.22).
  *
  * The screen's job is to keep D4.13's three wire states three states on the
  * glass — see `studyPlanView`. Two spec affordances are deliberately absent

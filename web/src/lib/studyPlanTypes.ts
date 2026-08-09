@@ -3,11 +3,12 @@
  * adaptive study-plan routes, P4.7 chunk C / D4.13). Field names are camelCase
  * to match the wire, following `practiceTypes.ts`/`placementTypes.ts`.
  *
- * **These are not the legacy `StudyPlan`/`StudyPlanRequest` types in
- * `studentTypes.ts`.** Those mirror `GET`/`POST /api/student/plan`, which
- * rebuilds an unpersisted plan on every request and exposes neither a date nor
- * an activity type. P4.10 migrates the screen onto this surface; the legacy
- * pair is removed in chunk C.
+ * **These are the only study-plan types.** The legacy
+ * `StudyPlan`/`StudyPlanRequest` in `studentTypes.ts` mirrored
+ * `GET`/`POST /api/student/plan`, which rebuilt an unpersisted plan on every
+ * request and exposed neither a date nor an activity type. P4.10 chunk A
+ * migrated the screen onto this surface and chunk D deleted that pair on both
+ * sides of the wire (D4.22).
  */
 
 /** The four activity types the scheduler can emit (`lemely.core.study.

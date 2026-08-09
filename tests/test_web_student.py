@@ -6,13 +6,14 @@ seeded :class:`~lemely.io.history_store.HistoryStore` and the pure-core analytic
 theory/integrity for history-sourced papers, subject ranks) are asserted to be
 their typed-neutral defaults rather than mock demo numbers.
 
-The Gemini client is only exercised on the ``narrate`` path of ``POST /plan``,
-where it is mocked — no network calls anywhere in this module.
+No Gemini client is exercised anywhere in this module — the one path that did
+(``POST /plan``'s ``narrate`` flag) was retired with the route in P4.10 chunk D
+(D4.22). Study plans now live on ``/api/student/study-plan`` and onboarding on
+``/api/me/student-profile*``, each tested in its own module.
 """
 
 from __future__ import annotations
 
-import datetime
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -29,34 +30,23 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-from pydantic import SecretStr
-
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
-from lemely.core.study import ActivityType, StudyPlan, StudySession
 from lemely.db.base import Base
 from lemely.db.models import User
 from lemely.db.models.enums import Role
 from lemely.db.parent_repo import ParentLinkService
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import DatabaseSettings, Settings, load_settings
+from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_history_store,
     get_parent_link_service,
-    get_settings,
 )
 
 STUDENT_ID = "maya"
-
-
-def _settings_with_key() -> Settings:
-    """A Settings copy carrying a dummy API key (enables the narrate path)."""
-    data = load_settings().model_dump()
-    data["gemini_api_key"] = SecretStr("test-key")
-    return Settings.model_validate(data)
 
 
 def _record(
@@ -437,150 +427,6 @@ def test_correct_unknown_paper_is_404(seeded_store: HistoryStore) -> None:
     app.dependency_overrides.clear()
 
 
-# ── Study plan ────────────────────────────────────────────────────────────────
-
-
-def test_plan_get_is_deterministic_without_narrative(client: TestClient) -> None:
-    """GET /plan schedules sessions from weaknesses with no AI narrative."""
-    body = client.get("/api/student/plan").json()
-
-    assert body["studentId"] == STUDENT_ID
-    assert body["weeklyHours"] == 11.0
-    assert body["narrative"] is None
-    topics = {s["topic"] for s in body["sessions"]}
-    # Weak topics across all papers become sessions.
-    assert "Thermal physics" in topics
-    assert "Moles" in topics
-
-
-def test_plan_post_narrate_uses_mocked_gemini(
-    seeded_store: HistoryStore,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """POST /plan with narrate=true runs the narrator (mocked) and returns text."""
-    narrated = StudyPlan(
-        student_id=STUDENT_ID,
-        weekly_hours=8.0,
-        sessions=[
-            StudySession(
-                date=datetime.date(2026, 8, 10),
-                topic="Thermal physics",
-                subject_code="0625",
-                activity_type=ActivityType.review,
-                duration_minutes=90,
-                focus="Review notes: Thermal physics",
-            )
-        ],
-        narrative="Focus on thermal physics this week.",
-    )
-    fake_client = MagicMock()
-    fake_client.generate_structured.return_value = narrated
-
-    # The router calls get_gemini_client() directly (not via Depends), so patch
-    # the module-level reference; monkeypatch restores it after the test.
-    import lemely.web.routers.student as student_router
-
-    monkeypatch.setattr(student_router, "get_gemini_client", lambda: fake_client)
-
-    app = create_app()
-    app.dependency_overrides[get_history_store] = lambda: seeded_store
-    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
-        user_id=STUDENT_ID, role="student"
-    )
-    # Narration only runs when an API key is configured, so present one.
-    app.dependency_overrides[get_settings] = lambda: _settings_with_key()
-
-    body = (
-        TestClient(app)
-        .post(
-            "/api/student/plan",
-            json={"weeklyHours": 8.0, "narrate": True},
-        )
-        .json()
-    )
-
-    assert body["narrative"] == "Focus on thermal physics this week."
-    fake_client.generate_structured.assert_called_once()
-
-
-def _settings_without_key() -> Settings:
-    """A Settings copy with the Gemini credential cleared.
-
-    ``model_copy``, not ``model_validate``: ``Settings`` is a
-    pydantic-settings model, so validating a dict re-runs its env/dotenv
-    sources and an exported ``GEMINI_API_KEY`` silently reinstates the very
-    key this helper exists to remove.
-    """
-    return load_settings().model_copy(update={"gemini_api_key": None})
-
-
-def test_plan_post_narrate_without_key_is_503_not_500(
-    seeded_store: HistoryStore,
-) -> None:
-    """narrate=true with no API key returns a clean 503, never an unhandled 500.
-
-    Regression for the Gemini-absent HIGH item: on the default no-key state the
-    narrate path must degrade to 503 instead of raising through to a 500.
-
-    The absence of a key is now **injected**, not assumed from the ambient
-    environment. Relying on the environment made this both flaky and a
-    live-spend leak: running the gates the documented way (`set -a && . ./.env`)
-    exported a real key, so the narrate path made a billed `gemini-2.5-flash`
-    call and returned 200 instead of 503 (MISSION §8 — automated tests mock
-    Gemini). `tests/conftest.py` now also blocks live clients suite-wide.
-    """
-    app = create_app()
-    app.dependency_overrides[get_history_store] = lambda: seeded_store
-    app.dependency_overrides[get_settings] = _settings_without_key
-    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
-        user_id=STUDENT_ID, role="student"
-    )
-    resp = TestClient(app).post(
-        "/api/student/plan",
-        json={"weeklyHours": 8.0, "narrate": True},
-    )
-    assert resp.status_code == 503
-
-
-def test_plan_post_without_narrate_returns_plan_without_key(
-    seeded_store: HistoryStore,
-) -> None:
-    """Without narrate the deterministic plan still returns even with no key."""
-    app = create_app()
-    app.dependency_overrides[get_history_store] = lambda: seeded_store
-    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
-        user_id=STUDENT_ID, role="student"
-    )
-    resp = TestClient(app).post(
-        "/api/student/plan",
-        json={"weeklyHours": 8.0, "narrate": False},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["narrative"] is None
-    assert body["sessions"]
-
-
-def test_plan_post_without_narrate_skips_gemini(seeded_store: HistoryStore) -> None:
-    """POST /plan without narrate never touches Gemini."""
-    app = create_app()
-    app.dependency_overrides[get_history_store] = lambda: seeded_store
-    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
-        user_id=STUDENT_ID, role="student"
-    )
-    body = (
-        TestClient(app)
-        .post(
-            "/api/student/plan",
-            json={"weeklyHours": 6.0},
-        )
-        .json()
-    )
-
-    assert body["weeklyHours"] == 6.0
-    assert body["narrative"] is None
-
-
 # ── Standings ─────────────────────────────────────────────────────────────────
 
 
@@ -597,39 +443,6 @@ def test_standings_counts_are_data_backed_ranks_empty(client: TestClient) -> Non
     assert ranks["0620"]["papers"] == 1
     # No cohort → every rank string is empty (no fabricated leaderboard position).
     assert all(r["rank"] == "" for r in body["subjectRanks"])
-
-
-# ── Onboarding ────────────────────────────────────────────────────────────────
-
-
-def test_onboarding_builds_profile_from_sliders() -> None:
-    """Onboarding maps subject sliders into a StudentProfile with confidences.
-
-    The profile id is the authenticated student (auth.user_id), never a
-    caller-supplied studentId (former IDOR removed).
-    """
-    app = create_app()
-    app.dependency_overrides[get_auth_context] = lambda: AuthContext(user_id="maya", role="student")
-    client = TestClient(app)
-    body = client.post(
-        "/api/student/onboarding",
-        json={
-            "gradeLevel": "Year 11",
-            "school": "Helwan Science Centre",
-            "weeklyHours": 11.0,
-            "sliders": [
-                {"label": "Physics", "code": "0625", "pct": 72},
-                {"label": "Chemistry", "code": "0620", "pct": 34},
-                {"label": "Hours per week", "code": "", "pct": 46},
-            ],
-        },
-    ).json()
-
-    assert body["studentId"] == "maya"
-    assert body["weeklyStudyHours"] == 11.0
-    # Only subject sliders (with a code) become subjects / confidences.
-    assert body["subjects"] == ["0625", "0620"]
-    assert body["confidenceBySubject"] == {"0625": 0.72, "0620": 0.34}
 
 
 # ── Parent links (invite/list/revoke, D3.11/P3.6a) ──────────────────────────

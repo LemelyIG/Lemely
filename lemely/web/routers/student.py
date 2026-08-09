@@ -6,8 +6,13 @@ touching ``app.py`` — the app factory already mounts this router.
 **Data provenance.** Every response is computed from real core logic and the
 :class:`~lemely.io.history_store.HistoryStore`: cross-paper aggregation via
 :mod:`lemely.core.analytics`, grade + boundary resolution via
-:mod:`lemely.io.grade_boundaries`, scheduling via :mod:`lemely.core.study_plan`,
-and integrity via :mod:`lemely.core.plagiarism` / :mod:`lemely.io.integrity`.
+:mod:`lemely.io.grade_boundaries`, and integrity via
+:mod:`lemely.core.plagiarism` / :mod:`lemely.io.integrity`. Study-plan
+scheduling and onboarding are **not** here: they live on
+:mod:`lemely.web.routers.study_plan` (``/api/student/study-plan``, persisted
+per ISO week) and :mod:`lemely.web.routers.me` (``/api/me/student-profile*``)
+since P4.10 chunk D retired this router's superseded ``/student/plan`` pair and
+``/student/onboarding`` (D4.22).
 Where a frontend field has *no* backing data source (leaderboard peers, streak
 history beyond recorded-paper days, marketing copy, or the per-question detail
 that history records do not persist), the response returns a typed-neutral
@@ -19,7 +24,6 @@ from __future__ import annotations
 
 import tempfile
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -40,8 +44,6 @@ from lemely.core.history import (
 )
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
-from lemely.core.study import StudentProfile, StudyPlan
-from lemely.core.study_plan import build_study_plan
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.models.enums import Role, UploadStatus
@@ -52,7 +54,6 @@ from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
-from lemely.io.study_plan_ai import StudyPlanNarrator
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
     AuthContext,
@@ -73,18 +74,13 @@ from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
     MomentumDTO,
-    OnboardingRequest,
     OverviewDTO,
     PaperBarDTO,
     PaperBreakdownDTO,
     PaperHistoryRowDTO,
-    PlanSessionDTO,
     ResultDTO,
     StandingsDTO,
-    StudentProfileDTO,
     StudentUploadResponse,
-    StudyPlanDTO,
-    StudyPlanRequest,
     SubjectDTO,
     SubjectHeaderDTO,
     SubjectRankDTO,
@@ -97,11 +93,6 @@ from lemely.web.services.grading import extract_answers, grade_paper
 from lemely.web.upload_utils import check_upload_cap, safe_upload_name
 
 router = APIRouter(prefix="/api")
-
-# Default weekly study budget when the GET plan endpoint has no caller-supplied
-# figure (the POST path takes an explicit ``weeklyHours``). Kept as a named
-# constant rather than a mock demo number.
-_DEFAULT_WEEKLY_HOURS = 11.0
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -767,113 +758,6 @@ def student_correct(
     return StreamingResponse(bus_event_stream(run), media_type="text/event-stream")
 
 
-# ── Study plan ────────────────────────────────────────────────────────────────
-
-
-def _plan_to_dto(plan: StudyPlan) -> StudyPlanDTO:
-    """Convert a core :class:`StudyPlan` into its camelCase DTO (data-backed).
-
-    ``PlanSessionDTO.hours`` is a unit conversion of the scheduler's
-    ``duration_minutes`` (chunk A's real granularity), not a re-derivation —
-    the DTO shape itself is left untouched here on purpose: chunk C owns the
-    route/DTO decision (whether to expose ``activityType``/``date``), and this
-    conversion is the smallest change that keeps the existing route honest in
-    the meantime.
-    """
-    return StudyPlanDTO(
-        studentId=plan.student_id,
-        weeklyHours=plan.weekly_hours,
-        sessions=[
-            PlanSessionDTO(
-                topic=s.topic,
-                subjectCode=s.subject_code,
-                hours=round(s.duration_minutes / 60, 2),
-                focus=s.focus,
-            )
-            for s in plan.sessions
-        ],
-        narrative=plan.narrative,
-    )
-
-
-@router.get("/student/plan", response_model=StudyPlanDTO)
-def student_plan_get(
-    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
-) -> StudyPlanDTO:
-    """Return the deterministic weekly study plan (data-backed, no narrative).
-
-    Built by :func:`lemely.core.study_plan.build_study_plan` from the student's
-    aggregate weaknesses over the default weekly budget. ``narrative`` is null on
-    this path (no Gemini call). Placement results and S-02 confidence ratings
-    are not read here yet — that is chunk B/C wiring; this route still passes
-    weaknesses alone, which ``build_study_plan`` schedules honestly on its own.
-    """
-    history = history_store.load(auth.user_id)
-    weaknesses = aggregate_weaknesses_from_history(history)
-    subjects = sorted({r.metadata.subject_code for r in history.records})
-    subject_code = subjects[0] if subjects else "unknown"
-    plan = build_study_plan(
-        auth.user_id,
-        subject_code,
-        weekly_hours=_DEFAULT_WEEKLY_HOURS,
-        now=datetime.now(UTC),
-        weaknesses=weaknesses.weak_areas,
-    )
-    return _plan_to_dto(plan)
-
-
-@router.post("/student/plan", response_model=StudyPlanDTO)
-def student_plan_post(
-    payload: StudyPlanRequest,
-    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> StudyPlanDTO:
-    """Build the authenticated student's study plan, optionally AI-narrated.
-
-    The student is the authenticated caller (``auth.user_id``) — never a
-    caller-supplied id — so a student can only ever generate their own plan
-    (former IDOR removed). Deterministic schedule is data-backed from history
-    weaknesses. When ``narrate`` is true a :class:`StudyPlanNarrator` (Gemini)
-    enriches it with a narrative. Narration only runs when an API key is
-    configured (mirroring the upload pipeline); in the default no-key state — or
-    if the narrator raises at runtime — the endpoint returns a clean 503 rather
-    than an unhandled 500. The deterministic plan is always available, so a
-    degraded caller can retry without narration.
-    """
-    history = history_store.load(auth.user_id)
-    weaknesses = aggregate_weaknesses_from_history(history)
-    subjects = sorted({r.metadata.subject_code for r in history.records})
-    subject_code = subjects[0] if subjects else "unknown"
-    plan = build_study_plan(
-        auth.user_id,
-        subject_code,
-        weekly_hours=payload.weeklyHours,
-        now=datetime.now(UTC),
-        weaknesses=weaknesses.weak_areas,
-    )
-
-    if payload.narrate:
-        if settings.gemini_api_key is None:
-            raise HTTPException(
-                status_code=503,
-                detail="AI narration is unavailable: no API key is configured.",
-            )
-        try:
-            narrator = StudyPlanNarrator(get_gemini_client())
-            plan = narrator.narrate(plan)
-        except HTTPException:
-            raise
-        except Exception as exc:  # narrator failed at runtime — degrade cleanly.
-            raise HTTPException(
-                status_code=503,
-                detail=f"AI narration is temporarily unavailable: {exc}",
-            ) from exc
-
-    return _plan_to_dto(plan)
-
-
 # ── Standings ─────────────────────────────────────────────────────────────────
 
 
@@ -919,49 +803,6 @@ def student_standings(
         subjectRanks=subject_ranks,
         paperCount=len(papers),
         streakDays=streak_days,
-    )
-
-
-# ── Onboarding ────────────────────────────────────────────────────────────────
-
-
-@router.post("/student/onboarding", response_model=StudentProfileDTO)
-def student_onboarding(
-    payload: OnboardingRequest,
-    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-) -> StudentProfileDTO:
-    """Build and return a :class:`StudentProfile` from onboarding slider inputs.
-
-    The profile belongs to the authenticated student (``auth.user_id``), never a
-    caller-supplied id (former IDOR removed). Fully data-backed: subjects and
-    per-subject confidence come from the slider readings (a slider with a subject
-    ``code`` contributes a ``pct/100`` confidence); ``weeklyStudyHours`` is the
-    reported hours. Nothing is fabricated — sliders without a subject code (e.g.
-    "hours", "pressure") are treated as non-subject signals and excluded from
-    ``subjects``/``confidenceBySubject``.
-    """
-    confidence: dict[str, float] = {}
-    subjects: list[str] = []
-    for slider in payload.sliders:
-        if slider.code:
-            subjects.append(slider.code)
-            confidence[slider.code] = round(slider.pct / 100.0, 4)
-
-    profile = StudentProfile(
-        student_id=auth.user_id,
-        grade_level=payload.gradeLevel,
-        subjects=subjects,
-        school=payload.school,
-        weekly_study_hours=payload.weeklyHours,
-        confidence_by_subject=confidence,
-    )
-    return StudentProfileDTO(
-        studentId=profile.student_id,
-        gradeLevel=profile.grade_level,
-        subjects=profile.subjects,
-        school=profile.school,
-        weeklyStudyHours=profile.weekly_study_hours,
-        confidenceBySubject=profile.confidence_by_subject,
     )
 
 

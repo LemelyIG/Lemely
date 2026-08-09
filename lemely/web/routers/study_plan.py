@@ -2,10 +2,10 @@
 
 A new router file, mirroring ``lemely.web.routers.placement`` and
 ``lemely.web.routers.flashcards``: thin, its own DTOs, no growth of
-``student.py``. **Does not touch** the legacy ``GET``/``POST
-/api/student/plan`` routes in ``lemely.web.routers.student`` — those stay
-wired to the stateless, unpersisted scheduler until P4.10 migrates the
-frontend onto this surface.
+``student.py``. This is the **only** study-plan surface: the legacy
+``GET``/``POST /api/student/plan`` routes in ``lemely.web.routers.student``
+were stateless and unpersisted, and P4.10 chunk D deleted them once the
+frontend had moved here (D4.22).
 
 **Student-only and owner-scoped on every read and write**, via the
 router-level ``require_role(Role.student)`` dependency — a study plan is

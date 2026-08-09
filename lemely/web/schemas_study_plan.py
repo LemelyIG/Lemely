@@ -4,11 +4,11 @@ Field names are camelCase to match the frontend contract, mirroring
 ``schemas_placement.py``. Converters live in
 ``lemely.web.routers.study_plan``.
 
-These DTOs are new and distinct from the legacy ``StudyPlanDTO`` in
-``lemely.web.routers.student`` (the ``GET``/``POST /api/student/plan``
-routes) — that surface stays untouched until P4.10 migrates the frontend.
-``activityType`` and ``date`` are exposed per session here for the first
-time (D4.12 §5's stated gap); the legacy DTO never surfaced them.
+These are the **only** study-plan DTOs in the product. The legacy
+``StudyPlanDTO`` on ``GET``/``POST /api/student/plan`` was retired in P4.10
+chunk D (D4.22) once the frontend moved onto this surface.
+``activityType`` and ``date`` are exposed per session here (D4.12 §5's stated
+gap); the retired DTO never surfaced them.
 """
 
 from __future__ import annotations

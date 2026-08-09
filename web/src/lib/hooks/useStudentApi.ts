@@ -57,9 +57,9 @@ export function useResult(paperId: string): UseQueryResult<Result, Error> {
  * `/api/student/study-plan` backend (`lib/hooks/useStudyPlanApi.ts`), leaving
  * these two with no caller at all.
  *
- * The backend routes themselves are still live and still route-tested; they
- * are removed separately rather than inside this chunk, so that a gate failure
- * here is attributable to the frontend diff. See BUILD/STATE.md P4.10.
+ * The backend routes themselves were removed separately in chunk D (D4.22),
+ * deliberately not inside chunk C, so that a gate failure there stayed
+ * attributable to the frontend diff.
  */
 
 /*
