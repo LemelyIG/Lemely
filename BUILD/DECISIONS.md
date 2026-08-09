@@ -3938,3 +3938,60 @@ a student surface) and fact 6 (the photo-answer route is not built, because no i
 exists anywhere on the quiz answer path and a camera affordance would silently discard the
 student's work). In all three the honest move was to leave it unbuilt and say so, not to
 build a convincing shell.
+
+## D4.18 — Gate 8 for S-20..S-23: opacity on text broke two contrast floors, and the seed's "hermetic 24-row bank" was never actually 24 rows (P4.9 chunk C)
+
+P4.9 chunks A and B shipped four screens (S-20/S-21 practice, S-22/S-23 flashcards) with **no
+audit-registry entry at all**, so `ui-thresholds` was green over them without ever loading one
+— the same vacuous pass P4.8 chunk C's own header note warns about. Chunk C adds 13 registry
+entries / 14 captured states on three deliberately non-overlapping seeded accounts
+(`active`/`settled`/`bare`), and the run found three real defects that reading had not.
+
+**1. Two serious axe violations, both `opacity` applied to text, neither a token problem.**
+`--t3` is fine (5.58–7.17:1 on every base surface, per `index.css`'s own history). What axe
+measured was `#b3a7a5` on `#fffcfb` — exactly `--t3` (`#67534f`) composited at 50%.
+- **S-20**: `PracticeGenerator` dimmed the *entire* Topics `<Card>` with `opacity-50` while
+  "Weak topics only" was on. That dragged the card's "Topics" heading and its two explanatory
+  paragraphs down to **2.28:1**. Dimming the label of a genuinely disabled control is exempt
+  from WCAG 1.4.3; dimming a section heading and the prose that explains *why* the section is
+  inactive is not.
+  Root cause was one level down: **C-14 `Checkbox` self-dimmed only on its own `disabled`
+  prop**, but these checkboxes are disabled by an ancestor `<fieldset disabled>`, which React
+  never propagates as a prop. With `appearance-none` the browser draws no disabled affordance
+  either, so the screen had no way to show the state except the card-wide wash. Fixed at the
+  component with `has-disabled:` (`:has(:disabled)`), which covers both the prop and the
+  ancestor case; the card-wide `opacity-50` is then deleted rather than tuned.
+- **S-23**: the keyboard hints (`(2)`/`(3)`/`(4)`) on the three accent grade buttons were
+  `opacity-70` — white at 70% over `--accent` measured **4.17:1**. `opacity-70` removed rather
+  than nudged: `text-2xs` already de-emphasises the hint, and this is a *keyboard affordance*,
+  the one thing on that button that must not be hard to read. Nudging a computed blend is the
+  loop `--t3`'s own comment records failing twice.
+
+**2. The seed's hermetic bank was never hermetic, and it broke a capture silently.**
+`PRACTICE_SET_COUNT` and the placement assembly are both reasoned against a documented
+"hermetic 24-row Paper 2 bank (6 rows/topic × 4 topics)". `seed_e2e.py` had no teardown and
+run-tags its question ids, so every run **added** 24 rows: the live DB held **96**. A student's
+practice pool is scoped by subject+paper, never by run, so the student saw all of them.
+This is invisible until a capture depends on the pool's *size* — and S-20's `insufficient_pool`
+is the first one that does (6 available < 10 requested at the screen's default count). Once two
+runs had accumulated, the weak topic held 12+ rows, the shortfall panel stopped rendering, and
+that route **timed out and produced no screenshots and no axe report at all** while the other
+S-20 states passed. A gate that passed on a virgin database and failed on every run after it.
+Fixed by purging prior runs' fixture rows at seed start, which *restores* the invariant the
+code already documented rather than inventing a new one. Safe because `question_bank` is
+referenced only by `quiz_questions.question_bank_id` `ON DELETE SET NULL` (verified against
+`pg_constraint`, not assumed). `is_placement_seed_prompt`'s docstring asserted the opposite
+("earlier runs' rows stay in the bank") and was corrected in the same commit rather than left
+to mislead.
+
+**Why the third defect is the one worth remembering.** Both axe violations were loud — a gate
+names them. The bank accumulation was *silent*: the audit exited non-zero for the two contrast
+findings, and the missing route was visible only by noticing that `reports/.scratch/screens/S-20/`
+had no `default--*.png` and `axe/` had no `student-practice-generator.json`. An exit code that
+already has a reason to be non-zero will hide a second, unrelated failure behind it. Verified by
+listing the captures, not by reading the summary line.
+
+**Verification.** All 13 gates green, 0 skipped, exit 0. 14/14 axe reports clean at every
+severity (not just serious/critical); 42 screenshots (14 states × 3 breakpoints); Lighthouse
+a11y **100** on all four newly-scored routes, performance 80–82 (student floor is ≥80). Bank
+re-measured after the fix at exactly 6 rows/topic × 4 topics. $0.00 Gemini.

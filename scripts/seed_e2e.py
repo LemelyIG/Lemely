@@ -264,6 +264,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import delete as sa_delete
+
 from lemely.core.at_risk import AtRiskReason
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import (
@@ -282,8 +284,10 @@ from lemely.db.models.enums import (
     Role,
 )
 from lemely.db.models.flashcards import DeckOrigin, ReviewGrade
+from lemely.db.models.quizzes import QuestionBank
 from lemely.db.practice_repo import PracticeRequest
 from lemely.db.question_bank_repo import NewBankQuestion
+from lemely.db.session import get_sessionmaker
 from lemely.web import deps
 
 if TYPE_CHECKING:
@@ -814,12 +818,12 @@ def is_placement_seed_prompt(prompt: str) -> bool:
     privileged read-back.
 
     **Matches any run's rows, not just the current one, and that is correct.**
-    Prompts carry no run tag, and earlier runs' rows stay in the bank (this
-    script has no teardown), so they are legitimately in the eligible pool and
-    legitimately answerable — every seeded row shares
-    :data:`PLACEMENT_MCQ_ANSWER`. Narrowing this to one run's exact prompts
-    would reject a *previous* run's question, which is not the failure worth
-    catching. The failure worth catching is a **real corpus** question, whose
+    Prompts carry no run tag. Since P4.9 chunk C :func:`seed` purges earlier
+    runs' fixture rows before seeding its own, so in practice only one run's
+    rows are ever in the bank — but this staying run-agnostic is still the
+    right shape, because every seeded row shares :data:`PLACEMENT_MCQ_ANSWER`
+    and a prompt-exact match would couple this guard to that purge holding.
+    The failure worth catching is a **real corpus** question, whose
     prompt carries no such marker; :func:`seed` treats that as a hard error
     rather than guessing, because it is exactly what previously spent live
     Gemini budget and produced a meaningless S-05 baseline.
@@ -1135,6 +1139,33 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             f"(status={mark_result.status.value}, error={mark_result.marking_error!r}) — "
             "T-10 will see an unmarked submission; not faked as marked."
         )
+
+    # P4.9 chunk C: drop any PREVIOUS run's fixture rows before seeding this
+    # run's. Without this the bank grows by 24 rows every run — the prompts
+    # carry no run tag, and a student's practice/placement pool is scoped by
+    # subject+paper, never by run — so the "hermetic 24-row Paper 2 bank
+    # (6 rows/topic x 4 topics)" that PRACTICE_SET_COUNT and the placement
+    # assembly are both reasoned against was only ever true on a virgin
+    # database. It silently became a 48-, 72-, 96-row bank.
+    #
+    # That is not cosmetic: S-20's `insufficient_pool` capture is the first
+    # state whose truth depends on the pool's SIZE (6 available < 10 requested
+    # at the screen's default count). Once two runs had accumulated, the weak
+    # topic held 12+ rows, the shortfall panel stopped rendering, and the audit
+    # route timed out — a gate that passed on a fresh DB and failed ever after.
+    # `question_bank` is referenced only by `quiz_questions.question_bank_id`
+    # ON DELETE SET NULL, so retiring an earlier run's rows cannot orphan a
+    # foreign key; those runs' quizzes are dead fixture data already.
+    with get_sessionmaker()() as purge_session:
+        purged = len(
+            purge_session.execute(
+                sa_delete(QuestionBank)
+                .where(QuestionBank.prompt.contains(PLACEMENT_PROMPT_MARKER))
+                .returning(QuestionBank.id)
+            ).all()
+        )
+        purge_session.commit()
+    _log(f"Purged {purged} placement fixture bank row(s) from previous seed runs")
 
     _log(
         "Seeding the placement-eligible 0625 past-paper bank (P4.8 chunk C) — real "

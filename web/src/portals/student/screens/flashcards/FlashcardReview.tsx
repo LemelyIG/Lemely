@@ -259,7 +259,13 @@ export function FlashcardReview() {
             >
               <span className="flex flex-col items-center">
                 {g.label}
-                <span className="text-2xs opacity-70">({g.hint})</span>
+                {/* No `opacity-70`: white at 70% over `--accent` measured
+                    4.17:1 (serious axe violation, P4.9 chunk C) on the three
+                    accent-variant buttons. `text-2xs` already de-emphasises the
+                    shortcut against its label, and this hint is a keyboard
+                    affordance — the one thing on this button that must not be
+                    hard to read. */}
+                <span className="text-2xs">({g.hint})</span>
               </span>
             </Button>
           ))}

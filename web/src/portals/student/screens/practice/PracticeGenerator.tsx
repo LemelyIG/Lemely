@@ -9,7 +9,6 @@ import { ApiError } from "@/lib/api"
 import { useCreatePractice, usePracticePreview, usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import type { CreatePracticeResponse, PracticeFilterSet, PracticePreview } from "@/lib/practiceTypes"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
-import { cn } from "@/lib/utils"
 import {
   groupTopicsBySyllabusGroup,
   practiceAvailabilityView,
@@ -220,7 +219,14 @@ export function PracticeGenerator() {
         </CardBody>
       </Card>
 
-      <Card className={cn(weakTopicsOnly && "opacity-50")}>
+      {/* No card-wide dim while `weakTopicsOnly` is on: `opacity-50` here also
+          dimmed this card's "Topics" heading and its two explanatory
+          paragraphs, measuring 2.28:1 (serious axe violation, P4.9 chunk C).
+          The disabled affordance now comes from C-14 Checkbox's own
+          `has-disabled:` rule, which the `<fieldset disabled>` below drives —
+          so only the genuinely-inactive controls dim, and the prose that
+          explains *why* they are inactive stays readable. */}
+      <Card>
         <CardBody className="flex flex-col gap-5">
           <div className="text-dense-sm uppercase tracking-widest text-t3">Topics</div>
           {groups.length === 0 ? (

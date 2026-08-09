@@ -2,7 +2,7 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 4            # Phase 3 complete, merged (49d9750) and reported; Phase 4 not started
-last_updated: 2026-08-10T04:15:00Z   # P4.9 chunk B closed, 13 gates green. Next: chunk C (gate 8 for all four screens).
+last_updated: 2026-08-10T07:45:00Z   # P4.9 closed (chunk C, D4.18) — 13 gates green, 0 skipped. Next: P4.10 (S-24/S-25 study-plan screens).
 gemini_spend_usd: 0.1612
 
 ## Rules for maintaining this file
@@ -894,7 +894,10 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
   memoization. Lighthouse perf 82, so not currently measurable — but this exact ticker is what
   turned an unstable react-query object identity into a duplicate-PUT-per-second bug (D4.15 §1).
 
-- [ ] doing — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards).
+- [x] done — **P4.9** Frontend S-20/S-21 (practice) + S-22/S-23 (flashcards). All four chunks
+      landed (0, A, B, C); decisions D4.17/D4.18. Gate 8 is real for these screens: 13 registry
+      entries / 14 states, 14/14 axe clean at every severity, Lighthouse a11y 100 on the four
+      scored routes, all 13 gates green with 0 skipped.
       Backends this composes: `/api/student/practice/*` (P4.5, 3 routes: preview / create /
       export), `/api/student/flashcards/*` (P4.6 chunk C, 10 routes), and the **existing**
       `/api/student/quizzes/{assignment_id}` take/save/submit path — practice sets are
@@ -1128,7 +1131,41 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         - `<h1>` on every new screen (D4.16), and S-23 must be keyboard-operable: the spec
           calls it a repeated micro-interaction where friction compounds, so the reveal and
           the four grade buttons need real key affordances, not mouse-only handlers.
-      - [ ] doing — chunk C — the standing UI gate (gate 8) for all four screens: audit-registry
+      - [x] chunk C — **done** (D4.18). 13 registry entries / **14 captured states** across
+        S-20..S-23 on three non-overlapping seeded accounts (`active`/`settled`/`bare`), plus
+        the `practice` block in `scripts/seed_e2e.py` that backs them.
+        **All 13 gates green, 0 skipped, exit 0.** 14/14 axe reports clean **at every
+        severity**, not just serious/critical; 42 screenshots (14 states × 3 breakpoints);
+        Lighthouse a11y **100** on all four newly-scored routes, perf 80–82 (student floor
+        ≥80). 279 web unit tests. $0.00 Gemini.
+        **Three real defects the run found and reading had not — do not re-derive:**
+        1. **S-20 dimmed a whole `<Card>` with `opacity-50`**, dragging its heading and prose
+           to **2.28:1** (serious). Not a token fault — `--t3` is 5.58–7.17:1 everywhere; axe
+           measured it composited at 50%. Root cause one level down: **C-14 `Checkbox`
+           self-dimmed only on its own `disabled` prop**, never on an ancestor
+           `<fieldset disabled>` (React does not propagate it, and `appearance-none` means the
+           browser draws no affordance either). Fixed at the component with `has-disabled:`;
+           the card-wide wash deleted, not tuned.
+        2. **S-23's keyboard hints were `opacity-70`** — white at 70% over `--accent` = 4.17:1
+           (serious). Opacity removed rather than nudged: `text-2xs` already de-emphasises it,
+           and a keyboard affordance is the last thing on that button to make hard to read.
+        3. **The "hermetic 24-row bank" was 96 rows.** `seed_e2e.py` had no teardown, so every
+           run *added* 24; the pool is scoped by subject+paper, never by run. S-20's
+           `insufficient_pool` is the first capture whose truth depends on pool *size*
+           (6 available < 10 requested), so once two runs had accumulated the shortfall panel
+           stopped rendering and that route **timed out, producing no screenshots and no axe
+           report at all** — passing on a virgin DB, failing ever after. Fixed by purging prior
+           runs' fixture rows at seed start (restores the invariant the code already
+           documented). Safe: `question_bank` is referenced only by
+           `quiz_questions.question_bank_id` `ON DELETE SET NULL`, verified against
+           `pg_constraint`. `is_placement_seed_prompt`'s docstring claimed the opposite and was
+           corrected in the same commit.
+        **The lesson worth carrying:** defect 3 was silent because the audit already exited
+        non-zero for defects 1 and 2. It was found only by listing
+        `reports/.scratch/screens/S-20/` and noticing `default--*.png` was absent. **An exit
+        code that already has a reason to be non-zero will hide a second, unrelated failure
+        behind it — verify captures by listing them, never from the summary line.**
+      - [ ] chunk C (original plan, kept for the rationale) — the standing UI gate (gate 8) for all four screens: audit-registry
         entries with their **real** states (including the honest `no_questions` /
         `no_weaknesses` / `insufficient_pool` refusals and S-22's "nothing due today"), axe
         zero serious/critical, Lighthouse a11y ≥ 95, screenshot corpus, `<h1>` per screen

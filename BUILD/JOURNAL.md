@@ -1323,3 +1323,25 @@ one edit and bought a real test.
 `scripts/` diff (seed + registry). Its scoping block in STATE.md is written to start cold; the
 mutually-exclusive-state analysis (a student with weaknesses cannot show `no_weaknesses`) is
 the thing to do before writing the seed, not after.
+
+## 2026-08-10 — P4.9 chunk C closed; P4.9 done
+
+- **Did:** ran the gate over chunk C's on-disk seed + registry (13 entries / 14 states for
+  S-20..S-23). First run failed on two serious axe violations and, silently, a third defect.
+  Fixed all three, re-ran: **all 13 gates green, 0 skipped**. P4.9 closed; D4.18 recorded.
+- **Learned (1):** both contrast failures were `opacity` applied to *text*, not token faults —
+  `--t3` is 5.58–7.17:1 everywhere; axe was measuring it composited at 50%. The S-20 one had a
+  root cause a level down: C-14 `Checkbox` only self-dimmed on its own `disabled` prop, never on
+  an ancestor `<fieldset disabled>`, so the screen had no way to show the state except washing
+  the whole card — heading and prose included. Fixed at the component (`has-disabled:`).
+- **Learned (2), the one that matters:** the seed's documented "hermetic 24-row bank" was
+  **96 rows** — no teardown, 24 added per run, and the student pool is scoped by subject+paper,
+  never by run. S-20's `insufficient_pool` is the first capture that depends on pool *size*, so
+  it passed on a virgin DB and failed on every run after. It was invisible in the summary
+  because the audit already exited non-zero for the axe findings; found only by listing
+  `screens/S-20/` and noticing `default--*.png` was missing. **Verify captures by listing them,
+  never from the exit code.**
+- **Next:** P4.10 — frontend S-24/S-25 (study-plan week view + session detail), replacing the
+  placeholder `StudyPlan.tsx`. Backend is landed and route-tested (P4.7 chunk C, D4.13); the
+  `CurrentStudyPlanDTO {generated, plan}` envelope's three distinguishable states are the thing
+  the screen must render honestly rather than collapse.
