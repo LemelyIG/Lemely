@@ -4045,3 +4045,98 @@ study plan is an inventoried feature), into DELIVERY.md.
 Phase-4 report rather than letting it vanish as a side effect of a cleanup diff. The
 already-shipped half (chunk A dropped the rendering) is the part most likely to go unrecorded,
 because no gate in this build can see a feature that stopped being offered.
+
+---
+
+## D4.20 — The placement band assertion was pinning luck, not a rule
+
+**Context.** P4.10 chunk C's gate run failed `pytest` on exactly one test,
+`tests/test_placement_assembly.py::test_a_broad_pool_assembles_inside_the_budget`
+(`assert result.spans_multiple_bands is True` → False). Chunk C's diff is
+`seed_e2e.py` + `test_seed_e2e.py` + `audit.mjs` + two deleted frontend hooks —
+nothing within reach of placement — and the same test passed the A+B run. The
+flake dates to `5809814` (P4.4 chunk B-3), the commit that introduced the test.
+
+**Measured, not assumed.**
+1. **Flake rate: 1 failure in 30 runs** of that test alone (the prediction from
+   reading was "roughly 1 in 20"). After the fix: **60/60 runs of the whole file
+   green.**
+2. **Live 0625 corpus: `spans_multiple_bands` is True.** The corpus had been
+   lost from the local Postgres in a DB reset, so it was re-ingested first
+   (deterministic, $0.00, zero Gemini) and the reconstruction verified against
+   the recorded figures before any conclusion was drawn: 273 banked / 273 linked
+   / 26 papers / 211 classified, 248 servable after the P4.8 chunk-0 renderable
+   filter — every number matching D4.1/D4.2/D4.8/chunk-0 exactly. Placement then
+   assembles **10 questions / 17.06 min / 6 syllabus topics**, matching the
+   chunk-0 measurement, of which **6 are `foundation` and 4 `standard`**. So the
+   real bank does span bands, **S-05 does show a working level, and this is not
+   a Phase-4 limitation.**
+   A first measurement said 8 q / 15.94 min because the DB also held the E2E
+   seed's 24 placement fixture rows; excluding them reproduced 10 q / 17.06 min.
+   *A measurement taken against a seeded DB is not a measurement of the corpus.*
+
+**Two independent defects, and the assertion is the more important one.**
+
+1. **The fixture was random.** `_c` minted `uuid.uuid4()` per candidate, and
+   `assemble` breaks ties on `str(candidate.question_bank_id)`. In `_spread`
+   every candidate carries identical marks, so the primary sort key
+   `abs(estimated_minutes - share)` **ties for every option** and the pick was
+   decided by a random UUID string sort. Fixed with a per-test counter
+   (`uuid.UUID(int=n)`, reset by an autouse fixture so ids never depend on test
+   order). Note `test_assembly_is_deterministic` could never have caught this:
+   it assembles the *same pool object* twice, so it pins determinism within a
+   run, not across runs.
+
+2. **`assemble` has no band-spread rule at all**, so the assertion pinned a
+   behaviour that was never implemented and passed ~97% of runs by luck. It
+   selects breadth-first across top-level topics with a nearest-to-even-share
+   tie-break and **never reads `Candidate.difficulty`**. Worse, the assertion
+   argues against the property's stated design: `spans_multiple_bands` exists
+   precisely to be False sometimes — it is what stops S-05 inventing a
+   working-level estimate from a sample drawn from one band
+   (`placement.py:152-158`).
+
+**Decision: delete the assertion; do not make the fixture deterministic and
+re-pin whatever falls out.** Making the pool deterministic *would* have made the
+assertion pass every time — and that is exactly the trap, because it would have
+laundered a lucky draw into a guarantee the algorithm does not offer. The
+assertion is replaced by `TestBandSpread`, an explicit inverse pair proving the
+real contract (the flag *reports* the bands in the selected set: True for a
+mixed pool, **False for a viable single-band one**), with the live-corpus
+measurement recorded in the docstring as a measurement rather than an assertion.
+
+**Deliberately not done: no band-spread rule was added to `assemble`.** Making
+placement guarantee two bands is a product change to the assembly contract, not
+a test fix, and MISSION §8b forbids speculative work. The corpus currently
+yields a mixed set anyway, so there is no user-visible gap to close.
+
+---
+
+## D4.21 — Every state view in the product overflowed the 380px breakpoint
+
+**Context.** The same chunk C gate run also failed `ui-thresholds`:
+`student-study-plan-week-refused` had horizontal overflow at 380px
+(scrollWidth 418 > clientWidth 380).
+
+**It is not a study-plan bug.** The offender is
+`web/src/components/ui/state-views.tsx`, the shared `StateView` — so the defect
+was in **every empty, error, offline and refusal state in the product**, and the
+S-24 refused state is merely the first one the audit registry drove a browser
+into at that width. Two causes, both fixed at the component:
+
+1. `mx-auto flex max-w-sm …` with **no `w-full`**: `max-w-sm` caps a box at
+   384px but does not make it shrink, so the element kept its intrinsic 384px —
+   4px wider than the 380px breakpoint before its own `px-6` is counted.
+2. The action row (`mt-2 flex items-center gap-2`) could not wrap, and `Button`
+   sets `whitespace-nowrap`. S-24's refused state carries two actions ("Take the
+   placement test" + "Rebuild this week's plan") which cannot sit side by side
+   on a phone. Now `flex-wrap` + `justify-center`. **Wrapping, not truncating**:
+   a clipped label hides what the button does, and this state's whole job is to
+   tell a student what to do next.
+
+Neither change affects wide viewports (`max-w-sm` still caps at 384, `flex-wrap`
+only engages when the row cannot fit), so no baseline is re-based.
+
+**The gate is the regression pin.** The responsive check at 380px is what caught
+it and is what would catch it again; a unit test asserting the presence of a
+utility class would restate the fix rather than test the behaviour.

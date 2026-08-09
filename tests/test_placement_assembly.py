@@ -9,7 +9,9 @@ ineligible rather than counted, and a set that misses the viability floor is
 
 from __future__ import annotations
 
+import itertools
 import uuid
+from collections.abc import Iterator
 
 import pytest
 
@@ -38,9 +40,28 @@ P4 = PaperTiming(
 TIMINGS = {4: P4}
 
 
+#: Candidate ids are handed out in creation order and reset before every test
+#: (see :func:`_reset_candidate_ids`), so a pool is byte-identical from run to
+#: run. ``uuid.uuid4()`` here used to make this module genuinely random:
+#: :func:`~lemely.core.placement.assemble` breaks a tie on
+#: ``str(question_bank_id)``, and in a pool where every candidate carries the
+#: same marks the primary key ``abs(estimated_minutes - share)`` ties for
+#: *every* option — so the pick was decided by a random UUID string sort and
+#: roughly 1 run in 30 selected a different set (measured, not estimated).
+_next_id = itertools.count()
+
+
+@pytest.fixture(autouse=True)
+def _reset_candidate_ids() -> Iterator[None]:
+    """Restart the id counter per test, so ids never depend on test order."""
+    global _next_id
+    _next_id = itertools.count()
+    yield
+
+
 def _c(topic: str | None, marks: int, *, paper: int | None = 4, band: str = "medium") -> Candidate:
     return Candidate(
-        question_bank_id=uuid.uuid4(),
+        question_bank_id=uuid.UUID(int=next(_next_id)),
         topic=topic,
         paper_number=paper,
         total_marks=marks,
@@ -117,7 +138,70 @@ def test_a_broad_pool_assembles_inside_the_budget() -> None:
     assert 12.0 <= result.estimated_minutes <= 18.0
     assert len(result.topics) >= 4
     assert result.question_count >= 6
-    assert result.spans_multiple_bands is True
+    # No band assertion here on purpose — see TestBandSpread. This test is about
+    # the budget, and `assemble` has no band-spread rule to assert against.
+
+
+class TestBandSpread:
+    """What ``Assembly.spans_multiple_bands`` actually reports (D4.20).
+
+    This class replaces an ``assert result.spans_multiple_bands is True`` that
+    sat in :func:`test_a_broad_pool_assembles_inside_the_budget` from
+    ``5809814`` until D4.20. That assertion was wrong twice over:
+
+    1. **``assemble`` has no band-spread rule.** It selects breadth-first
+       across top-level topics and breaks ties on nearest-to-even-share; it
+       never reads ``Candidate.difficulty``. Nothing in it can guarantee two
+       bands, so the assertion pinned a behaviour that was never implemented
+       and passed on the luck of a random-UUID tie-break.
+    2. **``spans_multiple_bands`` is designed to be False sometimes.** It is
+       the flag that stops S-05 inventing a working-level estimate from a
+       sample drawn from one band (see the property's own docstring). Pinning
+       it True on a broad pool asserts against its stated purpose.
+
+    So the honest contract is: it *reports* the bands present in the selected
+    set. Both outcomes are legitimate, and S-05 must handle False.
+
+    **Measured on the live 0625 corpus at D4.20** (248 servable rows after the
+    P4.8 chunk-0 renderable filter, E2E seed fixtures excluded): placement
+    assembles 10 questions / 17.06 min / 6 syllabus topics, of which 6 are
+    ``foundation`` and 4 ``standard`` — so ``spans_multiple_bands`` is True
+    today and S-05 does show a working level. That is a property of the
+    corpus's mark distribution, not a guarantee of the algorithm, which is
+    exactly why it is recorded here as a measurement rather than asserted.
+    """
+
+    def test_it_is_true_when_the_selected_set_holds_more_than_one_band(self) -> None:
+        pool = [
+            # 3 marks: six of them is 16.875 min, inside the 12-18 window. At 2
+            # marks the pool totals 11.25 and is refused on duration, so the
+            # band flag would never be reached.
+            _c(f"{i + 1}.1 Topic {i + 1}", 3, band="easy" if i % 2 else "hard")
+            for i in range(6)
+        ]
+
+        result = assemble(pool, TIMINGS)
+
+        assert isinstance(result, Assembly)
+        assert {s.candidate.difficulty for s in result.selected} == {"easy", "hard"}
+        assert result.spans_multiple_bands is True
+
+    def test_it_is_false_when_a_viable_set_happens_to_be_single_band(self) -> None:
+        """The inverse, and the one the deleted assertion denied could happen.
+
+        A perfectly viable placement test — enough questions, enough topics,
+        inside the budget — drawn entirely from one band. ``assemble`` accepts
+        it, because breadth across the syllabus is what it is required to
+        deliver; the flag is what tells S-05 to keep quiet about a level.
+        """
+        pool = [_c(f"{i + 1}.1 Topic {i + 1}", 3, band="hard") for i in range(6)]
+
+        result = assemble(pool, TIMINGS)
+
+        assert isinstance(result, Assembly)
+        assert result.question_count >= 6
+        assert result.syllabus_topic_count == 6
+        assert result.spans_multiple_bands is False
 
 
 def test_breadth_comes_before_depth() -> None:
