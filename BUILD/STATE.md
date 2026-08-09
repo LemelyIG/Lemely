@@ -1407,6 +1407,33 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         4. Registry entry shape to copy is the S-20 block at `audit.mjs:1487-1535`: either a
            bare entry (`screenId`/`slug`/`path`/`session`/`ready`/`authed`) or one with a
            `states: [{state, slug, lighthouse, ready}]` array for the non-default states.
+        **State matrix RESOLVED read-only 2026-08-09 (sixteenth session), point 3's conflict
+        settled by measurement — do not re-derive.** The question point 3 left open was whether
+        `settled` can honestly produce `no_signal`. It can, and so can `bare`: the planner's
+        three signals are weakness rows, placement results and confidence ratings, and
+        `scripts/seed_e2e.py` writes **zero confidence ratings for any account** (no
+        `confidence_rating`/`ConfidenceRating` match anywhere in the file) and gives neither
+        `settled` nor `bare` a placement or a weakness row (seed docstring lines 230-241 —
+        `settled` has only a fully-reviewed deck, `bare` has "nothing else"). So the mutually
+        exclusive pair splits cleanly across the two accounts that already exist, and **no new
+        account is needed**:
+        - `active` → **the real populated week.** It is the only practice account with a
+          `WeaknessRecord` (seeded via the deliberately-wrong marked set, docstring 218-221),
+          which is exactly the signal `generate` needs. Also carries S-25's *provable*
+          recorded-weakness rationale arm, because the weak topic is real.
+        - `settled` → **the persisted refusal** (`generated: true`, `available: false`,
+          `reason: "no_signal"`). Honest, not forced: it has no signal of any of the three
+          kinds. The seed must call `generate` for it — the refusal is a persisted row, not
+          an absence.
+        - `bare` → **`generated: false`** (no plan row this ISO week). Seed does nothing; the
+          state is the *absence* of a generate call, which is why it cannot share an account
+          with the refusal.
+        **Still undecided and cheaper to decide at write time:** the week-fully-complete state
+        chunk A renders needs every session of a populated week `completed_at`-stamped, which
+        `active` cannot also demonstrate. Either add a fourth account or capture it as a second
+        state on a separate seeded student; do **not** complete `active`'s sessions to get it —
+        that would destroy the populated-week capture. S-25's superseded/absent-session arm is
+        reachable without new seed data (a session id that is not in the current week).
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
