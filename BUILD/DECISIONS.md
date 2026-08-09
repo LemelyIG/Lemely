@@ -4559,7 +4559,10 @@ S-29 requires boards "for basis — total XP or per-subject XP", and `xp_events`
 has **no subject attribution at all**. Two additive changes, which together are
 the only XP-related schema work P5 does:
 
-1. **`xp_events.subject_id`, nullable, FK to `subjects`.** Nullable because not
+1. **`xp_events.subject_id`, nullable, FK to `subjects`.** — **SUPERSEDED BY D5.2:
+   this is `subject_code`, a String FK to `subjects.code`, because all eight
+   other subject-scoped tables key on the code and every award seam already
+   carries one.** The rest of this item stands. Nullable because not
    every award has a subject — a flashcard review does, a future account-level
    award might not. Per-subject boards filter on it; total boards ignore it.
    Storing it in the `metadata` JSONB instead was rejected: it is a real foreign
@@ -4621,3 +4624,42 @@ Named so a later task does not read the silence as an oversight:
 - **XP for a *teacher* or *parent*.** `xp_events.user_id` is a `users` FK, so the
   schema permits it. The product does not: engagement mechanics are a student
   surface. P5 awards XP to students only.
+
+---
+
+## D5.2 — D5.1 §7 was wrong: `xp_events` keys subjects by code, not by UUID (P5.2 chunk A)
+
+D5.1 §7 specified **`xp_events.subject_id`, nullable, FK to `subjects`** — a
+UUID pointing at the `subjects.id` surrogate key. The P5.2 implementation built
+exactly that, and flagged it rather than quietly following the house style. The
+flag was right and the spec was wrong.
+
+**Every other subject-scoped table in this schema keys on the code, not the id.**
+Eight of them, with no exceptions: `papers`, `quizzes`, `quiz_questions`,
+`flashcard_decks`, `study_plans`, `student_subject_enrolments`, `attempts`,
+`announcements`. Only two foreign keys in the entire model layer point at
+`subjects.id`; two point at `subjects.code`, and the `subject_code` *column*
+convention is universal.
+
+**Why this actually mattered rather than being cosmetic.** Every award seam P5.2
+chunk B is about to wire — a corrected paper, a submitted quiz, a reviewed
+flashcard deck, a completed plan session — already carries a `subject_code` and
+none of them holds a subject UUID. A `subject_id` column would therefore have
+forced a code-to-UUID lookup at *every single award call site*, to store a value
+no caller possesses, purely to satisfy a line in a spec. That is a per-call-site
+query and a per-call-site failure mode bought for nothing.
+
+**Corrected to `subject_code`, nullable `String`, FK to `subjects.code`**, with
+`ix_xp_events_subject_code`. Migration 0013 was amended before being committed,
+so there is no second migration and no schema churn. `XpService.award` now takes
+`subject_code: str | None` and does no UUID coercion on it.
+
+**The process point is the reusable one.** D5.1 was written from the UI spec and
+MISSION without reading the model layer's existing subject convention, and it
+specified a column shape that contradicted eight tables. It was caught because
+the implementation was briefed to *implement the spec and report disagreement
+rather than silently deviate* — so the divergence arrived as a labelled note in
+a migration docstring instead of as an inconsistency discovered months later.
+A spec written above the code is worth having; it is not automatically right
+about the code, and the brief that lets an implementer say "this is wrong" is
+what makes the difference.

@@ -293,6 +293,12 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
   not a request the orchestrator can fix). The JSON publish endpoint itself works fine (200).
   So: put the substance **in the message body** and use `click`/`actions` to link the artifact
   on GitHub instead of attaching it.
+- **`ruff` excludes `lemely/db/migrations/versions` via `extend-exclude`** (pyproject), and
+  **naming a migration file explicitly on the ruff command line overrides that exclusion** —
+  so `ruff check lemely/db/migrations/versions/00NN_x.py` reports TC003 on the standard
+  `from collections.abc import Sequence` header that *every* migration has and that
+  `./scripts/check.sh` correctly ignores. Verified by running it against the already-merged
+  `0012_study_plans` and getting the identical error. Lint migrations only through `check.sh`.
 - **`pytest --collect-only` still runs the coverage plugin** and will clobber `.coverage` —
   pass `--no-cov`. Its `-q` output is one `path: N` line per file, so the total is
   `... | grep -E "^tests/.*: [0-9]+$" | awk -F': ' '{s+=$2} END {print s}'` (2350 at Phase 4).
