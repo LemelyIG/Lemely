@@ -1273,3 +1273,31 @@ question-rendering surface P4.9 and P5 will compose.
   backends. Four audit findings deliberately deferred and recorded in STATE + D4.16 §4; the
   `prefers-reduced-motion` blanket kill is P5's, because Phase 5's own acceptance requires a
   test that cannot honestly pass against it.
+
+## 2026-08-09 — P4.9 opened; chunk 0 (backend read paths) done
+- **Did:** scoped P4.9 by measurement before briefing anything, which turned up two missing
+  backend read paths and made them chunk 0 (`dc0c0ac`). A practice set **is** marked on submit
+  — marking fires for every quiz kind — but had **no result route anywhere**: the take DTO
+  carries no marks at all and placement's result route is narrowed to `kind == placement`. And
+  no topic-listing endpoint existed in any router, so S-20's topic selection had no data
+  source. Both added; both filtered/narrowed through the *existing* shared predicates rather
+  than second copies. All 13 gates green, 0 skipped; 2331 / 6 / 0, 90.37% cov.
+- **Learned:** the live bank mixes taxonomy levels — `"1 Motion, forces and energy"` (152) comes
+  back as a **peer** of `"1.2 Motion"` (6) on disjoint row sets, so a flat chip list would offer
+  a parent that silently excludes its own children while looking perfectly correct. Only
+  querying the real bank showed it; reading the code could not. It is the same defect class as
+  P4.4 chunk B-3's breadth bug, which is why the helper to fix it already existed.
+  Second lesson, cheaper to have learned here than during a phase report: **running `pytest`
+  concurrently with `check.sh` corrupts the coverage figure while still exiting 0** — 89.67%
+  concurrent vs 90.37% serial on an identical tree, with test counts identical both times. I
+  spent real effort chasing a regression that did not exist. Recorded in STATE's environment
+  facts.
+  Third: the handover omitted the structural-exclusion test the brief explicitly required, and
+  the existing precedent it would have copied asserts on a response *body* — which passes
+  vacuously the moment `questions` is empty, i.e. exactly the unmarked case. Added in the
+  stronger field-set form.
+- **Next:** P4.9 chunk A — S-20 (practice generator) + S-21 (working view), composing the
+  existing `QuizTaker` rather than forking it, and reading chunk 0's result route for the
+  finish summary. Chunk 0's `syllabusGroup` is what S-20 must nest by. Note S-21's
+  reveal-answer is deliberately **not** built (no route exposes a model answer, and D3.8's
+  structural exclusion is on purpose) — recorded as a scope decision in STATE, not an omission.
