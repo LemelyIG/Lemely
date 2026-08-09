@@ -1334,6 +1334,32 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         must be updated when chunk C adds the registry entries.
       - [ ] chunk B — **S-25** session detail + its route, the fact-1 "why" join, and the
         session-complete flow from the detail screen. No XP (P5's seam is `completed_at`).
+        **Design decided by measurement 2026-08-10 (tenth session), before briefing — do not
+        re-derive:**
+        1. **There is no `GET /sessions/{id}` route.** The router has exactly three paths and
+           none fetches a single session. S-25 therefore reads the *week* via
+           `useCurrentStudyPlan(subjectCode)` and locates the session by id in `plan.sessions`.
+           **A session id absent from the current week is a real state, not a 404 and not an
+           error** — a rebuild supersedes the previous plan (P4.7 chunk B stamps
+           `superseded_at` rather than mutating), so a bookmarked or mid-rebuild link lands
+           here legitimately and must say *that*, not "not found".
+        2. **The "why" join, per fact 1 above.** `usePracticeTopics(subjectCode).weakTopics` is
+           the one provable signal (`_weak_topics_for` is byte-identical to the planner's
+           `_weaknesses` query). `sessionRationale` in `studyPlanData.ts` gets **three** arms,
+           and the third is the one that is easy to get wrong: recorded-weakness (provable),
+           not-a-recorded-weakness (honest — the planner also weighs placement and confidence
+           and which signal drove *this* session is not recorded anywhere), and
+           **unknown-while-the-topics-query-is-pending-or-failed** — claiming "not a recorded
+           weakness" on a failed fetch would report an absence of evidence as evidence of
+           absence. `focus` is never rendered as a reason (it is a restatement).
+        3. **Start action → route by `activityType`:** practice → `/student/practice/:code`,
+           flashcards → `/student/flashcards/:code`, past_paper → `/student/correct`,
+           **review → no destination exists in this product** (there is no revision surface),
+           so no button is rendered rather than a dead one — the same call chunk A made for
+           reschedule.
+        4. `resolveCrumb`'s `planMatch` arm is `^/student/plan/([^/]+)$` — **anchored, so the
+           new session route falls through to the bare "Home" catch-all** exactly as the
+           chunk-A defect did. Add the arm and its inverse test in the same commit.
       - [ ] chunk C — gate 8: audit-registry entries for **each** state (not just the populated
         week), E2E seed, screenshots — verified by listing `reports/.scratch/screens/<id>/`,
         never from the exit code (D4.18). Plus the legacy cleanup above.
