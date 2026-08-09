@@ -1560,6 +1560,78 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         `practice_bare` + `active_uuid`/`settled_uuid`, `placement_completed`/`completed_uuid`
         (**note: there is no `bare_uuid`** — derive it), `practice_dict` (1482-1498) and
         `placement_dict` (1316).
+      - [ ] chunk D — **the legacy-route cleanup chunk C deliberately split out.** Delete the
+        `GET/POST /api/student/plan` pair and `POST /api/student/onboarding`, both superseded and
+        both with zero frontend callers (P4.8 chunk A deleted `usePostOnboarding`, chunk C deleted
+        `useStudyPlan`/`usePostStudyPlan`). **Scoped read-only 2026-08-09 (twentieth session) while
+        the chunk C gate run was in flight — do not re-derive any of it.**
+        **Trap 1, and it is the reason this chunk is not a delete-and-go: `tests/test_authz_matrix.py`
+        has ZERO coverage of either replacement surface.** `grep -n "study-plan\|/api/me\|student-profile"`
+        over that file returns **nothing**. So `/api/student/plan` (in `STUDENT_GET_ROUTES:37` and
+        `STUDENT_POST_ROUTES:41`) and `/api/student/onboarding` (`:42`) are the **only** authz-matrix
+        representation of the study-plan and onboarding surfaces in the product. Deleting those three
+        entries alone **silently shrinks the RBAC matrix and passes all 13 gates** — MISSION §6 gate 6
+        ("anything touching auth/routes: authz matrix updated and green") is what forbids it. The
+        replacements must be **added in the same commit**:
+        - `/api/student/study-plan/*` — router-level guard
+          (`APIRouter(prefix=..., dependencies=[Depends(require_role(Role.student))])`,
+          `routers/study_plan.py:50-52`), so the file's existing "representative spread proves the
+          router" convention (its own comment at `:46-47`) **does** apply: one GET
+          (`/api/student/study-plan/0625`) plus one POST (`""`, body `{"subjectCode": "0625"}`) is
+          sufficient and honest.
+        - `/api/me/student-profile*` — **the shortcut does NOT apply here.** `me.py:57` is a bare
+          `APIRouter(prefix="/api/me")` with **no router-level guard**; each student route carries its
+          own per-route `require_role(Role.student)` (`:250/279/313/355/375`) and two routes
+          (`/api/me/notification-preferences`, `/api/me/profile`) are **deliberately role-agnostic**
+          (`me.py:86` says so). A representative spread would therefore prove nothing about the other
+          routes. Each of the five student-only `/api/me/student-profile*` routes needs its own matrix
+          entry, or its guard stays unproven.
+        Also delete the two explicit former-IDOR pins that die with their routes
+        (`test_plan_post_ignores_any_caller_supplied_id` ~416-433,
+        `test_onboarding_uses_token_identity` ~436-442) and rewrite the module docstring `:8-10`,
+        which names both as live endpoints.
+        **Trap 2 — there are TWO different `StudentProfileDTO` classes.** `schemas_student.py:336`
+        (legacy, used only by the route being deleted) and `schemas_student_profile.py:47` (P4.3,
+        used by `me.py:211/276/373`). A by-name deletion breaks `me.py`'s four routes. `student.py:84`
+        imports the legacy one from `schemas_student`.
+        **Trap 3 — this deletion is a real feature loss on the web surface, and it must be recorded,
+        not smoothed over.** The legacy `POST /api/student/plan` is the **only web path to AI
+        study-plan narration** (`payload.narrate` → `StudyPlanNarrator`, `student.py:857-865`).
+        The replacement `StudyPlanWeekDTO` (`schemas_study_plan.py:37`) has **no `narrative` field
+        at all**, so nothing on the new surface replaces it. Narration survives on the CLI only
+        (`cli.py:582 --use-ai`, `:612-614`) — so **do not delete `lemely/io/study_plan_ai.py`**.
+        Either record the web-side loss in `BUILD/DECISIONS.md` (and it then belongs in DELIVERY.md's
+        limitations, since MISSION §9 inventories the adaptive study plan) or carry narration onto the
+        new route deliberately; do not let it vanish as a side effect of a cleanup commit.
+        **Exact edit sites, measured:**
+        - `lemely/web/routers/student.py`: `_plan_to_dto` (773-795), `student_plan_get` (799-823),
+          `student_plan_post` (826-874), `student_onboarding` (928-965) + the two section headers.
+          Orphaned imports/constants to remove: `build_study_plan` (`:44`), `StudyPlanNarrator`
+          (`:55`), `PlanSessionDTO` (`:81`), `OnboardingRequest` (`:76`), legacy `StudentProfileDTO`
+          (`:84`), `StudyPlanDTO` (`:86`), `StudyPlanRequest` (`:87`), `StudentProfile`+`StudyPlan`
+          (`:43`), `_DEFAULT_WEEKLY_HOURS` (`:104`, sole use is `:819`). **Keep**
+          `aggregate_weaknesses_from_history` (`:32`) — it has two other live uses at `:251` and
+          `:377`. `ruff` F401 will name any I missed.
+        - `lemely/web/schemas_student.py`: `StudyPlanDTO` (257), `StudyPlanRequest` (271),
+          `OnboardingRequest` (323), legacy `StudentProfileDTO` (336), `PlanSessionDTO`, the slider
+          model feeding `OnboardingRequest`, and their `__all__` entries.
+        - `tests/test_web_student.py`: the six plan/onboarding tests at ~443/456/517/545/564/615
+          (`test_plan_get_is_deterministic_without_narrative`, the three `narrate` tests, the
+          no-narrate pair, the onboarding one) + the module docstring `:9` and the `dummy-key`
+          fixture `:56` if nothing else uses it.
+        - `tests/conftest.py:50` names `test_plan_post_narrate_without_key_is_503_not_500` in the
+          D4.3 billed-Gemini-guard rationale. That test dies here. **Keep the guard, fix the
+          reference** — a comment citing a deleted test is the same stale-note trap as the
+          `audit.mjs` exclusion strings.
+        - `web/src/lib/studentTypes.ts:228-240` (legacy `StudyPlanDTO`/`PlanSessionDTO`/request type,
+          now callerless) and the stale comment at `:266`.
+        - **Docstring cross-references that all describe the legacy pair as live** and go stale the
+          moment it dies — this build has already been bitten twice by an outlived note
+          (`audit.mjs:89-91` is its own worked apology): `schemas_study_plan.py:7-8`,
+          `routers/study_plan.py:6`, `schemas_student.py:275/327`, `useStudentApi.ts:53`,
+          `studyPlanTypes.ts:7`, `StudyPlanWeek.tsx:25`, `data.ts:93-94`, `audit.mjs:89-91`.
+        Gate 8 is in play only for the two small `web/` text edits (dead type + comments); no screen
+        changes, so no new captures are expected.
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
