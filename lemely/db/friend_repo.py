@@ -74,6 +74,12 @@ _MAX_CODE_ATTEMPTS = 5
 #: constraint is treated as a collision worth retrying.
 _FRIEND_CODE_CONSTRAINT_NAME = "uq_users_friend_code"
 
+#: The unique index migration ``0015`` creates on
+#: ``friendships (pair_low, pair_high)``. Postgres reports a unique-index
+#: violation with the index name in ``diag.constraint_name``, exactly as it
+#: does for a named constraint.
+_FRIENDSHIP_PAIR_INDEX_NAME = "uq_friendships_pair"
+
 
 def _utcnow() -> datetime:
     """Default clock: aware UTC now. Production wiring only — tests inject their own."""
@@ -100,6 +106,19 @@ def _is_friend_code_violation(exc: IntegrityError) -> bool:
     diag = getattr(orig, "diag", None)
     constraint_name = getattr(diag, "constraint_name", None)
     return constraint_name == _FRIEND_CODE_CONSTRAINT_NAME
+
+
+def _is_pair_violation(exc: IntegrityError) -> bool:
+    """``True`` only for a violation of ``uq_friendships_pair``.
+
+    Same reasoning as :func:`_is_friend_code_violation`: a foreign-key or
+    CHECK failure on ``friendships`` must keep propagating rather than being
+    mistaken for the benign "somebody else inserted this pair first" race.
+    """
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    constraint_name = getattr(diag, "constraint_name", None)
+    return constraint_name == _FRIENDSHIP_PAIR_INDEX_NAME
 
 
 class FriendError(Exception):
@@ -302,22 +321,7 @@ class FriendService:
                 )
             )
             if existing is not None:
-                if existing.status == FriendshipStatus.accepted:
-                    raise FriendAlreadyExistsError(
-                        f"{requester_uuid} and {target.id} are already friends"
-                    )
-                # Pending. If the caller is the existing row's requester,
-                # this is a duplicate of their own outstanding ask.
-                if existing.requester_id == requester_uuid:
-                    raise FriendAlreadyExistsError(
-                        f"{requester_uuid} already has a pending request to {target.id}"
-                    )
-                # Reverse pending: the target already asked the caller.
-                # Accept it rather than erroring or inserting a second row.
-                existing.status = FriendshipStatus.accepted
-                existing.responded_at = self._now()
-                session.flush()
-                return existing
+                return self._resolve_existing_pair(session, existing, requester_uuid, target.id)
 
             friendship = Friendship(
                 requester_id=requester_uuid,
@@ -326,9 +330,58 @@ class FriendService:
                 pair_low=pair_low,
                 pair_high=pair_high,
             )
-            session.add(friendship)
-            session.flush()
+            try:
+                with session.begin_nested():
+                    session.add(friendship)
+                    session.flush()
+            except IntegrityError as exc:
+                if not _is_pair_violation(exc):
+                    raise
+                # Lost the race: between the SELECT above and this INSERT,
+                # a concurrent call created this pair. Without the savepoint
+                # the violation would surface on COMMIT — outside this method
+                # entirely — and the router would answer 500 to what is really
+                # an ordinary duplicate or crossed request. Re-read the winner
+                # and resolve it through exactly the branch it would have taken
+                # had the SELECT seen it (READ COMMITTED makes it visible now:
+                # our INSERT blocked until the other transaction committed).
+                raced = session.scalar(
+                    select(Friendship).where(
+                        Friendship.pair_low == pair_low, Friendship.pair_high == pair_high
+                    )
+                )
+                if raced is None:  # pragma: no cover - the index fired, the row must exist
+                    raise
+                return self._resolve_existing_pair(session, raced, requester_uuid, target.id)
             return friendship
+
+    def _resolve_existing_pair(
+        self,
+        session: Session,
+        existing: Friendship,
+        requester_uuid: uuid.UUID,
+        target_id: uuid.UUID,
+    ) -> Friendship:
+        """Decide what a request means when the pair already has a row.
+
+        Shared by the ordinary "the SELECT found it" path and the lost-race
+        path in :meth:`request`, so a concurrent insert and a sequential one
+        produce the *same* outcome rather than two behaviours that drift.
+        """
+        if existing.status == FriendshipStatus.accepted:
+            raise FriendAlreadyExistsError(f"{requester_uuid} and {target_id} are already friends")
+        # Pending. If the caller is the existing row's requester,
+        # this is a duplicate of their own outstanding ask.
+        if existing.requester_id == requester_uuid:
+            raise FriendAlreadyExistsError(
+                f"{requester_uuid} already has a pending request to {target_id}"
+            )
+        # Reverse pending: the target already asked the caller.
+        # Accept it rather than erroring or inserting a second row.
+        existing.status = FriendshipStatus.accepted
+        existing.responded_at = self._now()
+        session.flush()
+        return existing
 
     def accept(self, user_id: uuid.UUID | str, friendship_id: uuid.UUID | str) -> Friendship:
         """Accept a pending friend request. Only the addressee may call this.

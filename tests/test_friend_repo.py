@@ -26,8 +26,10 @@ Covers:
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from unittest import mock
 
 import pytest
 import sqlalchemy as sa
@@ -186,6 +188,49 @@ class TestFriendCode:
 # ---------------------------------------------------------------------------
 
 
+def _pair_row_count(sm: sessionmaker[Session], one: uuid.UUID, other: uuid.UUID) -> int | None:
+    """How many rows exist for this pair, in either direction."""
+    with sm() as session:
+        return session.scalar(
+            select(sa.func.count())
+            .select_from(Friendship)
+            .where(
+                sa.or_(
+                    sa.and_(Friendship.requester_id == one, Friendship.addressee_id == other),
+                    sa.and_(Friendship.requester_id == other, Friendship.addressee_id == one),
+                )
+            )
+        )
+
+
+@contextmanager
+def _blind_first_friendship_select() -> Iterator[None]:
+    """Make the first ``friendships`` SELECT miss a row that really exists.
+
+    That miss is precisely what losing the insert race does to
+    :meth:`FriendService.request`, and it is the only part these tests
+    simulate — a genuinely concurrent commit cannot be staged
+    deterministically in a single-threaded test. Everything downstream is
+    real: the real ``uq_friendships_pair`` index raises a real
+    ``IntegrityError``, ``_is_pair_violation`` classifies it, and the
+    re-read resolves it. Reverting the savepoint/recovery in ``request``
+    fails both tests with an ``IntegrityError`` escaping on COMMIT, which is
+    the 500 the fix exists to prevent.
+    """
+    original = Session.scalar
+    blinded = False
+
+    def patched(self: Session, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal blinded
+        if not blinded and "friendships" in str(statement):
+            blinded = True
+            return None
+        return original(self, statement, *args, **kwargs)
+
+    with mock.patch.object(Session, "scalar", patched):
+        yield
+
+
 class TestRequestAccept:
     def test_happy_path(
         self, service: FriendService, pg_sessionmaker: sessionmaker[Session]
@@ -231,6 +276,37 @@ class TestRequestAccept:
                 )
             )
         assert count == 1
+
+    def test_race_lost_to_own_duplicate_raises_instead_of_erroring(
+        self, service: FriendService, pg_sessionmaker: sessionmaker[Session]
+    ) -> None:
+        """Double-tap on a never-before-seen pair: 409-shaped error, not a 500."""
+        a = _seed_user(pg_sessionmaker)
+        b = _seed_user(pg_sessionmaker)
+        code_b = service.friend_code_for(b)
+        service.request(a, code_b)  # the race winner
+
+        with _blind_first_friendship_select(), pytest.raises(FriendAlreadyExistsError):
+            service.request(a, code_b)
+
+        assert _pair_row_count(pg_sessionmaker, a, b) == 1
+
+    def test_race_lost_to_crossed_request_accepts_the_winner(
+        self, service: FriendService, pg_sessionmaker: sessionmaker[Session]
+    ) -> None:
+        """Losing the race to the *other* party is still a crossed request."""
+        a = _seed_user(pg_sessionmaker)
+        b = _seed_user(pg_sessionmaker)
+        code_a = service.friend_code_for(a)
+        code_b = service.friend_code_for(b)
+        winner = service.request(b, code_a)  # b asked first, a never saw it
+
+        with _blind_first_friendship_select():
+            resolved = service.request(a, code_b)
+
+        assert resolved.id == winner.id  # the same row, not a second one
+        assert resolved.status == FriendshipStatus.accepted
+        assert _pair_row_count(pg_sessionmaker, a, b) == 1
 
     def test_self_request_via_own_code_raises(
         self, service: FriendService, pg_sessionmaker: sessionmaker[Session]

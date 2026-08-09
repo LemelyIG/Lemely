@@ -4942,3 +4942,67 @@ question: what did this student actually consent to?
 - **The leaderboard reads `friendships` directly** rather than calling
   `FriendService`, matching what that module already does with
   `ClassEnrollment`/`Seat`.
+
+## D5.7 — A lost insert race in `FriendService.request` must answer 409, not 500 (P5.4, from adversarial review)
+
+**Found by the P5.4 reviewer subagent (MISSION §6 gate 7), confirmed by reading the
+code, fixed before P5.4 was marked done.**
+
+`FriendService.request` resolved an already-existing pair by SELECTing it first
+(duplicate ask → `FriendAlreadyExistsError`; reverse-pending → accept the crossed
+request). The genuinely-new-pair branch then inserted with no `IntegrityError`
+handling at all. Two callers can both pass the `existing is None` check for the
+same never-before-seen pair, and the loser's INSERT violates `uq_friendships_pair`.
+
+**The reason this was worse than it looks:** the insert was a bare
+`session.add()` + `flush()` inside `with session.begin()`, so under a real race
+the violation surfaces on **COMMIT — after `request()` has returned**, outside any
+frame the router can catch. `routers/friends.py` catches only the `Friend*` domain
+errors and `ValueError`, so the honest outcomes (409 duplicate, or 201-with-accepted
+for a crossed request) degrade to a raw **500**. Concrete: two tabs open for student
+A both `POST /requests` with B's code on their first-ever contact — one gets 201, the
+other a 500.
+
+**Decision.** Wrap the insert in `session.begin_nested()` and catch `IntegrityError`,
+exactly as `friend_code_for` already does for `uq_users_friend_code` (and `xp_repo`
+does for its dedupe index) — this is the house pattern, not a new one. On a
+`_is_pair_violation` match, re-read the winning row and resolve it through the *same*
+`_resolve_existing_pair` helper the sequential path uses. Any other `IntegrityError`
+(foreign key, one of the three CHECKs) still propagates.
+
+- **The savepoint is the load-bearing part, not the `except`.** Without
+  `begin_nested()` the error cannot be caught here at all, because it is not raised
+  here — it is raised at the transaction boundary.
+- **The resolution branch is shared, not duplicated.** A concurrent insert and a
+  sequential one produce the same outcome by construction, so the two paths cannot
+  drift.
+- **The re-read is sound under READ COMMITTED**: the losing INSERT blocks until the
+  winner commits, so a fresh SELECT after the savepoint rollback always sees it.
+- **Not a security or integrity defect** — the database constraint always won, no
+  duplicate or reciprocal row was ever possible (D5.6 holds). This is purely about
+  the service translating a DB truth into an honest HTTP answer.
+
+**Proven by inversion, not assertion.** `tests/test_friend_repo.py` blinds the first
+`friendships` SELECT — which is exactly what losing the race does to it — and lets
+everything downstream run for real against the real index. Only the missed SELECT is
+simulated; a genuinely concurrent commit cannot be staged deterministically
+single-threaded.
+
+**What inversion actually shows** (re-run in the forty-first session with the
+`begin_nested()` replaced by a bare `if True:`, rather than carried over as a claim):
+both new tests fail, but *not* with the `IntegrityError` surfacing on COMMIT as this
+entry first said. Without the savepoint the failing `flush()` raises `IntegrityError`
+immediately and **poisons the enclosing transaction**, so the recovery SELECT dies
+first with `sqlalchemy.exc.InvalidRequestError: Can't operate on closed transaction
+inside context manager`. The conclusion is unchanged and the fix is unchanged — an
+uncaught exception out of `request()` is a 500 either way — but the mechanism is
+worth stating correctly: a savepoint is what makes the error *recoverable at all*,
+not merely *catchable here*. Once the outer transaction is poisoned there is nothing
+left to re-read with.
+
+**Method note, the fourth instance in Phase 5.** D5.2/D5.3/D5.4/D5.5 were all "a
+brief or a convention was trusted where the schema or spec should have been read."
+This one is different and worth naming separately: **the invariant was correctly
+enforced in the database and the service simply had no story for being told so.**
+A CHECK or unique index is a guarantee, not an error handler — every place that can
+provoke one needs a decision about what the user sees when it fires.
