@@ -30,6 +30,7 @@ from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.flashcard_repo import FlashcardService
+from lemely.db.friend_repo import FriendService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
@@ -385,6 +386,18 @@ def get_leaderboard_service() -> LeaderboardService:
 
 
 @lru_cache(maxsize=1)
+def get_friend_service() -> FriendService:
+    """Return the process-wide :class:`FriendService` singleton (P5.4 chunk B).
+
+    Wired with the DB session factory alone, mirroring :func:`get_leaderboard_service`
+    — the clock is left at its default (real UTC now). Tests override this
+    dependency with a service built on an injected fake clock and a
+    throwaway Postgres database.
+    """
+    return FriendService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_at_risk_ack_service() -> AtRiskAckService:
     """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
 
@@ -594,3 +607,4 @@ def reset_singletons() -> None:
     get_student_profile_service.cache_clear()
     get_xp_service.cache_clear()
     get_leaderboard_service.cache_clear()
+    get_friend_service.cache_clear()

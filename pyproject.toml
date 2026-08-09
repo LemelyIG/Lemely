@@ -236,6 +236,7 @@ module = [
   "lemely.web.schemas_student_profile",
   "lemely.web.schemas_study_plan",
   "lemely.web.schemas_leaderboard",
+  "lemely.web.schemas_friends",
   # httpx `.json()` and pyjwt `decode()` return Any at the trust boundary; these
   # modules parse those payloads defensively into typed dataclasses/Claims.
   "lemely.auth.gotrue",

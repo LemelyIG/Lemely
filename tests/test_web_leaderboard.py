@@ -578,7 +578,7 @@ def test_explicit_null_leaderboard_opt_out_is_422(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad_scope", ["friends", "class_", "global_", "", "CLASS"])
+@pytest.mark.parametrize("bad_scope", ["class_", "global_", "", "CLASS"])
 def test_unknown_scope_is_422(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -587,8 +587,16 @@ def test_unknown_scope_is_422(
     bad_scope: str,
 ) -> None:
     """The route accepts only the readable spellings, never the Python enum's
-    trailing-underscore member names -- and ``friends`` is P5.4's scope, which
-    must fail loudly now rather than silently returning a global board."""
+    trailing-underscore member names.
+
+    ``friends`` was in this parametrize list as a P5.3-chunk-B-era bad scope
+    (P5.4 had not landed yet); P5.4 chunk A (``7397df0``) added it to
+    :class:`~lemely.db.leaderboard_repo.LeaderboardScope`, so it has been a
+    valid, reachable scope since before this router test file's last edit —
+    keeping it in this list would assert a 422 for a scope that actually
+    returns 200. See ``tests/test_web_friends.py``'s
+    ``test_leaderboard_friends_scope_is_reachable_over_http`` for the
+    positive case this scope now has."""
     _use_services(client, leaderboard_service, student_profile_service)
     student = _seed_user(pg_sessionmaker)
     _auth_as(client, student, Role.student)

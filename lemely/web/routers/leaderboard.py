@@ -99,9 +99,12 @@ def get_leaderboard(
 
     Query params (snake_case, mirroring ``practice.py``'s convention):
 
-    - ``scope``: ``class``, ``school`` or ``global`` (readable spellings —
-      never the Python enum's ``class_``/``global_`` trailing-underscore
-      forms). Unknown value is 422.
+    - ``scope``: ``class``, ``school``, ``global`` or ``friends`` (readable
+      spellings — never the Python enum's ``class_``/``global_``
+      trailing-underscore forms). ``friends`` needs no ``class_id`` (P5.4
+      chunk A, D5.6 §6 — the scope ranks the caller against their accepted
+      friends, resolved from ``friendships`` directly, not a class). Unknown
+      value is 422.
     - ``basis``: ``total`` for all-subjects XP, or a subject code (e.g.
       ``0625``) for a per-subject board.
     - ``class_id``: required when ``scope=class``; ignored otherwise.
