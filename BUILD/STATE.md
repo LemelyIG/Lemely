@@ -1439,12 +1439,25 @@ Recorded rather than smoothed over. None is a regression; all three predate or e
         The two stale strings are confirmed verbatim at `audit.mjs:71-73` (header comment)
         and `:2162-2164` (a runtime `log()` call, **not** a comment — it prints the false
         claim to the operator, so fixing only the comment leaves the lie in the output).
-        **Still undecided and cheaper to decide at write time:** the week-fully-complete state
-        chunk A renders needs every session of a populated week `completed_at`-stamped, which
-        `active` cannot also demonstrate. Either add a fourth account or capture it as a second
-        state on a separate seeded student; do **not** complete `active`'s sessions to get it —
-        that would destroy the populated-week capture. S-25's superseded/absent-session arm is
-        reachable without new seed data (a session id that is not in the current week).
+        **The last open question — the week-fully-complete state — RESOLVED read-only
+        2026-08-09 (seventeenth session) by measurement, and it needs NO fourth account.**
+        The state needs a populated week with every session `completed_at`-stamped, and
+        `active` cannot also demonstrate it (completing `active`'s sessions would destroy the
+        populated-week capture — do not do that). The account that can is
+        **`placement.students.completed`**, which the P4.9 matrix never claimed:
+        `seed_e2e.py`'s docstring (179-183) and its `_signup_account("placement-completed")`
+        path (1194-1263) show it is onboarded, enrolled in 0625 with papers pinned to
+        `PLACEMENT_PAPER_NUMBER`, and — because its **first placement answer is deliberately
+        wrong** — carries a real `WeaknessRecord` *and* a marked placement result. That is
+        **two** of the planner's three signals, so `generate` produces a genuinely populated
+        week for it; the seed then stamps every session complete. Nothing is forced and no
+        signal is hand-written. Registry binding: a new `planCompleteSession` built from
+        `seed.placement.students.completed`, subject `seed.placement.subjectCode`.
+        S-25's superseded/absent-session arm is still reachable without any new seed data
+        (a session id that is not in the current week).
+        **Consequence to honour, not code around:** this account now also answers S-24 at
+        `/student/plan/0625`, so its plan must be generated *and* completed by the seed —
+        a half-completed week here would silently become the "populated" capture's twin.
 - [ ] todo — **P4.11** Acceptance + standing UI gate: E2E (onboard → placement → plan; practice
       targets seeded weaknesses), axe/Lighthouse, screenshot corpus for every new screen × state ×
       breakpoint, **maths notation + diagram rendering verified visually in screenshots, not
