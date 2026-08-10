@@ -2,8 +2,10 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T13:31:00Z   # **Sixty-sixth session (this one): the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at 27m11s, still 11/13 PASS, inside `puppeteer-audit` (child `npm run audit` 6m38s, a FRESH Chrome at 42s, which is progress: `audit.mjs` cycles a browser per route batch). Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
-#                                    **The waiting time went into the one part of the P5.11 brief that had gone STALE, and it was pessimistic: the push/notification flow is now the CHEAPEST of the four, not the blocked one (new point 9).** Point 4 was written in session 59 *before* P5.9 existed. Three things now hold. (1) **G-13 needs ZERO markup change** — `NotificationRow` renders the title as a real `<h3>` with real `Mark as read`/`Open` buttons, so it is already in the suite's accessible-name idiom; it is the exact opposite of points 6 and 7(d), which do need an a11y fix. (2) **It costs no new seed group and no new driver** — the teacher's own announcement POST fans out at `announcements.py:202`, so the announcement flow and "push delivery" are *one driver, two assertions*; and `grade_ready` fires on the same `POST /student/correct` that point 7's XP assertion rides. (3) **Its preference gate is already satisfied** — an absent prefs row reads `DEFAULTS` = "every type enabled", so no prefs seeding. Assert `grade_ready` renders with **no** `Open` button (session 60's dead-link finding honoured in `destinationFor`), and assert the inbox row, never a delivered push.
+last_updated: 2026-08-10T13:31:00Z   # **Sixty-seventh session (this one): THE P5.9 GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0 — AND THEN THE GREEN RESULT TURNED OUT TO BE INCOMPLETE.** Session 61's `setsid` run (PID 1077823) exited clean at ~31 minutes, seven agent sessions after it started; the numbers are on the P5.9 UI-gate checklist line and were read off that run, never re-run. Working tree clean on entry, no wip commit needed; INBOX had no unhandled items.
+#                                    **The finding: `audit.mjs` had NO entry for G-13, the notification inbox — chunk B's own screen — so the gate went green *because it did not know the screen existed*.** The one new student screen in P5.9 was never axe-audited, never Lighthouse-scored, never screenshotted, and MISSION §6.8 requires all three. The registry is a hand-maintained list, which makes a missing entry silent: third instance of that shape in this build (`EXPECTED_TABLES` P5.4, the `SeedContract` mirror P4.11) and **the first where the green result was actively misleading rather than merely incomplete.** Entry added and being verified by a standalone `npm run audit` under `setsid` (`/tmp/g13-audit.log`); a full `check.sh` on the tree carrying it is still owed. **P5.9 is NOT done — do not mark it done on the strength of the EXIT=0 above.**
+#                                    **Also measured off the finished run and worth carrying: `ui-thresholds` passed with NINE routes below Lighthouse performance 80** (seven at P5.8), one of them P5.9's own `settings-notifications` at 73. D4.25 restated by a second phase — `check_ui_gates.py` has no performance check at all. **Never cite this run as a performance pass.**
+#                                    Prior: **Sixty-sixth session: the waiting time went into the one part of the P5.11 brief that had gone STALE, and it was pessimistic: the push/notification flow is now the CHEAPEST of the four, not the blocked one (new point 9).** Point 4 was written in session 59 *before* P5.9 existed. Three things now hold. (1) **G-13 needs ZERO markup change** — `NotificationRow` renders the title as a real `<h3>` with real `Mark as read`/`Open` buttons, so it is already in the suite's accessible-name idiom; it is the exact opposite of points 6 and 7(d), which do need an a11y fix. (2) **It costs no new seed group and no new driver** — the teacher's own announcement POST fans out at `announcements.py:202`, so the announcement flow and "push delivery" are *one driver, two assertions*; and `grade_ready` fires on the same `POST /student/correct` that point 7's XP assertion rides. (3) **Its preference gate is already satisfied** — an absent prefs row reads `DEFAULTS` = "every type enabled", so no prefs seeding. Assert `grade_ready` renders with **no** `Open` button (session 60's dead-link finding honoured in `destinationFor`), and assert the inbox row, never a delivered push.
 #                                    Prior: **Sixty-fifth session: the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at 24m30s, now 11/13 gates PASS: `playwright-e2e` cleared, so only `puppeteer-audit` (in progress) and `ui-thresholds` remain. Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
 #                                    **The waiting time went into VERIFYING, not re-sharpening, P5.11's riskiest precondition — and it downgrades point 7's worry.** Point 7 warned that `xp_events.subject_code` is a live FK to `subjects.code` whose row exists "only as a side effect" of the placement seed, so a missing row would make the fail-open `award_xp_safely` swallow a real FK error and the XP assertion vanish silently. Read rather than assumed: `xp_repo.py`'s own contract (§4) confirms only the *dedupe* constraint is swallowed and "a genuine foreign-key violation (e.g. an unknown `subject_code`) still raises" — but **`scripts/seed_e2e.py:1316` raises `RuntimeError` if `link_past_paper_rows()` links fewer rows than it was given**, so a seed that produced no `subjects` row cannot complete. The precondition is *guarded by the seed itself*, not incidental. **The residual risk is only "the seed was never run against this DB", which every E2E run already precludes.** Build the XP-accrual assertion without adding a subject-row guard to it.
 #                                    Prior: **Sixty-fourth session: the gate was at 16m19s, 4/13 (inside `pytest`).** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file was touched — the run is verifying this exact tree — so the waiting time went into the next unmeasured P5.11 flow: **XP accrual (point 7 on the P5.11 line).**
@@ -1294,22 +1296,48 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             G-10's **audit-registry entry** needs a seed account already holding three live
             devices — that is a `scripts/seed_e2e.py` change and P5.11 owns the seed work, so
             either coordinate it there or leave it and report it honestly.
-      - [ ] **UI gate for P5.9** — MISSION §6.8 in full, run **once** after B/C/D land rather
-            than per chunk. Launch it with `setsid` (see the environment facts) and expect ~31
-            minutes; attach and wait rather than relaunching.
-            **LAUNCHED 2026-08-10T12:44Z by session 61 (this one), `setsid` PID 1077823, log
-            at `/tmp/p59-gate.log`, which ends in an `EXIT=` line.** All four chunks (A–D)
-            are committed, working tree clean at launch. **Do NOT relaunch it** — a second
-            run costs ~31 minutes and risks the concurrent-`.coverage` corruption recorded
-            below; attach to 1077823 and arm a Monitor instead, exactly as sessions 52–60
-            did for the P5.8 run. Read coverage off *this* run with
-            `.venv/bin/coverage report --precision=2` and the test count with
-            `pytest --collect-only -q --no-cov`; `check.sh` suppresses output for passing
-            gates, so a green log carries no counts.
-            **Expect `ui-thresholds` to pass while saying nothing about performance**
-            (D4.25): `check_ui_gates.py` has no performance check, and the P5.8 run passed it
-            with seven routes below Lighthouse 80. G-12 is a new route in the registry, so it
-            gets its first axe/Lighthouse numbers here.
+      - [x] **UI gate for P5.9 — FINISHED 2026-08-10, ALL 13 GATES PASS, 0 skipped, EXIT=0.**
+            Session 61's `setsid` run (PID 1077823) took **~31 minutes** and was carried
+            across seven agent sessions (61 launched, 62–66 attached, 67 caught the exit on
+            an armed Monitor). Measured off that run and **never re-run**: **2927 tests**,
+            **coverage 90.91%**, **67 axe route-states with zero violations at any severity**
+            (P5.8: 66 — the +1 is G-12), **40 Lighthouse routes, a11y floor 96, 39 of 40 at
+            100**, **0 console errors**, **0 horizontal-scroll violations**.
+            **The pytest count and coverage are byte-identical to the P5.8 run, and that is
+            correct, not a stale artifact** — P5.9 is a frontend-only task that touched zero
+            backend files. Verified rather than assumed: `.coverage`'s mtime falls inside this
+            run's pytest leg. Do not "fix" the equality.
+            **`ui-thresholds` passed with NINE routes below Lighthouse performance 80, up
+            from seven at P5.8, and one of the two new ones is P5.9's own `settings-notifications`
+            at 73** (the other new entrant is `student-study-plan-week` at 76; the full set is
+            teacher-quiz-detail 66, student-standings 70, teacher-class-analytics 72,
+            settings-notifications 73, teacher-class-roster 73, teacher-schemes 73,
+            student-study-plan-week 76, student-announcements 78, student-practice-generator 79).
+            This is D4.25 restated by a second phase: `check_ui_gates.py` has **no performance
+            check**, so a green `ui-thresholds` says nothing about performance. **Never cite
+            this run as a performance pass.** Carried to P5.12 §4.
+      - [ ] **G-13 registry gap — FOUND BY SESSION 67 AFTER the gate went green, and it is the
+            reason P5.9 is not closed yet.** The gate passed on a registry that **did not
+            contain G-13 at all**: `Notifications.tsx` (chunk B's screen, route
+            `/student/notifications`) shipped with no entry in `web/scripts/audit.mjs`, so the
+            one new *student* screen in this task was never axe-audited, never
+            Lighthouse-scored and never screenshotted. MISSION §6.8 requires exactly that for
+            every new screen.
+            **The failure mode is what matters: the registry is a hand-maintained list, so a
+            missing entry is SILENT — the gate goes green *because* it does not know the
+            screen exists.** That is the third instance of this shape in the build
+            (`EXPECTED_TABLES` at P5.4, the `SeedContract` mirror at P4.11) and the first
+            where the green result was actively misleading rather than merely incomplete.
+            **Write the registry entry in the same chunk as the screen.**
+            Entry added (screenId `G-13`, slug `student-notifications`, `practiceActiveSession`,
+            probe `"Nothing yet"`). It audits the **empty** state, which is the state the
+            screen genuinely ships in: the seed writes no Phase-5 rows and notifications only
+            exist via a live fan-out, so **`NotificationRow` — the unread dot, `Mark as read`,
+            `Open` — is not covered by axe.** A real gap, recorded not hidden; P5.11's seed
+            work should add a `populated` state *alongside* this one, not replace it.
+            Verification in flight: standalone `npm run audit` under `setsid`, log
+            `/tmp/g13-audit.log`, ending in `EXIT=`. A full `./scripts/check.sh` re-run is
+            still owed on the tree that carries this entry before P5.9 may be marked done.
       **Brief sharpened 2026-08-10 (session 56) by reading the code while the P5.8 gate run
       held the test lane — recon only, nothing edited. Four corrections, and the first is a
       scope halving.**
@@ -1586,6 +1614,30 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          no class audience and would render an honest empty state that reads as a passing flow.
          **So the seed work is G-10's three `devices` rows and the leaderboard's XP-ordering
          rows — and only those pay the three-edit tax.**
+      10. **Point 8's remaining tax shrinks again: the leaderboard-ordering seed pays it
+         EITHER. Measured session 67 while the P5.9 gate finished. Only G-10 pays it — one
+         account, three edits, and that is the whole seed-contract cost of P5.11.**
+         Point 8 left two payers. The ordering rows are not one, because the assertion needs
+         **no new contract key**: `SeedContract` already exposes `students.{declining,inactive,
+         control,correctedPaper,belowTarget}` with `displayName`, `email`, `password` and
+         `accessToken` (`web/e2e/seed.ts:34`), and they are already co-enrolled in `class`. So
+         the spec logs in as a student it already has, reads the *expected* names from the
+         contract it already reads, and asserts their relative order on the class board. The
+         seed adds `xp_events` rows for existing users and exposes **nothing new** — zero edits
+         to `seed.ts`, zero to `seed-contract.spec.ts`, zero to `build_result_payload`.
+         **Two traps in those rows, both cheap to avoid and both silent if missed.**
+         (a) **`awarded_on` must land inside the CURRENT Cairo week or the board is empty.**
+         `board()` filters `XpEvent.awarded_on` between `week_bounds(civil_date_in_zone(now))`
+         (`leaderboard_repo.py:367/436`), which is Monday–Sunday of the ISO week containing
+         today (`xp_repo.py:130`). A hardcoded literal date passes on the day it is written and
+         then silently empties the board forever after — and an empty board fails as "ordering
+         assertion found no rows", which reads as a product defect. Seed relative to the seed
+         run's own Cairo today.
+         (b) **`xp_events.subject_code` is NULLABLE** (`models/engagement.py:55`, FK to
+         `subjects.code` with `ondelete="SET NULL"`), so a `basis=total` ordering seed needs
+         **no `subjects` row at all**. Session 65 verified the seed guarantees one anyway; this
+         is the independent reason the ordering flow cannot trip point 7's FK worry. That worry
+         still stands for the *live award* path, which is a different seam.
       9. **Point 4 is STALE and it was pessimistic. The push/notification flow is now the
          CHEAPEST of the four, not the blocked one. Measured session 66, read-only while the
          P5.9 gate held the lane.** Point 4 was written in session 59, *before* P5.9 existed,
