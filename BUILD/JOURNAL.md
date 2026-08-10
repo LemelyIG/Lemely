@@ -1859,3 +1859,38 @@ design, so its output must be read, not trusted.
 **Next.** Read `/tmp/p59b-gate.log` (PID **1232550**) for the `EXIT=` line — do
 not relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
 with a brief that is now twelve points deep and covers both of its legs.
+
+## 2026-08-10 — session 69
+
+**Did.** Found the second P5.9/P5.10 gate run (PID **1232550**) alive at 11m18s,
+4/13, inside `pytest` — attached, armed a Monitor, did **not** relaunch it, and
+touched no source file, because the run is verifying this exact tree. `pytest`
+cleared at ~17m (5/13). Working tree clean on entry; INBOX had no unhandled
+items. The waiting time went into the one P5.11 mechanic no session had checked:
+the announcement flow needs **two roles in one spec**, and nobody had asked
+whether the suite has a role-switching idiom or whether the teacher's POST even
+has a screen. Recorded as points **13** and **14**, and repaired point 9's
+opening line, which my first edit swallowed.
+
+**Learned.** (1) **The teacher's announcement POST has a real compose screen**
+(`/teacher/announcements`), so the flow is genuinely through-the-UI per MISSION
+§5 rather than an API-only setup step — and every locator it needs is already
+accessible-name-addressable. (2) **Two roles cost nothing**: `injectSession`
+(`seed.ts:184-207`) writes the session into `localStorage` before page scripts
+run, which is the split `phase4-journey.spec.ts` already documents. (3) The class
+checkbox's visible text is **exactly** `seed.class.name` — `routers/classes.py:211`
+is `label=row.name`, verbatim, so no substring hedging. (4) S-28's read half needs
+no markup change either: the title is a real `<h3>`, and opening *is* reading, so
+one `Read it` click asserts the whole receipt round trip. **Three of the four E2E
+flows now need zero a11y work; only S-29 and S-31 do.** (5) Two traps, both of
+which fail as something other than what they are: `audience` defaults to
+`"classes"` so the radio needs no click, which makes title+message+submit look
+like the whole driver — but the unticked class checkbox gates the submit button's
+`disabled`, so the spec clicks a dead button and dies as a **30s "element is not
+enabled" timeout that reads as a hung app**; and `Read it` is **not** a unique
+accessible name — it resolves only because the seed seeds zero announcements, so
+it becomes a strict-mode violation the day any session seeds one.
+
+**Next.** Read `/tmp/p59b-gate.log` (PID **1232550**) for the `EXIT=` line — do
+not relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
+with a brief that is now fourteen points deep and covers both of its legs.
