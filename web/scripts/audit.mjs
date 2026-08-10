@@ -1896,6 +1896,25 @@ function buildRouteRegistry(seed) {
         },
       ],
     },
+    // ── S-28 · Announcements & exam calendar (P5.8 chunk B) ───────────────
+    // The `ready` probe deliberately targets the *announcements* heading and
+    // not the countdown or a date row: `exam_dates` ships empty in every
+    // environment this build produces (P5.5 chunk C built the ingestion path
+    // and populated nothing), so the countdown legitimately does not render
+    // and a probe waiting on it would hang and be misread as a route failure.
+    //
+    // The calendar half is therefore audited in its `no_timetable`/
+    // `no_enrolment` state, which is the state it genuinely ships in — that is
+    // coverage of the real screen, not a gap. When a timetable is ingested,
+    // add a `dated` state here rather than replacing this one.
+    {
+      screenId: "S-28",
+      slug: "student-announcements",
+      path: "/student/announcements",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "From your teachers"),
+      authed: true,
+    },
   ]
 }
 

@@ -17,6 +17,7 @@ import { CorrectPaper } from "./screens/CorrectPaper"
 import { StudyPlanSession } from "./screens/studyplan/StudyPlanSession"
 import { StudyPlanWeek } from "./screens/studyplan/StudyPlanWeek"
 import { Standings } from "./screens/Standings"
+import { Announcements } from "./screens/Announcements"
 import { Onboarding } from "./screens/Onboarding"
 import { PlacementInvite } from "./screens/placement/PlacementInvite"
 import { PlacementTest } from "./screens/placement/PlacementTest"
@@ -212,6 +213,7 @@ export const studentRoute: RouteObject = {
     { path: "plan/:subjectCode", element: <StudyPlanWeek /> },
     { path: "plan/:subjectCode/session/:sessionId", element: <StudyPlanSession /> },
     { path: "board", element: <Standings /> },
+    { path: "announcements", element: <Announcements /> },
     // The only place a parent_child_links row is created (D3.11).
     { path: "parents", element: <Parents /> },
     { path: "onboard", element: <Onboarding /> },
