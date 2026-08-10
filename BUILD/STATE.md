@@ -950,9 +950,11 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             **Incidentally closes half of a P5.7 gap:** `/settings/devices` had no nav
             entry anywhere; the **student** portal now reaches it from S-31. Teacher and
             parent still do not — that remains P5.11's.
-      - [ ] **doing — UI gate for P5.8** (forty-seventh session started the run 2026-08-11;
-            tree clean at `a38140f`, `web/node_modules/.tmp` cleared first per the stale-
-            tsbuildinfo fact below) — MISSION §6.8 in full, run **once** after C and D land
+      - [ ] **doing — UI gate for P5.8** (forty-seventh session started the run and died
+            mid-pytest; the **forty-eighth** restarted it clean at `1af8a23` after killing
+            an **orphaned pytest** from that dead run — see the new first environment fact
+            below, this is a real trap that would have corrupted the coverage figure)
+            — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
             (read `removed` = 0, not `changed`). The audit leg alone is ~11 minutes, so
@@ -984,6 +986,15 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
   happened repeatedly; the audit leg alone takes ~11 minutes.
 - `pytest -q` emits **no `N passed` line** (a reporter plugin eats it). Count the progress
   characters in the `^[.sFEx]+ +\[ NN%\]` lines, or read the `Total coverage:` line.
+- **A dead session leaves an ORPHANED `pytest` behind, and the next session's `check.sh`
+  then runs concurrently with it — springing the coverage trap below without anyone
+  starting a second run deliberately.** Seen for real at the start of the forty-eighth
+  session: the forty-seventh's `check.sh` died with the session, but its `pytest` child was
+  re-parented to PID 1 and kept running (`/tmp/check_p58.log`, 11:15); the new run started
+  11:20 and its pytest was contending within one second. **Before starting any gate run,
+  `pgrep -af "check.sh|bin/pytest"` and kill anything with `PPID 1`.** The resume protocol's
+  "verify the working tree is clean" does not cover this — an orphan leaves no trace in
+  `git status`.
 - **Never run `pytest` concurrently with `./scripts/check.sh`.** Both drive `pytest-cov` and
   they contend on the same `.coverage` data file, so the *coverage figure* comes back badly
   wrong while the run still exits 0 — a concurrent run reported **89.67% with
