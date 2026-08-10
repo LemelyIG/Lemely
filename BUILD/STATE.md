@@ -950,15 +950,17 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             **Incidentally closes half of a P5.7 gap:** `/settings/devices` had no nav
             entry anywhere; the **student** portal now reaches it from S-31. Teacher and
             parent still do not — that remains P5.11's.
-      - [ ] **doing — UI gate for P5.8** (forty-seventh session started the run and died
-            mid-pytest; the **forty-eighth** restarted it clean at `1af8a23` after killing
-            an **orphaned pytest** from that dead run — see the new first environment fact
-            below, this is a real trap that would have corrupted the coverage figure)
+      - [ ] **doing — UI gate for P5.8** (sessions **47, 48 and 49 each started this run and
+            each died in the same place** — `/tmp/check_p58*.log` are four files of exactly
+            84 bytes, all stopping after the four backend gates, i.e. mid-`pytest`. The
+            forty-eighth also had to kill an **orphaned pytest** from the forty-seventh —
+            see the environment facts below. The **fiftieth** session diagnosed the shared
+            cause: see the new "foreground is a trap here" fact — and restarted it as a
+            harness-tracked background task.)
             — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
-            (read `removed` = 0, not `changed`). The audit leg alone is ~11 minutes, so
-            run `./scripts/check.sh` in the **foreground**.
+            (read `removed` = 0, not `changed`).
       S-28 (announcements + exam calendar):
       `GET /api/student/announcements`, `/unread-count`, `POST /{id}/read` (P5.5 chunk B)
       and `GET /api/student/exam-calendar` (P5.5 chunk C) — **the calendar table ships
@@ -981,9 +983,19 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
 - [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
 
 ### Environment facts worth not re-deriving (cost real work to find)
-- Run gates as `./scripts/check.sh` in the **foreground** — it exports `$HOME/.local/bin`
-  onto PATH itself, so all 13 gates run. A backgrounded run that a session dies on has
-  happened repeatedly; the audit leg alone takes ~11 minutes.
+- **"Run `check.sh` in the foreground" was advice that ate three sessions (47, 48, 49) and
+  it is now CORRECTED.** A full run is ~25 minutes (pytest ~10, the audit leg ~11) and the
+  **foreground Bash tool caps at 600 s**, so it is *structurally impossible* for a foreground
+  run to reach the UI gates: it is killed at the cap, mid-pytest, every time — which is also
+  what manufactures the orphaned-pytest trap below. The evidence was sitting in `/tmp` the
+  whole time: `check_p58.log`, `_s48.log`, `_s48b.log`, `_s49.log`, **four files of exactly
+  84 bytes**, each stopping after the same four backend gates. Identical byte counts across
+  independent sessions is a *deterministic* cutoff, never three unlucky crashes.
+  **Run it as a harness-tracked background task instead** (`run_in_background: true`), which
+  survives the cap and re-invokes on exit; redirect to a log and append `EXIT=$?` so the
+  status is readable afterwards. The original note's real content still holds and is why the
+  script is the entry point: `check.sh` exports `$HOME/.local/bin` onto PATH itself, so all
+  13 gates run.
 - `pytest -q` emits **no `N passed` line** (a reporter plugin eats it). Count the progress
   characters in the `^[.sFEx]+ +\[ NN%\]` lines, or read the `Total coverage:` line.
 - **A dead session leaves an ORPHANED `pytest` behind, and the next session's `check.sh`
