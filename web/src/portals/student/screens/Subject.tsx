@@ -16,9 +16,19 @@ export function Subject() {
   const { code } = useParams<{ code: string }>()
   const { data, isPending, isError, error } = useSubject(code ?? "")
 
+  /* The page must identify itself in every state, not only the populated one.
+     The visible title below is the subject's full name, which is exactly what
+     these three states do not have yet — so they carry the code instead, for
+     assistive tech only, rather than going without a page heading precisely
+     when there is least other content to orient by. Same defect G-13 shipped
+     with and the same fix; it stayed invisible here because this route had no
+     audit-registry entry at all until P5.11. */
+  const fallbackHeading = <h1 className="sr-only">Subject {code}</h1>
+
   if (isPending) {
     return (
       <div className="lm-screen flex flex-col gap-6">
+        {fallbackHeading}
         <div className="text-[13.5px] text-t2">Loading subject…</div>
       </div>
     )
@@ -28,6 +38,7 @@ export function Subject() {
     if (error instanceof ApiError && error.status === 404) {
       return (
         <div className="lm-screen flex flex-col gap-6">
+          {fallbackHeading}
           <div className="text-[13.5px] text-t2">
             No papers recorded for {code} yet.
           </div>
@@ -36,6 +47,7 @@ export function Subject() {
     }
     return (
       <div className="lm-screen flex flex-col gap-6">
+        {fallbackHeading}
         <div className="text-[13.5px] text-accent">
           Couldn't load this subject: {error.message}
         </div>
@@ -53,9 +65,9 @@ export function Subject() {
           <div className="font-mono text-[12px] text-t2">
             {subjectHeader.meta}
           </div>
-          <div className="font-serif text-[38px] leading-[1.1] mt-1">
+          <h1 className="font-serif text-[38px] leading-[1.1] mt-1">
             {subjectHeader.title}
-          </div>
+          </h1>
           <div className="text-[14px] text-t2 mt-2 max-w-[62ch] text-pretty">
             {subjectHeader.intro}
           </div>

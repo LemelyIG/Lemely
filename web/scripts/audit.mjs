@@ -80,10 +80,21 @@
  *     below — which is why they cannot be collapsed onto one account, and the
  *     fourth is on a different account again because completing `active`'s
  *     sessions would destroy the populated-week capture.
- * Deliberately still NOT in this registry (P5 screens still on mock data):
- *   /student/subject/:code, /student/board, /student/landing,
- *   /student/directions.
- *   (`/student/onboard` was on this list until P4.8 chunk C — chunk A made it
+ * Deliberately still NOT in this registry: nothing. Every student route is
+ * audited as of P5.11.
+ *   (This note used to name four routes as "P5 screens still on mock data",
+ *   and by P5.11 every word of that was wrong — the THIRD time this exclusion
+ *   list went stale, and this time it happened to the very sentence
+ *   documenting the previous two. `/student/board` had had a real entry since
+ *   P5.8, so the claim was simply false; `/student/subject/:code` runs on the
+ *   real `useSubject` hook and was never on mock data; and `/student/landing`
+ *   and `/student/directions` are static, which is a different reason from
+ *   the one written down and, by the rule three lines below, not a sufficient
+ *   one either. Adding the three genuinely-missing entries immediately found
+ *   a real defect in each: none of them rendered an `<h1>`, so all three
+ *   failed `page-has-heading-one` — exactly what the exclusion had been
+ *   hiding, and exactly what the G-13 entry found when it was added.
+ *   `/student/onboard` was on this list until P4.8 chunk C — chunk A made it
  *   real, and the list had gone stale, which is precisely how a route stays
  *   unaudited: the exclusion note outlives the exclusion.
  *   It happened a second time: `/student/plan` sat on this list through
@@ -2023,6 +2034,107 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Nothing yet"),
       authed: true,
     },
+    // ── S-08 · Subject overview (added P5.11) ─────────────────────────────
+    // Not a new screen — it has shipped since Phase 2 and runs on the real
+    // `useSubject` hook. It was excluded by a header note claiming it was
+    // "still on mock data", which was never true. Audited under the declining
+    // student because that account has three real 0625 attempts, so the
+    // populated state renders; the probe targets the "Forecast grade" label
+    // rather than a number, which would move with the fixture.
+    {
+      screenId: "S-08",
+      slug: "student-subject",
+      path: `/student/subject/${subjectCode}`,
+      session: decliningStudentSession,
+      ready: (page) => waitForText(page, "Forecast grade"),
+      authed: true,
+    },
+    // ── G-01 · Landing / marketing (added P5.11) ──────────────────────────
+    // Static — no data hook — which is a different reason from the "still on
+    // mock data" one the exclusion list gave, and by this registry's own rule
+    // not a reason to skip it: axe and Lighthouse apply to a static route
+    // exactly as much as to a live one, and an unlooked-at route is how this
+    // gate becomes vacuous.
+    {
+      screenId: "G-01",
+      slug: "student-landing",
+      path: "/student/landing",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Thirty papers marked"),
+      authed: true,
+    },
+    // ── DEV-01 · Result-header design gallery (added P5.11) ───────────────
+    // Deliberately given a DEV- id rather than an S- one: this is an internal
+    // design gallery of three result-header treatments, not a product screen
+    // in docs/LEMELY_UI_SPEC.md, and it should not be mistaken for one in the
+    // screenshot corpus. It is in the registry regardless because it is a
+    // reachable route in the shipped bundle — which is the only test that
+    // matters for an accessibility gate.
+    {
+      screenId: "DEV-01",
+      slug: "student-directions",
+      path: "/student/directions",
+      session: practiceActiveSession,
+      ready: (page) =>
+        waitForText(page, "The result header is the emotional moment of the product"),
+      authed: true,
+    },
+    // ── G-10 · Device-limit challenge (added P5.11) ───────────────────────
+    // The last screen in the build with no entry. It needed a seed
+    // precondition rather than a navigation — an account already holding
+    // three live devices — which is why P5.7 shipped the screen and left this
+    // open, and P5.11's seed work is what closes it.
+    //
+    // The challenge is reached by *logging in*, so `ready` drives the real
+    // login form rather than waiting on a static route. Puppeteer starts with
+    // an empty localStorage, so it mints a fresh deviceId, matches none of the
+    // three seeded rows (their `client_device_id` is NULL on purpose) and
+    // needs a fourth slot — which is what makes the 409 reproduce for free.
+    //
+    // Safe to re-run: the SPA sends `confirmDeviceEviction: false`, mapping to
+    // `allow_eviction=False`, so the registry raises and writes NOTHING. The
+    // 409 is non-destructive and idempotent. It only becomes destructive if
+    // something confirms it — which nothing here does.
+    //
+    // The load-bearing precondition is that this account is DEDICATED. Any
+    // other test logging in as it mints its own deviceId and, on a path that
+    // permits eviction, silently consumes a slot — after which G-10 stops
+    // reproducing and this entry goes green by screenshotting the ordinary
+    // logged-in screen. Silent and order-dependent. Nothing else may use
+    // `seed.engagement.deviceLimit`.
+    {
+      screenId: "G-10",
+      slug: "login-device-limit",
+      path: "/login",
+      session: null,
+      authed: false,
+      // Axe and the screenshots run through `ready` and therefore see the real
+      // challenge. Lighthouse does NOT: `runLighthouseAudit` drives its own
+      // navigation to the URL and never replays `ready`, so it would score the
+      // plain login form and file the number under this slug — a measurement
+      // of a state it never reached. `/login` is already Lighthouse-scored on
+      // its own entry, so nothing is lost by declining it here; a wrong number
+      // would be worse than none.
+      states: [
+        {
+          state: "default",
+          slug: "login-device-limit",
+          lighthouse: false,
+          ready: async (page) => {
+            // The login inputs are nested inside their <label> and carry no
+            // id, so they are addressed by type — the shape Login.tsx ships.
+            // `waitForText` takes a RegExp *source*, so the probe avoids
+            // metacharacters and the heading's curly apostrophe.
+            const { email, password } = seed.engagement.deviceLimit
+            await page.waitForSelector('input[type="email"]', { timeout: 15_000 })
+            await page.type('input[type="email"]', email)
+            await page.type('input[type="password"]', password)
+            await page.click('button[type="submit"]')
+            await waitForText(page, "signed in on 3 devices")
+          },
+        },
+      ],
+    },
   ]
 }
 
@@ -2446,11 +2558,7 @@ async function main() {
       )
     }
   }
-  log(
-    "Not covered by this registry (P5 screens still on mock data): " +
-      "/student/subject/:code, /student/board, " +
-      "/student/landing, /student/directions.",
-  )
+  log("Not covered by this registry: no student routes (all audited as of P5.11).")
   log(`Contact sheet: ${CONTACT_SHEET_PATH}`)
 
   if (routeFailures.length) {
