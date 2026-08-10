@@ -2,7 +2,10 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T12:45:00Z   # **Sixty-first session (this one): P5.9 CHUNKS C AND D ARE BUILT AND COMMITTED; the P5.9 UI gate is RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`). Do not relaunch it — attach.**
+last_updated: 2026-08-10T12:52:00Z   # **Sixty-second session (this one): the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at ~7 min, 4/13 gates PASS. Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file was touched — the run is verifying this exact tree — so the waiting time went into the last unmeasured brief.
+#                                    **P5.11's G-10 seed precondition is now measured (point 5 on the P5.11 line).** Every prior session left it as a pointer ("a seed account already holding three live devices"). It is three plain `devices` inserts — but the load-bearing part is that the account must be **dedicated**: any other E2E logging in as it mints a fresh `deviceId` and can silently consume a slot, after which G-10 stops reproducing and the audit entry goes green by rendering the ordinary logged-in screen. Silent and order-dependent. The 409 itself is non-destructive (`allow_eviction=False` writes nothing), so the entry is safely re-runnable.
+#                                    **One near-miss worth keeping: I almost recorded that the SPA sends no `deviceId`, making the 3-device limit really a 3-*login* limit.** That was false — `getDeviceId()` (`web/src/lib/auth/storage.ts:16`) mints once into `localStorage` and `AuthContext.tsx:79` sends it; a `grep | head -10` had truncated before line 79. The client half is fully built and correct — **do not re-derive it as a defect**. This phase keeps recording "the code beats the note"; this time the wrong note would have been mine, from a truncated search. **Never conclude an absence from a `head`-truncated grep.**
+#                                    Prior: **Sixty-first session: P5.9 CHUNKS C AND D ARE BUILT AND COMMITTED; the P5.9 UI gate was launched under `setsid`.**
 #                                    Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. Chunk C (`7a8f93a`) is **G-12**, chunk D (`666d6a7`) closes the teacher/parent nav gaps and puts G-12 in the audit registry. **All four web gates green after each chunk** (456 tests over 15 files, up from 430/14). Two guards verified by inversion in chunk C.
 #                                    **Three findings a resuming session must not undo.** (1) **The route is `PUT`, not `PATCH`** — the brief said PATCH; `routers/me.py:176` declares `@router.put`. Still a genuine partial update via `model_fields_set`, and the screen sends **one key per toggle flip**, which is not bandwidth: a whole-object body carries `atRiskAlert`, a **422 for any role but teacher/parent**, and clobbers a change made on another device since load. Seventh Phase-5 instance of the code beating the note. (2) **`atRiskAlert: null` is information, not absence** — "no such preference for your role" — so the toggle is *filtered out*, never rendered unchecked. (3) **`urlBase64ToUint8Array` must return `Uint8Array<ArrayBuffer>`**: since TS 5.7 the bare `Uint8Array` defaults to `ArrayBufferLike`, which admits a `SharedArrayBuffer` that `applicationServerKey` does not, and the bare form fails `web-typecheck` at the `pushManager.subscribe` call rather than at the helper.
 #                                    **The push state that ships is `unavailable`, and no gate exercises the other two.** This build has no VAPID keys, so `available: false` is the designed answer (D5.9 §4) — the G-12 audit entry therefore never presses the enable or test-notification buttons, and a student-session audit sees four toggles rather than five. Both written into the registry entry; both carried to P5.12's limitations. Also carried: UI spec §G-12's `weekly_summary` ships **absent**, and the toggle key list is asserted *exactly* so it cannot be added without the backend growing the enum value.
@@ -1435,6 +1438,49 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          VAPID keys, so the transport reports itself unavailable by design (D5.9 §4) and **no
          real push can be delivered in any harness here** — the assertable facts are the inbox
          row (D5.9 §1's source of truth) and G-12's unavailable state, never a delivered push.
+      5. **G-10's seed precondition is now MEASURED (session 61, read-only while the P5.9 gate
+         held the lane). It is three `devices` rows and one dedicated account — but the
+         account being dedicated is the load-bearing part, not the rows.**
+         **The mechanism, verified in code rather than assumed.** The SPA *does* send a device
+         identity — `getDeviceId()` (`web/src/lib/auth/storage.ts:16`) mints a
+         `crypto.randomUUID()` **once** into `localStorage` and reuses it, and
+         `AuthContext.tsx:79/106/127` sends it as `deviceId` on login/signup/OTP-verify.
+         Backend: `_device_context` (`routers/auth.py:55`) → `DeviceRegistry.register_login`,
+         which matches on `(user_id, client_device_id, revoked_at IS NULL)` and only counts a
+         **new slot** when `_match_existing` returns None (`device_repo.py:198` — it returns
+         None immediately for a NULL fingerprint). `MAX_DEVICES = 3` (`device_repo.py:39`).
+         **I nearly recorded the opposite and it was wrong** — a `grep ... | head -10` truncated
+         before line 79 and made it look like the SPA sent no `deviceId`, i.e. that the 3-device
+         limit was really a 3-*login* limit. It is not; the client half is fully built and
+         correct. *Do not re-derive this as a defect.* The lesson is this phase's recurring one
+         pointed the other way — the note-vs-code gap was mine, caused by a truncated grep.
+         **Never conclude an absence from a `head`-truncated search.**
+         **Why a fresh browser triggers G-10 for free:** Playwright/Puppeteer start with an empty
+         `localStorage`, so every audit run mints a *new* deviceId, never matches a seeded row,
+         and needs a fourth slot. The SPA sends `confirmDeviceEviction: false` by default
+         (`AuthContext.tsx:80`), which maps to `allow_eviction=False`, so the registry raises
+         `DeviceLimitReachedError` and **writes nothing** — the 409 is non-destructive and
+         idempotent, so the audit entry can be re-run and re-screenshotted freely. It only
+         becomes destructive if something *confirms*.
+         **So the actual precondition is: a dedicated account no other test ever logs in as.**
+         Any other E2E logging in as the same student mints its own fresh deviceId and, on a
+         path that permits eviction, silently consumes/evicts a slot — after which G-10 stops
+         reproducing and the audit entry goes green by rendering the ordinary logged-in screen.
+         That failure is silent and order-dependent, which is the expensive kind. Seed a
+         **G-10-only** account.
+         **Seeding is three plain inserts, no login flow needed:** `devices` requires only
+         `user_id` + `last_seen_at` (`models/users.py:180` — `id` has a `gen_random_uuid()`
+         server default; `client_device_id`/`device_label`/`user_agent`/`revoked_at` are all
+         nullable, and `revoked_at IS NULL` is what "live" means). Leave `client_device_id`
+         **NULL** so no browser can ever accidentally match one.
+         **Give the three rows distinct labels/user-agents and staggered `last_seen_at`.**
+         `_to_challenge` (`routers/auth.py:65`) names the device a confirmed retry would sign
+         out as the **last** of a most-recently-active-first list, and `DeviceLimitNotice.tsx:41`
+         highlights exactly that `oldestDeviceId`. With three NULL-labelled rows the screenshot
+         is three indistinguishable lines and the one behaviour G-10 exists to prove — that the
+         UI names the device it will sign out rather than leaving the client to re-derive it —
+         is not visible in the evidence.
+         Remember this seed change costs the **three** edits of point 3, not one.
 - [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
       **Brief sharpened 2026-08-10 (session 60) while the P5.8 gate run held the test lane —
       recon only, nothing edited. P5.12 was the last remaining bare one-liner (56/58/59 did
