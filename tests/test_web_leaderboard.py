@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.leaderboard_repo import ANONYMOUS_DISPLAY_NAME, LeaderboardService
 from lemely.db.models.academic import Subject
-from lemely.db.models.engagement import XpEvent
+from lemely.db.models.engagement import Streak, XpEvent
 from lemely.db.models.enums import Role, SeatStatus, XpSource
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, Seat
 from lemely.db.models.profiles import StudentProfile
@@ -654,3 +654,151 @@ def test_token_role_student_but_db_row_is_not_a_student_is_403(
     student = _seed_user(pg_sessionmaker, Role.student)
     _auth_as(client, student, Role.student)
     assert client.get("/api/student/leaderboard").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# The per-row streak indicator (P5.8 chunk C, D5.14 §2).
+#
+# The load-bearing property is the None/0 split: a missing `streaks` row and a
+# broken streak are different facts, and rendering the first as `0` would state
+# something about a student the table never asserted (UI spec §1.4).
+# ---------------------------------------------------------------------------
+
+
+def _seed_streak(sm: sessionmaker[Session], user_id: uuid.UUID, current_length: int) -> None:
+    with sm.begin() as session:
+        session.add(Streak(user_id=user_id, current_length=current_length, longest_length=9))
+
+
+def test_a_ranked_row_carries_the_students_streak(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    leaderboard_service: LeaderboardService,
+    student_profile_service: StudentProfileService,
+) -> None:
+    _use_services(client, leaderboard_service, student_profile_service)
+    top = _seed_user(pg_sessionmaker, display_name="Top Student")
+    viewer = _seed_user(pg_sessionmaker, display_name="Viewer")
+    _award(pg_sessionmaker, top, 100)
+    _seed_streak(pg_sessionmaker, top, 7)
+    _auth_as(client, viewer, Role.student)
+
+    resp = client.get("/api/student/leaderboard", params={"scope": "global"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["rows"][0]["streak"] == 7
+
+
+def test_a_student_with_no_streak_row_reports_null_not_zero(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    leaderboard_service: LeaderboardService,
+    student_profile_service: StudentProfileService,
+) -> None:
+    """The whole reason `streak` is nullable (D5.14 §2).
+
+    This student earned XP but has no ``streaks`` row. `0` here would be a
+    claim about their attendance that nothing in the database supports.
+    """
+    _use_services(client, leaderboard_service, student_profile_service)
+    top = _seed_user(pg_sessionmaker, display_name="Top Student")
+    viewer = _seed_user(pg_sessionmaker, display_name="Viewer")
+    _award(pg_sessionmaker, top, 100)
+    _auth_as(client, viewer, Role.student)
+
+    resp = client.get("/api/student/leaderboard", params={"scope": "global"})
+
+    assert resp.status_code == 200
+    assert resp.json()["rows"][0]["streak"] is None
+
+
+def test_a_broken_streak_reports_a_real_zero(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    leaderboard_service: LeaderboardService,
+    student_profile_service: StudentProfileService,
+) -> None:
+    """The other side of the split: `0` is a fact when a row says so.
+
+    Paired with the test above deliberately — together they prove the two
+    states are distinguishable on the wire. Either test alone would still pass
+    if the route collapsed both into one value.
+    """
+    _use_services(client, leaderboard_service, student_profile_service)
+    top = _seed_user(pg_sessionmaker, display_name="Top Student")
+    viewer = _seed_user(pg_sessionmaker, display_name="Viewer")
+    _award(pg_sessionmaker, top, 100)
+    _seed_streak(pg_sessionmaker, top, 0)
+    _auth_as(client, viewer, Role.student)
+
+    resp = client.get("/api/student/leaderboard", params={"scope": "global"})
+
+    assert resp.status_code == 200
+    assert resp.json()["rows"][0]["streak"] == 0
+
+
+def test_the_viewer_row_carries_a_streak_even_when_opted_out(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    leaderboard_service: LeaderboardService,
+    student_profile_service: StudentProfileService,
+) -> None:
+    """An opted-out student is absent from `rows` but still sees their own streak.
+
+    D5.14 §4: opting out hides you from other people's boards; it does not
+    blank your own numbers, because a student who wants motivation without
+    exposure is exactly who the setting is for.
+    """
+    _use_services(client, leaderboard_service, student_profile_service)
+    viewer = _seed_user(pg_sessionmaker, display_name="Viewer")
+    _award(pg_sessionmaker, viewer, 40)
+    _seed_streak(pg_sessionmaker, viewer, 12)
+    with pg_sessionmaker.begin() as session:
+        session.add(StudentProfile(user_id=viewer, leaderboard_opt_out=True))
+    _auth_as(client, viewer, Role.student)
+
+    resp = client.get("/api/student/leaderboard", params={"scope": "global"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["viewerOptedOut"] is True
+    assert body["viewer"]["streak"] == 12
+    assert all(row["userId"] != str(viewer) for row in body["rows"])
+
+
+def test_the_streak_is_one_batched_query_not_one_per_row(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    leaderboard_service: LeaderboardService,
+    student_profile_service: StudentProfileService,
+) -> None:
+    """`streaks_for` must stay the `display_names_for`-shaped batch read.
+
+    Counted rather than asserted structurally: a per-row implementation would
+    still return correct data, so only the call count catches the regression a
+    global board with 50 rows would pay for.
+    """
+    _use_services(client, leaderboard_service, student_profile_service)
+    viewer = _seed_user(pg_sessionmaker, display_name="Viewer")
+    for index in range(5):
+        other = _seed_user(pg_sessionmaker, display_name=f"Other {index}")
+        _award(pg_sessionmaker, other, 100 - index)
+        _seed_streak(pg_sessionmaker, other, index + 1)
+    _auth_as(client, viewer, Role.student)
+
+    calls: list[int] = []
+    original = leaderboard_service.streaks_for
+
+    def counting(user_ids: object) -> dict[uuid.UUID, int]:
+        ids = list(user_ids)  # type: ignore[call-overload]
+        calls.append(len(ids))
+        return original(ids)
+
+    leaderboard_service.streaks_for = counting  # type: ignore[method-assign, assignment]
+    resp = client.get("/api/student/leaderboard", params={"scope": "global"})
+
+    assert resp.status_code == 200
+    assert len(calls) == 1
+    assert calls[0] == 6  # five ranked rows plus the viewer, resolved in one go
+    assert [row["streak"] for row in resp.json()["rows"]] == [1, 2, 3, 4, 5]

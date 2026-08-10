@@ -84,7 +84,7 @@ import sqlalchemy as sa
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
-from lemely.db.models.engagement import XpEvent
+from lemely.db.models.engagement import Streak, XpEvent
 from lemely.db.models.enums import FriendshipStatus, Role, SeatStatus
 from lemely.db.models.orgs import ClassEnrollment, Seat
 from lemely.db.models.profiles import StudentProfile
@@ -497,6 +497,44 @@ class LeaderboardService:
         with self._sessionmaker() as session:
             rows = session.execute(select(User.id, User.display_name).where(User.id.in_(ids))).all()
         return {row.id: (row.display_name or ANONYMOUS_DISPLAY_NAME) for row in rows}
+
+    def streaks_for(self, user_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """Batch-resolve current streak length for a board (P5.8 chunk C, D5.14 §2).
+
+        The exact sibling of :meth:`display_names_for`: one batched read over
+        the ids the board already resolved, never a per-row query, and no part
+        of the ranking machinery above (:func:`_ranked_subquery` and the SQL
+        the ``TestSqlGuard`` guard test compiles are untouched by this).
+
+        **A streak is effort, not attainment**, so surfacing it here stays
+        inside MISSION §3's "leaderboards show XP (effort), never grades" and
+        adds nothing grade-shaped to D5.1 §0's public surface. It is also
+        already public to a narrower audience — ``FriendDTO.streak`` (D5.6 §5)
+        shows it to friends — and S-29's ``friends`` scope ranks exactly those
+        people, so omitting it here would make two adjacent screens disagree
+        about the same fact.
+
+        **A missing key means "no ``streaks`` row", which the caller must
+        render as absent and never as ``0``.** The distinction is real: a
+        student who broke a streak has ``current_length = 0``, a genuine zero
+        this method returns as ``0``, while a student who has never earned XP
+        has no row at all. Collapsing the two would state "0 day streak" about
+        someone the table knows nothing about (UI spec §1.4), which is the same
+        rule ``FriendDTO``'s nullable ``xp``/``streak`` already follow.
+
+        Opted-out students never reach here: they are removed in the ranking
+        query's own ``WHERE`` clause (D5.1 §9), so their ids are not among the
+        ones a caller resolves, and their streak is not reachable through this
+        surface at all.
+        """
+        ids = list(user_ids)
+        if not ids:
+            return {}
+        with self._sessionmaker() as session:
+            rows = session.execute(
+                select(Streak.user_id, Streak.current_length).where(Streak.user_id.in_(ids))
+            ).all()
+        return {row.user_id: row.current_length for row in rows}
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:

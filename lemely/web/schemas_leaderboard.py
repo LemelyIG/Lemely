@@ -32,6 +32,19 @@ class LeaderboardRowDTO(ApiModel):
     xp: int
     rank: int
     """Standard competition ranking (equal XP -> equal rank; ties skip the next rank)."""
+    streak: int | None = None
+    """Current streak length — the "streak indicator" UI spec §S-29 fixes on
+    every row (P5.8 chunk C, D5.14 §2).
+
+    Effort, not attainment, so it does not breach this module's no-grades
+    guarantee; it is also already visible to a narrower audience through
+    ``FriendDTO.streak`` (D5.6 §5), and S-29's ``friends`` scope ranks exactly
+    those people.
+
+    ``None`` means the student has **no ``streaks`` row**, and must render as
+    absent rather than as ``0``. A student who broke their streak has a real
+    ``0`` and the two are different facts (UI spec §1.4). Never "tidy" this
+    into ``int = 0``."""
 
 
 class LeaderboardViewerDTO(ApiModel):
@@ -48,6 +61,10 @@ class LeaderboardViewerDTO(ApiModel):
     rank: int | None
     """``None`` when the viewer has no XP this week, or is opted out —
     never a fabricated last place (UI spec §1.4: never invent precision)."""
+    streak: int | None = None
+    """Same contract as :attr:`LeaderboardRowDTO.streak` — ``None`` is "no
+    row", not "zero". Present on the viewer too so an opted-out student, who
+    by design never appears in ``rows``, still sees their own streak."""
 
 
 class LeaderboardDTO(ApiModel):

@@ -54,34 +54,46 @@ router = APIRouter(
 )
 
 
-def _row_to_dto(row: LeaderboardRow, names: dict[uuid.UUID, str]) -> LeaderboardRowDTO:
+def _row_to_dto(
+    row: LeaderboardRow, names: dict[uuid.UUID, str], streaks: dict[uuid.UUID, int]
+) -> LeaderboardRowDTO:
     return LeaderboardRowDTO(
         userId=str(row.user_id),
         displayName=names.get(row.user_id, ANONYMOUS_DISPLAY_NAME),
         xp=row.xp,
         rank=row.rank,
+        # `.get` with no default, deliberately: a missing key is "no streaks
+        # row" and must stay `None` rather than becoming a `0` the table never
+        # asserted (D5.14 §2). A real broken streak is a real `0` and arrives
+        # here as one.
+        streak=streaks.get(row.user_id),
     )
 
 
 def _viewer_to_dto(
-    viewer: LeaderboardViewerRow, names: dict[uuid.UUID, str]
+    viewer: LeaderboardViewerRow, names: dict[uuid.UUID, str], streaks: dict[uuid.UUID, int]
 ) -> LeaderboardViewerDTO:
     return LeaderboardViewerDTO(
         userId=str(viewer.user_id),
         displayName=names.get(viewer.user_id, ANONYMOUS_DISPLAY_NAME),
         xp=viewer.xp,
         rank=viewer.rank,
+        streak=streaks.get(viewer.user_id),
     )
 
 
-def _result_to_dto(result: LeaderboardResult, names: dict[uuid.UUID, str]) -> LeaderboardDTO:
+def _result_to_dto(
+    result: LeaderboardResult, names: dict[uuid.UUID, str], streaks: dict[uuid.UUID, int]
+) -> LeaderboardDTO:
     return LeaderboardDTO(
         status=result.status,
         unavailableReason=result.unavailable_reason.value if result.unavailable_reason else None,
         weekStart=result.week_start,
         weekEnd=result.week_end,
-        rows=[_row_to_dto(row, names) for row in result.rows],
-        viewer=_viewer_to_dto(result.viewer, names) if result.viewer is not None else None,
+        rows=[_row_to_dto(row, names, streaks) for row in result.rows],
+        viewer=(
+            _viewer_to_dto(result.viewer, names, streaks) if result.viewer is not None else None
+        ),
         viewerOptedOut=result.viewer_opted_out,
     )
 
@@ -144,7 +156,10 @@ def get_leaderboard(
     if result.viewer is not None:
         user_ids.add(result.viewer.user_id)
     names = service.display_names_for(user_ids)
-    return _result_to_dto(result, names)
+    # One batched read over the same id set, mirroring `display_names_for`
+    # exactly — never a per-row query (D5.14 §2).
+    streaks = service.streaks_for(user_ids)
+    return _result_to_dto(result, names, streaks)
 
 
 __all__ = ["router"]
