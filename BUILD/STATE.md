@@ -992,6 +992,13 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             it attached by polling `kill -0 927164`. **The standing instruction for any
             session that resumes here: `pgrep -af check.sh` FIRST. A live PID means
             attach and wait (~25 min total: pytest ~10, audit leg ~11), never relaunch.**
+            **Fifty-fourth session (this one) attached at 10:22 elapsed** — same run,
+            same PID 927164, `pytest` child 927224 still owned by it (PPID 927164, so
+            no orphan). Instead of hand-polling, it armed a **Monitor** that streams new
+            log lines and fires once when `kill -0 927164` fails, so the wait costs no
+            turns and the run's own output is the completion signal. Seventh run still
+            not started. `setsid` has now carried this run past **10 minutes**, ~4x the
+            mark that killed every pre-`setsid` attempt.
             — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
