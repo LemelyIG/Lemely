@@ -2,7 +2,11 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T11:58:00Z   # **Fifty-ninth session (this one): the run is alive at 27m01s, still inside `puppeteer-audit`; the waiting time went into sharpening P5.11.**
+last_updated: 2026-08-10T12:10:00Z   # **Sixtieth session (this one): THE P5.8 GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0. P5.8 is COMPLETE; 9/12 Phase-5 tasks done. Resume at P5.9.**
+#                                    Session 51's `setsid` run (PID 927164) exited clean at ~11:59, **31 minutes** after launch and **ten agent sessions** after it started (51 launched, 52–59 attached, 60 caught the exit on an armed Monitor). Measured off that run and never re-run: **2927 tests**, **coverage 90.91%** (develop 90.18%, P5.6 90.78% — no drop), **66 axe route-states with zero violations at any severity**, **0 console errors**, **0 horizontal-scroll violations**, **Lighthouse a11y floor 96**. All four new screens are in the audit registry and score a11y 100. Working tree clean on entry, no wip commit needed.
+#                                    **The one honest finding the run produced: `ui-thresholds` passed with SEVEN routes below Lighthouse performance 80, two of them new P5.8 student routes** (`student-standings` 69, `student-announcements` 77). D4.25 said the performance floor is not enforced; this run is the Phase-5 proof — `check_ui_gates.py` has no performance check, so a green `ui-thresholds` says nothing about performance. **Never cite this run as a performance pass.** Carried to P5.12 §4.
+#                                    **P5.12 was the last bare one-liner and is now briefed** (56/58/59 did P5.9/P5.10/P5.11). Its expensive part is §7, the honest-limitations list: every Phase-5 item that was tagged "carry to the Phase-5 limitations" as it was found is now collected in one place on the P5.12 line — nine Phase-5 items plus six carried ones — so the report writer copies instead of re-grepping 700 lines.
+#                                    Prior: **Fifty-ninth session: the run is alive at 27m01s, still inside `puppeteer-audit`; the waiting time went into sharpening P5.11.**
 #                                    Session 51's `setsid` run (PID 927164) is alive at **27:01**, log still 276 bytes (11/13 PASS). Health checked the fifty-fifth session's way: the `npm run audit` child (973395) is **the same one session 57 saw** — 5m59s elapsed against 27m01s total puts its start at ~21 min, exactly where session 57 reported `puppeteer-audit` beginning — under a **fresh** Chrome tree (990891 + crashpad/zygotes), which is progress rather than a restart because `audit.mjs` cycles a browser per route batch. Twelfth run not started; Monitor re-armed on 927164 (it now also fires on `EXIT=`/FAIL, so a red gate is not silent). Working tree clean on entry, no wip commit needed.
 #                                    **P5.11's brief was a bare one-liner and is now measured** (P5.9 and P5.10 were sharpened by sessions 56 and 58, so P5.11 was the next unbriefed task). Three findings: **zero** E2E coverage of any Phase-5 surface, `seed_e2e.py` seeds **no** Phase-5 data at all (so leaderboard *ordering* — the one acceptance criterion MISSION §4 names — has never been asserted against a populated board, and G-10 still lacks the 3-device account it needs), and the seed contract is **P5.4's `EXPECTED_TABLES` trap in frontend form**: `seed-contract.spec.ts` asserts exact key equality plus an exhaustive SHAPE map, so one seed group costs three edits and fails ~22 min into a run instead of ~10. Full brief on the P5.11 line.
 #                                    Prior: **Fifty-eighth session: the run was alive at 23m41s inside `puppeteer-audit`; the waiting time went into sharpening P5.10.**
@@ -824,7 +828,35 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             `--no-semi` on the five new ones. The web gates are **typecheck + oxlint +
             build + vitest + impeccable detect** — none of them formats. Do not reach for a
             formatter that the gate chain does not run.
-- [ ] doing — **P5.8** Screens S-28, S-29, S-30, S-31.
+- [x] done — **P5.8** Screens S-28, S-29, S-30, S-31. **CLOSED 2026-08-10 (session 60): the
+      gate run finished ALL 13 GATES PASS, 0 skipped, EXIT=0.** Nothing was re-implemented —
+      every chunk was committed by earlier sessions and the only outstanding work was this run.
+      **Measured off the run itself, never re-run** (the method note below): **2927 tests**
+      (`--collect-only`), **coverage 90.91%** (develop 90.18%, P5.6 90.78% — no drop, a rise);
+      **66 axe route-states with ZERO violations at any severity**, **0 console errors**,
+      **0 horizontal-scroll violations**, **Lighthouse a11y floor 96** (`teacher-review`; the
+      four new screens sit at 100, e.g. `student-standings`). All four Phase-5 screens appear
+      in the audit registry: `student-announcements`, `student-standings`, `student-friends`,
+      `student-profile`, plus `settings-devices`.
+      **The run took 31 minutes and spanned TEN agent sessions (51→60).** Session 51 launched
+      it with `setsid`; sessions 52–59 each attached, confirmed health and did recon instead of
+      relaunching. Five pre-`setsid` runs never reached gate 5. **That is the whole return on
+      `setsid` and on the "attach, never relaunch" rule — do not lose it.**
+      **One honest finding this run produced, and it is now a Phase-5 instance of D4.25, not
+      merely a carried one.** `ui-thresholds` PASSED with **seven routes below Lighthouse
+      performance 80** — `teacher-quiz-detail` 66, **`student-standings` 69**,
+      `teacher-class-analytics` 71, `student-placement-invite` 73, `teacher-class-roster` 75,
+      **`student-announcements` 77**, `teacher-quizzes` 78. Two of those are **new P5.8 student
+      routes**, and MISSION §11's "performance ≥ 80" is claimed to be gated for exactly the
+      student routes. It is not gated: `scripts/check_ui_gates.py` has no performance check at
+      all, so a green `ui-thresholds` says nothing about performance. Do **not** cite this run
+      as a performance pass; it is a11y + axe + console + responsive only. Carried to the
+      Phase-5 limitations for P5.12 §4.
+      **Worth not re-deriving about the artefacts:** `reports/.scratch/axe/` holds 67 files —
+      66 per-slug detail files plus **`_summary.json`, which is the one to read** (a per-slug
+      file is not the run summary despite also containing a list). Both `console-errors.json`
+      and `responsive-summary.json` are `[]` on a clean run, i.e. an empty list is the PASS
+      shape, not a missing measurement.
       **CORRECTION to this brief, made 2026-08-11 by reading the code — the eighth time
       this phase a note lost to the codebase. "Every backend these screens need is already
       built" is TRUE for S-28/S-29/S-30 and FALSE for S-31.** `XpService` is wired into the
@@ -961,7 +993,12 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             **Incidentally closes half of a P5.7 gap:** `/settings/devices` had no nav
             entry anywhere; the **student** portal now reaches it from S-31. Teacher and
             parent still do not — that remains P5.11's.
-      - [ ] **doing — UI gate for P5.8** (sessions **47, 48 and 49 each started this run and
+      - [x] **done — UI gate for P5.8: ALL 13 GATES PASS, 0 skipped, EXIT=0** (finished
+            2026-08-10 ~11:59, 31 minutes after session 51 launched it; closed by session 60,
+            which was attached via a Monitor when it exited). Historical detail below kept
+            because the five-session detour that preceded it is the source of the `setsid`
+            rule and the orphaned-pytest trap in the environment facts.
+            (sessions **47, 48 and 49 each started this run and
             each died in the same place** — `/tmp/check_p58*.log` are four files of exactly
             84 bytes, all stopping after the four backend gates, i.e. mid-`pytest`. The
             forty-eighth also had to kill an **orphaned pytest** from the forty-seventh —
@@ -1197,6 +1234,78 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          real push can be delivered in any harness here** — the assertable facts are the inbox
          row (D5.9 §1's source of truth) and G-12's unavailable state, never a delivered push.
 - [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
+      **Brief sharpened 2026-08-10 (session 60) while the P5.8 gate run held the test lane —
+      recon only, nothing edited. P5.12 was the last remaining bare one-liner (56/58/59 did
+      P5.9/P5.10/P5.11). Its expensive part is not the merge, it is §7.**
+      1. **Follow `reports/phase-4/REPORT.md`'s section structure** — it is the most recent and
+         the most complete: 1 what-was-built, 2 acceptance criteria against MISSION §4, 3 test
+         & coverage, 4 quality gates, 5 visual/a11y evidence, 6 the near-vacuous criterion,
+         7 known limitations, 8 defects found in existing work, 9 decisions, 10 blockers,
+         appendix files-of-record. Phase 4's §6 is worth keeping as a habit, not a one-off.
+      2. **§9 is D5.1–D5.14** (`BUILD/DECISIONS.md`, lines 4394–5612). Fourteen records, six of
+         them written **before** their code (D5.1, D5.9, D5.10, D5.12, D5.13, D5.14) — that
+         ordering is what MISSION §4 mandates for this phase and is worth stating as a result,
+         not just complying with silently.
+      3. **§7 is the section that must not be re-derived at report time — the Phase-5
+         limitations are already scattered across this file's task entries and every one of
+         them was explicitly marked "carry to the Phase-5 limitations" when it was found.**
+         Collected here once so the report writer copies rather than greps:
+         - **No scheduler exists in this build (D5.9 §5).** `streak_warning` and
+           `study_plan_reminder` ship as service methods nothing invokes on a timer. Joined by
+           **at-risk rule 3 (≥14 days inactive), which cannot fire at its seam** — the alert
+           fires on correction, and a student who just uploaded is by definition active, so the
+           reason most likely to matter for a *disengaging* student is the one this build
+           cannot deliver.
+         - **The exam-calendar table ships empty and that is the deliverable, not a gap**
+           (D5.8) — no CAIE timetable exists on this machine. There is also **no CLI wrapper
+           around `ExamCalendarService.ingest`**, deliberately not built speculatively while no
+           document exists to feed it.
+         - **No VAPID keys on this machine**, so the push transport reports itself unavailable
+           by design (D5.9 §4) and **no real push can be delivered in any harness here**. The
+           assertable facts are the inbox row and G-12's unavailable state, never a delivered
+           push.
+         - **A payload-less push (D5.10) means a service worker must fetch before it can
+           render**, so a push arriving offline (or whose fetch fails) shows a generic "You
+           have a new notification" — browsers require *some* notification per push.
+         - **S-31's "papers marked / questions answered / hours studied" ships absent.** The
+           obvious source — a count of `xp_events` rows — is wrong by construction: D5.1 §3's
+           caps mean a capped award writes no row, and §8's dedupe means a re-corrected paper
+           writes one row for two markings. Achievements are out of scope on D5.1 §10's own
+           terms.
+         - **No avatar storage exists anywhere**, so S-29's avatar is a monogram off the
+           display name — a rendering of data we hold, never a generated identicon that would
+           look like identity the account does not have.
+         - **G-10's "rough location" is deliberately absent** (D5.12) — no geo-IP source and no
+           stored IP exist, and UI spec §1.4 forbids inventing the one field the user would
+           decide on.
+         - **UI spec §G-12's `weekly_summary` toggle has no backend** — `NotificationType` has
+           exactly five values and that is not one of them. Five real toggles shipped; a sixth
+           switch gating nothing would violate UI spec §1.4.
+         - **G-10 has no audit-registry entry** — it needs a seed account already holding three
+           live devices, a seed precondition rather than a navigation. Closed only if P5.11
+           lands the `seed_e2e.py` change; report it honestly if not.
+      4. **Carried limitations that are NOT Phase-5's but must still appear** (MISSION says
+         reported, never silently resolved): the Lighthouse **performance** floor MISSION §11
+         claims is gated is still **not enforced** (D4.25, `check_ui_gates.py` has no
+         performance check); `web/e2e/` + `playwright.config.ts` are **still in no tsconfig
+         `include`** (D3.20) and P5.11 will only grow that untypechecked surface; Phase 2's
+         synthetic accuracy gate is **unchanged at 83.8% vs ≥95%**; D3.21's paper 22 is **still
+         confidently wrong** (40/40 marks at confidence 1.0, zero flags, 3 marks of pure
+         vision/transcription error); 0580 and 0606 still have **zero ingested questions**; and
+         a practice set is **marked but its result cannot be read**.
+      5. **Mechanics, from P4.12 and P3.11.** Merge `feature/phase-5-engagement` → develop,
+         push, update PR #3 (rolling develop→main, **never merged**) — retitle to "Phases 0–5"
+         and **append** a Phase-5 section rather than replacing the body; P3.11 found the PR
+         body had silently never carried its Phase-2.5 section despite STATE claiming it did,
+         so **read the existing body before editing it**. Then prune this Phase-5 section to a
+         single summary line per MISSION §8b once the report is committed and merged.
+      6. **ntfy: attachments are DISABLED on this instance** (see the environment facts below) —
+         put the substance in the message body and use `click`/`actions` to link the report on
+         GitHub. Do not retry the `Filename:` PUT.
+      7. **Read the real ledger for the spend figure**, `outputs/gemini_spend.json`, not this
+         file's `gemini_spend_usd` field — that field is a hand-copied mirror and has drifted
+         before (it was 0.1612 against a real 0.18429). Phase 5 is expected to be ~$0.00 of new
+         spend; every automated test mocks Gemini (D4.3 made that structural).
 
 ### Environment facts worth not re-deriving (cost real work to find)
 - **A gate run must be launched with `setsid`, or it dies with the session. This note has
