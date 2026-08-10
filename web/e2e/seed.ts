@@ -149,6 +149,43 @@ export interface SeedContract {
     activeSessionCount: number
     completedSessionCount: number
   }
+  /** Phase-5 engagement preconditions (P5.11). */
+  engagement: {
+    /**
+     * An account whose three device slots are already full, so the very next
+     * login from any fresh browser takes the G-10 409 challenge.
+     *
+     * **Nothing else may log in as this account.** Playwright and Puppeteer
+     * both start with an empty `localStorage`, so each mints its own
+     * `deviceId` and needs a fourth slot — which is what makes G-10
+     * reproducible for free. But a second test logging in here on a path that
+     * permits eviction silently consumes or evicts a slot, after which G-10
+     * stops reproducing and its audit entry goes green by rendering the
+     * ordinary logged-in screen. That failure is silent and order-dependent.
+     *
+     * The 409 itself writes nothing (`allow_eviction=False`), so *taking* the
+     * challenge is idempotent and re-runnable; only confirming it is
+     * destructive.
+     */
+    deviceLimit: SeedAccount & { deviceCount: number; oldestDeviceLabel: string }
+    /**
+     * A populated, deterministically ordered weekly class board — the single
+     * acceptance criterion MISSION §4 names for Phase 5, and one that had
+     * never been asserted against real rows before P5.11.
+     *
+     * Keyed by `students` key, and only the three students enrolled in
+     * `class` appear. Every event is awarded on the seed run's own Cairo
+     * civil date because the board's window is Monday..Sunday around *today*
+     * in Africa/Cairo; totals are strictly distinct because equal XP reads as
+     * equal rank by design, which would make an ordering assertion vacuous.
+     */
+    leaderboard: {
+      classId: string
+      weeklyXpByStudentKey: Record<string, number>
+      /** Highest XP first. */
+      expectedOrderByStudentKey: string[]
+    }
+  }
 }
 
 /** Where `global-setup.ts` writes the seed contract and every spec reads it

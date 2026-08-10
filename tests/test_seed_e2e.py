@@ -728,6 +728,14 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
             "activeSessionCount": 3,
             "completedSessionCount": 3,
         },
+        "engagement": {
+            "deviceLimit": {"userId": "dl1", "deviceCount": 3, "oldestDeviceLabel": "Chrome"},
+            "leaderboard": {
+                "classId": "c1",
+                "weeklyXpByStudentKey": {"declining": 200, "inactive": 150},
+                "expectedOrderByStudentKey": ["declining", "inactive"],
+            },
+        },
     }
     base.update(overrides)
     return base
@@ -801,6 +809,14 @@ class TestBuildResultPayload:
                 "activeSessionTopic": "1.2 Motion",
                 "activeSessionCount": 3,
                 "completedSessionCount": 3,
+            },
+            "engagement": {
+                "deviceLimit": {"userId": "dl1", "deviceCount": 3, "oldestDeviceLabel": "Chrome"},
+                "leaderboard": {
+                    "classId": "c1",
+                    "weeklyXpByStudentKey": {"declining": 200, "inactive": 150},
+                    "expectedOrderByStudentKey": ["declining", "inactive"],
+                },
             },
         }
 
