@@ -955,8 +955,19 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             84 bytes, all stopping after the four backend gates, i.e. mid-`pytest`. The
             forty-eighth also had to kill an **orphaned pytest** from the forty-seventh —
             see the environment facts below. The **fiftieth** session diagnosed the shared
-            cause: see the new "foreground is a trap here" fact — and restarted it as a
-            harness-tracked background task.)
+            cause as the 600 s foreground cap and restarted it as a harness-tracked
+            background task — **and that run died in the same place too**, producing a
+            fifth 84-byte log. **The fifty-first session corrected the diagnosis: the
+            600 s cap is NOT what is killing these runs.** The five logs are stamped
+            11:15 / 11:20 / 11:23 / 11:25 / 11:27 — **2 to 5 minutes apart**, so each
+            session died only ~2–4 minutes after launching the run, far short of any
+            600 s cap, and session 50's *background* run died identically, which a
+            foreground-only cap cannot explain. What is actually shared is that all five
+            died **during `pytest`** (gate 5, `check.sh:65`) on a box already 3.7 GB into
+            swap with 7.8 GB RAM — resource pressure, not a tool timeout. **The fix that
+            makes this survivable is `setsid`**: session 51 launched the run in its own
+            detached session/process group, so a dying agent session no longer takes the
+            gate run down with it. See the corrected environment fact below.)
             — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
@@ -983,19 +994,33 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
 - [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
 
 ### Environment facts worth not re-deriving (cost real work to find)
-- **"Run `check.sh` in the foreground" was advice that ate three sessions (47, 48, 49) and
-  it is now CORRECTED.** A full run is ~25 minutes (pytest ~10, the audit leg ~11) and the
-  **foreground Bash tool caps at 600 s**, so it is *structurally impossible* for a foreground
-  run to reach the UI gates: it is killed at the cap, mid-pytest, every time — which is also
-  what manufactures the orphaned-pytest trap below. The evidence was sitting in `/tmp` the
-  whole time: `check_p58.log`, `_s48.log`, `_s48b.log`, `_s49.log`, **four files of exactly
-  84 bytes**, each stopping after the same four backend gates. Identical byte counts across
-  independent sessions is a *deterministic* cutoff, never three unlucky crashes.
-  **Run it as a harness-tracked background task instead** (`run_in_background: true`), which
-  survives the cap and re-invokes on exit; redirect to a log and append `EXIT=$?` so the
-  status is readable afterwards. The original note's real content still holds and is why the
-  script is the entry point: `check.sh` exports `$HOME/.local/bin` onto PATH itself, so all
-  13 gates run.
+- **A gate run must be launched with `setsid`, or it dies with the session. This note has
+  now been wrong twice; the third version is the one backed by timestamps.** Five sessions
+  (47, 48, 49, 50) produced **five `/tmp/check_p58*.log` files of exactly 84 bytes**, each
+  stopping after the same four backend gates, i.e. mid-`pytest` (gate 5, `check.sh:65`).
+  - *First theory (sessions 47–49): bad luck.* Wrong — identical byte counts across
+    independent sessions is a deterministic cutoff.
+  - *Second theory (session 50): the 600 s foreground Bash cap.* **Also wrong, and it cost
+    a sixth run.** The logs are stamped 11:15 / 11:20 / 11:23 / 11:25 / 11:27 — **2 to 5
+    minutes apart** — so each session died ~2–4 minutes in, nowhere near 600 s. Decisively,
+    session 50 *did* follow that advice and ran it as a harness-tracked background task,
+    and it died in exactly the same place. A foreground-only cap cannot kill a background
+    task. **Check the timestamps before accepting a duration-based explanation** — the gaps
+    between the logs falsified the cap theory using evidence that was already on disk when
+    the theory was written.
+  - *Third version, what actually holds:* the agent **session** is dying (cause not fully
+    pinned; this box has 7.8 GB RAM and was already 3.7 GB into swap, and `pytest` with
+    coverage over 2767 tests is the heaviest thing in the run — resource pressure, not a
+    tool timeout). Whatever kills the session also kills anything in its process group,
+    background or not, and that is what manufactures the orphaned-pytest trap below.
+  **So: launch the run in its own detached session with `setsid`**, which puts it outside
+  the agent's process group and lets it survive:
+  `setsid nohup bash -c './scripts/check.sh > /tmp/LOG 2>&1; echo "EXIT=$?" >> /tmp/LOG' </dev/null >/dev/null 2>&1 & disown`
+  Then poll the log; a session that dies mid-run costs nothing, because the next session
+  reads a log that kept growing. Append `EXIT=$?` so the status is readable afterwards.
+  A full run is ~25 minutes (pytest ~10, the audit leg ~11). The original note's real
+  content still holds and is why the script is the entry point: `check.sh` exports
+  `$HOME/.local/bin` onto PATH itself, so all 13 gates run.
 - `pytest -q` emits **no `N passed` line** (a reporter plugin eats it). Count the progress
   characters in the `^[.sFEx]+ +\[ NN%\]` lines, or read the `Total coverage:` line.
 - **A dead session leaves an ORPHANED `pytest` behind, and the next session's `check.sh`
