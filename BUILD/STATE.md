@@ -2,8 +2,10 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T13:52:00Z   # **A SECOND FULL GATE RUN IS IN FLIGHT — `setsid` **PID 1232550** (`bash -c ./scripts/check.sh …`), log `/tmp/p59b-gate.log`, launched 2026-08-10T10:52Z, expect ~31 min, ends in an `EXIT=` line. Do NOT relaunch it; attach and arm a Monitor.** **Watch the PID you record: this line first said 1232528, which was the transient `setsid` helper and had already exited — `ps -p` on it says GONE while the run is perfectly alive, and a session trusting that note would relaunch and burn 31 minutes.** Take the PID of the surviving `bash -c` wrapper (`pgrep -af check.sh`), never the one `$!` reports right after `setsid`. It covers all three of this session's changes at once (the G-13 registry entry, the `page-has-heading-one` fix, and P5.10's new spec) — deliberately one run rather than three. Commit `5df4807`; working tree clean at launch. When it comes back green, **P5.9 AND P5.10 are both done (11/12)** and the next task is P5.11.
-#                                    **Sixty-seventh session: THE P5.9 GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0 — AND THEN THE GREEN RESULT TURNED OUT TO BE INCOMPLETE.** Session 61's `setsid` run (PID 1077823) exited clean at ~31 minutes, seven agent sessions after it started; the numbers are on the P5.9 UI-gate checklist line and were read off that run, never re-run. Working tree clean on entry, no wip commit needed; INBOX had no unhandled items.
+last_updated: 2026-08-10T14:05:00Z   # **A SECOND FULL GATE RUN IS IN FLIGHT — `setsid` **PID 1232550** (`bash -c ./scripts/check.sh …`), log `/tmp/p59b-gate.log`, launched 2026-08-10T10:52Z, expect ~31 min, ends in an `EXIT=` line. Do NOT relaunch it; attach and arm a Monitor.** **Watch the PID you record: this line first said 1232528, which was the transient `setsid` helper and had already exited — `ps -p` on it says GONE while the run is perfectly alive, and a session trusting that note would relaunch and burn 31 minutes.** Take the PID of the surviving `bash -c` wrapper (`pgrep -af check.sh`), never the one `$!` reports right after `setsid`. It covers all three of this session's changes at once (the G-13 registry entry, the `page-has-heading-one` fix, and P5.10's new spec) — deliberately one run rather than three. Commit `5df4807`; working tree clean at launch. When it comes back green, **P5.9 AND P5.10 are both done (11/12)** and the next task is P5.11.
+#                                    **Sixty-eighth session: the second gate run was ALIVE at 5m36s (4/13, inside `pytest`) on entry — attached, Monitor armed, NOT relaunched.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
+#                                    **The waiting time went into the half of P5.11 no session had ever looked at: the UI-gate leg (new point 12). It found the audit registry's exclusion list stale in ALL FOUR entries.** Two things change the task. (1) **The screenshot corpus is produced by `audit.mjs`, not by `screenshots.spec.ts`** — that spec captures only five Phase-2.5 ids; the other 34 in `reports/phase-4/screens/` come from registry entries. So P5.11's screenshot leg needs **no new Playwright spec**, just `LEMELY_REPORT_DIR=reports/phase-5 npm run audit` (`reports/phase-5/` does not exist yet). (2) **`audit.mjs:83-85` and its operator-facing `log()` at `:2451` both still declare `/student/board` unaudited — it has been audited since P5.8 (`:1960`) — and excuse three other real routes as "still on mock data" when `/student/subject/:code` runs on the real `useSubject` hook.** Third instance of this shape in Phase 5, and it happened *to the sentence documenting the previous two*. The G-13 miss inverted: present-and-falsely-declared-absent, alongside three genuinely unaudited live routes.
+#                                    Prior: **Sixty-seventh session: THE P5.9 GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0 — AND THEN THE GREEN RESULT TURNED OUT TO BE INCOMPLETE.** Session 61's `setsid` run (PID 1077823) exited clean at ~31 minutes, seven agent sessions after it started; the numbers are on the P5.9 UI-gate checklist line and were read off that run, never re-run. Working tree clean on entry, no wip commit needed; INBOX had no unhandled items.
 #                                    **The finding: `audit.mjs` had NO entry for G-13, the notification inbox — chunk B's own screen — so the gate went green *because it did not know the screen existed*.** The one new student screen in P5.9 was never axe-audited, never Lighthouse-scored, never screenshotted, and MISSION §6.8 requires all three. The registry is a hand-maintained list, which makes a missing entry silent: third instance of that shape in this build (`EXPECTED_TABLES` P5.4, the `SeedContract` mirror P4.11) and **the first where the green result was actively misleading rather than merely incomplete.** Entry added and being verified by a standalone `npm run audit` under `setsid` (`/tmp/g13-audit.log`); a full `check.sh` on the tree carrying it is still owed. **P5.9 is NOT done — do not mark it done on the strength of the EXIT=0 above.**
 #                                    **Also measured off the finished run and worth carrying: `ui-thresholds` passed with NINE routes below Lighthouse performance 80** (seven at P5.8), one of them P5.9's own `settings-notifications` at 73. D4.25 restated by a second phase — `check_ui_gates.py` has no performance check at all. **Never cite this run as a performance pass.**
 #                                    Prior: **Sixty-sixth session: the waiting time went into the one part of the P5.11 brief that had gone STALE, and it was pessimistic: the push/notification flow is now the CHEAPEST of the four, not the blocked one (new point 9).** Point 4 was written in session 59 *before* P5.9 existed. Three things now hold. (1) **G-13 needs ZERO markup change** — `NotificationRow` renders the title as a real `<h3>` with real `Mark as read`/`Open` buttons, so it is already in the suite's accessible-name idiom; it is the exact opposite of points 6 and 7(d), which do need an a11y fix. (2) **It costs no new seed group and no new driver** — the teacher's own announcement POST fans out at `announcements.py:202`, so the announcement flow and "push delivery" are *one driver, two assertions*; and `grade_ready` fires on the same `POST /student/correct` that point 7's XP assertion rides. (3) **Its preference gate is already satisfied** — an absent prefs row reads `DEFAULTS` = "every type enabled", so no prefs seeding. Assert `grade_ready` renders with **no** `Open` button (session 60's dead-link finding honoured in `destinationFor`), and assert the inbox row, never a delivered push.
@@ -1708,6 +1710,52 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          `classList.length > 1` (`:379`), and the roster is one class — so `effectiveClassId`
          resolves with no extra interaction. The global/school boards would drag in every
          other seeded account and make the expected order depend on unrelated seed groups.
+      12. **P5.11's OTHER half — the UI-gate leg — has never been measured, and measuring it
+         found the audit registry's exclusion list stale in ALL FOUR entries. Measured
+         session 68, read-only while the second P5.9/P5.10 gate held the lane.**
+         Points 1–11 all measure the four E2E flows. The task line's second clause —
+         "axe/Lighthouse/screenshots/visual compare" — had never been looked at by any session.
+         **(a) How the corpus is actually produced, which is not what its own file header says.**
+         `web/e2e/screenshots.spec.ts` captures **five** screen ids only (S-06/S-10/S-14/S-15/
+         S-17, the Phase-2.5 retrofit) at 380/768/1440. The other 34 ids in
+         `reports/phase-4/screens/` come from **`web/scripts/audit.mjs`**, which writes the same
+         `screens/<id>/<state>--<bp>.png` convention. So "capture screenshots for every new
+         screen" is overwhelmingly an *audit-registry* job, not a Playwright-spec job — the
+         Phase-5 screens are already captured by their registry entries, and
+         `screenshots.spec.ts` needs **no** new test. **`reports/phase-5/` does not exist yet**;
+         creating it is the explicit re-baseline act `report-dir.ts` documents:
+         `LEMELY_REPORT_DIR=reports/phase-5 npm run audit` (and `npm run test:e2e`), never a
+         default run — the default is the gitignored `reports/.scratch` precisely so a routine
+         `check.sh` cannot overwrite a committed baseline.
+         **(b) The registry's exclusion list is stale in all four entries — the third instance
+         of this shape in Phase 5, and the file warns about itself twice in its own header.**
+         `audit.mjs:83-85` still says "Deliberately still NOT in this registry (P5 screens still
+         on mock data): /student/subject/:code, /student/board, /student/landing,
+         /student/directions." Measured against the code:
+         • **`/student/board` IS audited** — a real registry entry at `audit.mjs:1960` (P5.8's
+           S-29). The claim is simply false.
+         • **The false claim is ALSO in the runner's operator-facing `log()` at `audit.mjs:2451`**,
+           not just the comment. That is the exact failure the header itself describes when
+           `/student/plan` went stale ("fixing only the comment would have left the false
+           statement in the operator-facing output, where it is actually read"). It has now
+           happened a third time, to the sentence documenting the previous two.
+         • **`/student/subject/:code` is NOT on mock data.** `Subject.tsx:17` is
+           `useSubject(code)`, a real react-query hook. So a real, live-data student route is
+           unaudited under a justification that is false — the G-13 miss in its other direction:
+           G-13 was absent-and-silently-green, this is present-and-falsely-declared-absent plus
+           three genuinely-absent routes excused by a stale reason.
+         • `/student/landing` and `/student/directions` are static (no data hook), which is a
+           *different* reason from the one written down — and by the registry's own rule three
+           lines further on ("no *populated* fixture is NOT on its own a reason to leave a route
+           out … an unlooked-at route is exactly how this gate became vacuous") it is not a
+           sufficient one either. All four routes exist (`portals/student/index.tsx:213/218/
+           235/236`).
+         **What P5.11 owes here:** delete the four-route claim from **both** `:83-85` and
+         `:2451`, and add registry entries for `/student/subject/:code`, `/student/landing`,
+         `/student/directions` (subject needs a seeded student with a corrected paper — the
+         contract's `students.correctedPaper` already is one; the other two are static and need
+         no fixture). Do **not** re-add `/student/board` — it is already there, and a duplicate
+         entry would double-capture S-29 and quietly disagree with itself on state slugs.
       9. **Point 4 is STALE and it was pessimistic. The push/notification flow is now the
          CHEAPEST of the four, not the blocked one. Measured session 66, read-only while the
          P5.9 gate held the lane.** Point 4 was written in session 59, *before* P5.9 existed,
