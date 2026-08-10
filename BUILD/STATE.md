@@ -2,7 +2,9 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-11T03:30:00Z   # **Forty-sixth session (this one): P5.6 AND P5.7 are COMPLETE — 8/12 Phase-5 tasks done. Resume at P5.8 (screens S-28..S-31).**
+last_updated: 2026-08-10T11:48:00Z   # **Fifty-sixth session (this one): the P5.8 gate run has cleared 10/13 gates including `pytest`.**
+#                                    Session 51's `setsid` run (PID 927164) was still alive at 18 minutes — `ruff`/`format`/`mypy`/`import-linter`/**pytest**/`web-typecheck`/`web-lint`/`web-build`/`web-test`/`impeccable-detect` all PASS. Only the live-stack UI leg is left (playwright-e2e running, then puppeteer-audit, ui-thresholds). No new run started; attached + Monitor armed. See the P5.8 checklist entry.
+#                                    Prior: **Forty-sixth session: P5.6 AND P5.7 are COMPLETE — 8/12 Phase-5 tasks done. Resume at P5.8 (screens S-28..S-31).**
 #                                    **P5.7 in one line:** the 3-device policy (D1.11) was already correct and atomic; what was missing was any way for a user to *see* it. Backend `allow_eviction` + a 409 challenge on login + `GET`/`DELETE /api/me/devices`, then G-10 on the login screen and G-11 at `/settings/devices`. All 13 gates green at **90.83%** with the new screen at **axe 0 / Lighthouse a11y 100**. D5.12 recorded before the code.
 #                                    **Two P5.7 gaps left deliberately for P5.11/P5.9, do not mistake them for covered:** G-10 has **no audit-registry entry** (it needs an account already holding three live devices — a seed precondition, not a navigation), and **no nav entry anywhere reaches `/settings/devices`** (the teacher sidebar needs an icon-map addition, the parent portal has no sidebar).
 #                                    **New environment fact, cost real work: `npx prettier --write` is NOT this repo's formatter.** `web/` has no prettier config and does not depend on it, so a bare run silently reformatted 8 files with **semicolons** against the house semicolon-free style. The web gates are typecheck + oxlint + build + vitest + impeccable detect — **none of them formats**. Never run a formatter the gate chain does not run.
@@ -1006,6 +1008,23 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             "not hung", and the four sessions that misread this run had neither number.
             Eighth run still not started; the Monitor was re-armed on the same PID.
             Working tree was clean on entry, so no wip commit was needed.
+            **Fifty-sixth session (this one): the run has cleared `pytest` and TEN of the
+            thirteen gates.** At 11:48, 18 minutes after session 51 launched it, PID 927164
+            was still alive and `/tmp/check_p58_s51.log` had grown from 84 to **254 bytes**:
+            `ruff-check`, `ruff-format`, `mypy`, `import-linter`, **`pytest`**,
+            `web-typecheck`, `web-lint`, `web-build`, `web-test`, `impeccable-detect` — all
+            **PASS**, with the header `== Live-stack UI gates ==` printed and
+            `npm run test:e2e` (child 966482, its own `playwright test` below it) freshly
+            started. **`pytest` is the gate that killed all five pre-`setsid` attempts, and
+            it has now passed.** Only `playwright-e2e`, `puppeteer-audit` and `ui-thresholds`
+            remain — the ~11-minute audit leg. No ninth run was started; the session attached
+            and re-armed the Monitor on 927164. Working tree clean on entry.
+            **The generalisable form of the five-session detour, now that the run has proved
+            it: `setsid` bought ~18 minutes where the ceiling was 2–4.** The four sessions
+            that read an 84-byte log as a crash were reading the *normal* mid-`pytest`
+            appearance of a healthy run; the log going 84 → 254 in one step is what a
+            passing `pytest` looks like from outside, because `check.sh` writes a gate's
+            PASS line only when the gate *returns*.
             — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
