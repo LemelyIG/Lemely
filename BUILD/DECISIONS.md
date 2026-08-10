@@ -5792,3 +5792,112 @@ delivered in any harness in this build**. The push path is verified by unit
 tests over the pure function and by the screen's handling of the `unavailable`
 state — never by an end-to-end delivery. Do not write "push delivery verified"
 in the Phase-5 report; write what was actually exercised.
+
+---
+
+## D5.16 — G-12 states what it cannot do rather than offering a control that cannot work (P5.9 chunk C)
+
+Recorded **after** the code rather than before it, and the distinction is worth
+being honest about: MISSION §4's spec-before-code ordering for this phase was
+served by D5.15, which settled the architectural question (the service worker
+and the credential boundary). Everything below is a set of smaller calls made
+while building G-12 that the file comments alone would lose.
+
+### 1. The route is `PUT`, and the update is partial anyway
+
+The task brief said `PATCH /api/me/notification-preferences`. The router
+declares **`@router.put`** (`lemely/web/routers/me.py:176`). It is still a
+genuine partial update — pydantic's `model_fields_set` tells "omitted" from
+"explicitly sent", so an omitted field is left untouched server-side.
+
+The screen therefore sends **exactly one key per toggle flip**. That is not a
+bandwidth argument. A whole-object body would carry `atRiskAlert`, which the
+router answers with a **422** for any role but teacher/parent whether the value
+is `true` or `false`; and it would silently clobber a change made on another
+device between this screen's load and its save. The partial body is what makes
+the wire shape match what the reader actually asked for.
+
+This is the seventh time in Phase 5 that a note paraphrasing the codebase has
+been wrong where the code was right (D5.2, D5.4, D5.5, P5.5's header, the two
+deps predictions). The rule holds: **read the router; where a brief restates
+it, the code wins.**
+
+### 2. `atRiskAlert: null` is information, not an absent value
+
+The DTO returns `null` for every role except teacher and parent. That null does
+not mean "off" — it means *this caller's role has no such preference*. So the
+toggle is **filtered out of the list**, never rendered unchecked. Rendering it
+unchecked would offer a student a switch that 422s on use, and would tell them
+they had opted out of something that was never theirs.
+
+### 3. Three push states, and the order between two of them is load-bearing
+
+UI spec §G-12 asks for permission state to be shown "clearly with a route to fix
+it rather than toggles that silently do nothing". `resolvePushState` collapses
+four independent facts — server availability, browser support, permission,
+subscription — into one state, and two orderings inside it are decisions:
+
+**Server availability is checked before browser support.** Both mean push
+cannot happen here. Only the browser one *looks* actionable, and acting on it
+achieves nothing while the server has no VAPID keys to sign an assertion with —
+so telling the reader to switch browsers would be an errand that ends in the
+same place. The binding constraint no user action can change is stated first.
+
+**`granted` without a live subscription resolves to `prompt`, not `enabled`.**
+The permission is the browser's memory of an earlier answer; the subscription is
+what the server can actually push to. Cleared site data, a new browser profile,
+or a `410` the server acted on (D5.9 §4) leaves the first without the second.
+Reporting "on" there is the single failure a settings screen exists to prevent.
+Re-enabling from `prompt` shows no permission dialog when permission is already
+granted, so the recovery costs a click and no interruption.
+
+Both verified by inversion: dropping `subscribed` from the enabled check fails
+`reports prompt, not enabled…`; swapping the two precedence lines fails `puts
+server unavailability ahead of browser support`.
+
+### 4. The test-notification button is a device check and says so
+
+**No route in this backend sends a test push**, and on a build with no VAPID
+keys none could. Rather than ship a button that pretends otherwise, it shows a
+notification from the device itself and the copy beside it states plainly that
+it does not check the server can reach you.
+
+What it does prove is the half that actually breaks: permission is granted, the
+service worker is registered and active, and the operating system will surface a
+Lemely notification rather than swallowing it. It goes through
+`registration.showNotification` rather than `new Notification()` — that
+constructor is unsupported on Android Chrome, which is exactly where a
+hand-rolled test button silently does nothing on the platform most of these
+students are on.
+
+### 5. Five toggles, and the sixth is refused structurally
+
+UI spec §G-12 lists "weekly summary". `NotificationType` has five members, no
+`weekly_summary` column, no sender and no row — a sixth switch would gate
+nothing (UI spec §1.4). `NOTIFICATION_TOGGLES`'s key list is asserted **exactly**
+in `tests/unit/notificationPrefs.test.ts`, so it cannot be added without the
+backend growing the enum value first. Carried to the Phase-5 limitations.
+
+### 6. Quiet hours refuse a half-filled pair before the server does
+
+`NotificationPreferencesService.set` raises on a merged result with exactly one
+bound set, and the router turns that into a 422. Catching it client-side is not
+duplication: without it, a reader who types a start time and tabs away is shown
+a server error for a form they have not finished filling in.
+
+Start equal to end is deliberately **allowed through** — the backend accepts it,
+and a client stricter than the server it mirrors is the same dishonesty in
+reverse. An overnight window says out loud that it wraps past midnight, because
+"22:00 to 07:00" read literally is an empty range and the reader has no other
+way to check we understood them short of waiting until 2am.
+
+### 7. What no gate exercises, and why it stays that way
+
+The G-12 audit-registry entry runs under a student session against a build with
+no VAPID keys. So **the `prompt`, `denied` and `enabled` push states, the enable
+button and the test-notification button are covered by unit tests only** — never
+by axe, Lighthouse or a browser — and a student-session audit sees four toggles
+rather than five. Covering them would need a mocked push config, i.e. auditing a
+screen this deployment never shows. Both non-coverages are written into the
+registry entry itself and carried to the Phase-5 limitations. Do not write "push
+enablement verified" in the Phase-5 report.
