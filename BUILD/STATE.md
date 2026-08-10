@@ -1524,6 +1524,56 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       **E. the UI-gate pass** — point 12(a)/(c): `LEMELY_REPORT_DIR=reports/phase-5 npm run
       audit`, `compare-screens` with an **explicit** `--baseline reports/phase-4/screens`, then
       the full `./scripts/check.sh` under `setsid`.
+      ---
+      **PROGRESS (session 72): chunks A, B, C and D are BUILT, COMMITTED and each verified
+      against the live stack. Only chunk E remains.**
+      - [x] **chunk A** (`4bbbe0c`) — S-29 `BoardRow` takes the element as a **prop**
+            (`<li>` inside the new `<ol>`, `<div>` for the pinned viewer row). Point 16's trap
+            avoided: making the root `<li>` unconditionally would have put a listitem outside
+            any list — a *serious* axe violation no web gate catches. S-31's Level / Total XP /
+            Day streak are now named `group`s. Deliberately **not** C-2 `MarkDisplay`'s exact
+            shape: that names a generic `<div>` (no accessible name in ARIA) and repeats the
+            value into the label where it can drift. Naming the group with the LABEL and
+            leaving the value as content states the number once.
+      - [x] **chunk B** (`cfccaec`) — `seed_e2e.py` grows an `engagement` group: three XP-ranked
+            roster students (**declining 200 / inactive 150 / control 100**, real `XpService`
+            awards, all on the run's own Cairo date) and a dedicated three-device account.
+            Paid the full three-edit contract tax in one commit. **Verified by running the seed
+            against the live stack** — and it purged **51** pre-existing `xp_event` rows on its
+            first run, so point 15(d)'s accumulation was already real, not hypothetical.
+      - [x] **chunk C** (`df57c37`) — `engagement.spec.ts` (leaderboard ordering + the
+            announcement flow across two roles) plus the XP and `grade_ready` assertions
+            appended to `correct-paper.spec.ts`. **7 specs pass against the live stack in 45s.**
+            **Inverted, not just passed:** reversing the expected order fails with `row 1 should
+            be Seed Control`, proving the assertion reads real DOM order.
+            Also fixed a real S-28 defect the flow surfaced: every card's `Read it` button had
+            the identical accessible name, so a screen-reader user hears it repeated with
+            nothing to distinguish the notices. It now carries the title (visible text still
+            leads, per WCAG 2.5.3) — which is also what lets the spec scope by title instead of
+            depending on the seed happening to hold exactly one announcement.
+      - [x] **chunk D** (`e288caf`) — the stale exclusion list is gone from **both** sites, all
+            three genuinely-unaudited routes have entries (S-08, G-01, DEV-01), and **G-10 is
+            closed** — the last screen in the build with no entry.
+            **The entries earned themselves immediately, exactly as G-13's did: NONE of the
+            three rendered an `<h1>`.** Three more `page-has-heading-one` defects that the
+            false "still on mock data" exclusion had been hiding. Fixed in all four of
+            Subject's states, not just the populated one — G-13's specific lesson.
+            **One honest scope call recorded in the entry itself: G-10 declines Lighthouse.**
+            `runLighthouseAudit` drives its own navigation and never replays `ready`, so it
+            would score the plain login form and file the number under G-10's slug — a
+            measurement of a state it never reached. `/login` is already scored on its own
+            entry.
+      - [ ] **chunk E — IN FLIGHT.** `LEMELY_REPORT_DIR=reports/phase-5 npm run audit` under
+            `setsid`, launched 2026-08-10T15:05Z. Log `/tmp/p511-audit.log`, ends in an `EXIT=`
+            line. **Durable wrapper PID `1376670`** (`bash -c LEMELY_REPORT_DIR=…`); the `node
+            scripts/audit.mjs` child was 1376683 but `audit.mjs` recycles Chrome per route
+            batch, so a changed child PID is progress, not a crash. Do NOT relaunch it.
+            When it lands: read the axe/Lighthouse summary (expect **~72 route-states**, up
+            from 68 — G-10, S-08, G-01, DEV-01), then
+            `npm run compare-screens -- --baseline reports/phase-4/screens --candidate
+            reports/phase-5/screens` (the default baseline is Phase **2.5** and is wrong for
+            this phase — always pass `--baseline`), then the full `./scripts/check.sh` under
+            `setsid`. `reports/phase-5/` is a new committed baseline.
       **Brief sharpened 2026-08-10 (session 59) by measuring the code while the P5.8 gate run
       held the test lane — recon only, nothing edited. Three findings, and the third is a trap
       that fires 22 minutes into a gate run.**
