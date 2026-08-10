@@ -79,6 +79,7 @@ EXPECTED_TABLES = {
     "study_plan_sessions",
     "friendships",
     "announcement_reads",
+    "exam_dates",
 }
 
 

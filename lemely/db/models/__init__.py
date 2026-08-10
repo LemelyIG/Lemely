@@ -11,7 +11,7 @@ from __future__ import annotations
 # Re-export model classes for convenient ``from lemely.db.models import User`` usage.
 # These imports must come before import_all_models so they are always available
 # regardless of whether the caller has already triggered the lazy imports.
-from lemely.db.models.academic import MarkScheme, Paper, Subject
+from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.billing import PlanTier, Subscription
 from lemely.db.models.engagement import Streak, XpEvent
@@ -120,6 +120,7 @@ __all__ = [
     "Device",
     "DifficultySource",
     "ExamBoard",
+    "ExamDate",
     "Flashcard",
     "FlashcardDeck",
     "FlashcardReview",

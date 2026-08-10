@@ -5006,3 +5006,111 @@ This one is different and worth naming separately: **the invariant was correctly
 enforced in the database and the service simply had no story for being told so.**
 A CHECK or unique index is a guarantee, not an error handler — every place that can
 provoke one needs a decision about what the user sees when it fires.
+
+---
+
+## D5.8 — The exam calendar ships with a real table and no dates (P5.5 chunk C)
+
+**Decision: build `exam_dates`, build a strict ingestion path, and ship the
+student surface honestly empty. Do not populate a single row.**
+
+### The measurement that forced it
+
+There is **no CAIE timetable data anywhere on this machine.** `Sources/` holds
+AdditionalMathematics/Mathematics/Physics *mark schemes* and four solved
+scripts; the PaperScraper corpus at `/home/sico/PaperScraper/papers/CAIE/`
+holds 648 question papers and grade-boundary documents. Neither contains a
+timetable, and `find -iname "*timetable*" -o -iname "*calendar*"` over both
+returns nothing. The scraper has no timetable route — the artifact lives in a
+separate official CAIE timetable PDF this build has no path to.
+
+MISSION §4 Phase 5 says "auto-populated official CAIE session dates". The
+*auto-populated* half is unbuildable without the source document. Three
+options existed:
+
+1. **Invent plausible dates.** Rejected. IGCSE sessions do cluster in May/June
+   and Oct/Nov, so a generated date would look right and be wrong by days.
+2. **Skip the feature.** Rejected — the table and ingestion are the expensive,
+   design-bearing part, and deferring them means P5.8's screen has nothing to
+   consume and the work lands twice.
+3. **Table + ingestion + honest empty state.** Chosen. The tri-state
+   availability pattern P4.5 established for the practice generator (D4.10),
+   applied to a second surface that must refuse rather than fabricate.
+
+### Why inventing here is worse than inventing anywhere else
+
+UI spec §1.4 forbids invented precision generally. This screen sharpens it: the
+exam calendar's entire purpose is a **countdown a student plans revision
+around**. A missing date disappoints. A wrong date actively misdirects study
+scheduling toward the wrong week, and the student has no way to detect it —
+the app is the authority they are consulting precisely because they do not
+know the date. A wrong exam date is not a degraded feature; it is harm
+delivered confidently, which is the same failure shape as D3.21's paper 22.
+
+### The design decisions inside the table
+
+- **The grain is the paper *variant*, not the paper number.** The official
+  timetable dates components (`0625/22`), and variants of one paper number can
+  sit on different days in different zones. Storing at number grain would have
+  forced the ingester to pick one real date and discard the others — invented
+  precision arriving through the back door. `paper_number` is stored *beside*
+  the variant because it is the only key the read path can join on
+  (`student_enrolment_papers.paper_number` is what a student declares, P4.3),
+  and it comes from the source document rather than from parsing a digit out
+  of the variant string.
+- **`source` is `NOT NULL`.** A row that cannot name the document it came from
+  is indistinguishable from an invented one. It is also on the wire, so a
+  student or teacher who believes a date is wrong can name the timetable
+  rather than argue with the app.
+- **`uq_exam_dates_variant` makes ingestion idempotent by database, not by
+  care** — the fourth table in Phase 5 to make that choice (0013, 0015, 0016).
+  Timetables get republished with corrections, so re-ingest must *update in
+  place*; appending would put one paper on a student's calendar twice with two
+  different dates, which is worse than having no calendar.
+- **A batch that contradicts itself is rejected whole.** Two lines claiming the
+  same variant with different dates means the document disagrees with itself.
+  Last-one-wins would let a stale line silently overwrite a correct one.
+- **Nothing is defaulted at parse time.** A missing `paperNumber` is not
+  inferred from the variant, a missing `sessionYear` is not taken from the
+  current year, and one bad entry rejects the document rather than ingesting
+  the good rows. Each convenience would manufacture a fact about a real exam.
+- **`starts_at_local` is a string, not a `Time`.** The document prints a
+  wall-clock time in a zone this table does not model; coercing it to a typed
+  time would imply a precision about *which* zone we do not have. A missing
+  time is `None`, never midnight.
+
+### Three empty causes, kept apart
+
+`no_enrolment` (the student has not said what they are sitting),
+`no_timetable` (they have, and we hold no official dates), and per-paper
+`no_session` (that enrolment names no session). Collapsing the first two would
+tell a student who never onboarded that *Cambridge* has not published dates —
+a false statement about a third party, and one that hides the action the
+student could actually take. Pinned by tests.
+
+### Past dates are deliberately not filtered
+
+The read path does not compare anything to "now" — the service takes no clock.
+A session's components sit within a few weeks of each other, so dropping past
+dates would empty a student's calendar halfway through their own exam series
+and make `no_timetable` — the state that means "we have no data" — fire when
+we hold all of it. The screen decides what a past date looks like.
+
+### There is no ingestion route
+
+Loading a timetable is an operator act against a published document, not a
+request any authenticated user makes. Exposing it over HTTP would put the one
+write path capable of publishing a wrong exam date behind nothing but a role
+check. Pinned by a test asserting the router's OpenAPI surface is exactly one
+`GET`.
+
+### The honest gap, stated rather than hidden
+
+**There is no CLI wrapper around `ExamCalendarService.ingest` yet.** The
+ingestion path is the service plus `parse_timetable_payload`, both fully
+tested; loading a real timetable today means calling them. A `lemely
+ingest-exam-timetable <file>` command is a thin wrapper and the natural next
+step, deliberately not built speculatively (MISSION §8b) while no document
+exists to feed it. **Carry this into the Phase-5 limitations list**, together
+with the empty table itself — neither is a defect to quietly fix, and neither
+may be closed by generating data.

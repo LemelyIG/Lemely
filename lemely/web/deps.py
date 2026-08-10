@@ -29,6 +29,7 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
+from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
 from lemely.db.friend_repo import FriendService
 from lemely.db.history_repo import DbHistoryStore
@@ -386,6 +387,18 @@ def get_leaderboard_service() -> LeaderboardService:
 
 
 @lru_cache(maxsize=1)
+def get_exam_calendar_service() -> ExamCalendarService:
+    """Return the process-wide :class:`ExamCalendarService` singleton (P5.5 chunk C).
+
+    Wired with the DB session factory alone, and with no clock — unlike its
+    Phase-5 siblings this service compares nothing to "now" (see its module
+    docstring). Tests override this dependency with a service built on a
+    throwaway Postgres database.
+    """
+    return ExamCalendarService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_friend_service() -> FriendService:
     """Return the process-wide :class:`FriendService` singleton (P5.4 chunk B).
 
@@ -608,3 +621,4 @@ def reset_singletons() -> None:
     get_xp_service.cache_clear()
     get_leaderboard_service.cache_clear()
     get_friend_service.cache_clear()
+    get_exam_calendar_service.cache_clear()

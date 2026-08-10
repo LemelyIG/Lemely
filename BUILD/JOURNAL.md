@@ -1611,3 +1611,36 @@ none has a helper waiting from Phase 3 or 4.
   `/api/student/announcements`, own schemas module, deps + `reset_singletons`), then chunk C, the
   exam calendar, which must ship honestly empty because no CAIE timetable data exists anywhere
   on this machine.
+
+## 2026-08-10 — forty-fourth session — P5.5 chunks B and C
+
+- **Did:** finished P5.5's remaining two chunks. **Chunk B** (`51657f8`) is the student
+  announcement surface — a thin student-only router at `/api/student/announcements`
+  (list / unread-count / mark-read), its own reader DTO module kept separate from the
+  teacher composer's, 24 route tests + 11 schema-introspection tests. **Chunk C** is the
+  exam calendar: migration 0017 (`exam_dates`), `ExamCalendarService` (ingest, strict
+  payload parser, per-student read), `GET /api/student/exam-calendar`, 41 tests, D5.8.
+- **The brief was wrong about chunk B and the code won again** — the sixth Phase-5
+  instance. It predicted a new `deps.py` entry plus a `reset_singletons()` line; both
+  already existed, because `get_announcement_service` has been there since P3.8. Reusing
+  that singleton is not just less code: two instances would carry two clocks, and the
+  clock decides whether a scheduled announcement is published, so a student and their
+  teacher could have disagreed about it.
+- **Learned, and it cost real time:** `sa.Enum(..., create_type=False)` **silently ignores
+  the flag** — only `sa.dialects.postgresql.ENUM` honours it. The failure is nasty because
+  `pytest` stayed green (tests build the schema with `create_all`) while `alembic upgrade`
+  died on "type sessionmonth already exists". Same shape as P5.2's trap: the tests and the
+  real migration path do not agree by default.
+- **Learned:** this FastAPI version wraps an included router in an opaque `_IncludedRouter`
+  with no `.path`, so a test that walks `app.routes` to assert a router's surface finds
+  **nothing and passes for the wrong reason**. Caught only because I asserted an exact
+  expected list rather than a subset. Read `app.openapi()["paths"]` instead.
+- **Chunk C ships a table with zero rows on purpose (D5.8)** and that is the deliverable,
+  not a gap. No CAIE timetable exists on this machine, so ingestion is built and nothing
+  populates a row; the read path names *which* of three causes made a calendar empty, so a
+  student who never onboarded is never told that Cambridge has not published dates.
+  Four guards across both chunks verified by inversion, not asserted.
+- **Next:** P5.6 — notifications inbox + web push (VAPID) with a headless-testable
+  transport, and making `notification_preferences` actually gate delivery. It is the first
+  P5 task with a genuine *consumer* for those preferences, which have been written and read
+  by nothing since migration 0008.

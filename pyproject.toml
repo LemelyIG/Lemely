@@ -150,6 +150,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/web/schemas_me.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/study_plan.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/flashcards.py" = ["TC001", "TC002", "TC003"]
+"lemely/web/routers/exam_calendar.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/jobs.py" = ["ANN401"]
 "lemely/web/deps.py" = ["ANN401"]
 # SQLAlchemy 2.0 ORM models resolve Mapped[...] annotations at runtime, so the
@@ -234,6 +235,7 @@ module = [
   "lemely.web.schemas_me",
   "lemely.web.schemas_announcements",
   "lemely.web.schemas_announcements_student",
+  "lemely.web.schemas_exam_calendar",
   "lemely.web.schemas_student_profile",
   "lemely.web.schemas_study_plan",
   "lemely.web.schemas_leaderboard",

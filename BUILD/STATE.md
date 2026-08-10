@@ -408,33 +408,50 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             2 tests. `announcement_reads` went into `EXPECTED_TABLES` in the same commit.
             The clock is now injected (`now=`) and the docstring that asserted its absence was
             corrected rather than left contradicting the code.
-      - [ ] **chunk B — NEXT, start here.** The student announcement endpoints. Mirror P5.3's
-            `routers/leaderboard.py` / P5.4's `routers/friends.py` exactly: a thin
-            student-role-only router of its own at prefix `/api/student/announcements`, a
-            `lemely/web/schemas_announcements_student.py` (do **not** widen the existing
-            `schemas_announcements.py` — it is the teacher composer's wire contract), a
-            `get_student_announcement_service()`-shaped entry in `deps.py` **plus the matching
-            line in `reset_singletons()`** (both P5.3 and P5.4 needed that pair), and tests in
-            `tests/test_web_announcements_student.py`. Routes: `GET ""` (list, honours `limit`),
-            `GET "/unread-count"`, `POST "/{announcement_id}/read"`. Identity must be the token's
-            `sub` on every route — **no caller-supplied user id anywhere on this router**, which
-            is what made P5.4 chunk B structurally safe. The service already exists and is
-            tested; this chunk is wiring, DTOs, and authz. Note `AnnouncementService` is already
-            constructed in `deps.py` for the teacher router — reuse that singleton rather than
-            building a second one with a different clock.
-      - [ ] **chunk C — the exam calendar, and it must not invent dates.** *Measured this
-            session, do not re-derive:* there is **no CAIE timetable data anywhere** — not in
-            `Sources/` (which holds only AdditionalMathematics/Mathematics/Physics mark schemes)
-            and not in the PaperScraper corpus (`find -iname "*timetable*" -o -iname "*calendar*"`
-            over both returns nothing). The scraper fetches papers and grade boundaries, never
-            timetables; real dates live in a separate official CAIE timetable PDF this build has
-            no path to. **Therefore: build the table and the ingestion path, and ship the surface
-            honestly empty** — the tri-state-availability pattern P4.5 established (D4.10).
-            Inventing plausible exam dates would violate UI spec §1.4 ("never invent precision")
-            on the one screen whose entire purpose is a countdown a student plans around, and a
-            wrong exam date is materially worse than a missing one. Record as **D5.8** and carry
-            it into the Phase-5 limitations list. The student's papers come from
-            `student_enrolment_papers` (P4.3).
+      - [x] **chunk B** (`51657f8`) — the student announcement endpoints:
+            `lemely/web/routers/student_announcements.py` (`GET ""`, `GET "/unread-count"`,
+            `POST "/{id}/read"`), `schemas_announcements_student.py`, app wiring, 24 route
+            tests + 11 schema-introspection tests. **`deps.py` needed no new entry** —
+            `get_announcement_service` has existed since P3.8 and is reused, so the student
+            and their teacher share one clock and cannot disagree about whether a scheduled
+            announcement is published; `reset_singletons()` already covered it. The brief
+            predicted a deps pair here and was wrong; the code won.
+            Two guards **verified by inversion**: `publishedAt` is the *effective* time
+            (`publish_at or created_at`) and the only time field on the wire — shipping
+            `created_at` too would let a screen sort by typing time and disagree with the
+            server's ordering; and the read receipt echoes the **canonical** id, because
+            `uuid.UUID` accepts `urn:uuid:`/uppercase/braces forms and echoing the raw path
+            hands back an id that never matches the list response (P5.4 chunk B's lesson,
+            second sighting).
+      - [x] **chunk C** (pending commit) — the exam calendar. Migration 0017 (`exam_dates`)
+            + `lemely/db/exam_calendar_repo.py` (`ExamCalendarService`: `ingest`,
+            `parse_timetable_payload`, `calendar_for_student`) + `schemas_exam_calendar.py`
+            + `routers/exam_calendar.py` (`GET /api/student/exam-calendar`, read-only) +
+            deps/`reset_singletons`/app wiring + 41 tests. **D5.8 recorded** with the full
+            rationale. `alembic check` clean both directions.
+            **`exam_dates` went into `EXPECTED_TABLES` in the same edit as the
+            `create_table`** — P5.4's trap, not re-sprung.
+            **The table ships empty and that is the deliverable**, not a gap: no CAIE
+            timetable exists on this machine, so ingestion is built and *nothing* populates
+            a row. Three empty causes are kept apart (`no_enrolment` / `no_timetable` /
+            per-paper `no_session`) because collapsing the first two would blame Cambridge
+            for a blank the student can fill in themselves. The grain is the paper
+            **variant**, with `paper_number` stored beside it (the only key the student's
+            declared papers can join on) — number-grain storage would have forced the
+            ingester to discard real dates. Past dates are deliberately **not** filtered and
+            the service takes **no clock**: dropping them would empty a calendar mid-series
+            and make `no_timetable` fire when we hold all the data.
+            Two guards **verified by inversion**: collapsing `no_enrolment` into
+            `no_timetable` fails 2 tests, and dropping the self-contradicting-batch rejection
+            fails another. Two real traps found while building — `sa.Enum(..., create_type=
+            False)` silently ignores the flag and re-`CREATE TYPE`s an existing enum (use
+            `sa.dialects.postgresql.ENUM`; `pytest` passed while `alembic upgrade` failed),
+            and **this FastAPI version wraps included routers in an opaque `_IncludedRouter`
+            with no `.path`**, so a route-introspection test over `app.routes` finds nothing
+            and passes for the wrong reason — read `app.openapi()["paths"]` instead.
+            **Honest gap carried to the Phase-5 limitations:** there is no CLI wrapper around
+            `ingest` yet (service + parser only), deliberately not built speculatively while
+            no document exists to feed it.
 - [ ] todo — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable transport,
       and make `notification_preferences` actually gate delivery.
 - [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
