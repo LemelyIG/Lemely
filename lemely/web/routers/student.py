@@ -46,7 +46,8 @@ from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
-from lemely.db.models.enums import Role, UploadStatus, XpSource
+from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
+from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import XpService
@@ -62,13 +63,23 @@ from lemely.web.deps import (
     get_class_service,
     get_gemini_client,
     get_history_store,
+    get_notification_service,
     get_parent_link_service,
+    get_push_transport,
     get_settings,
     get_storage_backend,
     get_student_upload_repo,
     get_xp_service,
     require_role,
 )
+from lemely.web.notify import notify_safely
+
+# NotificationTransport is a **runtime** import for the same reason as the two
+# above: FastAPI resolves every ``Annotated[...]`` parameter through pydantic,
+# and with ``from __future__ import annotations`` a type-checking-only name
+# leaves an unresolvable ForwardRef that raises PydanticUserError on the
+# route's *first request* rather than at import (P5.6 chunk C1).
+from lemely.web.push import NotificationTransport
 from lemely.web.schemas import question_to_dto
 from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
 from lemely.web.schemas_parent import LinkedParentDTO, LinkParentRequestDTO, ParentLinkListDTO
@@ -639,6 +650,8 @@ def student_correct(
     settings: Annotated[Settings, Depends(get_settings)],
     storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
     xp_service: Annotated[XpService, Depends(get_xp_service)],
+    notification_service: Annotated[NotificationService, Depends(get_notification_service)],
+    push_transport: Annotated[NotificationTransport, Depends(get_push_transport)],
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
@@ -739,6 +752,42 @@ def student_correct(
                     dedupe_key=str(owned.id),
                     subject_code=report.correction.metadata.subject_code,
                     seam="paper_corrected",
+                )
+                # P5.6 chunk C2a, D5.9: tell the student their paper is marked.
+                # Fail-open for the same reason as the XP award above — the
+                # attempt is persisted and the upload is complete, so nothing
+                # here may turn a successful correction into an error frame.
+                #
+                # The dedupe key is the **upload**, exactly as the XP key is,
+                # and for exactly D5.3's reason: ``persist_correction`` mints a
+                # fresh ``Attempt`` every run, so an attempt-keyed notification
+                # would re-fire on every re-correction of the same PDF. D5.9 §6
+                # wrote this down before it could recur.
+                #
+                # Title and body are **pointers, never the data** (D5.9 §2):
+                # the paper's identity, and no mark, percentage or grade. That
+                # is what makes the preference gate lossless — a student who
+                # turns ``grade_ready`` off loses a nudge, not a result — and it
+                # keeps grades private (UI spec §1.4) on a row that a push
+                # service is told about.
+                paper_metadata = report.correction.metadata
+                notify_safely(
+                    notification_service,
+                    push_transport,
+                    user_id=auth.user_id,
+                    type=NotificationType.grade_ready,
+                    title="Your paper has been marked",
+                    # "Paper 1 Variant 2", never "Paper 1/2": a slash between two
+                    # small integers reads as a mark out of a total on a lock
+                    # screen, which is the one thing this line must not look like.
+                    body=(
+                        f"{paper_metadata.subject_code} Paper "
+                        f"{paper_metadata.paper_number} Variant {paper_metadata.paper_variant}"
+                        " is ready to review."
+                    ),
+                    payload={"uploadId": str(owned.id)},
+                    dedupe_key=str(owned.id),
+                    seam="grade_ready",
                 )
                 # ``report.correction.metadata`` (an ``ExamMetadata``, derived from
                 # ``mark_scheme.metadata`` by ``core.correction._exam_metadata``) —
