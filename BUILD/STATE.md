@@ -523,10 +523,29 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             and — **the honest gap** — `streak_warning`/`study_plan_reminder` are time-triggered
             with **no scheduler in this build**, so they ship as service methods nothing invokes
             on a timer. Do not build a scheduler daemon; carry it to the Phase-5 limitations.
-      - [ ] **chunk A** — migration 0018 `push_subscriptions` (+ `EXPECTED_TABLES` in the SAME
-            commit) + `lemely/db/notification_repo.py` (`NotificationService`: create with the
-            preference gate and dedupe, list, unread count, mark read) + tests. The inbox itself
-            needs no migration.
+      - [x] **chunk A** (`e9c3ca1`) — migration 0018 + `lemely/db/notification_repo.py`
+            (`NotificationService`: create/mark_read/mark_all_read/list_for_user/counts,
+            subscribe/unsubscribe/forget_endpoint/subscriptions_for) + 60 tests.
+            ruff/format/mypy(203 files)/lint-imports clean; `alembic check` clean **both
+            directions**; the three related test files pass (71 tests).
+            **Not yet run: the full suite / `check.sh`.**
+            **The brief was wrong that the inbox needs no migration** — it needs no *table*, but
+            D5.9 §6's per-upload idempotency has nowhere to live on the existing row, so
+            `notifications` gained a `dedupe_key` column mirroring 0013's `xp_events.dedupe_key`:
+            nullable, **partial** unique index `WHERE dedupe_key IS NOT NULL` so the types with no
+            natural key (two study-plan reminders a week apart are two real reminders) stay
+            exempt. Sixth instance this phase of the code beating the note.
+            **D5.9 §2's split verified by inversion, both halves:** forcing the preference gate
+            to always-enabled fails 2 tests; making quiet hours drop the row as well as the push
+            fails `test_quiet_hours_write_the_row_and_only_block_the_push`.
+            `push_subscriptions` went into `EXPECTED_TABLES` **in the same commit** — third table
+            running to avoid P5.4's trap.
+            **Worth not re-deriving: Cairo is UTC+3 in August, not +2** (Egypt reinstated summer
+            time in 2023), so quiet hours convert through `ZoneInfo` and the test pins an August
+            *and* a January instant. A hardcoded offset is wrong by exactly one hour for half the
+            year. Also: `Session.execute` is typed as returning `Result`, which has **no
+            `rowcount`** — narrow through a one-attribute `Protocol`, since mypy here forbids
+            explicit `Any` so `cast("CursorResult[Any]", ...)` fails the gate.
       - [ ] **chunk B** — the transport seam: `NotificationTransport` protocol, the VAPID
             implementation, the recording in-memory double, VAPID settings in
             `lemely/runtime/config.py`, `deps.py` + `reset_singletons()`.
