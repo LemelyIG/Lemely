@@ -5430,3 +5430,119 @@ not silently dropped.
 idempotent; the route reuses it. Revoking the *current* device is permitted and
 is simply "sign out this browser" — the liveness check in `get_auth_context`
 turns the caller's own next request into a 401 without any special case.
+
+---
+
+## D5.13 — The XP profile read route, and the level curve D5.1 §10 deferred to P5.8 (P5.8 chunk A, written before any code)
+
+D5.1 §10 named two S-31 questions and explicitly left them here: *"the mapping
+from XP to level is a display concern with no schema implication; P5.8 fixes it
+and records it, so long as it is a pure function of total XP"*, and
+*"achievements/milestones … out of scope unless P5.8 finds the screen
+unbuildable without them"*. This is that record, plus the route S-31 needs.
+
+### 0. The correction that made this a chunk at all
+
+P5.8's brief said every backend these four screens need was already built and
+gate-green. That is true of S-28, S-29 and S-30 and **false of S-31**.
+`XpService` is wired into the web layer at **write seams only** — `deps.py`,
+`xp_awards.py`, and the four award call sites in `student.py`, `quiz.py`,
+`flashcards.py`, `study_plan.py`. Nothing reads. The read *methods* exist and
+are covered (`xp_repo.py`: `total_xp`, `xp_breakdown(start, end)`,
+`streak(now)`), so this is one thin router in the shape of P5.3's
+`leaderboard.py`, not an engine. Eighth instance this phase of the codebase
+beating a note; the standing rule holds.
+
+### 1. The level curve
+
+**`level(total) = isqrt(total // 100) + 1`.** Equivalently, level *N* begins at
+**100·(N−1)² XP**: 0, 100, 400, 900, 1600, 2500, 3600 …
+
+Why quadratic rather than linear. A linear curve makes every level cost the
+same, so the number stops meaning anything once a student is past the first
+month — it becomes a slow restatement of total XP. The quadratic makes the
+first few levels arrive quickly (one paper corrected, at D5.1 §2's 50 XP, puts
+a new student halfway to level 2 on their first day) and later ones a genuine
+record of accumulated work, which is what UI spec S-31 asks the screen to feel
+like: a training log. Against D5.1 §2's real earning rates — a student
+correcting one paper a day earns 350 XP/week — that is level 2 on day 2, level
+3 on day 8, level 4 on day 18, level 5 on day 32. A level roughly every two to
+three weeks by mid-game, without a cap or a prestige mechanic to design.
+
+**It is integer arithmetic on purpose.** `math.isqrt(total // 100)` and never
+`floor(sqrt(total / 100))`: the float form is exactly wrong at the boundaries
+that matter, where `sqrt(1600 / 100)` can land at 3.9999999999999996 and a
+student who just earned their level watches the screen refuse it. The integer
+form is also exactly equivalent to the stated rule — `isqrt(x // 100) >= N` iff
+`x // 100 >= N²` iff `x >= 100N²`, because N² is an integer — so the curve in
+this paragraph and the code cannot drift apart.
+
+The route returns `levelStartXp` and `nextLevelXp` beside `level` so the screen
+draws a progress bar without re-deriving the curve in TypeScript. **The curve
+exists in exactly one place** (`lemely/web/xp_levels.py`); a second
+implementation on the client is the sort of duplicate that stays right for a
+year and then disagrees after one tweak.
+
+### 2. The week is one definition, shared with the leaderboard
+
+S-31's "XP earned this week" and S-29's weekly board must be the same week, or
+a student reads two different numbers for one fact on two screens they can
+switch between in a tap. `_week_bounds` was private to
+`lemely/db/leaderboard_repo.py`; it moves to `lemely/db/xp_repo.py` as
+**`week_bounds`**, beside `civil_date_in_zone` and `DEFAULT_ZONE`, which
+`leaderboard_repo` already imports from. One definition, D5.1 §6's Monday
+00:00 → Sunday 23:59:59 Cairo, used by both. Same reasoning as P5.6 chunk C2b,
+where the announcement seam and the student read path were made to share one
+predicate rather than derive the audience twice.
+
+### 3. What the screen may show, and the thing it must not
+
+UI spec S-31 lists "lifetime stats (papers marked, questions answered, hours
+studied)". **Those are not shipped, and the reason is not that they were hard.**
+The tempting source is `xp_events`: count the `paper_corrected` rows and call it
+papers marked. That number is **wrong by construction** — D5.1 §3's daily caps
+mean a capped award writes *no row at all*, so a student who corrected eight
+papers in a day has five rows, and D5.1 §8's dedupe means a re-corrected paper
+has one row for two markings. It would read as a precise lifetime count and be
+neither precise nor a count. UI spec §1.4 forbids exactly that, and a wrong
+number on a "record of real work" screen is worse than an absent one because the
+student has no way to tell.
+
+So the route is deliberately about **XP and the streak only**: total, level,
+this week split by source, and the streak. `bySource` is XP per source, labelled
+as XP, never as an activity tally. "Hours studied" has no source in this
+schema at all and is not approximated. Carry to the Phase-5 limitations.
+
+**Achievements/milestones stay out of scope** on D5.1 §10's own terms: S-31 is
+fully buildable without them (streak, level and the weekly breakdown carry the
+screen), no schema exists, and MISSION §4's Phase-5 bullet does not list them.
+
+### 4. The streak calendar needs per-day data, so the route carries it
+
+S-31 asks for "current streak with its calendar visualisation", and
+`Standings.tsx`'s header comment records a 28-cell streak heatmap that P5.0
+deliberately removed rather than mock. `StreakState` carries lengths and
+`last_active_on` — enough for a number, not for a calendar. So `XpService`
+gains one narrow reader, **`xp_by_day(user_id, start, end)`**, and the route
+returns the last 28 days as `(date, xp)` pairs for days that earned XP.
+
+It reports **XP per day, not a boolean "active"**, because the honest thing the
+table knows is how much XP a day earned; "active" would be a derived claim about
+attendance that the caps and dedupe rules can falsify in the same way §3
+describes. Days with no XP are simply absent from the list — the client fills
+the 28-cell grid from the window it asked for, so an empty day and a missing
+day cannot be rendered differently by accident.
+
+### 5. Route shape
+
+`GET /api/student/xp`, its own thin router
+(`lemely/web/routers/xp.py`), `require_role(Role.student)` at the router level,
+mirroring P5.3's `leaderboard.py` exactly. **Identity is structurally
+`auth.user_id`** — no caller-supplied user id parameter exists on the route, so
+one student cannot request another's profile, and that is a property of the
+signature rather than a check that a later edit could drop.
+
+Non-students get 403 from the router guard rather than an empty profile; unlike
+P5.6's deliberately role-agnostic notification router, this surface has exactly
+one intended reader, because D5.1 §10 already fixed that XP is awarded to
+students only.
