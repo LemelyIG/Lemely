@@ -1644,3 +1644,28 @@ none has a helper waiting from Phase 3 or 4.
   transport, and making `notification_preferences` actually gate delivery. It is the first
   P5 task with a genuine *consumer* for those preferences, which have been written and read
   by nothing since migration 0008.
+
+## 2026-08-10 — forty-fourth session — P5.5 closed on a clean gate run
+
+- **Did:** ran the outstanding full `./scripts/check.sh` on P5.5's three already-committed
+  chunks and closed the task. **All 13 gates PASS, 0 skipped, exit 0; 2623 tests; coverage
+  90.57%** (develop 90.18%, P5.4 90.48% — no drop); `alembic check` clean. Nothing was
+  re-implemented; no defect surfaced. 6/12 Phase-5 tasks done.
+- **Learned — a written-down trap paid off on first contact.** P5.4 cost ~10 minutes of gate
+  time discovering that a new table needs *two* edits (the migration and `EXPECTED_TABLES` in
+  `tests/test_db_schema.py`), and wrote that into STATE. P5.5 added two tables
+  (`announcement_reads`, `exam_dates`), both registered in the same commit as their
+  `create_table`, and the trap did not fire. That is the cheapest possible outcome and the
+  argument for keeping these notes specific enough to act on.
+- **Did:** recon for P5.6 by reading the models rather than trusting the phase plan. Three
+  facts that change the task's shape: `notifications` exists with **zero writers anywhere**
+  (`grep -rln "Notification("` outside `models/` returns nothing), `notification_preferences`
+  **already** carries one boolean per `NotificationType` plus `quiet_hours_start/end`, and
+  nothing in `lemely/` or `web/src/` mentions VAPID or push subscriptions. So "make
+  preferences gate delivery" needs **no schema work at all** — only a consumer — and the
+  push-subscription table is the single genuine migration in P5.6.
+- **Next:** P5.6. Record the transport-seam design in DECISIONS.md before implementing
+  (MISSION §4 mandates spec-before-code for this layer): a `NotificationTransport` protocol
+  with a real VAPID impl and a recording double, the **inbox row as source of truth with push
+  as a best-effort side effect**, and quiet hours suppressing the *push* but never the row —
+  a student must not silently lose a notification for having received it at 2am.

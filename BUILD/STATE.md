@@ -2,7 +2,10 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T00:00:00Z   # **Forty-third session — P5.4 (friends backend) is COMPLETE.** Its three code chunks were already committed by the two prior sessions; the only outstanding work was the gate run, and nothing was re-implemented. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, 2532 tests / 6 live-only skips / 0 failures, coverage 90.48%** (develop 90.18% — no drop); `alembic check` clean. 5/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
+last_updated: 2026-08-10T12:00:00Z   # **Forty-fourth session — P5.5 (announcements + exam calendar) is COMPLETE.** All three chunks were committed by prior sessions; this session re-implemented nothing and only ran the outstanding gates. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, exit 0, 2623 tests, coverage 90.57%** (develop 90.18% — no drop); `alembic check` clean. 6/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
+#                                    **P5.4's `EXPECTED_TABLES` trap did not fire** — both new tables went into the set in the same commit as their `create_table`, which is what P5.4 told the next session to do. A written-down trap that costs nothing on its next encounter is the point of writing it down.
+#                                    **Resume at P5.6** (notifications inbox + web push). Its recon is done and recorded in the checklist — read those lines rather than re-deriving. The headline: `notifications` exists with **zero writers anywhere**, `notification_preferences` already carries one boolean per notification type plus quiet hours, so **the only migration this task needs is the push-subscription table**. Record the transport-seam design in DECISIONS.md before implementing, per MISSION §4.
+#                                    **Previous (forty-third) session:** **Forty-third session — P5.4 (friends backend) is COMPLETE.** Its three code chunks were already committed by the two prior sessions; the only outstanding work was the gate run, and nothing was re-implemented. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, 2532 tests / 6 live-only skips / 0 failures, coverage 90.48%** (develop 90.18% — no drop); `alembic check` clean. 5/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
 #                                    **The gate run found one real defect** (`72330b8`): `tests/test_db_schema.py` asserts exact set equality against a hand-maintained `EXPECTED_TABLES`, and migration 0015's `friendships` was never added to it. Fixed by extending the set — exact equality is what forces a new table to be acknowledged deliberately. **The generalisable form: a new table costs two edits, the migration and that set.** 0013 and 0014 added only columns, so P5.4 was the first chance in this phase for the trap to fire, and it fires ~10 minutes into the run. Make the `EXPECTED_TABLES` edit in the same chunk as the `create_table`.
 #                                    **Method note worth keeping:** `check.sh` suppresses output for gates that pass, so a green log contains no pytest counts at all — read coverage with `.venv/bin/coverage report --precision=2` off the run it just did, and get the test count from `pytest --collect-only -q --no-cov`. Never re-run the suite for a number; a second run costs ~10 minutes and risks the concurrent-`.coverage` corruption noted below.
 #                                    **Then continued into P5.5 (announcements), chunk A of three committed as `446e7fa`.** Two things a resuming session must not redo. **(1) P5.0's recon was wrong: the school-admin whole-school audience is NOT missing** — it has been fully built since P3.8/D3.14 (`school_wide`/`school_id`, `school_admin`-only, exposed on the teacher POST). Verified by reading `announcement_repo.py` and `routers/announcements.py`, so P5.5 is three parts, not four. That is the **fifth** Phase-5 instance of a note paraphrasing the codebase from memory and being wrong — D5.2, D5.3, D5.4, D5.5 are the others, and the standing rule holds: *read the model; where a note restates the code, the code wins.* **(2) There is no CAIE timetable data anywhere on this machine** (checked `Sources/` and the PaperScraper corpus), so the exam calendar ships as table + ingestion path + honest empty state, never invented dates.
@@ -378,10 +381,18 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       `pair_low`/`pair_high` with a unique index + three CHECK constraints, so a duplicate or
       reciprocal friendship is a database error rather than a service-layer convention
       (D5.1 §8's reasoning applied to a second table).
-- [ ] **doing** — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
+- [x] done — **P5.5** Announcements: student-facing read + read-receipts, school-admin audience,
       auto-populated official CAIE session dates for the exam calendar.
       Backend only — the consuming screens are P5.8/P5.9. UI spec §S-28 (line 725) is the
       product truth for what the student surface must eventually hold.
+      **Closed by the forty-fourth session's gate run — nothing was re-implemented.** All three
+      chunks were already committed; the only outstanding work was the gates. Full
+      `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, exit 0**; **2623 tests**;
+      **coverage 90.57%** (develop 90.18%, P5.4 90.48% — no drop); `alembic check` clean.
+      **P5.4's `EXPECTED_TABLES` trap did NOT fire this time** — chunks A and C each added
+      their table (`announcement_reads`, `exam_dates`) to the set in the same commit as the
+      `create_table`, which is exactly the fix P5.4 wrote down. The lesson held on first
+      contact; keep doing it.
       **P5.0's reconnaissance was WRONG on one of the three bullets — corrected here by reading
       the code, and this is the fifth instance in Phase 5 of the same failure mode.** P5.0 wrote
       that the "school-admin → whole-school audience is also absent". **It is not: it has been
@@ -452,8 +463,53 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             **Honest gap carried to the Phase-5 limitations:** there is no CLI wrapper around
             `ingest` yet (service + parser only), deliberately not built speculatively while
             no document exists to feed it.
-- [ ] todo — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable transport,
-      and make `notification_preferences` actually gate delivery.
+- [ ] **doing** — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable
+      transport, and make `notification_preferences` actually gate delivery.
+      Backend only — the consuming screens are P5.9 (G-12/G-13). MISSION §4 Phase-5 names the
+      four triggers: grades ready, new announcement, streak about to break, study-plan reminder,
+      plus at-risk alerts to the teacher and (if opted in) the parent.
+      **Recon done 2026-08-10 by reading the models, not by paraphrasing a note** (this is the
+      sixth Phase-5 task where that distinction mattered — D5.2/D5.4/D5.5, P5.5's own header, and
+      the two deps predictions that were wrong):
+      - **`notifications` exists and has ZERO writers.** `lemely/db/models/ops.py:140` —
+        `id`/`user_id`/`type`/`title`/`body`/`payload` (JSONB, defaults `{}`)/`read_at`, indexed
+        on `(user_id, read_at)`. `grep -rln "Notification("` over `lemely/` excluding `models/`
+        returns **nothing**: no repo, no service, no route, no call site. So the inbox is a
+        genuinely empty build, not a retrofit — but **no migration is needed for the inbox
+        itself**, exactly like P5.2's XP tables.
+      - **`NotificationType` has exactly five values** (`enums.py:164`): `grade_ready`,
+        `announcement`, `streak_warning`, `study_plan_reminder`, `at_risk_alert`.
+      - **`notification_preferences` already has one boolean per type, same five names**
+        (`ops.py:335`), all `NOT NULL DEFAULT true`, **plus `quiet_hours_start`/`quiet_hours_end`
+        (nullable `Time`)**. So "make preferences gate delivery" needs **no schema work** — the
+        toggles are there and `NotificationPreferencesService.get/set`
+        (`lemely/db/notification_prefs_repo.py`) already reads them. What is missing is a
+        *consumer*, because no send path exists. The service's `get` returns an all-defaults row
+        for a user with no row, so the gate must treat "never configured" as opted-**in**.
+      - **Nothing anywhere mentions VAPID or push subscriptions** — `grep -rlin
+        "vapid|push_subscription"` over `lemely/` and `web/src/` is empty. **The push
+        subscription table is the one genuine migration this task needs** (P5.0 listed it, and
+        that bullet is confirmed).
+      **Design to fix in DECISIONS.md before implementing** (P5.1 set this precedent and MISSION
+      §4 mandates it for the engagement layer): the transport seam. Web push cannot be sent from
+      a headless test, so define a `NotificationTransport` protocol with a real VAPID
+      implementation and a recording in-memory double, choose it in `deps.py`, and make the
+      **inbox row the source of truth with push as a best-effort side effect** — a failed push
+      must never lose a notification or fail the action that produced it (D5.1 §3's fail-open
+      reasoning, already implemented once in `lemely/web/xp_awards.py::award_xp_safely`).
+      Also decide: quiet-hours semantics (suppress the *push*, never the inbox row — the student
+      must not silently lose a notification because it arrived at 2am), and whether
+      `at_risk_alert` to a **parent** consults the parent's own preference row (it must — the
+      opt-in in MISSION §4 is the parent's, not the student's).
+      **Traps already paid for, do not re-spring:** a new table costs **two** edits, the
+      migration and `EXPECTED_TABLES` in `tests/test_db_schema.py` (P5.4) — make both in the same
+      chunk; use `sa.dialects.postgresql.ENUM` if a new enum is involved, because
+      `sa.Enum(..., create_type=False)` silently re-`CREATE TYPE`s and passes pytest while
+      `alembic upgrade` fails (P5.5 chunk C); and a route-introspection test must read
+      `app.openapi()["paths"]`, not `app.routes`, which this FastAPI version wraps in an opaque
+      `_IncludedRouter` with no `.path` so the test passes for the wrong reason (P5.5 chunk C).
+      Check whether `get_notification_preferences_service` already exists in `deps.py` before
+      adding one — the last two briefs predicted a deps entry that was already there.
 - [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
 - [ ] todo — **P5.8** Screens S-28, S-29, S-30, S-31.
 - [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
