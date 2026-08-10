@@ -5,6 +5,8 @@ current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 
 last_updated: 2026-08-10T12:10:00Z   # **Sixtieth session (this one): THE P5.8 GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0. P5.8 is COMPLETE; 9/12 Phase-5 tasks done. Resume at P5.9.**
 #                                    Session 51's `setsid` run (PID 927164) exited clean at ~11:59, **31 minutes** after launch and **ten agent sessions** after it started (51 launched, 52–59 attached, 60 caught the exit on an armed Monitor). Measured off that run and never re-run: **2927 tests**, **coverage 90.91%** (develop 90.18%, P5.6 90.78% — no drop), **66 axe route-states with zero violations at any severity**, **0 console errors**, **0 horizontal-scroll violations**, **Lighthouse a11y floor 96**. All four new screens are in the audit registry and score a11y 100. Working tree clean on entry, no wip commit needed.
 #                                    **The one honest finding the run produced: `ui-thresholds` passed with SEVEN routes below Lighthouse performance 80, two of them new P5.8 student routes** (`student-standings` 69, `student-announcements` 77). D4.25 said the performance floor is not enforced; this run is the Phase-5 proof — `check_ui_gates.py` has no performance check, so a green `ui-thresholds` says nothing about performance. **Never cite this run as a performance pass.** Carried to P5.12 §4.
+#                                    **Then started P5.9 and landed chunks A and B.** D5.15 was recorded **before any code** (MISSION §4's ordering for this phase) and made two calls: `injectManifest` over `workbox.importScripts`, because a `public/` file is invisible to `tsc`/oxlint/vitest and this phase's only new client logic must not live where no gate can see it; and — correcting D5.10 — **a service worker cannot authenticate**, since the session token is in `localStorage` which no `ServiceWorkerGlobalScope` can read. Mirroring the token into IndexedDB was rejected as a second longer-lived copy of a credential that every logout and eviction would then have to clear. The worker asks an open page instead. Chunk A is the worker + a pure decision module + 21 tests; chunk B is G-13's inbox screen + the page half of the handshake + 22 tests. **All four web gates green after each chunk** (430 tests over 14 files). **The full suite / `check.sh` has NOT been run since P5.8** — chunks C and D remain before the P5.9 UI gate.
+#                                    **Two findings from those chunks that a resuming session must not undo.** (1) **`grade_ready` has no resolvable link and deliberately gets none** — its payload carries the upload UUID, but `/student/result/:paperId` addresses papers by *history index* and `int(paper_id)` 404s on a UUID, so an Open button would be a guaranteed dead link. There is no route mapping an upload id to its result. (2) **`tsconfig.sw.json`'s narrow include is load-bearing, not tidiness** — widening it to the whole `src/lib/push` directory fails with `TS2304: Cannot find name 'localStorage'`, which is the compiler stating the exact constraint D5.15 §2 rests on. That boundary is now enforced by `web-typecheck` rather than discovered on a reader's device.
 #                                    **P5.12 was the last bare one-liner and is now briefed** (56/58/59 did P5.9/P5.10/P5.11). Its expensive part is §7, the honest-limitations list: every Phase-5 item that was tagged "carry to the Phase-5 limitations" as it was found is now collected in one place on the P5.12 line — nine Phase-5 items plus six carried ones — so the report writer copies instead of re-grepping 700 lines.
 #                                    Prior: **Fifty-ninth session: the run is alive at 27m01s, still inside `puppeteer-audit`; the waiting time went into sharpening P5.11.**
 #                                    Session 51's `setsid` run (PID 927164) is alive at **27:01**, log still 276 bytes (11/13 PASS). Health checked the fifty-fifth session's way: the `npm run audit` child (973395) is **the same one session 57 saw** — 5m59s elapsed against 27m01s total puts its start at ~21 min, exactly where session 57 reported `puppeteer-audit` beginning — under a **fresh** Chrome tree (990891 + crashpad/zygotes), which is progress rather than a restart because `audit.mjs` cycles a browser per route batch. Twelfth run not started; Monitor re-armed on 927164 (it now also fires on `EXIT=`/FAIL, so a red gate is not silent). Working tree clean on entry, no wip commit needed.
@@ -1160,18 +1162,40 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             instance can reach it and hostile property access is not a reachable input. The
             always-show-something guarantee instead lives in `sw.ts` wrapped around the decision,
             which is where the browser requirement actually applies.
-      - [ ] **chunk B — G-13, the notification inbox screen.** The backend is complete and
-            untouched by chunk A: `GET /api/notifications` (`NotificationsPageDTO`),
-            `/counts` (`unread`/`total`), `POST /{id}/read`, `POST /read-all`. **Note the prefix
-            is `/api/notifications`, NOT `/api/student/notifications`** — the router is
-            deliberately role-agnostic because `at_risk_alert` is addressed to a teacher and a
-            parent, so this screen is reachable from more than the student portal. Follow P5.7/P5.8
-            frontend conventions: no `fallback` in `request()`, one hook file per area under
-            `lib/hooks/`, types in a `lib/*Types.ts`, and **do not run `npx prettier`**.
-            **The page half of chunk A's handshake belongs here**: a `message` listener for
-            `PUSH_CONTENT_REQUEST` that does the authenticated fetch and posts the title/body
-            back over `event.ports[0]`. Without it every push renders the generic notification
-            even with a tab open, and chunk A's whole client-handshake design does nothing.
+      - [x] **chunk B** (`b7368bb`) — **G-13 is built**, plus the page half of chunk A's
+            handshake. `portals/student/screens/Notifications.tsx` (route
+            `/student/notifications`), `lib/notificationTypes.ts`,
+            `lib/hooks/useNotificationApi.ts`, `lib/push/pushClientBridge.ts`,
+            `main.tsx` registration, `tests/unit/notifications.test.ts` (22 tests).
+            **web-typecheck / web-lint / web-test / web-build all green** (430 tests over 14
+            files). **Not yet run: the full suite / `check.sh`.**
+            **The finding that changed the design, and it is a live-link defect avoided:
+            `grade_ready` has NO resolvable destination and deliberately gets no link.** Its
+            payload carries `uploadId`, the upload's **UUID** (`routers/student.py:891`), but
+            the only per-paper screen is `/student/result/:paperId` whose `paperId` is a
+            **history record index** — `student_result` does `int(paper_id)` and 404s on
+            anything else (`routers/student.py:487`). An "Open" button there would have been a
+            guaranteed dead link that looks like a feature. **There is no route mapping an
+            upload id to its result**; if a later task wants one, that is a backend addition,
+            not a frontend fix. Carry to the Phase-5 limitations.
+            **The default push destination is `/`, not an inbox path**, because the API is
+            role-agnostic on purpose — `at_risk_alert` is addressed to a **teacher and a
+            parent**, neither of whom has an inbox screen in this build, so a hardcoded student
+            path would 404 for exactly the audience the notification was written for.
+            **`tsconfig.sw.json` now enforces D5.15 §2 at compile time, which was discovered by
+            it failing.** Including the whole `src/lib/push` directory pulls
+            `pushClientBridge.ts` → `lib/api` → `auth/storage`, and the build fails with
+            **`TS2304: Cannot find name 'localStorage'`** under the WebWorker lib — the type
+            system stating the exact constraint the whole design rests on. The include is
+            narrowed to `src/sw.ts` + `src/lib/push/pushDecision.ts`, so any future attempt to
+            reach page-only APIs from the worker fails `web-typecheck` instead of failing at
+            runtime on a reader's device. **Do not widen that include back to the directory.**
+            The bridge replies with the **newest unread** row, never simply the newest — a push
+            described by a notification the reader has already opened is actively misleading,
+            and that is what a naive `notifications[0]` yields the moment a read row sits on
+            top. Registered in `main.tsx` at startup, not inside a screen: a push can arrive
+            whenever a tab is open, and a listener mounted with one screen would answer only
+            while that screen happened to be showing.
       - [ ] **chunk C — G-12, notification preferences.** Route is
             **`GET`/`PATCH /api/me/notification-preferences`** (`routers/me.py:86`) — *not*
             `/me/profile` or `/me/student-profile`, the two neighbours P5.8 chunk C tripped over.
