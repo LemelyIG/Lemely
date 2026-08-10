@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.sw.tsbuildinfo",
+    "target": "es2023",
+    /* The service worker's own project, and the only reason it exists: `sw.ts`
+       needs `WebWorker` types (`ServiceWorkerGlobalScope`, `PushEvent`,
+       `NotificationEvent`) while every other file in `src` needs `DOM`. The two
+       libs declare overlapping globals with different types, so a single
+       project cannot hold both — `tsconfig.app.json` excludes `sw.ts` and this
+       project is where it is typechecked.
+
+       Without this split the alternative is leaving the worker untypechecked,
+       which is exactly the outcome D5.15 §1 chose `injectManifest` to avoid. */
+    "lib": ["ES2023", "WebWorker"],
+    "module": "esnext",
+    "types": ["vite/client"],
+    "skipLibCheck": true,
+
+    /* Bundler mode — matches tsconfig.app.json, since vite builds this file
+       with the same resolution rules as the rest of `src`. */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "paths": { "@/*": ["./src/*"] },
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  /* `pushDecision.ts` is deliberately compiled in both this project and the app
+     project. It is pure data logic that imports no lib-specific global, so it
+     is valid under `DOM` and `WebWorker` alike — and typechecking it in both
+     places is the point: the page half and the worker half must agree about it. */
+  "include": ["src/sw.ts", "src/lib/push"]
+}

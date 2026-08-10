@@ -23,5 +23,11 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /* The service worker is typechecked by `tsconfig.sw.json` instead, because it
+     needs the `WebWorker` lib and this project needs `DOM`; the two declare
+     overlapping globals and cannot share a project. It is excluded rather than
+     left out of `include` because `include: ["src"]` would otherwise pick it up
+     and fail on `ServiceWorkerGlobalScope`. */
+  "exclude": ["src/sw.ts"]
 }

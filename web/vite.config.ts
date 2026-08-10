@@ -11,6 +11,19 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
+      // `injectManifest`, not the default `generateSW` (D5.15 §1). A generated
+      // worker has no `push` listener at all, so D5.10's payload-less push had
+      // nowhere to land — the backend could send a notification and nothing on
+      // the client would render it. The handler now lives in `src/sw.ts`, where
+      // `tsc -b`, oxlint and vitest can all see it; a hand-written file under
+      // `public/` (the `workbox.importScripts` alternative) would be copied
+      // verbatim and checked by nothing.
+      //
+      // The `workbox` block below became `injectManifest` and the precache
+      // wiring it used to generate is now written out by hand in `src/sw.ts`.
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
       // App shell only: precache built JS/CSS/fonts/icons so the SPA loads
       // offline. Never cache /api/* — student/teacher marks, grades, and
       // review-queue data are live and must not be served stale, and the
@@ -47,10 +60,13 @@ export default defineConfig({
           },
         ],
       },
-      workbox: {
+      // Only the manifest is configured here now. `navigateFallback` and its
+      // `/^\/api/` denylist are no longer plugin options under injectManifest —
+      // they are the `NavigationRoute` in `src/sw.ts`, and the denylist is
+      // load-bearing for the same reason the comment above gives: /api/* is
+      // live marks and grades and must never be served from a cache.
+      injectManifest: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2}"],
-        navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api/],
       },
     }),
   ],
