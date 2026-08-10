@@ -1196,7 +1196,46 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             top. Registered in `main.tsx` at startup, not inside a screen: a push can arrive
             whenever a tab is open, and a listener mounted with one screen would answer only
             while that screen happened to be showing.
-      - [ ] **chunk C — G-12, notification preferences.** Route is
+      - [x] **chunk C** (`7a8f93a`) — **G-12 is built.**
+            `portals/settings/NotificationSettings.tsx` at `/settings/notifications`
+            (top-level, all roles, like G-11), `lib/notificationPrefs.ts`,
+            `lib/push/pushEnable.ts`, `lib/hooks/useNotificationPrefsApi.ts`, a route in
+            `App.tsx`, a link from the G-13 inbox, `tests/unit/notificationPrefs.test.ts`
+            (26 tests). **web-typecheck / web-lint / web-build / web-test all green**
+            (456 tests over 15 files, up from 430/14). **Not yet run: the full suite /
+            `check.sh`.**
+            **The brief was wrong about the verb: it is `PUT`, not `PATCH`**
+            (`routers/me.py:176`). Still a genuine partial update via `model_fields_set`,
+            and the screen sends **one key per toggle flip** — not bandwidth: a
+            whole-object body carries `atRiskAlert`, which is a 422 for any role but
+            teacher/parent, and clobbers a change made on another device since load.
+            **`atRiskAlert: null` is information, not absence** — "no such preference for
+            your role". The toggle is filtered out rather than rendered unchecked, which
+            would have offered a student a switch the router rejects.
+            **Two guards verified by inversion.** `resolvePushState` checks **server
+            availability before browser support** (both mean push cannot happen, but only
+            the browser one *looks* actionable, and acting on it achieves nothing while
+            the server has no keys) — swapping the two lines fails a test. And `granted`
+            **without** a live subscription resolves to `prompt`, not `enabled`: the
+            permission is the browser's memory of an old answer, the subscription is what
+            the server can push to, and cleared site data / a new profile / a 410 the
+            server acted on leaves the first without the second — dropping `subscribed`
+            from the check fails a test.
+            **The test-notification button is a device check, not a delivery test, and
+            says so in its own copy.** No route in this backend sends a test push and on a
+            keyless build none could; it goes through the **SW registration**, not
+            `new Notification()`, which is unsupported on Android Chrome — exactly where a
+            hand-rolled test button silently does nothing on the platform these students
+            use.
+            **Trap worth not re-paying: `urlBase64ToUint8Array` must return
+            `Uint8Array<ArrayBuffer>`.** Since TS 5.7 the bare `Uint8Array` defaults its
+            parameter to `ArrayBufferLike`, which admits a `SharedArrayBuffer` that
+            `applicationServerKey` does not — the bare form fails `web-typecheck` at the
+            `pushManager.subscribe` call, not at the helper.
+            Five toggles only; the key list is asserted **exactly**, so UI spec §G-12's
+            `weekly_summary` cannot be added without the backend growing the enum value
+            first. Carried to the Phase-5 limitations.
+      - [ ] ~~chunk C brief~~ (superseded by the entry above; kept for the route note)
             **`GET`/`PATCH /api/me/notification-preferences`** (`routers/me.py:86`) — *not*
             `/me/profile` or `/me/student-profile`, the two neighbours P5.8 chunk C tripped over.
             **Ship exactly FIVE toggles**; UI spec §G-12's `weekly_summary` has no backend value,
