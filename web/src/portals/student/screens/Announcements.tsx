@@ -174,6 +174,13 @@ function AnnouncementCard({
             size="sm"
             onClick={() => onOpen(announcement.announcementId)}
             aria-expanded={isOpen}
+            /* Every card renders a button with the identical visible text, so
+               a screen-reader user tabbing a list of notices hears "Read it,
+               Read it, Read it" with nothing to tell them apart. Naming the
+               button with the notice it belongs to fixes that; the visible
+               text stays the leading part of the accessible name, which is
+               what WCAG 2.5.3 (Label in Name) requires. */
+            aria-label={`${isOpen ? "Show less" : "Read it"}: ${announcement.title}`}
           >
             {isOpen ? "Show less" : "Read it"}
           </Button>
