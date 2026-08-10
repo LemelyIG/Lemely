@@ -1689,6 +1689,25 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          **no `subjects` row at all**. Session 65 verified the seed guarantees one anyway; this
          is the independent reason the ordering flow cannot trip point 7's FK worry. That worry
          still stands for the *live award* path, which is a different seam.
+      11. **S-29 opens on the FRIENDS board, not the class board — so the ordering test must
+         click a scope tab before it can assert anything. Measured session 67.**
+         `Standings.tsx:316` is `useState<LeaderboardScope>("friends")`. A spec that just
+         navigates to `/student/board` and reads rows is looking at the **friends** board,
+         which is empty for every seeded student (no friendships are seeded), so the ordering
+         assertion would find zero rows and fail as "the board is empty" — a failure that
+         reads as a backend defect and is really a default.
+         **Drive it in the suite's own idiom, no new hook needed.** The scope selector is a
+         `role="group"` / `aria-label="Board scope"` (`:364`) of `TabButton`s carrying
+         `aria-pressed` (`:297`), labelled exactly **Friends / Class / School / Everyone**
+         (`SCOPES`, `:278`). So `getByRole("group", {name: "Board scope"}).getByRole("button",
+         {name: "Class"})` locates it by accessible name, and `aria-pressed` is readable state
+         — the same product-owned attribute `audit.mjs`'s `pressToggleOnce` already relies on,
+         so the click can be made idempotent for free.
+         **Seed the ordering into the CLASS scope specifically.** The seeded roster is
+         co-enrolled in `class` (point 10), the class picker only renders when
+         `classList.length > 1` (`:379`), and the roster is one class — so `effectiveClassId`
+         resolves with no extra interaction. The global/school boards would drag in every
+         other seeded account and make the expected order depend on unrelated seed groups.
       9. **Point 4 is STALE and it was pessimistic. The push/notification flow is now the
          CHEAPEST of the four, not the blocked one. Measured session 66, read-only while the
          P5.9 gate held the lane.** Point 4 was written in session 59, *before* P5.9 existed,
