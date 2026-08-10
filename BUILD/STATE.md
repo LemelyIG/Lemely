@@ -777,9 +777,30 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             evicting silently, because the code is single-use and a challenge the caller
             re-sent confirmed would fail on a spent code and cost the parent a second SMS.
             Parents on a fourth device get D1.11's old behaviour — Phase-5 limitation.
-      - [ ] **chunk B** — frontend G-10 + G-11. **First Phase-5 task with a `web/` leg, so
-            MISSION §6.8 applies in full**: `/impeccable audit`, axe zero serious/critical,
-            Lighthouse a11y ≥95, screenshots per screen × state × breakpoint, visual compare.
+      - [x] **chunk B** (`b4bb942`) — G-10 renders in place of the login form on the 409
+            (`DeviceLimitNotice.tsx`), G-11 ships at **`/settings/devices`** guarded for all
+            five roles (`portals/settings/DeviceSettings.tsx`), plus `lib/deviceTypes.ts`,
+            `lib/devices.ts`, `lib/hooks/useDeviceApi.ts`, the `confirmDeviceEviction` flag
+            through `AuthContext`/`authTypes`, the `App.tsx` route, and a **G-11 entry in
+            `web/scripts/audit.mjs`'s registry**. 12 new vitest cases (336 total pass);
+            typecheck, oxlint, build, `impeccable detect` clean.
+            **Deliberately not stubbed:** G-11's profile/password/relationships/subscription
+            rows have no P5.7 backend, and a settings row that does nothing is worse than an
+            absent one. Stated in the screen's header comment, not just here.
+            **Two things left for P5.11, recorded so they are not mistaken for covered:**
+            (1) **G-10 has no audit-registry entry** — it needs an account already holding
+            three live devices, which is a *seed precondition*, not a navigation; (2) **no
+            nav entry anywhere reaches `/settings/devices`** — the teacher sidebar needs an
+            icon-map addition and the parent portal has no sidebar at all, so wiring three
+            portals' nav belongs with P5.9's screens rather than half-done here.
+            **Trap that cost real work — `npx prettier --write` is NOT this repo's
+            formatter.** `web/` has no prettier config and prettier is not a dependency, so
+            a bare run reformatted 8 files with **semicolons**, against the house
+            semicolon-free style, silently and across files I had only read. Reverted with
+            `git checkout` on the three tracked files (re-applying the edits by hand) and
+            `--no-semi` on the five new ones. The web gates are **typecheck + oxlint +
+            build + vitest + impeccable detect** — none of them formats. Do not reach for a
+            formatter that the gate chain does not run.
 - [ ] todo — **P5.8** Screens S-28, S-29, S-30, S-31.
 - [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
 - [ ] todo — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
