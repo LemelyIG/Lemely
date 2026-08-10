@@ -1133,6 +1133,63 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       it meant. Test seam: a **pure function** (content vs. fallback) that vitest drives, with
       `src/sw.ts` a thin adapter — vitest is `environment: "node"` with no jsdom
       (`vitest.config.ts:25`) and there is no `ServiceWorkerGlobalScope` to mount anyway.
+      - [x] **chunk A** (`e3c2076`) — the service worker. `web/src/sw.ts` (adapter),
+            `web/src/lib/push/pushDecision.ts` (the pure decision logic),
+            `web/tests/unit/pushDecision.test.ts` (21 tests), `tsconfig.sw.json`,
+            `vite.config.ts` → `injectManifest`, the three workbox packages promoted to
+            explicit devDependencies. **web-typecheck / web-lint / web-test / web-build all
+            green** (408 tests over 13 files; lint shows only the pre-existing
+            `only-export-components` warnings). **Not yet run: the full suite / `check.sh`.**
+            **Verified on the BUILT worker, not on the source** — a strategy switch is exactly
+            where "it compiles" and "it still does what it did" come apart: `dist/sw.js` has
+            **28 precache entries**, the `\/api` navigation denylist, **both `push` and
+            `notificationclick` listeners**, `skipWaiting`, and `dist/registerSW.js` is still
+            auto-injected into `index.html`. **Trap: the minifier rewrites `addEventListener("push"`
+            to backticks**, so a grep for the double-quoted form finds nothing and reads as a
+            missing handler. Grep for `showNotification`/`clients.matchAll` or for the backtick
+            form.
+            **`sw.ts` is typechecked, confirmed by inversion** (appending a deliberate type
+            error fails `tsc -b` with TS2322 at `src/sw.ts`) — worth doing because `tsconfig.sw.json`
+            is a *new* project and a reference that silently checks nothing is the exact
+            "passes for the wrong reason" shape P5.5 chunk C and P5.8 both paid for.
+            **One design correction made while building, recorded here because the file comments
+            alone would lose it:** the first cut of the test file asserted `.toThrow()` under the
+            name "never throws", which is a contradiction that would have shipped a false
+            guarantee. The resolution is not defensive code in the pure function — a reply crosses
+            a `postMessage` boundary and is therefore **structured-cloned**, so no getter or class
+            instance can reach it and hostile property access is not a reachable input. The
+            always-show-something guarantee instead lives in `sw.ts` wrapped around the decision,
+            which is where the browser requirement actually applies.
+      - [ ] **chunk B — G-13, the notification inbox screen.** The backend is complete and
+            untouched by chunk A: `GET /api/notifications` (`NotificationsPageDTO`),
+            `/counts` (`unread`/`total`), `POST /{id}/read`, `POST /read-all`. **Note the prefix
+            is `/api/notifications`, NOT `/api/student/notifications`** — the router is
+            deliberately role-agnostic because `at_risk_alert` is addressed to a teacher and a
+            parent, so this screen is reachable from more than the student portal. Follow P5.7/P5.8
+            frontend conventions: no `fallback` in `request()`, one hook file per area under
+            `lib/hooks/`, types in a `lib/*Types.ts`, and **do not run `npx prettier`**.
+            **The page half of chunk A's handshake belongs here**: a `message` listener for
+            `PUSH_CONTENT_REQUEST` that does the authenticated fetch and posts the title/body
+            back over `event.ports[0]`. Without it every push renders the generic notification
+            even with a tab open, and chunk A's whole client-handshake design does nothing.
+      - [ ] **chunk C — G-12, notification preferences.** Route is
+            **`GET`/`PATCH /api/me/notification-preferences`** (`routers/me.py:86`) — *not*
+            `/me/profile` or `/me/student-profile`, the two neighbours P5.8 chunk C tripped over.
+            **Ship exactly FIVE toggles**; UI spec §G-12's `weekly_summary` has no backend value,
+            no column and no sender, and a sixth switch that gates nothing violates UI spec §1.4.
+            Quiet hours are real (`quiet_hours_start`/`_end`). **Three distinct states, not one
+            grey button**: transport unavailable (this machine has no VAPID keys, so
+            `GET /api/notifications/push/config` returns `available: false` **by design** —
+            D5.9 §4), browser permission denied, and granted.
+      - [ ] **chunk D — the two gaps P5.7/P5.8 left, both small.** Teacher + parent still have
+            **no nav entry to `/settings/devices`** (P5.8 wired only the student one from S-31;
+            the teacher sidebar needs an icon-map addition, the parent portal has no sidebar).
+            G-10's **audit-registry entry** needs a seed account already holding three live
+            devices — that is a `scripts/seed_e2e.py` change and P5.11 owns the seed work, so
+            either coordinate it there or leave it and report it honestly.
+      - [ ] **UI gate for P5.9** — MISSION §6.8 in full, run **once** after B/C/D land rather
+            than per chunk. Launch it with `setsid` (see the environment facts) and expect ~31
+            minutes; attach and wait rather than relaunching.
       **Brief sharpened 2026-08-10 (session 56) by reading the code while the P5.8 gate run
       held the test lane — recon only, nothing edited. Four corrections, and the first is a
       scope halving.**
