@@ -1795,3 +1795,35 @@ failed on twice. The build is the typecheck gate; the bare form is not.
 **Next.** Chunk C (S-29 leaderboards + S-30 friends — read `Standings.tsx`'s
 header first, it records what was deliberately removed rather than mocked), then
 chunk D (S-31 on chunk A's route), then one UI-gate run for the whole task.
+
+## 2026-08-10 — session 67: the gate went green because it did not know the screen existed
+
+**Did.** Caught the exit of session 61's 31-minute P5.9 gate run (all 13 gates
+PASS, 0 skipped, EXIT=0; 2927 tests, 90.91% coverage, 67 axe route-states, a11y
+floor 96 — read off that run, never re-run). Then found the green was
+incomplete: `audit.mjs` had **no entry for G-13**, chunk B's own notification
+inbox. Added it, and the entry immediately produced the **first non-zero axe
+count in this build** — 1 moderate `page-has-heading-one`, because the `<h1>`
+lived inside the populated branch only and the empty state is the state this
+screen ships in. Fixed across all four states. Also wrote and proved P5.10
+(`e2e/reduced-motion.spec.ts`, 2 tests, no CSS), inverted properly. One full
+`check.sh` in flight covering all three changes (`5df4807`).
+
+**Learned.** (1) **A hand-maintained registry fails silently in the one
+direction that matters**: a missing entry does not fail the gate, it removes the
+screen from the gate. Third instance of that shape (`EXPECTED_TABLES` P5.4, the
+`SeedContract` mirror P4.11) and the first where green was actively misleading
+rather than merely incomplete. **Write the registry entry in the same chunk as
+the screen.** (2) **The zero-at-any-severity standard is not enforced by
+anything** — `check_ui_gates.py` fails on serious/critical only, so this
+moderate would have passed `ui-thresholds`. That standard lives in whoever reads
+the summary. (3) **D3.20 cost something concrete for the first time**:
+`test.use({ reducedMotion })` is a type error on the pinned Playwright, and
+`web/e2e/` is in no tsconfig include, so nothing would have caught it. Used
+`page.emulateMedia` instead. (4) The waiting time also measured P5.11 point 10 —
+only G-10 pays the three-edit seed-contract tax; the leaderboard-ordering rows
+reuse contracted students and pay nothing.
+
+**Next.** Read `/tmp/p59b-gate.log` (PID 1232528) for the `EXIT=` line — do not
+relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
+with a brief that is now ten points deep.
