@@ -166,33 +166,68 @@ function NotificationRow({ notification }: { notification: Notification }) {
   )
 }
 
+/**
+ * The page heading, rendered in EVERY state.
+ *
+ * It used to live only inside the populated branch, which cost a real axe
+ * `page-has-heading-one` violation (moderate) — found the moment G-13 was
+ * finally added to the audit registry in session 67, and invisible for as
+ * long as it was not. The seed creates no notifications, so the state this
+ * screen actually ships in is the empty one, and that was exactly the state
+ * with no `<h1>`: the page stopped identifying itself precisely when it had
+ * the least other content to orient a screen-reader user. Same violation
+ * `MarkSchemes.tsx` and `Grading.tsx` already carry comments about.
+ *
+ * Keep it outside the branch. A heading is what the page IS, not one of the
+ * things it happens to be showing.
+ */
+function InboxHeading() {
+  return (
+    <div>
+      <Eyebrow>Inbox</Eyebrow>
+      <h1 className="text-title text-t1">Notifications</h1>
+    </div>
+  )
+}
+
 export function Notifications() {
   const { data, isPending, isError, refetch } = useNotifications()
   const markAll = useMarkAllNotificationsRead()
 
   if (isPending) {
-    return <div className="text-body text-t3">Loading your notifications…</div>
+    return (
+      <div className="flex flex-col gap-4">
+        <InboxHeading />
+        <div className="text-body text-t3">Loading your notifications…</div>
+      </div>
+    )
   }
 
   if (isError) {
     return (
-      <ErrorState
-        heading="Notifications could not be loaded"
-        // An empty inbox and a failed fetch look identical if this lies, and
-        // the difference matters: one means nothing has happened, the other
-        // means something may have and we cannot show it.
-        body="This is a connection problem on our side. You may well have notifications waiting — nothing has been lost."
-        action={{ label: "Try again", onClick: () => void refetch() }}
-      />
+      <div className="flex flex-col gap-4">
+        <InboxHeading />
+        <ErrorState
+          heading="Notifications could not be loaded"
+          // An empty inbox and a failed fetch look identical if this lies, and
+          // the difference matters: one means nothing has happened, the other
+          // means something may have and we cannot show it.
+          body="This is a connection problem on our side. You may well have notifications waiting — nothing has been lost."
+          action={{ label: "Try again", onClick: () => void refetch() }}
+        />
+      </div>
     )
   }
 
   if (data.notifications.length === 0) {
     return (
-      <EmptyState
-        heading="Nothing yet"
-        body="When a paper is marked, a teacher posts an announcement, or your streak is about to break, it will appear here."
-      />
+      <div className="flex flex-col gap-4">
+        <InboxHeading />
+        <EmptyState
+          heading="Nothing yet"
+          body="When a paper is marked, a teacher posts an announcement, or your streak is about to break, it will appear here."
+        />
+      </div>
     )
   }
 
@@ -201,10 +236,7 @@ export function Notifications() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <Eyebrow>Inbox</Eyebrow>
-          <h1 className="text-title text-t1">Notifications</h1>
-        </div>
+        <InboxHeading />
         <div className="flex items-center gap-3">
           {/* The inbox is where a reader notices they are getting too much or
               too little, so it is where the settings for that belong. Until the

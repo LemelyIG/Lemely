@@ -1335,9 +1335,30 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             exist via a live fan-out, so **`NotificationRow` — the unread dot, `Mark as read`,
             `Open` — is not covered by axe.** A real gap, recorded not hidden; P5.11's seed
             work should add a `populated` state *alongside* this one, not replace it.
-            Verification in flight: standalone `npm run audit` under `setsid`, log
-            `/tmp/g13-audit.log`, ending in `EXIT=`. A full `./scripts/check.sh` re-run is
-            still owed on the tree that carries this entry before P5.9 may be marked done.
+            **VERIFIED, and the entry immediately earned itself: the standalone
+            `npm run audit` came back `EXIT=0` with G-13 driving cleanly (68 route-states,
+            41 Lighthouse routes, `student-notifications` a11y **100**) — and carrying
+            THE FIRST NON-ZERO AXE COUNT IN THIS CORPUS.** Every prior run in the build
+            reported zero violations at *any* severity across 66–67 route-states; G-13
+            reported **1 moderate `page-has-heading-one`**. That is exactly what the missing
+            registry entry had been hiding, and it is a real screen-reader defect, not a
+            harness artefact: the `<h1>` lived **inside the populated branch only**, so the
+            empty state — the state this screen actually ships in, since the seed creates no
+            notifications — had no page heading at all. The page stopped identifying itself
+            precisely when it had the least other content to orient by.
+            **Note it would NOT have failed the gate**: `check_ui_gates.py` fails on
+            serious/critical only, so `ui-thresholds` would have gone green on a moderate.
+            The build's own standard has been zero-at-any-severity, and that standard is
+            enforced by *reading the summary*, not by the gate.
+            Fixed by hoisting the heading into an `InboxHeading` component rendered in
+            **all four** states (loading / error / empty / populated); the loading and error
+            states had silently lacked it too. There is no unit-level pin available —
+            `vitest.config.ts` is `environment: "node"` with no jsdom and no
+            @testing-library, deliberately (D3.20) — so **the axe entry itself is the
+            regression pin**, which is now real rather than absent.
+            Same `page-has-heading-one` shape `MarkSchemes.tsx` and `Grading.tsx` already
+            carry comments about. A full `./scripts/check.sh` on the fixed tree is still owed
+            before P5.9 may be marked done.
       **Brief sharpened 2026-08-10 (session 56) by reading the code while the P5.8 gate run
       held the test lane — recon only, nothing edited. Four corrections, and the first is a
       scope halving.**
@@ -1385,8 +1406,37 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          "the browser denied permission", which §G-12 explicitly asks be shown "clearly with
          a route to fix it rather than toggles that silently do nothing". Three states, not
          one grey button.
-- [ ] todo — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
+- [ ] doing — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
       Phase-5 acceptance names this explicitly).
+      **WRITTEN 2026-08-10 (session 67): `web/e2e/reduced-motion.spec.ts`, two tests, no CSS
+      touched — exactly the one-chunk shape items 2/3 predicted.** Awaiting its first run
+      (the standalone G-13 audit held the browser lane while it was written); typecheck and
+      oxlint on the file are already clean.
+      **Target: `/teacher/schemes`, because it is the one route carrying all THREE of the
+      rule's declarations at once** — `.lm-screen` (`index.css:727`) gives a real `lm-in`
+      animation, and its "Upload your own" `<Button>` carries `transition-colors`
+      (`button.tsx:16`). Asserting only an animation would leave `transition-duration`, a
+      third of the rule, unproven. The control test (motion allowed) asserts both durations
+      are **>1ms** — without it the `reduce` test could pass vacuously on a page where
+      nothing animated in the first place, which looks identical to a real pass.
+      **The finding worth keeping: `test.use({ reducedMotion: "reduce" })` — which item 3 of
+      this brief recommended — IS A TYPE ERROR on the pinned Playwright, and NOTHING WOULD
+      HAVE CAUGHT IT.** `reducedMotion` is not a declared key of `PlaywrightTestOptions` in
+      1.62.1 (`colorScheme` is; verified by reading the interface in
+      `node_modules/playwright/types/test.d.ts:7145`), and `web/e2e/` is in **no** tsconfig
+      `include` (D3.20), so the directory is never typechecked by any gate. Used
+      `page.emulateMedia({ reducedMotion: "reduce" })` instead — same real CDP signal, fully
+      typed. **This is D3.20 costing something concrete for the first time**: the carried
+      limitation stopped being theoretical the moment a spec needed a type it could get
+      wrong. Carry to P5.12 §4 with that framing, not as a generic "e2e isn't typechecked".
+      **RUN AND INVERTED, both green — the only thing still owed is the full `check.sh`.**
+      First run: **2 passed (25.8s), EXIT=0**. Inversion done properly rather than claimed
+      (D5.7's lesson — *a claim about a test is not the test*): the `index.css:742` block was
+      deleted and the suite re-run, giving **1 failed / 1 passed** with the `reduce` test
+      reporting `Expected: < 1, Received: 320` — the real 0.32s token — while the control
+      test still passed. `index.css` restored and verified byte-identical (`git diff` empty).
+      That is the shape item 4 demanded: the test fails for the right reason, and it cannot
+      pass on a page where nothing animates.
       **Brief sharpened 2026-08-10 (session 58) by measuring the code while the P5.8 gate run
       held the test lane — recon only, nothing edited. The scope is smaller than the task
       title implies, and it has moved from CSS to testing.**

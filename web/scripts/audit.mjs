@@ -1996,6 +1996,33 @@ function buildRouteRegistry(seed) {
         waitForText(page, "Everything here measures work done"),
       authed: true,
     },
+    // ── G-13 · Notification inbox (P5.9 chunk B) ──────────────────────────
+    // This entry was missing until session 67, and its absence was silent:
+    // the registry is a hand-maintained list, so a screen that ships without
+    // an entry is never axe-audited, never Lighthouse-scored and never
+    // screenshotted, and the gate goes green *because* it does not know the
+    // screen exists. Same failure shape as `EXPECTED_TABLES` (P5.4) and the
+    // `SeedContract` mirror (P4.11) — a hand-kept list that nothing
+    // regenerates. Add the registry entry in the same chunk as the screen.
+    //
+    // It audits the EMPTY state, and that is the state this screen genuinely
+    // ships in today: `scripts/seed_e2e.py` seeds no Phase-5 rows at all, and
+    // notifications are only ever created by a live fan-out (a teacher's
+    // announcement POST, or `grade_ready` on `POST /student/correct`) — the
+    // seed's corrected paper is written straight to the DB and goes through
+    // neither. So `NotificationRow` itself — the unread dot, `Mark as read`,
+    // and the `Open` link — is NOT covered by axe here. That is a real
+    // coverage gap, not a hidden one: P5.11 owns the seed work, and it should
+    // add a `populated` state alongside this one rather than replacing it,
+    // exactly as S-28's comment says for the calendar.
+    {
+      screenId: "G-13",
+      slug: "student-notifications",
+      path: "/student/notifications",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Nothing yet"),
+      authed: true,
+    },
   ]
 }
 
