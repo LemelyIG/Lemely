@@ -2402,6 +2402,26 @@ async function main() {
       await runLighthouseAudit(resultUrl, page, "student-result", { authed: true }),
     )
 
+    // ── G-13 · Notification inbox — POPULATED (P5.11) ──────────────────────
+    // The registry's G-13 entry audits the EMPTY state, which is the state the
+    // screen genuinely ships in (the seed writes no notification rows), and it
+    // stays. But that left `NotificationRow` itself — the unread chip, the
+    // `Mark as read` button, the `Open` link — never seen by axe, which P5.9
+    // recorded as a real gap rather than hiding it.
+    //
+    // This closes it here rather than in the registry, because the fixture is
+    // a *live fan-out*, not seed data: the correction just performed above
+    // fires `grade_ready` for this very account, so this page — and only this
+    // page, mid-journey — has a real notification on it. A registry entry
+    // cannot reach that state; it would need the seed to write notification
+    // rows directly, which is the one thing the notification path does not do.
+    log("G-13 /student/notifications — axe (POPULATED, via the grade_ready fan-out above)...")
+    await page.setViewport(AUDIT_VIEWPORT)
+    await page.goto(`${PREVIEW_URL}/student/notifications`, { waitUntil: "networkidle0" })
+    await waitForText(page, "Your paper has been marked")
+    axeSummary.push(await runAxe(page, "student-notifications-populated"))
+    await shoot(page, "G-13", "populated", AUDIT_VIEWPORT.width)
+
     // ── S-06 · Student overview — now non-empty (one corrected paper) ──────
     log("S-06 /student — responsive check (380px) + axe + Lighthouse (non-empty, after correction)...")
     await page.setViewport({ width: 380, height: 844 })
