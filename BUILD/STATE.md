@@ -2,8 +2,10 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T14:05:00Z   # **A SECOND FULL GATE RUN IS IN FLIGHT — `setsid` **PID 1232550** (`bash -c ./scripts/check.sh …`), log `/tmp/p59b-gate.log`, launched 2026-08-10T10:52Z, expect ~31 min, ends in an `EXIT=` line. Do NOT relaunch it; attach and arm a Monitor.** **Watch the PID you record: this line first said 1232528, which was the transient `setsid` helper and had already exited — `ps -p` on it says GONE while the run is perfectly alive, and a session trusting that note would relaunch and burn 31 minutes.** Take the PID of the surviving `bash -c` wrapper (`pgrep -af check.sh`), never the one `$!` reports right after `setsid`. It covers all three of this session's changes at once (the G-13 registry entry, the `page-has-heading-one` fix, and P5.10's new spec) — deliberately one run rather than three. Commit `5df4807`; working tree clean at launch. When it comes back green, **P5.9 AND P5.10 are both done (11/12)** and the next task is P5.11.
-#                                    **Sixty-eighth session: the second gate run was ALIVE at 5m36s (4/13, inside `pytest`) on entry — attached, Monitor armed, NOT relaunched.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
+last_updated: 2026-08-10T11:20:00Z   # **A SECOND FULL GATE RUN IS IN FLIGHT — `setsid` **PID 1232550** (`bash -c ./scripts/check.sh …`), log `/tmp/p59b-gate.log`, launched 2026-08-10T10:52Z, expect ~31 min, ends in an `EXIT=` line. Do NOT relaunch it; attach and arm a Monitor.** **Watch the PID you record: this line first said 1232528, which was the transient `setsid` helper and had already exited — `ps -p` on it says GONE while the run is perfectly alive, and a session trusting that note would relaunch and burn 31 minutes.** Take the PID of the surviving `bash -c` wrapper (`pgrep -af check.sh`), never the one `$!` reports right after `setsid`. It covers all three of this session's changes at once (the G-13 registry entry, the `page-has-heading-one` fix, and P5.10's new spec) — deliberately one run rather than three. Commit `5df4807`; working tree clean at launch. When it comes back green, **P5.9 AND P5.10 are both done (11/12)** and the next task is P5.11.
+#                                    **Sixty-ninth session: the second gate run was ALIVE at 11m18s (4/13, inside `pytest`) on entry — attached, Monitor armed, NOT relaunched.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
+#                                    **The waiting time went into the last unmeasured mechanic in P5.11: the announcement flow needs TWO ROLES in one spec, and no session had checked whether the suite has a role-switching idiom or whether the teacher's POST even has a screen (new point 13). Both answers are good.** (1) **It has a screen** — `/teacher/announcements` renders a real compose `<form>`, so the flow satisfies MISSION §5's "through the real UI" with no API-only setup step, and every locator it needs is already accessible-name-addressable (zero markup change, like G-13, unlike S-29/S-31). (2) **Two roles cost nothing** — `injectSession` (`seed.ts:184-207`) writes the session into `localStorage` pre-scripts and every seeded account carries an `accessToken`. (3) **The checkbox's visible text is EXACTLY `seed.class.name`** — `routers/classes.py:211` is `label=row.name`, verbatim. **The one trap: `audience` defaults to `"classes"` so the radio needs no click, which makes title+message+submit look like the whole driver — but `selectedClassIds` starts `[]` and gates `disabled`, so skipping the class tick clicks a disabled button and dies as a 30s "element is not enabled" timeout that reads as a hung app.**
+#                                    Prior: **Sixty-eighth session: the second gate run was ALIVE at 5m36s (4/13, inside `pytest`) on entry — attached, Monitor armed, NOT relaunched.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
 #                                    **The waiting time went into the half of P5.11 no session had ever looked at: the UI-gate leg (new point 12). It found the audit registry's exclusion list stale in ALL FOUR entries.** Two things change the task. (1) **The screenshot corpus is produced by `audit.mjs`, not by `screenshots.spec.ts`** — that spec captures only five Phase-2.5 ids; the other 34 in `reports/phase-4/screens/` come from registry entries. So P5.11's screenshot leg needs **no new Playwright spec**, just `LEMELY_REPORT_DIR=reports/phase-5 npm run audit` (`reports/phase-5/` does not exist yet). (2) **`audit.mjs:83-85` and its operator-facing `log()` at `:2451` both still declare `/student/board` unaudited — it has been audited since P5.8 (`:1960`) — and excuse three other real routes as "still on mock data" when `/student/subject/:code` runs on the real `useSubject` hook.** Third instance of this shape in Phase 5, and it happened *to the sentence documenting the previous two*. The G-13 miss inverted: present-and-falsely-declared-absent, alongside three genuinely unaudited live routes.
 #                                    Prior: **Sixty-seventh session: THE P5.9 GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0 — AND THEN THE GREEN RESULT TURNED OUT TO BE INCOMPLETE.** Session 61's `setsid` run (PID 1077823) exited clean at ~31 minutes, seven agent sessions after it started; the numbers are on the P5.9 UI-gate checklist line and were read off that run, never re-run. Working tree clean on entry, no wip commit needed; INBOX had no unhandled items.
 #                                    **The finding: `audit.mjs` had NO entry for G-13, the notification inbox — chunk B's own screen — so the gate went green *because it did not know the screen existed*.** The one new student screen in P5.9 was never axe-audited, never Lighthouse-scored, never screenshotted, and MISSION §6.8 requires all three. The registry is a hand-maintained list, which makes a missing entry silent: third instance of that shape in this build (`EXPECTED_TABLES` P5.4, the `SeedContract` mirror P4.11) and **the first where the green result was actively misleading rather than merely incomplete.** Entry added and being verified by a standalone `npm run audit` under `setsid` (`/tmp/g13-audit.log`); a full `check.sh` on the tree carrying it is still owed. **P5.9 is NOT done — do not mark it done on the strength of the EXIT=0 above.**
@@ -1769,6 +1771,47 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          be read and accounted for in the report**, which is P4.11's `0 removed` convention
          (a nonzero `changed` is not by itself a regression: the seed's random `run_tag` changes
          every screen showing a class name — the standing Phase-4 limitation).
+      13. **The announcement flow can be driven ENTIRELY THROUGH THE UI — a teacher compose
+         form exists — and its one trap is a disabled submit button that fails as a 30s hang.
+         Measured session 69, read-only while the second P5.9/P5.10 gate held the lane.**
+         Points 8 and 9(b) both describe the announcement cause as "the teacher's own POST"
+         and neither says whether a *screen* issues it. It does: `/teacher/announcements`
+         (`portals/teacher/index.tsx:259`) renders a real compose `<form>`
+         (`teacher/screens/Announcements.tsx:198`), so this flow needs no API-only setup step
+         and satisfies MISSION §5's "through the real UI" without a caveat.
+         **(a) Every locator it needs already exists in the suite's accessible-name idiom —
+         zero markup change, like G-13 and unlike S-29/S-31.** `Title` (:202-210) and
+         `Message` (:213-223) are inputs nested *inside* their `<label>`, so implicit
+         association makes `getByLabel("Title")`/`getByLabel("Message")` work; the class
+         `Checkbox` (`components/ui/checkbox.tsx:29/65`) likewise wraps its input in a
+         `<label>` with the visible text inside; submit is
+         `getByRole("button", {name: "Save announcement"})` (:332).
+         **(b) The checkbox's visible text is EXACTLY the seed contract's class name** —
+         `routers/classes.py:211` builds the DTO as `label=row.name`, verbatim and undecorated,
+         and `seed.ts:39` exposes `class: {classId, name, joinCode}`. So
+         `getByLabel(seed.class.name)` matches exactly; no substring hedging and no
+         `run_tag` prefix to work around.
+         **(c) The trap: `selectedClassIds` starts EMPTY and it gates the submit button's
+         `disabled` attribute.** `audience` already defaults to `"classes"` (:120) so the
+         radio needs no click — which makes it *look* like title + message + submit is the
+         whole driver. It is not: `canSubmit` (:146-149) additionally requires
+         `selectedClassIds.length > 0`, and that array starts `[]` (:121). A spec that skips
+         the checkbox clicks a **disabled** button and dies as a 30-second Playwright
+         "element is not enabled" timeout — which reads as a hung app or a backend problem,
+         not as a missing tick. Tick the class checkbox before submitting.
+         **(d) The success signal is server-derived and already assertable, so do not assert
+         on navigation — the screen does not navigate.** On success a `role="status"` region
+         renders "Saved to 1 class." (:335-338) where the count is `data.announcements.length`
+         (:174) — the rows **the server says it created**, not an optimistic local value. The
+         form also self-clears (:175-178), an independent second proof. Both are stronger
+         evidence than a URL change would have been.
+         **(e) Two roles in one spec costs nothing.** `injectSession` (`seed.ts:184-207`)
+         writes `lemely.session` into `localStorage` before the page's own scripts run and
+         every seeded account carries an `accessToken`, so the student half of the flow needs
+         no second login. Use the real UI login (`teacher-journey.spec.ts:30-31`) for the
+         teacher half if the compose screen is what is under test, and `injectSession` for the
+         student read — which is exactly the split `phase4-journey.spec.ts:51-53` already
+         documents ("`injectSession` because the login itself is not what they are testing").
       9. **Point 4 is STALE and it was pessimistic. The push/notification flow is now the
          CHEAPEST of the four, not the blocked one. Measured session 66, read-only while the
          P5.9 gate held the lane.** Point 4 was written in session 59, *before* P5.9 existed,
