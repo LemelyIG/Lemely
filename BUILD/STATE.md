@@ -1104,7 +1104,35 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       Follow P5.7's frontend conventions: no `fallback` in `request()`, one hook file per
       area under `lib/hooks/`, and **do not run `npx prettier`** (see the environment fact
       below). MISSION §6.8 applies in full again.
-- [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
+- [ ] doing — **P5.9** Screens G-10, G-11, G-12, G-13.
+      **D5.15 recorded 2026-08-10 (session 60) BEFORE any code**, per the ordering MISSION §4
+      mandates for this phase — it answers item 3 below and adds one finding item 3 did not
+      have. Two loads worth carrying up here:
+      **(a) A service worker cannot authenticate, so D5.10 is not implementable as written.**
+      The session JWT is persisted to **`localStorage`** (`lib/auth/storage.ts:33/44`, consumed
+      at `lib/api.ts:45`) and `localStorage` does not exist in a `ServiceWorkerGlobalScope`. A
+      SW fetch would go out unauthenticated and take a 401. **Mirroring the token into
+      IndexedDB was rejected** — it creates a second, longer-lived copy of a bearer credential
+      that every logout, refresh and device eviction must then also clear, quietly undoing the
+      session boundaries P5.7/D5.12 was built to make real. The SW instead **asks an open
+      client** (`clients.matchAll` + `postMessage` with a timeout) and the page does the
+      authenticated fetch, so the credential never leaves the page context. **Consequence to
+      carry to the Phase-5 limitations: with no tab open every push renders the generic "You
+      have a new notification"; the window where push carries real content is a backgrounded
+      but open tab.**
+      **(b) `injectManifest`, not `workbox.importScripts`.** A `public/` file is copied
+      verbatim — not typechecked by `tsc -b`, not linted, not reachable by vitest — and putting
+      this phase's only new client logic where no gate can see it is what "proven by a test"
+      forbids. **Zero new downloads**: all four workbox runtime packages are already installed
+      at 7.4.1 (transitive from `vite-plugin-pwa` 1.3.0); they are promoted to explicit
+      `devDependencies` because `src/sw.ts` imports them directly. **Reproduce the generateSW
+      behaviour deliberately or it is lost** — `precacheAndRoute(self.__WB_MANIFEST)`,
+      `navigateFallback` to `/index.html` **with the `/^\/api/` denylist preserved** (the
+      original comment records that `/api/*` must never be cached because marks and grades are
+      live), and `skipWaiting`/`clientsClaim` so `registerType: "autoUpdate"` still means what
+      it meant. Test seam: a **pure function** (content vs. fallback) that vitest drives, with
+      `src/sw.ts` a thin adapter — vitest is `environment: "node"` with no jsdom
+      (`vitest.config.ts:25`) and there is no `ServiceWorkerGlobalScope` to mount anyway.
       **Brief sharpened 2026-08-10 (session 56) by reading the code while the P5.8 gate run
       held the test lane — recon only, nothing edited. Four corrections, and the first is a
       scope halving.**

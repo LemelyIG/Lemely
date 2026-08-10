@@ -5680,3 +5680,115 @@ again, so a modal would cost more than the mistake.
 says "resets Sunday" / "N days left" and never an hour-precise countdown it has
 no data for. Same reasoning as S-28's `daysUntil` (chunk B): a boundary the
 student watches must not move while they sleep.
+
+## D5.15 — The service worker: `injectManifest`, and a push handler that never holds a credential (P5.9, written before any code)
+
+D5.10 fixed the wire — a push carries **no payload**, only a VAPID
+`Authorization` header — on the reasoning that the inbox row is the source of
+truth (D5.9 §1) and student notification titles/bodies must stay off Google's,
+Mozilla's and Apple's push infrastructure. It left one thing unstated: **where
+the `push` event handler actually lives**, and how it gets the content it was
+deliberately not sent.
+
+### 1. `generateSW` cannot host a push handler, so the strategy changes
+
+`web/vite.config.ts` runs `VitePWA` with a `workbox: {...}` block and no
+`strategies` key — that is the **generateSW** strategy, which emits a service
+worker with **no `push` event listener at all**, and there is no service-worker
+source anywhere in `web/src` (`web/dist/sw.js` is a build artefact, not an
+input). So D5.10's transport is, today, invisible: the backend can send a push
+and nothing on the client would render it.
+
+Two ways to add the listener:
+
+- **`workbox.importScripts: ["push-sw.js"]`** — keeps generateSW untouched and
+  `importScripts()` a hand-written file in `public/`. Smallest diff.
+- **`strategies: "injectManifest"` + `src/sw.ts`** — the SW becomes a real
+  source file that vite compiles.
+
+**Chosen: `injectManifest`**, for one reason that outweighs the smaller diff —
+**the handler's decision logic must be testable, and `public/` is invisible to
+every gate this build runs.** A file in `public/` is copied verbatim: not
+typechecked by `tsc -b`, not linted by oxlint, not reachable by vitest. Putting
+the only new client-side logic in this phase somewhere no gate can see it is
+exactly the shape MISSION §4's "proven by a test" forbids. `src/sw.ts` is
+compiled, linted and can import from `src/lib/`.
+
+The cost was measured, not assumed: **all four workbox runtime packages are
+already installed** (`workbox-precaching`, `workbox-routing`, `workbox-core`,
+`workbox-window`, all 7.4.1, transitive from `vite-plugin-pwa` 1.3.0), so this
+is **zero new downloads**. They are promoted to explicit `devDependencies`
+because `src/sw.ts` imports them directly, and depending on a transitive
+package without declaring it is how a lockfile bump breaks a build silently.
+
+`injectManifest` means the precache setup is now ours to write rather than
+generated, so the existing behaviour must be reproduced deliberately and not
+lost: `precacheAndRoute(self.__WB_MANIFEST)`, the `navigateFallback` to
+`/index.html` with the **`/^\/api/` denylist preserved**, and
+`skipWaiting`/`clientsClaim` to keep `registerType: "autoUpdate"` meaning what
+it meant before. The denylist is load-bearing — the original config's comment
+records that `/api/*` must never be cached because marks and grades are live.
+
+### 2. The finding that D5.10 did not have: **a service worker cannot authenticate**
+
+D5.10 says "the service worker fetches the inbox over the authenticated API".
+**As written, that is not implementable in this codebase.** The session — and
+the bearer token with it — is persisted to **`localStorage`**
+(`web/src/lib/auth/storage.ts:33/44`), and `localStorage` does not exist in a
+`ServiceWorkerGlobalScope`. `lib/api.ts:45` builds `Authorization: Bearer
+${token}` from that same store. A SW `fetch` would go out unauthenticated and
+get a 401.
+
+Three ways out, and the rejection matters more than the choice:
+
+- **Rejected — mirror the token into IndexedDB** (which a SW *can* read). It is
+  the only option that works with no tab open, and it is the wrong trade: it
+  creates a second, longer-lived copy of a bearer credential in a store with an
+  independent lifecycle, which every logout, token refresh and device eviction
+  must now also clear. A single missed invalidation leaves a background process
+  holding a valid token after the user believes they have left. This build spent
+  all of P5.7/D5.12 making session boundaries real — deciding *at the login
+  itself* whether a device may be admitted — and duplicating the credential into
+  a store nothing else touches would quietly undo that to save one fetch.
+- **Rejected — always render a generic notification and never fetch.** Honest,
+  but it throws away the case that actually works.
+- **Chosen — the SW asks an open client for the content.**
+  `clients.matchAll({type: "window", includeUncontrolled: true})` plus a
+  `postMessage` round-trip with a short timeout: the page, which *can* read
+  `localStorage`, does the authenticated fetch and posts the title/body back.
+  **The credential never leaves the page context** and no second copy is
+  created.
+
+### 3. The honest consequence, recorded rather than papered over
+
+With **no tab open, every push renders the generic "You have a new
+notification"** — the fallback P5.6 chunk B already predicted. The window where
+push carries real content is a tab that is **open but backgrounded**. That is a
+genuine reduction against a payload-carrying push, and it is the compound price
+of D5.10's privacy choice and §2's credential choice. Both are still right; the
+limitation is real and belongs in the Phase-5 limitations, not in a comment.
+
+The fallback is **mandatory, not a nicety**: browsers require *some*
+notification per push, and a `push` handler that resolves without calling
+`showNotification` triggers the engine's own "This site has been updated in the
+background" message in several of them. So there is no "show nothing" branch to
+design.
+
+### 4. Where the test seam is
+
+`vitest` here runs `environment: "node"` with **no jsdom** (a deliberate choice,
+`vitest.config.ts:25`), and there is no `ServiceWorkerGlobalScope` to mount in
+any case. So the logic is split: a **pure function** that takes whatever the
+client handshake returned (or `null`) and returns the notification to show, and
+a thin `src/sw.ts` adapter that wires real events to it. The pure function is
+what the tests drive, and the branch that matters — *content vs. fallback* — is
+entirely inside it.
+
+### 5. What cannot be claimed
+
+This machine has **no VAPID keys**, so `GET /api/notifications/push/config`
+reports the transport unavailable by design (D5.9 §4) and **no real push can be
+delivered in any harness in this build**. The push path is verified by unit
+tests over the pure function and by the screen's handling of the `unavailable`
+state — never by an end-to-end delivery. Do not write "push delivery verified"
+in the Phase-5 report; write what was actually exercised.
