@@ -5366,3 +5366,67 @@ D5.9 §2 and UI spec §1.4 hold here even though the audience is staff: the row
 is a pointer to the teacher's own at-risk view, which already renders the
 evidence with its confidence intact. A grade on a lock screen is a grade on a
 lock screen regardless of who is holding the phone.
+
+---
+
+## D5.12 — The device limit is disclosed by a 409 challenge on a re-authenticated login, never by an unauthenticated device list (P5.7, written before any code)
+
+**Context.** UI spec G-10 ("Device limit reached") says the screen contains *a
+list of the three currently signed-in devices, a clear statement that signing in
+here will sign out the oldest, and a confirm action*. The backend already
+implements the policy — `DeviceRegistry.register_login` (D1.11) locks the user
+row `FOR UPDATE`, registers the new device, and evicts the oldest beyond
+`MAX_DEVICES = 3` in the same transaction. Two things are missing, and neither is
+the policy: **no route exposes a user's devices at all** (G-11's list and
+individual sign-out), and **eviction is silent** — `DeviceRegistration` carries
+`evicted_session_ids`, but `AuthService._register_device` returns only
+`session_id` and drops them, so the client cannot know a device was signed out.
+Verified by reading `lemely/db/device_repo.py`, `lemely/auth/service.py:123-140`
+and `lemely/web/routers/auth.py`, not by trusting a note.
+
+**1. The device list is never shown to an unauthenticated caller.** The naive
+reading of G-10 — show the three devices *before* signing in, so the user can
+decide — requires enumerating a stranger's devices from an email address alone.
+That hands anyone who knows an email address a list of that person's browsers and
+activity times. It is refused: **credentials are proven first, the challenge is
+returned second.**
+
+**2. The challenge is a 409 on the login itself, and the confirm is a re-sent
+login.** When a login would evict, `POST /api/auth/login` answers **409** with
+the three device summaries and **mints no token and evicts nothing**. The client
+shows G-10 and, on confirm, re-sends the same login with
+`confirmDeviceEviction: true`, which registers and evicts normally. The
+alternative — a stateful, short-lived "confirmation ticket" — was rejected as the
+more expensive and less reversible of the two: it adds a token kind, an expiry, a
+store and a revocation story, to save a second credential check on a path that
+fires only when a user is genuinely at three devices. Re-authenticating is also
+the *stronger* guarantee: the confirm cannot be replayed by anyone who did not
+just prove the password again.
+
+**3. "Would this evict?" is answered inside the same lock that does the
+evicting, never before it.** `register_login` grows `allow_eviction: bool = True`
+and raises `DeviceLimitReachedError` from *inside* the existing `FOR UPDATE`
+transaction when eviction is needed and not permitted. A separate preflight query
+would be a TOCTOU: two tabs could both be told "no eviction needed" and both
+evict. The default stays `True` so every existing caller — signup, phone-OTP,
+the E2E seed — is unchanged.
+
+**4. A re-login on a known device is never a challenge.** The `client_device_id`
+match path reuses its slot and evicts nothing, so a user with three devices
+signing in again on one of them sees no G-10. This is the common case and it must
+stay silent, or the limit reads as broken.
+
+**5. Rough location is deliberately absent from the device list.** G-10 asks for
+it; this build has **no geo-IP source and does not store an IP address**, so a
+location would have to be inferred or invented. UI spec §1.4 (never invent
+precision) forbids that outright, and a wrong city beside "sign out this device"
+is worse than no city — it is the field a user would make the decision on. The
+list ships with device label, user-agent-derived description, and last-active
+time, all of which are real. Carried to the Phase-5 limitations as an honest gap,
+not silently dropped.
+
+**6. Signing a device out is a revocation, not a delete, and is idempotent.**
+`DeviceRegistry.revoke` already scopes to the caller's own devices and is
+idempotent; the route reuses it. Revoking the *current* device is permitted and
+is simply "sign out this browser" — the liveness check in `get_auth_context`
+turns the caller's own next request into a 401 without any special case.
