@@ -73,6 +73,41 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:5173",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
+    /*
+     * P5.11: pin one `lemely.deviceId` across every browser context so the
+     * whole run presents as a single device to the D1.11 3-device registry.
+     *
+     * WHY THIS IS CORRECT AND NOT A WORKAROUND. `lemely/db/device_repo.py`'s
+     * own contract: "A stable, client-supplied `client_device_id` ... lets a
+     * re-login on the *same* device reuse its row — its `last_seen_at` is
+     * refreshed rather than a new slot consumed." The SPA mints that id once
+     * into localStorage (`src/lib/auth/storage.ts`) precisely so repeated
+     * logins from one browser do not eat slots. Playwright hands every test a
+     * fresh context, hence a fresh localStorage, hence a *fresh* id — so the
+     * suite was manufacturing a new "device" per spec. One CI browser on one
+     * machine is one device; the fresh id was the test-isolation artifact, and
+     * this restores the semantics the product was built with.
+     *
+     * WHAT IT COST TO LEARN. The seeded teacher is shared, and three specs log
+     * in as it through the real UI (`reduced-motion` twice via `gotoSchemes`,
+     * `engagement`, `teacher-journey`). That was exactly MAX_DEVICES=3 — at
+     * the cap with zero headroom — so P5.11 adding the `engagement` login made
+     * a fourth, and `teacher-journey` (last alphabetically, so last to run)
+     * was served G-10's 409 device-limit challenge instead of `/teacher`. It
+     * read as a broken teacher login; it was the device limit working.
+     *
+     * WHY GLOBAL RATHER THAN PER-SPEC. Getting under the cap by converting one
+     * spec to `injectSession` would leave headroom of one, and the next spec
+     * that logs in as a shared account breaks a *different*, alphabetically
+     * later spec. That failure is silent and order-dependent. Pinning the id
+     * removes the class of bug rather than this instance of it.
+     *
+     * IT DOES NOT WEAKEN G-10. The dedicated device-limit account is seeded
+     * with three rows whose `client_device_id` is NULL (`scripts/seed_e2e.py`),
+     * deliberately so no browser can ever match one — a pinned id matches
+     * nothing there and still gets its 409 challenge.
+     */
+    storageState: path.join(__dirname, "e2e/device-state.json"),
   },
   projects: [
     {

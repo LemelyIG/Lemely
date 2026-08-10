@@ -1,0 +1,14 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://127.0.0.1:5173",
+      "localStorage": [
+        {
+          "name": "lemely.deviceId",
+          "value": "e2e00000-0000-4000-8000-000000000001"
+        }
+      ]
+    }
+  ]
+}
