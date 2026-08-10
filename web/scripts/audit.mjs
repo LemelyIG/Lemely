@@ -1915,6 +1915,44 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "From your teachers"),
       authed: true,
     },
+    // ── S-29 · Leaderboards (P5.8 chunk C) ────────────────────────────────
+    // `/student/board` has never been in this registry — the honest-empty
+    // placeholder that stood here since P2.7 was never audited, so this is the
+    // route's first coverage, not a re-audit.
+    //
+    // The `ready` probe targets the screen's own heading rather than a board
+    // row, deliberately and for the same reason S-28's targets the
+    // announcements heading: the seed awards no XP, so every scope
+    // legitimately renders its empty state and a probe waiting on a ranked row
+    // would hang and be misread as a route failure. The empty board IS the
+    // state this ships in, so auditing it is coverage of the real screen.
+    //
+    // The default scope is `friends`, which needs no class and no school, so
+    // this state exercises the board panel without depending on seeded
+    // enrolment. When the seed grows XP events, add a populated state here
+    // rather than replacing this one.
+    {
+      screenId: "S-29",
+      slug: "student-standings",
+      path: "/student/board",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Effort, not marks"),
+      authed: true,
+    },
+    // ── S-30 · Friends (P5.8 chunk C) ─────────────────────────────────────
+    // The friend code is minted lazily on first read, so this route always has
+    // one real thing to render regardless of seed state — the probe targets
+    // the heading anyway, so a slow mint cannot be mistaken for a route
+    // failure. The friends list itself renders its empty state (the seed
+    // creates no friendships), which is the state this ships in.
+    {
+      screenId: "S-30",
+      slug: "student-friends",
+      path: "/student/friends",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Who you are studying with"),
+      authed: true,
+    },
   ]
 }
 

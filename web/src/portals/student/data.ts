@@ -65,6 +65,7 @@ export const navGroups: NavGroup[] = [
       { to: "/student/flashcards/0625", label: "Flashcards", tag: "0625" },
       { to: "/student/plan/0625", label: "Study plan", tag: "0625" },
       { to: "/student/board", label: "Standings" },
+      { to: "/student/friends", label: "Friends" },
       { to: "/student/announcements", label: "Announcements" },
       { to: "/student/parents", label: "Your parents" },
     ],
@@ -96,6 +97,7 @@ export const crumbs: Record<string, string> = {
   // pattern arm in `resolveCrumb` alongside practice and flashcards. Leaving
   // the bare key here would be a lookup no pathname can ever hit.
   "/student/board": "Home / Standings",
+  "/student/friends": "Home / Friends",
   "/student/announcements": "Home / Announcements",
   "/student/parents": "Home / Your parents",
   "/student/onboard": "Onboarding",
