@@ -619,9 +619,70 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             else's endpoint is a **success**, not a 404 that would reveal ownership; the
             wire payload is `dict[str, str]` and **coerced, not rejected**, on read,
             because an inbox that 500s over one odd row is worse than a stringified id.
-      - [ ] **chunk C2** — the three action seams, each `notify_safely(...)` at the
-            **router** layer after the action has committed, exactly like
-            `award_xp_safely`. Then run `./scripts/check.sh` before marking P5.6 done.
+      - [x] **chunk C2a** (`78d58a0`) — the `grade_ready` seam. `notify_safely` in
+            `/student/correct` immediately after `award_xp_safely`, dedupe on the
+            **upload** (D5.9 §6 / D5.3). Verified by inversion: an attempt key fails
+            `test_re_correcting_the_same_paper_does_not_re_notify`, which also asserts
+            two `Attempt` rows so it cannot pass by the pipeline declining to re-run.
+            Body says "Paper 4 Variant 1", never "Paper 4/1" — a slash between two
+            small integers reads as a mark out of a total on a lock screen.
+            New `tests/test_web_notify_seams.py` (6 tests here, 18 by end of C2).
+            **Trap found: a substring scan over a payload containing a UUID is a test
+            that fails on the seed** — "67" appears in a random UUID about a third of
+            the time, which is what made the first run intermittently red. Assert the
+            payload structurally; scan only the human-readable strings.
+      - [x] **chunk C2b** (`965a242`) — the `announcement` seam, plus
+            `AnnouncementService.student_recipients`: `list_for_student`'s predicate
+            read in the other direction, so the seam and the student read path share
+            one definition of "the audience". The recon was right that no such method
+            existed for the school arm.
+            Two guards **verified by inversion**: swapping the school arm to
+            `SchoolMembership` fails the seated-student test with an empty audience
+            (D5.4's "reads as a data problem" shape); dropping the future-`publish_at`
+            guard fails `test_a_scheduled_announcement_notifies_nobody_yet`.
+            Naive `publish_at` (the router parses an offset-less ISO string) is
+            normalised to UTC — this runs **outside** `notify_safely`, so an
+            unnormalised value would TypeError and 500 an announcement already written.
+            **A first cut was removed for being justified by a false comment**: the key
+            was `f"{announcement_id}:{recipient}"` on the reasoning that otherwise the
+            first student notified suppresses the rest. Inversion disproved it —
+            migration 0018's unique index is already `(user_id, type, dedupe_key)`, so
+            the recipient half of D5.9 §6's pair comes from the index. Key is now the
+            announcement id alone. **Generalisable: before writing the reason a guard
+            exists, check whether something else already provides it.**
+      - [x] **chunk C2c** (`c1792fd`) — the `at_risk_alert` seam and **D5.11**
+            (recorded before the code, per MISSION §4). Seam is the post-correction
+            point; dedupe on `(student, reason, Cairo civil date)` via
+            `civil_date_in_zone` — at-risk is a *state*, so an upload key would send a
+            teacher of thirty students one alert per upload. Two inversions, each
+            landing on exactly one test: `flag.summary` as the body (it renders
+            percentages and predicted grades) fails the no-evidence assertion; no
+            dedupe key fails the second-paper-same-day test. D5.9 §3 pinned from both
+            sides — a student turning `at_risk_alert` off does **not** silence their
+            teacher or parent, and the parent's own row gates the parent's alert.
+            **The recon was wrong about recipients (seventh time this phase the code
+            beat a note): `ClassService.student_classes` does NOT reach the teacher
+            id** — `StudentClassRow` is class_id/name/subject_code/school_name. Two
+            narrow readers added instead (`teachers_for_student`, `display_name_for`)
+            rather than widening a row the parent portal renders.
+            **Rule 3 (≥14 days inactive) cannot fire at this seam** — a student who
+            just uploaded is by definition active — so the reason most likely to
+            matter for a *disengaging* student is the one this build cannot deliver.
+            Joins D5.9 §5's no-scheduler limitation; **carry to the Phase-5
+            limitations**.
+            **Process trap that cost real work: `git checkout <file>` to revert an
+            inversion also discarded ~80 lines of uncommitted real work in the same
+            file.** Copy the file to /tmp before inverting, restore with `cp`, and
+            invert one thing at a time — two simultaneous inversions produced a
+            NameError that failed four tests and proved nothing about either.
+      - [ ] **doing** — `./scripts/check.sh` (first full run since chunk A), then mark
+            P5.6 done. Backend lint leg already reported PASS ×4 (ruff-check,
+            ruff-format, mypy, import-linter); pytest + web + audit legs still running
+            at the time of writing. **If this session died here: re-run
+            `./scripts/check.sh` in the foreground, fix anything red, then set P5.6
+            `[x]` and move to P5.7. No code is outstanding — all three seams are
+            committed.**
+            The recon below is kept for reference; all of it is now spent.
             **Recon done 2026-08-10, use it rather than re-deriving:**
             - **`grade_ready`** — easiest, do it first. The seam is
               `lemely/web/routers/student.py:735`, immediately after the existing
