@@ -1827,3 +1827,35 @@ reuse contracted students and pay nothing.
 **Next.** Read `/tmp/p59b-gate.log` (PID 1232528) for the `EXIT=` line — do not
 relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
 with a brief that is now ten points deep.
+
+## 2026-08-10 — session 68
+
+**Did.** Found the second gate run alive at 5m36s (4/13, inside `pytest`) — the
+PID that matters is the surviving `bash -c` wrapper **1232550**, which the
+previous entry recorded wrongly as the already-exited `setsid` helper 1232528.
+Attached, armed a Monitor on `EXIT=`/`FAIL`, relaunched nothing, touched no
+source file. Working tree clean on entry; INBOX had no unhandled items.
+
+**Learned.** The waiting time went into the half of P5.11 that no session had
+ever looked at — points 1–11 all measure the four E2E flows, while the task
+line's other clause (axe/Lighthouse/screenshots/visual compare) had never been
+measured. New point 12, three findings. (1) **The screenshot corpus comes from
+`audit.mjs`'s registry, not from `screenshots.spec.ts`** — that spec captures
+only the five Phase-2.5 ids; the other 34 in `reports/phase-4/screens/` are
+registry output. So P5.11's screenshot leg needs no new Playwright spec, just an
+explicit `LEMELY_REPORT_DIR=reports/phase-5` re-baseline. (2) **`audit.mjs`'s
+four-route exclusion list is false in every entry** — `/student/board` has been
+audited since P5.8 (`:1960`), and `/student/subject/:code` runs on the real
+`useSubject` hook rather than the mock data the list claims. The false statement
+is in the operator-facing `log()` at `:2451` as well as the comment — which is
+precisely the failure that same header documents happening twice before, so it
+has now happened a third time *to the sentence describing the previous two*. The
+G-13 miss inverted: present-and-falsely-declared-absent, plus three genuinely
+unaudited live routes excused by a stale reason. (3) **`compare-screens` defaults
+its baseline to `reports/phase-2.5/screens`**, so a bare run diffs Phase 5
+against a 2.5-era corpus and buries any real regression; it also exits 0 by
+design, so its output must be read, not trusted.
+
+**Next.** Read `/tmp/p59b-gate.log` (PID **1232550**) for the `EXIT=` line — do
+not relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
+with a brief that is now twelve points deep and covers both of its legs.
