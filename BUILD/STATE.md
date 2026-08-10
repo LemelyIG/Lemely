@@ -729,7 +729,32 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             (small, self-contained), C2b `announcement`, C2c `at_risk_alert`.** Committing
             `grade_ready` alone is a real increment; do not hold it hostage to the other
             two.
-- [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
+- [ ] **doing** — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
+      **Recon done 2026-08-10 by reading the code** (`lemely/db/device_repo.py`,
+      `lemely/auth/service.py:123-140`, `lemely/web/routers/auth.py`): the **policy already
+      exists and is correct** — D1.11's `DeviceRegistry.register_login` locks the user row
+      `FOR UPDATE`, registers, and evicts the oldest beyond `MAX_DEVICES = 3` atomically;
+      `deps.get_auth_context` checks liveness per request. **`MAX_DEVICES` needs no change and
+      no migration is needed.** What is genuinely missing is exactly two things: **no route
+      exposes a user's devices at all** (G-11's list + individual sign-out), and **eviction is
+      silent** — `DeviceRegistration.evicted_session_ids` exists but `_register_device` drops it,
+      so a client cannot know a device was signed out. The SPA already mints and sends
+      `deviceId` (`web/src/lib/auth/storage.ts`), so the slot-reuse path is wired end to end.
+      **D5.12 recorded before any code.** Load-bearing: the device list is **never** shown to an
+      unauthenticated caller (that would enumerate a stranger's browsers from an email alone), so
+      G-10 is a **409 challenge on the login itself** — credentials proven first, no token minted,
+      nothing evicted — confirmed by re-sending the login with `confirmDeviceEviction: true`;
+      "would this evict?" is answered **inside** the existing `FOR UPDATE` transaction via
+      `allow_eviction: bool = True` (a preflight query would be a TOCTOU between two tabs); a
+      re-login on a known `client_device_id` is never a challenge; and **rough location is
+      deliberately absent** — no geo-IP source and no stored IP exist, and UI spec §1.4 forbids
+      inventing the one field the user would decide on. Carry that to the Phase-5 limitations.
+      - [ ] **chunk A** — backend: `allow_eviction` + `DeviceLimitReachedError` in
+            `device_repo.py`, surfaced through `AuthService`, the 409 on `POST /api/auth/login`,
+            and `GET`/`DELETE /api/me/devices` reusing the existing `revoke`. Tests.
+      - [ ] **chunk B** — frontend G-10 + G-11. **First Phase-5 task with a `web/` leg, so
+            MISSION §6.8 applies in full**: `/impeccable audit`, axe zero serious/critical,
+            Lighthouse a11y ≥95, screenshots per screen × state × breakpoint, visual compare.
 - [ ] todo — **P5.8** Screens S-28, S-29, S-30, S-31.
 - [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
 - [ ] todo — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4

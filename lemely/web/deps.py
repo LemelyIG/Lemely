@@ -539,12 +539,18 @@ class AuthContext:
     ``user_id`` is the token ``sub`` (the mirrored ``public.users`` id); ``role``
     is the platform role from ``app_metadata.role`` (one of :class:`Role`'s
     values). ``email`` / ``phone`` mirror the optional token claims.
+
+    ``session_id`` is the ``devices`` row this token was minted against, and is
+    ``None`` for the tokens that are exempt from the liveness check (hermetic
+    tests, seat-invite signups — see :class:`~lemely.db.device_repo.DeviceRegistry`).
+    G-11 uses it to mark which of the listed devices is the one asking.
     """
 
     user_id: str
     role: str
     email: str | None = None
     phone: str | None = None
+    session_id: str | None = None
 
 
 _bearer_scheme = HTTPBearer(auto_error=False, description="Supabase-compatible access token")
@@ -604,6 +610,7 @@ def get_auth_context(
         role=claims.app_role,
         email=claims.email,
         phone=claims.phone,
+        session_id=claims.session_id,
     )
 
 

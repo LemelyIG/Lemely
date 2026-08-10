@@ -121,13 +121,17 @@ class AuthService:
         self._device_registry = device_registry
 
     def _register_device(
-        self, user_id: uuid.UUID, device: DeviceContext | None
+        self, user_id: uuid.UUID, device: DeviceContext | None, *, allow_eviction: bool = True
     ) -> uuid.UUID | None:
         """Register the login's device and return its session id, or ``None``.
 
         Returns ``None`` (so no ``session_id`` claim is minted, exempting the token
         from the liveness check) when either the registry or the device context is
         absent — e.g. hermetic tests and seat-invite signups.
+
+        With ``allow_eviction=False`` a login that would consume a fourth slot
+        raises :class:`~lemely.db.device_repo.DeviceLimitReachedError` and writes
+        nothing, letting the caller confirm with the user first (D5.12).
         """
         if self._device_registry is None or device is None:
             return None
@@ -136,6 +140,7 @@ class AuthService:
             client_device_id=device.client_device_id,
             user_agent=device.user_agent,
             device_label=device.label,
+            allow_eviction=allow_eviction,
         )
         return registration.session_id
 
@@ -170,7 +175,14 @@ class AuthService:
         )
         return AuthResult(access_token=access_token, user_id=created.id, role=role)
 
-    def login(self, email: str, password: str, device: DeviceContext | None = None) -> AuthResult:
+    def login(
+        self,
+        email: str,
+        password: str,
+        device: DeviceContext | None = None,
+        *,
+        confirm_device_eviction: bool = False,
+    ) -> AuthResult:
         """Verify the credential via GoTrue, re-mirror, and mint a token.
 
         GoTrue's password grant is used only to *verify* the credential; its
@@ -178,15 +190,23 @@ class AuthService:
         token (D1.5). The mirrored role is read from the existing ``public.users``
         row when present (GoTrue owns the credential, we own the role); it falls
         back to ``student`` only if the user was never mirrored. When a
-        :class:`DeviceContext` is supplied the login registers a device and may
-        evict the account's oldest session (D1.11).
+        :class:`DeviceContext` is supplied the login registers a device (D1.11).
+
+        A login that would consume a **fourth** device slot raises
+        :class:`~lemely.db.device_repo.DeviceLimitReachedError` unless
+        ``confirm_device_eviction`` is set — the credential has been verified by
+        then, so the caller may show the user which devices would be signed out
+        (D5.12) and re-send the login confirmed. Nothing is written on the
+        unconfirmed attempt; in particular no device is evicted.
         """
         token = self._gotrue.password_grant(email, password)
         existing = self._mirror.get_by_id(token.user.id)
         role = existing.role if existing is not None else Role.student
         phone = existing.phone if existing is not None else None
         self._mirror.upsert(token.user.id, email=token.user.email, role=role)
-        session_id = self._register_device(token.user.id, device)
+        session_id = self._register_device(
+            token.user.id, device, allow_eviction=confirm_device_eviction
+        )
         access_token = self._mint_email_token(
             user_id=token.user.id,
             role=role,
@@ -239,6 +259,13 @@ class AuthService:
         the user is mirrored so the token always has a stable subject. When a
         :class:`DeviceContext` is supplied the login is registered against the
         3-device limit (D1.11).
+
+        Unlike :meth:`login`, a fourth device here still **silently evicts** the
+        oldest rather than raising D5.12's confirmation challenge: the OTP code is
+        single-use and is consumed by the ``verify`` above, so a challenge the
+        caller re-sent confirmed would fail on a spent code and cost the parent a
+        second SMS. Scoping the challenge to the email/password path is deliberate
+        and is carried as an honest gap, not an oversight.
 
         Raises:
             AuthError: The OTP is unknown, expired, wrong, or locked out.

@@ -28,7 +28,12 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
-from lemely.db.device_repo import MAX_DEVICES, DeviceRegistry, UnknownUserError
+from lemely.db.device_repo import (
+    MAX_DEVICES,
+    DeviceLimitReachedError,
+    DeviceRegistry,
+    UnknownUserError,
+)
 from lemely.db.models import Device, User
 from lemely.db.models.enums import Role
 from lemely.runtime.config import DatabaseSettings
@@ -234,3 +239,91 @@ def test_non_uuid_user_is_value_error(pg_sessionmaker: sessionmaker[Session]) ->
     registry = DeviceRegistry(pg_sessionmaker)
     with pytest.raises(ValueError, match="must be a UUID"):
         registry.register_login("not-a-uuid")
+
+
+# ── The confirmation challenge (D5.12) ─────────────────────────────────────────
+
+
+def test_unconfirmed_fourth_login_raises_and_writes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # D5.12 §2/§3: with allow_eviction=False a fourth slot is refused *inside* the
+    # locked transaction, and the refusal is total — no new device row, no
+    # eviction, no last_seen_at bump on anybody.
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+    base = datetime(2026, 7, 31, tzinfo=UTC)
+    live_before = {
+        registry.register_login(uid, now=base + timedelta(minutes=i)).session_id
+        for i in range(MAX_DEVICES)
+    }
+
+    with pytest.raises(DeviceLimitReachedError) as excinfo:
+        registry.register_login(uid, now=base + timedelta(minutes=9), allow_eviction=False)
+
+    assert _live_ids(pg_sessionmaker, uid) == live_before
+    assert all(registry.is_session_live(sid) for sid in live_before)
+    assert {row.device_id for row in excinfo.value.devices} == live_before
+
+
+def test_the_refused_login_names_the_device_a_confirmed_retry_evicts(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # The whole point of showing the list: the device the user is told will be
+    # signed out must be the device the confirmed retry actually signs out. The
+    # challenge is newest-first, so that device is its last entry — pinned here
+    # because a re-derived ordering in the router or the UI could disagree with
+    # the registry's own eviction order.
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+    base = datetime(2026, 7, 31, tzinfo=UTC)
+    for i in range(MAX_DEVICES):
+        registry.register_login(uid, now=base + timedelta(minutes=i))
+
+    with pytest.raises(DeviceLimitReachedError) as excinfo:
+        registry.register_login(uid, now=base + timedelta(minutes=9), allow_eviction=False)
+    promised = excinfo.value.devices[-1].device_id
+
+    confirmed = registry.register_login(uid, now=base + timedelta(minutes=10))
+
+    assert confirmed.evicted_session_ids == [promised]
+
+
+def test_a_relogin_on_a_known_device_is_never_challenged(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # D5.12 §4: the common case — a user at the cap signing in again on one of
+    # their three devices — reuses that slot and evicts nothing, so it must not
+    # raise even with allow_eviction=False. If it did, G-10 would appear on an
+    # ordinary re-login and the limit would read as broken.
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+    base = datetime(2026, 7, 31, tzinfo=UTC)
+    known = registry.register_login(uid, client_device_id="phone-A", now=base).session_id
+    registry.register_login(uid, client_device_id="tablet-B", now=base + timedelta(minutes=1))
+    registry.register_login(uid, client_device_id="laptop-C", now=base + timedelta(minutes=2))
+
+    again = registry.register_login(
+        uid,
+        client_device_id="phone-A",
+        now=base + timedelta(hours=1),
+        allow_eviction=False,
+    )
+
+    assert again.reused is True
+    assert again.session_id == known
+    assert again.evicted_session_ids == []
+
+
+def test_below_the_cap_allow_eviction_false_registers_normally(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # A new device is only a challenge when it would *evict*. Under the cap the
+    # flag must be inert, or the first two logins of every account would 409.
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+
+    first = registry.register_login(uid, allow_eviction=False)
+    second = registry.register_login(uid, allow_eviction=False)
+
+    assert _live_ids(pg_sessionmaker, uid) == {first.session_id, second.session_id}

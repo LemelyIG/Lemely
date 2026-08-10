@@ -16,9 +16,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 
 from lemely.auth.otp import OtpRateLimitError
 from lemely.auth.service import AuthResult, AuthService, DeviceContext
+from lemely.db.device_repo import MAX_DEVICES, DeviceLimitReachedError
 from lemely.db.models.enums import Role
 from lemely.runtime.errors import AuthError
 from lemely.web.deps import get_auth_service
+from lemely.web.devices import to_device_dto
 from lemely.web.schemas_auth import (
     LoginRequestDTO,
     OtpRequestDTO,
@@ -27,6 +29,7 @@ from lemely.web.schemas_auth import (
     SignupRequestDTO,
     TokenResponseDTO,
 )
+from lemely.web.schemas_devices import DeviceLimitChallengeDTO
 
 router = APIRouter(prefix="/api")
 
@@ -57,6 +60,21 @@ def _device_context(client_device_id: str | None, user_agent: str | None) -> Dev
     ``user_agent`` is stored for the device-management view.
     """
     return DeviceContext(client_device_id=client_device_id, user_agent=user_agent)
+
+
+def _to_challenge(exc: DeviceLimitReachedError) -> DeviceLimitChallengeDTO:
+    """Build G-10's body from the devices the registry refused to evict past.
+
+    ``exc.devices`` is most-recently-active first, so the device a confirmed retry
+    would sign out is the **last** one — named explicitly rather than left for the
+    client to re-derive, which is how a UI ends up promising to sign out a device
+    the server would keep.
+    """
+    return DeviceLimitChallengeDTO(
+        maxDevices=MAX_DEVICES,
+        devices=[to_device_dto(row) for row in exc.devices],
+        oldestDeviceId=str(exc.devices[-1].device_id),
+    )
 
 
 @router.post("/auth/signup", response_model=TokenResponseDTO)
@@ -98,15 +116,22 @@ def login(
 ) -> TokenResponseDTO:
     """Authenticate an email/password user and return an access token.
 
-    Registers the login against the 3-device limit; a 4th concurrent device
-    silently evicts the account's oldest session (D1.11).
+    Registers the login against the 3-device limit (D1.11). A login that would
+    consume a **fourth** slot answers **409** with the account's signed-in devices
+    and mints no token, evicting nothing; the client shows G-10 and re-sends the
+    same login with ``confirmDeviceEviction`` once the user has agreed (D5.12).
+    The credential is verified *before* that list is produced, so no unauthenticated
+    caller can enumerate a stranger's devices.
     """
     try:
         result = service.login(
             body.email,
             body.password,
             device=_device_context(body.deviceId, user_agent),
+            confirm_device_eviction=body.confirmDeviceEviction,
         )
+    except DeviceLimitReachedError as exc:
+        raise HTTPException(status_code=409, detail=_to_challenge(exc).model_dump()) from exc
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     return _to_token_dto(result)

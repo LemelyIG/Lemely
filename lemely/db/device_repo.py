@@ -48,6 +48,23 @@ class UnknownUserError(DeviceError):
     """No user row exists for the id a login tried to register a device against."""
 
 
+class DeviceLimitReachedError(DeviceError):
+    """A login would have evicted a device but was not permitted to (D5.12).
+
+    Raised by :meth:`DeviceRegistry.register_login` when ``allow_eviction`` is
+    ``False`` and the account already holds :data:`MAX_DEVICES` live devices that
+    the incoming login does not match. Carries the live devices so the caller can
+    show the user *what* would be signed out before they confirm — the list is
+    read inside the same locked transaction that would have done the evicting, so
+    it cannot disagree with what a confirmed retry actually evicts.
+    """
+
+    def __init__(self, devices: list[DeviceRow]) -> None:
+        """Carry the account's live devices, most-recently-seen first."""
+        super().__init__(f"Account already has {len(devices)} signed-in devices.")
+        self.devices = devices
+
+
 @dataclass(frozen=True, slots=True)
 class DeviceRegistration:
     """The outcome of registering a login: the live session plus any it evicted."""
@@ -82,6 +99,7 @@ class DeviceRegistry:
         client_device_id: str | None = None,
         user_agent: str | None = None,
         device_label: str | None = None,
+        allow_eviction: bool = True,
         now: datetime | None = None,
     ) -> DeviceRegistration:
         """Register (or refresh) a device for ``user_id`` and evict the oldest if needed.
@@ -97,10 +115,18 @@ class DeviceRegistry:
                 device for this user that device is reused (not a new slot).
             user_agent: The request ``User-Agent`` (stored for the device UI).
             device_label: Optional human label for the device.
+            allow_eviction: When ``False``, a login that would consume a fourth
+                slot raises :class:`DeviceLimitReachedError` instead of evicting,
+                so the caller can ask the user to confirm first (D5.12). The
+                check runs **inside** this method's ``FOR UPDATE`` transaction
+                rather than as a preflight query, because two concurrent logins
+                asking "would this evict?" separately could both be told no.
             now: Injectable clock for deterministic tests.
 
         Raises:
             UnknownUserError: ``user_id`` has no ``public.users`` row.
+            DeviceLimitReachedError: The cap is reached, this login needs a new
+                slot, and ``allow_eviction`` is ``False``. Nothing is written.
         """
         uid = _as_uuid(user_id)
         stamp = now or datetime.now(UTC)
@@ -110,6 +136,10 @@ class DeviceRegistry:
 
             device = self._match_existing(session, uid, client_device_id)
             reused = device is not None
+            if device is None and not allow_eviction:
+                live = self._live_devices(session, uid)
+                if len(live) >= MAX_DEVICES:
+                    raise DeviceLimitReachedError([_row(d) for d in live])
             if device is None:
                 device = Device(
                     user_id=uid,
@@ -146,21 +176,7 @@ class DeviceRegistry:
         """Return the user's non-revoked devices, most-recently-seen first."""
         uid = _as_uuid(user_id)
         with self._sessionmaker() as session:
-            stmt = (
-                select(Device)
-                .where(Device.user_id == uid, Device.revoked_at.is_(None))
-                .order_by(Device.last_seen_at.desc(), Device.created_at.desc())
-            )
-            return [
-                DeviceRow(
-                    device_id=d.id,
-                    client_device_id=d.client_device_id,
-                    device_label=d.device_label,
-                    user_agent=d.user_agent,
-                    last_seen_at=d.last_seen_at,
-                )
-                for d in session.scalars(stmt).all()
-            ]
+            return [_row(d) for d in self._live_devices(session, uid)]
 
     def revoke(self, user_id: uuid.UUID | str, session_id: uuid.UUID | str) -> bool:
         """Explicitly revoke one of the user's devices (e.g. a "sign out" action).
@@ -197,6 +213,20 @@ class DeviceRegistry:
         )
         return session.scalars(stmt).first()
 
+    def _live_devices(self, session: Session, uid: uuid.UUID) -> list[Device]:
+        """Return the user's non-revoked devices, most-recently-seen first.
+
+        Shared by :meth:`active_devices` and the ``allow_eviction`` check so the
+        list a user confirms against in G-10 and the list they manage in G-11 are
+        the same query, ordered the same way.
+        """
+        stmt = (
+            select(Device)
+            .where(Device.user_id == uid, Device.revoked_at.is_(None))
+            .order_by(Device.last_seen_at.desc(), Device.created_at.desc())
+        )
+        return list(session.scalars(stmt).all())
+
     def _evict_oldest(
         self, session: Session, uid: uuid.UUID, *, keep_id: uuid.UUID, now: datetime
     ) -> list[uuid.UUID]:
@@ -220,6 +250,17 @@ class DeviceRegistry:
         return evicted
 
 
+def _row(device: Device) -> DeviceRow:
+    """Project a ``devices`` ORM row onto the read-only view DTO."""
+    return DeviceRow(
+        device_id=device.id,
+        client_device_id=device.client_device_id,
+        device_label=device.device_label,
+        user_agent=device.user_agent,
+        last_seen_at=device.last_seen_at,
+    )
+
+
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
     """Coerce a str/UUID to :class:`uuid.UUID`, raising ``ValueError`` if invalid."""
     if isinstance(value, uuid.UUID):
@@ -233,6 +274,7 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 __all__ = [
     "MAX_DEVICES",
     "DeviceError",
+    "DeviceLimitReachedError",
     "DeviceRegistration",
     "DeviceRegistry",
     "DeviceRow",
