@@ -5561,3 +5561,122 @@ Non-students get 403 from the router guard rather than an empty profile; unlike
 P5.6's deliberately role-agnostic notification router, this surface has exactly
 one intended reader, because D5.1 §10 already fixed that XP is awarded to
 students only.
+
+## D5.14 — S-29/S-30 need two small backend additions, and one spec element is deliberately not invented (P5.8 chunk C, written before any code)
+
+P5.8's brief says "every backend these screens need is already built". That was
+true for S-28 and it is **nearly** true here — `GET /api/student/leaderboard`
+and `GET/POST/DELETE /api/student/friends` are complete and gate-green. Reading
+the code before writing the screen found two places where the built backend
+cannot express what UI spec §S-29 names, and one place where it should not try.
+This is the ninth time this phase that a note lost to the codebase, and the
+correction is recorded here before the screen, not after it.
+
+### 1. `scope=class` is unreachable from the student SPA today
+
+`GET /api/student/leaderboard?scope=class` requires a `class_id`, and **no
+student-facing route lists a student's classes**. `grep '@router.get'` over
+`lemely/web/routers/student.py` returns overview / subject / result / standings
+/ parent-links and nothing else; `/student/classes/join` is a POST. The only
+readers of `ClassService.student_classes` are the *parent* portal's P-01 and
+P-02 (`routers/parent.py:347`).
+
+So the class tab is not "hard" — it is unaddressable. The two options were to
+drop a quarter of the spec'd scope selector and record it, or to add the thin
+read route. **Added: `GET /api/student/classes`**, reusing
+`ClassService.student_classes` directly rather than deriving a second
+`ClassEnrollment` query — that method's own docstring asks callers not to write
+one ("do not write a second `ClassEnrollment` query anywhere else for that
+purpose"), and honouring it is the reason the parent portal and this screen
+cannot drift about what class a student is in.
+
+`StudentClassRow` already carries exactly the four fields a tab needs
+(`class_id`, `name`, `subject_code`, `school_name`), so the DTO is a projection
+with nothing new computed. Identity is `auth.user_id` structurally — no
+caller-supplied student id exists on the route, matching P5.3's and chunk A's
+shape, so one student cannot enumerate another's classes.
+
+### 2. The per-row streak indicator is built, not dropped
+
+§S-29 fixes each row as "rank, avatar, display name, XP, streak indicator".
+`LeaderboardRowDTO` carries the first, third and fourth and **has no streak
+field**. Shipping without it was the cheaper path and was rejected for a reason
+stronger than spec-completeness: **S-30 already shows a friend's streak**
+(`FriendDTO.streak`, D5.6 §5), so the leaderboard's own `friends` scope would
+render the same people, on an adjacent screen, with the streak silently missing.
+An inconsistency between two screens about the same fact is read as a bug, and
+here it would be one.
+
+A streak is effort, not attainment, so it is squarely inside MISSION §3's
+"leaderboards show XP (effort), never grades" and adds no grade-shaped field —
+D5.1 §0's structural guarantee is untouched, and
+`tests/test_schemas_leaderboard.py`'s field-set introspection is updated
+deliberately in the same commit, which is exactly the acknowledgement that test
+exists to force.
+
+`LeaderboardService.streaks_for(user_ids)` mirrors the existing
+`display_names_for(user_ids)` exactly: one batched read keyed by the ids already
+resolved for the board, never a per-row query. **`streak` is `int | None`, and
+`None` means "no `streaks` row", never a rendered `0`** — the same rule
+`FriendDTO.xp`/`streak` already follow (D5.6 §5, UI spec §1.4). A student who
+broke their streak legitimately has `current_length = 0` and that is a real
+zero; the two must stay distinguishable.
+
+**No opt-out hole is opened by this.** An opted-out student is removed in the
+query's own WHERE clause (P5.3 chunk A) and never reaches `rows`, so their
+streak is not resolvable through this surface at all.
+
+### 3. The avatar is a monogram, because there is no avatar
+
+Nothing in this schema stores an avatar, an image URL, or a colour preference.
+The row renders the display name's initial in a tinted disc — a *rendering* of
+data we hold, not a fabricated field, and it degrades correctly for the
+`"Student"` fallback D5.5 installed for unnamed users. No placeholder photo, no
+generated identicon keyed on a user id: both would look like stored identity
+the account does not have. Carry "no avatar storage" to the Phase-5 limitations
+rather than implying one exists.
+
+### 4. Opt-out sits on S-29 itself, and its endpoint is `/me/student-profile`
+
+§S-29 requires the opt-out be "available and easy to find — this matters for
+students who find ranking stressful". A settings screen two navigations away is
+not that, so the control lives on the board it governs.
+
+**The brief names `PATCH /me/profile`; the real route is
+`PATCH /api/me/student-profile`** and `leaderboardOptOut` is on
+`StudentProfileUpdateDTO` (`schemas_student_profile.py:85`). The frontend's
+`meTypes.ts` mirror of that DTO predates P5.3 and is missing the field entirely
+— it is added to both `StudentProfile` and `StudentProfileUpdate` here.
+`leaderboard_opt_out` is NOT NULL on the model, so an explicit `null` is a 422,
+never a coerced `false`; the toggle therefore always sends a real boolean.
+
+**Opting out hides you; it does not lock you out.** The service keeps returning
+the board to an opted-out viewer (`viewer_opted_out=True`, absent from `rows`,
+`rank` null). That is deliberate on the backend and the screen states it
+plainly with a one-tap undo, rather than blanking the screen — a student who
+wants motivation without exposure is exactly who this setting is for, and
+hiding the board from them would punish using it.
+
+### 5. S-30 adds by friend code, and the code is the invite link
+
+§S-30 says "add by username or invite link". **`users` has no username column**
+(D5.6) and searching by display name (not unique, enumerable) or email (the
+exact leak D5.5 killed) are both closed. `users.friend_code` is the built
+mechanism and serves both halves: the student shows or copies their own code,
+and pastes a friend's. The submitted value is normalised server-side with
+`.strip().upper()` already, so a code copied out of a screenshot in lowercase
+works — the screen does not re-implement that normalisation and cannot drift
+from it.
+
+`POST /requests` returns `status: "accepted"` in the crossed-requests case, so
+the screen says "you are now friends" from the response rather than inferring
+"request sent" from the 201. Decline, cancel and unfriend are one `DELETE`
+(D5.6 §3) and one confirm-free action each — the row is recoverable by asking
+again, so a modal would cost more than the mistake.
+
+### 6. The weekly reset is stated in civil days
+
+`weekStart`/`weekEnd` are dates (D5.1 §6, Monday..Sunday Cairo), so the screen
+says "resets Sunday" / "N days left" and never an hour-precise countdown it has
+no data for. Same reasoning as S-28's `daysUntil` (chunk B): a boundary the
+student watches must not move while they sleep.

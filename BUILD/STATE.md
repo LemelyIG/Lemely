@@ -879,7 +879,7 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             Do not treat a bare `tsc --noEmit` as having typechecked the web app.**
             `cd web` persisting into the next Bash call bit again (the environment fact
             below is real) — absolute-path everything after an `npx` run.
-      - [ ] **chunk C** — **S-29 (leaderboards) + S-30 (friends). NEXT.** One navigation
+      - [ ] **doing — chunk C** — **S-29 (leaderboards) + S-30 (friends).** One navigation
             pair, and they share the friends DTOs, so build them together.
             Backend is complete and gate-green: `GET /api/student/leaderboard`
             (`scope=class|school|global|friends`, `basis=total|<subject code>`,
