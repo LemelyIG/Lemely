@@ -984,6 +984,14 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             the process is also gone — check `pgrep`/`kill -0` before reading a byte
             count as a failure signal.** Three sessions' diagnoses were built on that
             byte count alone.)
+            **Fifty-third session (this one) re-confirmed it at 8 minutes elapsed.**
+            Session 51's run — `check.sh` PID **927164**, `pytest` child **927224**,
+            log `/tmp/check_p58_s51.log` — was still alive at 11:38, having been
+            launched 11:30. That is more than double the 2–4 minute mark that killed
+            every pre-`setsid` run. Session 53 did **not** start a seventh run either;
+            it attached by polling `kill -0 927164`. **The standing instruction for any
+            session that resumes here: `pgrep -af check.sh` FIRST. A live PID means
+            attach and wait (~25 min total: pytest ~10, audit leg ~11), never relaunch.**
             — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
