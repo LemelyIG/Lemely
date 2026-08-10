@@ -121,14 +121,25 @@ function StreakBadge({ streak }: { streak: number | null }) {
 function BoardRow({
   row,
   isViewer,
+  as: Root = "div",
 }: {
   row: Pick<LeaderboardRow, "displayName" | "xp" | "streak"> & {
     rank: number | null
   }
   isViewer: boolean
+  /* The ranked board is an ordered list, so its rows are `<li>` — that is the
+     honest markup for a ranking and it is what makes row order readable by
+     assistive tech (and, incidentally, by `getByRole("listitem")`).
+     But this same component also renders the viewer's PINNED row, which sits
+     outside the `<ol>` on purpose: its rank is out of sequence with the list
+     above it. An `<li>` there would be a listitem with no list parent — a
+     serious `listitem` violation under axe's default ruleset, which
+     `/student/board` is audited against. Hence an element prop rather than a
+     wrapper around the whole body: the two call sites genuinely differ. */
+  as?: "li" | "div"
 }) {
   return (
-    <div
+    <Root
       className={cn(
         "flex items-center gap-3 py-2.5",
         // The viewer's own row carries a tint *and* the "You" label below, so
@@ -155,7 +166,7 @@ function BoardRow({
         {row.xp.toLocaleString()}
         <span className="ml-1 text-3xs text-t3">XP</span>
       </span>
-    </div>
+    </Root>
   )
 }
 
@@ -197,15 +208,16 @@ function BoardBody({
           body="Correct a paper, review flashcards or finish a study session — the board fills as soon as anyone does."
         />
       ) : (
-        <div className="divide-y divide-border">
+        <ol className="divide-y divide-border">
           {board.rows.map((row) => (
             <BoardRow
               key={row.userId}
+              as="li"
               row={row}
               isViewer={row.userId === board.viewer?.userId}
             />
           ))}
-        </div>
+        </ol>
       )}
 
       {/* The viewer's row stays pinned below when they fall outside the top N,

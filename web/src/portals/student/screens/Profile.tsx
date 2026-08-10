@@ -128,12 +128,24 @@ function LevelCard({ profile }: { profile: XpProfile }) {
   return (
     <Card>
       <CardBody className="flex flex-col gap-3">
+        {/* Each label/value pair is a named `group` rather than an <Eyebrow>
+            with a detached sibling <div>. The bug that fixes is real and not a
+            test convenience: the number had no accessible name and no
+            programmatic association with its own label, so a screen reader
+            announced "Level" and "3" as two unrelated fragments.
+            Deliberately NOT C-2 `MarkDisplay`'s exact shape. That one repeats
+            the value inside the aria-label (`"12 out of 20 marks"`), which
+            names a generic <div> — a role that has no accessible name in the
+            ARIA spec — and duplicates the number into a second place that can
+            drift from the first. Naming the group with the LABEL and leaving
+            the value as its content associates the two with the value stated
+            exactly once. */}
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div>
+          <div role="group" aria-label="Level">
             <Eyebrow>Level</Eyebrow>
             <div className="font-mono text-display-sm text-t1">{profile.level}</div>
           </div>
-          <div className="text-right">
+          <div role="group" aria-label="Total XP" className="text-right">
             <Eyebrow>Total XP</Eyebrow>
             <div className="font-mono text-display-sm text-t1">
               {profile.totalXp.toLocaleString()}
@@ -164,7 +176,7 @@ function StreakCard({ profile }: { profile: XpProfile }) {
             className="flex-none text-accent"
             aria-hidden="true"
           />
-          <div>
+          <div role="group" aria-label="Day streak">
             <div className="font-mono text-display-sm text-t1">{current}</div>
             <Eyebrow>Day streak</Eyebrow>
           </div>
