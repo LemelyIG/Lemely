@@ -2,7 +2,10 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T11:52:00Z   # **Fifty-seventh session (this one): the P5.8 gate run has cleared 11/13 gates — `playwright-e2e` PASSED.**
+last_updated: 2026-08-10T11:54:00Z   # **Fifty-eighth session (this one): the run is still alive at 23m41s inside `puppeteer-audit`; the waiting time went into sharpening P5.10.**
+#                                    Session 51's `setsid` run (PID 927164) is alive at **23:41**, log still 276 bytes (11/13 PASS). Health checked the fifty-fifth session's way and it holds: a live `npm run audit` child (973395) and a **fresh** Chrome tree (980241 + gpu/network/zygote workers) — note that is NOT session 57's Chrome 974729, because `audit.mjs` cycles a browser per route batch, so a *changed* Chrome PID is a sign of progress, not of a crash-restart. Eleventh run not started; Monitor re-armed on 927164. Working tree clean on entry, no wip commit needed.
+#                                    **P5.10's brief was a bare one-liner and is now measured** (P5.9 was already sharpened by session 56, so P5.10 was the next unbriefed task). Two findings that change it: the global `prefers-reduced-motion` rule **already exists** at `src/index.css:742` covering `*`/`::before`/`::after`, and it genuinely reaches **all** motion here — the app is CSS-only, with exactly three `@keyframes` and **zero** animation libraries, `requestAnimationFrame` calls, or smooth-scroll. So P5.10 is not a CSS task. **The gap is that no test anywhere has ever asserted it** — the deliverable is the proof test, verified by inversion. Full brief on the P5.10 line.
+#                                    Prior: **Fifty-seventh session: the P5.8 gate run has cleared 11/13 gates — `playwright-e2e` PASSED.**
 #                                    Session 51's `setsid` run (PID 927164) was alive at **21m52s** and the log had grown 254 → **276 bytes**: `playwright-e2e` **PASS**. It is now inside `puppeteer-audit` (child `npm run audit` → `node scripts/audit.mjs`, 47 s elapsed, Chrome actively driving routes). Only `puppeteer-audit` and `ui-thresholds` remain. No tenth run started; attached + Monitor re-armed on 927164. Working tree clean on entry.
 #                                    **The most expensive gate in this build has now passed on the P5.8 tree.** `playwright-e2e` is the live-stack leg that needs Supabase up, and it cleared without a session touching it — the whole value of `setsid` is that the run outlives the agent session that launched it.
 #                                    Prior: **Fifty-sixth session: the P5.8 gate run cleared 10/13 gates including `pytest`.**
@@ -1111,6 +1114,42 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          one grey button.
 - [ ] todo — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
       Phase-5 acceptance names this explicitly).
+      **Brief sharpened 2026-08-10 (session 58) by measuring the code while the P5.8 gate run
+      held the test lane — recon only, nothing edited. The scope is smaller than the task
+      title implies, and it has moved from CSS to testing.**
+      1. **The reduced-motion rule already exists and is already global.** `src/index.css:742`
+         is `@media (prefers-reduced-motion: reduce)` over `*`, `*::before`, `*::after`,
+         forcing `animation-duration: 0.001ms !important`, `animation-iteration-count: 1
+         !important`, `transition-duration: 0.001ms !important`. Do **not** rebuild it and do
+         not add per-component `motion-reduce:` variants on the assumption it is missing —
+         that is the seventh Phase-5 chance for a note to be beaten by the code.
+      2. **That blanket rule genuinely reaches ALL motion in this app, and that was measured,
+         not assumed.** The whole surface is CSS-only: exactly **three** `@keyframes`
+         (`lm-in` screen entry :702, `lm-pulse` ambient :712, `lm-spin` spinner :721), and
+         **zero** of every escape hatch a blanket CSS rule cannot cover — no animation library
+         in `package.json` (no framer/motion/gsap/spring), **no `requestAnimationFrame`
+         anywhere in `src/`**, and **no `scroll-behavior: smooth` / `scrollIntoView` /
+         `scrollTo`**. So there is no JS-driven or scroll motion to retrofit. If P5.8's four
+         new screens added none either, the CSS half of this task is **already done** and the
+         honest deliverable is the proof.
+      3. **The actual gap is the test, and it does not exist at all.** `grep -rln
+         "reduced-motion|reducedMotion"` over `e2e/` and `src/` returns **only `index.css` and
+         `processing-state.tsx`** — no test file, in any suite, has ever asserted this.
+         MISSION §4 Phase-5 says "proven by a test", so a passing screenshot is not the
+         deliverable. Playwright takes `reducedMotion: "reduce"` in a context/`use:` block
+         (`playwright.config.ts:72` already has a `use:` block and one `chromium` project at
+         :77–80), which is the cheap seam — a second project or a per-test `test.use()`.
+      4. **Assert something observable, not the media query.** A test that only checks the
+         `@media` block exists re-states the CSS. Assert the *computed* style of a
+         genuinely-animating element (`processing-state.tsx` is the spinner and its header
+         comment at :19 already documents that it relies on this global rule, so it is the
+         honest target) is ~0 duration under `reduce` and non-zero without it. **Verify by
+         inversion** — deleting the `index.css:742` block must fail the test — per the standing
+         Phase-5 practice; a reduced-motion test that passes with the rule removed is the exact
+         "passes for the wrong reason" shape P5.5 chunk C already paid for once.
+      5. One subtlety worth not re-deriving: the rule neutralises duration but never sets
+         `animation: none`, so `lm-pulse` (an *infinite* ambient pulse) becomes one 0.001ms
+         cycle rather than stopping mid-frame. That is correct behaviour, not a bug to fix.
 - [ ] todo — **P5.11** Acceptance + UI-gate pass: E2E for XP accrual, leaderboard ordering, push
       delivery (mock), announcement flow; axe/Lighthouse/screenshots/visual compare.
 - [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
