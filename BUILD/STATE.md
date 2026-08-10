@@ -2,7 +2,9 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T13:15:00Z   # **Sixty-fifth session (this one): the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at 24m30s, now 11/13 gates PASS: `playwright-e2e` cleared, so only `puppeteer-audit` (in progress) and `ui-thresholds` remain. Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
+last_updated: 2026-08-10T13:31:00Z   # **Sixty-sixth session (this one): the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at 27m11s, still 11/13 PASS, inside `puppeteer-audit` (child `npm run audit` 6m38s, a FRESH Chrome at 42s, which is progress: `audit.mjs` cycles a browser per route batch). Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
+#                                    **The waiting time went into the one part of the P5.11 brief that had gone STALE, and it was pessimistic: the push/notification flow is now the CHEAPEST of the four, not the blocked one (new point 9).** Point 4 was written in session 59 *before* P5.9 existed. Three things now hold. (1) **G-13 needs ZERO markup change** — `NotificationRow` renders the title as a real `<h3>` with real `Mark as read`/`Open` buttons, so it is already in the suite's accessible-name idiom; it is the exact opposite of points 6 and 7(d), which do need an a11y fix. (2) **It costs no new seed group and no new driver** — the teacher's own announcement POST fans out at `announcements.py:202`, so the announcement flow and "push delivery" are *one driver, two assertions*; and `grade_ready` fires on the same `POST /student/correct` that point 7's XP assertion rides. (3) **Its preference gate is already satisfied** — an absent prefs row reads `DEFAULTS` = "every type enabled", so no prefs seeding. Assert `grade_ready` renders with **no** `Open` button (session 60's dead-link finding honoured in `destinationFor`), and assert the inbox row, never a delivered push.
+#                                    Prior: **Sixty-fifth session: the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at 24m30s, now 11/13 gates PASS: `playwright-e2e` cleared, so only `puppeteer-audit` (in progress) and `ui-thresholds` remain. Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
 #                                    **The waiting time went into VERIFYING, not re-sharpening, P5.11's riskiest precondition — and it downgrades point 7's worry.** Point 7 warned that `xp_events.subject_code` is a live FK to `subjects.code` whose row exists "only as a side effect" of the placement seed, so a missing row would make the fail-open `award_xp_safely` swallow a real FK error and the XP assertion vanish silently. Read rather than assumed: `xp_repo.py`'s own contract (§4) confirms only the *dedupe* constraint is swallowed and "a genuine foreign-key violation (e.g. an unknown `subject_code`) still raises" — but **`scripts/seed_e2e.py:1316` raises `RuntimeError` if `link_past_paper_rows()` links fewer rows than it was given**, so a seed that produced no `subjects` row cannot complete. The precondition is *guarded by the seed itself*, not incidental. **The residual risk is only "the seed was never run against this DB", which every E2E run already precludes.** Build the XP-accrual assertion without adding a subject-row guard to it.
 #                                    Prior: **Sixty-fourth session: the gate was at 16m19s, 4/13 (inside `pytest`).** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file was touched — the run is verifying this exact tree — so the waiting time went into the next unmeasured P5.11 flow: **XP accrual (point 7 on the P5.11 line).**
 #                                    **The finding inverts point 2's framing for this one flow: XP accrual needs NO new seed data, because its cause already exists.** `correct-paper.spec.ts` signs up a *fresh* account and drives a real upload→mark, which is the `paper_corrected` seam (`routers/student.py:851`); a brand-new account has zero prior XP, and `GET /api/student/xp` is gated on the student role **only**, so the never-onboarded account can read S-31. The expected value is exact — **50** — not a range. Build this flow first, not last.
@@ -1584,6 +1586,41 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          no class audience and would render an honest empty state that reads as a passing flow.
          **So the seed work is G-10's three `devices` rows and the leaderboard's XP-ordering
          rows — and only those pay the three-edit tax.**
+      9. **Point 4 is STALE and it was pessimistic. The push/notification flow is now the
+         CHEAPEST of the four, not the blocked one. Measured session 66, read-only while the
+         P5.9 gate held the lane.** Point 4 was written in session 59, *before* P5.9 existed,
+         and its "no screen to assert against until P5.9 lands" is now wrong twice over: the
+         screen shipped (chunks B–D), **and** the flow needs no driver of its own.
+         **(a) G-13 needs ZERO markup change — it is the opposite of points 6 and 7(d).**
+         `NotificationRow` (`Notifications.tsx:105`) renders the title as a real
+         **`<h3>`** (:127), so `getByRole("heading", {name: "New announcement"})` locates a
+         row directly; the body is a `<p>` carrying the teacher's own title, the unread state
+         is a literal `Unread` chip, and both actions are real buttons
+         (`Mark as read`, `Open`). Every assertion this flow needs is already in the suite's
+         accessible-name idiom. **Do not budget an a11y fix here** — S-29 and S-31 need one,
+         G-13 does not.
+         **(b) It rides on drivers that already exist, so it costs no new seed group.** The
+         announcement fan-out is `announcements.py:202` — the teacher's own
+         `POST /api/teacher/announcements` notifies every `student_recipients(row)` — so the
+         announcement flow of point 8 and "push delivery (mock)" are **one driver, two
+         assertions**: the S-28 list *and* the G-13 inbox row. Likewise `grade_ready`
+         (`student.py:877`) fires on the same `POST /student/correct` that point 7 builds the
+         XP assertion on, so the correct-paper spec can assert an inbox row for free.
+         **(c) `grade_ready` renders with NO `Open` button and that is correct, not a bug.**
+         `destinationFor` (`Notifications.tsx:73`) maps `announcement` → `/student/announcements`
+         and everything else → `null`, which is session 60's finding (the upload UUID is not
+         addressable by `/student/result/:paperId`) honoured in the UI. Assert the *absence*;
+         a later session must not "fix" it into a dead link.
+         **(d) The one precondition — and unlike point 7(c) it is already satisfied.**
+         `notification_repo.create` gates every row on the recipient's preferences
+         (`:308-315`, an opted-out type returns `row=None` and the flow silently produces
+         nothing). But `notification_prefs_repo.py:88-98` returns `DEFAULTS` for a user with
+         **no stored row**, documented as "every type enabled, no quiet hours". So a fresh
+         signup and an unseeded roster student both receive. No prefs seeding required.
+         **(e) Scope honestly, exactly as point 4 said:** `transport.available` is `False`
+         here (no VAPID keys, D5.9 §4), so `notify_safely` returns
+         `push_suppressed_reason="transport_unavailable"` **after** writing the row. The row
+         is the assertable fact; a delivered push is not, in any harness on this machine.
 - [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
       **Brief sharpened 2026-08-10 (session 60) while the P5.8 gate run held the test lane —
       recon only, nothing edited. P5.12 was the last remaining bare one-liner (56/58/59 did
