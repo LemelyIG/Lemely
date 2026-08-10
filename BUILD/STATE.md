@@ -423,7 +423,7 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             `uuid.UUID` accepts `urn:uuid:`/uppercase/braces forms and echoing the raw path
             hands back an id that never matches the list response (P5.4 chunk B's lesson,
             second sighting).
-      - [x] **chunk C** (pending commit) — the exam calendar. Migration 0017 (`exam_dates`)
+      - [x] **chunk C** (`5713238`) — the exam calendar. Migration 0017 (`exam_dates`)
             + `lemely/db/exam_calendar_repo.py` (`ExamCalendarService`: `ingest`,
             `parse_timetable_payload`, `calendar_for_student`) + `schemas_exam_calendar.py`
             + `routers/exam_calendar.py` (`GET /api/student/exam-calendar`, read-only) +
