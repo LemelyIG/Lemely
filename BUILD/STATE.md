@@ -967,7 +967,23 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             swap with 7.8 GB RAM — resource pressure, not a tool timeout. **The fix that
             makes this survivable is `setsid`**: session 51 launched the run in its own
             detached session/process group, so a dying agent session no longer takes the
-            gate run down with it. See the corrected environment fact below.)
+            gate run down with it. See the corrected environment fact below.
+            **CONFIRMED by the fifty-second session (this one): `setsid` is the fix, and
+            the fifty-first session's run was still alive when session 52 resumed.**
+            Session 51 launched it at 11:30; session 52 opened at 11:33 and found
+            `check.sh` PID 927164 and its `pytest` child 927224 both **still running** at
+            3 minutes elapsed — past the 2–4 minute mark where all five previous runs
+            died. Session 52 did **not** start a sixth run; it attached to the surviving
+            one by polling `kill -0`.
+            **The "84-byte log" is not a symptom of anything.** It is what *every*
+            healthy run looks like while `pytest` is in flight: `check.sh` suppresses a
+            passing gate's output, so between the four backend gates finishing and pytest
+            returning, the log is exactly those four PASS lines and nothing else. The
+            fifty-second session's still-running log was byte-identical to the five
+            "dead" ones. **A log that has stopped growing is only evidence of death if
+            the process is also gone — check `pgrep`/`kill -0` before reading a byte
+            count as a failure signal.** Three sessions' diagnoses were built on that
+            byte count alone.)
             — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
@@ -1018,6 +1034,14 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
   `setsid nohup bash -c './scripts/check.sh > /tmp/LOG 2>&1; echo "EXIT=$?" >> /tmp/LOG' </dev/null >/dev/null 2>&1 & disown`
   Then poll the log; a session that dies mid-run costs nothing, because the next session
   reads a log that kept growing. Append `EXIT=$?` so the status is readable afterwards.
+  - *Confirmed by session 52*, which resumed 3 minutes after session 51 launched the run
+    and found it **still alive** — the first run in five to get past the 2–4 minute mark.
+  - **Corollary that cost four sessions: an 84-byte log is the NORMAL appearance of a
+    healthy run mid-`pytest`, not a symptom.** `check.sh` prints nothing for a passing
+    gate, so between the four backend gates and pytest returning there is nothing to
+    write. Sessions 47–50 each read that byte count as a crash. **Before diagnosing a
+    stalled run, `pgrep -af check.sh` or `kill -0 <pid>`** — a stopped log plus a live
+    process means "working", and the only honest wait is to poll the PID, not the file.
   A full run is ~25 minutes (pytest ~10, the audit leg ~11). The original note's real
   content still holds and is why the script is the entry point: `check.sh` exports
   `$HOME/.local/bin` onto PATH itself, so all 13 gates run.
