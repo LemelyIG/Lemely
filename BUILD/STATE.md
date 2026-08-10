@@ -2,7 +2,9 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T12:52:00Z   # **Sixty-second session (this one): the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at ~7 min, 4/13 gates PASS. Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file was touched — the run is verifying this exact tree — so the waiting time went into the last unmeasured brief.
+last_updated: 2026-08-10T12:57:00Z   # **Sixty-third session (this one): the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at 12m27s, 4/13 gates PASS (inside `pytest`). Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file was touched — the run is verifying this exact tree — so the waiting time went into the one measurable thing left: **what the P5.11 E2E can actually assert against.**
+#                                    **P5.11 point 6 is new and it changes the task's shape: the leaderboard-ordering assertion — the single acceptance criterion MISSION §4 names for this phase — has nothing to grab.** `data-testid` appears **zero** times in `web/src/` and `getByTestId` zero times in `web/e2e/`, so there is no test-hook convention to fall back on (the suite locates purely by accessible name); and `BoardRow` is a bare `<div>` inside a bare `divide-y` `<div>`, so there is no row-shaped locator either. The fix is **list semantics on the ranked container only** — honest markup, an a11y gain, and the suite's existing idiom. **The trap: the viewer's pinned row is the same `BoardRow` rendered OUTSIDE that container**, so wrapping all of `BoardBody` puts an out-of-sequence rank in the list and the ordering assertion can pass on a board where the viewer ranks last. Full detail on the P5.11 line.
+#                                    Prior: **Sixty-second session: P5.11's G-10 seed precondition measured.**
 #                                    **P5.11's G-10 seed precondition is now measured (point 5 on the P5.11 line).** Every prior session left it as a pointer ("a seed account already holding three live devices"). It is three plain `devices` inserts — but the load-bearing part is that the account must be **dedicated**: any other E2E logging in as it mints a fresh `deviceId` and can silently consume a slot, after which G-10 stops reproducing and the audit entry goes green by rendering the ordinary logged-in screen. Silent and order-dependent. The 409 itself is non-destructive (`allow_eviction=False` writes nothing), so the entry is safely re-runnable.
 #                                    **One near-miss worth keeping: I almost recorded that the SPA sends no `deviceId`, making the 3-device limit really a 3-*login* limit.** That was false — `getDeviceId()` (`web/src/lib/auth/storage.ts:16`) mints once into `localStorage` and `AuthContext.tsx:79` sends it; a `grep | head -10` had truncated before line 79. The client half is fully built and correct — **do not re-derive it as a defect**. This phase keeps recording "the code beats the note"; this time the wrong note would have been mine, from a truncated search. **Never conclude an absence from a `head`-truncated grep.**
 #                                    Prior: **Sixty-first session: P5.9 CHUNKS C AND D ARE BUILT AND COMMITTED; the P5.9 UI gate was launched under `setsid`.**
@@ -1481,6 +1483,32 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          UI names the device it will sign out rather than leaving the client to re-derive it —
          is not visible in the evidence.
          Remember this seed change costs the **three** edits of point 3, not one.
+      6. **The leaderboard-ordering assertion has NOTHING to grab, and the naive fix is
+         wrong. Measured session 63, read-only while the P5.9 gate held the lane.**
+         **(a) There is no test-hook convention to fall back on.** `data-testid` appears
+         **zero** times in `web/src/` and `getByTestId` **zero** times in `web/e2e/` — the
+         whole 15-file suite locates by accessible name (`getByRole`/`getByText`/`getByLabel`,
+         top hits: `getByRole("link", {name: …})`, `getByText("Loading overview…")`). Do not
+         introduce testids for this one flow; that imports a foreign convention into a suite
+         that deliberately has none.
+         **(b) But `BoardRow` (`Standings.tsx:120`) is a bare `<div>` with no role**, inside a
+         bare `<div className="divide-y">` (`:199`). Rank is a plain `<span>`, name a plain
+         `<span>`. So there is **no row-shaped locator at all** — no `listitem`, no `row`, no
+         accessible name on the row. Ordering can only be read as raw DOM order out of the
+         section (`aria-labelledby="s29-board"`, `:352`), which asserts nothing a refactor
+         would not silently break.
+         **The right move is list semantics on the ranked container** — a ranked board *is* an
+         ordered list, so `<ol>`/`<li>` is the honest markup, it is an a11y improvement rather
+         than a test-only hook, and it yields `getByRole("listitem")` in the suite's existing
+         idiom. It is a `web/` change, so P5.11's own UI gate covers it.
+         **(c) The trap: the viewer's pinned row is the SAME `BoardRow` component rendered
+         OUTSIDE the ranked container** (`:216`, when the viewer falls outside the top N).
+         Wrap the `<ol>` around the `divide-y` container **only**. Wrapping the whole
+         `BoardBody` puts the pinned row in the list as a trailing `listitem` whose rank is
+         out of sequence — an ordering assertion then either fails for the wrong reason or,
+         worse, passes on a board where the viewer happens to rank last. Same shape as the
+         `no_enrolment`/`no_timetable` collapse P5.5 chunk C refused: two different things
+         that render alike.
 - [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
       **Brief sharpened 2026-08-10 (session 60) while the P5.8 gate run held the test lane —
       recon only, nothing edited. P5.12 was the last remaining bare one-liner (56/58/59 did
