@@ -5,6 +5,7 @@ import { parentRoute } from "@/portals/parent"
 import { Login } from "@/portals/auth/Login"
 import { ParentLogin } from "@/portals/auth/ParentLogin"
 import { DeviceSettings } from "@/portals/settings/DeviceSettings"
+import { NotificationSettings } from "@/portals/settings/NotificationSettings"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 
@@ -55,6 +56,15 @@ export const router = createBrowserRouter([
   {
     path: "/settings/devices",
     element: <RequireAuth allowedRoles={ALL_ROLES}><DeviceSettings /></RequireAuth>,
+  },
+  // G-12. Top-level for the same reason, and one it does not share: the
+  // at-risk-alert preference belongs to the **teacher and the parent**
+  // (`routers/me.py` gates it to those two roles), so mounting this inside the
+  // student portal would have put a toggle out of reach of the only roles it
+  // applies to.
+  {
+    path: "/settings/notifications",
+    element: <RequireAuth allowedRoles={ALL_ROLES}><NotificationSettings /></RequireAuth>,
   },
   {
     ...teacherRoute,

@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { Eyebrow } from "@/components/ui/primitives"
@@ -205,16 +205,28 @@ export function Notifications() {
           <Eyebrow>Inbox</Eyebrow>
           <h1 className="text-title text-t1">Notifications</h1>
         </div>
-        {unreadCount > 0 ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => markAll.mutate()}
-            disabled={markAll.isPending}
+        <div className="flex items-center gap-3">
+          {/* The inbox is where a reader notices they are getting too much or
+              too little, so it is where the settings for that belong. Until the
+              portal navs grow an entry (P5.9 chunk D), this is also the only
+              route to G-12 for a student. */}
+          <Link
+            to="/settings/notifications"
+            className="text-body-sm text-accent hover:underline"
           >
-            Mark all as read
-          </Button>
-        ) : null}
+            Notification settings
+          </Link>
+          {unreadCount > 0 ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => markAll.mutate()}
+              disabled={markAll.isPending}
+            >
+              Mark all as read
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-col gap-3">
