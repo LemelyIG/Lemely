@@ -930,15 +930,27 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             lint-imports clean. `schemas_student_classes` joined the
             `disallow_any_explicit` list (**fourth sighting** — every `schemas_*.py`
             costs that edit).
-      - [ ] **doing — chunk D** — **S-31 (profile / XP / streak)**, on chunk A's
-            `GET /api/student/xp`. Total, level band (`levelStartXp`/`nextLevelXp` are on
-            the wire so the bar needs no TypeScript arithmetic — do not re-derive the
-            curve client-side), streak with freezes, this week by source, and the 28-day
-            calendar. **`calendar` omits days with no XP by design** — fill the grid from
-            `calendarStart`/`calendarEnd`, and do not render an absent day differently
-            from a zero one. **No lifetime stats and no achievements** (D5.13 §3): if the
-            screen looks thin without them, that is the honest shape, not a gap to fill.
-      - [ ] **UI gate for P5.8** — MISSION §6.8 in full, run **once** after C and D land
+      - [x] **chunk D** — **S-31 is built.** `screens/Profile.tsx`, `lib/xpTypes.ts`,
+            `lib/hooks/useXpApi.ts`, route `/student/profile`, sidebar + breadcrumb, and
+            an **S-31 entry in `web/scripts/audit.mjs`**. 15 new vitest cases
+            (**381 total, from 366**); build / oxlint 0 errors / `impeccable detect`
+            clean.
+            **No lifetime stats and no achievements shipped, per D5.13 §3** — the screen
+            is deliberately thin and a future session must not "fill" it: a count of
+            `xp_events` rows is wrong by construction (caps write no row, dedupe writes
+            one row for two markings) and "hours studied" has no source in this schema.
+            The audit entry says so too, so a probe for those states is not added later
+            as if restoring something missing.
+            **The level curve is not re-derived client-side** (pinned by a test reading
+            50% off a band, not a formula), and **the calendar collapses absent into zero
+            deliberately** — that is the correct direction: the backend omits empty days
+            so "no XP" and "outside the window" stay distinct, and inside a known window
+            an omitted day means exactly zero. Pinned by a test asserting an absent day
+            and an explicit zero day produce identical cells.
+            **Incidentally closes half of a P5.7 gap:** `/settings/devices` had no nav
+            entry anywhere; the **student** portal now reaches it from S-31. Teacher and
+            parent still do not — that remains P5.11's.
+      - [ ] **doing — UI gate for P5.8** — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
             (read `removed` = 0, not `changed`). The audit leg alone is ~11 minutes, so
