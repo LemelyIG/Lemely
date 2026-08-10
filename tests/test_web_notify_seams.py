@@ -25,11 +25,26 @@ Seam 1 — ``grade_ready`` at ``POST /api/student/correct``. What it pins:
   the correction a normal, successful SSE stream.
 * The preference gate is live at the seam, not merely inside the service: a
   student who turned ``grade_ready`` off gets no row at all.
+
+Seam 2 — ``announcement`` at ``POST /api/teacher/announcements``. Here the
+composer and the recipients are *different people*, which is what the seam has
+to get right. What it pins:
+
+* Every enrolled student is notified, not just the first — the dedupe key
+  carries the recipient as well as the announcement (D5.9 §6).
+* A school-wide post reaches students through ``Seat``, never
+  ``SchoolMembership`` (D5.4), and a revoked seat is not in the audience: a
+  notification pointing at a row the reader cannot open is worse than none.
+* A scheduled (future ``publishAt``) post notifies nobody yet, because
+  ``list_for_student`` still hides it.
+* The composer survives a failing inbox, and one student's opt-out does not
+  silence their classmates.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -43,11 +58,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
-from lemely.db.models import User
+from lemely.db.class_repo import ClassService
+from lemely.db.models import School, SchoolMembership, User
 from lemely.db.models.attempts import Attempt
-from lemely.db.models.enums import NotificationType, Role
+from lemely.db.models.enums import MembershipRole, NotificationType, Role, SeatStatus
+from lemely.db.models.orgs import ClassEnrollment, Seat
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
 from lemely.db.upload_repo import StudentUploadRepository
@@ -56,8 +74,10 @@ from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
+    get_announcement_service,
     get_attempt_repo,
     get_auth_context,
+    get_class_service,
     get_gemini_client,
     get_notification_service,
     get_push_transport,
@@ -357,17 +377,23 @@ def test_the_notification_carries_no_mark_and_no_grade(
     field, so a future seam that adds a helpful "you scored…" line fails here.
     """
     api, student_id = correct_client
-    _upload_and_correct(api)
+    paper_id = _upload_and_correct(api)
 
     row = _inbox(notifications, student_id, NotificationType.grade_ready)[0]
-    text = f"{row.title} {row.body} {row.payload}".lower()
-    # "2/3" is the awarded total, "67" its percentage; "out of"/"scored"/"%"
-    # are the shapes a well-meaning future edit would reach for. The word
-    # "marked" is fine and deliberately not forbidden — that a paper *has
-    # been marked* is the event, and saying so reveals nothing.
+    # The human-readable half: "2/3" is the awarded total, "67" its
+    # percentage; "out of"/"scored"/"%" are the shapes a well-meaning future
+    # edit would reach for. The word "marked" is fine and deliberately not
+    # forbidden — that a paper *has been marked* is the event, and saying so
+    # reveals nothing.
+    text = f"{row.title} {row.body}".lower()
     for forbidden in ("2/3", "67", "%", "scored", "out of", "grade"):
         assert forbidden not in text
+    # The payload is checked structurally rather than by substring: it holds
+    # an id, and a UUID contains arbitrary hex, so "67" appears in one about
+    # a third of the time. A substring scan over it is a test that fails on
+    # the seed rather than on the code — which is exactly what it did.
     assert set(row.payload) == {"uploadId"}
+    assert row.payload["uploadId"] == paper_id
 
 
 def test_a_notification_failure_does_not_fail_the_correction(
@@ -412,3 +438,259 @@ def test_a_student_who_turned_grade_ready_off_gets_no_row(
 
     assert _inbox(notifications, student_id, NotificationType.grade_ready) == []
     assert transport.endpoints == []
+
+
+# ---------------------------------------------------------------------------
+# Seam 2 — announcement (POST /api/teacher/announcements).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def class_service(pg_sessionmaker: sessionmaker[Session]) -> ClassService:
+    return ClassService(pg_sessionmaker)
+
+
+@pytest.fixture
+def announcements(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> AnnouncementService:
+    return AnnouncementService(pg_sessionmaker, class_service)
+
+
+@pytest.fixture
+def compose_client(
+    announcements: AnnouncementService,
+    class_service: ClassService,
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> Iterator[TestClient]:
+    """A ``TestClient`` for the composer with a live inbox behind it.
+
+    Auth is set per test via :func:`_auth_as`, because this seam's whole point
+    is that the *composer* and the *recipients* are different people.
+    """
+    app = create_app()
+    app.dependency_overrides[get_announcement_service] = lambda: announcements
+    app.dependency_overrides[get_class_service] = lambda: class_service
+    app.dependency_overrides[get_notification_service] = lambda: notifications
+    app.dependency_overrides[get_push_transport] = lambda: transport
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _auth_as(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(user_id), role=role.value
+    )
+
+
+def _seed_school(sm: sessionmaker[Session], admin_id: uuid.UUID) -> uuid.UUID:
+    school_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(School(id=school_id, name="Test School", seat_quota=10))
+        session.add(
+            SchoolMembership(
+                school_id=school_id,
+                user_id=admin_id,
+                membership_role=MembershipRole.school_admin,
+            )
+        )
+    return school_id
+
+
+def _enroll(sm: sessionmaker[Session], class_id: uuid.UUID, student_id: uuid.UUID) -> None:
+    with sm.begin() as session:
+        session.add(ClassEnrollment(class_id=class_id, student_id=student_id))
+
+
+def _seat(
+    sm: sessionmaker[Session],
+    school_id: uuid.UUID,
+    student_id: uuid.UUID,
+    status: SeatStatus = SeatStatus.assigned,
+) -> None:
+    with sm.begin() as session:
+        session.add(Seat(school_id=school_id, assigned_user_id=student_id, status=status))
+
+
+def _post(client: TestClient, **body: object) -> dict[str, object]:
+    resp = client.post("/api/teacher/announcements", json=body)
+    assert resp.status_code == 200, resp.text
+    return dict(resp.json())
+
+
+def test_a_class_announcement_notifies_every_enrolled_student(
+    compose_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    notifications: NotificationService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    alice = _seed_user(pg_sessionmaker)
+    bob = _seed_user(pg_sessionmaker)
+    _enroll(pg_sessionmaker, cls.class_id, alice)
+    _enroll(pg_sessionmaker, cls.class_id, bob)
+    _auth_as(compose_client, teacher, Role.teacher)
+
+    payload = _post(
+        compose_client,
+        title="Test on Friday",
+        body="Bring calculators.",
+        classIds=[str(cls.class_id)],
+    )
+    announcement_id = payload["announcements"][0]["announcementId"]  # type: ignore[index]
+
+    # **Both** students. D5.9 §6 makes this seam idempotent on the pair
+    # (announcement_id, user_id), and it is the unique index — already
+    # (user_id, type, dedupe_key) — that supplies the user half, so one
+    # announcement-id key per recipient is one row each, not one row total.
+    for student in (alice, bob):
+        rows = _inbox(notifications, student, NotificationType.announcement)
+        assert len(rows) == 1
+        assert rows[0].title == "New announcement"
+        assert rows[0].body == "Test on Friday"
+        assert rows[0].payload == {"announcementId": announcement_id}
+
+    # The composing teacher is not in their own audience.
+    assert _inbox(notifications, teacher, NotificationType.announcement) == []
+
+
+def test_a_school_wide_announcement_notifies_seated_students(
+    compose_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+) -> None:
+    """D5.4's guard, in the delivery direction.
+
+    Students reach a school through ``Seat``, never ``SchoolMembership`` —
+    that table's role vocabulary is staff-only. Resolving the audience the
+    wrong way returns nobody and reads as "the school has no students"
+    rather than as a bug, which is why this test exists as well as
+    ``test_announcement_student_read.py``'s read-side twin.
+    """
+    admin = _seed_user(pg_sessionmaker, Role.school_admin)
+    school_id = _seed_school(pg_sessionmaker, admin)
+    seated = _seed_user(pg_sessionmaker)
+    _seat(pg_sessionmaker, school_id, seated)
+    _auth_as(compose_client, admin, Role.school_admin)
+
+    _post(
+        compose_client,
+        title="Half term",
+        body="School closed Monday.",
+        schoolWide=True,
+        schoolId=str(school_id),
+    )
+
+    assert len(_inbox(notifications, seated, NotificationType.announcement)) == 1
+
+
+def test_a_revoked_seat_is_not_notified(
+    compose_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+) -> None:
+    """Someone whose seat was revoked cannot read the post, so must not be told about it.
+
+    The audience reader and ``list_for_student`` share this predicate for
+    exactly this reason: a notification pointing at a row the recipient is
+    not allowed to open is worse than no notification.
+    """
+    admin = _seed_user(pg_sessionmaker, Role.school_admin)
+    school_id = _seed_school(pg_sessionmaker, admin)
+    revoked = _seed_user(pg_sessionmaker)
+    _seat(pg_sessionmaker, school_id, revoked, SeatStatus.revoked)
+    _auth_as(compose_client, admin, Role.school_admin)
+
+    _post(
+        compose_client,
+        title="Half term",
+        body="School closed Monday.",
+        schoolWide=True,
+        schoolId=str(school_id),
+    )
+
+    assert _inbox(notifications, revoked, NotificationType.announcement) == []
+
+
+def test_a_scheduled_announcement_notifies_nobody_yet(
+    compose_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    notifications: NotificationService,
+) -> None:
+    """A future ``publishAt`` is invisible to students, so it must be silent.
+
+    Notifying now would push a student at a post ``list_for_student`` still
+    hides — a pointer to nothing. The honest cost, recorded rather than
+    hidden: with no scheduler in this build (D5.9 §5), a scheduled
+    announcement is never notified about at all; it simply appears in the
+    student's list when its time comes.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    student = _seed_user(pg_sessionmaker)
+    _enroll(pg_sessionmaker, cls.class_id, student)
+    _auth_as(compose_client, teacher, Role.teacher)
+
+    future = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+    _post(
+        compose_client,
+        title="Next week",
+        body="Later.",
+        classIds=[str(cls.class_id)],
+        publishAt=future,
+    )
+
+    assert _inbox(notifications, student, NotificationType.announcement) == []
+
+
+def test_a_notification_failure_does_not_fail_the_compose(
+    compose_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> None:
+    """D5.9 §1: the announcement is written and stays written.
+
+    The teacher's post succeeded before this seam ran; an inbox outage costs
+    the class a nudge, and must not cost the teacher their announcement or
+    show them a 500 for work that landed.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    _enroll(pg_sessionmaker, cls.class_id, _seed_user(pg_sessionmaker))
+    _auth_as(compose_client, teacher, Role.teacher)
+    compose_client.app.dependency_overrides[get_notification_service] = _FailingNotificationService  # type: ignore[union-attr]
+
+    resp = compose_client.post(
+        "/api/teacher/announcements",
+        json={"title": "Test", "body": "Body", "classIds": [str(cls.class_id)]},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["announcements"]) == 1
+
+
+def test_a_student_who_turned_announcements_off_gets_no_row(
+    compose_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    notifications: NotificationService,
+    prefs: NotificationPreferencesService,
+) -> None:
+    """One student opting out does not silence their classmates."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    quiet = _seed_user(pg_sessionmaker)
+    loud = _seed_user(pg_sessionmaker)
+    _enroll(pg_sessionmaker, cls.class_id, quiet)
+    _enroll(pg_sessionmaker, cls.class_id, loud)
+    prefs.set(quiet, announcement=False)
+    _auth_as(compose_client, teacher, Role.teacher)
+
+    _post(compose_client, title="Test", body="Body", classIds=[str(cls.class_id)])
+
+    assert _inbox(notifications, quiet, NotificationType.announcement) == []
+    assert len(_inbox(notifications, loud, NotificationType.announcement)) == 1

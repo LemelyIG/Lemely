@@ -401,6 +401,78 @@ class AnnouncementService:
             )
             return int(session.scalar(stmt) or 0)
 
+    def student_recipients(self, row: AnnouncementRow) -> list[uuid.UUID]:
+        """Return the students who may see ``row`` — the audience, as ids (P5.6 chunk C2b).
+
+        This is :meth:`list_for_student`'s predicate read in the other
+        direction: given an announcement, who is in its audience, rather than
+        given a student, which announcements are in theirs. It exists so the
+        notification seam has **one** definition of "the audience" to call.
+        Deriving the recipient list independently at the router would let the
+        two drift, and the failure mode of that drift is silent — a student
+        who can read an announcement but was never told about it, or worse, a
+        notification pointing at a row the reader is not allowed to open.
+
+        The two arms mirror ``create``'s two audiences exactly:
+
+        * a ``class_id`` row → every student with a ``class_enrollments`` row
+          for that class;
+        * a ``school_id`` row → every student holding a non-revoked
+          :class:`~lemely.db.models.orgs.Seat` in that school. **``Seat``,
+          not ``SchoolMembership``** — the latter is staff-only, so keying on
+          it would return an empty audience for every school-wide post and
+          read as "nobody was in the school" rather than as a bug (D5.4).
+
+        **A row that is not yet published has no recipients yet.** Returning
+        its future audience here would notify students about something
+        :meth:`list_for_student` still hides from them — a push telling you to
+        go and read a post that is not there. The consequence, honestly
+        stated: with no scheduler in this build (D5.9 §5), a scheduled
+        announcement is never notified about *at all*; it simply appears in
+        the student's list at its publish time. That is the correct trade —
+        a missing nudge, never a broken pointer.
+
+        The author is not excluded, because the author is staff and can be in
+        neither audience: a teacher has no ``class_enrollments`` row and no
+        ``Seat``.
+        """
+        publish_at = row.publish_at
+        if publish_at is not None:
+            # ``publish_at`` reaches this row from two places: a DB read of a
+            # ``timestamptz`` column (always aware) and, on the create path,
+            # whatever the router parsed out of the request, where an ISO
+            # string with no offset is naive. Comparing the two shapes raises
+            # TypeError, and this runs *outside* ``notify_safely`` — so an
+            # unnormalised naive value would 500 an announcement that was
+            # already written. Naive means UTC here, as everywhere else.
+            if publish_at.tzinfo is None:
+                publish_at = publish_at.replace(tzinfo=UTC)
+            if publish_at > self._now():
+                return []
+
+        # The two arms run their own query rather than sharing a ``stmt``
+        # variable: ``Seat.assigned_user_id`` is nullable (an unassigned seat
+        # is a real state) while ``ClassEnrollment.student_id`` is not, and
+        # ``Select`` is invariant in its row type, so no single annotation
+        # accepts both. The seat arm's ``is_not(None)`` predicate already
+        # excludes the NULLs in SQL; the comprehension restates it for the
+        # type checker rather than casting.
+        with self._sessionmaker() as session:
+            if row.class_id is not None:
+                enrolled = select(ClassEnrollment.student_id).where(
+                    ClassEnrollment.class_id == row.class_id
+                )
+                return list(session.scalars(enrolled.distinct()).all())
+            if row.school_id is not None:
+                seated = select(Seat.assigned_user_id).where(
+                    Seat.school_id == row.school_id,
+                    Seat.assigned_user_id.is_not(None),
+                    Seat.status != SeatStatus.revoked,
+                )
+                return [uid for uid in session.scalars(seated.distinct()).all() if uid is not None]
+        # create() writes one of the two audiences, never neither.
+        return []
+
     def mark_read(
         self,
         student_id: uuid.UUID | str,
