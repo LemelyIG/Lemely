@@ -2,7 +2,8 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T11:25:00Z   # **A SECOND FULL GATE RUN IS IN FLIGHT — `setsid` **PID 1232550** (`bash -c ./scripts/check.sh …`), log `/tmp/p59b-gate.log`, launched 2026-08-10T10:52Z, expect ~31 min, ends in an `EXIT=` line. Do NOT relaunch it; attach and arm a Monitor.** **Watch the PID you record: this line first said 1232528, which was the transient `setsid` helper and had already exited — `ps -p` on it says GONE while the run is perfectly alive, and a session trusting that note would relaunch and burn 31 minutes.** Take the PID of the surviving `bash -c` wrapper (`pgrep -af check.sh`), never the one `$!` reports right after `setsid`. It covers all three of this session's changes at once (the G-13 registry entry, the `page-has-heading-one` fix, and P5.10's new spec) — deliberately one run rather than three. Commit `5df4807`; working tree clean at launch. When it comes back green, **P5.9 AND P5.10 are both done (11/12)** and the next task is P5.11.
+last_updated: 2026-08-10T14:40:00Z   # **Seventy-second session: THE SECOND GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0. P5.9 AND P5.10 ARE BOTH DONE — 11/12 Phase-5 tasks complete. The only remaining task before the phase report is P5.11, which is now `doing`.** No gate run is in flight; the test lane is FREE for the first time in twelve sessions. Coverage **90.91%** off that run's own `.coverage` (develop 90.18% — no drop; byte-identical to P5.8 because P5.9/P5.10 touched zero backend files). Working tree clean on entry; INBOX had no unhandled items.
+#                                    **What that changes about how to work: sessions 62–71 all ran read-only because a gate held the lane, and they spent that time turning P5.11's one-line brief into SIXTEEN measured points. Do not add a seventeenth. The brief is done; P5.11 is now a BUILD task, and the lane is free to build in.** Points 6+16 (S-29 `BoardRow` element prop), 7(d) (S-31 aria-labels), 15 (the XP seed), 5+3 (G-10's dedicated 3-device account and its three-edit contract tax) and 12 (the stale audit exclusion list) are the five concrete edits; points 7/11/13/14/9 are the four E2E specs; point 12(a)/(c) is the re-baseline + compare procedure.
 #                                    **Sixty-ninth session: the second gate run was ALIVE at 11m18s (4/13, inside `pytest`) on entry — attached, Monitor armed, NOT relaunched.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
 #                                    **Seventieth session: the second gate run was ALIVE at 19m00s (10/13) on entry — attached, Monitor armed, NOT relaunched; `playwright-e2e` PASSED during the session, so it stands at 11/13 with only `puppeteer-audit` and `ui-thresholds` left.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
 #                                    **Seventy-first session: the second gate run was ALIVE at 24m02s (11/13, inside `puppeteer-audit`) on entry — attached, Monitor armed, NOT relaunched; only `puppeteer-audit` and `ui-thresholds` remain.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
@@ -1135,7 +1136,15 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       Follow P5.7's frontend conventions: no `fallback` in `request()`, one hook file per
       area under `lib/hooks/`, and **do not run `npx prettier`** (see the environment fact
       below). MISSION §6.8 applies in full again.
-- [ ] doing — **P5.9** Screens G-10, G-11, G-12, G-13.
+- [x] done — **P5.9** Screens G-10, G-11, G-12, G-13.
+      **CLOSED 2026-08-10 (session 72): the second full gate run finished — ALL 13 GATES PASS,
+      0 skipped, EXIT=0** (`setsid` PID 1232550, log `/tmp/p59b-gate.log`, ~31 min, carried
+      across four agent sessions: 68 launched, 69–71 attached, 72 caught the exit). It verified
+      the tree carrying all three of session 67's changes at once — the G-13 registry entry,
+      the `page-has-heading-one` fix, and P5.10's new spec. Coverage read off that run's own
+      `.coverage`: **90.91%** (develop 90.18%, P5.8 90.91% — no drop; identical because P5.9/
+      P5.10 touched zero backend files, which is the same correct-not-stale equality the P5.9
+      UI-gate line already explains). Commit `5df4807`; working tree clean at launch and at exit.
       **D5.15 recorded 2026-08-10 (session 60) BEFORE any code**, per the ordering MISSION §4
       mandates for this phase — it answers item 3 below and adds one finding item 3 did not
       have. Two loads worth carrying up here:
@@ -1325,8 +1334,8 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             This is D4.25 restated by a second phase: `check_ui_gates.py` has **no performance
             check**, so a green `ui-thresholds` says nothing about performance. **Never cite
             this run as a performance pass.** Carried to P5.12 §4.
-      - [ ] **G-13 registry gap — FOUND BY SESSION 67 AFTER the gate went green, and it is the
-            reason P5.9 is not closed yet.** The gate passed on a registry that **did not
+      - [x] **G-13 registry gap — FOUND BY SESSION 67 AFTER the gate went green; CLOSED by the
+            second gate run (session 72, all 13 PASS on the tree carrying the fix).** The gate passed on a registry that **did not
             contain G-13 at all**: `Notifications.tsx` (chunk B's screen, route
             `/student/notifications`) shipped with no entry in `web/scripts/audit.mjs`, so the
             one new *student* screen in this task was never axe-audited, never
@@ -1415,8 +1424,11 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          "the browser denied permission", which §G-12 explicitly asks be shown "clearly with
          a route to fix it rather than toggles that silently do nothing". Three states, not
          one grey button.
-- [ ] doing — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
+- [x] done — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
       Phase-5 acceptance names this explicitly).
+      **CLOSED 2026-08-10 (session 72) by the same second gate run — `playwright-e2e` PASS with
+      `reduced-motion.spec.ts` in the suite.** No CSS was written, as items 1–3 predicted; the
+      deliverable was the proof test and it was verified by inversion before the gate ran.
       **WRITTEN 2026-08-10 (session 67): `web/e2e/reduced-motion.spec.ts`, two tests, no CSS
       touched — exactly the one-chunk shape items 2/3 predicted.** Awaiting its first run
       (the standalone G-13 audit held the browser lane while it was written); typecheck and
@@ -1492,8 +1504,26 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       5. One subtlety worth not re-deriving: the rule neutralises duration but never sets
          `animation: none`, so `lm-pulse` (an *infinite* ambient pulse) becomes one 0.001ms
          cycle rather than stopping mid-frame. That is correct behaviour, not a bug to fix.
-- [ ] todo — **P5.11** Acceptance + UI-gate pass: E2E for XP accrual, leaderboard ordering, push
+- [ ] doing — **P5.11** Acceptance + UI-gate pass: E2E for XP accrual, leaderboard ordering, push
       delivery (mock), announcement flow; axe/Lighthouse/screenshots/visual compare.
+      **STARTED 2026-08-10 (session 72), the first session with a free test lane since 61.**
+      Chunk plan derived from the sixteen measured points below — build in this order, because
+      each chunk is a precondition of the next:
+      **A. a11y/markup prep (`web/`)** — points 6+16 (`BoardRow` element prop + `<ol>` on the
+      ranked container only) and 7(d) (S-31 value `aria-label`s in the C-2 `MarkDisplay`
+      pattern). Both are what makes the assertions in chunk C locatable at all.
+      **B. seed (`scripts/seed_e2e.py`)** — point 15's XP rows (today's Cairo date, purge first)
+      and point 5's dedicated G-10 three-device account. Only G-10 pays point 3's three-edit
+      contract tax (point 10 proved the XP rows do not).
+      **C. the four E2E specs** — point 7 (XP accrual, inside `correct-paper.spec.ts`), 11
+      (leaderboard ordering, click Class scope first), 13+14 (announcement flow, both roles),
+      9 (the inbox rows, riding chunk C's own drivers).
+      **D. audit registry** — point 12(b): delete the false four-route claim from **both**
+      `audit.mjs:83-85` and `:2451`, add the three genuinely-unaudited routes, add G-10's entry
+      (now possible, chunk B seeds it). Do not re-add `/student/board`.
+      **E. the UI-gate pass** — point 12(a)/(c): `LEMELY_REPORT_DIR=reports/phase-5 npm run
+      audit`, `compare-screens` with an **explicit** `--baseline reports/phase-4/screens`, then
+      the full `./scripts/check.sh` under `setsid`.
       **Brief sharpened 2026-08-10 (session 59) by measuring the code while the P5.8 gate run
       held the test lane — recon only, nothing edited. Three findings, and the third is a trap
       that fires 22 minutes into a gate run.**
