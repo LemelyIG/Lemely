@@ -830,6 +830,37 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       stats" line — ship only the stats a table actually holds.
       Chunking: **A** = the XP read route + D5.13; **B** = S-28; **C** = S-29 + S-30
       (they are one navigation pair and share the friends DTOs); **D** = S-31.
+      - [x] **chunk A** (`6c74c97`) — `GET /api/student/xp` + `lemely/web/xp_levels.py`
+            (the curve D5.1 §10 deferred here) + `XpService.profile`/`xp_by_day` +
+            `schemas_xp.py` + app wiring + 91 tests. **D5.13 recorded before the code.**
+            ruff/format/mypy(212)/lint-imports clean; 221 related tests pass.
+            **Not yet run: the full suite / `check.sh`.**
+            `_week_bounds` moved from `leaderboard_repo` to **`xp_repo.week_bounds`** so
+            S-29 and S-31 cannot report two different weeks for one fact (D5.13 §2);
+            `profile()` resolves `today` **once** for all four reads, so a request crossing
+            midnight in Cairo cannot return a week and a calendar that disagree.
+            `schemas_xp` needed the `disallow_any_explicit` override in `pyproject.toml`
+            (**third sighting — every `schemas_*.py` costs that edit**) and the
+            `# noqa: TC001` runtime import (P5.6 C1's ForwardRef trap, second sighting).
+            **The inversion that FAILED is the thing to carry forward.** D5.13 §1 justified
+            the integer curve by claiming `floor(sqrt(total / 100))` is wrong at the level
+            boundaries. Inverting the implementation left **all 62 level tests green** — at
+            a boundary `100·N²` both the division and the square root are exact in IEEE 754
+            for any total this product can reach. The integer form still ships (its
+            correctness does not *depend* on that floating-point argument holding forever),
+            but **D5.13 §1 was corrected in place rather than left standing on a failure
+            mode nobody had reproduced.** Third instance of this family — P5.6 C2b's guard
+            justified by a false comment, D5.7's inherited "proven by inversion" claim, now
+            this. **The rule: invert first, then write why. Writing the reason first is how
+            a decision record acquires a confident sentence that is not true.**
+            The absent-not-zero calendar rule was inverted too and is real (filling the
+            window with zeros fails 6 tests across both layers).
+            **Scope call, recorded in the DTO docstrings and not just here:** S-31's
+            "papers marked / questions answered / hours studied" ships **absent**. The
+            obvious source is a count of `xp_events` rows and it is wrong by construction —
+            D5.1 §3's caps mean a capped award writes no row, §8's dedupe means a
+            re-corrected paper writes one row for two markings. Carry to the Phase-5
+            limitations. Achievements out of scope on D5.1 §10's own terms.
       S-28 (announcements + exam calendar):
       `GET /api/student/announcements`, `/unread-count`, `POST /{id}/read` (P5.5 chunk B)
       and `GET /api/student/exam-calendar` (P5.5 chunk C) — **the calendar table ships
