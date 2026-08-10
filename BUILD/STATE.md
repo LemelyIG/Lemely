@@ -879,27 +879,58 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             Do not treat a bare `tsc --noEmit` as having typechecked the web app.**
             `cd web` persisting into the next Bash call bit again (the environment fact
             below is real) — absolute-path everything after an `npx` run.
-      - [ ] **doing — chunk C** — **S-29 (leaderboards) + S-30 (friends).** One navigation
-            pair, and they share the friends DTOs, so build them together.
-            Backend is complete and gate-green: `GET /api/student/leaderboard`
-            (`scope=class|school|global|friends`, `basis=total|<subject code>`,
-            `class_id`, `limit`) and `GET/POST/DELETE /api/student/friends`.
-            **`web/src/portals/student/screens/Standings.tsx` (route `student/board`) is
-            the screen S-29 fills — read its header comment FIRST.** It records that the
-            friends/school/global boards and the 28-cell streak heatmap were *deliberately
-            removed rather than mocked* because `StandingsDTO` had no `boards` field. It
-            is on `GET /student/standings`, a different endpoint; the subject standings
-            already there is real and must not be thrown away.
-            **S-30's "add by username" is unbuildable as written** — `users` has no
-            username column. The built mechanism is `users.friend_code` (D5.6): 8 chars,
-            ambiguity-free alphabet, minted lazily, serving both the typed code and the
-            invite link. Searching by display name or email is what D5.5/D5.6 explicitly
-            killed; do not reintroduce either.
-            The leaderboard's own opt-out lives on `PATCH /me/profile`
-            (`leaderboardOptOut`), and UI spec §S-29 requires it be **easy to find** —
-            "this matters for students who find ranking stressful". `leaderboard_opt_out`
-            is NOT NULL, so an explicit `null` is a 422, never a coerced `false`.
-      - [ ] **chunk D** — **S-31 (profile / XP / streak)**, on chunk A's
+      - [x] **chunk C** (`d5.14` + two commits) — **S-29 and S-30 are built.**
+            `screens/Standings.tsx` rewritten from its P2.7 placeholder,
+            `screens/Friends.tsx`, `lib/leaderboardTypes.ts`, `lib/friendTypes.ts`,
+            `lib/hooks/useLeaderboardApi.ts`, `lib/hooks/useFriendApi.ts`, route
+            `/student/friends`, sidebar + breadcrumb, and **S-29 + S-30 entries in
+            `web/scripts/audit.mjs`** (`/student/board` had never been in that registry,
+            so this is its first coverage, not a re-audit). 17 new vitest cases
+            (**366 total, from 349**); build / oxlint 0 errors / vitest / `impeccable
+            detect` clean. **Not yet run: the full suite / `check.sh`.**
+            **D5.14 recorded before the code**, and it corrects the brief twice.
+            **(1) `scope=class` was unreachable, not merely awkward** — it needs a
+            `class_id` and no student-facing route listed a student's classes (the only
+            readers of `ClassService.student_classes` were the parent portal's
+            P-01/P-02). So chunk C absorbed a small backend leg: **`GET
+            /api/student/classes`** over that same method, never a second enrolment
+            query. **(2) The opt-out endpoint is `PATCH /api/me/student-profile`, not
+            the brief's `/me/profile`**, and the frontend's `meTypes.ts` mirror was
+            missing `leaderboardOptOut` entirely — added to both `StudentProfile` and
+            `StudentProfileUpdate`, the latter as `boolean | undefined` (not
+            `| null`, which is a 422 on a NOT NULL column). Ninth and tenth instances
+            this phase of the code beating a note.
+            **The per-row streak indicator was built rather than dropped.** §S-29 fixes
+            every row as "rank, avatar, display name, XP, streak indicator" and
+            `LeaderboardRowDTO` had none. Dropping it was cheaper and lost to a stronger
+            argument than spec-completeness: `FriendDTO.streak` already shows it, so the
+            leaderboard's own `friends` scope would render the same people, one screen
+            over, with the number missing. `LeaderboardService.streaks_for` mirrors
+            `display_names_for` (one batched read, pinned by a call-counting test —
+            a per-row version returns identical data and only the count catches it).
+            **`streak` is `int | None` and `None` is not `0`**: a broken streak is a real
+            zero, a missing `streaks` row is no fact at all. Verified by inversion —
+            `.get(id, 0)` fails exactly `test_a_student_with_no_streak_row_reports_null_
+            not_zero` while its paired real-zero test stays green.
+            **The avatar §S-29 names has no storage anywhere**, so it is a monogram off
+            the display name — a rendering of data we hold, never a generated identicon
+            that would look like identity the account does not have. Uses `\p{L}`, not
+            `[A-Za-z]`, so an Arabic display name does not degrade to the fallback glyph
+            in this product's launch market. Carry "no avatar storage" to the Phase-5
+            limitations.
+            **A real pre-existing defect found and fixed: `web/tsconfig.test.json` had no
+            `jsx` option**, so any test importing a `.tsx` fails TS6142 — which chunk B's
+            `announcements.test.ts` does. It did not surface then because **`tsc -b` is
+            incremental and a stale `node_modules/.tmp` tsbuildinfo reports success**.
+            Confirmed by stashing this work and rebuilding the committed tree clean.
+            **`rm -rf node_modules/.tmp` before believing a green `tsc -b`** — this is the
+            second sighting of chunk B's "the build is the stricter gate" lesson, and the
+            sharper form of it.
+            83 related backend tests pass; ruff / format / mypy (214 files) /
+            lint-imports clean. `schemas_student_classes` joined the
+            `disallow_any_explicit` list (**fourth sighting** — every `schemas_*.py`
+            costs that edit).
+      - [ ] **doing — chunk D** — **S-31 (profile / XP / streak)**, on chunk A's
             `GET /api/student/xp`. Total, level band (`levelStartXp`/`nextLevelXp` are on
             the wire so the bar needs no TypeScript arithmetic — do not re-derive the
             curve client-side), streak with freezes, this week by source, and the 28-day
@@ -951,6 +982,12 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
   Its `mypy` and `import-linter` hooks then fail with *"Executable not found"* — a defect in
   the hook environment, **not a code failure**: `./scripts/check.sh` runs both tools directly
   and they pass on the same tree. Verify there before believing a pre-commit red on those two.
+- **`tsc -b` is incremental and a stale `node_modules/.tmp` hides real errors.**
+  `web/tsconfig.test.json` was missing `jsx` since P5.8 chunk B — every test importing
+  a `.tsx` fails TS6142 — and `npm run build` reported success anyway because the
+  tsbuildinfo predated the test. **`rm -rf web/node_modules/.tmp` before believing a
+  green build.** Related: a bare `npx tsc --noEmit -p tsconfig.json` is NOT the web
+  typecheck; `tsc -b` covers a different (larger) project set and is the stricter gate.
 - **`cd` in one Bash call persists into the next.** A `cd web` for an npx run leaves the
   following command running from `web/`, where `.venv/` and `.pre-commit-config.yaml` do not
   exist — which reads as "the venv is gone". Prefix with an absolute `cd /home/sico/Lemely`.
