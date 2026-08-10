@@ -813,9 +813,24 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             `--no-semi` on the five new ones. The web gates are **typecheck + oxlint +
             build + vitest + impeccable detect** — none of them formats. Do not reach for a
             formatter that the gate chain does not run.
-- [ ] todo — **P5.8** Screens S-28, S-29, S-30, S-31.
-      **Every backend these screens need is already built and gate-green — this is a
-      wiring task, not a build-both-ends task.** S-28 (announcements + exam calendar):
+- [ ] doing — **P5.8** Screens S-28, S-29, S-30, S-31.
+      **CORRECTION to this brief, made 2026-08-11 by reading the code — the eighth time
+      this phase a note lost to the codebase. "Every backend these screens need is already
+      built" is TRUE for S-28/S-29/S-30 and FALSE for S-31.** `XpService` is wired into the
+      web layer at **write seams only**: `grep total_xp\|xp_breakdown\|streak` over
+      `lemely/web/` returns `deps.py`, `xp_awards.py` and the four award call sites, and
+      **nothing reads**. The service methods themselves exist and are 100%-covered
+      (`xp_repo.py:342 total_xp`, `:353 xp_breakdown(start, end)`, `:377 streak(now)`), so
+      S-31 needs **one thin read router**, not an engine. That is chunk A and it goes first.
+      **D5.1 §10 pre-authorised two S-31 decisions and they are P5.8's to make:** the
+      XP→level mapping is explicitly deferred here ("P5.8 fixes it and records it, so long
+      as it is a pure function of total XP"), and **achievements/milestones are out of
+      scope** unless the screen is unbuildable without them, in which case they get their
+      own decision record. UI spec §1.4 (never invent precision) governs S-31's "lifetime
+      stats" line — ship only the stats a table actually holds.
+      Chunking: **A** = the XP read route + D5.13; **B** = S-28; **C** = S-29 + S-30
+      (they are one navigation pair and share the friends DTOs); **D** = S-31.
+      S-28 (announcements + exam calendar):
       `GET /api/student/announcements`, `/unread-count`, `POST /{id}/read` (P5.5 chunk B)
       and `GET /api/student/exam-calendar` (P5.5 chunk C) — **the calendar table ships
       empty and its three distinct empty causes (`no_enrolment`/`no_timetable`/
