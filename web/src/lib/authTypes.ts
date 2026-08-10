@@ -19,6 +19,8 @@ export interface LoginRequest {
   email: string
   password: string
   deviceId?: string | null
+  /** Agreed to sign the oldest device out (the second half of D5.12's 409 handshake). */
+  confirmDeviceEviction?: boolean
 }
 
 export interface OtpRequestBody {

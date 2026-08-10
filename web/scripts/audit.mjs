@@ -1009,6 +1009,22 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Check on your child"),
       authed: false,
     },
+    // ── G-11 · Account & devices — the devices section (P5.7 chunk B) ─────
+    // Authed but portal-agnostic: the route is one screen for all five roles,
+    // so auditing it under one session covers it for every role. The student
+    // session is used because it is the one every other student entry already
+    // builds. G-10 (the device-limit challenge) is NOT here: it needs an
+    // account already holding three live devices, which is a seed precondition
+    // rather than a navigation — P5.11's job, recorded so it is not mistaken
+    // for covered.
+    {
+      screenId: "G-11",
+      slug: "settings-devices",
+      path: "/settings/devices",
+      session: decliningStudentSession,
+      ready: (page) => waitForText(page, "Signed-in devices"),
+      authed: true,
+    },
     // ── Teacher (15 entries — several carry more than one `states[]`) ──────
     {
       screenId: "T-01",
