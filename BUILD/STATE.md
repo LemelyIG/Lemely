@@ -999,6 +999,13 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             turns and the run's own output is the completion signal. Seventh run still
             not started. `setsid` has now carried this run past **10 minutes**, ~4x the
             mark that killed every pre-`setsid` attempt.
+            **Fifty-fifth session (this one) attached at 14:13 elapsed** — same run, same
+            PID 927164, `pytest` child 927224 still its own (PPID 927164, no orphan) and
+            **actively working**: 7m30s of CPU at 52.7%, 696 MB RSS. That is the check
+            worth copying — a live PID says "not dead", but accumulating CPU time says
+            "not hung", and the four sessions that misread this run had neither number.
+            Eighth run still not started; the Monitor was re-armed on the same PID.
+            Working tree was clean on entry, so no wip commit was needed.
             — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
@@ -1078,11 +1085,16 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
   **90.37% and 99%**. The test counts stayed correct (2331/6/0 both times), which is what
   makes it convincing: it reads as a real coverage regression to be chased. Re-measure
   serially before believing any coverage drop.
-- **`pre-commit` is not on PATH and two of its hooks cannot run.** The binary is
+- **`pre-commit` is not on PATH, and the fix is one PATH entry — not, as this note
+  previously claimed, an unfixable hook-environment defect.** The binary is
   `.venv/bin/pre-commit` (no bare `pre-commit`, and `$HOME/.local/bin` does not have it).
-  Its `mypy` and `import-linter` hooks then fail with *"Executable not found"* — a defect in
-  the hook environment, **not a code failure**: `./scripts/check.sh` runs both tools directly
-  and they pass on the same tree. Verify there before believing a pre-commit red on those two.
+  Invoking it as `.venv/bin/pre-commit` is *not enough*: its `mypy` and `import-linter`
+  hooks are `system`-language, so they resolve their executable off **PATH**, which still
+  lacks the venv — both then fail *"Executable ... not found"*. **Run it as
+  `PATH="$PWD/.venv/bin:$PATH" .venv/bin/pre-commit run --all-files`** and all ten hooks
+  pass (verified 2026-08-10, session 55, on the P5.8 tree). The old note's "verify in
+  `check.sh` instead" advice still works but is the expensive path — it reaches those two
+  tools by the same mechanism, having exported a bin dir onto PATH first.
 - **`tsc -b` is incremental and a stale `node_modules/.tmp` hides real errors.**
   `web/tsconfig.test.json` was missing `jsx` since P5.8 chunk B — every test importing
   a `.tsx` fails TS6142 — and `npm run build` reported success anyway because the
