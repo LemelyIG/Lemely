@@ -1772,3 +1772,26 @@ guessed, because it is precisely the field a user would decide on.
 **Next.** P5.8 — screens S-28..S-31. Two P5.7 gaps are recorded in STATE and belong to
 later tasks, not to a future session's rediscovery: G-10 has no audit-registry entry (it
 needs a seeded three-device account) and no nav entry yet reaches `/settings/devices`.
+
+## 2026-08-11 — forty-seventh session · P5.8 chunks A and B
+
+**Did.** Corrected P5.8's brief (S-31 had no backend: `XpService` was wired at
+write seams only, nothing read it), then built chunk A — `GET /api/student/xp`,
+the XP→level curve D5.1 §10 deferred here, `XpService.profile`/`xp_by_day`, and
+D5.13 recorded before the code. 91 tests. Then chunk B — S-28, announcements +
+exam calendar, with D5.8's three empty causes reaching the screen as three
+distinct states. 13 vitest cases; all web gates clean.
+
+**Learned.** Two things worth the ink. (1) **An inversion I ran disproved my own
+decision record.** D5.13 §1 justified the integer level curve by claiming the
+float form breaks at level boundaries; inverting the implementation left all 62
+tests green, because at `100·N²` both the float operations are exact. Corrected
+D5.13 in place rather than leaving a confident sentence that was untrue — third
+instance this phase (P5.6 C2b, D5.7). **New rule: invert first, then write why.**
+(2) **`npm run build` runs `tsc -b` over a wider project set than `npx tsc
+--noEmit -p tsconfig.json`** — the bare form passed on a tree the build then
+failed on twice. The build is the typecheck gate; the bare form is not.
+
+**Next.** Chunk C (S-29 leaderboards + S-30 friends — read `Standings.tsx`'s
+header first, it records what was deliberately removed rather than mocked), then
+chunk D (S-31 on chunk A's route), then one UI-gate run for the whole task.

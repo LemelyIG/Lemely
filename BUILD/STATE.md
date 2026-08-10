@@ -861,6 +861,57 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             D5.1 §3's caps mean a capped award writes no row, §8's dedupe means a
             re-corrected paper writes one row for two markings. Carry to the Phase-5
             limitations. Achievements out of scope on D5.1 §10's own terms.
+      - [x] **chunk B** (`64df07e`) — **S-28 is built.** `screens/Announcements.tsx`,
+            `lib/announcementTypes.ts`, `lib/hooks/useAnnouncementApi.ts`, route
+            `/student/announcements`, sidebar entry + breadcrumb in `data.ts`, and an
+            **S-28 entry in `web/scripts/audit.mjs`**. 13 new vitest cases (349 total,
+            from 336). typecheck / oxlint (0 errors) / build / vitest / `impeccable
+            detect` all clean.
+            D5.8's three empty causes reach the screen as three different states, per the
+            brief. The calendar ships in its `no_timetable` state and **that is what the
+            audit entry probes** — its `ready` waits on the announcements heading, never
+            the countdown, because a probe waiting on a hero that legitimately does not
+            render would hang and be misread as a route failure.
+            **`StateViewAction` is `{label, onClick}` and has NO `to` field** — a nav
+            action needs `useNavigate`. Caught by `npm run build`, not by
+            `npx tsc --noEmit -p tsconfig.json`, which passed on the same tree: **the
+            build runs `tsc -b` over a different project set, so it is the stricter gate.
+            Do not treat a bare `tsc --noEmit` as having typechecked the web app.**
+            `cd web` persisting into the next Bash call bit again (the environment fact
+            below is real) — absolute-path everything after an `npx` run.
+      - [ ] **chunk C** — **S-29 (leaderboards) + S-30 (friends). NEXT.** One navigation
+            pair, and they share the friends DTOs, so build them together.
+            Backend is complete and gate-green: `GET /api/student/leaderboard`
+            (`scope=class|school|global|friends`, `basis=total|<subject code>`,
+            `class_id`, `limit`) and `GET/POST/DELETE /api/student/friends`.
+            **`web/src/portals/student/screens/Standings.tsx` (route `student/board`) is
+            the screen S-29 fills — read its header comment FIRST.** It records that the
+            friends/school/global boards and the 28-cell streak heatmap were *deliberately
+            removed rather than mocked* because `StandingsDTO` had no `boards` field. It
+            is on `GET /student/standings`, a different endpoint; the subject standings
+            already there is real and must not be thrown away.
+            **S-30's "add by username" is unbuildable as written** — `users` has no
+            username column. The built mechanism is `users.friend_code` (D5.6): 8 chars,
+            ambiguity-free alphabet, minted lazily, serving both the typed code and the
+            invite link. Searching by display name or email is what D5.5/D5.6 explicitly
+            killed; do not reintroduce either.
+            The leaderboard's own opt-out lives on `PATCH /me/profile`
+            (`leaderboardOptOut`), and UI spec §S-29 requires it be **easy to find** —
+            "this matters for students who find ranking stressful". `leaderboard_opt_out`
+            is NOT NULL, so an explicit `null` is a 422, never a coerced `false`.
+      - [ ] **chunk D** — **S-31 (profile / XP / streak)**, on chunk A's
+            `GET /api/student/xp`. Total, level band (`levelStartXp`/`nextLevelXp` are on
+            the wire so the bar needs no TypeScript arithmetic — do not re-derive the
+            curve client-side), streak with freezes, this week by source, and the 28-day
+            calendar. **`calendar` omits days with no XP by design** — fill the grid from
+            `calendarStart`/`calendarEnd`, and do not render an absent day differently
+            from a zero one. **No lifetime stats and no achievements** (D5.13 §3): if the
+            screen looks thin without them, that is the honest shape, not a gap to fill.
+      - [ ] **UI gate for P5.8** — MISSION §6.8 in full, run **once** after C and D land
+            rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
+            screenshots at 380/768/1440 for every new screen × state, visual compare
+            (read `removed` = 0, not `changed`). The audit leg alone is ~11 minutes, so
+            run `./scripts/check.sh` in the **foreground**.
       S-28 (announcements + exam calendar):
       `GET /api/student/announcements`, `/unread-count`, `POST /{id}/read` (P5.5 chunk B)
       and `GET /api/student/exam-calendar` (P5.5 chunk C) — **the calendar table ships
