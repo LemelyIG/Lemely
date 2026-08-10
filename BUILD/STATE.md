@@ -950,7 +950,9 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             **Incidentally closes half of a P5.7 gap:** `/settings/devices` had no nav
             entry anywhere; the **student** portal now reaches it from S-31. Teacher and
             parent still do not — that remains P5.11's.
-      - [ ] **doing — UI gate for P5.8** — MISSION §6.8 in full, run **once** after C and D land
+      - [ ] **doing — UI gate for P5.8** (forty-seventh session started the run 2026-08-11;
+            tree clean at `a38140f`, `web/node_modules/.tmp` cleared first per the stale-
+            tsbuildinfo fact below) — MISSION §6.8 in full, run **once** after C and D land
             rather than per chunk: axe (0 serious/critical), Lighthouse a11y ≥ 95,
             screenshots at 380/768/1440 for every new screen × state, visual compare
             (read `removed` = 0, not `changed`). The audit leg alone is ~11 minutes, so
