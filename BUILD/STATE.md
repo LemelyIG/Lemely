@@ -1364,6 +1364,16 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          `scrollTo`**. So there is no JS-driven or scroll motion to retrofit. If P5.8's four
          new screens added none either, the CSS half of this task is **already done** and the
          honest deliverable is the proof.
+         **RE-VERIFIED 2026-08-10 (session 62) on the post-P5.9 tree, which is what item 2's
+         conditional was waiting on: the claim holds and the CSS half IS already done.** Still
+         exactly three `@keyframes`, all in `index.css`; still **zero** `requestAnimationFrame`,
+         `scrollIntoView`, `scrollTo(`, `scroll-behavior` anywhere in `src/`; still no animation
+         library in `package.json`. P5.9's four chunks added **one** motion token in total —
+         `transition-colors` in `Notifications.tsx` — and a transition is exactly what the
+         blanket `transition-duration: 0.001ms !important` already covers; `NotificationSettings.tsx`
+         and `sw.ts` added none. `grep -rln "reduced-motion|reducedMotion|prefers-reduced"` over
+         `src/`, `e2e/` and `tests/` **still returns only `index.css` and `processing-state.tsx`**,
+         so item 3's gap is intact and untouched. **P5.10 is a one-chunk test task — write no CSS.**
       3. **The actual gap is the test, and it does not exist at all.** `grep -rln
          "reduced-motion|reducedMotion"` over `e2e/` and `src/` returns **only `index.css` and
          `processing-state.tsx`** — no test file, in any suite, has ever asserted this.
@@ -1500,6 +1510,21 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          spend; every automated test mocks Gemini (D4.3 made that structural).
 
 ### Environment facts worth not re-deriving (cost real work to find)
+- **`pre-commit` needs `.venv/bin` on `PATH`, or two hooks fail for the wrong reason.**
+  CLAUDE.md mandates `pre-commit run --all-files` before every commit. A bare
+  `pre-commit` is **not on PATH at all** (use `.venv/bin/pre-commit`), and running it that
+  way still fails `mypy` and `import-linter` with **`Executable 'mypy' not found` /
+  `Executable 'lint-imports' not found`** — both are `language: system` hooks that resolve
+  their binary off `PATH`, and invoking the venv's pre-commit by absolute path does not put
+  the venv's `bin` there. Run it as
+  `PATH="/home/sico/Lemely/.venv/bin:$PATH" .venv/bin/pre-commit run --all-files`
+  (or `source .venv/bin/activate` first) and all ten hooks pass.
+  **The failure mode that matters: it is a false red, not a code failure**, and the two
+  hooks it fakes are exactly two of the gates — so it invites either a bogus "the tree is
+  broken" diagnosis or a `--no-verify` habit. Session 62 caught it only because the
+  concurrently-running `check.sh` had already printed `PASS mypy` / `PASS import-linter`
+  on the same tree. **An "executable not found" is an environment answer, never a verdict
+  on the code.**
 - **A gate run must be launched with `setsid`, or it dies with the session. This note has
   now been wrong twice; the third version is the one backed by timestamps.** Five sessions
   (47, 48, 49, 50) produced **five `/tmp/check_p58*.log` files of exactly 84 bytes**, each
