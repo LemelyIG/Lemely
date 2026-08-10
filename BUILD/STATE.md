@@ -2,7 +2,8 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T14:40:00Z   # **Seventy-second session: THE SECOND GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0. P5.9 AND P5.10 ARE BOTH DONE — 11/12 Phase-5 tasks complete. The only remaining task before the phase report is P5.11, which is now `doing`.** No gate run is in flight; the test lane is FREE for the first time in twelve sessions. Coverage **90.91%** off that run's own `.coverage` (develop 90.18% — no drop; byte-identical to P5.8 because P5.9/P5.10 touched zero backend files). Working tree clean on entry; INBOX had no unhandled items.
+last_updated: 2026-08-10T12:16:00Z   # **Seventy-third session: P5.11 chunk E's audit run was KILLED AND RELAUNCHED, on purpose, against the tree that actually matches it.** Session 72 launched the run at 15:03:54 local and then edited `audit.mjs` at 15:09:58 — six minutes in — so the in-flight run could never have contained the G-13-populated check that edit adds. The edit is now committed (`401f8e1`) and verified in code before relaunch, not after. New durable wrapper PID **`1409573`** (node child `1409596`), log `/tmp/p511-audit.log`, relaunched 12:16Z; healthy at 3m26s. **Do NOT relaunch it.** Full rationale, plus the two environment traps it cost (partial audit artifacts already tracked from a mid-run `git add -A`; `pre-commit --all-files` reporting phantom failures while a run writes into `reports/`) are on the P5.11 chunk-E line. Working tree on entry was dirty with exactly that one uncommitted `audit.mjs` edit; INBOX had no unhandled items.
+#                                    Prior: **Seventy-second session: THE SECOND GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0. P5.9 AND P5.10 ARE BOTH DONE — 11/12 Phase-5 tasks complete. The only remaining task before the phase report is P5.11, which is now `doing`.** No gate run is in flight; the test lane is FREE for the first time in twelve sessions. Coverage **90.91%** off that run's own `.coverage` (develop 90.18% — no drop; byte-identical to P5.8 because P5.9/P5.10 touched zero backend files). Working tree clean on entry; INBOX had no unhandled items.
 #                                    **What that changes about how to work: sessions 62–71 all ran read-only because a gate held the lane, and they spent that time turning P5.11's one-line brief into SIXTEEN measured points. Do not add a seventeenth. The brief is done; P5.11 is now a BUILD task, and the lane is free to build in.** Points 6+16 (S-29 `BoardRow` element prop), 7(d) (S-31 aria-labels), 15 (the XP seed), 5+3 (G-10's dedicated 3-device account and its three-edit contract tax) and 12 (the stale audit exclusion list) are the five concrete edits; points 7/11/13/14/9 are the four E2E specs; point 12(a)/(c) is the re-baseline + compare procedure.
 #                                    **Sixty-ninth session: the second gate run was ALIVE at 11m18s (4/13, inside `pytest`) on entry — attached, Monitor armed, NOT relaunched.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
 #                                    **Seventieth session: the second gate run was ALIVE at 19m00s (10/13) on entry — attached, Monitor armed, NOT relaunched; `playwright-e2e` PASSED during the session, so it stands at 11/13 with only `puppeteer-audit` and `ui-thresholds` left.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file touched — the run is verifying this exact tree.
@@ -1563,13 +1564,49 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             would score the plain login form and file the number under G-10's slug — a
             measurement of a state it never reached. `/login` is already scored on its own
             entry.
-      - [ ] **chunk E — IN FLIGHT.** `LEMELY_REPORT_DIR=reports/phase-5 npm run audit` under
-            `setsid`, launched 2026-08-10T15:05Z. Log `/tmp/p511-audit.log`, ends in an `EXIT=`
-            line. **Durable wrapper PID `1376670`** (`bash -c LEMELY_REPORT_DIR=…`); the `node
-            scripts/audit.mjs` child was 1376683 but `audit.mjs` recycles Chrome per route
+      - [ ] **chunk E — IN FLIGHT (RELAUNCHED, session 73).** `LEMELY_REPORT_DIR=reports/phase-5
+            npm run audit` under `setsid`, relaunched 2026-08-10T12:16Z. Log
+            `/tmp/p511-audit.log`, ends in an `EXIT=` line. **Durable wrapper PID `1409573`**,
+            `node scripts/audit.mjs` child `1409596`; `audit.mjs` recycles Chrome per route
             batch, so a changed child PID is progress, not a crash. Do NOT relaunch it.
-            When it lands: read the axe/Lighthouse summary (expect **~72 route-states**, up
-            from 68 — G-10, S-08, G-01, DEV-01), then
+            **Why session 72's run (wrapper 1376670) was killed at ~11 of ~30 minutes — a
+            judgment call that overrode this line's own "do NOT relaunch".** That run started
+            15:03:54 local; `audit.mjs` was then edited at **15:09:58**, six minutes into it, to
+            add the G-13 *populated* axe check (now committed as `401f8e1`). Node reads its
+            entrypoint once at startup, so **the in-flight run could never have contained the
+            edit** — it was verifying a tree that no longer existed. Letting it finish would
+            have produced a baseline corpus that had to be re-run anyway (~30 min), against
+            ~11 min sunk by relaunching. The decisive argument is that **`./scripts/check.sh`
+            runs `puppeteer-audit` too**, so the edit executes in the 28-minute gate regardless
+            — proving it in this audit is strictly cheaper than discovering it red there. The
+            edit was verified before the relaunch, not after: `/student/notifications` is a real
+            route (`portals/student/index.tsx:220`, nested under `path: "student"` — it is
+            absent from `App.tsx`, which has only five top-level paths, so a grep of `App.tsx`
+            alone falsely reads as "no such route"); the waited-for string matches
+            `routers/student.py:882` verbatim; `shoot`/`runAxe`/`waitForText` signatures match;
+            and the following S-06 block does its own `page.goto`, so the inserted navigation
+            does not strand it. The `grade_ready` fan-out itself is already proven live by
+            chunk C's `correct-paper.spec.ts`.
+            **Two environment facts this cost real work to learn, both worth keeping.**
+            (1) **`reports/phase-5/` was ALREADY PARTLY TRACKED — 75 files — swept into two
+            BUILD-doc commits mid-run.** `96ce495` (15:05:14) and `4e7e772` (15:07:41) landed
+            ~1.5 and ~4 minutes into session 72's audit and captured whatever partial artifacts
+            existed at that instant. That corpus is **not a curated baseline**; it is a
+            mid-run snapshot. `rm -rf reports/phase-5` before the relaunch therefore showed as
+            tracked `D` deletions rather than vanishing. Deliberately **not** restored: the
+            fresh run regenerates the corpus, and any tracked file still showing `D` when it
+            lands is precisely the signal that the new run did not produce it — restoring first
+            would let a stale artifact ride silently into a "fresh" baseline. **When committing
+            a BUILD doc, path-scope the `git add`; a bare `git add -A` during an audit run
+            commits partial evidence.**
+            (2) **`pre-commit run --all-files` is unusable while an audit run is writing into
+            `reports/`.** It reported `trim trailing whitespace` and `detect-private-key` as
+            FAILED "files were modified by this hook" — neither was real; the hooks saw the
+            live run rewriting JSON underneath them. Path-scoped
+            `pre-commit run --files web/scripts/audit.mjs` passes clean. **Scope pre-commit to
+            the files being committed whenever a background job is writing to the tree.**
+            When it lands: read the axe/Lighthouse summary (expect **~73 route-states**, up
+            from 68 — G-10, S-08, G-01, DEV-01, plus G-13 populated), then
             `npm run compare-screens -- --baseline reports/phase-4/screens --candidate
             reports/phase-5/screens` (the default baseline is Phase **2.5** and is wrong for
             this phase — always pass `--baseline`), then the full `./scripts/check.sh` under
