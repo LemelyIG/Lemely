@@ -37,7 +37,13 @@ export function Landing() {
           <div className="text-[16.5px] text-t2 leading-[1.55] mt-5 max-w-[52ch] text-pretty">
             {landingHero.body}
           </div>
-          <div className="flex gap-3 mt-7">
+          {/* `flex-wrap`, not a narrower button: Button carries
+              `whitespace-nowrap`, so at 380px the secondary CTA cannot shrink
+              and instead ran to x=409 — a horizontal-scroll violation, which
+              `check_ui_gates.py` fails the build on (zero tolerated). Wrapping
+              stacks the two CTAs and keeps both labels intact; truncating
+              "For centres & teachers" would hide who the link is for. */}
+          <div className="flex flex-wrap gap-3 mt-7">
             <Button
               variant="accent"
               size="lg"

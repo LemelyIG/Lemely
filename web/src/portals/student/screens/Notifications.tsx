@@ -125,7 +125,16 @@ function NotificationRow({ notification }: { notification: Notification }) {
       <CardBody className="flex flex-col gap-2">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <h3 className="text-body-lg font-medium text-t1">{notification.title}</h3>
+            {/* <h2>, not <h3>: these rows sit directly under the page's <h1>
+                with no section heading between them, so an <h3> skips a level
+                (axe `heading-order`, moderate — found the moment the audit
+                registry grew a POPULATED state for this screen in P5.11 chunk
+                E, and invisible for as long as it only probed the empty one).
+                S-28 uses <h3> for its cards legitimately, because it really
+                does have "Notices"/"Calendar" <h2>s above them. Do not
+                normalize the two to the same level; the level has to describe
+                the actual outline, not match a sibling screen. */}
+            <h2 className="text-body-lg font-medium text-t1">{notification.title}</h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-2xs text-t3">
               <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
                 {typeLabel(notification.type)}
