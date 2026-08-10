@@ -814,6 +814,21 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             build + vitest + impeccable detect** — none of them formats. Do not reach for a
             formatter that the gate chain does not run.
 - [ ] todo — **P5.8** Screens S-28, S-29, S-30, S-31.
+      **Every backend these screens need is already built and gate-green — this is a
+      wiring task, not a build-both-ends task.** S-28 (announcements + exam calendar):
+      `GET /api/student/announcements`, `/unread-count`, `POST /{id}/read` (P5.5 chunk B)
+      and `GET /api/student/exam-calendar` (P5.5 chunk C) — **the calendar table ships
+      empty and its three distinct empty causes (`no_enrolment`/`no_timetable`/
+      `no_session`) must reach the screen as three different states, not one blank**
+      (D5.8). Leaderboard: `GET /api/student/leaderboard` with all four scopes including
+      `friends` (P5.3/P5.4); `web/src/portals/student/screens/Standings.tsx` is the
+      existing honest-empty screen this fills — read its header comment first, it records
+      what was deliberately removed rather than mocked. Friends: `GET/POST/DELETE
+      /api/student/friends` (P5.4) — S-30's "add by username" is **unbuildable as
+      written**, `users` has no username; the built mechanism is `friend_code` (D5.6).
+      Follow P5.7's frontend conventions: no `fallback` in `request()`, one hook file per
+      area under `lib/hooks/`, and **do not run `npx prettier`** (see the environment fact
+      below). MISSION §6.8 applies in full again.
 - [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
 - [ ] todo — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
       Phase-5 acceptance names this explicitly).
