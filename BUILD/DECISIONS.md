@@ -5469,13 +5469,28 @@ correcting one paper a day earns 350 XP/week — that is level 2 on day 2, level
 3 on day 8, level 4 on day 18, level 5 on day 32. A level roughly every two to
 three weeks by mid-game, without a cap or a prestige mechanic to design.
 
-**It is integer arithmetic on purpose.** `math.isqrt(total // 100)` and never
-`floor(sqrt(total / 100))`: the float form is exactly wrong at the boundaries
-that matter, where `sqrt(1600 / 100)` can land at 3.9999999999999996 and a
-student who just earned their level watches the screen refuse it. The integer
-form is also exactly equivalent to the stated rule — `isqrt(x // 100) >= N` iff
-`x // 100 >= N²` iff `x >= 100N²`, because N² is an integer — so the curve in
-this paragraph and the code cannot drift apart.
+**It is integer arithmetic on purpose:** `math.isqrt(total // 100)`. The
+integer form is *exactly* the rule in the paragraph above — `isqrt(x // 100) >=
+N` iff `x // 100 >= N²` iff `x >= 100N²`, because N² is an integer — so the
+prose and the code cannot drift apart, and the equivalence is provable by hand
+rather than by sampling.
+
+> **Corrected in place after the code, and the correction matters more than the
+> decision.** This paragraph first said the float form `floor(sqrt(total /
+> 100))` is *wrong* at the boundaries, citing `sqrt(1600 / 100)` landing at
+> 3.9999999999999996. **That was inverted and it is false**: swapping the
+> implementation to the float form leaves all 62 tests in
+> `tests/test_xp_levels.py` green, because at a boundary `100·N²` both the
+> division and the square root are exact in IEEE 754 for any total this product
+> can reach (the first inexact case needs a total above 2⁵³). The integer form
+> is still what ships — its correctness does not *depend* on that
+> floating-point argument holding for every input forever, while the float
+> form's does — but the original reason was a failure mode nobody had
+> reproduced. Same shape as P5.6 chunk C2b, where a guard was removed for being
+> justified by a false comment, and D5.7, where an inherited "proven by
+> inversion" claim turned out not to be the test it described. **Writing the
+> reason before running the inversion is how a decision record acquires a
+> confident sentence that is not true.** Invert first, then write why.
 
 The route returns `levelStartXp` and `nextLevelXp` beside `level` so the screen
 draws a progress bar without re-deriving the curve in TypeScript. **The curve

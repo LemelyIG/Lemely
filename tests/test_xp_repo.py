@@ -41,6 +41,7 @@ from lemely.db.models.academic import Subject
 from lemely.db.models.enums import Role, XpSource
 from lemely.db.models.users import User
 from lemely.db.xp_repo import (
+    CALENDAR_DAYS,
     DAILY_SOURCE_CAPS,
     GLOBAL_DAILY_CAP,
     XP_AMOUNTS,
@@ -50,6 +51,7 @@ from lemely.db.xp_repo import (
     XpService,
     XpUserNotFoundError,
     civil_date_in_zone,
+    week_bounds,
 )
 from lemely.runtime.config import DatabaseSettings
 
@@ -677,3 +679,145 @@ class TestReads:
         reader = XpService(pg_sessionmaker)
         breakdown = reader.xp_breakdown(student_id, start=date(2026, 8, 1), end=date(2026, 8, 31))
         assert breakdown.total == XP_AMOUNTS[XpSource.paper_corrected]
+
+
+class TestWeekBounds:
+    """D5.13 §2: the one definition of "this week", shared with the leaderboard."""
+
+    @pytest.mark.parametrize(
+        ("day", "monday"),
+        [
+            (date(2026, 8, 3), date(2026, 8, 3)),  # Monday itself
+            (date(2026, 8, 5), date(2026, 8, 3)),  # midweek
+            (date(2026, 8, 9), date(2026, 8, 3)),  # Sunday, the last day in
+            (date(2026, 8, 10), date(2026, 8, 10)),  # the next Monday rolls over
+        ],
+    )
+    def test_the_week_runs_monday_to_sunday(self, day: date, monday: date) -> None:
+        assert week_bounds(day) == (monday, monday + timedelta(days=6))
+
+    def test_a_new_years_week_spans_the_year_boundary(self) -> None:
+        """The window is the ISO week, not a calendar-month or year slice.
+
+        1 Jan 2027 is a Friday, so its week starts in the previous year — a
+        naive `replace(day=1)`-style implementation would silently truncate it.
+        """
+        assert week_bounds(date(2027, 1, 1)) == (date(2026, 12, 28), date(2027, 1, 3))
+
+
+class TestXpByDay:
+    """S-31's streak calendar (D5.13 §4)."""
+
+    def test_days_with_no_xp_are_absent_rather_than_zero(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        """The rule that keeps "no XP" distinguishable from "outside the window"."""
+        XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 5))).award(
+            student_id, XpSource.paper_corrected, dedupe_key="a"
+        )
+
+        by_day = XpService(pg_sessionmaker).xp_by_day(
+            student_id, start=date(2026, 8, 1), end=date(2026, 8, 10)
+        )
+
+        assert by_day == {date(2026, 8, 5): XP_AMOUNTS[XpSource.paper_corrected]}
+
+    def test_a_days_xp_sums_across_sources(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        service = XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 5)))
+        service.award(student_id, XpSource.paper_corrected, dedupe_key="p")
+        service.award(student_id, XpSource.quiz_completed, dedupe_key="q")
+
+        by_day = XpService(pg_sessionmaker).xp_by_day(
+            student_id, start=date(2026, 8, 1), end=date(2026, 8, 10)
+        )
+
+        expected = XP_AMOUNTS[XpSource.paper_corrected] + XP_AMOUNTS[XpSource.quiz_completed]
+        assert by_day == {date(2026, 8, 5): expected}
+
+    def test_the_window_is_inclusive_at_both_ends(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        for label, day in (("first", date(2026, 8, 1)), ("last", date(2026, 8, 10))):
+            XpService(pg_sessionmaker, now=lambda d=day: _at(d)).award(  # type: ignore[misc]
+                student_id, XpSource.paper_corrected, dedupe_key=label
+            )
+        XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 11))).award(
+            student_id, XpSource.paper_corrected, dedupe_key="after"
+        )
+
+        by_day = XpService(pg_sessionmaker).xp_by_day(
+            student_id, start=date(2026, 8, 1), end=date(2026, 8, 10)
+        )
+
+        assert set(by_day) == {date(2026, 8, 1), date(2026, 8, 10)}
+
+
+class TestProfile:
+    """The composed S-31 read (D5.13 §5)."""
+
+    def test_every_window_resolves_from_one_today(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        """The reason `profile` exists rather than three router-level calls.
+
+        Assembled separately, a request crossing midnight in Africa/Cairo could
+        return a week and a calendar that disagree about the date.
+        """
+        service = XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 5)))
+        service.award(student_id, XpSource.paper_corrected, dedupe_key="p")
+
+        profile = service.profile(student_id)
+
+        assert profile.calendar_end == date(2026, 8, 5)
+        assert profile.week_start <= profile.calendar_end <= profile.week_end
+        assert profile.calendar_start == date(2026, 8, 5) - timedelta(days=CALENDAR_DAYS - 1)
+
+    def test_the_week_matches_week_bounds_of_the_same_day(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        service = XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 5)))
+        profile = service.profile(student_id)
+        assert (profile.week_start, profile.week_end) == week_bounds(date(2026, 8, 5))
+
+    def test_the_total_is_all_time_while_the_breakdown_is_weekly(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        XpService(pg_sessionmaker, now=lambda: _at(date(2026, 1, 5))).award(
+            student_id, XpSource.paper_corrected, dedupe_key="old"
+        )
+        service = XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 5)))
+        service.award(student_id, XpSource.quiz_completed, dedupe_key="new")
+
+        profile = service.profile(student_id)
+
+        expected_total = XP_AMOUNTS[XpSource.paper_corrected] + XP_AMOUNTS[XpSource.quiz_completed]
+        assert profile.total_xp == expected_total
+        assert profile.week.total == XP_AMOUNTS[XpSource.quiz_completed]
+        assert profile.week.by_source[XpSource.paper_corrected] == 0
+
+    def test_a_student_who_has_never_earned_gets_a_zeroed_profile(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        profile = XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 5))).profile(student_id)
+
+        assert profile.total_xp == 0
+        assert profile.calendar == {}
+        assert profile.streak.current_length == 0
+        assert profile.streak.last_active_on is None
+
+    def test_the_calendar_window_is_configurable(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        service = XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 5)))
+        profile = service.profile(student_id, calendar_days=7)
+        assert profile.calendar_start == date(2026, 7, 30)
+
+    def test_the_clock_can_be_overridden_per_call(
+        self, pg_sessionmaker: sessionmaker[Session], student_id: uuid.UUID
+    ) -> None:
+        service = XpService(pg_sessionmaker, now=lambda: _at(date(2026, 8, 5)))
+        profile = service.profile(student_id, now=_at(date(2026, 9, 9)))
+        assert profile.calendar_end == date(2026, 9, 9)
+        assert (profile.week_start, profile.week_end) == week_bounds(date(2026, 9, 9))

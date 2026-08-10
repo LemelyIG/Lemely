@@ -127,6 +127,25 @@ def civil_date_in_zone(moment: datetime, *, zone: ZoneInfo) -> date:
     return moment.astimezone(zone).date()
 
 
+def week_bounds(today: date) -> tuple[date, date]:
+    """Monday..Sunday (inclusive) of the ISO week containing ``today`` (D5.1 §6).
+
+    **The one definition of "this week" in the codebase** (D5.13 §2). It lived
+    privately in :mod:`lemely.db.leaderboard_repo` until P5.8 needed the same
+    week for S-31's "XP earned this week"; a second copy would let the profile
+    screen and the leaderboard disagree about a fact the student can switch
+    between in one tap. It sits here, beside :func:`civil_date_in_zone`,
+    because ``leaderboard_repo`` already imports from this module and the
+    dependency must not run the other way.
+
+    Takes a civil ``date`` rather than a ``datetime`` so the zone conversion
+    has already happened at the call site — this function has no opinion about
+    timezones and cannot silently apply the wrong one.
+    """
+    monday = today - timedelta(days=today.weekday())
+    return monday, monday + timedelta(days=6)
+
+
 def _utcnow() -> datetime:
     """Default clock: aware UTC now. Production wiring only — tests inject their own."""
     return datetime.now(UTC)
@@ -189,6 +208,32 @@ class XpBreakdown:
 
     total: int
     by_source: dict[XpSource, int]
+
+
+#: Days of streak calendar S-31 renders (D5.13 §4). Four weeks, so the grid is
+#: a clean 7-wide block and a student who was away a fortnight still sees the
+#: run they are trying to get back to.
+CALENDAR_DAYS = 28
+
+
+@dataclass(frozen=True, slots=True)
+class XpProfile:
+    """Everything S-31 needs about one student's XP, resolved at one moment.
+
+    Composed here rather than in the router so the week window, the calendar
+    window and the streak all read the *same* ``today`` — assembled from three
+    separate calls, a request crossing midnight in ``Africa/Cairo`` could
+    return a week and a calendar that disagree about which day it is.
+    """
+
+    total_xp: int
+    streak: StreakState
+    week_start: date
+    week_end: date
+    week: XpBreakdown
+    calendar: dict[date, int]
+    calendar_start: date
+    calendar_end: date
 
 
 class XpService:
@@ -374,6 +419,38 @@ class XpService:
             by_source[source] = int(amount or 0)
         return XpBreakdown(total=sum(by_source.values()), by_source=by_source)
 
+    def xp_by_day(self, user_id: uuid.UUID | str, *, start: date, end: date) -> dict[date, int]:
+        """XP earned per civil day in ``[start, end]`` (inclusive), for S-31's calendar.
+
+        **Only days that earned XP appear as keys.** A day with no XP is
+        absent, never present with a 0 — the caller already knows the window it
+        asked for and fills the gaps itself, so "no XP" and "outside the
+        window" cannot be rendered as two different things by accident
+        (D5.13 §4).
+
+        Reports XP, not a boolean "was this student active". The table honestly
+        knows the former; the latter is a claim about attendance that D5.1 §3's
+        daily caps and §8's dedupe can falsify — a student's ninth paper of the
+        day writes no row.
+
+        Args:
+            user_id: The student whose days are summed.
+            start: First ``awarded_on`` civil date included.
+            end: Last ``awarded_on`` civil date included.
+        """
+        student_uuid = _as_uuid(user_id)
+        with self._sessionmaker() as session:
+            rows = session.execute(
+                select(XpEvent.awarded_on, func.sum(XpEvent.amount))
+                .where(
+                    XpEvent.user_id == student_uuid,
+                    XpEvent.awarded_on >= start,
+                    XpEvent.awarded_on <= end,
+                )
+                .group_by(XpEvent.awarded_on)
+            ).all()
+        return {day: int(amount or 0) for day, amount in rows}
+
     def streak(self, user_id: uuid.UUID | str, *, now: datetime | None = None) -> StreakState:
         """Resolve and return the user's streak as of ``now``.
 
@@ -401,6 +478,47 @@ class XpService:
                 last_active_on=row.last_active_on,
                 freezes_available=row.freezes_available,
             )
+
+    def profile(
+        self,
+        user_id: uuid.UUID | str,
+        *,
+        now: datetime | None = None,
+        calendar_days: int = CALENDAR_DAYS,
+    ) -> XpProfile:
+        """S-31's whole read: total, streak, this week by source, and the calendar.
+
+        Resolves ``today`` **once** and passes that one civil date to every
+        window, so the returned week and calendar cannot disagree about the
+        date for a request that crosses midnight in ``Africa/Cairo``.
+
+        Note this makes four queries and pins none of them to a snapshot: a
+        concurrent award can leave ``total_xp`` a few XP ahead of the week
+        breakdown. Judged and accepted for the same reason P5.3 accepted it on
+        the leaderboard — a progress screen is an inherently stale read, and it
+        self-corrects on the next request.
+
+        Args:
+            user_id: The student whose profile is read.
+            now: Override the clock (tests, and callers that already fixed a
+                moment). Aware datetime; naive raises through
+                :func:`civil_date_in_zone`.
+            calendar_days: Length of the calendar window ending today.
+        """
+        moment = now if now is not None else self._now()
+        today = civil_date_in_zone(moment, zone=self._zone)
+        week_start, week_end = week_bounds(today)
+        calendar_start = today - timedelta(days=calendar_days - 1)
+        return XpProfile(
+            total_xp=self.total_xp(user_id),
+            streak=self.streak(user_id, now=moment),
+            week_start=week_start,
+            week_end=week_end,
+            week=self.xp_breakdown(user_id, start=week_start, end=week_end),
+            calendar=self.xp_by_day(user_id, start=calendar_start, end=today),
+            calendar_start=calendar_start,
+            calendar_end=today,
+        )
 
     # -- Streak internals -----------------------------------------------------
 
@@ -506,6 +624,7 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "CALENDAR_DAYS",
     "DAILY_SOURCE_CAPS",
     "DEFAULT_ZONE",
     "GLOBAL_DAILY_CAP",
@@ -516,7 +635,9 @@ __all__ = [
     "XpCapReason",
     "XpError",
     "XpIneligibleUserError",
+    "XpProfile",
     "XpService",
     "XpUserNotFoundError",
     "civil_date_in_zone",
+    "week_bounds",
 ]

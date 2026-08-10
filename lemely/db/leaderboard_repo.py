@@ -76,7 +76,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
@@ -89,7 +89,7 @@ from lemely.db.models.enums import FriendshipStatus, Role, SeatStatus
 from lemely.db.models.orgs import ClassEnrollment, Seat
 from lemely.db.models.profiles import StudentProfile
 from lemely.db.models.users import Friendship, User
-from lemely.db.xp_repo import DEFAULT_ZONE, civil_date_in_zone
+from lemely.db.xp_repo import DEFAULT_ZONE, civil_date_in_zone, week_bounds
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -192,13 +192,6 @@ class LeaderboardResult:
     """The explicit "viewer opted out" fact D5.1 §9 requires the route be
     able to surface honestly, independent of whether the viewer happens to
     have XP this week."""
-
-
-def _week_bounds(today: date) -> tuple[date, date]:
-    """Monday..Sunday (inclusive) of the ISO week containing ``today`` (D5.1 §6)."""
-    monday = today - timedelta(days=today.weekday())
-    sunday = monday + timedelta(days=6)
-    return monday, sunday
 
 
 def _membership_subquery(
@@ -371,7 +364,7 @@ class LeaderboardService:
 
         moment = now if now is not None else self._now()
         today = civil_date_in_zone(moment, zone=self._zone)
-        week_start, week_end = _week_bounds(today)
+        week_start, week_end = week_bounds(today)
 
         with self._sessionmaker() as session:
             viewer = session.get(User, viewer_uuid)
