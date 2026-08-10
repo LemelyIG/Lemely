@@ -2,7 +2,10 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T11:54:00Z   # **Fifty-eighth session (this one): the run is still alive at 23m41s inside `puppeteer-audit`; the waiting time went into sharpening P5.10.**
+last_updated: 2026-08-10T11:58:00Z   # **Fifty-ninth session (this one): the run is alive at 27m01s, still inside `puppeteer-audit`; the waiting time went into sharpening P5.11.**
+#                                    Session 51's `setsid` run (PID 927164) is alive at **27:01**, log still 276 bytes (11/13 PASS). Health checked the fifty-fifth session's way: the `npm run audit` child (973395) is **the same one session 57 saw** — 5m59s elapsed against 27m01s total puts its start at ~21 min, exactly where session 57 reported `puppeteer-audit` beginning — under a **fresh** Chrome tree (990891 + crashpad/zygotes), which is progress rather than a restart because `audit.mjs` cycles a browser per route batch. Twelfth run not started; Monitor re-armed on 927164 (it now also fires on `EXIT=`/FAIL, so a red gate is not silent). Working tree clean on entry, no wip commit needed.
+#                                    **P5.11's brief was a bare one-liner and is now measured** (P5.9 and P5.10 were sharpened by sessions 56 and 58, so P5.11 was the next unbriefed task). Three findings: **zero** E2E coverage of any Phase-5 surface, `seed_e2e.py` seeds **no** Phase-5 data at all (so leaderboard *ordering* — the one acceptance criterion MISSION §4 names — has never been asserted against a populated board, and G-10 still lacks the 3-device account it needs), and the seed contract is **P5.4's `EXPECTED_TABLES` trap in frontend form**: `seed-contract.spec.ts` asserts exact key equality plus an exhaustive SHAPE map, so one seed group costs three edits and fails ~22 min into a run instead of ~10. Full brief on the P5.11 line.
+#                                    Prior: **Fifty-eighth session: the run was alive at 23m41s inside `puppeteer-audit`; the waiting time went into sharpening P5.10.**
 #                                    Session 51's `setsid` run (PID 927164) is alive at **23:41**, log still 276 bytes (11/13 PASS). Health checked the fifty-fifth session's way and it holds: a live `npm run audit` child (973395) and a **fresh** Chrome tree (980241 + gpu/network/zygote workers) — note that is NOT session 57's Chrome 974729, because `audit.mjs` cycles a browser per route batch, so a *changed* Chrome PID is a sign of progress, not of a crash-restart. Eleventh run not started; Monitor re-armed on 927164. Working tree clean on entry, no wip commit needed.
 #                                    **P5.10's brief was a bare one-liner and is now measured** (P5.9 was already sharpened by session 56, so P5.10 was the next unbriefed task). Two findings that change it: the global `prefers-reduced-motion` rule **already exists** at `src/index.css:742` covering `*`/`::before`/`::after`, and it genuinely reaches **all** motion here — the app is CSS-only, with exactly three `@keyframes` and **zero** animation libraries, `requestAnimationFrame` calls, or smooth-scroll. So P5.10 is not a CSS task. **The gap is that no test anywhere has ever asserted it** — the deliverable is the proof test, verified by inversion. Full brief on the P5.10 line.
 #                                    Prior: **Fifty-seventh session: the P5.8 gate run has cleared 11/13 gates — `playwright-e2e` PASSED.**
@@ -1152,6 +1155,47 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          cycle rather than stopping mid-frame. That is correct behaviour, not a bug to fix.
 - [ ] todo — **P5.11** Acceptance + UI-gate pass: E2E for XP accrual, leaderboard ordering, push
       delivery (mock), announcement flow; axe/Lighthouse/screenshots/visual compare.
+      **Brief sharpened 2026-08-10 (session 59) by measuring the code while the P5.8 gate run
+      held the test lane — recon only, nothing edited. Three findings, and the third is a trap
+      that fires 22 minutes into a gate run.**
+      1. **There is ZERO E2E coverage of any Phase-5 surface.** `grep -rlnE
+         "leaderboard|/student/board|/student/friends|/student/announcements|/student/profile|
+         notification|streak|settings/devices"` over `web/e2e/` returns **NONE**. The suite is
+         15 files / 25 test blocks and every one of them is Phase 2–4 (at-risk, correct-paper,
+         parent/teacher/student journeys, phase4-journey, phase4-practice, rbac, screenshots,
+         seed-contract, smoke). So all four flows are a **clean build**, not a retrofit — the
+         same shape S-28 and the notification screens were. Do not go looking for a Phase-5
+         helper to extend.
+      2. **`scripts/seed_e2e.py` seeds NO Phase-5 data at all.** `grep -nE
+         "XpEvent|Streak|Friendship|Announcement|Notification|PushSubscription|ExamDate|Device"`
+         over all 1796 lines returns **nothing**. Two consequences the brief must not gloss:
+         (a) the S-28/S-29/S-30/S-31 entries P5.8 added to `audit.mjs` are probing **empty
+         states only** — that is honest for the axe/Lighthouse leg but means **leaderboard
+         ordering has never been asserted against a populated board**, which is the single
+         acceptance criterion MISSION §4 names for this phase; (b) **G-10 still has no
+         audit entry** because it needs an account already holding three live devices, and
+         *that* is the seed gap P5.7 recorded as "a seed precondition, not a navigation".
+         Seeding XP events across two students with a known ordering is the cheapest way to
+         make criterion (a) real, and it is a `seed_e2e.py` change, not a screen change.
+      3. **The seed contract costs THREE edits, not one — this is P5.4's `EXPECTED_TABLES`
+         trap in its frontend form, and it is more expensive because it fails inside
+         `playwright-e2e` (~22 min into a run) instead of `pytest` (~10 min).**
+         `web/e2e/seed-contract.spec.ts:171` asserts **exact** top-level key equality
+         (`toEqual` over sorted `Object.keys`) and :180 walks an **exhaustive** dotted `SHAPE`
+         map over every field. So one new seed group costs: `scripts/seed_e2e.py` (the
+         `SeedContract` dataclass at :941 **and** `build_result_payload`, documented at
+         spec:126 as returning exactly **14 keys**) + `web/e2e/seed.ts:34` (the TS interface)
+         + `seed-contract.spec.ts` (both the key list and `SHAPE`). **Make all three edits in
+         the same commit as the seed change**, exactly as P5.5 did for `EXPECTED_TABLES`.
+      4. **Ordering: the push-delivery flow depends on P5.9.** G-12/G-13 do not exist yet
+         (P5.9 §2 measured that there is no notification frontend of any kind), so "push
+         delivery (mock)" has no screen to assert against until P5.9 lands. The other three
+         flows (XP accrual, leaderboard ordering, announcement flow) are unblocked **today** —
+         S-28/S-29/S-30/S-31 all shipped in P5.8. If P5.9 slips, build those three rather than
+         holding the task. And scope the push flow honestly when it comes: this machine has no
+         VAPID keys, so the transport reports itself unavailable by design (D5.9 §4) and **no
+         real push can be delivered in any harness here** — the assertable facts are the inbox
+         row (D5.9 §1's source of truth) and G-12's unavailable state, never a delivered push.
 - [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
 
 ### Environment facts worth not re-deriving (cost real work to find)
