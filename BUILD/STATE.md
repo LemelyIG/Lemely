@@ -1044,6 +1044,53 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       area under `lib/hooks/`, and **do not run `npx prettier`** (see the environment fact
       below). MISSION §6.8 applies in full again.
 - [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
+      **Brief sharpened 2026-08-10 (session 56) by reading the code while the P5.8 gate run
+      held the test lane — recon only, nothing edited. Four corrections, and the first is a
+      scope halving.**
+      1. **G-10 and G-11 are already BUILT — P5.7 shipped both.** `DeviceLimitNotice.tsx`
+         (the 409 challenge) and `portals/settings/DeviceSettings.tsx` at `/settings/devices`,
+         with a G-11 audit-registry entry and axe 0 / Lighthouse a11y 100 already measured.
+         **P5.9's real scope is G-12 + G-13 only**, plus the two gaps P5.7 and P5.8 recorded
+         as explicitly *not* covered: G-10 has **no audit-registry entry** (it needs a seed
+         account already holding three live devices — a seed precondition, not a navigation,
+         so it is a `scripts/seed_e2e.py` change) and **teacher + parent still have no nav
+         entry to `/settings/devices`** (P5.8 chunk D wired the student one from S-31; the
+         teacher sidebar needs an icon-map addition and the parent portal has no sidebar).
+      2. **There is no notification frontend of any kind.** `grep -rln "notification"
+         web/src` returns exactly three teacher files, none of them related
+         (`ReviewItem.tsx`, teacher `Announcements.tsx`, `teacherTypes.ts`). No hook, no
+         types file, no screen. Both screens are a clean build, like S-28 was.
+      3. **The real architectural item, and it needs a decision record before code:
+         D5.10's payload-less push has nowhere to land.** `web/vite.config.ts:12` runs
+         `VitePWA` with `registerType: "autoUpdate"` and a `workbox: {...}` block — that is
+         the **generateSW** strategy, which emits a service worker with **no `push` event
+         handler at all**, and there is no service-worker source file anywhere in `web/src`
+         (`web/dist/sw.js` and `registerSW.js` are build artefacts, not inputs). D5.10 chose
+         an empty push body precisely so the SW must *fetch the inbox over the authenticated
+         API before it can render* — so a custom `push` handler is not optional decoration
+         here, it is the only thing that makes P5.6's transport visible. That means moving to
+         `strategies: "injectManifest"` + a `src/sw.ts`, or `workbox.importScripts`. **Decide
+         and record it before writing the screen**, per the ordering MISSION §4 mandates for
+         this phase. P5.6 chunk B already wrote the brief for its offline behaviour: a push
+         whose fetch fails must still show a generic "You have a new notification", because
+         browsers require *some* notification per push.
+      4. **G-12's spec names a toggle the backend does not have.** UI spec §G-12 (line 375)
+         lists "results ready, new announcement, study session reminders, streak at risk,
+         weekly summary, teacher/at-risk alerts". `NotificationType` has exactly **five**
+         values and **`weekly_summary` is not one of them** — there is no sender, no column,
+         and no row. Ship the five real toggles; do not add a sixth switch that gates
+         nothing (UI spec §1.4). Quiet hours **are** real (`quiet_hours_start`/`_end` on
+         `notification_preferences`) and the route is
+         **`GET`/`PATCH /api/me/notification-preferences`** (`routers/me.py:86`) — note it is
+         *not* `/me/profile` or `/me/student-profile`, the two neighbours P5.8 chunk C
+         already tripped over.
+      5. **G-12's "test-notification button" and permission state must both handle
+         `available: false` honestly.** This machine has **no VAPID keys**, so
+         `GET /api/student/notifications/push/config` reports the transport unavailable by
+         design (D5.9 §4) — that is a first-class state for this screen, distinct from
+         "the browser denied permission", which §G-12 explicitly asks be shown "clearly with
+         a route to fix it rather than toggles that silently do nothing". Three states, not
+         one grey button.
 - [ ] todo — **P5.10** Motion pass + a real `prefers-reduced-motion` proof test (MISSION §4
       Phase-5 acceptance names this explicitly).
 - [ ] todo — **P5.11** Acceptance + UI-gate pass: E2E for XP accrual, leaderboard ordering, push
