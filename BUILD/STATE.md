@@ -510,6 +510,30 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       `_IncludedRouter` with no `.path` so the test passes for the wrong reason (P5.5 chunk C).
       Check whether `get_notification_preferences_service` already exists in `deps.py` before
       adding one — the last two briefs predicted a deps entry that was already there.
+      - [x] **spec** (`369ef68`) — **D5.9 recorded before any code**, per MISSION §4. Load-bearing
+            calls: the inbox row is the source of truth and push is a best-effort side effect that
+            can never fail the action producing it; **a type toggle off suppresses the row too**
+            (content preference) while **quiet hours suppress only the push** (timing preference,
+            row still written) — safe precisely because a notification is always a pointer and
+            never the data; a missing prefs row means opted-**in**; parent at-risk alerts read the
+            **parent's** prefs so a student cannot silence alerts about themselves; VAPID keys
+            absent ⇒ transport reports itself unavailable rather than erroring (this machine has
+            no keys); a 404/410 from a push service **deletes** the subscription; `grade_ready`
+            dedupes on the **upload**, not the attempt (D5.3 written down before it can recur);
+            and — **the honest gap** — `streak_warning`/`study_plan_reminder` are time-triggered
+            with **no scheduler in this build**, so they ship as service methods nothing invokes
+            on a timer. Do not build a scheduler daemon; carry it to the Phase-5 limitations.
+      - [ ] **chunk A** — migration 0018 `push_subscriptions` (+ `EXPECTED_TABLES` in the SAME
+            commit) + `lemely/db/notification_repo.py` (`NotificationService`: create with the
+            preference gate and dedupe, list, unread count, mark read) + tests. The inbox itself
+            needs no migration.
+      - [ ] **chunk B** — the transport seam: `NotificationTransport` protocol, the VAPID
+            implementation, the recording in-memory double, VAPID settings in
+            `lemely/runtime/config.py`, `deps.py` + `reset_singletons()`.
+      - [ ] **chunk C** — routes (inbox list / unread-count / mark-read, push subscribe +
+            unsubscribe) and the three action seams that can actually fire (`grade_ready`,
+            `announcement`, `at_risk_alert`), each wrapped fail-open at the router layer like
+            `xp_awards.py`. Then run `./scripts/check.sh` before marking P5.6 done.
 - [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
 - [ ] todo — **P5.8** Screens S-28, S-29, S-30, S-31.
 - [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
