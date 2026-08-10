@@ -5114,3 +5114,125 @@ step, deliberately not built speculatively (MISSION §8b) while no document
 exists to feed it. **Carry this into the Phase-5 limitations list**, together
 with the empty table itself — neither is a defect to quietly fix, and neither
 may be closed by generating data.
+
+## D5.9 — The notification spec: the inbox is the record, push is a side effect (P5.6, written before any implementation)
+
+**MISSION §4 Phase 5 mandates spec-before-code for the engagement layer, the
+same ordering P5.1/D5.1 followed for XP.** This is that spec. Every claim about
+existing schema below was verified by reading the models on 2026-08-10, not
+carried from the phase plan — five earlier Phase-5 tasks were mis-briefed by a
+note paraphrasing the codebase from memory (D5.2, D5.4, D5.5, and both of
+P5.5's deps predictions).
+
+### 0. What already exists, measured
+
+- **`notifications` (`lemely/db/models/ops.py:140`) exists and has zero
+  writers.** Columns: `id`, `user_id`, `type`, `title`, `body`, `payload`
+  (JSONB, defaults `{}`), `read_at`, indexed on `(user_id, read_at)`.
+  `grep -rln "Notification("` over `lemely/` excluding `models/` returns
+  nothing — no repo, no service, no route, no call site. **No migration is
+  needed for the inbox**, same situation P5.2 found for `xp_events`.
+- **`NotificationType` has exactly five values** (`enums.py:164`):
+  `grade_ready`, `announcement`, `streak_warning`, `study_plan_reminder`,
+  `at_risk_alert`. These are precisely MISSION §4's four student triggers plus
+  the teacher/parent at-risk alert. **No enum value needs adding.**
+- **`notification_preferences` (`ops.py:335`) already carries one boolean per
+  type, under the same five names**, all `NOT NULL DEFAULT true`, plus
+  `quiet_hours_start`/`quiet_hours_end` (nullable `Time`).
+  `NotificationPreferencesService.get/set` reads and writes them today and
+  `routers/me.py` exposes them. **So "make preferences gate delivery" needs no
+  schema work at all** — the toggles have existed since migration 0008 and
+  what is missing is a consumer.
+- **Nothing anywhere mentions VAPID or push subscriptions.** The
+  push-subscription table is this task's **only** migration.
+- **There is no scheduler in this build** — no cron, no Celery, no APScheduler,
+  nothing in `pyproject.toml`. This constrains §5 below.
+
+### 1. The inbox row is the source of truth; push is a best-effort side effect
+
+A notification is **a row in `notifications`**. Web push is one *delivery* of
+that row to one device. Push therefore:
+
+- never decides whether a notification exists,
+- never fails the user action that produced it,
+- never fails the inbox write.
+
+This is D5.1 §3's fail-open reasoning ("the learning wins") applied a second
+time, and it reuses the shape already proven in
+`lemely/web/xp_awards.py::award_xp_safely`: the notify call sits at the router
+layer after the action has committed, wrapped in a helper that logs and
+swallows. A student whose grade is ready must not get a 500 because a push
+endpoint was unreachable.
+
+### 2. A type toggle suppresses the row; quiet hours suppress only the push
+
+These two preferences mean different things and must not be collapsed:
+
+- **A type toggle off is a content preference** — "do not notify me about
+  this". So it suppresses **the row as well as the push**. An inbox that fills
+  with items the user explicitly said they did not want is not a feature.
+- **Quiet hours are a timing preference** — "do not buzz my phone at 2am". So
+  they suppress **the push only; the row is always written** and the user sees
+  it when they next open the app.
+
+**Suppressing a row loses no information, and that is what makes this safe.**
+No notification is the sole record of anything: a ready grade is on the results
+screen, an announcement is in P5.5's announcements list (which owns its own
+read-receipts), a streak is on the dashboard, a study-plan session is in the
+plan. The notification is a pointer, never the data. If that ever stops being
+true for a new type, this decision must be revisited rather than extended.
+
+**Default is opted-in.** `NotificationPreferencesService.get` returns an
+all-defaults row for a user who has never configured anything, so "no row"
+means "wants everything" — the gate must never read a missing row as opt-out.
+
+### 3. Parent at-risk alerts consult the parent's own preferences
+
+MISSION §4: at-risk alerts go "to the teacher and (if opted-in) parent". The
+opt-in is **the parent's**, read from the parent's own
+`notification_preferences.at_risk_alert` row. Reading the *student's* row
+would let a student silence alerts about themselves to their own parent, which
+inverts the point of the feature and quietly breaks UI spec §1.4's teacher
+authority.
+
+### 4. The transport seam, and why it is a protocol
+
+Web push cannot be exercised from a headless test, and MISSION §4's acceptance
+explicitly asks for "push delivery (headless push mock)". So:
+
+- a `NotificationTransport` **protocol** with `send(subscription, payload)`,
+- a real VAPID implementation,
+- a **recording in-memory double** that captures what would have been sent,
+- selected in `deps.py` like every other service, and reset by
+  `reset_singletons()`.
+
+**VAPID keys come from `lemely/runtime/config.py` `Settings` and their absence
+is not an error.** With no keys configured the transport reports itself
+unavailable, logs once, and the inbox keeps working — this build has no keys,
+so a hard requirement would make every notification fail in the exact
+environment the tests run in. Same tri-state honesty as D4.10/D5.8: available,
+unavailable-for-a-named-reason, empty.
+
+**A dead subscription is deleted, not retried.** A push service answering 404
+or 410 means the browser subscription is permanently gone; keeping it produces
+a growing table of endpoints that can never succeed.
+
+### 5. What cannot be built here, stated now rather than discovered later
+
+`streak_warning` and `study_plan_reminder` are **time-triggered, not
+action-triggered** — nothing a user does produces them. With no scheduler in
+this build, P5.6 ships the *service method* that computes and sends each one,
+plus a manual entry point, and **nothing invokes them on a timer**. That is the
+honest deliverable and it goes in the Phase-5 limitations; inventing a
+scheduler daemon in an engagement task is out of scope and would be untested
+infrastructure. `grade_ready`, `announcement` and `at_risk_alert` are all
+action-triggered and are wired to real seams.
+
+### 6. Dedupe: the same lesson as D5.3, applied before it bites
+
+`grade_ready` keys on **the upload**, not the attempt. `persist_correction`
+inserts a fresh `Attempt` on every call, so an attempt-keyed notification
+re-fires every time a student re-runs a correction on one PDF — this is
+exactly the defect D5.3 found in the XP paper seam, and it is written down here
+*before* implementation so it is not re-discovered a second time.
+`announcement` keys on `(announcement_id, user_id)`.
