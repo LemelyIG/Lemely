@@ -53,14 +53,25 @@ export function DeviceSettings() {
             ? `You can be signed in on ${devices.data.maxDevices} devices at a time. Signing in on another one signs out whichever you used least recently.`
             : "You can be signed in on a limited number of devices at a time."}
         </p>
-        {session ? (
+        <div className="flex flex-wrap items-center gap-4">
+          {session ? (
+            <Link
+              to={portalPathForRole(session.role)}
+              className="text-body-md text-accent hover:underline"
+            >
+              ← Back
+            </Link>
+          ) : null}
+          {/* The two settings screens link to each other so one nav entry per
+              portal reaches both (P5.9 chunk D). Without this the teacher
+              sidebar and parent header would each need two. */}
           <Link
-            to={portalPathForRole(session.role)}
+            to="/settings/notifications"
             className="text-body-md text-accent hover:underline"
           >
-            ← Back
+            Notification settings
           </Link>
-        ) : null}
+        </div>
       </header>
 
       <section

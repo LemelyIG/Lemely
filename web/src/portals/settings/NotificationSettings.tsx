@@ -203,14 +203,23 @@ export function NotificationSettings() {
           Choose what you want to hear about, and when. Everything you switch on
           arrives in your inbox whether or not this device can show pop-ups.
         </p>
-        {session ? (
+        <div className="flex flex-wrap items-center gap-4">
+          {session ? (
+            <Link
+              to={portalPathForRole(session.role)}
+              className="text-body-md text-accent hover:underline"
+            >
+              ← Back
+            </Link>
+          ) : null}
+          {/* Reciprocal of G-11's link — see the note there (P5.9 chunk D). */}
           <Link
-            to={portalPathForRole(session.role)}
+            to="/settings/devices"
             className="text-body-md text-accent hover:underline"
           >
-            ← Back
+            Account &amp; devices
           </Link>
-        ) : null}
+        </div>
       </header>
 
       <section aria-labelledby="types-heading" className="flex flex-col gap-3">

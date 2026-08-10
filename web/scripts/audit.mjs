@@ -1025,6 +1025,29 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Signed-in devices"),
       authed: true,
     },
+    // ── G-12 · Notification preferences (P5.9 chunk C) ────────────────────
+    // Portal-agnostic for the same reason as G-11, and audited under the
+    // student session for the same one. Note what this entry does *not* cover:
+    // the `atRiskAlert` toggle only renders for a teacher or a parent (the
+    // router returns `null` for every other role), so a student-session audit
+    // sees four toggles, not five. Auditing the five-toggle variant needs a
+    // teacher session on this route — worth adding when a role dimension is
+    // introduced here, not worth a duplicate entry today.
+    // The push section renders its `unavailable` state, which is the honest
+    // one for every build this repo produces: no VAPID keys are configured, so
+    // `GET /notifications/push/config` answers `available: false` by design
+    // (D5.9 §4). The enable button and the test-notification button are
+    // therefore NOT exercised by this audit — that is a real coverage gap and
+    // is carried to the Phase-5 limitations rather than hidden behind a mock
+    // config that would audit a screen this deployment never shows.
+    {
+      screenId: "G-12",
+      slug: "settings-notifications",
+      path: "/settings/notifications",
+      session: decliningStudentSession,
+      ready: (page) => waitForText(page, "What you get told about"),
+      authed: true,
+    },
     // ── Teacher (15 entries — several carry more than one `states[]`) ──────
     {
       screenId: "T-01",
