@@ -1687,3 +1687,42 @@ none has a helper waiting from Phase 3 or 4.
   + the three action seams that can actually fire). Carrying to the Phase-5 limitations:
   `streak_warning`/`study_plan_reminder` are time-triggered and this build has **no
   scheduler**, so they ship as methods nothing invokes on a timer.
+
+## 2026-08-10 — forty-fifth session — P5.6 chunks B and C1
+
+**Did.** Built the notification transport seam (chunk B, `58fa04c`) and the inbox
+routes plus the fail-open notify helper (chunk C1, `dbc5d9f`). Recorded **D5.10**
+before writing chunk B, per the phase's spec-before-code precedent. 86 new tests;
+ruff/format/mypy(207 files)/lint-imports clean throughout. `check.sh` still not run
+since chunk A — it belongs at the end of chunk C2.
+
+**Learned — the decision.** Web push here carries **no payload**: an empty RFC 8030
+body with a VAPID auth header, and the service worker fetches the inbox. That is
+just D5.9 §1 ("the inbox row is the source of truth, push is one delivery of it")
+stated on the wire, and it keeps student notification content off third-party push
+infrastructure entirely. What made the choice easy was not cost but *verifiability*:
+hand-rolled RFC 8291 encryption cannot be honestly proven on a machine with no test
+vector and no live push service, and a vector generated from my own implementation
+would prove only that the code agrees with itself. Payload-less push needs no such
+thing — the ES256 assertion is verified by decoding it with the public key.
+`pywebpush` was measured rather than assumed (11 packages, including a second HTTP
+stack) before being set aside.
+
+**Learned — two traps, both cheap next time.** A router's `Annotated[...]` parameter
+types must be **runtime** imports, not `TYPE_CHECKING`: FastAPI resolves them through
+pydantic, so a type-checking-only name leaves an unresolvable ForwardRef and the route
+raises on its *first request* rather than at import. And a new `lemely/web/schemas_*.py`
+must join the `disallow_any_explicit` override list in `pyproject.toml` — every
+existing schemas module already is.
+
+**Verified rather than asserted.** Six guards proven by inversion across the two
+chunks: attaching a push payload, folding a 503 into "subscription gone", signing the
+endpoint path instead of its origin, plus C1's opted-out/quiet-hours split and the
+fail-open paths driven by a service and a transport that raise.
+
+**Next.** Chunk C2 — the three action seams. `grade_ready` is small and self-contained
+(the seam sits beside the existing XP call in `student.py`); `announcement` needs a
+school-wide recipient reader that does not exist yet; `at_risk_alert` must state
+honestly that rule 3 (14 days inactive) cannot fire without a scheduler. STATE carries
+the full recon of which lookup methods exist. Split C2 if it runs long — shipping
+`grade_ready` alone is a real increment.

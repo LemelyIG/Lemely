@@ -2,9 +2,11 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T12:00:00Z   # **Forty-fourth session — P5.5 (announcements + exam calendar) is COMPLETE.** All three chunks were committed by prior sessions; this session re-implemented nothing and only ran the outstanding gates. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, exit 0, 2623 tests, coverage 90.57%** (develop 90.18% — no drop); `alembic check` clean. 6/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
+last_updated: 2026-08-10T20:00:00Z   # **READ THE FORTY-FIFTH-SESSION LINES BELOW FIRST — they are the current state.** Prior context: **Forty-fourth session — P5.5 (announcements + exam calendar) is COMPLETE.** All three chunks were committed by prior sessions; this session re-implemented nothing and only ran the outstanding gates. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, exit 0, 2623 tests, coverage 90.57%** (develop 90.18% — no drop); `alembic check` clean. 6/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
 #                                    **P5.4's `EXPECTED_TABLES` trap did not fire** — both new tables went into the set in the same commit as their `create_table`, which is what P5.4 told the next session to do. A written-down trap that costs nothing on its next encounter is the point of writing it down.
-#                                    **Resume at P5.6** (notifications inbox + web push). Its recon is done and recorded in the checklist — read those lines rather than re-deriving. The headline: `notifications` exists with **zero writers anywhere**, `notification_preferences` already carries one boolean per notification type plus quiet hours, so **the only migration this task needs is the push-subscription table**. Record the transport-seam design in DECISIONS.md before implementing, per MISSION §4.
+#                                    **Forty-fifth session (this one): P5.6 chunks B and C1 built and committed; resume at chunk C2, the three action seams.** Read the C2 checklist lines — they carry a full recon of which recipient-lookup methods already exist and which do not, so do not re-derive it. Nothing was re-implemented from chunk A. `./scripts/check.sh` has NOT been run since chunk A; run it before P5.6 is marked done.
+#                                    **D5.10 recorded before chunk B's code: a push carries NO payload** — an empty RFC 8030 body plus a VAPID auth header, with the service worker fetching the inbox over the authenticated API. That is D5.9 §1 stated on the wire rather than contradicted by it, and it keeps student notification content off Google/Mozilla/Apple push infrastructure. Zero new dependencies; `pywebpush` was measured (11 packages, incl. aiohttp) and hand-rolled RFC 8291 was rejected because **it could not be honestly verified here** — no test vector, no live push service, and a self-generated vector proves only self-agreement.
+#                                    **Two traps this session paid for, both cheap next time.** (1) `Settings`/`NotificationTransport` in a router's `Annotated[...]` must be **runtime** imports, not `TYPE_CHECKING` — otherwise FastAPI hands pydantic an unresolvable ForwardRef and the route raises `PydanticUserError` on its *first request*, not at import. (2) A new `lemely/web/schemas_*.py` must be added to the `disallow_any_explicit` override list in `pyproject.toml`; every existing schemas module is already there.
 #                                    **Previous (forty-third) session:** **Forty-third session — P5.4 (friends backend) is COMPLETE.** Its three code chunks were already committed by the two prior sessions; the only outstanding work was the gate run, and nothing was re-implemented. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, 2532 tests / 6 live-only skips / 0 failures, coverage 90.48%** (develop 90.18% — no drop); `alembic check` clean. 5/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
 #                                    **The gate run found one real defect** (`72330b8`): `tests/test_db_schema.py` asserts exact set equality against a hand-maintained `EXPECTED_TABLES`, and migration 0015's `friendships` was never added to it. Fixed by extending the set — exact equality is what forces a new table to be acknowledged deliberately. **The generalisable form: a new table costs two edits, the migration and that set.** 0013 and 0014 added only columns, so P5.4 was the first chance in this phase for the trap to fire, and it fires ~10 minutes into the run. Make the `EXPECTED_TABLES` edit in the same chunk as the `create_table`.
 #                                    **Method note worth keeping:** `check.sh` suppresses output for gates that pass, so a green log contains no pytest counts at all — read coverage with `.venv/bin/coverage report --precision=2` off the run it just did, and get the test count from `pytest --collect-only -q --no-cov`. Never re-run the suite for a number; a second run costs ~10 minutes and risks the concurrent-`.coverage` corruption noted below.
@@ -587,10 +589,80 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             fetch before it can render, so a push arriving offline (or whose fetch fails)
             shows a generic "You have a new notification" — browsers require *some*
             notification per push. This is P5.9's service-worker brief.
-      - [ ] **chunk C** — routes (inbox list / unread-count / mark-read, push subscribe +
-            unsubscribe) and the three action seams that can actually fire (`grade_ready`,
-            `announcement`, `at_risk_alert`), each wrapped fail-open at the router layer like
-            `xp_awards.py`. Then run `./scripts/check.sh` before marking P5.6 done.
+      - [x] **chunk C1** (`dbc5d9f`) — the routes and the fail-open helper.
+            `lemely/web/routers/notifications.py` (`GET ""`, `GET /counts`,
+            `POST /{id}/read`, `POST /read-all`, `GET /push/config`,
+            `POST /push/subscribe`, `POST /push/unsubscribe`),
+            `schemas_notifications.py`, `lemely/web/notify.py` (`notify_safely`), app
+            wiring, 49 tests (31 route + 18 helper). ruff/format/mypy(207)/lint-imports
+            clean; the four notification test files pass together (126 tests).
+            **Not yet run: the full suite / `check.sh`.**
+            **The router is deliberately role-agnostic**, unlike every Phase-5 router it
+            mirrors: `at_risk_alert` is addressed to a teacher and a parent, so a
+            `Role.student` gate would have built an inbox two of its three intended
+            readers cannot open. Pinned by a test over four roles.
+            **New trap, cost real debugging, do not re-spring:** `Settings` and
+            `NotificationTransport` must be imported at **runtime**, not under
+            `TYPE_CHECKING`. FastAPI resolves every `Annotated[...]` parameter through
+            pydantic, and with `from __future__ import annotations` a type-checking-only
+            name leaves an unresolvable ForwardRef — the route then raises
+            `PydanticUserError` **on its first request**, not at import, which is a much
+            later and more confusing place to find out. `ruff`'s TC001 wants the
+            opposite and is overridden with a reasoned `noqa`.
+            Also: `lemely.web.schemas_notifications` had to join the
+            `disallow_any_explicit` override list in `pyproject.toml` — pydantic's mypy
+            plugin injects `Any` into generated `__init__`s, and **every** schemas module
+            is already on that list. A new `schemas_*.py` costs that edit too.
+            Behaviour worth keeping: subscribing is accepted with **no VAPID keys**
+            (a subscription is a durable fact about a browser; refusing it would force
+            every user to re-subscribe the day keys arrive); `removed: false` for someone
+            else's endpoint is a **success**, not a 404 that would reveal ownership; the
+            wire payload is `dict[str, str]` and **coerced, not rejected**, on read,
+            because an inbox that 500s over one odd row is worse than a stringified id.
+      - [ ] **chunk C2** — the three action seams, each `notify_safely(...)` at the
+            **router** layer after the action has committed, exactly like
+            `award_xp_safely`. Then run `./scripts/check.sh` before marking P5.6 done.
+            **Recon done 2026-08-10, use it rather than re-deriving:**
+            - **`grade_ready`** — easiest, do it first. The seam is
+              `lemely/web/routers/student.py:735`, immediately after the existing
+              `award_xp_safely(..., seam="paper_corrected")` call. Recipient is
+              `auth.user_id`; **dedupe on `str(owned.id)` — the upload, never the
+              attempt** (D5.9 §6 / D5.3: `persist_correction` mints a fresh `Attempt`
+              every run, so an attempt key re-fires on every re-correction of one PDF).
+              Payload carries the upload id; **never a mark** (D5.9 §2).
+            - **`announcement`** — the seam is `create_announcement` in
+              `lemely/web/routers/announcements.py:100`, after `service.create` returns
+              its rows. **Recipient resolution does not exist yet and is the real work
+              here.** For a class row, `ClassService.roster(caller_id, caller_role,
+              class_id)` works directly and the author's ownership is already proven by
+              the create that just succeeded. **For a `school_wide` row there is no
+              method at all** — the audience is every student holding a non-revoked
+              `Seat` in that school (D5.4: students reach a school through `Seat`, never
+              `SchoolMembership`), and `seat_repo.py` exposes only
+              create/available/list_admin_schools/seat_usage/invite/revoke. Add one
+              narrow reader (to `AnnouncementService`, beside `list_for_student`, whose
+              audience logic is the same predicate in the other direction) rather than a
+              second independently-derived query. Dedupe on
+              `f"{announcement_id}:{user_id}"` (D5.9 §6).
+            - **`at_risk_alert`** — the hardest, and **scope it honestly**. At-risk is
+              computed **on read** today (`assess_at_risk` called from
+              `routers/classes.py:203/306`), so there is no existing event to hang this
+              on. The defensible seam is the same post-correction point as `grade_ready`:
+              a new paper is exactly what can change rule 1 (declining trend) and rule 2
+              (below target). **Rule 3 (≥14 days inactive) is time-triggered and cannot
+              fire here** — it joins `streak_warning`/`study_plan_reminder` in D5.9 §5's
+              no-scheduler limitation, and must be stated as such, not quietly omitted.
+              Recipients: the student's teachers via `ClassService.student_classes(
+              student_id)` (it joins `SchoolClass`, so the teacher id is reachable), and
+              the parents via `ParentLinkService.list_parents(student_id)`.
+              **The parent's own `notification_preferences.at_risk_alert` is what gates
+              the parent's row (D5.9 §3)** — `notify_safely` already does this correctly
+              because the gate reads the *recipient's* prefs, but a test must pin it, or
+              a student could silence alerts about themselves.
+            **If C2 turns out larger than one session, split it: C2a `grade_ready`
+            (small, self-contained), C2b `announcement`, C2c `at_risk_alert`.** Committing
+            `grade_ready` alone is a real increment; do not hold it hostage to the other
+            two.
 - [ ] todo — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
 - [ ] todo — **P5.8** Screens S-28, S-29, S-30, S-31.
 - [ ] todo — **P5.9** Screens G-10, G-11, G-12, G-13.
