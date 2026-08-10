@@ -5311,3 +5311,58 @@ requirement would fail every notification in exactly the environment the tests
 run in. A `404`/`410` from a push service deletes the subscription through
 `NotificationService.forget_endpoint`, per D5.9 §4 — a permanently gone browser
 subscription is not a retryable failure.
+
+## D5.11 — At-risk alerts fire on correction and dedupe per student, reason and day (P5.6 chunk C2c)
+
+D5.9 fixed the transport, the gate and the fail-open rule, but left the
+`at_risk_alert` seam open because at-risk had no event to hang on. This is that
+choice, recorded before the code per MISSION §4's Phase-5 ordering.
+
+**1. The seam is the post-correction point, and that is a real constraint, not
+a convenience.** At-risk is computed **on read** today — `assess_at_risk` is
+called from `routers/classes.py` when a teacher opens a class — so there is no
+existing "a student became at-risk" event anywhere in the build. Manufacturing
+one would mean either a scheduler (D5.9 §5 says there is none) or an
+assessment-state table nothing else needs. A newly marked paper is the thing
+that actually changes the answer: it is the input to rule 1 (declining trend
+across the last N papers) and rule 2 (predicted grade below target). So the
+alert is raised immediately after `grade_ready`, on the same already-committed
+correction.
+
+**2. Rule 3 cannot fire here, and this is stated rather than quietly omitted.**
+"≥14 days inactive" is true of a student who is doing *nothing* — a student who
+has just uploaded a paper is by definition active. Rule 3 is time-triggered and
+joins `streak_warning` and `study_plan_reminder` in D5.9 §5's no-scheduler
+limitation. The consequence is concrete: **the one at-risk reason most likely
+to matter for a disengaging student is the one this build cannot deliver.**
+That belongs in the Phase-5 limitations, not in a comment.
+
+**3. The dedupe key is `(student_id, reason, civil date)`.** At-risk is a
+*state*, not an event: a student whose trend is declining stays declining
+across every paper they upload that week. Keying on the upload — the right
+answer for `grade_ready`, which announces one specific artifact — would send a
+teacher of thirty students one alert per upload per student, and a notification
+stream nobody can read is worse than none. Keying on nothing but the reason
+would collapse a term into one alert. A civil day is the cheapest honest bound,
+and it is **`Africa/Cairo`, via `civil_date_in_zone`** — the same day boundary
+D5.1 §4 fixed for streaks, reusing that helper rather than re-deriving one
+(Cairo is UTC+3 in summer, so a hardcoded offset is wrong for half the year).
+The recipient half of the key comes free from migration 0018's
+`(user_id, type, dedupe_key)` unique index, as established in chunk C2b.
+
+**4. Recipients are derived server-side, per recipient, from their own
+preferences.** Teachers come from a new narrow `ClassService.teachers_for_student`
+— the chunk's recon predicted `student_classes` would serve, and **it does
+not**: `StudentClassRow` carries `class_id`/`name`/`subject_code`/`school_name`
+and no teacher id at all. (Seventh time this phase that reading the model beat
+paraphrasing a note.) Parents come from `ParentLinkService.list_parents`. Each
+recipient's row is gated by **their own** `notification_preferences.at_risk_alert`
+(D5.9 §3) — `notify_safely` already reads the recipient's prefs, so this is
+free, but it is pinned by a test, because the failure it prevents is a student
+silencing alerts about themselves.
+
+**5. The alert names the student and the reason, never a mark or a grade.**
+D5.9 §2 and UI spec §1.4 hold here even though the audience is staff: the row
+is a pointer to the teacher's own at-risk view, which already renders the
+evidence with its confidence intact. A grade on a lock screen is a grade on a
+lock screen regardless of who is holding the phone.

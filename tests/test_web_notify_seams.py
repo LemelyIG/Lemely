@@ -56,8 +56,9 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from lemely.core.history import PaperRecord, StudentHistory
 from lemely.core.loose_schemas import MarkScheme
-from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+from lemely.core.schemas import ExamMetadata, ExtractedAnswer, ExtractedAnswers
 from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
@@ -66,8 +67,11 @@ from lemely.db.models import School, SchoolMembership, User
 from lemely.db.models.attempts import Attempt
 from lemely.db.models.enums import MembershipRole, NotificationType, Role, SeatStatus
 from lemely.db.models.orgs import ClassEnrollment, Seat
+from lemely.db.models.users import ParentChildLink
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
+from lemely.db.parent_repo import ParentLinkService
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
@@ -79,10 +83,13 @@ from lemely.web.deps import (
     get_auth_context,
     get_class_service,
     get_gemini_client,
+    get_history_store,
     get_notification_service,
+    get_parent_link_service,
     get_push_transport,
     get_settings,
     get_storage_backend,
+    get_student_profile_service,
     get_student_upload_repo,
     get_xp_service,
 )
@@ -694,3 +701,218 @@ def test_a_student_who_turned_announcements_off_gets_no_row(
 
     assert _inbox(notifications, quiet, NotificationType.announcement) == []
     assert len(_inbox(notifications, loud, NotificationType.announcement)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Seam 3 — at_risk_alert (also POST /api/student/correct).
+# ---------------------------------------------------------------------------
+
+
+def _at_risk_record(percentage: float) -> PaperRecord:
+    return PaperRecord(
+        student_id="student",
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=4,
+            paper_variant=1,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        awarded_marks=int(percentage * 80 / 100),
+        maximum_marks=80,
+        percentage=percentage,
+        grade="D",
+        weak_areas=[],
+        recorded_at=datetime.now(UTC).isoformat(),
+        origin="past_paper",
+    )
+
+
+class _StubHistoryStore:
+    """Returns one fixed history for every student.
+
+    The at-risk *rules* are ``tests/test_at_risk.py``'s subject and are not
+    re-tested here; what this file has to pin is the **seam** — who gets told,
+    on what key, and gated by whose preferences. Driving the assessment from a
+    fixed declining history makes those properties deterministic instead of a
+    consequence of whatever grade the mocked pipeline happens to predict.
+    """
+
+    def __init__(self, history: StudentHistory) -> None:
+        self._history = history
+
+    def load(self, student_id: str) -> StudentHistory:
+        return StudentHistory(student_id=student_id, records=list(self._history.records))
+
+
+#: 72% → 65% → 58%: strictly decreasing over the 3-paper window with a 14pp
+#: drop, so rule 1 fires. Rule 2 stays not-evaluable (no target is seeded) and
+#: rule 3 cannot fire at this seam at all (D5.11 §2).
+_DECLINING = StudentHistory(
+    student_id="student",
+    records=[_at_risk_record(72.0), _at_risk_record(65.0), _at_risk_record(58.0)],
+)
+_STEADY = StudentHistory(
+    student_id="student",
+    records=[_at_risk_record(72.0), _at_risk_record(74.0), _at_risk_record(73.0)],
+)
+
+
+@pytest.fixture
+def at_risk_client(
+    correct_client: tuple[TestClient, uuid.UUID],
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> tuple[TestClient, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """A declining student with one teacher and one linked parent.
+
+    Returns ``(client, student, teacher, parent)``.
+    """
+    api, student_id = correct_client
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    _enroll(pg_sessionmaker, cls.class_id, student_id)
+
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    with pg_sessionmaker.begin() as session:
+        session.add(ParentChildLink(parent_id=parent, child_id=student_id))
+
+    api.app.dependency_overrides[get_class_service] = lambda: class_service  # type: ignore[union-attr]
+    api.app.dependency_overrides[get_parent_link_service] = lambda: ParentLinkService(  # type: ignore[union-attr]
+        pg_sessionmaker
+    )
+    api.app.dependency_overrides[get_student_profile_service] = lambda: StudentProfileService(  # type: ignore[union-attr]
+        pg_sessionmaker
+    )
+    api.app.dependency_overrides[get_history_store] = lambda: _StubHistoryStore(_DECLINING)  # type: ignore[union-attr]
+    return api, student_id, teacher, parent
+
+
+def test_a_declining_students_teacher_and_parent_are_both_alerted(
+    at_risk_client: tuple[TestClient, uuid.UUID, uuid.UUID, uuid.UUID],
+    notifications: NotificationService,
+) -> None:
+    api, student_id, teacher, parent = at_risk_client
+
+    _upload_and_correct(api)
+
+    for staff in (teacher, parent):
+        rows = _inbox(notifications, staff, NotificationType.at_risk_alert)
+        assert len(rows) == 1
+        assert rows[0].payload == {"studentId": str(student_id), "reason": "declining_trend"}
+        # The reason, not the evidence: no percentage, no predicted grade.
+        assert rows[0].body == "Recent papers show a declining trend."
+        assert "%" not in rows[0].title + (rows[0].body or "")
+
+    # The student is not told they are at risk by this seam — the alert is
+    # addressed to the people who can act on it.
+    assert _inbox(notifications, student_id, NotificationType.at_risk_alert) == []
+
+
+def test_a_second_paper_the_same_day_does_not_re_alert(
+    at_risk_client: tuple[TestClient, uuid.UUID, uuid.UUID, uuid.UUID],
+    notifications: NotificationService,
+) -> None:
+    """D5.11 §3: at-risk is a state, not an event.
+
+    An upload-keyed alert would send a teacher of thirty students one
+    notification per upload per student. The key is
+    ``(student, reason, Cairo civil date)``, so a second paper the same day is
+    the same standing concern and says nothing new.
+    """
+    api, _student_id, teacher, _parent = at_risk_client
+
+    _upload_and_correct(api)
+    _upload_and_correct(api)
+
+    assert len(_inbox(notifications, teacher, NotificationType.at_risk_alert)) == 1
+
+
+def test_a_student_who_is_not_at_risk_alerts_nobody(
+    correct_client: tuple[TestClient, uuid.UUID],
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    notifications: NotificationService,
+) -> None:
+    """No flag, no notification — the alert is a signal, so it must stay rare."""
+    api, student_id = correct_client
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    _enroll(pg_sessionmaker, cls.class_id, student_id)
+    api.app.dependency_overrides[get_class_service] = lambda: class_service  # type: ignore[union-attr]
+    api.app.dependency_overrides[get_parent_link_service] = lambda: ParentLinkService(  # type: ignore[union-attr]
+        pg_sessionmaker
+    )
+    api.app.dependency_overrides[get_student_profile_service] = lambda: StudentProfileService(  # type: ignore[union-attr]
+        pg_sessionmaker
+    )
+    api.app.dependency_overrides[get_history_store] = lambda: _StubHistoryStore(_STEADY)  # type: ignore[union-attr]
+
+    _upload_and_correct(api)
+
+    assert _inbox(notifications, teacher, NotificationType.at_risk_alert) == []
+
+
+def test_the_student_cannot_silence_alerts_about_themselves(
+    at_risk_client: tuple[TestClient, uuid.UUID, uuid.UUID, uuid.UUID],
+    notifications: NotificationService,
+    prefs: NotificationPreferencesService,
+) -> None:
+    """D5.9 §3, the property this seam most needs pinned.
+
+    The gate reads the **recipient's** preferences, never the subject's. A
+    student turning ``at_risk_alert`` off silences alerts *addressed to them*
+    — of which this seam sends none — and must not silence the ones addressed
+    to their teacher and their parent. The parent's own row is what gates the
+    parent's alert, and MISSION §4's opt-in for parent alerts is the parent's.
+    """
+    api, student_id, teacher, parent = at_risk_client
+    prefs.set(student_id, at_risk_alert=False)
+
+    _upload_and_correct(api)
+
+    assert len(_inbox(notifications, teacher, NotificationType.at_risk_alert)) == 1
+    assert len(_inbox(notifications, parent, NotificationType.at_risk_alert)) == 1
+
+
+def test_a_parent_who_opted_out_is_not_alerted_but_the_teacher_still_is(
+    at_risk_client: tuple[TestClient, uuid.UUID, uuid.UUID, uuid.UUID],
+    notifications: NotificationService,
+    prefs: NotificationPreferencesService,
+) -> None:
+    """The other half of D5.9 §3: the parent's own row governs the parent's alert."""
+    api, _student_id, teacher, parent = at_risk_client
+    prefs.set(parent, at_risk_alert=False)
+
+    _upload_and_correct(api)
+
+    assert _inbox(notifications, parent, NotificationType.at_risk_alert) == []
+    assert len(_inbox(notifications, teacher, NotificationType.at_risk_alert)) == 1
+
+
+def test_an_at_risk_failure_does_not_fail_the_correction(
+    at_risk_client: tuple[TestClient, uuid.UUID, uuid.UUID, uuid.UUID],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """D5.9 §1 again, and here it needs its own guard.
+
+    The assessment and both recipient lookups are queries of *ours* and sit
+    outside ``notify_safely``, so unlike the other two seams this one is not
+    covered by that helper's own try/except. A raising history store stands in
+    for any of them failing.
+    """
+
+    class _ExplodingHistoryStore:
+        def load(self, student_id: str) -> StudentHistory:
+            raise RuntimeError("simulated history-store failure")
+
+    api, _student_id, _teacher, _parent = at_risk_client
+    api.app.dependency_overrides[get_history_store] = _ExplodingHistoryStore  # type: ignore[union-attr]
+
+    paper_id = _upload(api)
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+
+    assert resp.status_code == 200, resp.text
+    assert "[DONE]" in resp.text
+    with pg_sessionmaker() as session:
+        assert len(list(session.scalars(select(Attempt)))) == 1
