@@ -2,9 +2,12 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T20:00:00Z   # **READ THE FORTY-FIFTH-SESSION LINES BELOW FIRST — they are the current state.** Prior context: **Forty-fourth session — P5.5 (announcements + exam calendar) is COMPLETE.** All three chunks were committed by prior sessions; this session re-implemented nothing and only ran the outstanding gates. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, exit 0, 2623 tests, coverage 90.57%** (develop 90.18% — no drop); `alembic check` clean. 6/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
+last_updated: 2026-08-10T23:30:00Z   # **Forty-sixth session (this one): P5.6 is COMPLETE — 7/12 Phase-5 tasks done. Resume at P5.7.**
+#                                    No code was written this session and nothing was re-implemented: every P5.6 chunk was already committed, and the single outstanding item was the first full gate run since chunk A. It came back **all 13 gates PASS, 0 skipped, exit 0, 2767 tests, coverage 90.78%** (develop 90.18%, P5.5 90.57% — no drop), `alembic check` clean. **Nothing was red.** Five chunks of notification work — a migration, a transport, seven routes and three award seams — landed green on first full contact, which is the return on the per-chunk targeted test runs that preceded it. Branch `feature/phase-5-engagement`, not yet merged to develop.
+#                                    **P5.7 is next and it is the first Phase-5 task with a frontend leg** (G-10 device-limit UI + G-11 device management), so MISSION §6.8 applies to it and not to anything P5.6 did: axe, Lighthouse ≥95, screenshots, `/impeccable audit`, visual compare. The 3-device session registry itself is Phase-1 work (D1.11) and already exists — read it before assuming a backend gap.
+#                                    Prior context: **Forty-fourth session — P5.5 (announcements + exam calendar) is COMPLETE.** All three chunks were committed by prior sessions; this session re-implemented nothing and only ran the outstanding gates. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, exit 0, 2623 tests, coverage 90.57%** (develop 90.18% — no drop); `alembic check` clean. 6/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
 #                                    **P5.4's `EXPECTED_TABLES` trap did not fire** — both new tables went into the set in the same commit as their `create_table`, which is what P5.4 told the next session to do. A written-down trap that costs nothing on its next encounter is the point of writing it down.
-#                                    **Forty-fifth session (this one): P5.6 chunks B and C1 built and committed; resume at chunk C2, the three action seams.** Read the C2 checklist lines — they carry a full recon of which recipient-lookup methods already exist and which do not, so do not re-derive it. Nothing was re-implemented from chunk A. `./scripts/check.sh` has NOT been run since chunk A; run it before P5.6 is marked done.
+#                                    **Forty-fifth session: P5.6 chunks B and C1 built and committed** (C2a/b/c followed in the same session).
 #                                    **D5.10 recorded before chunk B's code: a push carries NO payload** — an empty RFC 8030 body plus a VAPID auth header, with the service worker fetching the inbox over the authenticated API. That is D5.9 §1 stated on the wire rather than contradicted by it, and it keeps student notification content off Google/Mozilla/Apple push infrastructure. Zero new dependencies; `pywebpush` was measured (11 packages, incl. aiohttp) and hand-rolled RFC 8291 was rejected because **it could not be honestly verified here** — no test vector, no live push service, and a self-generated vector proves only self-agreement.
 #                                    **Two traps this session paid for, both cheap next time.** (1) `Settings`/`NotificationTransport` in a router's `Annotated[...]` must be **runtime** imports, not `TYPE_CHECKING` — otherwise FastAPI hands pydantic an unresolvable ForwardRef and the route raises `PydanticUserError` on its *first request*, not at import. (2) A new `lemely/web/schemas_*.py` must be added to the `disallow_any_explicit` override list in `pyproject.toml`; every existing schemas module is already there.
 #                                    **Previous (forty-third) session:** **Forty-third session — P5.4 (friends backend) is COMPLETE.** Its three code chunks were already committed by the two prior sessions; the only outstanding work was the gate run, and nothing was re-implemented. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, 2532 tests / 6 live-only skips / 0 failures, coverage 90.48%** (develop 90.18% — no drop); `alembic check` clean. 5/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
@@ -465,8 +468,15 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             **Honest gap carried to the Phase-5 limitations:** there is no CLI wrapper around
             `ingest` yet (service + parser only), deliberately not built speculatively while
             no document exists to feed it.
-- [ ] **doing** — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable
+- [x] done — **P5.6** Notifications inbox + web push (VAPID) with a headless-testable
       transport, and make `notification_preferences` actually gate delivery.
+      **Closed by the forty-sixth session's gate run — nothing was re-implemented.** All
+      five chunks (spec, A, B, C1, C2a/b/c) were already committed; the only outstanding
+      work was the first full run since chunk A. Full `./scripts/check.sh`: **all 13 gates
+      PASS, 0 skipped, exit 0**; **2767 tests**; **coverage 90.78%** (develop 90.18%,
+      P5.5 90.57% — no drop); `alembic check` clean. **Nothing was red** — the three
+      seams, the transport and the routes all landed green on first full contact, which
+      is what the per-chunk targeted test runs were buying.
       Backend only — the consuming screens are P5.9 (G-12/G-13). MISSION §4 Phase-5 names the
       four triggers: grades ready, new announcement, streak about to break, study-plan reminder,
       plus at-risk alerts to the teacher and (if opted in) the parent.
@@ -675,14 +685,9 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             file.** Copy the file to /tmp before inverting, restore with `cp`, and
             invert one thing at a time — two simultaneous inversions produced a
             NameError that failed four tests and proved nothing about either.
-      - [ ] **doing** — `./scripts/check.sh` (first full run since chunk A), then mark
-            P5.6 done. Backend lint leg already reported PASS ×4 (ruff-check,
-            ruff-format, mypy, import-linter); pytest + web + audit legs still running
-            at the time of writing. **If this session died here: re-run
-            `./scripts/check.sh` in the foreground, fix anything red, then set P5.6
-            `[x]` and move to P5.7. No code is outstanding — all three seams are
-            committed.**
-            The recon below is kept for reference; all of it is now spent.
+      - [x] done — `./scripts/check.sh`, the first full run since chunk A: **13/13 PASS,
+            0 skipped, exit 0, 2767 tests, 90.78% coverage**, `alembic check` clean.
+            The C2 recon below is kept for reference; all of it is now spent.
             **Recon done 2026-08-10, use it rather than re-deriving:**
             - **`grade_ready`** — easiest, do it first. The seam is
               `lemely/web/routers/student.py:735`, immediately after the existing
