@@ -131,10 +131,12 @@ function BoardRow({
     <div
       className={cn(
         "flex items-center gap-3 py-2.5",
-        // The viewer's own row is marked by a border and a label, not by colour
-        // alone — the same "no meaning by colour alone" rule the XPStreak
-        // component follows.
-        isViewer && "-mx-3 rounded-md border-l-2 border-l-accent bg-accent-subtle px-3",
+        // The viewer's own row carries a tint *and* the "You" label below, so
+        // the "no meaning by colour alone" rule is satisfied by the text, not
+        // by a stripe. An earlier cut added a left accent border as a third
+        // channel; it was redundant with both and is the single most
+        // recognisable tell of a generated interface, so the tint stands alone.
+        isViewer && "-mx-3 rounded-md bg-accent-subtle px-3",
       )}
     >
       <span className="w-7 flex-none font-mono text-2xs text-t3">
@@ -317,16 +319,22 @@ export function Standings() {
 
   const classes = useMyClasses()
   const profile = useStudentProfile()
-  const board = useLeaderboard({ scope, basis, classId })
   const standings = useStandings()
+
+  const classList = classes.data?.classes ?? []
+  // Default to the first class rather than making the student pick before they
+  // can see anything. `classId` (the explicit choice) is deliberately NOT what
+  // the query receives: a class board with a null id is disabled, and a
+  // disabled query stays `isPending` forever — the screen would sit on
+  // "Loading the board…" with nothing loading.
+  const effectiveClassId = classId ?? classList[0]?.classId ?? null
+
+  const board = useLeaderboard({ scope, basis, classId: effectiveClassId })
 
   // The basis options are the student's own declared subjects, not a global
   // catalogue: a board for a subject they do not sit is noise they cannot act
   // on (D5.14 §4's reasoning applied to the second selector).
   const subjects = profile.data?.enrolments.map((e) => e.subjectCode) ?? []
-
-  const classList = classes.data?.classes ?? []
-  const effectiveClassId = classId ?? classList[0]?.classId ?? null
 
   return (
     <div className="flex flex-col gap-8">
