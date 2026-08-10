@@ -5236,3 +5236,78 @@ re-fires every time a student re-runs a correction on one PDF — this is
 exactly the defect D5.3 found in the XP paper seam, and it is written down here
 *before* implementation so it is not re-discovered a second time.
 `announcement` keys on `(announcement_id, user_id)`.
+
+## D5.10 — Push carries no payload: VAPID auth only, and the service worker fetches the inbox (P5.6 chunk B)
+
+D5.9 §4 fixed the *seam* (a `NotificationTransport` protocol, a real VAPID
+implementation, a recording double, chosen in `deps.py`) but deliberately left
+the wire format open. This is that choice, made before the implementation
+because it is load-bearing and hard to reverse once a service worker ships
+against it.
+
+**The decision: send RFC 8030 push messages with an empty body, authorised by
+an RFC 8292 VAPID `Authorization` header, and no RFC 8291 content encryption.**
+The push tells the browser *that* something happened; the service worker then
+calls the authenticated inbox API to find out *what*.
+
+### Why this is the right shape, not merely the cheap one
+
+D5.9 §1 already fixed the architecture: **the inbox row is the source of truth
+and a push is one delivery of it.** A payload-carrying push contradicts that by
+making the push message a second, independent copy of the notification — one
+that can disagree with the row, and one that must be encrypted precisely
+because it holds content. A payload-less push is the same architecture stated
+on the wire.
+
+It also removes a real disclosure. An encrypted-payload push still routes a
+student's notification title and body through Google's, Mozilla's or Apple's
+push infrastructure. Payload-less, **nothing about a student ever transits a
+third-party push service** — the endpoint URL and a signed assertion that we
+are who we say we are, and that is all. The content is fetched from us, over
+the same authenticated API that already gates every other read.
+
+### What it costs, stated now
+
+A browser requires that *some* notification be shown for each push it
+delivers. With no payload, the service worker must fetch the inbox first, so a
+push that arrives while the device is offline — or whose fetch fails — shows a
+generic "You have a new notification" rather than the real title. That is a
+genuine degradation and it belongs in P5.9's service-worker brief and the
+Phase-5 limitations, not hidden here.
+
+### The dependency arithmetic that made the alternative unattractive
+
+`pywebpush` is the standard payload-carrying implementation and it **is**
+installable here (verified: `uv pip install --dry-run pywebpush` resolves
+cleanly). It would add **11 packages**, including `aiohttp` — an entire second
+HTTP stack alongside the `httpx` this project already depends on — plus
+`http-ece` and `py-vapid`. The alternative, hand-rolling RFC 8291's
+ECDH/HKDF/AES128GCM against `cryptography`, was rejected for a different and
+stronger reason: **it could not be honestly verified here.** Correct-looking
+content encryption is only provable against a published test vector or a live
+push service, and this build has neither. Generating a "test vector" from my
+own implementation and asserting against it is exactly the invented precision
+UI spec §1.4 forbids — it would prove the code agrees with itself.
+
+Payload-less push needs neither. The VAPID JWT is ES256 over a three-claim
+body and is verifiable *by decoding it*, which a test does directly with the
+public key. **Zero new dependencies:** `pyjwt[crypto]` is already in the `db`
+extra and `httpx` is already in the `web` extra.
+
+### Reversibility
+
+Swapping to payload-carrying push later means implementing one protocol method
+behind the same seam. Nothing outside the transport module knows a payload
+exists or does not — `NotificationService` never touches it, the routers never
+touch it, and the recording double's shape does not change.
+
+### Settings, and the absence of keys
+
+VAPID material lands in a `[push]` block (`LEMELY_PUSH__*`): an application
+server public/private key pair and a `sub` contact URI. **Their absence is not
+an error** (D5.9 §4): with no keys the transport reports itself unavailable,
+logs once, and the inbox keeps working. This machine has no keys, so any harder
+requirement would fail every notification in exactly the environment the tests
+run in. A `404`/`410` from a push service deletes the subscription through
+`NotificationService.forget_endpoint`, per D5.9 §4 — a permanently gone browser
+subscription is not a retryable failure.

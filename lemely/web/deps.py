@@ -36,6 +36,7 @@ from lemely.db.history_repo import DbHistoryStore
 from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
+from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.placement_repo import PlacementService
 from lemely.db.practice_repo import PracticeService
@@ -56,6 +57,7 @@ from lemely.io.gemini import GeminiClient
 from lemely.io.storage import HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
+from lemely.web.push import NotificationTransport, VapidPushTransport
 
 if TYPE_CHECKING:
     import uuid
@@ -449,6 +451,43 @@ def get_notification_prefs_service() -> NotificationPreferencesService:
 
 
 @lru_cache(maxsize=1)
+def get_notification_service() -> NotificationService:
+    """Return the process-wide :class:`NotificationService` singleton (P5.6 chunk A).
+
+    Composed with :func:`get_notification_prefs_service` rather than
+    constructing its own preferences service, so the gate that decides whether
+    a notification row is written and the endpoint that lets a user change
+    that preference cannot disagree about what the user asked for (D5.9 §2).
+    The clock and quiet-hours zone are left at their defaults (real UTC now,
+    ``Africa/Cairo``); tests override this dependency with a service built on
+    an injected fake clock and a throwaway Postgres database.
+    """
+    return NotificationService(
+        get_sessionmaker(get_settings()),
+        get_notification_prefs_service(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_push_transport() -> NotificationTransport:
+    """Return the process-wide web-push transport singleton (P5.6 chunk B).
+
+    Returns the **real** :class:`~lemely.web.push.VapidPushTransport` even
+    when no VAPID keys are configured — that is not a degraded mode needing a
+    different class, it is the transport honestly reporting
+    ``available is False`` and answering every send with
+    ``PushOutcome.unavailable`` (D5.9 §4). Substituting a double here when
+    keys are absent would mean the code path this build actually runs is one
+    no test ever exercises.
+
+    Tests that need to assert *what would have been sent* override this
+    dependency with :class:`~lemely.web.push.RecordingPushTransport` — the
+    headless push mock MISSION §4's Phase-5 acceptance asks for.
+    """
+    return VapidPushTransport(get_settings().push)
+
+
+@lru_cache(maxsize=1)
 def get_student_profile_service() -> StudentProfileService:
     """Return the process-wide :class:`StudentProfileService` singleton (P4.3 chunk B).
 
@@ -622,3 +661,5 @@ def reset_singletons() -> None:
     get_leaderboard_service.cache_clear()
     get_friend_service.cache_clear()
     get_exam_calendar_service.cache_clear()
+    get_notification_service.cache_clear()
+    get_push_transport.cache_clear()
