@@ -1756,6 +1756,19 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          contract's `students.correctedPaper` already is one; the other two are static and need
          no fixture). Do **not** re-add `/student/board` — it is already there, and a duplicate
          entry would double-capture S-29 and quietly disagree with itself on state slugs.
+         **(c) The visual compare is a manual phase act with a DEFAULT THAT IS WRONG FOR P5.**
+         `web/scripts/compare_screens.mjs` is deliberately **not** a `check.sh` gate (its header
+         explains why: a per-run screenshot gate re-fails on every intended change and trains
+         everyone to ignore it — D3.2's vacuous baseline gate). It is run by hand at re-baseline
+         time: `npm run compare-screens -- --baseline reports/phase-4/screens --candidate
+         reports/phase-5/screens`. **Its default baseline is `reports/phase-2.5/screens`**, so a
+         bare `npm run compare-screens` diffs Phase 5 against a 2.5-era corpus and returns a
+         meaningless flood of `added`/`changed` that buries any real regression. Always pass
+         `--baseline` explicitly. Exit code is 0 without `--fail-on-change` by design — "changed"
+         is a question for a human — so **the compare cannot fail the build and its output must
+         be read and accounted for in the report**, which is P4.11's `0 removed` convention
+         (a nonzero `changed` is not by itself a regression: the seed's random `run_tag` changes
+         every screen showing a class name — the standing Phase-4 limitation).
       9. **Point 4 is STALE and it was pessimistic. The push/notification flow is now the
          CHEAPEST of the four, not the blocked one. Measured session 66, read-only while the
          P5.9 gate held the lane.** Point 4 was written in session 59, *before* P5.9 existed,
