@@ -66,6 +66,7 @@ export const navGroups: NavGroup[] = [
       { to: "/student/plan/0625", label: "Study plan", tag: "0625" },
       { to: "/student/board", label: "Standings" },
       { to: "/student/friends", label: "Friends" },
+      { to: "/student/profile", label: "Your profile" },
       { to: "/student/announcements", label: "Announcements" },
       { to: "/student/parents", label: "Your parents" },
     ],
@@ -98,6 +99,7 @@ export const crumbs: Record<string, string> = {
   // the bare key here would be a lookup no pathname can ever hit.
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
+  "/student/profile": "Home / Your profile",
   "/student/announcements": "Home / Announcements",
   "/student/parents": "Home / Your parents",
   "/student/onboard": "Onboarding",

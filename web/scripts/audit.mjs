@@ -1953,6 +1953,26 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Who you are studying with"),
       authed: true,
     },
+    // ── S-31 · Profile / XP / streak (P5.8 chunk D) ───────────────────────
+    // The probe targets the screen's static intro line rather than the level
+    // number or a calendar cell: the seed awards no XP, so this student is
+    // level 1 with a 28-cell calendar of zeros and an all-zero weekly
+    // breakdown. That is a fully-rendered screen, not an empty state — the
+    // panels are all present with real zeros — so it is genuine coverage.
+    //
+    // Deliberately NOT probed: lifetime stats and achievements. They do not
+    // exist on this screen and will not appear later (D5.13 §3); a future
+    // session adding a probe for them would be building a state the product
+    // decided against, not restoring a missing one.
+    {
+      screenId: "S-31",
+      slug: "student-profile",
+      path: "/student/profile",
+      session: practiceActiveSession,
+      ready: (page) =>
+        waitForText(page, "Everything here measures work done"),
+      authed: true,
+    },
   ]
 }
 

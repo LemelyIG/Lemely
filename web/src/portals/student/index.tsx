@@ -19,6 +19,7 @@ import { StudyPlanWeek } from "./screens/studyplan/StudyPlanWeek"
 import { Standings } from "./screens/Standings"
 import { Announcements } from "./screens/Announcements"
 import { Friends } from "./screens/Friends"
+import { Profile } from "./screens/Profile"
 import { Onboarding } from "./screens/Onboarding"
 import { PlacementInvite } from "./screens/placement/PlacementInvite"
 import { PlacementTest } from "./screens/placement/PlacementTest"
@@ -216,6 +217,7 @@ export const studentRoute: RouteObject = {
     { path: "board", element: <Standings /> },
     { path: "announcements", element: <Announcements /> },
     { path: "friends", element: <Friends /> },
+    { path: "profile", element: <Profile /> },
     // The only place a parent_child_links row is created (D3.11).
     { path: "parents", element: <Parents /> },
     { path: "onboard", element: <Onboarding /> },
