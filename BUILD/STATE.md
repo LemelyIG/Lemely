@@ -2,7 +2,11 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T12:57:00Z   # **Sixty-third session (this one): the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at 12m27s, 4/13 gates PASS (inside `pytest`). Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file was touched — the run is verifying this exact tree — so the waiting time went into the one measurable thing left: **what the P5.11 E2E can actually assert against.**
+last_updated: 2026-08-10T13:05:00Z   # **Sixty-fourth session (this one): the P5.9 UI gate is STILL RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`) — attached at 16m19s, still 4/13 gates PASS (inside `pytest`, the ~10-minute gate). Do NOT relaunch it.** Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. No source file was touched — the run is verifying this exact tree — so the waiting time went into the next unmeasured P5.11 flow: **XP accrual (point 7 on the P5.11 line).**
+#                                    **The finding inverts point 2's framing for this one flow: XP accrual needs NO new seed data, because its cause already exists.** `correct-paper.spec.ts` signs up a *fresh* account and drives a real upload→mark, which is the `paper_corrected` seam (`routers/student.py:851`); a brand-new account has zero prior XP, and `GET /api/student/xp` is gated on the student role **only**, so the never-onboarded account can read S-31. The expected value is exact — **50** — not a range. Build this flow first, not last.
+#                                    **The precondition that can make it vanish silently:** `xp_events.subject_code` is a live FK to `subjects.code`, the golden fixture is `0625`, and `xp_repo.py:37` says an unknown code **raises** — which `award_xp_safely` then swallows by design. The `subjects` row exists today only as a side effect of the placement seed's `link_past_paper_rows`. **An XP assertion after the correction would be the first test in this build ever to catch a fail-open seam failing.**
+#                                    **And the read has nothing to grab — session 63's point-6 problem again, at S-31.** `Total XP`, `Level` and the streak `current` are all `<Eyebrow>` labels with the value in a **sibling bare `<div>`** (`Profile.tsx:133-140/167-170`): no accessible name, no association — a screen-reader defect, not just a test inconvenience. The only locatable values are indirect (the `Meter` label, `"{remaining} XP to level N"`), and reading the total through `nextLevelXp` is derived precision. **The fix is this repo's own C-2 `MarkDisplay` pattern** — value in its own `aria-label` — which `correct-paper.spec.ts:57-61` already asserts against. Not `data-testid`; point 6(a) measured the suite has none.
+#                                    Prior: **Sixty-third session: P5.11's ordering assertion has nothing to grab.**
 #                                    **P5.11 point 6 is new and it changes the task's shape: the leaderboard-ordering assertion — the single acceptance criterion MISSION §4 names for this phase — has nothing to grab.** `data-testid` appears **zero** times in `web/src/` and `getByTestId` zero times in `web/e2e/`, so there is no test-hook convention to fall back on (the suite locates purely by accessible name); and `BoardRow` is a bare `<div>` inside a bare `divide-y` `<div>`, so there is no row-shaped locator either. The fix is **list semantics on the ranked container only** — honest markup, an a11y gain, and the suite's existing idiom. **The trap: the viewer's pinned row is the same `BoardRow` rendered OUTSIDE that container**, so wrapping all of `BoardBody` puts an out-of-sequence rank in the list and the ordering assertion can pass on a board where the viewer ranks last. Full detail on the P5.11 line.
 #                                    Prior: **Sixty-second session: P5.11's G-10 seed precondition measured.**
 #                                    **P5.11's G-10 seed precondition is now measured (point 5 on the P5.11 line).** Every prior session left it as a pointer ("a seed account already holding three live devices"). It is three plain `devices` inserts — but the load-bearing part is that the account must be **dedicated**: any other E2E logging in as it mints a fresh `deviceId` and can silently consume a slot, after which G-10 stops reproducing and the audit entry goes green by rendering the ordinary logged-in screen. Silent and order-dependent. The 409 itself is non-destructive (`allow_eviction=False` writes nothing), so the entry is safely re-runnable.
@@ -1509,7 +1513,53 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          worse, passes on a board where the viewer happens to rank last. Same shape as the
          `no_enrolment`/`no_timetable` collapse P5.5 chunk C refused: two different things
          that render alike.
-- [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
+      7. **XP accrual needs NO new seed data — its cause already exists in the suite, and the
+         gap is the read side, not the write side. Measured session 64, read-only while the
+         P5.9 gate held the lane.** Point 2 said Phase-5 flows are a clean build; that is true
+         of leaderboard/friends/announcements but **not** of XP accrual, and building a fresh
+         driver for it would duplicate a flow the suite already runs.
+         **(a) `correct-paper.spec.ts` is already a live XP-award driver.** It signs up a
+         **fresh** account (`e2e-${Date.now()}@example.com`, :23/:26-33) and drives a real
+         upload→mark through the UI, and `POST /student/correct` awards `paper_corrected`
+         at `routers/student.py:851`. A brand-new account has **zero** prior XP, so the
+         before/after assertion needs no seeding, no fixture and no clock control — the
+         strongest of the four flows to build first, not last.
+         **(b) The read path is open to that account.** `routers/xp.py:46` gates
+         `GET /api/student/xp` on `require_role(Role.student)` **only** — no student profile,
+         no onboarding, no enrolment — and `XpService` resolves the streak lazily. So the
+         never-onboarded correct-paper account can render S-31 `/student/profile`, which is
+         driven purely by `useXpProfile()` (`Profile.tsx:283`). The expected number is exact,
+         not a range: `XP_AMOUNTS[paper_corrected]` is **50** (`xp_repo.py:80`), one award,
+         well under the 5/day source cap and the 250 global cap.
+         **(c) The one precondition that can make the award vanish silently, and it is not
+         obvious.** `xp_events.subject_code` is a **live FK to `subjects.code`**
+         (`models/engagement.py:55`), the golden fixture reports `subject_code: "0625"`
+         (`tests/golden/0625_m20_qp_12_mcq/mark_scheme.json:4`), and `xp_repo.py:37` states
+         in its own docstring that an unknown `subject_code` **still raises**. That raise is
+         caught by `award_xp_safely` (D5.1 §3 fail-open, deliberately) — so a missing
+         `subjects` row costs the student 50 XP while the correction, the result screen and
+         **every gate in this build stay green**. The row does exist today, but only as a
+         *side effect*: the sole `Subject(` constructor in the codebase is
+         `question_bank_repo.py:290`, reached from `link_past_paper_rows`, which the seed
+         calls for the placement paper (`seed_e2e.py:489`). Nothing declares that dependency
+         and nothing asserts it. **Asserting XP after the correction is the first test that
+         would ever catch a fail-open seam failing** — which is the whole point of writing
+         the flow, and worth stating in the test's own comment so a later reader does not
+         "simplify" it away.
+         **(d) The read has nothing to grab — point 6's finding again, at S-31.** `Total XP`
+         is an `<Eyebrow>` label with the value in a **sibling bare `<div>`**
+         (`Profile.tsx:137-140`), and `Level` (:133-134) and the streak `current` (:167-170)
+         have the identical detached shape. `getByText("Total XP")` finds the *label*; the
+         number has no accessible name and no programmatic association with it — a
+         screen-reader defect, not merely a test inconvenience. Only two values on the screen
+         are locatable at all, and both are indirect: the `Meter` label (:145) and
+         `"{remaining} XP to level N"` (:147-149), and asserting on `remaining` reads the
+         total through `nextLevelXp` — derived precision, exactly what UI spec §1.4 forbids.
+         **The fix is this repo's own established pattern, not a new one:** C-2 `MarkDisplay`
+         already "carries the value in its own aria-label rather than a sibling text node",
+         and `correct-paper.spec.ts:57-61` asserts against precisely that. Give the label/value
+         pairs the same treatment. Do **not** reach for `data-testid` — point 6(a) measured
+         that the suite has none.
       **Brief sharpened 2026-08-10 (session 60) while the P5.8 gate run held the test lane —
       recon only, nothing edited. P5.12 was the last remaining bare one-liner (56/58/59 did
       P5.9/P5.10/P5.11). Its expensive part is not the merge, it is §7.**
