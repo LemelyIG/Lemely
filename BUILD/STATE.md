@@ -2,7 +2,12 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T12:10:00Z   # **Sixtieth session (this one): THE P5.8 GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0. P5.8 is COMPLETE; 9/12 Phase-5 tasks done. Resume at P5.9.**
+last_updated: 2026-08-10T12:45:00Z   # **Sixty-first session (this one): P5.9 CHUNKS C AND D ARE BUILT AND COMMITTED; the P5.9 UI gate is RUNNING under `setsid` (PID 1077823, log `/tmp/p59-gate.log`). Do not relaunch it — attach.**
+#                                    Working tree clean on entry, no wip commit needed; INBOX had no unhandled items. Chunk C (`7a8f93a`) is **G-12**, chunk D (`666d6a7`) closes the teacher/parent nav gaps and puts G-12 in the audit registry. **All four web gates green after each chunk** (456 tests over 15 files, up from 430/14). Two guards verified by inversion in chunk C.
+#                                    **Three findings a resuming session must not undo.** (1) **The route is `PUT`, not `PATCH`** — the brief said PATCH; `routers/me.py:176` declares `@router.put`. Still a genuine partial update via `model_fields_set`, and the screen sends **one key per toggle flip**, which is not bandwidth: a whole-object body carries `atRiskAlert`, a **422 for any role but teacher/parent**, and clobbers a change made on another device since load. Seventh Phase-5 instance of the code beating the note. (2) **`atRiskAlert: null` is information, not absence** — "no such preference for your role" — so the toggle is *filtered out*, never rendered unchecked. (3) **`urlBase64ToUint8Array` must return `Uint8Array<ArrayBuffer>`**: since TS 5.7 the bare `Uint8Array` defaults to `ArrayBufferLike`, which admits a `SharedArrayBuffer` that `applicationServerKey` does not, and the bare form fails `web-typecheck` at the `pushManager.subscribe` call rather than at the helper.
+#                                    **The push state that ships is `unavailable`, and no gate exercises the other two.** This build has no VAPID keys, so `available: false` is the designed answer (D5.9 §4) — the G-12 audit entry therefore never presses the enable or test-notification buttons, and a student-session audit sees four toggles rather than five. Both written into the registry entry; both carried to P5.12's limitations. Also carried: UI spec §G-12's `weekly_summary` ships **absent**, and the toggle key list is asserted *exactly* so it cannot be added without the backend growing the enum value.
+#                                    **G-10 still has no audit-registry entry** — it needs a seed account already holding three live devices, which is `scripts/seed_e2e.py` work that P5.11 owns. Not closed here, and not to be mistaken for covered.
+#                                    Prior: **Sixtieth session: THE P5.8 GATE RUN FINISHED — ALL 13 GATES PASS, 0 skipped, EXIT=0. P5.8 is COMPLETE; 9/12 Phase-5 tasks done. Resume at P5.9.**
 #                                    Session 51's `setsid` run (PID 927164) exited clean at ~11:59, **31 minutes** after launch and **ten agent sessions** after it started (51 launched, 52–59 attached, 60 caught the exit on an armed Monitor). Measured off that run and never re-run: **2927 tests**, **coverage 90.91%** (develop 90.18%, P5.6 90.78% — no drop), **66 axe route-states with zero violations at any severity**, **0 console errors**, **0 horizontal-scroll violations**, **Lighthouse a11y floor 96**. All four new screens are in the audit registry and score a11y 100. Working tree clean on entry, no wip commit needed.
 #                                    **The one honest finding the run produced: `ui-thresholds` passed with SEVEN routes below Lighthouse performance 80, two of them new P5.8 student routes** (`student-standings` 69, `student-announcements` 77). D4.25 said the performance floor is not enforced; this run is the Phase-5 proof — `check_ui_gates.py` has no performance check, so a green `ui-thresholds` says nothing about performance. **Never cite this run as a performance pass.** Carried to P5.12 §4.
 #                                    **Then started P5.9 and landed chunks A and B.** D5.15 was recorded **before any code** (MISSION §4's ordering for this phase) and made two calls: `injectManifest` over `workbox.importScripts`, because a `public/` file is invisible to `tsc`/oxlint/vitest and this phase's only new client logic must not live where no gate can see it; and — correcting D5.10 — **a service worker cannot authenticate**, since the session token is in `localStorage` which no `ServiceWorkerGlobalScope` can read. Mirroring the token into IndexedDB was rejected as a second longer-lived copy of a credential that every logout and eviction would then have to clear. The worker asks an open page instead. Chunk A is the worker + a pure decision module + 21 tests; chunk B is G-13's inbox screen + the page half of the handshake + 22 tests. **All four web gates green after each chunk** (430 tests over 14 files). **The full suite / `check.sh` has NOT been run since P5.8** — chunks C and D remain before the P5.9 UI gate.
@@ -1244,7 +1249,33 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             grey button**: transport unavailable (this machine has no VAPID keys, so
             `GET /api/notifications/push/config` returns `available: false` **by design** —
             D5.9 §4), browser permission denied, and granted.
-      - [ ] **chunk D — the two gaps P5.7/P5.8 left, both small.** Teacher + parent still have
+      - [x] **chunk D** (`666d6a7`) — the nav gaps closed, and **the brief's predicted fix
+            was the wrong shape.** One entry per portal, not two, because the two settings
+            screens now **link to each other** — without that the teacher sidebar and the
+            parent header would each have needed a pair, and a hub for two screens is a
+            screen that exists to hold two links.
+            **The teacher entry needed no icon-map addition at all.** It sits in the sidebar
+            *footer* beside "Open the student portal", not in `navItems`: the primary nav is
+            that teacher's work — every entry is a `/teacher` route with a `NavLink` active
+            state — and `/settings/*` is account-level, shared with every role, and would
+            never render active from a list matched against the teacher subtree.
+            The parent portal genuinely has no sidebar (P-01, deliberate), so the header was
+            the only surface; the link takes the same icon-at-mobile + `aria-label`
+            treatment as the Sign out button beside it, for the `button-name` reason
+            recorded there.
+            **G-12 IS in the audit registry** (`web/scripts/audit.mjs`), with two
+            non-coverages written into the entry rather than left to be discovered: a
+            student session sees **four** toggles, not five (`atRiskAlert` renders only for
+            teacher/parent), and the push section renders **`unavailable`** — the honest
+            state for every build this repo produces — so the enable and test-notification
+            buttons are **not exercised by any gate**. Auditing them needs a mocked config,
+            i.e. a screen this deployment never shows. Carried to the Phase-5 limitations.
+            **Still open, deliberately: G-10 has no audit-registry entry.** It needs a seed
+            account already holding three live devices — a `scripts/seed_e2e.py` change, and
+            P5.11 owns the seed work.
+            **web-typecheck / web-lint / web-build / web-test all green** (456 tests over 15
+            files).
+      - [ ] ~~chunk D brief~~ (superseded above) Teacher + parent still have
             **no nav entry to `/settings/devices`** (P5.8 wired only the student one from S-31;
             the teacher sidebar needs an icon-map addition, the parent portal has no sidebar).
             G-10's **audit-registry entry** needs a seed account already holding three live
@@ -1253,6 +1284,19 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       - [ ] **UI gate for P5.9** — MISSION §6.8 in full, run **once** after B/C/D land rather
             than per chunk. Launch it with `setsid` (see the environment facts) and expect ~31
             minutes; attach and wait rather than relaunching.
+            **LAUNCHED 2026-08-10T12:44Z by session 61 (this one), `setsid` PID 1077823, log
+            at `/tmp/p59-gate.log`, which ends in an `EXIT=` line.** All four chunks (A–D)
+            are committed, working tree clean at launch. **Do NOT relaunch it** — a second
+            run costs ~31 minutes and risks the concurrent-`.coverage` corruption recorded
+            below; attach to 1077823 and arm a Monitor instead, exactly as sessions 52–60
+            did for the P5.8 run. Read coverage off *this* run with
+            `.venv/bin/coverage report --precision=2` and the test count with
+            `pytest --collect-only -q --no-cov`; `check.sh` suppresses output for passing
+            gates, so a green log carries no counts.
+            **Expect `ui-thresholds` to pass while saying nothing about performance**
+            (D4.25): `check_ui_gates.py` has no performance check, and the P5.8 run passed it
+            with seven routes below Lighthouse 80. G-12 is a new route in the registry, so it
+            gets its first axe/Lighthouse numbers here.
       **Brief sharpened 2026-08-10 (session 56) by reading the code while the P5.8 gate run
       held the test lane — recon only, nothing edited. Four corrections, and the first is a
       scope halving.**
