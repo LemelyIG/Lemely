@@ -749,9 +749,34 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
       re-login on a known `client_device_id` is never a challenge; and **rough location is
       deliberately absent** — no geo-IP source and no stored IP exist, and UI spec §1.4 forbids
       inventing the one field the user would decide on. Carry that to the Phase-5 limitations.
-      - [ ] **chunk A** — backend: `allow_eviction` + `DeviceLimitReachedError` in
-            `device_repo.py`, surfaced through `AuthService`, the 409 on `POST /api/auth/login`,
-            and `GET`/`DELETE /api/me/devices` reusing the existing `revoke`. Tests.
+      - [x] **chunk A** (`5660cbf`) — `allow_eviction` + `DeviceLimitReachedError` in
+            `device_repo.py`, threaded through `AuthService.login`
+            (`confirm_device_eviction`), the **409** on `POST /api/auth/login`, and
+            `GET`/`DELETE /api/me/devices` reusing the existing idempotent `revoke`.
+            New `lemely/web/schemas_devices.py` + `lemely/web/devices.py` (one projector,
+            shared by the challenge and the list, so the two surfaces cannot describe the
+            same device differently). `AuthContext` grew `session_id` — it was already on
+            the claims and already checked for liveness, but never carried, so nothing
+            could mark "this device is the one you are using". 22 new tests (4 registry,
+            18 route). ruff/format/mypy(209)/lint-imports clean; the seven related test
+            files pass together (156 tests). **Not yet run: the full suite / `check.sh`.**
+            **No migration and no `EXPECTED_TABLES` edit** — the `devices` table is
+            Phase-1's and unchanged. `schemas_devices` **did** need the
+            `disallow_any_explicit` override in `pyproject.toml` (P5.6 C1's trap, second
+            sighting: every `schemas_*.py` costs that edit).
+            **Two guards verified by inversion**, one file at a time with a `/tmp` copy
+            (P5.6 C2c's process trap, not re-sprung): dropping the `allow_eviction` check
+            fails the two registry tests; hardcoding the login's confirm flag fails three
+            route tests. **The third inversion is the one worth keeping** — it exposed a
+            test that passed for the wrong reason: `test_the_challenge_carries_no_location_
+            field` scanned the response body for "location", and a 200 body trivially
+            contains none either, so it would have stayed green with the challenge gone.
+            It now asserts the 409 first. *A negative assertion needs a positive one
+            beside it, or it proves only that the response was short.*
+            **Scope call recorded in the code, not just here:** the OTP path keeps
+            evicting silently, because the code is single-use and a challenge the caller
+            re-sent confirmed would fail on a spent code and cost the parent a second SMS.
+            Parents on a fourth device get D1.11's old behaviour — Phase-5 limitation.
       - [ ] **chunk B** — frontend G-10 + G-11. **First Phase-5 task with a `web/` leg, so
             MISSION §6.8 applies in full**: `/impeccable audit`, axe zero serious/critical,
             Lighthouse a11y ≥95, screenshots per screen × state × breakpoint, visual compare.
