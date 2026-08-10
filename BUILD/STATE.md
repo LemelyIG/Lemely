@@ -2,7 +2,11 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 5            # Phases 0-4 complete, merged and reported; Phase 5 in progress
-last_updated: 2026-08-10T23:30:00Z   # **Forty-sixth session (this one): P5.6 is COMPLETE — 7/12 Phase-5 tasks done. Resume at P5.7.**
+last_updated: 2026-08-11T03:30:00Z   # **Forty-sixth session (this one): P5.6 AND P5.7 are COMPLETE — 8/12 Phase-5 tasks done. Resume at P5.8 (screens S-28..S-31).**
+#                                    **P5.7 in one line:** the 3-device policy (D1.11) was already correct and atomic; what was missing was any way for a user to *see* it. Backend `allow_eviction` + a 409 challenge on login + `GET`/`DELETE /api/me/devices`, then G-10 on the login screen and G-11 at `/settings/devices`. All 13 gates green at **90.83%** with the new screen at **axe 0 / Lighthouse a11y 100**. D5.12 recorded before the code.
+#                                    **Two P5.7 gaps left deliberately for P5.11/P5.9, do not mistake them for covered:** G-10 has **no audit-registry entry** (it needs an account already holding three live devices — a seed precondition, not a navigation), and **no nav entry anywhere reaches `/settings/devices`** (the teacher sidebar needs an icon-map addition, the parent portal has no sidebar).
+#                                    **New environment fact, cost real work: `npx prettier --write` is NOT this repo's formatter.** `web/` has no prettier config and does not depend on it, so a bare run silently reformatted 8 files with **semicolons** against the house semicolon-free style. The web gates are typecheck + oxlint + build + vitest + impeccable detect — **none of them formats**. Never run a formatter the gate chain does not run.
+#                                    Prior: **P5.6 is COMPLETE.**
 #                                    No code was written this session and nothing was re-implemented: every P5.6 chunk was already committed, and the single outstanding item was the first full gate run since chunk A. It came back **all 13 gates PASS, 0 skipped, exit 0, 2767 tests, coverage 90.78%** (develop 90.18%, P5.5 90.57% — no drop), `alembic check` clean. **Nothing was red.** Five chunks of notification work — a migration, a transport, seven routes and three award seams — landed green on first full contact, which is the return on the per-chunk targeted test runs that preceded it. Branch `feature/phase-5-engagement`, not yet merged to develop.
 #                                    **P5.7 is next and it is the first Phase-5 task with a frontend leg** (G-10 device-limit UI + G-11 device management), so MISSION §6.8 applies to it and not to anything P5.6 did: axe, Lighthouse ≥95, screenshots, `/impeccable audit`, visual compare. The 3-device session registry itself is Phase-1 work (D1.11) and already exists — read it before assuming a backend gap.
 #                                    Prior context: **Forty-fourth session — P5.5 (announcements + exam calendar) is COMPLETE.** All three chunks were committed by prior sessions; this session re-implemented nothing and only ran the outstanding gates. Full `./scripts/check.sh`: **all 13 gates PASS, 0 skipped, exit 0, 2623 tests, coverage 90.57%** (develop 90.18% — no drop); `alembic check` clean. 6/12 Phase-5 tasks done. Branch `feature/phase-5-engagement`, not yet merged to develop.
@@ -729,7 +733,15 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             (small, self-contained), C2b `announcement`, C2c `at_risk_alert`.** Committing
             `grade_ready` alone is a real increment; do not hold it hostage to the other
             two.
-- [ ] **doing** — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
+- [x] done — **P5.7** 3-device limit enforced in the UI (G-10) + device management (G-11).
+      **Full `./scripts/check.sh` on the committed tree: all 13 gates PASS, 0 skipped,
+      exit 0; 2789 tests; coverage 90.83%** (develop 90.18%, P5.6 90.78% — no drop);
+      `alembic check` clean. **MISSION §6.8 satisfied for the new screen, measured not
+      assumed:** `/settings/devices` audited as G-11 — **axe 0 violations at every
+      severity** (critical/serious/moderate/minor all 0), **Lighthouse accessibility 100**
+      (performance 87, best-practices 100), screenshots at all three breakpoints
+      (380/768/1440), and the responsive summary carries **zero** horizontal-scroll
+      violations. 8/12 Phase-5 tasks done.
       **Recon done 2026-08-10 by reading the code** (`lemely/db/device_repo.py`,
       `lemely/auth/service.py:123-140`, `lemely/web/routers/auth.py`): the **policy already
       exists and is correct** — D1.11's `DeviceRegistry.register_login` locks the user row

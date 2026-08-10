@@ -1747,3 +1747,28 @@ the **first Phase-5 task with a frontend leg**, so MISSION §6.8 applies for the
 this phase: axe, Lighthouse ≥95, screenshots, `/impeccable audit`, visual compare. The
 session registry itself is Phase-1 work (D1.11) and exists — read it before assuming a
 backend gap, per this phase's seven-times-repeated lesson that the code beats the note.
+
+## 2026-08-11 — P5.7: the device limit learns to ask first
+
+**Did.** D5.12 before any code, then two chunks. Backend: `register_login` grew
+`allow_eviction`, refusing a fourth slot from **inside** its existing `FOR UPDATE`
+transaction (a preflight query would be a TOCTOU two tabs could both pass); `POST
+/api/auth/login` maps the refusal to a **409** carrying the account's devices — after the
+credential is verified, so an email address alone cannot enumerate a stranger's browsers —
+and the client confirms by re-sending the same login. Frontend: G-10 in place of the login
+form, G-11 at `/settings/devices` for all five roles. All 13 gates green: **2789 tests,
+90.83% coverage**, and the new screen measured at **axe 0 violations, Lighthouse a11y 100**,
+screenshots at three breakpoints.
+
+**Learned.** Three things worth keeping. (1) `npx prettier --write` is not this repo's
+formatter — no config, not a dependency — and it silently semicoloned eight files against
+the house style; the web gate chain formats nothing, so never run a formatter it does not
+run. (2) An inversion caught a test that passed for the wrong reason: scanning a response
+body for "location" is trivially satisfied by a 200 that has no challenge in it at all. A
+negative assertion needs a positive one beside it. (3) The spec asked for a rough location
+in G-10 and this build has no geo-IP source and stores no IP — so the field is absent, not
+guessed, because it is precisely the field a user would decide on.
+
+**Next.** P5.8 — screens S-28..S-31. Two P5.7 gaps are recorded in STATE and belong to
+later tasks, not to a future session's rediscovery: G-10 has no audit-registry entry (it
+needs a seeded three-device account) and no nav entry yet reaches `/settings/devices`.
