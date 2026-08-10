@@ -53,8 +53,16 @@ export interface PushNotificationContent {
 export const GENERIC_PUSH_TITLE = "Lemely"
 export const GENERIC_PUSH_BODY = "You have a new notification"
 
-/** Where a notification with no better destination sends the reader. */
-export const DEFAULT_PUSH_URL = "/notifications"
+/**
+ * Where a notification with no better destination sends the reader.
+ *
+ * The app root, not an inbox path, and deliberately so: this API is
+ * role-agnostic because `at_risk_alert` is addressed to a **teacher and a
+ * parent**, and neither portal has an inbox screen in this build. `/` routes by
+ * role, so it is the one destination that cannot 404 for the reader who
+ * received the push.
+ */
+export const DEFAULT_PUSH_URL = "/"
 
 /**
  * How long the worker waits for a page to answer before rendering the generic

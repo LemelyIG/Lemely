@@ -34,6 +34,17 @@
   /* `pushDecision.ts` is deliberately compiled in both this project and the app
      project. It is pure data logic that imports no lib-specific global, so it
      is valid under `DOM` and `WebWorker` alike — and typechecking it in both
-     places is the point: the page half and the worker half must agree about it. */
-  "include": ["src/sw.ts", "src/lib/push"]
+     places is the point: the page half and the worker half must agree about it.
+
+     It is listed as a single file rather than as the whole `src/lib/push`
+     directory, and that distinction is load-bearing. The directory also holds
+     `pushClientBridge.ts`, which is **page** code: it reaches `lib/api` and so
+     `auth/storage`, which reads `localStorage`. Compiling it here fails with
+     `TS2304: Cannot find name 'localStorage'` — which is the type system
+     stating exactly the constraint D5.15 §2 is built on, that a service worker
+     cannot read the store the session token lives in. Keeping the include
+     narrow means that boundary is now enforced by `tsc -b`: any future attempt
+     to reach page-only APIs from the worker fails the web-typecheck gate rather
+     than failing at runtime on a reader's device. */
+  "include": ["src/sw.ts", "src/lib/push/pushDecision.ts"]
 }

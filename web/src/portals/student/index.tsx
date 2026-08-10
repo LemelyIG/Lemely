@@ -18,6 +18,7 @@ import { StudyPlanSession } from "./screens/studyplan/StudyPlanSession"
 import { StudyPlanWeek } from "./screens/studyplan/StudyPlanWeek"
 import { Standings } from "./screens/Standings"
 import { Announcements } from "./screens/Announcements"
+import { Notifications } from "./screens/Notifications"
 import { Friends } from "./screens/Friends"
 import { Profile } from "./screens/Profile"
 import { Onboarding } from "./screens/Onboarding"
@@ -216,6 +217,7 @@ export const studentRoute: RouteObject = {
     { path: "plan/:subjectCode/session/:sessionId", element: <StudyPlanSession /> },
     { path: "board", element: <Standings /> },
     { path: "announcements", element: <Announcements /> },
+    { path: "notifications", element: <Notifications /> },
     { path: "friends", element: <Friends /> },
     { path: "profile", element: <Profile /> },
     // The only place a parent_child_links row is created (D3.11).
