@@ -57,6 +57,7 @@ from lemely.db.models.ops import (
     AtRiskAcknowledgement,
     Notification,
     NotificationPreference,
+    PushSubscription,
     ReviewQueueItem,
 )
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat
@@ -137,6 +138,7 @@ __all__ = [
     "ParentChildLink",
     "PlanInterval",
     "PlanTier",
+    "PushSubscription",
     "QualificationLevel",
     "QuestionBank",
     "QuestionDifficulty",

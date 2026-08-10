@@ -80,6 +80,7 @@ EXPECTED_TABLES = {
     "friendships",
     "announcement_reads",
     "exam_dates",
+    "push_subscriptions",
 }
 
 
