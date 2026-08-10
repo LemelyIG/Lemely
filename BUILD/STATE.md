@@ -546,9 +546,47 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
             year. Also: `Session.execute` is typed as returning `Result`, which has **no
             `rowcount`** — narrow through a one-attribute `Protocol`, since mypy here forbids
             explicit `Any` so `cast("CursorResult[Any]", ...)` fails the gate.
-      - [ ] **chunk B** — the transport seam: `NotificationTransport` protocol, the VAPID
-            implementation, the recording in-memory double, VAPID settings in
-            `lemely/runtime/config.py`, `deps.py` + `reset_singletons()`.
+      - [x] **chunk B** (`58fa04c`) — the transport seam: `lemely/web/push.py`
+            (`NotificationTransport` protocol, `VapidPushTransport`,
+            `RecordingPushTransport`, `PushResult`/`PushOutcome`), `PushSettings` in
+            `lemely/runtime/config.py`, `get_push_transport` + `get_notification_service`
+            in `deps.py` + `reset_singletons()`, 37 tests.
+            ruff/format/mypy(204 files)/lint-imports clean. **Not yet run: the full
+            suite / `check.sh`.**
+            **D5.10 recorded before the code, and it supersedes D5.9 §4's
+            `send(subscription, payload)` sketch: a push carries NO payload.** Empty
+            RFC 8030 body + RFC 8292 VAPID `Authorization` header; the service worker
+            fetches the inbox over the authenticated API. That is D5.9 §1 (inbox row is
+            the source of truth, push is one delivery of it) stated on the wire instead
+            of contradicted by it, and it keeps student notification titles/bodies off
+            Google/Mozilla/Apple push infrastructure entirely.
+            **The alternative was measured:** `pywebpush` resolves cleanly here
+            (`uv pip install --dry-run`) but adds **11 packages including `aiohttp`** — a
+            second HTTP stack beside the existing `httpx`. Hand-rolling RFC 8291
+            (ECDH/HKDF/AES128GCM) was rejected for the stronger reason that **it could
+            not be honestly verified on this machine**: content encryption is only
+            provable against a published test vector or a live push service, and a
+            self-generated vector proves the code agrees with itself. Payload-less push
+            needs neither — the ES256 assertion is verified *by decoding it with the
+            public key*. **Zero new dependencies** (`pyjwt[crypto]` in the `db` extra,
+            `httpx` in `web`).
+            Absent VAPID keys are a supported state (D5.9 §4): `available` False, every
+            send `unavailable`, one log line per process. `get_push_transport` returns the
+            **real** transport even unconfigured — substituting a double there would leave
+            the path this build actually runs untested.
+            **Three guards verified by inversion:** attaching a payload fails
+            `test_the_push_body_is_empty`; folding 5xx into `expired` fails 5 tests
+            (a 503 must not evict a healthy device); signing the full endpoint instead of
+            its origin fails 3 — the subscription path is the nearest thing a subscription
+            has to a secret and must stay out of the assertion.
+            `get_notification_service` composes the **existing**
+            `get_notification_prefs_service` singleton (the brief's "check whether it
+            already exists" warning was right, it did) so the delivery gate and the
+            endpoint that edits it cannot disagree (D5.9 §2).
+            **Carry to the Phase-5 limitations:** with no payload, a service worker must
+            fetch before it can render, so a push arriving offline (or whose fetch fails)
+            shows a generic "You have a new notification" — browsers require *some*
+            notification per push. This is P5.9's service-worker brief.
       - [ ] **chunk C** — routes (inbox list / unread-count / mark-read, push subscribe +
             unsubscribe) and the three action seams that can actually fire (`grade_ready`,
             `announcement`, `at_risk_alert`), each wrapped fail-open at the router layer like
