@@ -5901,3 +5901,75 @@ rather than five. Covering them would need a mocked push config, i.e. auditing a
 screen this deployment never shows. Both non-coverages are written into the
 registry entry itself and carried to the Phase-5 limitations. Do not write "push
 enablement verified" in the Phase-5 report.
+
+## D5.17 — Four Phase-5 acceptance flows, and the four judgment calls the E2E pass forced (P5.11)
+
+MISSION §4 Phase 5 names four acceptance flows: XP accrual, leaderboard ordering,
+push delivery (mock), announcement flow. Before P5.11 there was **zero** E2E
+coverage of any Phase-5 surface. Building all four forced four calls worth
+recording, because each one is a place where the obvious choice is wrong in a way
+that still goes green.
+
+**1. Two flows ride on `correct-paper.spec.ts` rather than getting their own spec.**
+`POST /student/correct` is *both* the `paper_corrected` XP seam and the
+`grade_ready` notification seam. A dedicated driver for either would re-run an
+upload→mark journey the suite already runs, for no new coverage. The XP number is
+exact (50) rather than a range because that spec signs up a **fresh** account, so
+there is no prior XP to account for and no clock control needed.
+
+The XP assertion is worth more than its size suggests, and this is why it must not
+later be "simplified" into a smoke check: `award_xp_safely` is deliberately
+**fail-open** (D5.1 §3 — an already-committed student action must never become an
+error response), and `xp_events.subject_code` is a live FK whose violation that
+helper swallows. So a missing `subjects` row costs a real student 50 XP while the
+correction, the result screen and every other gate in this build stay green. This
+is the **first test in the build that would catch a fail-open seam failing.**
+
+**2. "Push delivery" is scoped to the notification row, and no push is mocked into
+a pass.** This machine has no VAPID keys, so the transport reports itself
+unavailable by design (D5.9 §4) and `notify_safely` records
+`push_suppressed_reason="transport_unavailable"` *after* writing the row. The row
+is the assertable fact. Asserting a "delivered push" here would mean asserting a
+mock of our own construction — a test that proves the harness, not the product.
+`grade_ready` is additionally asserted to render with **no** Open button: its
+payload carries an upload UUID and `/student/result/:paperId` addresses papers by
+history index, so a link would be a guaranteed dead one. The absence is pinned so
+a later session does not "fix" it into one.
+
+**3. S-31's label/value pairs diverge from C-2 `MarkDisplay`, deliberately.**
+The established repo pattern puts the value inside the element's own `aria-label`
+(`"12 out of 20 marks"`). Two problems with copying it here: it names a generic
+`<div>`, which has no accessible name in the ARIA spec, and it duplicates the
+number into a second place that can drift from the first. P5.11 instead names a
+`role="group"` with the **label** and leaves the value as its content — the pair
+is associated, the number is stated exactly once, and `getByRole("group", {name})`
+is still a stable locator. This is a deliberate improvement on the house pattern,
+not an oversight; C-2 itself was left alone (changing it would touch an assertion
+in `correct-paper.spec.ts` for no behavioural gain).
+
+**4. `BoardRow` takes its element as a prop, and G-10 declines Lighthouse.**
+Two "the natural fix is the wrong one" cases in the same chunk:
+* Making `BoardRow`'s root `<li>` unconditionally — the obvious way to get list
+  semantics — turns the *pinned viewer row*, which renders outside the `<ol>` on
+  purpose because its rank is out of sequence, into a listitem with no list
+  parent. That is a **serious** axe violation on a route already in the registry,
+  and no cheap gate catches it: there is no `Standings` component test and no
+  vitest test imports axe, so all four web gates go green and it surfaces ~28
+  minutes into a run.
+* G-10's registry entry sets `lighthouse: false`. `runLighthouseAudit` drives its
+  own navigation and never replays the entry's `ready`, so it would score the
+  plain login form and file the number under G-10's slug — a measurement of a
+  state it never reached. `/login` is already scored on its own entry. A wrong
+  number is worse than no number (UI spec §1.4).
+
+**Also recorded, because it is the same lesson a third time.** The audit
+registry's exclusion list named four student routes as "still on mock data" and
+every word of it was false by P5.11 — and the stale sentence was the one
+*documenting the two previous times this happened*. Adding the three genuinely
+unaudited routes immediately found that **none of them rendered an `<h1>`**.
+Three more real screen-reader defects that a hand-maintained exclusion list had
+been hiding, on top of the one the G-13 entry found the session before. The
+generalisable rule, now paid for four times (`EXPECTED_TABLES` P5.4, the
+`SeedContract` mirror P4.11, G-13 P5.9, this): **a hand-kept list that nothing
+regenerates fails silently and in the direction of false confidence.** Write the
+registry entry in the same chunk as the screen.
