@@ -1560,6 +1560,29 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          and `correct-paper.spec.ts:57-61` asserts against precisely that. Give the label/value
          pairs the same treatment. Do **not** reach for `data-testid` — point 6(a) measured
          that the suite has none.
+      8. **Point 3's three-edit seed-contract tax applies to FEWER flows than it reads.
+         Measured session 64.** Point 3 is right that a *new seed group* costs three edits in
+         one commit, and points 2/5 are right that G-10 needs one. But two of the four named
+         flows need **no new group at all**, so scoping the whole task around that tax
+         overestimates it.
+         **XP accrual: none needed** — point 7(a); the driver is a fresh signup inside
+         `correct-paper.spec.ts`, which touches no seed group.
+         **Announcements: none needed either.** The audience precondition is already seeded:
+         `seed_e2e.py:1137` creates the class and enrols the at-risk roster, and the contract
+         already exposes `teacher`, `class` and `students` (`build_result_payload`, :941-980),
+         which `teacher-journey.spec.ts` and `at-risk-flags.spec.ts` already log in as. Student
+         audience resolution is class enrolment **or** a non-revoked school `Seat` (D5.4,
+         `routers/student_announcements.py:11-12`), so an enrolled roster student qualifies on
+         the first branch. Teacher writes at `POST /api/teacher/announcements`
+         (`announcements.py:130`); student reads at `GET /api/student/announcements`
+         (`student_announcements.py:79`) with `/unread-count` and `/{id}/read` beside it — the
+         read-receipt round trip is assertable end to end.
+         **Do not point the announcement flow at the `correctedPaper` student**: `seed_e2e.py:39`
+         records it as a *standalone* account deliberately not enrolled in the class, so it has
+         no class audience and would render an honest empty state that reads as a passing flow.
+         **So the seed work is G-10's three `devices` rows and the leaderboard's XP-ordering
+         rows — and only those pay the three-edit tax.**
+- [ ] todo — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
       **Brief sharpened 2026-08-10 (session 60) while the P5.8 gate run held the test lane —
       recon only, nothing edited. P5.12 was the last remaining bare one-liner (56/58/59 did
       P5.9/P5.10/P5.11). Its expensive part is not the merge, it is §7.**
