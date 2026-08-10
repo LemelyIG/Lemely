@@ -1669,3 +1669,21 @@ none has a helper waiting from Phase 3 or 4.
   with a real VAPID impl and a recording double, the **inbox row as source of truth with push
   as a best-effort side effect**, and quiet hours suppressing the *push* but never the row —
   a student must not silently lose a notification for having received it at 2am.
+- **Same session, continued into P5.6.** Recorded **D5.9** before any code (MISSION §4's
+  spec-first mandate), then committed chunk A: migration 0018 + `notification_repo.py` + 60
+  tests, all four backend gates clean, `alembic check` clean both directions.
+- **The design call that matters:** a preference *type toggle* and *quiet hours* are
+  different mechanisms and collapsing them is the bug. A toggle off suppresses the inbox row
+  (content preference); quiet hours suppress only the push and always write the row (timing
+  preference). Both proven by inversion. Safe only because a notification is a pointer and
+  never the data — I wrote that condition into the module so a future type that *is* the sole
+  record forces a revisit rather than silently inheriting the rule.
+- **Learned:** Cairo is UTC+3 in August (Egypt reinstated summer time in 2023), so a
+  hardcoded +2 would be wrong for half the year by exactly one hour — small enough to go
+  unnoticed until a student is woken at 07:30. And `Session.execute` is typed as returning
+  `Result`, which has no `rowcount`; mypy here forbids explicit `Any`, so the fix is a
+  one-attribute `Protocol`, not `cast("CursorResult[Any]", ...)`.
+- **Next:** P5.6 chunk B (VAPID transport + headless recording double), then chunk C (routes
+  + the three action seams that can actually fire). Carrying to the Phase-5 limitations:
+  `streak_warning`/`study_plan_reminder` are time-triggered and this build has **no
+  scheduler**, so they ship as methods nothing invokes on a timer.
