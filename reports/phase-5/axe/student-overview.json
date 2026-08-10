@@ -13,7 +13,7 @@
     "orientationAngle": 0,
     "orientationType": "portrait-primary"
   },
-  "timestamp": "2026-08-10T12:05:06.892Z",
+  "timestamp": "2026-08-10T13:34:23.579Z",
   "url": "http://127.0.0.1:4173/student",
   "toolOptions": {
     "reporter": "v1"
@@ -2219,7 +2219,7 @@
               "data": null,
               "relatedNodes": [
                 {
-                  "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 7b4123de-f620-442f-beac-51f629c4b360.</h1>",
+                  "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 351e3e94-3303-4e71-a409-6c0d52303926.</h1>",
                   "target": [
                     "h1"
                   ]
@@ -2917,7 +2917,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"text-dense font-medium truncate\">puppet-audit-main-1786363479466-315825</div>",
+          "html": "<div class=\"text-dense font-medium truncate\">puppet-audit-main-1786368833470-335213</div>",
           "target": [
             ".text-dense"
           ]
@@ -3017,7 +3017,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 7b4123de-f620-442f-beac-51f629c4b360.</h1>",
+          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 351e3e94-3303-4e71-a409-6c0d52303926.</h1>",
           "target": [
             "h1"
           ]
@@ -3487,7 +3487,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 7b4123de-f620-442f-beac-51f629c4b360.</h1>",
+          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 351e3e94-3303-4e71-a409-6c0d52303926.</h1>",
           "target": [
             "h1"
           ]
@@ -3527,7 +3527,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 7b4123de-f620-442f-beac-51f629c4b360.</h1>",
+          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 351e3e94-3303-4e71-a409-6c0d52303926.</h1>",
           "target": [
             "h1"
           ]
@@ -4412,7 +4412,7 @@
               "data": null,
               "relatedNodes": [
                 {
-                  "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 7b4123de-f620-442f-beac-51f629c4b360.</h1>",
+                  "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 351e3e94-3303-4e71-a409-6c0d52303926.</h1>",
                   "target": [
                     "h1"
                   ]
@@ -5739,7 +5739,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"leading-[1.25] min-w-0\"><div class=\"text-dense font-medium truncate\">puppet-audit-main-1786363479466-315825</div><div class=\"text-2xs text-t2\">Student</div></div>",
+          "html": "<div class=\"leading-[1.25] min-w-0\"><div class=\"text-dense font-medium truncate\">puppet-audit-main-1786368833470-335213</div><div class=\"text-2xs text-t2\">Student</div></div>",
           "target": [
             ".leading-\\[1\\.25\\]"
           ]
@@ -5759,7 +5759,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"text-dense font-medium truncate\">puppet-audit-main-1786363479466-315825</div>",
+          "html": "<div class=\"text-dense font-medium truncate\">puppet-audit-main-1786368833470-335213</div>",
           "target": [
             ".text-dense"
           ]
@@ -5939,7 +5939,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 7b4123de-f620-442f-beac-51f629c4b360.</h1>",
+          "html": "<h1 class=\"text-display-lg text-t1\">Good afternoon, 351e3e94-3303-4e71-a409-6c0d52303926.</h1>",
           "target": [
             "h1"
           ]

@@ -13,8 +13,8 @@
     "orientationAngle": 0,
     "orientationType": "portrait-primary"
   },
-  "timestamp": "2026-08-10T12:06:41.753Z",
-  "url": "http://127.0.0.1:4173/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics",
+  "timestamp": "2026-08-10T13:35:58.698Z",
+  "url": "http://127.0.0.1:4173/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics",
   "toolOptions": {
     "reporter": "v1"
   },
@@ -1046,7 +1046,7 @@
             }
           ],
           "impact": null,
-          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics\" data-discover=\"true\">Analytics</a>",
+          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics\" data-discover=\"true\">Analytics</a>",
           "target": [
             ".border-accent"
           ]
@@ -1470,7 +1470,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics\" data-discover=\"true\">Analytics</a>",
+          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics\" data-discover=\"true\">Analytics</a>",
           "target": [
             ".border-accent"
           ]
@@ -1980,7 +1980,7 @@
             }
           ],
           "impact": null,
-          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics\" data-discover=\"true\">Analytics</a>",
+          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics\" data-discover=\"true\">Analytics</a>",
           "target": [
             ".border-accent"
           ]
@@ -2556,7 +2556,7 @@
           ],
           "none": [],
           "impact": null,
-          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics\" data-discover=\"true\">Analytics</a>",
+          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics\" data-discover=\"true\">Analytics</a>",
           "target": [
             ".border-accent"
           ]
@@ -2852,7 +2852,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics\" data-discover=\"true\">Analytics</a>",
+          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics\" data-discover=\"true\">Analytics</a>",
           "target": [
             ".border-accent"
           ]
@@ -3273,7 +3273,7 @@
               "data": null,
               "relatedNodes": [
                 {
-                  "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class 992a8aae5872</h1>",
+                  "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class cb377e3b7748</h1>",
                   "target": [
                     "h1"
                   ]
@@ -3602,7 +3602,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P3.10 Seed Class 992a8aae5872</a>",
+          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P3.10 Seed Class cb377e3b7748</a>",
           "target": [
             ".py-\\[7px\\].gap-\\[11px\\].text-dense-lg:nth-child(1)"
           ]
@@ -3627,7 +3627,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/108036dd-f2ae-46cd-8cdb-ecfd5b769c20\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P4.11 Below-Target Class 992a8aae5872</a>",
+          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/e9fc09f8-54be-4d33-a737-3845c3ad5319\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P4.11 Below-Target Class cb377e3b7748</a>",
           "target": [
             ".py-\\[7px\\].gap-\\[11px\\].text-dense-lg:nth-child(2)"
           ]
@@ -3827,7 +3827,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class 992a8aae5872</h1>",
+          "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class cb377e3b7748</h1>",
           "target": [
             "h1"
           ]
@@ -4202,7 +4202,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-transparent text-t2 hover:text-t1\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7\" data-discover=\"true\">Roster</a>",
+          "html": "<a class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-transparent text-t2 hover:text-t1\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e\" data-discover=\"true\">Roster</a>",
           "target": [
             ".border-b-2.-mb-px.hover\\:text-t1"
           ]
@@ -4227,7 +4227,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics\" data-discover=\"true\">Analytics</a>",
+          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics\" data-discover=\"true\">Analytics</a>",
           "target": [
             ".border-accent"
           ]
@@ -6122,7 +6122,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class 992a8aae5872</h1>",
+          "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class cb377e3b7748</h1>",
           "target": [
             "h1"
           ]
@@ -6415,7 +6415,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class 992a8aae5872</h1>",
+          "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class cb377e3b7748</h1>",
           "target": [
             "h1"
           ]
@@ -7006,7 +7006,7 @@
             }
           ],
           "impact": null,
-          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P3.10 Seed Class 992a8aae5872</a>",
+          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P3.10 Seed Class cb377e3b7748</a>",
           "target": [
             ".py-\\[7px\\].gap-\\[11px\\].text-dense-lg:nth-child(1)"
           ]
@@ -7032,7 +7032,7 @@
             }
           ],
           "impact": null,
-          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/108036dd-f2ae-46cd-8cdb-ecfd5b769c20\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P4.11 Below-Target Class 992a8aae5872</a>",
+          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/e9fc09f8-54be-4d33-a737-3845c3ad5319\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P4.11 Below-Target Class cb377e3b7748</a>",
           "target": [
             ".py-\\[7px\\].gap-\\[11px\\].text-dense-lg:nth-child(2)"
           ]
@@ -7136,7 +7136,7 @@
             }
           ],
           "impact": null,
-          "html": "<a class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-transparent text-t2 hover:text-t1\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7\" data-discover=\"true\">Roster</a>",
+          "html": "<a class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-transparent text-t2 hover:text-t1\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e\" data-discover=\"true\">Roster</a>",
           "target": [
             ".border-b-2.-mb-px.hover\\:text-t1"
           ]
@@ -7162,7 +7162,7 @@
             }
           ],
           "impact": null,
-          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics\" data-discover=\"true\">Analytics</a>",
+          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics\" data-discover=\"true\">Analytics</a>",
           "target": [
             ".border-accent"
           ]
@@ -7384,7 +7384,7 @@
               "data": null,
               "relatedNodes": [
                 {
-                  "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class 992a8aae5872</h1>",
+                  "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class cb377e3b7748</h1>",
                   "target": [
                     "h1"
                   ]
@@ -8191,7 +8191,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P3.10 Seed Class 992a8aae5872</a>",
+          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P3.10 Seed Class cb377e3b7748</a>",
           "target": [
             ".py-\\[7px\\].gap-\\[11px\\].text-dense-lg:nth-child(1)"
           ]
@@ -8231,7 +8231,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/108036dd-f2ae-46cd-8cdb-ecfd5b769c20\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P4.11 Below-Target Class 992a8aae5872</a>",
+          "html": "<a class=\"flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2\" href=\"/teacher/classes/e9fc09f8-54be-4d33-a737-3845c3ad5319\" data-discover=\"true\"><span class=\"w-1.5 h-1.5 rounded-full flex-none bg-border\"></span>P4.11 Below-Target Class cb377e3b7748</a>",
           "target": [
             ".py-\\[7px\\].gap-\\[11px\\].text-dense-lg:nth-child(2)"
           ]
@@ -8551,7 +8551,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"min-w-0\"><div class=\"font-mono text-2xs tracking-[0.11em] uppercase text-t3\">No subject set</div><h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class 992a8aae5872</h1></div>",
+          "html": "<div class=\"min-w-0\"><div class=\"font-mono text-2xs tracking-[0.11em] uppercase text-t3\">No subject set</div><h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class cb377e3b7748</h1></div>",
           "target": [
             ".items-start > .min-w-0"
           ]
@@ -8591,7 +8591,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class 992a8aae5872</h1>",
+          "html": "<h1 class=\"text-display-md mt-1.5 text-pretty\">P3.10 Seed Class cb377e3b7748</h1>",
           "target": [
             "h1"
           ]
@@ -9111,7 +9111,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-transparent text-t2 hover:text-t1\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7\" data-discover=\"true\">Roster</a>",
+          "html": "<a class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-transparent text-t2 hover:text-t1\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e\" data-discover=\"true\">Roster</a>",
           "target": [
             ".border-b-2.-mb-px.hover\\:text-t1"
           ]
@@ -9131,7 +9131,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/44fc8bc0-0754-413a-9f2d-3b911036f4c7/analytics\" data-discover=\"true\">Analytics</a>",
+          "html": "<a aria-current=\"page\" class=\"px-4 py-2.5 text-dense-lg border-b-2 -mb-px border-accent text-t1 font-medium\" href=\"/teacher/classes/095b65d7-f397-4882-bb83-d8c05e72553e/analytics\" data-discover=\"true\">Analytics</a>",
           "target": [
             ".border-accent"
           ]

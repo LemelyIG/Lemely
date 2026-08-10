@@ -13,8 +13,8 @@
     "orientationAngle": 0,
     "orientationType": "portrait-primary"
   },
-  "timestamp": "2026-08-10T12:04:54.642Z",
-  "url": "http://127.0.0.1:4173/student/result/3b0e593b-7688-49a5-bc5f-0971839e32c2",
+  "timestamp": "2026-08-10T13:34:08.820Z",
+  "url": "http://127.0.0.1:4173/student/result/24d02d41-b40a-415d-8e51-4affd705e14d",
   "toolOptions": {
     "reporter": "v1"
   },
@@ -7592,7 +7592,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"text-dense font-medium truncate\">puppet-audit-main-1786363479466-315825</div>",
+          "html": "<div class=\"text-dense font-medium truncate\">puppet-audit-main-1786368833470-335213</div>",
           "target": [
             ".text-dense"
           ]
@@ -7642,7 +7642,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"font-mono text-xs text-t2 min-w-0 truncate\">Home / Result 3b0e593b-7688-49a5-bc5f-0971839e32c2</div>",
+          "html": "<div class=\"font-mono text-xs text-t2 min-w-0 truncate\">Home / Result 24d02d41-b40a-415d-8e51-4affd705e14d</div>",
           "target": [
             ".truncate.min-w-0.text-xs"
           ]
@@ -11410,7 +11410,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"leading-[1.25] min-w-0\"><div class=\"text-dense font-medium truncate\">puppet-audit-main-1786363479466-315825</div><div class=\"text-2xs text-t2\">Student</div></div>",
+          "html": "<div class=\"leading-[1.25] min-w-0\"><div class=\"text-dense font-medium truncate\">puppet-audit-main-1786368833470-335213</div><div class=\"text-2xs text-t2\">Student</div></div>",
           "target": [
             ".leading-\\[1\\.25\\]"
           ]
@@ -11430,7 +11430,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"text-dense font-medium truncate\">puppet-audit-main-1786363479466-315825</div>",
+          "html": "<div class=\"text-dense font-medium truncate\">puppet-audit-main-1786368833470-335213</div>",
           "target": [
             ".text-dense"
           ]
@@ -11510,7 +11510,7 @@
           "all": [],
           "none": [],
           "impact": null,
-          "html": "<div class=\"font-mono text-xs text-t2 min-w-0 truncate\">Home / Result 3b0e593b-7688-49a5-bc5f-0971839e32c2</div>",
+          "html": "<div class=\"font-mono text-xs text-t2 min-w-0 truncate\">Home / Result 24d02d41-b40a-415d-8e51-4affd705e14d</div>",
           "target": [
             ".truncate.min-w-0.text-xs"
           ]
