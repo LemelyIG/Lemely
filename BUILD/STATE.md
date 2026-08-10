@@ -1812,6 +1812,28 @@ See MISSION §4 (Phase 5) + UI spec §4.6 (S-28..S-31), §4.5 (G-10..G-13), T-12
          teacher half if the compose screen is what is under test, and `injectSession` for the
          student read — which is exactly the split `phase4-journey.spec.ts:51-53` already
          documents ("`injectSession` because the login itself is not what they are testing").
+      14. **S-28's read half needs no markup change either, the read-receipt round trip is
+         fully UI-assertable, and its locator is unique only by an accident of the seed.
+         Measured session 69.** Point 9(a) measured G-13's inbox row and found it already
+         addressable; nobody had checked S-28, the *other* screen the announcement flow
+         asserts on. Same answer: `AnnouncementCard` renders the title as a real **`<h3>`**
+         (`student/screens/Announcements.tsx:141`) and the unread state as a literal `Unread`
+         chip (:155), so `getByRole("heading", {name: <title>})` locates the card and the chip's
+         presence/absence is the readable state. **Three of the four flows now need zero a11y
+         work; only S-29 (point 6) and S-31 (point 7d) do.**
+         **(a) Opening IS reading, so the receipt round trip costs one click.**
+         `handleOpen` (:191-205) fires `markRead.mutate(id)` on first expand, so
+         `getByRole("button", {name: "Read it"})` → the `Unread` chip disappearing is the
+         whole `POST /{id}/read` round trip asserted end to end through the UI. The button
+         also carries `aria-expanded` (:176), so the click is idempotent-checkable in the
+         same way point 11's `aria-pressed` is.
+         **(b) The trap: `Read it` is NOT a unique accessible name.** Every card renders its
+         own identically-named button, so `getByRole("button", {name: "Read it"})` resolves
+         only because the seed seeds **zero** announcements (point 2) and the flow's own
+         teacher posts exactly one. That is a real precondition, not a property of the screen:
+         the day any session seeds an announcement, this locator becomes a strict-mode
+         violation in a spec that never changed. Scope it through the card's `<h3>` title —
+         which the flow already knows, because it typed it — rather than relying on the count.
       9. **Point 4 is STALE and it was pessimistic. The push/notification flow is now the
          CHEAPEST of the four, not the blocked one. Measured session 66, read-only while the
          P5.9 gate held the lane.** Point 4 was written in session 59, *before* P5.9 existed,
