@@ -85,6 +85,12 @@ make seed                      # reference data + demo accounts
 cd web && npm ci && npm run dev
 ```
 
+`make seed` is currently a no-op — `seed_reference_data` and
+`seed_demo_accounts` (`lemely/db/seed.py:26-51`) are stubs, so it inserts zero
+rows and creates zero demo accounts while logging success. Use
+`scripts/seed_e2e.py` for a populated database (all five roles, but under a
+random per-run tag). See `DELIVERY.md` §7.
+
 Supported Python: 3.12, 3.13, 3.14. Node 24+ is required for the frontend
 tooling.
 

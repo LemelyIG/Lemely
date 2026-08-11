@@ -275,3 +275,13 @@ make db-migrate     # alembic upgrade head
 make seed           # reference data + demo accounts
 make up             # backend + built SPA, one command
 ```
+
+> **`make seed` does not do what that line says yet.**
+> `seed_reference_data` and `seed_demo_accounts`
+> (`lemely/db/seed.py:26-51`) are stubs with a bare `pass`: the command inserts
+> zero rows and creates zero accounts, then logs a successful
+> `db.seed.done`. The only working seeding path today is
+> `scripts/seed_e2e.py`, which does create all five roles — but under a random
+> per-run `run_tag`, so its emails and passwords differ on every run and cannot
+> be documented as demo credentials. Making `seed.py` real is Phase-6 task
+> P6.10; this note goes when that lands, not before.
