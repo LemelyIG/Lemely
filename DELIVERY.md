@@ -97,7 +97,7 @@ cell, and the fuller version is in §5.
 | Quiz generation | 3/4 | Delivered | `lemely/io/question_generation.py`, `lemely/core/generation.py` | `tests/test_question_generation.py` |
 | Question-stem extraction (closed the empty question bank, D4.1) | 4 | Delivered | `lemely/io/question_papers.py`, `lemely/core/question_papers.py` | `tests/test_question_papers_io.py`, `tests/test_question_bank_repo.py` |
 | **Study plan** | | | | |
-| Placement test (~15 min, real past-paper questions) | 4 | Delivered | `lemely/core/placement.py`, `lemely/db/placement_repo.py` | `tests/test_placement_assembly.py`, `tests/test_web_placement.py` |
+| Placement test (~15 min, real past-paper questions; 0580 and 0606 have no questions, so it refuses for two of three subjects — §5.2) | 4 | Delivered (limited) | `lemely/core/placement.py`, `lemely/db/placement_repo.py` | `tests/test_placement_assembly.py`, `tests/test_web_placement.py` |
 | Onboarding questionnaire | 4 | Delivered | `lemely/db/student_profile_repo.py`, `web/src/portals/student/screens/Onboarding.tsx` | `tests/test_student_profile_repo.py`, `web/tests/unit/onboarding.test.ts` |
 | Data-collection fields (subjects, session, school, target grades) | 4 | Delivered | `lemely/db/student_profile_repo.py` (migration 0009) | `tests/test_student_profile_repo.py` |
 | Adaptive study plan (week-scoped, concrete sessions; regeneration is student-triggered, not timed — §5.3) | 4 | Delivered | `lemely/core/study_plan.py`, `lemely/db/study_plan_repo.py` | `tests/test_study_plan.py`, `tests/test_web_study_plan.py` |
