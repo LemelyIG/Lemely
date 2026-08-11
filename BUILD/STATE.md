@@ -454,6 +454,20 @@ Measured, not assumed — every line below was checked on disk this session:
       the hard cap stops being a cap.
 - [ ] doing — **P6.6** Full-suite pass: all 13 gates green on the final tree, E2E across all 5 roles
       on seeded realistic data. Launch with `setsid` per the environment note below.
+      **Session 96: a run is IN FLIGHT — `/tmp/check_p66b.log`, launched detached (PPID 1) on the
+      clean tree at `179f9f6`. Do not launch a second one; poll for the `EXIT=` line.** Session 95
+      had launched `/tmp/check_p66.log` and died immediately; I killed it 5 minutes in on a **wrong
+      diagnosis** and relaunched, which is the lesson worth carrying:
+      **`supabase` is NOT on PATH in a non-interactive shell — a bare `supabase status` returns
+      `command not found`, which looks exactly like "the stack is down".** It is not. The binary is
+      `~/.local/bin/supabase` (a symlink into the npm global lib), the containers were running the
+      whole time, and **`check.sh` exports `$HOME/.local/bin` itself** (`scripts/check.sh:34`)
+      precisely so its `STACK_UP` probe works — so the run I killed would have run all 13 gates.
+      Prefix with `export PATH="$HOME/.local/bin:$PATH"` before believing any stack verdict from
+      your own shell. This is the same failure mode STATE already records for `pre-commit`/`mypy`,
+      hit a second time on a different binary: **"executable not found" is an environment answer,
+      never a verdict** — and here it nearly became a verdict about *Docker containers*, one level
+      further from the missing binary than the earlier case, which is why it was convincing.
 - [ ] todo — **P6.7** Full-product visual QA sweep: regenerate the **entire** screenshot corpus,
       per-role contact sheets, `/impeccable audit` across frontend source, `npx impeccable detect
       src/` with every finding resolved, axe + Lighthouse over every route. Regression against the
