@@ -429,9 +429,30 @@ Measured, not assumed — every line below was checked on disk this session:
       **Carry to P6.5/DELIVERY.md:** the entrypoint runs `alembic upgrade head` on every start. Right
       for a one-command local bring-up, wrong for a production deploy where migration is a separate
       gated step — the deployment doc must say so.
-- [ ] doing — **P6.5** Deployment docs for a future free-tier cloud deploy (Supabase cloud +
-      container host) at `docs/deployment.md`. Written, not hosted — MISSION §3 says no live hosting.
-- [ ] todo — **P6.6** Full-suite pass: all 13 gates green on the final tree, E2E across all 5 roles
+- [x] done — **P6.5** Deployment docs (`882f983`, D6.6). `docs/deployment.md` — the working
+      local `make up` stack, a Supabase-Cloud + container-host recipe, the configuration
+      reference (env precedence `LEMELY_` + `__`, the variables a deploy actually sets), the
+      CORS-only-if-split-origin case, and a copy-paste checklist. **The cloud half has never
+      been executed and the document opens by saying so**; every claim is anchored to a
+      file:line so a reader can check rather than trust. P6.4's two handoffs are discharged.
+      **Writing it found two facts nothing had stated, both from reading code:**
+      **(a) The backend cannot run more than one replica.** `JobRegistry`
+      (`lemely/web/jobs.py:31-37`, every in-flight correction job + its SSE stream) and the
+      parent OTP challenge store (`lemely/auth/service.py:107`) are **process-local**. Two
+      replicas ⇒ a student reconnects to a replica that never heard of their job, and a
+      parent's OTP is issued on one instance and verified on another. Intermittent and
+      unreproducible — the worst failure shape, tripped silently by any host that autoscales
+      by default, and caught by no test in this build.
+      **(b) `lemely/db/seed.py` creates nothing — this is a P6.10 problem, see that task.**
+      Not fixed deliberately: the `LEMELY_RUN_MIGRATIONS` guard for the entrypoint's
+      unconditional `alembic upgrade head` is *described* but not implemented — P6.5 is a
+      docs task and an untested branch in the container start path would risk the `make up`
+      P6.4 just verified.
+      **One containerisation consequence worth carrying:** the $8 Gemini ledger lives under
+      `/app/.lemely-cache` on the **ephemeral container filesystem**, so a host that recycles
+      containers resets measured spend to zero while the real bill climbs. Mount a volume or
+      the hard cap stops being a cap.
+- [ ] doing — **P6.6** Full-suite pass: all 13 gates green on the final tree, E2E across all 5 roles
       on seeded realistic data. Launch with `setsid` per the environment note below.
 - [ ] todo — **P6.7** Full-product visual QA sweep: regenerate the **entire** screenshot corpus,
       per-role contact sheets, `/impeccable audit` across frontend source, `npx impeccable detect
@@ -444,6 +465,15 @@ Measured, not assumed — every line below was checked on disk this session:
       carrying **every** `### Honest limitations` item from Phases 2–5 whether or not P6 fixed it.
 - [ ] todo — **P6.10** Fresh-clone acceptance: `git clone` → the documented commands → working
       product with seeded demo accounts for all 5 roles.
+      **Known before you start (found at P6.5, D6.6 — do not re-derive): the seeding path this
+      criterion names does not exist.** `seed_reference_data` and `seed_demo_accounts` in
+      `lemely/db/seed.py:26-51` are **stubs with a bare `pass`**, so `make seed` inserts zero
+      rows and creates zero accounts while logging a cheerful `db.seed.done`. The only working
+      path is `scripts/seed_e2e.py`, which does create all five roles — but under a **per-run
+      random `run_tag`**, so emails and passwords differ every run. Fine for tests, useless for
+      a document that must name credentials. P6.10 has to make `seed.py` real (stable demo
+      accounts, idempotent as its docstring already promises) before the fresh-clone test can
+      pass honestly. Budget for it: this is implementation work, not a verification pass.
 - [ ] todo — **P6.11** Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
       `status: COMPLETE` (the supervisor stops on that value — it is the last write of the build).
 
