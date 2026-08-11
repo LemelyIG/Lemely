@@ -2,7 +2,41 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-11T23:15:00Z   # **Ninety-ninth session: session 98's P6.6 re-run was only 2 minutes
+last_updated: 2026-08-12T00:05:00Z   # **Hundredth session: session 99's P6.6 re-run was 7 minutes old on
+#                                    arrival (PID 540503, 84-byte log, mid-`pytest`) — the FOURTH consecutive session
+#                                    where the correct move was to NOT relaunch. Held the standing rule (no code while
+#                                    a gate run is in flight) and did doc-only work.
+#                                    **P6.8's two blockers are now cleared** (DELIVERY.md exists since `ed0f6b7`; the
+#                                    seed claim was corrected in `2bee4cb`), so I audited the whole P6.8 draft against
+#                                    the carried limitations and found a claim in THREE files that no session had
+#                                    challenged: the study plan "regenerates weekly". **It does not.** Verified in code,
+#                                    not docs — a plan carries `week_start`, `POST /api/study-plan` supersedes that
+#                                    week's row (`study_plan_repo.py:243-253`), the only caller is the student
+#                                    (`routers/study_plan.py:112`), and grepping `lemely/` for any scheduler returns
+#                                    nothing. Week-*scoped*, not weekly-*regenerated*; a new week opens "not generated
+#                                    yet" until the student asks. Fixed in DELIVERY.md's feature row, a new §5.3 bullet,
+#                                    and the CHANGELOG (`818e269`).
+#                                    **Transferable, and it is the same failure this build keeps paying for:** D5.9
+#                                    already said "no scheduler exists in this build", and DELIVERY.md §5.3 already
+#                                    carried it — yet DELIVERY.md's OWN feature table, four screens up the same file,
+#                                    said "regenerates weekly". A limitation recorded in the prose section does not
+#                                    propagate itself into the table; **cross-check a summary row against the
+#                                    limitation list in the same document before shipping it.**
+#                                    Also marked *(limited)* on every CHANGELOG entry that exists and is tested but
+#                                    cannot fully operate (at-risk rule 3, push/VAPID, placement+practice 0625-only and
+#                                    the unreadable practice result, PWA camera/installability never live-tested), and
+#                                    added the accuracy target miss (83.8% vs ≥95%, flag recall 27.3%, D3.21's
+#                                    confidently-wrong paper 22) which the draft had omitted entirely while listing the
+#                                    harness as delivered. README's "All six build phases are complete" (Phase 6 is not)
+#                                    and the surviving inline `make seed  # reference data + demo accounts` comment —
+#                                    which `2bee4cb` corrected two lines BELOW while leaving the code block itself
+#                                    false — are both fixed.
+#                                    **Still open for P6.8's commit: the version bump** (`pyproject.toml` 0.1.0,
+#                                    `web/package.json` 0.0.0, and `lemely/web/app.py:50`'s hardcoded `version="0.1.0"`
+#                                    which must import `__version__`, not be hand-edited). CHANGELOG already announces
+#                                    `[1.0.0] — 2026-08-12`, so the bump is what makes that line true. Deliberately NOT
+#                                    done this session: `web/package.json` is read by the in-flight run's web gates.
+#                                    Previous session's note follows. **Ninety-ninth session: session 98's P6.6 re-run was only 2 minutes
 #                                    old on arrival (PID 540503, started 02:06:42 local, mid-`pytest`) — so for the
 #                                    third consecutive session the correct move was to NOT relaunch, and this time the
 #                                    84-byte log was genuinely 2 minutes of work rather than 20. Held to the standing
