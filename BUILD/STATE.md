@@ -2,7 +2,22 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-12T02:10:00Z   # **Ninety-fifth session: P6.3 + P6.4 done, 4/12 into Phase 6.** Tree was clean,
+last_updated: 2026-08-12T01:35:00Z   # **Ninety-seventh session: found session 96's P6.6 run ALIVE and healthy
+#                                    (PID 424176, PPID 1, 84-byte log, mid-`pytest`) and did NOT relaunch it — the
+#                                    exact trap STATE warns about. While it ran I did the docs half of **P6.8**
+#                                    (README + CHANGELOG rewritten for the shipped product), which is safe because no
+#                                    gate reads either file. **Deliberately NOT committed yet:** the new README links
+#                                    `DELIVERY.md` (P6.9, does not exist) and documents `make seed` as creating demo
+#                                    accounts, which is **false today** (P6.10's stub hole). Committing either would
+#                                    put an unverifiable claim in the tree — the thing this build keeps paying for.
+#                                    So P6.8's commit lands after P6.9 and P6.10, not before.
+#                                    **Found while checking the version bump: `lemely/web/app.py:50` hardcodes
+#                                    `version="0.1.0"`** instead of importing `__version__` — another hand-copied
+#                                    mirror of a fact nothing regenerates. Fix it as part of the bump, don't just
+#                                    edit the string. `tests/test_cli_global_options.py` matches `\d` by regex, so no
+#                                    test pins the number. Note `__version__` comes from installed metadata, so an
+#                                    editable install needs a reinstall before the CLI reports the new value.
+#                                    Previous session's note follows. **Ninety-fifth session: P6.3 + P6.4 done, 4/12 into Phase 6.** Tree was clean,
 #                                    INBOX had no unhandled items, no orphaned pytest. The security re-review found
 #                                    **nothing to fix** — all 121 route operations were already guarded and every
 #                                    Phase-4/5 row-level path already keys on `auth.user_id`. What changed is the
