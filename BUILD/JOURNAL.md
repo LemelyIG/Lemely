@@ -1925,3 +1925,24 @@ that nothing regenerates drifts, and it drifts toward looking better.**
 develop. P6.0 is reconnaissance; it should start from the `### Honest limitations`
 blocks in every phase section of STATE, since `DELIVERY.md` must account for all of
 them whether or not Phase 6 fixes them.
+
+## 2026-08-11/12 — session 94 (Phase 6 started)
+
+- **Did:** P6.0 recon + the 12-task Phase-6 plan; P6.1 closed both long-carried gate
+  holes (D3.20 `web/e2e/` never typechecked → own tsconfig project, found one real
+  `string | undefined` bug; D4.25 Lighthouse perf floor never enforced → real gate,
+  scoped to `/student` as MISSION words it); P6.2 built the concurrency + load-sanity
+  pass that never existed. Branch `feature/phase-6-hardening`, 5 commits.
+- **Learned:** the 65–87 Lighthouse band across all 44 routes was one cause — a single
+  1.3 MB bundle serving every route. Splitting took the entry chunk to 397 kB and the
+  student floor from 70 to 89. Also: `XpService.award` had a live TOCTOU that let
+  concurrency defeat the anti-farming caps, fixed with the lock idiom already used
+  next door.
+- **The lesson worth keeping:** two things I was handed as "verified" were not. A
+  subagent's device-cap test passed with the lock it claimed to verify removed, and my
+  own first inversion check misread pytest's output and looked flaky. Both were only
+  settled by a counted loop. Inversion, repeated and counted, is the only thing that
+  distinguishes a regression test from decoration.
+- **Next:** P6.3 security re-review (authz matrix over every Phase-4/5 route + a
+  reviewer sweep), then P6.4 Docker Compose — which is greenfield: no Dockerfile,
+  compose file, deployment doc or DELIVERY.md exists anywhere in the repo.

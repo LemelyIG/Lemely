@@ -329,9 +329,33 @@ Measured, not assumed — every line below was checked on disk this session:
       of hole to check for whenever a gate grows a new per-route field.
       **E2E re-verified after the split (MISSION §6 gate 4 — this change touches every flow):
       34/34 passed, `E2E_EXIT=0`, 3.7m.** Lazy routes broke nothing.
-- [x] done — **P6.2** Concurrency + load sanity (MISSION §4 P6 bullet 1). Parallel
-      uploads/markings against the real DB proving no cross-request state bleed or lost update, and
-      a basic API load-sanity script with recorded numbers. Gemini stays mocked.
+- [x] done — **P6.2** Concurrency + load sanity (`1cad838`, D6.3). `tests/test_concurrency.py`
+      (3 tests, real thread pools + separate sessions) and `scripts/load_sanity.py`.
+      **It found a real defect: `XpService.award` could be defeated by concurrency.** The D5.1 §3
+      daily anti-farming caps were a read-then-write with no lock — 8 concurrent awards against a
+      cap of 3 all succeeded, and distinct `dedupe_key`s mean migration 0013's unique constraint
+      cannot save it. Fixed with `with_for_update=True` on the `users` row, the idiom
+      `DeviceRegistry.register_login` already uses on the same table for the same TOCTOU.
+      **The inverted run failed with a *different* symptom than the one that motivated the fix** —
+      a `uq_streaks_user_id` UniqueViolation from concurrent streak-row creation, not the cap
+      bypass. One missing lock, two failure modes, and which surfaces depends on thread timing;
+      a later session seeing only one should not conclude the other was misdiagnosed. The streak
+      symptom is the worse one in production, because `award_xp_safely` is fail-open: the error is
+      swallowed and a real student silently loses XP with every gate green.
+      **The pass also caught one of its own tests being decoration**, which is the transferable
+      lesson: `test_device_cap_holds_under_concurrent_logins` *passed* with the lock it claimed to
+      verify removed (4 unsynchronised threads rarely overlap — 8 pass / 12 fail over 20 runs).
+      Fixed in the test only (`threading.Barrier`, 11 threads); re-measured independently at
+      **0 pass / 10 fail with the lock removed**. **Rule for the rest of Phase 6: a test asserting
+      a concurrency guarantee must be shown to fail repeatedly when that guarantee is removed, and
+      a single inversion run is not enough to clear one — count, don't eyeball.**
+      Load sanity reports numbers and **no verdict** (MISSION states no API latency threshold;
+      grading against an invented one is manufactured precision). Real output committed at
+      `reports/phase-6/load-sanity.{json,md}` — 8 endpoints, concurrency 10, ~10k requests, zero
+      errors. **Carry to DELIVERY.md: `/api/teacher/overview` is 10–40× slower than everything else
+      measured** (p50 396ms / p95 458ms vs 8–150ms) — the shape of an N+1 across a teacher's classes
+      and students. Not chased (an observation on seeded data, not a failing test), but it is the
+      first place to look if the teacher console feels slow.
 - [ ] todo — **P6.3** Security re-review: authz matrix re-verified over **every** route including
       all Phase 4/5 additions, plus a `reviewer` adversarial sweep (authz, tenancy, IDOR,
       injection). Findings fixed or recorded.
