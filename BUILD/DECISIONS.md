@@ -6275,3 +6275,45 @@ consequence of containerising that nothing had noted — the $8 Gemini spend led
 under `/app/.lemely-cache` on the **ephemeral container filesystem**, so a host that
 recycles containers resets the measured spend to zero while the real bill keeps climbing.
 Mount a volume there or the hard cap silently stops being a cap.
+
+---
+
+## D6.7 — The full-suite run found a time-bomb test, not a flake (P6.6)
+
+**Context.** P6.6's whole point is "all 13 gates green on the final tree". The run came
+back **12 of 13 PASS with `EXIT=1`**, the single failure being
+`tests/test_push_transport.py::test_authorization_header_verifies_against_the_public_key`.
+
+**What it actually was.** The test mints a VAPID assertion through a transport whose clock
+is injected as `FIXED_NOW = 2026-08-10 12:00 UTC`, then verifies it with `jwt.decode`
+against the **real wall clock**. RFC 8292 caps the assertion's lifetime at 24 hours, so the
+token is expired for any run later than 2026-08-11 12:00 UTC. **The test was green on the
+day it was written (P5.6, 2026-08-10) and has been red in every run since.** It went
+unnoticed because nothing ran the full backend suite in that window — Phase 5's own closing
+run predates the expiry.
+
+**Product code is correct and was not touched.** The transport is properly clock-injected,
+and the 24-hour cap has its own dedicated test (`test_the_assertion_expires_inside_rfc_
+8292s_24_hour_cap`) which judges expiry against `FIXED_NOW` — the honest clock for it. The
+defect was entirely in the *verification* step of a sibling test, which pinned the clock for
+signing and then forgot to pin it for checking.
+
+**Fix:** `options={"verify_exp": False}` on that one decode, with a comment saying why it is
+required rather than convenient. This is **not** weakening a test to get green: the
+assertion under test is the signature and the audience, and expiry is separately and better
+covered.
+
+**Inverted and counted, per P6.2's rule.** With the audience changed to a wrong origin the
+test fails with `InvalidAudienceError`; with the assertion verified against a freshly
+generated keypair instead of the signing one it fails with `InvalidSignatureError`. Both
+still bite, so `verify_exp: False` did not gut the test. The other two `jwt.decode` calls in
+the file pass `verify_signature: False`, which in PyJWT disables the other checks too, so
+they carry no clock dependency and needed no change.
+
+**The transferable lesson, and it is not about JWTs.** A test that pins a clock on the write
+path and reads it back with the real clock is green until it silently isn't, and the
+interval between those two states can be a single day. `grep -rn "jwt.decode" tests/` was
+run to find siblings with the same shape; there were none. **Any test mixing an injected
+clock with a real one is a dated assertion — the failure arrives on a calendar, not on a
+code change**, which is exactly the kind a phase-end run is for and a per-commit CI never
+catches.

@@ -167,11 +167,20 @@ def test_authorization_header_verifies_against_the_public_key(
     assert scheme == "vapid"
     assert parts["k"] == public_b64
 
+    # ``verify_exp=False`` is required, not a convenience. The transport signs at
+    # the injected ``FIXED_NOW``, and RFC 8292 caps the assertion at 24h — so a
+    # decode against the real wall clock passes for one day after FIXED_NOW and
+    # fails forever after. It did exactly that: written 2026-08-10, green that
+    # day, red in every run since. Nothing is lost by skipping expiry here; what
+    # this test asserts is the signature and the audience, and the expiry rule
+    # has its own test below against FIXED_NOW, which is the honest clock to
+    # judge it by.
     claims = jwt.decode(
         parts["t"],
         public_key,
         algorithms=["ES256"],
         audience="https://push.example.test",
+        options={"verify_exp": False},
     )
     assert claims["sub"] == SUBJECT
     assert claims["aud"] == "https://push.example.test"

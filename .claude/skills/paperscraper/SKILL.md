@@ -206,7 +206,16 @@ Status values: `pending` (discovered, not fetched) · `done` · `failed` (has `e
 
 CAIE filenames are preserved verbatim: `<syllabus>_<session><yy>_<type>[_<variant>].pdf` — the same convention Lemely's `Sources/` already uses (`0625_m20_ms_12.pdf`). Session letters: `m` March · `s` May/June · `w` Oct/Nov · `y` undated/specimen. Two-digit years pivot at 80 (`_w98_` → 1998).
 
-This is **not** Lemely's `Sources/<SubjectName>/MarkingSchemes/` layout. Copying into `Sources/` is a separate, deliberate step — decide the mapping with the user rather than bulk-copying, and remember `Sources/` is gitignored while its manifest is committed.
+**Topical documents use a different shape** (§11). A compilation has no session, so the `<year>/<session>` pair is replaced by `topical/<topic-slug>`:
+
+```
+└── CAIE/igcse/physics-0625/topical/thermal-physics/2.1 Kinetic particle model of matter QP-683d66.pdf
+    <board>/<qualification>/<subject-name-code>/topical/<topic-slug>/<PMT name>-<digest>.pdf
+```
+
+Two consequences for anything that walks this tree. The names are **PMT's own**, not CAIE canon — they carry spaces and a six-character URL digest, and `parse_caie_filename()` will not read them, so nothing can infer a session or variant from one. And a compilation covering several topics is stored **once**, under its lowest-numbered topic only; the full membership lives in `document_topics` (§11), never in the path.
+
+This is **not** Lemely's `Sources/<SubjectName>/MarkingSchemes/` layout. Copying into `Sources/` is a separate, deliberate step — decide the mapping with the user rather than bulk-copying, and remember `Sources/` is gitignored while its manifest is committed. Topical files need that decision made twice over: they are question banks spanning many sessions, so they do not slot into a per-session `Sources/` tree at all.
 
 Byte-identical files are stored once and hard-linked, so a non-zero `De-duplicated` count is healthy, not an error.
 
@@ -267,7 +276,14 @@ $PS list-topics -s 0625 --db "$OUT/index.db"      # one syllabus
 $PS list-topics --db /tmp/ps-topical-probe/index.db
 ```
 
-Columns: Subject, Unit, Slug, Label, Documents, Source. Same rule as `status` (§1): `--db` defaults to `papers/index.db` relative to CWD and does **not** inherit `-o`/`--db` from an earlier `fetch`, so from Lemely it must always be absolute or you will read a database that does not exist. And it is read-only against the catalogue: it lists topics a prior `fetch` or `--dry-run` already upserted, it never talks to PMT itself. Run it before ever fetching `pmt` and it correctly reports "No topics recorded".
+Columns: Subject, Unit, Slug, Label, Documents, Source. Same rule as `status` (§1): `--db` defaults to `papers/index.db` relative to CWD and does **not** inherit `-o`/`--db` from an earlier `fetch`, so from Lemely it must always be absolute or you will read a database that does not exist. And it is read-only against the catalogue: it lists topics a prior `fetch` or `--dry-run` already upserted, it never talks to PMT itself.
+
+Read its two empty-result messages carefully — they mean opposite things:
+
+| Output | Exit | Meaning |
+|---|---|---|
+| `No catalogue at <path>` | **1** | The DB file is not there. From Lemely this almost always means a relative `--db` resolved against the wrong CWD, not that the catalogue is empty. |
+| `No topics recorded` | 0 | The catalogue exists and genuinely holds no topics — nothing has fetched `pmt` yet. |
 
 ### Size it, fetch it, verify it — same discipline as §3
 
