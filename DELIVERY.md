@@ -61,7 +61,57 @@ that implement it and the tests that prove it. `Delivered (limited)` means the
 feature works but with a stated constraint — the constraint is in the feature
 cell, and the fuller version is in §5.
 
-<!-- FEATURE-TABLE -->
+| Feature | Phase | Status | Key implementation files | Proving tests |
+| --- | --- | --- | --- | --- |
+| **Correction** | | | | |
+| In-app PDF scanner (never live-tested — no camera in the build sandbox) | 2 | Delivered (limited) | `web/src/components/CameraCapture.tsx` | `web/e2e/screenshots.spec.ts` |
+| File upload | 2 | Delivered | `lemely/io/storage.py`, `lemely/web/routers/student.py` | `tests/test_storage.py`, `tests/test_web_student.py` |
+| Metadata detection | 2 | Delivered | `lemely/io/scan_metadata.py`, `lemely/io/metadata.py` | `tests/test_scan_metadata.py` |
+| Mark-scheme fetch / parse / store (32 of 72 papers parse for 0625) | 2 | Delivered (limited) | `lemely/io/mark_schemes.py`, `lemely/io/det/` | `tests/test_mark_schemes.py`, `tests/test_parsers_det.py` |
+| Method-mark marking + confidence (83.8% agreement vs a ≥95% target — §5.1) | 2 | Delivered (limited) | `lemely/core/correction.py`, `lemely/io/correction_ai.py` | `tests/test_correction.py`, `tests/test_accuracy_synth.py`, `tests/test_accuracy_real_papers.py` |
+| Plagiarism flag (advisory signal, never modifies a mark) | 2 | Delivered | `lemely/core/plagiarism.py`, `lemely/io/integrity.py` | `tests/test_integrity.py` |
+| AI-detection flag (advisory signal, never modifies a mark) | 2 | Delivered | `lemely/io/integrity.py`, `lemely/core/integrity_schemas.py` | `tests/test_integrity.py` |
+| Letter / numerical / total grade | 2 | Delivered | `lemely/core/analytics.py` (`grade_for_percentage`) | `tests/test_grade_boundaries.py` |
+| Predicted grade after boundary | 2 | Delivered | `lemely/core/analytics.py` (`predict_grade`), `lemely/io/grade_boundaries.py` | `tests/test_grade_boundaries.py` |
+| Mistakes + weakness identification | 2 | Delivered | `lemely/core/analytics.py`, `lemely/core/topics.py` | `tests/test_topics.py`, `tests/test_compare_performance.py` |
+| Performance vs past papers | 2 | Delivered | `lemely/core/history.py`, `lemely/core/analytics.py` | `tests/test_compare_performance.py` |
+| Custom exam + custom mark-scheme correction (via teacher override + quiz marking) | 3 | Delivered | `lemely/db/review_repo.py`, `lemely/web/routers/review.py` | `tests/test_review_repo.py`, `tests/test_web_review.py` |
+| **Student surfaces** | | | | |
+| Overall performance | 2 | Delivered | `lemely/web/routers/student.py`, `web/src/portals/student/screens/Overview.tsx` | `tests/test_web_student.py`, `web/e2e/student-journey.spec.ts` |
+| Per-subject performance | 2 | Delivered | `web/src/portals/student/screens/Subject.tsx` | `web/e2e/student-journey.spec.ts` |
+| Single-subject overview (per-paper performance, boundaries, final grade) | 2 | Delivered | `lemely/web/routers/student.py`, `web/src/portals/student/screens/PaperResult.tsx` | `tests/test_student_correct.py`, `web/e2e/correct-paper.spec.ts` |
+| Announcements calendar (ships with no CAIE dates — §5.4) | 5 | Delivered (limited) | `lemely/db/announcement_repo.py`, `lemely/web/routers/exam_calendar.py` | `tests/test_web_announcements_student.py`, `tests/test_exam_calendar_repo.py` |
+| Push notifications (no VAPID keys on this machine — §5.3) | 5 | Delivered (limited) | `lemely/web/push.py`, `lemely/db/notification_repo.py` | `tests/test_push_transport.py`, `tests/test_web_notifications.py` |
+| **Teacher surfaces** | | | | |
+| At-risk flagging (rule 3, inactivity, cannot fire — §5.3) | 3 | Delivered (limited) | `lemely/core/at_risk.py`, `lemely/db/at_risk_repo.py` | `tests/test_at_risk.py`, `web/e2e/at-risk-flags.spec.ts` |
+| Overall / individual performance + weakness points | 3 | Delivered | `lemely/core/class_analytics.py`, `lemely/web/routers/teacher.py` | `tests/test_class_analytics.py`, `tests/test_web_teacher.py` |
+| Academic statistics | 3 | Delivered | `lemely/core/class_analytics.py` | `tests/test_class_analytics.py` |
+| Review queue with override-and-annotate | 3 | Delivered | `lemely/db/review_repo.py`, `lemely/web/routers/review.py` | `tests/test_review_repo.py`, `tests/test_web_review.py` |
+| Quiz creation with difficulty / material / pool controls | 3 | Delivered | `lemely/io/teacher_quiz.py`, `lemely/db/quiz_repo.py`, `lemely/web/routers/quiz.py` | `tests/test_teacher_quiz.py`, `tests/test_quiz_repo.py`, `tests/test_web_quiz.py` |
+| **Parent surfaces** | | | | |
+| Child performance + weaknesses (read-only) | 3 | Delivered | `lemely/db/parent_repo.py`, `lemely/web/routers/parent.py` | `tests/test_parent_repo.py`, `web/e2e/parent-journey.spec.ts` |
+| Phone login (mock SMS provider, logs the OTP) | 3 | Delivered | `lemely/auth/service.py` | `tests/test_otp.py`, `tests/test_web_parent.py` |
+| **Content generation** | | | | |
+| Classified practice targeting weaknesses (0580 and 0606 have no questions — §5.2) | 4 | Delivered (limited) | `lemely/db/practice_repo.py`, `lemely/core/topics.py`, `lemely/web/routers/practice.py` | `tests/test_practice_repo.py`, `tests/test_web_practice.py`, `web/e2e/phase4-practice.spec.ts` |
+| Flashcards + spaced repetition | 4 | Delivered | `lemely/io/flashcard_generation.py`, `lemely/core/spaced_repetition.py` | `tests/test_flashcard_repo.py`, `tests/test_spaced_repetition.py` |
+| Quiz generation | 3/4 | Delivered | `lemely/io/question_generation.py`, `lemely/core/generation.py` | `tests/test_question_generation.py` |
+| Question-stem extraction (closed the empty question bank, D4.1) | 4 | Delivered | `lemely/io/question_papers.py`, `lemely/core/question_papers.py` | `tests/test_question_papers_io.py`, `tests/test_question_bank_repo.py` |
+| **Study plan** | | | | |
+| Placement test (~15 min, real past-paper questions) | 4 | Delivered | `lemely/core/placement.py`, `lemely/db/placement_repo.py` | `tests/test_placement_assembly.py`, `tests/test_web_placement.py` |
+| Onboarding questionnaire | 4 | Delivered | `lemely/db/student_profile_repo.py`, `web/src/portals/student/screens/Onboarding.tsx` | `tests/test_student_profile_repo.py`, `web/tests/unit/onboarding.test.ts` |
+| Data-collection fields (subjects, session, school, target grades) | 4 | Delivered | `lemely/db/student_profile_repo.py` (migration 0009) | `tests/test_student_profile_repo.py` |
+| Adaptive study plan (regenerates weekly, concrete sessions) | 4 | Delivered | `lemely/core/study_plan.py`, `lemely/db/study_plan_repo.py` | `tests/test_study_plan.py`, `tests/test_web_study_plan.py` |
+| **Engagement** | | | | |
+| XP + streaks with anti-farming caps | 5 | Delivered | `lemely/db/xp_repo.py`, `lemely/web/xp_awards.py` | `tests/test_xp_repo.py`, `tests/test_web_xp_awards.py`, `tests/test_concurrency.py` |
+| Leaderboards (friends / class / school / global / per-subject / total, weekly XP, opt-out) | 5 | Delivered | `lemely/db/leaderboard_repo.py`, `lemely/web/routers/leaderboard.py` | `tests/test_leaderboard_repo.py`, `tests/test_web_leaderboard.py`, `web/e2e/engagement.spec.ts` |
+| Announcements (teacher → class, school_admin → school) | 3/5 | Delivered | `lemely/db/announcement_repo.py`, `lemely/web/routers/announcements.py` | `tests/test_announcement_repo.py`, `tests/test_web_announcements.py` |
+| **Accounts + platform** | | | | |
+| Personalized accounts (5 roles) | 1 | Delivered | `lemely/auth/service.py`, `lemely/web/routers/auth.py` | `tests/test_auth_service.py`, `tests/test_auth_e2e_roles.py` |
+| RBAC on every route | 1 | Delivered | `lemely/web/deps.py` | `tests/test_authz_matrix_complete.py`, `tests/test_authz_matrix.py`, `web/e2e/rbac.spec.ts` |
+| Subscriptions / seats / manual activation (no payment processing, by scope) | 1 | Delivered | `lemely/db/seat_repo.py` | `tests/test_seat_repo.py` |
+| 3-device limit + sharing friction | 1/5 | Delivered | `lemely/db/device_repo.py`, `web/src/portals/settings/DeviceSettings.tsx` | `tests/test_device_repo.py`, `tests/test_web_devices.py`, `web/tests/unit/devices.test.ts` |
+| Design system + component library (C-1..C-13) | 2.5 | Delivered | `web/src/index.css`, `docs/COMPONENT_CATALOGUE.md` | `web/tests/unit/design-tokens.test.ts` |
+| Docker Compose one-command stack + deployment docs | 6 | Delivered | `docker-compose.yml`, `Dockerfile`, `web/Dockerfile`, `docs/deployment.md` | `none found` — verified by a manual `make up` bring-up (P6.4), not by an automated test |
 
 ## 4. Deferred, and why
 
@@ -150,7 +200,7 @@ source.**
 
 ### 5.5 Frontend, accessibility and measurement
 
-- ~~**`web/e2e/` and `playwright.config.ts` are in no tsconfig `include`
+- ~~**`web/e2e/` and `web/playwright.config.ts` are in no tsconfig `include`
   (D3.20)**~~ — **CLOSED in Phase 6 (D6.1)**. The most expensive gate is now
   typechecked for the first time, via a separate `web/tsconfig.e2e.json`
   project.
