@@ -40,6 +40,7 @@ import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from lemely.auth.tokens import mint_access_token
 from lemely.db.models.enums import Role
 from lemely.runtime.config import Settings
 from lemely.web import create_app
@@ -284,11 +285,14 @@ _ROLE_GATED = [
 
 
 @pytest.fixture
-def app(tmp_path: Path) -> FastAPI:
-    base = Settings()
-    data = base.model_dump()
+def settings(tmp_path: Path) -> Settings:
+    data = Settings().model_dump()
     data["paths"]["output_dir"] = tmp_path / "outputs"
-    settings = Settings.model_validate(data)
+    return Settings.model_validate(data)
+
+
+@pytest.fixture
+def app(settings: Settings) -> FastAPI:
     application = create_app()
     application.dependency_overrides[get_settings] = lambda: settings
     return application
@@ -339,8 +343,58 @@ def test_disallowed_role_is_403(app: FastAPI, method: str, path: str, role: str)
     assert resp.status_code == 403, (method, path, role, resp.status_code)
 
 
+# ── 3c. The same rejections through the REAL token chain ─────────────────────
+#
+# 3a and 3b override ``get_auth_context``, so they prove ``require_role`` given a
+# correctly-populated AuthContext — they cannot see a break in token decoding
+# itself, because the code that builds the context is the code they replace. The
+# P6.3 review named that as the gap. These cases use a genuinely minted token and
+# no override at all, one representative route per guard class, so the whole
+# chain (header → decode → claim extraction → role compare) is exercised.
+_REPRESENTATIVE = {
+    guard: next((m, p) for m, p in ROUTES if EXPECTED[(m, p)] == guard)
+    for guard in (STUDENT, PARENT, TEACHER, SCHOOL_ADMIN, TEACHER_OR_SCHOOL_ADMIN, STAFF)
+}
+_REAL_TOKEN_CASES = [
+    (method, path, role)
+    for guard, (method, path) in _REPRESENTATIVE.items()
+    for role in sorted(ALL_ROLES - guard)
+]
+
+
+@pytest.mark.parametrize(("method", "path", "role"), _REAL_TOKEN_CASES, ids=lambda v: str(v))
+def test_real_token_of_a_disallowed_role_is_403(
+    app: FastAPI, settings: Settings, method: str, path: str, role: str
+) -> None:
+    token = mint_access_token(
+        user_id=uuid.uuid4(), settings=settings, app_role=role, provider="email"
+    )
+    resp = TestClient(app).request(
+        method, _concrete(path), headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 403, (method, path, role, resp.status_code)
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Bearer not-a-jwt",
+        "Bearer " + "a.b.c",
+        "Basic dXNlcjpwYXNz",
+        "",
+    ],
+)
+def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> None:
+    """A token the chain cannot decode must fail closed."""
+    method, path = _REPRESENTATIVE[STUDENT]
+    resp = TestClient(app).request(method, _concrete(path), headers={"Authorization": header})
+    assert resp.status_code == 401, (header, resp.status_code)
+
+
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
     assert len(_NON_PUBLIC) == len(ROUTES) - 5  # 4 auth entrypoints + /api/health
     assert len(_ROLE_GATED) > 300
+    assert len(_REPRESENTATIVE) == 6
+    assert len(_REAL_TOKEN_CASES) >= 20
