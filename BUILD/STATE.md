@@ -1,8 +1,18 @@
 # BUILD STATE — single source of truth
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
-current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 not started
-last_updated: 2026-08-11T00:00:00Z   # **Ninety-third session: PHASE 5 IS COMPLETE. P5.12 landed — the report is committed (`1f6354a`), `feature/phase-5-engagement` is merged to develop (`322118b`) and pushed, and PR #3 is retitled "Phases 0–5" with a Phase-5 section APPENDED (all seven phase sections verified present afterwards; P3.11's silent-section-loss trap did not fire).** Nothing was re-implemented and no gate was re-run: session 92's `EXIT=0` run is the tree that merged, and every figure in the report is measured off that run's own committed artifacts.
+current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
+last_updated: 2026-08-11T09:00:00Z   # **Ninety-fourth session: PHASE 6 STARTED.** Tree was clean, INBOX had no
+#                                    unhandled items, BLOCKERS B1-B3 all resolved, no orphaned pytest. Branched
+#                                    `feature/phase-6-hardening` off develop at `76450ff` and did P6.0 — the
+#                                    reconnaissance and the twelve-task plan below. The headline recon finding is
+#                                    that **Phase 6 is mostly greenfield, not a polish pass**: there is no
+#                                    Dockerfile, no compose file, no deployment doc and no DELIVERY.md anywhere in
+#                                    the repo, and README/CHANGELOG still describe the 2026-08-04 (Phase-0/1)
+#                                    product. Plan ordering is deliberate — gate-affecting code fixes (P6.1) land
+#                                    before the full-suite (P6.6) and visual sweep (P6.7) so those runs exercise
+#                                    the shipping tree, and the ~25-minute gate run is spent once, not twice.
+#                                    Previous session's note follows. **Ninety-third session: PHASE 5 IS COMPLETE. P5.12 landed — the report is committed (`1f6354a`), `feature/phase-5-engagement` is merged to develop (`322118b`) and pushed, and PR #3 is retitled "Phases 0–5" with a Phase-5 section APPENDED (all seven phase sections verified present afterwards; P3.11's silent-section-loss trap did not fire).** Nothing was re-implemented and no gate was re-run: session 92's `EXIT=0` run is the tree that merged, and every figure in the report is measured off that run's own committed artifacts.
 #                                    **The one substantive finding of this session is a number correction, and it is recorded because this build keeps getting burned by hand-copied figures.** STATE and the session-92 note carried **146** axe route-states; `reports/phase-5/axe/_summary.json` has **73** rows and `audit.mjs` writes exactly one row per audited state (`axeSummary.length`, its own comment says so). 146 is double the truth. Phase 4's report carries the same shape (122 against a 61-row summary), so it is a propagated arithmetic error, not a Phase-5 coverage regression. **The verdict is unaffected — zero violations at every impact however the states are counted** — but a figure nobody can reproduce from the committed artifacts is exactly what this build has been paying for all phase, so the report states 73 and says why. Two other report figures were likewise recomputed from the JSON rather than copied: Lighthouse **44** route reports, a11y floor **96** (`teacher-review`, 100 on the other 43), and **8** routes below performance 80 (not the 9 STATE carried).
 #                                    Also corrected while writing the appendix: `xp_awards.py` is in `lemely/web/`, not `lemely/db/`, and the settings screen is `DeviceSettings.tsx`, not `DeviceManagement.tsx`. Both were caught by testing every path in the appendix for existence before committing — a 20-second check that a phase report should always get.
 #                                    **Next session starts Phase 6 on a fresh `feature/phase-6-*` branch off develop.** Read MISSION §4 Phase 6 and the carried limitations below before planning; several of them (the unenforced Lighthouse performance floor, the untypechecked `web/e2e/`, the synthetic accuracy gap) are explicitly Phase-6-shaped work, and DELIVERY.md must carry every one of them whether or not they are fixed.
@@ -263,11 +273,63 @@ Full text in `reports/phase-5/REPORT.md` §7. The ones that change what Phase 6 
       or this file's git history.
 - [x] done — **P5.12** Phase-5 report, merge to develop, push, update PR #3, ntfy.
 
-## Phase 6 — Hardening + ship — NOT STARTED
-See MISSION §4 (Phase 6). Start on a fresh `feature/phase-6-*` branch off develop. Nothing here
-is planned yet; P6.0 is the reconnaissance + phase plan, and it should begin by reading the
-carried limitations above and in every prior phase's `### Honest limitations` block, because
-`DELIVERY.md` must account for all of them whether or not Phase 6 fixes them.
+## Phase 6 — Hardening + ship — IN PROGRESS (started 2026-08-11, session 94)
+Branch: `feature/phase-6-hardening` (off develop at `76450ff`). See MISSION §4 (Phase 6).
+
+### What P6.0 reconnaissance established (do not re-derive)
+Measured, not assumed — every line below was checked on disk this session:
+- **There is no Docker Compose file, no Dockerfile, and no deployment doc anywhere in the repo.**
+  `find -maxdepth 2` for `*compose*`/`Dockerfile*` returns nothing; `docs/` holds only
+  COMPONENT_CATALOGUE, database, exit-codes, LEMELY_UI_SPEC, quiz-model, superpowers. So MISSION
+  §3's "definition of done for deployment" is **entirely unbuilt** — P6 builds it from zero, it is
+  not a hardening pass over something existing. `supabase/` (config.toml + seed.sql) is the only
+  container-adjacent asset.
+- **`DELIVERY.md` does not exist.** README.md and CHANGELOG.md are both dated **2026-08-04** —
+  i.e. Phase-0/1 era, describing a product five phases out of date.
+- **Version is `0.1.0`** (`pyproject.toml:7`) and `web/package.json` is `0.0.0` — never bumped.
+- **`tests/test_authz_matrix.py` exists**, so P6's authz re-verification extends a real matrix
+  rather than inventing one. No concurrency or load test exists (`grep` for
+  `concurren|asyncio.gather` hits only `test_device_repo.py`/`test_friend_repo.py`, both
+  incidental).
+- **`node -v` is v26.6.0**, so `npx impeccable detect src/` (needs 24+, MISSION §10) is runnable —
+  no blocker there.
+
+### Task checklist
+- [x] done — **P6.0** Reconnaissance + phase plan (this block), branch created.
+- [ ] todo — **P6.1** Gate-affecting hardening fixes, done FIRST so every later gate run exercises
+      the final tree. (a) Put `web/e2e/` + `playwright.config.ts` into a tsconfig `include` and fix
+      what 30 never-typechecked test blocks turn up (D3.20, carried since Phase 3). (b) Add the
+      Lighthouse **performance** check to `scripts/check_ui_gates.py` — MISSION §11 scopes the ≥80
+      floor to **student routes only**, so gate exactly that, then fix the student routes now
+      failing it (`student-standings` 70, `student-result` 73, `student-announcements` 78,
+      `student-placement-test` 79). The teacher-route figures are outside MISSION's stated floor and
+      get recorded in DELIVERY.md, not silently gated away. **Do not close D4.25 by deleting the
+      claim** — the fix is enforcement, not a reworded limitation.
+- [ ] todo — **P6.2** Concurrency + load sanity (MISSION §4 P6 bullet 1). Parallel
+      uploads/markings against the real DB proving no cross-request state bleed or lost update, and
+      a basic API load-sanity script with recorded numbers. Gemini stays mocked.
+- [ ] todo — **P6.3** Security re-review: authz matrix re-verified over **every** route including
+      all Phase 4/5 additions, plus a `reviewer` adversarial sweep (authz, tenancy, IDOR,
+      injection). Findings fixed or recorded.
+- [ ] todo — **P6.4** Docker Compose: one command brings up Supabase-local + backend + the built
+      SPA served with correct CORS/proxy. Backend + web Dockerfiles, compose file, Makefile target.
+- [ ] todo — **P6.5** Deployment docs for a future free-tier cloud deploy (Supabase cloud +
+      container host) at `docs/deployment.md`. Written, not hosted — MISSION §3 says no live hosting.
+- [ ] todo — **P6.6** Full-suite pass: all 13 gates green on the final tree, E2E across all 5 roles
+      on seeded realistic data. Launch with `setsid` per the environment note below.
+- [ ] todo — **P6.7** Full-product visual QA sweep: regenerate the **entire** screenshot corpus,
+      per-role contact sheets, `/impeccable audit` across frontend source, `npx impeccable detect
+      src/` with every finding resolved, axe + Lighthouse over every route. Regression against the
+      Phase-2.5 baselines is a blocker (MISSION §4). Read `removed` (must be 0), not `changed`.
+- [ ] todo — **P6.8** README + CHANGELOG rewritten for the shipped product; version bumped in both
+      `pyproject.toml` and `web/package.json`.
+- [ ] todo — **P6.9** `DELIVERY.md`: every feature in MISSION §9's inventory with status, files and
+      the tests that prove it, links to all seven phase reports, and an honest limitations section
+      carrying **every** `### Honest limitations` item from Phases 2–5 whether or not P6 fixed it.
+- [ ] todo — **P6.10** Fresh-clone acceptance: `git clone` → the documented commands → working
+      product with seeded demo accounts for all 5 roles.
+- [ ] todo — **P6.11** Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
+      `status: COMPLETE` (the supervisor stops on that value — it is the last write of the build).
 
 ### Environment facts worth not re-deriving (cost real work to find)
 - **`pre-commit` needs `.venv/bin` on `PATH`, or two hooks fail for the wrong reason.**
