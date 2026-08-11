@@ -80,10 +80,21 @@
  *     below — which is why they cannot be collapsed onto one account, and the
  *     fourth is on a different account again because completing `active`'s
  *     sessions would destroy the populated-week capture.
- * Deliberately still NOT in this registry (P5 screens still on mock data):
- *   /student/subject/:code, /student/board, /student/landing,
- *   /student/directions.
- *   (`/student/onboard` was on this list until P4.8 chunk C — chunk A made it
+ * Deliberately still NOT in this registry: nothing. Every student route is
+ * audited as of P5.11.
+ *   (This note used to name four routes as "P5 screens still on mock data",
+ *   and by P5.11 every word of that was wrong — the THIRD time this exclusion
+ *   list went stale, and this time it happened to the very sentence
+ *   documenting the previous two. `/student/board` had had a real entry since
+ *   P5.8, so the claim was simply false; `/student/subject/:code` runs on the
+ *   real `useSubject` hook and was never on mock data; and `/student/landing`
+ *   and `/student/directions` are static, which is a different reason from
+ *   the one written down and, by the rule three lines below, not a sufficient
+ *   one either. Adding the three genuinely-missing entries immediately found
+ *   a real defect in each: none of them rendered an `<h1>`, so all three
+ *   failed `page-has-heading-one` — exactly what the exclusion had been
+ *   hiding, and exactly what the G-13 entry found when it was added.
+ *   `/student/onboard` was on this list until P4.8 chunk C — chunk A made it
  *   real, and the list had gone stale, which is precisely how a route stays
  *   unaudited: the exclusion note outlives the exclusion.
  *   It happened a second time: `/student/plan` sat on this list through
@@ -1009,6 +1020,45 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Check on your child"),
       authed: false,
     },
+    // ── G-11 · Account & devices — the devices section (P5.7 chunk B) ─────
+    // Authed but portal-agnostic: the route is one screen for all five roles,
+    // so auditing it under one session covers it for every role. The student
+    // session is used because it is the one every other student entry already
+    // builds. G-10 (the device-limit challenge) is NOT here: it needs an
+    // account already holding three live devices, which is a seed precondition
+    // rather than a navigation — P5.11's job, recorded so it is not mistaken
+    // for covered.
+    {
+      screenId: "G-11",
+      slug: "settings-devices",
+      path: "/settings/devices",
+      session: decliningStudentSession,
+      ready: (page) => waitForText(page, "Signed-in devices"),
+      authed: true,
+    },
+    // ── G-12 · Notification preferences (P5.9 chunk C) ────────────────────
+    // Portal-agnostic for the same reason as G-11, and audited under the
+    // student session for the same one. Note what this entry does *not* cover:
+    // the `atRiskAlert` toggle only renders for a teacher or a parent (the
+    // router returns `null` for every other role), so a student-session audit
+    // sees four toggles, not five. Auditing the five-toggle variant needs a
+    // teacher session on this route — worth adding when a role dimension is
+    // introduced here, not worth a duplicate entry today.
+    // The push section renders its `unavailable` state, which is the honest
+    // one for every build this repo produces: no VAPID keys are configured, so
+    // `GET /notifications/push/config` answers `available: false` by design
+    // (D5.9 §4). The enable button and the test-notification button are
+    // therefore NOT exercised by this audit — that is a real coverage gap and
+    // is carried to the Phase-5 limitations rather than hidden behind a mock
+    // config that would audit a screen this deployment never shows.
+    {
+      screenId: "G-12",
+      slug: "settings-notifications",
+      path: "/settings/notifications",
+      session: decliningStudentSession,
+      ready: (page) => waitForText(page, "What you get told about"),
+      authed: true,
+    },
     // ── Teacher (15 entries — several carry more than one `states[]`) ──────
     {
       screenId: "T-01",
@@ -1880,6 +1930,211 @@ function buildRouteRegistry(seed) {
         },
       ],
     },
+    // ── S-28 · Announcements & exam calendar (P5.8 chunk B) ───────────────
+    // The `ready` probe deliberately targets the *announcements* heading and
+    // not the countdown or a date row: `exam_dates` ships empty in every
+    // environment this build produces (P5.5 chunk C built the ingestion path
+    // and populated nothing), so the countdown legitimately does not render
+    // and a probe waiting on it would hang and be misread as a route failure.
+    //
+    // The calendar half is therefore audited in its `no_timetable`/
+    // `no_enrolment` state, which is the state it genuinely ships in — that is
+    // coverage of the real screen, not a gap. When a timetable is ingested,
+    // add a `dated` state here rather than replacing this one.
+    {
+      screenId: "S-28",
+      slug: "student-announcements",
+      path: "/student/announcements",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "From your teachers"),
+      authed: true,
+    },
+    // ── S-29 · Leaderboards (P5.8 chunk C) ────────────────────────────────
+    // `/student/board` has never been in this registry — the honest-empty
+    // placeholder that stood here since P2.7 was never audited, so this is the
+    // route's first coverage, not a re-audit.
+    //
+    // The `ready` probe targets the screen's own heading rather than a board
+    // row, deliberately and for the same reason S-28's targets the
+    // announcements heading: the seed awards no XP, so every scope
+    // legitimately renders its empty state and a probe waiting on a ranked row
+    // would hang and be misread as a route failure. The empty board IS the
+    // state this ships in, so auditing it is coverage of the real screen.
+    //
+    // The default scope is `friends`, which needs no class and no school, so
+    // this state exercises the board panel without depending on seeded
+    // enrolment. When the seed grows XP events, add a populated state here
+    // rather than replacing this one.
+    {
+      screenId: "S-29",
+      slug: "student-standings",
+      path: "/student/board",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Effort, not marks"),
+      authed: true,
+    },
+    // ── S-30 · Friends (P5.8 chunk C) ─────────────────────────────────────
+    // The friend code is minted lazily on first read, so this route always has
+    // one real thing to render regardless of seed state — the probe targets
+    // the heading anyway, so a slow mint cannot be mistaken for a route
+    // failure. The friends list itself renders its empty state (the seed
+    // creates no friendships), which is the state this ships in.
+    {
+      screenId: "S-30",
+      slug: "student-friends",
+      path: "/student/friends",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Who you are studying with"),
+      authed: true,
+    },
+    // ── S-31 · Profile / XP / streak (P5.8 chunk D) ───────────────────────
+    // The probe targets the screen's static intro line rather than the level
+    // number or a calendar cell: the seed awards no XP, so this student is
+    // level 1 with a 28-cell calendar of zeros and an all-zero weekly
+    // breakdown. That is a fully-rendered screen, not an empty state — the
+    // panels are all present with real zeros — so it is genuine coverage.
+    //
+    // Deliberately NOT probed: lifetime stats and achievements. They do not
+    // exist on this screen and will not appear later (D5.13 §3); a future
+    // session adding a probe for them would be building a state the product
+    // decided against, not restoring a missing one.
+    {
+      screenId: "S-31",
+      slug: "student-profile",
+      path: "/student/profile",
+      session: practiceActiveSession,
+      ready: (page) =>
+        waitForText(page, "Everything here measures work done"),
+      authed: true,
+    },
+    // ── G-13 · Notification inbox (P5.9 chunk B) ──────────────────────────
+    // This entry was missing until session 67, and its absence was silent:
+    // the registry is a hand-maintained list, so a screen that ships without
+    // an entry is never axe-audited, never Lighthouse-scored and never
+    // screenshotted, and the gate goes green *because* it does not know the
+    // screen exists. Same failure shape as `EXPECTED_TABLES` (P5.4) and the
+    // `SeedContract` mirror (P4.11) — a hand-kept list that nothing
+    // regenerates. Add the registry entry in the same chunk as the screen.
+    //
+    // It audits the EMPTY state, and that is the state this screen genuinely
+    // ships in today: `scripts/seed_e2e.py` seeds no Phase-5 rows at all, and
+    // notifications are only ever created by a live fan-out (a teacher's
+    // announcement POST, or `grade_ready` on `POST /student/correct`) — the
+    // seed's corrected paper is written straight to the DB and goes through
+    // neither. So `NotificationRow` itself — the unread dot, `Mark as read`,
+    // and the `Open` link — is NOT covered by axe here. That is a real
+    // coverage gap, not a hidden one: P5.11 owns the seed work, and it should
+    // add a `populated` state alongside this one rather than replacing it,
+    // exactly as S-28's comment says for the calendar.
+    {
+      screenId: "G-13",
+      slug: "student-notifications",
+      path: "/student/notifications",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Nothing yet"),
+      authed: true,
+    },
+    // ── S-08 · Subject overview (added P5.11) ─────────────────────────────
+    // Not a new screen — it has shipped since Phase 2 and runs on the real
+    // `useSubject` hook. It was excluded by a header note claiming it was
+    // "still on mock data", which was never true. Audited under the declining
+    // student because that account has three real 0625 attempts, so the
+    // populated state renders; the probe targets the "Forecast grade" label
+    // rather than a number, which would move with the fixture.
+    {
+      screenId: "S-08",
+      slug: "student-subject",
+      path: `/student/subject/${subjectCode}`,
+      session: decliningStudentSession,
+      ready: (page) => waitForText(page, "Forecast grade"),
+      authed: true,
+    },
+    // ── G-01 · Landing / marketing (added P5.11) ──────────────────────────
+    // Static — no data hook — which is a different reason from the "still on
+    // mock data" one the exclusion list gave, and by this registry's own rule
+    // not a reason to skip it: axe and Lighthouse apply to a static route
+    // exactly as much as to a live one, and an unlooked-at route is how this
+    // gate becomes vacuous.
+    {
+      screenId: "G-01",
+      slug: "student-landing",
+      path: "/student/landing",
+      session: practiceActiveSession,
+      ready: (page) => waitForText(page, "Thirty papers marked"),
+      authed: true,
+    },
+    // ── DEV-01 · Result-header design gallery (added P5.11) ───────────────
+    // Deliberately given a DEV- id rather than an S- one: this is an internal
+    // design gallery of three result-header treatments, not a product screen
+    // in docs/LEMELY_UI_SPEC.md, and it should not be mistaken for one in the
+    // screenshot corpus. It is in the registry regardless because it is a
+    // reachable route in the shipped bundle — which is the only test that
+    // matters for an accessibility gate.
+    {
+      screenId: "DEV-01",
+      slug: "student-directions",
+      path: "/student/directions",
+      session: practiceActiveSession,
+      ready: (page) =>
+        waitForText(page, "The result header is the emotional moment of the product"),
+      authed: true,
+    },
+    // ── G-10 · Device-limit challenge (added P5.11) ───────────────────────
+    // The last screen in the build with no entry. It needed a seed
+    // precondition rather than a navigation — an account already holding
+    // three live devices — which is why P5.7 shipped the screen and left this
+    // open, and P5.11's seed work is what closes it.
+    //
+    // The challenge is reached by *logging in*, so `ready` drives the real
+    // login form rather than waiting on a static route. Puppeteer starts with
+    // an empty localStorage, so it mints a fresh deviceId, matches none of the
+    // three seeded rows (their `client_device_id` is NULL on purpose) and
+    // needs a fourth slot — which is what makes the 409 reproduce for free.
+    //
+    // Safe to re-run: the SPA sends `confirmDeviceEviction: false`, mapping to
+    // `allow_eviction=False`, so the registry raises and writes NOTHING. The
+    // 409 is non-destructive and idempotent. It only becomes destructive if
+    // something confirms it — which nothing here does.
+    //
+    // The load-bearing precondition is that this account is DEDICATED. Any
+    // other test logging in as it mints its own deviceId and, on a path that
+    // permits eviction, silently consumes a slot — after which G-10 stops
+    // reproducing and this entry goes green by screenshotting the ordinary
+    // logged-in screen. Silent and order-dependent. Nothing else may use
+    // `seed.engagement.deviceLimit`.
+    {
+      screenId: "G-10",
+      slug: "login-device-limit",
+      path: "/login",
+      session: null,
+      authed: false,
+      // Axe and the screenshots run through `ready` and therefore see the real
+      // challenge. Lighthouse does NOT: `runLighthouseAudit` drives its own
+      // navigation to the URL and never replays `ready`, so it would score the
+      // plain login form and file the number under this slug — a measurement
+      // of a state it never reached. `/login` is already Lighthouse-scored on
+      // its own entry, so nothing is lost by declining it here; a wrong number
+      // would be worse than none.
+      states: [
+        {
+          state: "default",
+          slug: "login-device-limit",
+          lighthouse: false,
+          ready: async (page) => {
+            // The login inputs are nested inside their <label> and carry no
+            // id, so they are addressed by type — the shape Login.tsx ships.
+            // `waitForText` takes a RegExp *source*, so the probe avoids
+            // metacharacters and the heading's curly apostrophe.
+            const { email, password } = seed.engagement.deviceLimit
+            await page.waitForSelector('input[type="email"]', { timeout: 15_000 })
+            await page.type('input[type="email"]', email)
+            await page.type('input[type="password"]', password)
+            await page.click('button[type="submit"]')
+            await waitForText(page, "signed in on 3 devices")
+          },
+        },
+      ],
+    },
   ]
 }
 
@@ -2147,6 +2402,26 @@ async function main() {
       await runLighthouseAudit(resultUrl, page, "student-result", { authed: true }),
     )
 
+    // ── G-13 · Notification inbox — POPULATED (P5.11) ──────────────────────
+    // The registry's G-13 entry audits the EMPTY state, which is the state the
+    // screen genuinely ships in (the seed writes no notification rows), and it
+    // stays. But that left `NotificationRow` itself — the unread chip, the
+    // `Mark as read` button, the `Open` link — never seen by axe, which P5.9
+    // recorded as a real gap rather than hiding it.
+    //
+    // This closes it here rather than in the registry, because the fixture is
+    // a *live fan-out*, not seed data: the correction just performed above
+    // fires `grade_ready` for this very account, so this page — and only this
+    // page, mid-journey — has a real notification on it. A registry entry
+    // cannot reach that state; it would need the seed to write notification
+    // rows directly, which is the one thing the notification path does not do.
+    log("G-13 /student/notifications — axe (POPULATED, via the grade_ready fan-out above)...")
+    await page.setViewport(AUDIT_VIEWPORT)
+    await page.goto(`${PREVIEW_URL}/student/notifications`, { waitUntil: "networkidle0" })
+    await waitForText(page, "Your paper has been marked")
+    axeSummary.push(await runAxe(page, "student-notifications-populated"))
+    await shoot(page, "G-13", "populated", AUDIT_VIEWPORT.width)
+
     // ── S-06 · Student overview — now non-empty (one corrected paper) ──────
     log("S-06 /student — responsive check (380px) + axe + Lighthouse (non-empty, after correction)...")
     await page.setViewport({ width: 380, height: 844 })
@@ -2303,11 +2578,7 @@ async function main() {
       )
     }
   }
-  log(
-    "Not covered by this registry (P5 screens still on mock data): " +
-      "/student/subject/:code, /student/board, " +
-      "/student/landing, /student/directions.",
-  )
+  log("Not covered by this registry: no student routes (all audited as of P5.11).")
   log(`Contact sheet: ${CONTACT_SHEET_PATH}`)
 
   if (routeFailures.length) {

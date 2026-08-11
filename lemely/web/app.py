@@ -15,9 +15,13 @@ from lemely.web.routers import (
     announcements,
     auth,
     classes,
+    exam_calendar,
     flashcards,
+    friends,
+    leaderboard,
     me,
     meta,
+    notifications,
     parent,
     placement,
     practice,
@@ -25,8 +29,11 @@ from lemely.web.routers import (
     review,
     school,
     student,
+    student_announcements,
+    student_classes,
     study_plan,
     teacher,
+    xp,
 )
 
 
@@ -53,6 +60,13 @@ def create_app() -> FastAPI:
     app.include_router(practice.router)
     app.include_router(flashcards.router)
     app.include_router(study_plan.router)
+    app.include_router(leaderboard.router)
+    app.include_router(xp.router)
+    app.include_router(friends.router)
+    app.include_router(student_announcements.router)
+    app.include_router(student_classes.router)
+    app.include_router(exam_calendar.router)
+    app.include_router(notifications.router)
     app.include_router(student.router)
     app.include_router(school.router)
     app.include_router(parent.router)

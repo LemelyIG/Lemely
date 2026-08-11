@@ -40,9 +40,12 @@ export function Directions() {
   return (
     <div className="lm-screen flex flex-col gap-[26px]">
       <div>
-        <div className="font-serif text-[34px] leading-[1.1]">
+        {/* The gallery's own title, as an <h1> — see the note on Landing's
+            hero: this route had no audit-registry entry until P5.11, so its
+            missing page heading had never been looked at. */}
+        <h1 className="font-serif text-[34px] leading-[1.1]">
           {directionsIntro.title}
-        </div>
+        </h1>
         <div className="text-[14px] text-t2 mt-2 max-w-[66ch] text-pretty">
           The result header is the emotional moment of the product - it is the
           screen a student opens after a mock. The app now uses{" "}

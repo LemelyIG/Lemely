@@ -209,6 +209,11 @@ class ReviewOutcome:
     grade: ReviewGrade
     interval_before_days: int
     interval_after_days: int
+    subject_code: str
+    """The owning deck's subject (P5.2 chunk B) — not part of the wire DTO
+    (``lemely.web.routers.flashcards`` doesn't read it); it exists so the web
+    layer can award ``flashcard_reviewed`` XP with the right subject
+    attribution (D5.1 §7/D5.2) without a second query."""
 
 
 class FlashcardService:
@@ -674,6 +679,18 @@ class FlashcardService:
         core_grade = CoreReviewGrade(grade.value)
         with self._sessionmaker() as session, session.begin():
             card = self._owned_card(session, student_uuid, card_uuid)
+            # Ownership of ``card`` is already proven by ``_owned_card`` (it
+            # loads and checks the same deck internally); this is a second,
+            # cheap fetch purely for ``subject_code`` and never re-validates
+            # ownership, so it can never diverge from what ``_owned_card``
+            # already decided.
+            deck = session.get(FlashcardDeck, card.deck_id)
+            if deck is None:
+                # Unreachable in practice: _owned_card above already loaded
+                # and checked this exact deck. A real runtime check rather
+                # than an assert (S101), mirroring generate_deck's precedent
+                # in this module.
+                raise FlashcardNotFoundError(f"Unknown deck for card: {card_uuid}")
             schedule_before = CardSchedule(
                 repetitions=card.repetitions,
                 ease_factor=card.ease_factor,
@@ -709,6 +726,7 @@ class FlashcardService:
                 grade=grade,
                 interval_before_days=schedule_before.interval_days,
                 interval_after_days=schedule_after.interval_days,
+                subject_code=deck.subject_code,
             )
 
     # -- Internals ----------------------------------------------------------------

@@ -37,11 +37,18 @@ class SignupRequestDTO(ApiModel):
 
 
 class LoginRequestDTO(ApiModel):
-    """Email/password login payload (``deviceId`` — see :class:`SignupRequestDTO`)."""
+    """Email/password login payload (``deviceId`` — see :class:`SignupRequestDTO`).
+
+    ``confirmDeviceEviction`` is the second half of the D5.12 handshake: a login
+    that would consume a fourth device slot answers **409** with the account's
+    signed-in devices and mints nothing, and the client re-sends the same login
+    with this flag set once the user has confirmed the sign-out.
+    """
 
     email: str
     password: str
     deviceId: str | None = None
+    confirmDeviceEviction: bool = False
 
 
 class OtpRequestDTO(ApiModel):

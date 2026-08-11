@@ -1,6 +1,6 @@
 import type { RouteObject } from "react-router-dom"
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom"
-import { SignOut } from "@phosphor-icons/react"
+import { Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useChildren } from "@/lib/hooks/useParentApi"
 import { Children } from "./screens/Children"
@@ -84,6 +84,22 @@ function Header() {
         </Link>
         <div className="ml-auto flex items-center gap-3">
           <ChildSwitcher />
+          {/* The parent portal has no sidebar by design (P-01: "no interest in
+              learning an interface"), so until P5.9 chunk D this header was the
+              only surface that could reach G-11/G-12 and did not — a parent had
+              no route to their own device list or to the at-risk-alert
+              preference that is addressed to them. One entry, because the two
+              settings screens link to each other. Same icon-at-mobile treatment
+              as Sign out beside it, `aria-label` and all, for the same
+              `button-name` reason. */}
+          <Link
+            to="/settings/devices"
+            aria-label="Settings"
+            className="flex items-center gap-1.5 rounded px-2 py-1.5 text-body-md text-t2 hover:text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            <Gear size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Settings</span>
+          </Link>
           {/* The label collapses to an icon at mobile, so `aria-label` carries
               the accessible name at every width — without it axe reports a
               serious `button-name` violation below 640px (found in

@@ -1502,3 +1502,395 @@ scenario.
 `completed_at` seam), students still cannot see announcements, and
 `notification_preferences` is written and read by nothing — all three are P5's, and
 none has a helper waiting from Phase 3 or 4.
+
+## 2026-08-09 — fortieth session (P5.2 complete)
+
+- **Did:** resumed on a dirty tree carrying an uncommitted P5.2 chunk A (XP engine + migration
+  0013 + 42 tests); verified it rather than trusting it, committed it, then wired chunk B — the
+  four XP award seams — and closed P5.2. Full suite green on the committed tree: 0 failed, 6
+  live-only skips, 90.30% cov (develop 90.18%).
+- **Learned (schema):** `alembic check` can fail while `pytest` passes, because tests build
+  their schema fresh and the dev DB does not. Chunk A's migration had been *amended* after being
+  applied, so the file said `subject_code` and the DB still said `subject_id`. After amending an
+  uncommitted migration: drop its artifacts, `alembic stamp` the prior revision, re-upgrade.
+- **Learned (process), the one that mattered:** the paper seam originally deduped on the attempt
+  id, which `persist_correction` re-mints on every call — a re-marked paper would have re-awarded
+  every time, 250 XP/day farmable from a single PDF. D5.1 §8 had already forbidden exactly this;
+  my *brief* to the implementer paraphrased it and lost the meaning. The implementer flagged the
+  seam as "not idempotency-safe by construction" instead of quietly shipping it, which is the
+  same instruction that produced D5.2 last session. A restated requirement is a copy that drifts;
+  point briefs at the spec by line number.
+- **Also:** proved the regression tests by inversion before believing them — with the old key
+  restored they fail 2 != 1 on xp_events rows, and they assert two Attempt rows exist so they
+  cannot pass vacuously. Caught a phantom coverage gap that was just me editing a file mid-run.
+- **Next:** P5.3 leaderboards. Its hardest requirement is D5.1 §0's test asserting over the
+  *emitted SQL* that no marking table is reachable, plus migration 0014 for `leaderboard_opt_out`.
+
+## 2026-08-09 (fortieth session, continued) — P5.3 leaderboards backend, done
+
+- **Did:** committed P5.3 chunk B (`3a2c445`) — `GET /api/student/leaderboard` over the chunk-A
+  query engine, plus the `leaderboard_opt_out` control on the student profile. Verified before
+  committing rather than after: a full foreground `./scripts/check.sh` came back **all 13 gates
+  PASS, 0 skipped**, coverage **90.43%** against develop's 90.18%. P5.3 is now done end to end;
+  4/12 Phase-5 tasks complete.
+- **Learned, and it is the fourth instance of one pattern:** D5.4 and D5.5 were both defects the
+  gates could not have caught. The school scope was briefed onto `school_memberships` — a
+  staff-only table, so the board would have been silently, permanently empty for every real
+  student and looked like missing data. And `display_names_for()` inherited the codebase's
+  `display_name or email` fallback, which is fine when a class sees its own quiz results and is
+  an email leak to strangers on a *global* board. With D5.2 and D5.3 that is four in this phase:
+  **a brief paraphrasing the schema or the spec is not a source of truth about either.** Neither
+  an empty board nor a leaked address is a test failure; only reading the model catches them.
+- **Also worth not re-deriving:** read the coverage number off the run `check.sh` just did
+  (`.venv/bin/coverage report --precision=2`). Re-running pytest to get it costs ~10 minutes and
+  risks the concurrent-`.coverage` corruption already recorded in STATE.
+- **Judged and not fixed:** `board()`'s three queries are not snapshot-pinned, so a concurrent
+  award can put the viewer's own row a few XP out of step with the top-N. A leaderboard is an
+  inherently stale read and it self-corrects next request; recorded in D5.5 so a later reader
+  knows it was seen, not missed.
+- **Next:** P5.4 — friends backend + migration, which also lands the leaderboard's fourth scope
+  (`LeaderboardScope.friends`) and must extend the D5.1 §0 emitted-SQL guard test to cover it.
+
+## 2026-08-10 — forty-third session — P5.4 closed by its gate run
+
+- **Did:** resumed with a clean tree, no unhandled INBOX items and no open blockers. P5.4's three
+  code chunks (`7397df0`, `71d1a9b`, `63a4bbc`) were already committed by the two prior sessions,
+  so the only outstanding work was the verification the forty-first session died before finishing.
+  Ran the full `./scripts/check.sh` twice: **all 13 gates PASS, 0 skipped, 2532 tests / 6
+  live-only skips / 0 failures, coverage 90.48%** (develop 90.18% — no drop), `alembic check`
+  clean. Nothing was re-implemented or re-planned.
+- **Learned — the one defect, and it is a class not an incident.** The first run failed on
+  `tests/test_db_schema.py::test_all_expected_tables_registered`: migration 0015 created
+  `friendships` but the hand-maintained `EXPECTED_TABLES` set was never extended, so the suite
+  died on `Extra items in the left set`. Fixed by adding the table (`72330b8`), **not** by
+  loosening the assertion — exact set equality is precisely what forces a new table to be
+  acknowledged deliberately instead of arriving by accident. The generalisable form: **a new
+  table costs two edits, the migration and that set.** Phase 5's earlier migrations (0013, 0014)
+  added only columns, which is why this could not fire until now, and it fires roughly ten
+  minutes into a gate run — make the `EXPECTED_TABLES` edit in the same chunk as the
+  `create_table`.
+- **Also worth not re-deriving:** `check.sh` suppresses output for every gate that passes, so a
+  fully green log contains no pytest counts whatsoever — the counts I could quote from the *first*
+  run existed only because pytest failed there. Read coverage with
+  `.venv/bin/coverage report --precision=2` off the run that just happened, and get the test
+  count from `pytest --collect-only -q --no-cov`. Never re-run the suite for a number.
+- **Confirmed rather than assumed:** `.venv/bin/pre-commit run --all-files` still fails its
+  `mypy` and `import-linter` hooks with *"Executable not found"* — the already-recorded hook
+  environment defect, not a code failure; both tools pass directly inside `check.sh` on the same
+  tree.
+- **Next:** P5.5 — announcements. Student-facing read (there is no student route at all today),
+  read-receipts (needs migration 0016), the school-admin whole-school audience, and
+  auto-populated official CAIE session dates. Backend only; the screens are P5.8/P5.9.
+
+## 2026-08-10 — forty-third session (continued) — P5.5 chunk A
+
+- **Did:** started P5.5 (announcements). Committed chunk A (`446e7fa`): migration 0016
+  (`announcement_reads`) plus the student read path on `AnnouncementService`
+  (`list_for_student`, `unread_count_for_student`, `mark_read`) and 17 tests. `alembic check`
+  clean both directions, ruff/format/mypy clean, related suites green. The full `check.sh` has
+  **not** been run since.
+- **Learned — P5.0's reconnaissance was wrong about a whole bullet.** It recorded the
+  school-admin → whole-school audience as absent. It has been fully built since P3.8/D3.14:
+  `create` takes `school_wide` + `school_id`, restricts to `school_admin`, validates through
+  `ClassService.member_school_ids`, and the router exposes it. I nearly built it a second time.
+  **Fifth instance in Phase 5** of a note paraphrasing the codebase from memory and being wrong
+  (D5.2–D5.5). The rule keeps paying: read the code, not the note about the code.
+- **The interesting design call: `publish_at` had been inert since P3.8.** Teachers could
+  schedule an announcement and nothing ever read the column back — harmless while no student
+  surface existed. This chunk is its first consumer, so honouring it was not optional: shipping
+  the read path without the filter would have turned a control that did nothing into a control
+  that actively lied. The author's own list stays unfiltered, since a teacher must see what they
+  queued.
+- **Both guards verified by inversion rather than asserted** (D5.7's lesson). Swapping the school
+  arm to `SchoolMembership` makes the seated student see an *empty list* — the exact
+  "reads as a data problem, not a defect" shape D5.4 warns about. Replacing the `publish_at`
+  predicate with `sa.true()` fails two tests.
+- **Applied this morning's own lesson:** `announcement_reads` went into `EXPECTED_TABLES` in the
+  same commit as the `create_table`, not ten minutes into a gate run.
+- **Next:** P5.5 chunk B — student announcement endpoints (thin router at
+  `/api/student/announcements`, own schemas module, deps + `reset_singletons`), then chunk C, the
+  exam calendar, which must ship honestly empty because no CAIE timetable data exists anywhere
+  on this machine.
+
+## 2026-08-10 — forty-fourth session — P5.5 chunks B and C
+
+- **Did:** finished P5.5's remaining two chunks. **Chunk B** (`51657f8`) is the student
+  announcement surface — a thin student-only router at `/api/student/announcements`
+  (list / unread-count / mark-read), its own reader DTO module kept separate from the
+  teacher composer's, 24 route tests + 11 schema-introspection tests. **Chunk C** is the
+  exam calendar: migration 0017 (`exam_dates`), `ExamCalendarService` (ingest, strict
+  payload parser, per-student read), `GET /api/student/exam-calendar`, 41 tests, D5.8.
+- **The brief was wrong about chunk B and the code won again** — the sixth Phase-5
+  instance. It predicted a new `deps.py` entry plus a `reset_singletons()` line; both
+  already existed, because `get_announcement_service` has been there since P3.8. Reusing
+  that singleton is not just less code: two instances would carry two clocks, and the
+  clock decides whether a scheduled announcement is published, so a student and their
+  teacher could have disagreed about it.
+- **Learned, and it cost real time:** `sa.Enum(..., create_type=False)` **silently ignores
+  the flag** — only `sa.dialects.postgresql.ENUM` honours it. The failure is nasty because
+  `pytest` stayed green (tests build the schema with `create_all`) while `alembic upgrade`
+  died on "type sessionmonth already exists". Same shape as P5.2's trap: the tests and the
+  real migration path do not agree by default.
+- **Learned:** this FastAPI version wraps an included router in an opaque `_IncludedRouter`
+  with no `.path`, so a test that walks `app.routes` to assert a router's surface finds
+  **nothing and passes for the wrong reason**. Caught only because I asserted an exact
+  expected list rather than a subset. Read `app.openapi()["paths"]` instead.
+- **Chunk C ships a table with zero rows on purpose (D5.8)** and that is the deliverable,
+  not a gap. No CAIE timetable exists on this machine, so ingestion is built and nothing
+  populates a row; the read path names *which* of three causes made a calendar empty, so a
+  student who never onboarded is never told that Cambridge has not published dates.
+  Four guards across both chunks verified by inversion, not asserted.
+- **Next:** P5.6 — notifications inbox + web push (VAPID) with a headless-testable
+  transport, and making `notification_preferences` actually gate delivery. It is the first
+  P5 task with a genuine *consumer* for those preferences, which have been written and read
+  by nothing since migration 0008.
+
+## 2026-08-10 — forty-fourth session — P5.5 closed on a clean gate run
+
+- **Did:** ran the outstanding full `./scripts/check.sh` on P5.5's three already-committed
+  chunks and closed the task. **All 13 gates PASS, 0 skipped, exit 0; 2623 tests; coverage
+  90.57%** (develop 90.18%, P5.4 90.48% — no drop); `alembic check` clean. Nothing was
+  re-implemented; no defect surfaced. 6/12 Phase-5 tasks done.
+- **Learned — a written-down trap paid off on first contact.** P5.4 cost ~10 minutes of gate
+  time discovering that a new table needs *two* edits (the migration and `EXPECTED_TABLES` in
+  `tests/test_db_schema.py`), and wrote that into STATE. P5.5 added two tables
+  (`announcement_reads`, `exam_dates`), both registered in the same commit as their
+  `create_table`, and the trap did not fire. That is the cheapest possible outcome and the
+  argument for keeping these notes specific enough to act on.
+- **Did:** recon for P5.6 by reading the models rather than trusting the phase plan. Three
+  facts that change the task's shape: `notifications` exists with **zero writers anywhere**
+  (`grep -rln "Notification("` outside `models/` returns nothing), `notification_preferences`
+  **already** carries one boolean per `NotificationType` plus `quiet_hours_start/end`, and
+  nothing in `lemely/` or `web/src/` mentions VAPID or push subscriptions. So "make
+  preferences gate delivery" needs **no schema work at all** — only a consumer — and the
+  push-subscription table is the single genuine migration in P5.6.
+- **Next:** P5.6. Record the transport-seam design in DECISIONS.md before implementing
+  (MISSION §4 mandates spec-before-code for this layer): a `NotificationTransport` protocol
+  with a real VAPID impl and a recording double, the **inbox row as source of truth with push
+  as a best-effort side effect**, and quiet hours suppressing the *push* but never the row —
+  a student must not silently lose a notification for having received it at 2am.
+- **Same session, continued into P5.6.** Recorded **D5.9** before any code (MISSION §4's
+  spec-first mandate), then committed chunk A: migration 0018 + `notification_repo.py` + 60
+  tests, all four backend gates clean, `alembic check` clean both directions.
+- **The design call that matters:** a preference *type toggle* and *quiet hours* are
+  different mechanisms and collapsing them is the bug. A toggle off suppresses the inbox row
+  (content preference); quiet hours suppress only the push and always write the row (timing
+  preference). Both proven by inversion. Safe only because a notification is a pointer and
+  never the data — I wrote that condition into the module so a future type that *is* the sole
+  record forces a revisit rather than silently inheriting the rule.
+- **Learned:** Cairo is UTC+3 in August (Egypt reinstated summer time in 2023), so a
+  hardcoded +2 would be wrong for half the year by exactly one hour — small enough to go
+  unnoticed until a student is woken at 07:30. And `Session.execute` is typed as returning
+  `Result`, which has no `rowcount`; mypy here forbids explicit `Any`, so the fix is a
+  one-attribute `Protocol`, not `cast("CursorResult[Any]", ...)`.
+- **Next:** P5.6 chunk B (VAPID transport + headless recording double), then chunk C (routes
+  + the three action seams that can actually fire). Carrying to the Phase-5 limitations:
+  `streak_warning`/`study_plan_reminder` are time-triggered and this build has **no
+  scheduler**, so they ship as methods nothing invokes on a timer.
+
+## 2026-08-10 — forty-fifth session — P5.6 chunks B and C1
+
+**Did.** Built the notification transport seam (chunk B, `58fa04c`) and the inbox
+routes plus the fail-open notify helper (chunk C1, `dbc5d9f`). Recorded **D5.10**
+before writing chunk B, per the phase's spec-before-code precedent. 86 new tests;
+ruff/format/mypy(207 files)/lint-imports clean throughout. `check.sh` still not run
+since chunk A — it belongs at the end of chunk C2.
+
+**Learned — the decision.** Web push here carries **no payload**: an empty RFC 8030
+body with a VAPID auth header, and the service worker fetches the inbox. That is
+just D5.9 §1 ("the inbox row is the source of truth, push is one delivery of it")
+stated on the wire, and it keeps student notification content off third-party push
+infrastructure entirely. What made the choice easy was not cost but *verifiability*:
+hand-rolled RFC 8291 encryption cannot be honestly proven on a machine with no test
+vector and no live push service, and a vector generated from my own implementation
+would prove only that the code agrees with itself. Payload-less push needs no such
+thing — the ES256 assertion is verified by decoding it with the public key.
+`pywebpush` was measured rather than assumed (11 packages, including a second HTTP
+stack) before being set aside.
+
+**Learned — two traps, both cheap next time.** A router's `Annotated[...]` parameter
+types must be **runtime** imports, not `TYPE_CHECKING`: FastAPI resolves them through
+pydantic, so a type-checking-only name leaves an unresolvable ForwardRef and the route
+raises on its *first request* rather than at import. And a new `lemely/web/schemas_*.py`
+must join the `disallow_any_explicit` override list in `pyproject.toml` — every
+existing schemas module already is.
+
+**Verified rather than asserted.** Six guards proven by inversion across the two
+chunks: attaching a push payload, folding a 503 into "subscription gone", signing the
+endpoint path instead of its origin, plus C1's opted-out/quiet-hours split and the
+fail-open paths driven by a service and a transport that raise.
+
+**Next.** Chunk C2 — the three action seams. `grade_ready` is small and self-contained
+(the seam sits beside the existing XP call in `student.py`); `announcement` needs a
+school-wide recipient reader that does not exist yet; `at_risk_alert` must state
+honestly that rule 3 (14 days inactive) cannot fire without a scheduler. STATE carries
+the full recon of which lookup methods exist. Split C2 if it runs long — shipping
+`grade_ready` alone is a real increment.
+
+## 2026-08-10 — forty-sixth session: P5.6 closed on a clean gate run
+
+**Did.** No code. Every P5.6 chunk was already committed (spec/D5.9, A, B, C1, and the
+three C2 seams); the one outstanding item was the first full `./scripts/check.sh` since
+chunk A. It came back **all 13 gates PASS, 0 skipped, exit 0 — 2767 tests, coverage
+90.78%** (develop 90.18%, P5.5 90.57%: no drop), `alembic check` clean. P5.6 marked done;
+7/12 Phase-5 tasks complete.
+
+**Learned.** Nothing was red — and that is the observation worth keeping. Five chunks
+spanning a migration, a push transport, seven routes and three award seams passed a
+15-gate-minute run on first full contact. The per-chunk discipline (targeted test files
+plus ruff/mypy/alembic after every commit) is what bought that, and it is cheaper than
+the P5.4 pattern where `EXPECTED_TABLES` failed ten minutes into a run. The counter-case
+still stands: a gate run that finds nothing is not a gate run that was unnecessary.
+
+**Next.** P5.7 — the 3-device limit in the UI (G-10) and device management (G-11). It is
+the **first Phase-5 task with a frontend leg**, so MISSION §6.8 applies for the first time
+this phase: axe, Lighthouse ≥95, screenshots, `/impeccable audit`, visual compare. The
+session registry itself is Phase-1 work (D1.11) and exists — read it before assuming a
+backend gap, per this phase's seven-times-repeated lesson that the code beats the note.
+
+## 2026-08-11 — P5.7: the device limit learns to ask first
+
+**Did.** D5.12 before any code, then two chunks. Backend: `register_login` grew
+`allow_eviction`, refusing a fourth slot from **inside** its existing `FOR UPDATE`
+transaction (a preflight query would be a TOCTOU two tabs could both pass); `POST
+/api/auth/login` maps the refusal to a **409** carrying the account's devices — after the
+credential is verified, so an email address alone cannot enumerate a stranger's browsers —
+and the client confirms by re-sending the same login. Frontend: G-10 in place of the login
+form, G-11 at `/settings/devices` for all five roles. All 13 gates green: **2789 tests,
+90.83% coverage**, and the new screen measured at **axe 0 violations, Lighthouse a11y 100**,
+screenshots at three breakpoints.
+
+**Learned.** Three things worth keeping. (1) `npx prettier --write` is not this repo's
+formatter — no config, not a dependency — and it silently semicoloned eight files against
+the house style; the web gate chain formats nothing, so never run a formatter it does not
+run. (2) An inversion caught a test that passed for the wrong reason: scanning a response
+body for "location" is trivially satisfied by a 200 that has no challenge in it at all. A
+negative assertion needs a positive one beside it. (3) The spec asked for a rough location
+in G-10 and this build has no geo-IP source and stores no IP — so the field is absent, not
+guessed, because it is precisely the field a user would decide on.
+
+**Next.** P5.8 — screens S-28..S-31. Two P5.7 gaps are recorded in STATE and belong to
+later tasks, not to a future session's rediscovery: G-10 has no audit-registry entry (it
+needs a seeded three-device account) and no nav entry yet reaches `/settings/devices`.
+
+## 2026-08-11 — forty-seventh session · P5.8 chunks A and B
+
+**Did.** Corrected P5.8's brief (S-31 had no backend: `XpService` was wired at
+write seams only, nothing read it), then built chunk A — `GET /api/student/xp`,
+the XP→level curve D5.1 §10 deferred here, `XpService.profile`/`xp_by_day`, and
+D5.13 recorded before the code. 91 tests. Then chunk B — S-28, announcements +
+exam calendar, with D5.8's three empty causes reaching the screen as three
+distinct states. 13 vitest cases; all web gates clean.
+
+**Learned.** Two things worth the ink. (1) **An inversion I ran disproved my own
+decision record.** D5.13 §1 justified the integer level curve by claiming the
+float form breaks at level boundaries; inverting the implementation left all 62
+tests green, because at `100·N²` both the float operations are exact. Corrected
+D5.13 in place rather than leaving a confident sentence that was untrue — third
+instance this phase (P5.6 C2b, D5.7). **New rule: invert first, then write why.**
+(2) **`npm run build` runs `tsc -b` over a wider project set than `npx tsc
+--noEmit -p tsconfig.json`** — the bare form passed on a tree the build then
+failed on twice. The build is the typecheck gate; the bare form is not.
+
+**Next.** Chunk C (S-29 leaderboards + S-30 friends — read `Standings.tsx`'s
+header first, it records what was deliberately removed rather than mocked), then
+chunk D (S-31 on chunk A's route), then one UI-gate run for the whole task.
+
+## 2026-08-10 — session 67: the gate went green because it did not know the screen existed
+
+**Did.** Caught the exit of session 61's 31-minute P5.9 gate run (all 13 gates
+PASS, 0 skipped, EXIT=0; 2927 tests, 90.91% coverage, 67 axe route-states, a11y
+floor 96 — read off that run, never re-run). Then found the green was
+incomplete: `audit.mjs` had **no entry for G-13**, chunk B's own notification
+inbox. Added it, and the entry immediately produced the **first non-zero axe
+count in this build** — 1 moderate `page-has-heading-one`, because the `<h1>`
+lived inside the populated branch only and the empty state is the state this
+screen ships in. Fixed across all four states. Also wrote and proved P5.10
+(`e2e/reduced-motion.spec.ts`, 2 tests, no CSS), inverted properly. One full
+`check.sh` in flight covering all three changes (`5df4807`).
+
+**Learned.** (1) **A hand-maintained registry fails silently in the one
+direction that matters**: a missing entry does not fail the gate, it removes the
+screen from the gate. Third instance of that shape (`EXPECTED_TABLES` P5.4, the
+`SeedContract` mirror P4.11) and the first where green was actively misleading
+rather than merely incomplete. **Write the registry entry in the same chunk as
+the screen.** (2) **The zero-at-any-severity standard is not enforced by
+anything** — `check_ui_gates.py` fails on serious/critical only, so this
+moderate would have passed `ui-thresholds`. That standard lives in whoever reads
+the summary. (3) **D3.20 cost something concrete for the first time**:
+`test.use({ reducedMotion })` is a type error on the pinned Playwright, and
+`web/e2e/` is in no tsconfig include, so nothing would have caught it. Used
+`page.emulateMedia` instead. (4) The waiting time also measured P5.11 point 10 —
+only G-10 pays the three-edit seed-contract tax; the leaderboard-ordering rows
+reuse contracted students and pay nothing.
+
+**Next.** Read `/tmp/p59b-gate.log` (PID 1232528) for the `EXIT=` line — do not
+relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
+with a brief that is now ten points deep.
+
+## 2026-08-10 — session 68
+
+**Did.** Found the second gate run alive at 5m36s (4/13, inside `pytest`) — the
+PID that matters is the surviving `bash -c` wrapper **1232550**, which the
+previous entry recorded wrongly as the already-exited `setsid` helper 1232528.
+Attached, armed a Monitor on `EXIT=`/`FAIL`, relaunched nothing, touched no
+source file. Working tree clean on entry; INBOX had no unhandled items.
+
+**Learned.** The waiting time went into the half of P5.11 that no session had
+ever looked at — points 1–11 all measure the four E2E flows, while the task
+line's other clause (axe/Lighthouse/screenshots/visual compare) had never been
+measured. New point 12, three findings. (1) **The screenshot corpus comes from
+`audit.mjs`'s registry, not from `screenshots.spec.ts`** — that spec captures
+only the five Phase-2.5 ids; the other 34 in `reports/phase-4/screens/` are
+registry output. So P5.11's screenshot leg needs no new Playwright spec, just an
+explicit `LEMELY_REPORT_DIR=reports/phase-5` re-baseline. (2) **`audit.mjs`'s
+four-route exclusion list is false in every entry** — `/student/board` has been
+audited since P5.8 (`:1960`), and `/student/subject/:code` runs on the real
+`useSubject` hook rather than the mock data the list claims. The false statement
+is in the operator-facing `log()` at `:2451` as well as the comment — which is
+precisely the failure that same header documents happening twice before, so it
+has now happened a third time *to the sentence describing the previous two*. The
+G-13 miss inverted: present-and-falsely-declared-absent, plus three genuinely
+unaudited live routes excused by a stale reason. (3) **`compare-screens` defaults
+its baseline to `reports/phase-2.5/screens`**, so a bare run diffs Phase 5
+against a 2.5-era corpus and buries any real regression; it also exits 0 by
+design, so its output must be read, not trusted.
+
+**Next.** Read `/tmp/p59b-gate.log` (PID **1232550**) for the `EXIT=` line — do
+not relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
+with a brief that is now twelve points deep and covers both of its legs.
+
+## 2026-08-10 — session 69
+
+**Did.** Found the second P5.9/P5.10 gate run (PID **1232550**) alive at 11m18s,
+4/13, inside `pytest` — attached, armed a Monitor, did **not** relaunch it, and
+touched no source file, because the run is verifying this exact tree. `pytest`
+cleared at ~17m (5/13). Working tree clean on entry; INBOX had no unhandled
+items. The waiting time went into the one P5.11 mechanic no session had checked:
+the announcement flow needs **two roles in one spec**, and nobody had asked
+whether the suite has a role-switching idiom or whether the teacher's POST even
+has a screen. Recorded as points **13** and **14**, and repaired point 9's
+opening line, which my first edit swallowed.
+
+**Learned.** (1) **The teacher's announcement POST has a real compose screen**
+(`/teacher/announcements`), so the flow is genuinely through-the-UI per MISSION
+§5 rather than an API-only setup step — and every locator it needs is already
+accessible-name-addressable. (2) **Two roles cost nothing**: `injectSession`
+(`seed.ts:184-207`) writes the session into `localStorage` before page scripts
+run, which is the split `phase4-journey.spec.ts` already documents. (3) The class
+checkbox's visible text is **exactly** `seed.class.name` — `routers/classes.py:211`
+is `label=row.name`, verbatim, so no substring hedging. (4) S-28's read half needs
+no markup change either: the title is a real `<h3>`, and opening *is* reading, so
+one `Read it` click asserts the whole receipt round trip. **Three of the four E2E
+flows now need zero a11y work; only S-29 and S-31 do.** (5) Two traps, both of
+which fail as something other than what they are: `audience` defaults to
+`"classes"` so the radio needs no click, which makes title+message+submit look
+like the whole driver — but the unticked class checkbox gates the submit button's
+`disabled`, so the spec clicks a dead button and dies as a **30s "element is not
+enabled" timeout that reads as a hung app**; and `Read it` is **not** a unique
+accessible name — it resolves only because the seed seeds zero announcements, so
+it becomes a strict-mode violation the day any session seeds one.
+
+**Next.** Read `/tmp/p59b-gate.log` (PID **1232550**) for the `EXIT=` line — do
+not relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
+with a brief that is now fourteen points deep and covers both of its legs.

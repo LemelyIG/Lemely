@@ -190,6 +190,19 @@ function Sidebar() {
       <ClassesNavSection />
 
       <div className="mt-auto border-t border-border pt-[14px] flex flex-col gap-3">
+        {/* Settings sits here rather than in `navItems` above, and that is a
+            judgement rather than convenience. The primary nav is this teacher's
+            *work* — every entry is a route under /teacher with a NavLink active
+            state. `/settings/*` is neither: it is account-level, shared with
+            every other role, and would never render active from a list matched
+            against the teacher subtree. One entry is enough because the two
+            settings screens link to each other. P5.9 chunk D. */}
+        <Link
+          to="/settings/devices"
+          className="text-xs text-t3 px-1 hover:text-ink"
+        >
+          Account, devices &amp; notifications →
+        </Link>
         <Link
           to="/student"
           className="text-xs text-t3 px-1 hover:text-ink"

@@ -4,6 +4,8 @@ import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
 import { Login } from "@/portals/auth/Login"
 import { ParentLogin } from "@/portals/auth/ParentLogin"
+import { DeviceSettings } from "@/portals/settings/DeviceSettings"
+import { NotificationSettings } from "@/portals/settings/NotificationSettings"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 
@@ -25,6 +27,10 @@ const PARENT_ROLES = ["parent"] as const
  * every panel 403'd. school_admin/platform_admin genuinely hold those roles and
  * stay; their own surfaces (K-01, X-01) are later phases. */
 const TEACHER_ROLES = ["teacher", "school_admin", "platform_admin"] as const
+/* G-11 is "All" in the UI spec, and the device limit is enforced per account
+ * regardless of role, so its guard admits every role and only excludes callers
+ * with no session at all. */
+const ALL_ROLES = [...STUDENT_ROLES, ...PARENT_ROLES, ...TEACHER_ROLES] as const
 
 function Root() {
   const { session } = useAuth()
@@ -44,6 +50,22 @@ export const router = createBrowserRouter([
   // no field with email/password, and the spec's whole framing for it is
   // "the lowest-friction entry in the product".
   { path: "/login/parent", element: <LoginRoute><ParentLogin /></LoginRoute> },
+  // G-11 (devices section). Top-level rather than inside a portal subtree: the
+  // 3-device limit applies to every account, so all five roles reach the same
+  // screen — the same reason `/api/me/devices` is role-agnostic (P5.7).
+  {
+    path: "/settings/devices",
+    element: <RequireAuth allowedRoles={ALL_ROLES}><DeviceSettings /></RequireAuth>,
+  },
+  // G-12. Top-level for the same reason, and one it does not share: the
+  // at-risk-alert preference belongs to the **teacher and the parent**
+  // (`routers/me.py` gates it to those two roles), so mounting this inside the
+  // student portal would have put a toggle out of reach of the only roles it
+  // applies to.
+  {
+    path: "/settings/notifications",
+    element: <RequireAuth allowedRoles={ALL_ROLES}><NotificationSettings /></RequireAuth>,
+  },
   {
     ...teacherRoute,
     element: <RequireAuth allowedRoles={TEACHER_ROLES}>{teacherRoute.element}</RequireAuth>,

@@ -29,10 +29,14 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
+from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
+from lemely.db.friend_repo import FriendService
 from lemely.db.history_repo import DbHistoryStore
+from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
+from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.placement_repo import PlacementService
 from lemely.db.practice_repo import PracticeService
@@ -47,11 +51,13 @@ from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.storage import HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
+from lemely.web.push import NotificationTransport, VapidPushTransport
 
 if TYPE_CHECKING:
     import uuid
@@ -354,6 +360,59 @@ def get_flashcard_service() -> FlashcardService:
 
 
 @lru_cache(maxsize=1)
+def get_xp_service() -> XpService:
+    """Return the process-wide :class:`XpService` singleton (P5.2 chunk B).
+
+    Wired with the DB session factory alone, mirroring
+    :func:`get_study_plan_service`/:func:`get_placement_service` — the clock
+    and streak-day zone are left at their defaults (real UTC now,
+    ``Africa/Cairo``); tests override this dependency with a service built on
+    an injected fake clock and a throwaway Postgres database. Composed with
+    each of the four award call sites only through
+    :func:`~lemely.web.xp_awards.award_xp_safely`, never called directly from
+    a repo service (D5.1: awarding is a router-layer concern, not nested
+    inside another service's own transaction).
+    """
+    return XpService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_leaderboard_service() -> LeaderboardService:
+    """Return the process-wide :class:`LeaderboardService` singleton (P5.3 chunk B).
+
+    Wired with the DB session factory alone, mirroring :func:`get_xp_service`
+    — the clock and week-boundary zone are left at their defaults (real UTC
+    now, ``Africa/Cairo``). Tests override this dependency with a service
+    built on an injected fake clock and a throwaway Postgres database.
+    """
+    return LeaderboardService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_exam_calendar_service() -> ExamCalendarService:
+    """Return the process-wide :class:`ExamCalendarService` singleton (P5.5 chunk C).
+
+    Wired with the DB session factory alone, and with no clock — unlike its
+    Phase-5 siblings this service compares nothing to "now" (see its module
+    docstring). Tests override this dependency with a service built on a
+    throwaway Postgres database.
+    """
+    return ExamCalendarService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_friend_service() -> FriendService:
+    """Return the process-wide :class:`FriendService` singleton (P5.4 chunk B).
+
+    Wired with the DB session factory alone, mirroring :func:`get_leaderboard_service`
+    — the clock is left at its default (real UTC now). Tests override this
+    dependency with a service built on an injected fake clock and a
+    throwaway Postgres database.
+    """
+    return FriendService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_at_risk_ack_service() -> AtRiskAckService:
     """Return the process-wide :class:`AtRiskAckService` singleton (P3.4b/D3.5).
 
@@ -389,6 +448,43 @@ def get_notification_prefs_service() -> NotificationPreferencesService:
     Postgres database.
     """
     return NotificationPreferencesService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_notification_service() -> NotificationService:
+    """Return the process-wide :class:`NotificationService` singleton (P5.6 chunk A).
+
+    Composed with :func:`get_notification_prefs_service` rather than
+    constructing its own preferences service, so the gate that decides whether
+    a notification row is written and the endpoint that lets a user change
+    that preference cannot disagree about what the user asked for (D5.9 §2).
+    The clock and quiet-hours zone are left at their defaults (real UTC now,
+    ``Africa/Cairo``); tests override this dependency with a service built on
+    an injected fake clock and a throwaway Postgres database.
+    """
+    return NotificationService(
+        get_sessionmaker(get_settings()),
+        get_notification_prefs_service(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_push_transport() -> NotificationTransport:
+    """Return the process-wide web-push transport singleton (P5.6 chunk B).
+
+    Returns the **real** :class:`~lemely.web.push.VapidPushTransport` even
+    when no VAPID keys are configured — that is not a degraded mode needing a
+    different class, it is the transport honestly reporting
+    ``available is False`` and answering every send with
+    ``PushOutcome.unavailable`` (D5.9 §4). Substituting a double here when
+    keys are absent would mean the code path this build actually runs is one
+    no test ever exercises.
+
+    Tests that need to assert *what would have been sent* override this
+    dependency with :class:`~lemely.web.push.RecordingPushTransport` — the
+    headless push mock MISSION §4's Phase-5 acceptance asks for.
+    """
+    return VapidPushTransport(get_settings().push)
 
 
 @lru_cache(maxsize=1)
@@ -443,12 +539,18 @@ class AuthContext:
     ``user_id`` is the token ``sub`` (the mirrored ``public.users`` id); ``role``
     is the platform role from ``app_metadata.role`` (one of :class:`Role`'s
     values). ``email`` / ``phone`` mirror the optional token claims.
+
+    ``session_id`` is the ``devices`` row this token was minted against, and is
+    ``None`` for the tokens that are exempt from the liveness check (hermetic
+    tests, seat-invite signups — see :class:`~lemely.db.device_repo.DeviceRegistry`).
+    G-11 uses it to mark which of the listed devices is the one asking.
     """
 
     user_id: str
     role: str
     email: str | None = None
     phone: str | None = None
+    session_id: str | None = None
 
 
 _bearer_scheme = HTTPBearer(auto_error=False, description="Supabase-compatible access token")
@@ -508,6 +610,7 @@ def get_auth_context(
         role=claims.app_role,
         email=claims.email,
         phone=claims.phone,
+        session_id=claims.session_id,
     )
 
 
@@ -561,3 +664,9 @@ def reset_singletons() -> None:
     get_quiz_marking_service.cache_clear()
     get_announcement_service.cache_clear()
     get_student_profile_service.cache_clear()
+    get_xp_service.cache_clear()
+    get_leaderboard_service.cache_clear()
+    get_friend_service.cache_clear()
+    get_exam_calendar_service.cache_clear()
+    get_notification_service.cache_clear()
+    get_push_transport.cache_clear()

@@ -82,4 +82,60 @@ test("student can log in, upload a scan, and see the marked result", async ({ pa
     path: path.join(SCREENS_DIR, "p2.10-02-paper-result.png"),
     fullPage: true,
   })
+
+  /*
+   * P5.11: XP accrual, asserted on the same correction rather than in a spec
+   * of its own — `POST /student/correct` is the `paper_corrected` award seam,
+   * so a separate driver would only duplicate this journey.
+   *
+   * This account is signed up fresh in `beforeAll` and has corrected exactly
+   * one paper, so the expected number is exact rather than a range: 50, the
+   * whole of XP_AMOUNTS[paper_corrected], one award, far under both the 5/day
+   * source cap and the 250/day global cap.
+   *
+   * Worth stating plainly, because it is the reason not to "simplify" this
+   * into a smoke check: XP is awarded through `award_xp_safely`, which is
+   * deliberately FAIL-OPEN (D5.1 §3 — an already-committed student action
+   * must never be turned into an error response). `xp_events.subject_code` is
+   * a live FK to `subjects.code`, and an unknown code raises inside that
+   * helper and is swallowed. So if the seed ever stops producing the subject
+   * row, the student silently loses the XP while the correction, this result
+   * screen and every other gate in the build stay green. This assertion is
+   * the only thing in the suite that would catch a fail-open seam failing.
+   */
+  await page.goto("/student/profile")
+  // Since P5.11 the label/value pairs are named groups — the value used to be
+  // a bare <div> sibling of its <Eyebrow>, with no accessible name and no
+  // association, so there was nothing here to assert on.
+  await expect(page.getByRole("group", { name: "Total XP" })).toContainText("50", {
+    timeout: 15_000,
+  })
+  await expect(page.getByRole("group", { name: "Day streak" })).toContainText("1")
+
+  /*
+   * P5.11: the notification half of the same seam. `grade_ready` fires on this
+   * same POST, so "push delivery" costs one navigation here rather than a
+   * driver of its own.
+   *
+   * The row is the assertable fact and a delivered push is not: this machine
+   * has no VAPID keys, so the transport reports itself unavailable by design
+   * (D5.9 §4) and `notify_safely` returns
+   * push_suppressed_reason="transport_unavailable" AFTER writing the row.
+   * No prefs seeding is needed either — a user with no stored preferences row
+   * reads DEFAULTS, which is every type enabled.
+   */
+  await page.goto("/student/notifications")
+  await expect(
+    page.getByRole("heading", { name: "Your paper has been marked" }),
+  ).toBeVisible({ timeout: 15_000 })
+
+  // Assert the ABSENCE of an Open button, and do not let a later session
+  // "fix" it into a link. `grade_ready`'s payload carries the upload UUID, but
+  // /student/result/:paperId addresses papers by history index and 404s on a
+  // UUID — there is no route mapping an upload id to its result, so an Open
+  // button here would be a guaranteed dead link. `destinationFor` returns null
+  // for every type but `announcement`, which is that finding honoured in the
+  // UI rather than worked around.
+  await expect(page.getByRole("button", { name: "Open" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Mark as read" })).toBeVisible()
 })

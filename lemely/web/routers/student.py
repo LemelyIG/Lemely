@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import tempfile
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, TypedDict
 
+import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -34,6 +36,7 @@ from fastapi.responses import StreamingResponse
 # FastAPI dependency injection and the response converters resolve their
 # annotations at call time, so they cannot move into a TYPE_CHECKING block.
 from lemely.core.analytics import aggregate_weaknesses_from_history
+from lemely.core.at_risk import AtRiskReason, assess_at_risk
 from lemely.core.history import (
     HistoryStoreProtocol,
     PaperRecord,
@@ -46,9 +49,12 @@ from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
-from lemely.db.models.enums import Role, UploadStatus
+from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
+from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.db.xp_repo import DEFAULT_ZONE, XpService, civil_date_in_zone
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
@@ -61,12 +67,24 @@ from lemely.web.deps import (
     get_class_service,
     get_gemini_client,
     get_history_store,
+    get_notification_service,
     get_parent_link_service,
+    get_push_transport,
     get_settings,
     get_storage_backend,
+    get_student_profile_service,
     get_student_upload_repo,
+    get_xp_service,
     require_role,
 )
+from lemely.web.notify import notify_safely
+
+# NotificationTransport is a **runtime** import for the same reason as the two
+# above: FastAPI resolves every ``Annotated[...]`` parameter through pydantic,
+# and with ``from __future__ import annotations`` a type-checking-only name
+# leaves an unresolvable ForwardRef that raises PydanticUserError on the
+# route's *first request* rather than at import (P5.6 chunk C1).
+from lemely.web.push import NotificationTransport
 from lemely.web.schemas import question_to_dto
 from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
 from lemely.web.schemas_parent import LinkedParentDTO, LinkParentRequestDTO, ParentLinkListDTO
@@ -91,8 +109,26 @@ from lemely.web.schemas_student import (
 )
 from lemely.web.services.grading import extract_answers, grade_paper
 from lemely.web.upload_utils import check_upload_cap, safe_upload_name
+from lemely.web.xp_awards import award_xp_safely
 
 router = APIRouter(prefix="/api")
+
+log = structlog.get_logger(__name__)
+
+#: Notification-body wording per at-risk reason (P5.6 chunk C2c, D5.11 §5).
+#: Deliberately **not** ``AtRiskFlag.summary``, which renders the evidence —
+#: percentages, predicted grades, a target — and is written for the teacher's
+#: at-risk view where that evidence appears with its confidence intact. A
+#: notification body reaches a lock screen, so it names the *reason* and sends
+#: the reader to the surface that can show them the rest.
+#: ``INACTIVE`` is included for completeness of the mapping even though rule 3
+#: cannot fire at this seam (D5.11 §2) — a map missing a case is a KeyError
+#: waiting for the day a scheduler exists.
+AT_RISK_REASON_LABELS: dict[AtRiskReason, str] = {
+    AtRiskReason.DECLINING_TREND: "Recent papers show a declining trend.",
+    AtRiskReason.BELOW_TARGET: "Tracking below their target grade.",
+    AtRiskReason.INACTIVE: "No activity recorded for a while.",
+}
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -626,6 +662,83 @@ def resolve_mark_scheme(
     return None
 
 
+def _alert_teachers_and_parents(
+    notification_service: NotificationService,
+    push_transport: NotificationTransport,
+    *,
+    history_store: HistoryStoreProtocol,
+    profile_service: StudentProfileService,
+    class_service: ClassService,
+    parent_service: ParentLinkService,
+    student_id: str,
+) -> None:
+    """Raise ``at_risk_alert`` for a freshly corrected student's staff (D5.11).
+
+    Runs after the correction has committed, wrapped, and never raises: the
+    at-risk assessment and both recipient lookups are queries of our own and
+    sit outside :func:`notify_safely`, so a failure anywhere in here must cost
+    an alert and nothing else (D5.9 §1).
+
+    **Rule 3 (≥14 days inactive) cannot fire at this seam and that is not an
+    oversight.** A student who has just uploaded a paper is, by definition,
+    active. Rule 3 is time-triggered and joins ``streak_warning`` and
+    ``study_plan_reminder`` in D5.9 §5's no-scheduler limitation — which means
+    the reason most likely to matter for a disengaging student is the one this
+    build cannot deliver. Stated in D5.11 §2 and carried to the Phase-5
+    limitations rather than left to be discovered.
+
+    The dedupe key is ``(student, reason, Cairo civil date)`` (D5.11 §3):
+    at-risk is a state, not an event, so an upload-keyed alert would send a
+    teacher of thirty students one notification per upload. The day boundary is
+    :func:`~lemely.db.xp_repo.civil_date_in_zone`, the same one D5.1 §4 fixed
+    for streaks — Cairo is UTC+3 in summer, so a hardcoded offset is wrong for
+    half the year.
+
+    Every recipient's row is gated by **their own** preferences, which
+    :func:`notify_safely` does for free by reading the recipient's row
+    (D5.9 §3). That is what stops a student silencing alerts about themselves.
+    """
+    try:
+        history = history_store.load(student_id)
+        assessment = assess_at_risk(
+            history,
+            now=datetime.now(UTC),
+            targets=profile_service.target_grades_for(student_id),
+        )
+        if not assessment.flags:
+            return
+
+        student_name = class_service.display_name_for(student_id)
+        recipients = [
+            *class_service.teachers_for_student(student_id),
+            *(parent.parent_id for parent in parent_service.list_parents(student_id)),
+        ]
+        if not recipients:
+            return
+
+        today = civil_date_in_zone(datetime.now(UTC), zone=DEFAULT_ZONE)
+        for flag in assessment.flags:
+            for recipient in recipients:
+                notify_safely(
+                    notification_service,
+                    push_transport,
+                    user_id=recipient,
+                    type=NotificationType.at_risk_alert,
+                    title=f"{student_name} may need support",
+                    # The reason, never the evidence. ``flag.summary`` renders
+                    # marks and predicted grades, and the teacher's own at-risk
+                    # view already shows them with their confidence intact —
+                    # a grade on a lock screen is a grade on a lock screen
+                    # whoever is holding the phone (D5.9 §2, UI spec §1.4).
+                    body=AT_RISK_REASON_LABELS[flag.reason],
+                    payload={"studentId": str(student_id), "reason": flag.reason.value},
+                    dedupe_key=f"{student_id}:{flag.reason.value}:{today.isoformat()}",
+                    seam="at_risk_alert",
+                )
+    except Exception:
+        log.exception("at_risk_alert_failed", student_id=str(student_id))
+
+
 @router.post("/student/correct")
 def student_correct(
     payload: CorrectRequest,
@@ -635,6 +748,13 @@ def student_correct(
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     settings: Annotated[Settings, Depends(get_settings)],
     storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
+    xp_service: Annotated[XpService, Depends(get_xp_service)],
+    notification_service: Annotated[NotificationService, Depends(get_notification_service)],
+    push_transport: Annotated[NotificationTransport, Depends(get_push_transport)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
+    class_service: Annotated[ClassService, Depends(get_class_service)],
+    parent_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
@@ -710,6 +830,81 @@ def student_correct(
                     user_id=auth.user_id, report=report, upload_id=owned.id
                 )
                 upload_repo.set_status(owned.id, UploadStatus.complete)
+                # P5.2 chunk B, D5.1: XP for the *act* of correcting a paper,
+                # never for how well it was corrected — no mark/score/grade
+                # is read here or passed to XpService.award. The attempt is
+                # already persisted and the upload already marked complete
+                # above, so a failure inside this call is caught and logged
+                # by award_xp_safely and never turns this already-successful
+                # correction into an error frame (D5.1 §3, "the learning
+                # wins").
+                #
+                # The dedupe key is the **upload** id, not the attempt id.
+                # D5.1 §8 names "the paper id" and opens with "a paper can be
+                # re-marked ... none of those may re-award XP".
+                # ``persist_correction`` inserts a fresh ``Attempt`` on every
+                # run, so keying on the attempt would mint a new key each
+                # time and award again for every re-correction of the same
+                # paper — the precise anomaly §8 exists to prevent. The
+                # upload is the stable identity of "this paper", so a student
+                # re-running the pipeline on it earns nothing new (D5.3).
+                award_xp_safely(
+                    xp_service,
+                    user_id=auth.user_id,
+                    source=XpSource.paper_corrected,
+                    dedupe_key=str(owned.id),
+                    subject_code=report.correction.metadata.subject_code,
+                    seam="paper_corrected",
+                )
+                # P5.6 chunk C2a, D5.9: tell the student their paper is marked.
+                # Fail-open for the same reason as the XP award above — the
+                # attempt is persisted and the upload is complete, so nothing
+                # here may turn a successful correction into an error frame.
+                #
+                # The dedupe key is the **upload**, exactly as the XP key is,
+                # and for exactly D5.3's reason: ``persist_correction`` mints a
+                # fresh ``Attempt`` every run, so an attempt-keyed notification
+                # would re-fire on every re-correction of the same PDF. D5.9 §6
+                # wrote this down before it could recur.
+                #
+                # Title and body are **pointers, never the data** (D5.9 §2):
+                # the paper's identity, and no mark, percentage or grade. That
+                # is what makes the preference gate lossless — a student who
+                # turns ``grade_ready`` off loses a nudge, not a result — and it
+                # keeps grades private (UI spec §1.4) on a row that a push
+                # service is told about.
+                paper_metadata = report.correction.metadata
+                notify_safely(
+                    notification_service,
+                    push_transport,
+                    user_id=auth.user_id,
+                    type=NotificationType.grade_ready,
+                    title="Your paper has been marked",
+                    # "Paper 1 Variant 2", never "Paper 1/2": a slash between two
+                    # small integers reads as a mark out of a total on a lock
+                    # screen, which is the one thing this line must not look like.
+                    body=(
+                        f"{paper_metadata.subject_code} Paper "
+                        f"{paper_metadata.paper_number} Variant {paper_metadata.paper_variant}"
+                        " is ready to review."
+                    ),
+                    payload={"uploadId": str(owned.id)},
+                    dedupe_key=str(owned.id),
+                    seam="grade_ready",
+                )
+                # P5.6 chunk C2c, D5.11: the same already-committed correction
+                # is also the only real "this student's risk may have changed"
+                # event in the build — at-risk is computed on *read* everywhere
+                # else, so there is nothing else to hang this on.
+                _alert_teachers_and_parents(
+                    notification_service,
+                    push_transport,
+                    history_store=history_store,
+                    profile_service=profile_service,
+                    class_service=class_service,
+                    parent_service=parent_service,
+                    student_id=auth.user_id,
+                )
                 # ``report.correction.metadata`` (an ``ExamMetadata``, derived from
                 # ``mark_scheme.metadata`` by ``core.correction._exam_metadata``) —
                 # not the separately-detected ``metadata`` variable above, which

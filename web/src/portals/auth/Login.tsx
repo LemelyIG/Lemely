@@ -3,25 +3,64 @@ import { Link, useNavigate } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
+import { ApiError } from "@/lib/api"
+import { isDeviceLimitChallenge, type DeviceLimitChallenge } from "@/lib/deviceTypes"
+import { DeviceLimitNotice } from "./DeviceLimitNotice"
 
 /*
  * Minimal email/password login screen — infrastructure to exercise the auth
  * plumbing (AuthContext, storage, api bearer header), not final UI. Screen
  * polish is P2.7/P2.8's job.
+ *
+ * G-10 lives here rather than on its own route (P5.7): the challenge is a
+ * refusal of *this* submission, and the credentials needed to confirm it are in
+ * this component's state. A route change would either lose them or have to park
+ * a password somewhere it does not belong.
  */
 export function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [challenge, setChallenge] = useState<DeviceLimitChallenge | null>(null)
+
+  const signIn = (confirmDeviceEviction: boolean) => {
+    login.mutate(
+      { email, password, confirmDeviceEviction },
+      {
+        onSuccess: (result) => navigate(portalPathForRole(result.role), { replace: true }),
+        // A 409 is not a failed login: the password was right and nothing has
+        // been signed out yet. Anything else stays an ordinary error message.
+        onError: (error) => {
+          const detail = error instanceof ApiError ? error.detail : undefined
+          setChallenge(isDeviceLimitChallenge(detail) ? detail : null)
+        },
+      },
+    )
+  }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    login.mutate(
-      { email, password },
-      {
-        onSuccess: (result) => navigate(portalPathForRole(result.role), { replace: true }),
-      },
+    signIn(false)
+  }
+
+  if (challenge) {
+    const failedConfirm =
+      login.isError &&
+      !isDeviceLimitChallenge(login.error instanceof ApiError ? login.error.detail : undefined)
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-surface px-4">
+        <DeviceLimitNotice
+          challenge={challenge}
+          isPending={login.isPending}
+          error={failedConfirm ? login.error.message : null}
+          onConfirm={() => signIn(true)}
+          onCancel={() => {
+            setChallenge(null)
+            login.reset()
+          }}
+        />
+      </main>
     )
   }
 

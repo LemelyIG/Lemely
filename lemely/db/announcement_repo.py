@@ -46,23 +46,30 @@ and the target ``school_id`` must be one the caller actually administers
 (:meth:`~lemely.db.class_repo.ClassService.member_school_ids`) — a teacher
 belonging to a school as a plain member still cannot post school-wide.
 
-**No injected clock, unlike several sibling services** (e.g.
-:class:`~lemely.db.quiz_taking_repo.QuizTakingService`). Nothing in this
-module computes anything from "now": ``list_for_author`` orders by the
-DB-populated ``created_at`` column (:class:`~lemely.db.models.enums.TimestampMixin`,
-a server default), and ``publish_at`` is stored exactly as given, never
-compared against the current time. There is nothing time-dependent to make
-injectable.
+**The clock is injected** (``now=``), following
+:class:`~lemely.db.quiz_taking_repo.QuizTakingService` and every sibling
+service. This module did **not** have one until P5.5, and its docstring
+correctly said so at the time: the write path computes nothing from "now"
+(``list_for_author`` orders by the DB-populated ``created_at``, and
+``publish_at`` was stored exactly as given). The student read path added in
+P5.5 is what made a clock necessary — see below.
 
-**Scheduling is inert.** ``publish_at`` is persisted verbatim — a caller's
-optional "schedule this for later" — but **nothing in this codebase reads it
-back to decide when to actually deliver anything**. There is no student-facing
-announcement surface and no delivery/notification path at all yet; both are
-Phase 5's (MISSION §4). A ``publish_at`` in the past is not an error (it
-means "already published"); ``None`` means "publish immediately" — neither
-distinction has any behavioural effect today, because nothing consumes this
-column. A future session adding delivery must not assume a scheduler already
-exists here — it does not.
+**Scheduling is live as of P5.5, and this is a behaviour change worth
+reading.** Until P5.5, ``publish_at`` was persisted verbatim and **nothing in
+the codebase read it back**: there was no student-facing surface, so the
+teacher's "schedule this for later" control had no effect on anyone.
+:meth:`AnnouncementService.list_for_student` is its first consumer, and it
+honours the column — a row whose ``publish_at`` is in the future is invisible
+to students until that moment passes. That is not a refinement; without it the
+composer's scheduling control would be an outright lie, promising a teacher
+that a post they wrote today goes out next Monday while every student in the
+class could already read it.
+
+``None`` means "publish immediately" and is the overwhelmingly common case; a
+``publish_at`` in the past means "already published" and is not an error.
+**The author's own view is deliberately unfiltered** — ``list_for_author``
+still returns scheduled rows, because a teacher must be able to see and delete
+what they have queued. Filtering is a property of the *student* view only.
 
 **No attachment field, deliberately (D3.14 §2).** ``announcements`` has no
 attachment column and no storage wiring for anything but student paper
@@ -75,21 +82,34 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import sqlalchemy as sa
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from lemely.db.class_repo import ClassNotFoundError, ClassOwnershipError
-from lemely.db.models import Announcement
-from lemely.db.models.enums import Role
+from lemely.db.models import Announcement, AnnouncementRead
+from lemely.db.models.enums import Role, SeatStatus
+from lemely.db.models.orgs import ClassEnrollment, Seat
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from datetime import datetime
+    from collections.abc import Callable, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
     from lemely.db.class_repo import ClassService
+
+
+def _utcnow() -> datetime:
+    """Default clock: aware UTC now. Production wiring only — tests inject their own."""
+    return datetime.now(UTC)
+
+
+#: Default page size for the student announcement list. S-28 does not fix a
+#: number; this is a generous but still-bounded default.
+DEFAULT_STUDENT_LIMIT = 50
 
 
 class AnnouncementError(Exception):
@@ -122,6 +142,20 @@ class AnnouncementRow:
     created_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class StudentAnnouncementRow:
+    """One announcement as a student sees it: the row plus *their* read state.
+
+    ``read_at`` is ``None`` when this student has no receipt — unread is an
+    absence, not a flag (migration ``0016``). It is per-viewer and can never
+    be folded into :class:`AnnouncementRow`, which is shared with the author
+    view where "read" has no meaning.
+    """
+
+    announcement: AnnouncementRow
+    read_at: datetime | None
+
+
 class AnnouncementService:
     """Announcement compose/list/delete (T-12, D3.14).
 
@@ -131,10 +165,17 @@ class AnnouncementService:
     diverge from what the rest of the teacher portal already enforces (D3.1).
     """
 
-    def __init__(self, sessionmaker: sessionmaker[Session], class_service: ClassService) -> None:
+    def __init__(
+        self,
+        sessionmaker: sessionmaker[Session],
+        class_service: ClassService,
+        *,
+        now: Callable[[], datetime] = _utcnow,
+    ) -> None:
         """Wire the service to its collaborators."""
         self._sessionmaker = sessionmaker
         self._class_service = class_service
+        self._now = now
 
     # -- Create -----------------------------------------------------------------
 
@@ -242,6 +283,299 @@ class AnnouncementService:
             )
             return [_to_row(row) for row in session.scalars(stmt).all()]
 
+    # -- Student read path (P5.5) ------------------------------------------
+
+    def list_for_student(
+        self,
+        student_id: uuid.UUID | str,
+        *,
+        limit: int = DEFAULT_STUDENT_LIMIT,
+    ) -> list[StudentAnnouncementRow]:
+        """Return the published announcements this student may see, newest first.
+
+        Visibility is the union of the two audiences ``create`` can write:
+
+        * a ``class_id`` row, when the student has a ``class_enrollments``
+          row for that class;
+        * a ``school_id`` row, when the student holds a non-revoked
+          :class:`~lemely.db.models.orgs.Seat` in that school.
+
+        **The school arm keys on ``Seat``, not ``SchoolMembership``.**
+        ``school_memberships`` is staff-only — its role vocabulary is exactly
+        ``teacher``/``school_admin`` — so no student ever has a row there and
+        keying on it would make every school-wide announcement permanently
+        invisible to precisely the people it was written for. That failure
+        reads as "the school never posts anything", not as a bug, which is
+        what makes it worth stating rather than merely doing. D5.4 cost P5.3
+        a chunk to exactly this; :mod:`lemely.db.leaderboard_repo` resolves
+        school membership the same way.
+
+        Future-dated rows are excluded (see the module docstring on
+        scheduling); ``publish_at IS NULL`` means published immediately.
+        Ordering is by effective publication time — ``publish_at`` when set,
+        otherwise ``created_at`` — so a back-dated post sorts where its author
+        meant it to, not at the top because it was typed last.
+        """
+        student_uuid = _as_uuid(student_id)
+        now = self._now()
+        effective_at = sa.func.coalesce(Announcement.publish_at, Announcement.created_at)
+
+        enrolled_classes = select(ClassEnrollment.class_id).where(
+            ClassEnrollment.student_id == student_uuid
+        )
+        seated_schools = select(Seat.school_id).where(
+            Seat.assigned_user_id == student_uuid,
+            Seat.status != SeatStatus.revoked,
+        )
+
+        with self._sessionmaker() as session:
+            stmt = (
+                select(Announcement, AnnouncementRead.read_at)
+                .outerjoin(
+                    AnnouncementRead,
+                    sa.and_(
+                        AnnouncementRead.announcement_id == Announcement.id,
+                        AnnouncementRead.user_id == student_uuid,
+                    ),
+                )
+                .where(
+                    sa.or_(
+                        Announcement.class_id.in_(enrolled_classes),
+                        Announcement.school_id.in_(seated_schools),
+                    ),
+                    sa.or_(
+                        Announcement.publish_at.is_(None),
+                        Announcement.publish_at <= now,
+                    ),
+                )
+                .order_by(effective_at.desc(), Announcement.id)
+                .limit(limit)
+            )
+            return [
+                StudentAnnouncementRow(announcement=_to_row(row), read_at=read_at)
+                for row, read_at in session.execute(stmt).all()
+            ]
+
+    def unread_count_for_student(self, student_id: uuid.UUID | str) -> int:
+        """Count the published announcements in this student's scope with no receipt.
+
+        Unread is an **absence** of an ``announcement_reads`` row, never a
+        flag — see migration ``0016``. Deliberately not derived from
+        ``len(list_for_student(...))``: that call is ``LIMIT``-ed, so a
+        student with more unread announcements than the page size would be
+        told they have exactly a page's worth.
+        """
+        student_uuid = _as_uuid(student_id)
+        now = self._now()
+
+        enrolled_classes = select(ClassEnrollment.class_id).where(
+            ClassEnrollment.student_id == student_uuid
+        )
+        seated_schools = select(Seat.school_id).where(
+            Seat.assigned_user_id == student_uuid,
+            Seat.status != SeatStatus.revoked,
+        )
+
+        with self._sessionmaker() as session:
+            stmt = (
+                select(sa.func.count())
+                .select_from(Announcement)
+                .outerjoin(
+                    AnnouncementRead,
+                    sa.and_(
+                        AnnouncementRead.announcement_id == Announcement.id,
+                        AnnouncementRead.user_id == student_uuid,
+                    ),
+                )
+                .where(
+                    sa.or_(
+                        Announcement.class_id.in_(enrolled_classes),
+                        Announcement.school_id.in_(seated_schools),
+                    ),
+                    sa.or_(
+                        Announcement.publish_at.is_(None),
+                        Announcement.publish_at <= now,
+                    ),
+                    AnnouncementRead.id.is_(None),
+                )
+            )
+            return int(session.scalar(stmt) or 0)
+
+    def student_recipients(self, row: AnnouncementRow) -> list[uuid.UUID]:
+        """Return the students who may see ``row`` — the audience, as ids (P5.6 chunk C2b).
+
+        This is :meth:`list_for_student`'s predicate read in the other
+        direction: given an announcement, who is in its audience, rather than
+        given a student, which announcements are in theirs. It exists so the
+        notification seam has **one** definition of "the audience" to call.
+        Deriving the recipient list independently at the router would let the
+        two drift, and the failure mode of that drift is silent — a student
+        who can read an announcement but was never told about it, or worse, a
+        notification pointing at a row the reader is not allowed to open.
+
+        The two arms mirror ``create``'s two audiences exactly:
+
+        * a ``class_id`` row → every student with a ``class_enrollments`` row
+          for that class;
+        * a ``school_id`` row → every student holding a non-revoked
+          :class:`~lemely.db.models.orgs.Seat` in that school. **``Seat``,
+          not ``SchoolMembership``** — the latter is staff-only, so keying on
+          it would return an empty audience for every school-wide post and
+          read as "nobody was in the school" rather than as a bug (D5.4).
+
+        **A row that is not yet published has no recipients yet.** Returning
+        its future audience here would notify students about something
+        :meth:`list_for_student` still hides from them — a push telling you to
+        go and read a post that is not there. The consequence, honestly
+        stated: with no scheduler in this build (D5.9 §5), a scheduled
+        announcement is never notified about *at all*; it simply appears in
+        the student's list at its publish time. That is the correct trade —
+        a missing nudge, never a broken pointer.
+
+        The author is not excluded, because the author is staff and can be in
+        neither audience: a teacher has no ``class_enrollments`` row and no
+        ``Seat``.
+        """
+        publish_at = row.publish_at
+        if publish_at is not None:
+            # ``publish_at`` reaches this row from two places: a DB read of a
+            # ``timestamptz`` column (always aware) and, on the create path,
+            # whatever the router parsed out of the request, where an ISO
+            # string with no offset is naive. Comparing the two shapes raises
+            # TypeError, and this runs *outside* ``notify_safely`` — so an
+            # unnormalised naive value would 500 an announcement that was
+            # already written. Naive means UTC here, as everywhere else.
+            if publish_at.tzinfo is None:
+                publish_at = publish_at.replace(tzinfo=UTC)
+            if publish_at > self._now():
+                return []
+
+        # The two arms run their own query rather than sharing a ``stmt``
+        # variable: ``Seat.assigned_user_id`` is nullable (an unassigned seat
+        # is a real state) while ``ClassEnrollment.student_id`` is not, and
+        # ``Select`` is invariant in its row type, so no single annotation
+        # accepts both. The seat arm's ``is_not(None)`` predicate already
+        # excludes the NULLs in SQL; the comprehension restates it for the
+        # type checker rather than casting.
+        with self._sessionmaker() as session:
+            if row.class_id is not None:
+                enrolled = select(ClassEnrollment.student_id).where(
+                    ClassEnrollment.class_id == row.class_id
+                )
+                return list(session.scalars(enrolled.distinct()).all())
+            if row.school_id is not None:
+                seated = select(Seat.assigned_user_id).where(
+                    Seat.school_id == row.school_id,
+                    Seat.assigned_user_id.is_not(None),
+                    Seat.status != SeatStatus.revoked,
+                )
+                return [uid for uid in session.scalars(seated.distinct()).all() if uid is not None]
+        # create() writes one of the two audiences, never neither.
+        return []
+
+    def mark_read(
+        self,
+        student_id: uuid.UUID | str,
+        announcement_id: uuid.UUID | str,
+    ) -> datetime:
+        """Record that this student read this announcement. Idempotent.
+
+        Returns the ``read_at`` of record — on a re-open, the **original**
+        first-read time, not the current one. A "last opened" timestamp is a
+        different feature and moving ``read_at`` would quietly destroy the
+        only number this table holds.
+
+        Idempotency is the database's job: two tabs firing this concurrently
+        both pass any Python existence check, but only one can win
+        ``uq_announcement_reads_pair``. The loser catches
+        :class:`~sqlalchemy.exc.IntegrityError` inside a **savepoint** and
+        re-reads the winner's row. The savepoint is what makes the error
+        recoverable rather than merely catchable — a failed ``flush`` poisons
+        the enclosing transaction, leaving nothing to re-read with (D5.7,
+        learned the hard way on ``FriendService.request``).
+
+        Raises:
+            AnnouncementNotFoundError: The announcement does not exist, is not
+                in this student's scope, or is not published yet (404). These
+                are deliberately **indistinguishable**: a student who could
+                tell "exists but not yours" from "does not exist" could
+                enumerate other classes' announcement ids.
+        """
+        student_uuid = _as_uuid(student_id)
+        announcement_uuid = _as_uuid(announcement_id)
+        now = self._now()
+
+        with self._sessionmaker() as session, session.begin():
+            if not self._is_visible(session, student_uuid, announcement_uuid, now):
+                raise AnnouncementNotFoundError(f"Unknown announcement: {announcement_uuid}")
+
+            existing = session.scalar(
+                select(AnnouncementRead.read_at).where(
+                    AnnouncementRead.announcement_id == announcement_uuid,
+                    AnnouncementRead.user_id == student_uuid,
+                )
+            )
+            if existing is not None:
+                return existing
+
+            try:
+                with session.begin_nested():
+                    session.add(
+                        AnnouncementRead(
+                            announcement_id=announcement_uuid,
+                            user_id=student_uuid,
+                            read_at=now,
+                        )
+                    )
+                    session.flush()
+            except IntegrityError:
+                # Lost the race for uq_announcement_reads_pair. The winner's
+                # row is the row of record; re-read it rather than reporting
+                # a conflict the caller cannot act on — both tabs did read it.
+                won = session.scalar(
+                    select(AnnouncementRead.read_at).where(
+                        AnnouncementRead.announcement_id == announcement_uuid,
+                        AnnouncementRead.user_id == student_uuid,
+                    )
+                )
+                if won is None:  # pragma: no cover - defensive
+                    raise
+                return won
+            return now
+
+    def _is_visible(
+        self,
+        session: Session,
+        student_uuid: uuid.UUID,
+        announcement_uuid: uuid.UUID,
+        now: datetime,
+    ) -> bool:
+        """Whether this published announcement is in this student's audience.
+
+        Shares the scope definition with :meth:`list_for_student` by
+        construction rather than by convention — if the two drifted, a
+        student could mark-as-read something they cannot see listed.
+        """
+        enrolled_classes = select(ClassEnrollment.class_id).where(
+            ClassEnrollment.student_id == student_uuid
+        )
+        seated_schools = select(Seat.school_id).where(
+            Seat.assigned_user_id == student_uuid,
+            Seat.status != SeatStatus.revoked,
+        )
+        stmt = select(Announcement.id).where(
+            Announcement.id == announcement_uuid,
+            sa.or_(
+                Announcement.class_id.in_(enrolled_classes),
+                Announcement.school_id.in_(seated_schools),
+            ),
+            sa.or_(
+                Announcement.publish_at.is_(None),
+                Announcement.publish_at <= now,
+            ),
+        )
+        return session.scalar(stmt) is not None
+
     # -- Delete ---------------------------------------------------------------
 
     def delete(self, author_id: uuid.UUID | str, announcement_id: uuid.UUID | str) -> None:
@@ -300,10 +634,12 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "DEFAULT_STUDENT_LIMIT",
     "AnnouncementError",
     "AnnouncementNotFoundError",
     "AnnouncementOwnershipError",
     "AnnouncementRow",
     "AnnouncementService",
     "AnnouncementValidationError",
+    "StudentAnnouncementRow",
 ]

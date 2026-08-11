@@ -227,6 +227,48 @@ class ClassService:
             )
             return list(session.scalars(stmt).all())
 
+    def display_name_for(self, user_id: uuid.UUID | str) -> str:
+        """Return one user's display name, falling back to their email (P5.6 chunk C2c).
+
+        The same fallback :meth:`_roster_entry_for` and :meth:`roster` already
+        apply, deliberately: an ``at_risk_alert`` names a student to their own
+        teachers and parents, who are looking at that exact string on their
+        roster already, so a second convention here would make one person read
+        as two. **This is not D5.5's leak** — that was the *global leaderboard*
+        broadcasting an unnamed student's email to strangers, and the audience
+        is what made it a leak. An unknown id returns ``"Student"`` rather
+        than raising: a missing name must never cost an alert.
+        """
+        with self._sessionmaker() as session:
+            user = session.get(User, _as_uuid(user_id))
+            if user is None:
+                return "Student"
+            return user.display_name or user.email
+
+    def teachers_for_student(self, student_id: uuid.UUID | str) -> list[uuid.UUID]:
+        """Return the distinct teachers who teach ``student_id``, ordered (P5.6 chunk C2c).
+
+        The recipient seam for ``at_risk_alert``: a student's teachers are the
+        people the alert is *for*. Deliberately its own narrow method rather
+        than a field added to :class:`StudentClassRow` — that row is the
+        parent portal's shape (P-01/P-02 render class names to a parent) and
+        putting a teacher id on it would push staff identity onto a screen
+        that has no use for it. ``SchoolClass.teacher_id`` is NOT NULL, so
+        every enrolled class yields exactly one teacher; ``distinct`` collapses
+        the common case of one teacher taking a student for two classes into
+        one alert rather than two.
+        """
+        student_uuid = _as_uuid(student_id)
+        with self._sessionmaker() as session:
+            stmt = (
+                select(SchoolClass.teacher_id)
+                .join(ClassEnrollment, ClassEnrollment.class_id == SchoolClass.id)
+                .where(ClassEnrollment.student_id == student_uuid)
+                .distinct()
+                .order_by(SchoolClass.teacher_id)
+            )
+            return list(session.scalars(stmt).all())
+
     def student_classes(self, student_id: uuid.UUID | str) -> list[StudentClassRow]:
         """Return every class ``student_id`` is enrolled in, with names (P3.6).
 

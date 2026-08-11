@@ -4388,3 +4388,1588 @@ gate actually asserts.
 (`teacher-review`) and student-route a11y **100**, **zero** console errors,
 **zero** responsive/horizontal-scroll violations, screenshot corpus across 39
 screen directories.
+
+---
+
+## D5.1 — The XP, streak and leaderboard specification (P5.1, written before any implementation)
+
+MISSION §4 Phase 5 requires this spec to exist *before* the code. It governs
+P5.2 (XP engine), P5.3 (leaderboards) and P5.4 (friends). Everything below is a
+decision, not a sketch — where a later task disagrees with this document, the
+disagreement gets recorded as its own D5.x rather than silently drifting.
+
+### 0. The constraint that outranks every other rule here
+
+**XP must never be a function of how well a student did.** Not their marks, not
+their percentage, not their predicted grade, not their accuracy on a quiz.
+
+This is not a style preference. MISSION §3 fixes "leaderboards show XP (effort),
+never grades", and UI spec §1.4 makes grades private to the student, their
+parents and their teachers. A leaderboard is the one public surface in this
+product. If XP correlated with performance, the leaderboard would be a grade
+ranking wearing a costume — and it would leak *precisely* the information the
+product promises to keep private, to *precisely* the audience (classmates) the
+student would least want to have it.
+
+So: a student who scores 18/80 and a student who scores 76/80 on the same paper
+earn **identical XP**. XP answers "did you do the work", never "were you good at
+it". Two structural consequences, both binding on P5.2/P5.3:
+
+- **The XP award functions take no mark, score, grade or accuracy argument.**
+  Not "ignore it" — do not plumb it in. An argument that does not exist cannot
+  be used by a later well-meaning change.
+- **The leaderboard query must not join to any marking table** (`attempts`,
+  `question_results`, `papers`, `weakness_records`). P5.3 carries a test that
+  asserts this over the emitted SQL, so the rule survives a refactor that
+  nobody reads carefully. A comment saying "don't join marks here" is not a
+  control; a failing test is.
+
+### 1. What already exists (do not rebuild it)
+
+`xp_events` and `streaks` were created in **migration 0002**, Phase 1's core
+schema — see the corrected Phase-4 limitation in STATE.md. `xp_events` carries
+`(user_id, source, amount, awarded_on, metadata)` with an index on
+`(user_id, awarded_on)`; `streaks` carries `(user_id UNIQUE, current_length,
+longest_length, last_active_on, freezes_available)`. The `xpsource` enum holds
+exactly four values and they are exactly MISSION's four sources:
+`paper_corrected`, `quiz_completed`, `flashcard_reviewed`,
+`study_session_completed`.
+
+**Adding a fifth XP source requires an enum migration.** The four are the scope;
+P5 does not invent a fifth.
+
+### 2. Award amounts
+
+Effort-proportional, weighted by how much real work each act represents:
+
+| Source | XP | Unit |
+|---|---|---|
+| `paper_corrected` | **50** | per paper reaching a completed marking |
+| `quiz_completed` | **30** | per quiz/practice/placement assignment submitted |
+| `study_session_completed` | **20** | per study-plan session marked complete |
+| `flashcard_reviewed` | **1** | per card graded in a review |
+
+The ratios matter more than the absolute numbers. Correcting a past paper is the
+product's core loop and its hardest single act, so it dominates. A flashcard is
+one keypress, so it is worth one point — which is also what makes the daily caps
+in §3 defensible rather than arbitrary.
+
+### 3. Anti-farming caps
+
+The cheapest action to repeat is the one that needs the tightest bound. Caps are
+**per user per streak-day** (§4's day, not a UTC day):
+
+| Source | Daily cap | Effective XP ceiling |
+|---|---|---|
+| `flashcard_reviewed` | 60 cards | 60 |
+| `quiz_completed` | 3 | 90 |
+| `paper_corrected` | 5 | 250 |
+| `study_session_completed` | 4 | 80 |
+| **Global** | — | **250 XP/day** |
+
+Two rules on how a cap behaves, because the wrong choice here is a support
+burden:
+
+- **A capped action still succeeds.** Hitting the flashcard cap does not block
+  the 61st review — it reviews normally and awards 0 XP. The learning activity
+  is never gated on the gamification layer. (If the two ever conflict, the
+  learning wins; that is the whole product.)
+- **A capped award writes no `xp_events` row**, rather than a row with
+  `amount = 0`. Zero-rows would inflate the "XP earned this week broken down by
+  source" breakdown on S-31 with entries that contributed nothing.
+
+### 4. The streak day, and why it is not UTC
+
+**A streak day is a civil date in `Africa/Cairo`.**
+
+The codebase's convention everywhere else is aware-UTC-now with an injectable
+clock (`lemely/db/flashcard_repo.py`), and P5 keeps that for *timestamps*. But a
+streak is a claim about *which day a human was working*, and Cairo is UTC+2/+3.
+A UTC day boundary falls at **02:00–03:00 Cairo**, so a student revising at 1am
+— the single most likely hour for this cohort to be doing flashcards — has that
+work credited to *yesterday*. That silently breaks today's streak while
+double-counting yesterday's. Both failure modes are invisible to a test written
+in UTC and infuriating to the student.
+
+Consequences, and one trap worth naming loudly:
+
+- **`xp_events.awarded_on` holds a Cairo civil date, NOT a UTC date.** The
+  column type is `Date` and gives no hint. Anything comparing it against
+  `datetime.now(UTC).date()` is wrong for two to three hours out of every
+  twenty-four. P5.2 converts through a single helper and nothing else computes
+  a streak date inline.
+- Egypt has not observed DST continuously; the helper uses `ZoneInfo`, never a
+  fixed `+02:00` offset, so a reinstated DST rule is a tzdata update rather than
+  a code change.
+- The timezone is a **launch-market default, not a per-user setting.** MISSION
+  §1 scopes v1 to Egypt. Per-user timezones are a real feature with real edge
+  cases (a student who moves mid-streak) and are out of scope; the helper takes
+  the zone as a parameter so that adding them later is a wiring change.
+
+### 5. Streaks and the freeze
+
+`current_length` counts consecutive streak-days on which the user earned **any**
+XP at all. Any source counts — one flashcard keeps a streak alive. The streak
+rewards showing up, and the caps in §3 already stop showing up from being
+farmed into a leaderboard win.
+
+**Everything is computed lazily on read.** There is no scheduler, cron or
+background worker in this build, so a streak must resolve correctly no matter
+how long the user was away — including the case where they return after 40 days
+and three freezes should have been consumed. P5.2 evaluates from
+`last_active_on` and the clock at every read and every award; it never assumes
+a nightly job ran.
+
+**Freeze grant.** One freeze per 7 consecutive active days, capped at **2 held**.
+Not purchasable — payments are out of scope (MISSION §1), and a purchasable
+streak protection is the exact mechanic UI spec S-31 warns against.
+
+**Freeze consume.** On the first missed day, automatically and silently: one
+freeze is spent, `current_length` is *preserved but not incremented*, and the
+streak survives. A second consecutive missed day with no freeze left resets
+`current_length` to 0. `longest_length` is never reduced.
+
+**The kindness rule is a design constraint, not a copy note.** UI spec S-31 asks
+for a streak that feels worth protecting "without being manipulative — a
+streak-freeze that's offered kindly beats a guilt-trip". So a freeze is reported
+**after** it saves the student ("your streak was protected"), never sold to them
+beforehand as urgency. The "streak about to break" push in MISSION §4 stays,
+because a factual reminder before the fact is different from a manufactured
+panic — but it is one notification, it respects quiet hours, and it is
+suppressible from G-12 like everything else.
+
+### 6. The weekly leaderboard window
+
+**ISO week: Monday 00:00 Cairo through Sunday 23:59:59 Cairo**, matching §4's
+day so a student never sees their streak and their weekly XP disagree about what
+day it is.
+
+**Weekly totals are computed by summing `xp_events`, never denormalized into a
+running column.** This build has now been burned three times by a hand-written
+mirror that nothing regenerates (`gemini_spend_usd`, the `SeedContract`, and the
+XP-schema limitation this very phase corrected). A `weekly_xp` column would be a
+fourth, and it would drift silently in the direction that flatters the user. The
+existing `ix_xp_events_user_id_awarded_on` index is exactly the right shape for
+the sum, and the row counts here are trivial — the caps in §3 bound a user to at
+most a few dozen rows per week.
+
+### 7. Per-subject XP needs a column that does not exist
+
+S-29 requires boards "for basis — total XP or per-subject XP", and `xp_events`
+has **no subject attribution at all**. Two additive changes, which together are
+the only XP-related schema work P5 does:
+
+1. **`xp_events.subject_id`, nullable, FK to `subjects`.** — **SUPERSEDED BY D5.2:
+   this is `subject_code`, a String FK to `subjects.code`, because all eight
+   other subject-scoped tables key on the code and every award seam already
+   carries one.** The rest of this item stands. Nullable because not
+   every award has a subject — a flashcard review does, a future account-level
+   award might not. Per-subject boards filter on it; total boards ignore it.
+   Storing it in the `metadata` JSONB instead was rejected: it is a real foreign
+   key with real referential integrity, and it must be indexable.
+2. **A uniqueness constraint for idempotency** — see §8.
+
+Additive-only, consistent with D1.2/D1.3.
+
+### 8. Idempotency is enforced by the database, not by care
+
+A paper can be re-marked. A teacher can override a result. A plan session can be
+un-completed and completed again. None of those may re-award XP, and "we only
+call the award function once" is not a control that survives a year.
+
+Every award carries a **`dedupe_key`** derived from the identity of the thing
+that caused it (the paper id, the assignment id, the plan-session id, the
+flashcard-review id), and a **unique index over `(user_id, source, dedupe_key)`**
+makes a double award a database error rather than a leaderboard anomaly. The
+award path treats a uniqueness violation as a no-op success, not a failure —
+re-marking a paper is a legitimate act that simply earns nothing new.
+
+This is also what makes the caps in §3 safe to evaluate optimistically: the
+worst case of a race is a rejected insert, not a double count.
+
+### 9. Opt-out
+
+**`student_profiles.leaderboard_opt_out`, boolean, not null, default false**
+(additive; `student_profiles` arrived in migration 0009, and leaderboards are a
+student-only surface so the flag belongs with the student profile rather than
+with `users`).
+
+Semantics:
+
+- An opted-out student is **absent from every board**, including boards their
+  own friends see. There is no "hidden but still ranked" halfway state.
+- They **keep earning XP**, keep their streak, and still see their own totals on
+  S-31. Opting out is about being *ranked publicly*, not about leaving the
+  system, and it must be losslessly reversible — no XP history is deleted, so
+  opting back in restores their position exactly.
+- Their own S-29 shows their XP without ranks, and says plainly that they have
+  opted out with a route to undo it. A blank screen would read as a bug.
+- **Enforced in the query's WHERE clause, not filtered in the DTO layer.** A row
+  that never leaves Postgres cannot leak through a serialization bug, a logging
+  statement, or a future endpoint that reuses the repo function and forgets the
+  filter. Same reasoning as §0's no-join rule: put the guarantee where it is
+  structural.
+
+### 10. What this spec deliberately does not decide
+
+Named so a later task does not read the silence as an oversight:
+
+- **Achievements/milestones** (UI spec S-31) — the screen mentions them; no
+  schema exists and MISSION §4's Phase-5 bullet does not list them. Out of scope
+  unless P5.8 finds the screen unbuildable without them, in which case it gets
+  its own decision record.
+- **Level thresholds.** S-31 says "total XP and level". The mapping from XP to
+  level is a display concern with no schema implication; P5.8 fixes it and
+  records it, so long as it is a pure function of total XP.
+- **XP for a *teacher* or *parent*.** `xp_events.user_id` is a `users` FK, so the
+  schema permits it. The product does not: engagement mechanics are a student
+  surface. P5 awards XP to students only.
+
+---
+
+## D5.2 — D5.1 §7 was wrong: `xp_events` keys subjects by code, not by UUID (P5.2 chunk A)
+
+D5.1 §7 specified **`xp_events.subject_id`, nullable, FK to `subjects`** — a
+UUID pointing at the `subjects.id` surrogate key. The P5.2 implementation built
+exactly that, and flagged it rather than quietly following the house style. The
+flag was right and the spec was wrong.
+
+**Every other subject-scoped table in this schema keys on the code, not the id.**
+Eight of them, with no exceptions: `papers`, `quizzes`, `quiz_questions`,
+`flashcard_decks`, `study_plans`, `student_subject_enrolments`, `attempts`,
+`announcements`. Only two foreign keys in the entire model layer point at
+`subjects.id`; two point at `subjects.code`, and the `subject_code` *column*
+convention is universal.
+
+**Why this actually mattered rather than being cosmetic.** Every award seam P5.2
+chunk B is about to wire — a corrected paper, a submitted quiz, a reviewed
+flashcard deck, a completed plan session — already carries a `subject_code` and
+none of them holds a subject UUID. A `subject_id` column would therefore have
+forced a code-to-UUID lookup at *every single award call site*, to store a value
+no caller possesses, purely to satisfy a line in a spec. That is a per-call-site
+query and a per-call-site failure mode bought for nothing.
+
+**Corrected to `subject_code`, nullable `String`, FK to `subjects.code`**, with
+`ix_xp_events_subject_code`. Migration 0013 was amended before being committed,
+so there is no second migration and no schema churn. `XpService.award` now takes
+`subject_code: str | None` and does no UUID coercion on it.
+
+**The process point is the reusable one.** D5.1 was written from the UI spec and
+MISSION without reading the model layer's existing subject convention, and it
+specified a column shape that contradicted eight tables. It was caught because
+the implementation was briefed to *implement the spec and report disagreement
+rather than silently deviate* — so the divergence arrived as a labelled note in
+a migration docstring instead of as an inconsistency discovered months later.
+A spec written above the code is worth having; it is not automatically right
+about the code, and the brief that lets an implementer say "this is wrong" is
+what makes the difference.
+
+---
+
+## D5.3 — The `paper_corrected` dedupe key is the upload id, not the attempt id (P5.2 chunk B)
+
+P5.2 chunk B wired the four XP award seams. Three were uncontroversial. The
+`paper_corrected` seam shipped its first implementation keyed on
+**`str(attempt_id)`** — the id `AttemptRepository.persist_correction` returns —
+because that is what the implementation brief's table said to use. **The brief
+was wrong, and D5.1 §8 already said so.**
+
+§8 opens: *"A paper can be re-marked. A teacher can override a result. A plan
+session can be un-completed and completed again. None of those may re-award
+XP."* It then names the dedupe identity as **"the paper id"**.
+
+`persist_correction` inserts a **fresh `Attempt` row on every call**. So an
+attempt-keyed dedupe key is re-minted on every re-correction, the partial
+unique index over `(user_id, source, dedupe_key)` never fires, and a student
+re-running `/student/correct` on the same uploaded paper earns another 50 XP
+every time — bounded only by the 5/day `paper_corrected` cap, i.e. **250 XP/day
+from one PDF**. That is the exact leaderboard anomaly §8 exists to prevent, and
+it is the cheapest farm in the whole system: re-marking costs the student one
+click.
+
+**Corrected to `str(owned.id)`, the `student_uploads` row** — the stable
+identity of "this paper" that the endpoint has already resolved and
+ownership-checked before streaming starts. Re-marking still works, still
+persists a second attempt, and now earns nothing new, which is precisely what
+§8 asks for.
+
+**Two things worth keeping from how this was caught.**
+
+1. The implementer **flagged it rather than silently following the brief**,
+   as the same standing instruction that produced D5.2 required — it reported
+   that the seam "is not idempotency-safe by construction" and declined to
+   change the key unilaterally, calling it a product decision. It was right
+   that it was a decision and wrong that it was out of scope: D5.1 §8 had
+   already made it. A flag that names the defect precisely is worth more than
+   a silent fix, because it arrived with the reasoning attached.
+2. **The regression test was verified by inversion**, not assumed. With the
+   key reverted to `attempt_id`, `test_re_correcting_the_same_paper_does_not_re_award`
+   fails on `2 != 1` xp_events rows and `test_paper_corrected_awards_xp` fails
+   on the dedupe-key assertion; both pass with `owned.id` restored. The test
+   also asserts that **two `Attempt` rows exist** after the second correction,
+   so it cannot pass vacuously by the pipeline having refused to re-run — a
+   green from "nothing happened" would be worthless here.
+
+**The general lesson, which is the same one as D5.2 from the opposite
+direction.** D5.2 was the spec being wrong about the code. This is the *brief*
+being wrong about the spec: the orchestrator's task table paraphrased D5.1 §8
+and lost its meaning, while the authoritative sentence sat in DECISIONS.md
+unchanged. A restated requirement is a copy that can drift. Where a brief
+paraphrases a spec, the spec wins, and the implementer should be reading it —
+which is why the brief pointed at D5.1 by line number rather than only
+summarizing it.
+
+**`flashcard_reviewed` is deliberately NOT analogous** and was left alone. Each
+review mints a genuinely new review id because reviewing a card again is a real,
+repeatable act the SM-2 scheduler depends on; two reviews of one card correctly
+award twice. Its anti-farming control is the 60-cards/day cap in D5.1 §3, not
+dedupe. `tests/test_web_xp_awards.py::test_flashcard_reviewed_two_reviews_of_the_same_card_both_award`
+pins that reading so a later reader does not "fix" it into the paper seam's shape.
+
+---
+
+## D5.4 — Students belong to a school through a `Seat`, not a `SchoolMembership` (P5.3 chunk A)
+
+The P5.3 brief specified the school leaderboard scope as "students holding a
+`school_memberships` row for the viewer's school". **That is not what the table
+means.** `SchoolMembership`'s docstring says "Staff member (teacher or
+school_admin) association with a school", and `MembershipRole` has exactly two
+values — `teacher` and `school_admin`. **No student ever gets a
+`SchoolMembership` row.**
+
+Scoping the school board on that table would have compiled, typechecked, passed
+lint, and returned an empty board for every real student forever — the school
+scope would have reported itself permanently "unavailable" and looked like a
+data problem rather than a code defect.
+
+Students are linked to a school through **`Seat`** (`seats.school_id` +
+`seats.assigned_user_id`, status not `revoked`), which is how
+`lemely/db/class_repo.py` and `lemely/db/seat_repo.py` already resolve the same
+question. The leaderboard's school scope uses that.
+
+**This is the same failure mode as D5.2** (`subject_id` vs `subject_code`) and
+worth naming as a pattern rather than a one-off: *an orchestrator brief that
+paraphrases the schema from memory is not a source of truth about the schema.*
+D5.3 recorded the spec-level version of this ("where a brief restates a spec,
+the spec wins"); this is the model-level version. **Read the model before
+keying a query on it.** Both times the implementing agent caught it by reading
+the table rather than trusting the brief, and both times the brief was wrong in
+a way that no gate would have caught — an empty board is not a test failure.
+
+### Two smaller calls made in the same chunk
+
+- **`RANK()` ties.** The first cut ranked with
+  `RANK() OVER (ORDER BY xp DESC, user_id ASC)`. Postgres decides ties over the
+  *whole* `ORDER BY` tuple, so two students on equal XP received ranks 1 and 2
+  instead of 1 and 1. The tiebreak now lives in the outer query's `order_by`,
+  where it fixes display order without touching rank values. D5.1 §0's spirit
+  applies: equal effort must read as equal standing.
+- **The opt-out join must be an outer join.** `student_profiles` rows are
+  created on first touch, so a student who never completed onboarding has no
+  row. An inner join for the `leaderboard_opt_out` filter would have erased
+  exactly those students from every board — the null-safe
+  `coalesce(leaderboard_opt_out, false) = false` predicate treats "no profile"
+  as "has not opted out", which is the only correct reading. Pinned by a test.
+
+---
+
+## D5.5 — A leaderboard never falls back to a student's email (P5.3, from adversarial review)
+
+The rest of this codebase resolves display identity as `display_name or email`
+— `lemely/db/quiz_taking_repo._display_name` and several siblings each
+re-declare it locally. P5.3's `LeaderboardService.display_names_for()` copied
+that pattern, and the adversarial review caught it.
+
+`users.display_name` is **nullable at signup** (`lemely/web/routers/auth.py`),
+so the fallback fires for real users, not hypothetical ones. The reason it is
+safe everywhere else is audience: a quiz result list is seen only by the class
+that sat the quiz. **A leaderboard is the one surface in this product where
+that assumption does not hold.** `LeaderboardScope.global_` shows every ranked
+student on the platform to every other student, so the identical line
+broadcasts a real contact address to an audience of strangers.
+
+D5.1 §0 reasons about the leaderboard from exactly this premise — it is the one
+public surface, which is why it must not carry a mark. A contact address is not
+a mark, so this does not violate §0 literally; it undercuts the same premise
+§0 protects, and it is not information a ranking needs in order to rank.
+
+**Decision: an unnamed student ranks normally under a neutral placeholder**
+(`ANONYMOUS_DISPLAY_NAME = "Student"`). Anonymity is not exclusion — they keep
+their rank, their XP and their position. `display_names_for()` no longer
+selects `users.email` at all, so the address cannot leak through a later
+serialization change either; the column is simply absent from the query. This
+is the same "make it structurally unreachable rather than carefully handled"
+reasoning as D5.1 §9's opt-out-in-the-WHERE-clause rule.
+
+Pinned by `tests/test_web_leaderboard.py::test_a_student_without_a_display_name_is_never_shown_by_email`,
+which asserts over the **response body** (what actually leaves the server, not
+what the repo intended) and includes the strong form: no `@` anywhere in the
+payload.
+
+**Not adopted from the same review:** `board()` issues three queries (top rows,
+viewer XP, viewer rank) without pinning them to one snapshot, so a concurrent
+award mid-request can make the viewer's own row disagree with the returned
+top-N by a few XP. Left as-is deliberately — it self-corrects on the next
+request, a leaderboard is an inherently stale read, and a REPEATABLE READ
+transaction would be real cost for a discrepancy no user can perceive.
+Recorded so a future reader knows it was seen and judged, not missed.
+
+---
+
+## D5.6 — The friends model: a friend code, one canonical row per pair, and no tombstone (P5.4 chunk A)
+
+D5.1 governs P5.4 but says nothing about the friendship *table* — §10 lists
+what the spec deliberately leaves open and friends is not among the listed
+omissions, so these are P5.4's decisions to make and record.
+
+### 1. S-30's "add by username" is unbuildable as written
+
+UI spec S-30 asks for "add by username or invite link". **`users` has no
+`username` column** — checked against the model, not assumed. The two
+obvious substitutes are both wrong:
+
+- **Search by `display_name`.** Not unique, so a lookup is ambiguous, and
+  worse, it lets any student type a common name and enumerate strangers.
+- **Search by email.** This is precisely the leak D5.5 closed on the
+  leaderboard three days ago, re-opened in a new place.
+
+So: **`users.friend_code`**, `String(8)`, **nullable**, **unique**, minted
+lazily on first read by `FriendService.friend_code_for`. It serves both of
+S-30's affordances — type the code, or share a link containing it — and it is
+non-enumerable, which a display name is not.
+
+Details that are decisions, not incidentals:
+
+- **Alphabet `ABCDEFGHJKMNPQRSTUVWXYZ23456789`** (no `0/O`, no `1/I/L`). A
+  friend code is read aloud or typed off a screenshot, and those are exactly
+  the pairs where transcription fails.
+- **`secrets.choice`, never `random`.** The code is a lookup key handed to
+  strangers.
+- **Nullable, minted lazily, not backfilled.** A `NOT NULL` backfill would
+  have to invent a code for every teacher, parent and admin who will never
+  hold one.
+- **Honest limitation:** there is no rate limit on code lookup. 8 characters
+  from a 31-symbol alphabet is ~2^40 of space, which makes blind enumeration
+  impractical, but the real control for a guessing attack is rate limiting
+  and this build has none anywhere. Recorded rather than papered over.
+
+### 2. One row per pair, enforced by Postgres
+
+`friendships` stores one direction of *record* (`requester_id`,
+`addressee_id` — who asked whom is real information S-30 needs for "requests
+in and out") plus a second, order-independent representation of the same two
+parties: `pair_low`/`pair_high`, always the smaller/larger id.
+
+"A and B are friends" must be unique regardless of who asked, and a unique
+constraint on `(requester_id, addressee_id)` admits both A→B and B→A. The
+natural fix — a unique index on `(LEAST(...), GREATEST(...))` — is not
+available, because Postgres will not index a non-`IMMUTABLE` expression. So
+the canonical pair is materialised into two real columns, with
+`uq_friendships_pair` unique over them and **three CHECK constraints**
+(`ck_friendships_no_self`, `ck_friendships_pair_ordered`,
+`ck_friendships_pair_matches_parties`) making it impossible for the pair
+columns to disagree with the parties.
+
+This is **D5.1 §8's principle applied to a second table**: "idempotency is
+enforced by the database, not by care". `tests/test_friend_repo.py` pins it
+by inserting the reciprocal row *directly through the session* and asserting
+an `IntegrityError` — the guarantee is worthless if only the service layer
+respects it.
+
+The same structure answers the crossed-requests case: if both students press
+"add" before either sees the other's request, `FriendService.request`
+**accepts the existing reverse-pending row** rather than attempting a second
+insert the unique index would reject anyway. Two people who both ask to be
+friends must end up friends, not deadlocked on whoever called the API second.
+
+### 3. Two statuses, and no tombstone
+
+`friendshipstatus` has exactly `pending` and `accepted`. Decline, cancel and
+unfriend are all the same database act — deleting the row — so
+`FriendService.remove` is one method covering all three, and separate ones
+would have differed only in the word used in an error message.
+
+**Consequence, stated rather than discovered later:** a removed friendship
+leaves nothing behind, so a declined request can be re-sent immediately.
+That is deliberate (re-friending after a mistaken decline must work), and it
+means **P5 ships no block/mute**. Blocking is a moderation feature; it is not
+in MISSION §4's Phase-5 bullet, and S-30's "blocked/removed" state list is
+the only place in the spec that mentions it. Carrying it forward as a known
+limitation is honest; a `blocked` enum value with no enforcement anywhere
+would not be.
+
+### 4. Errors never confirm what the caller cannot see
+
+`accept` and `remove` raise the **same** `FriendRequestNotFoundError` whether
+the friendship does not exist or exists between two other people — and the
+requester trying to accept their own request gets that same error, not a
+distinct one. Same reasoning as P5.3's `LeaderboardClassAccessError`
+collapsing "no such class" into "not your class": an error that distinguishes
+the two is an existence oracle.
+
+### 5. Opt-out on a friends *list* is not opt-out on a *board*
+
+D5.1 §9 says an opted-out student is absent from every board, **including
+boards their own friends see**. The friends leaderboard honours that
+unchanged — the opt-out lives in `_ranked_subquery`'s WHERE clause and the
+new `friends` scope inherits it for free.
+
+A friends *list* is not a board. It has no ranks, and the relationship is
+mutual and consented to by both parties, unlike a leaderboard that shows a
+student to classmates who never opted into being compared with them. Removing
+an opted-out friend from the list would also make them **unremovable** — you
+cannot unfriend someone you cannot see.
+
+So `list_friends` keeps them, and returns `xp=None, streak=None,
+opted_out=True`. The UI states the fact instead of rendering a fabricated
+`0`, which UI spec §1.4 forbids. Note this is the *stricter* reading on the
+numbers and the *looser* one on presence, and both follow from the same
+question: what did this student actually consent to?
+
+### 6. Smaller calls made here
+
+- **The friends board includes the viewer's own id explicitly.** The other
+  three scopes get the viewer for free — class/school/global membership is
+  defined in terms of something the viewer already belongs to — but no
+  friendship row names the viewer as their own counterparty, so without the
+  extra union term a student would be unranked on their own board.
+- **An empty friends board is an honest board of one, not `unavailable`.**
+  S-29's "too few friends to rank" is a display state read off `len(rows)`;
+  a new `LeaderboardUnavailableReason` would push a presentation decision
+  into the query engine.
+- **`friends` XP is lifetime, not weekly.** S-30 asks for "XP and streak"
+  with no window, unlike S-29's explicitly weekly board.
+- **The leaderboard reads `friendships` directly** rather than calling
+  `FriendService`, matching what that module already does with
+  `ClassEnrollment`/`Seat`.
+
+## D5.7 — A lost insert race in `FriendService.request` must answer 409, not 500 (P5.4, from adversarial review)
+
+**Found by the P5.4 reviewer subagent (MISSION §6 gate 7), confirmed by reading the
+code, fixed before P5.4 was marked done.**
+
+`FriendService.request` resolved an already-existing pair by SELECTing it first
+(duplicate ask → `FriendAlreadyExistsError`; reverse-pending → accept the crossed
+request). The genuinely-new-pair branch then inserted with no `IntegrityError`
+handling at all. Two callers can both pass the `existing is None` check for the
+same never-before-seen pair, and the loser's INSERT violates `uq_friendships_pair`.
+
+**The reason this was worse than it looks:** the insert was a bare
+`session.add()` + `flush()` inside `with session.begin()`, so under a real race
+the violation surfaces on **COMMIT — after `request()` has returned**, outside any
+frame the router can catch. `routers/friends.py` catches only the `Friend*` domain
+errors and `ValueError`, so the honest outcomes (409 duplicate, or 201-with-accepted
+for a crossed request) degrade to a raw **500**. Concrete: two tabs open for student
+A both `POST /requests` with B's code on their first-ever contact — one gets 201, the
+other a 500.
+
+**Decision.** Wrap the insert in `session.begin_nested()` and catch `IntegrityError`,
+exactly as `friend_code_for` already does for `uq_users_friend_code` (and `xp_repo`
+does for its dedupe index) — this is the house pattern, not a new one. On a
+`_is_pair_violation` match, re-read the winning row and resolve it through the *same*
+`_resolve_existing_pair` helper the sequential path uses. Any other `IntegrityError`
+(foreign key, one of the three CHECKs) still propagates.
+
+- **The savepoint is the load-bearing part, not the `except`.** Without
+  `begin_nested()` the error cannot be caught here at all, because it is not raised
+  here — it is raised at the transaction boundary.
+- **The resolution branch is shared, not duplicated.** A concurrent insert and a
+  sequential one produce the same outcome by construction, so the two paths cannot
+  drift.
+- **The re-read is sound under READ COMMITTED**: the losing INSERT blocks until the
+  winner commits, so a fresh SELECT after the savepoint rollback always sees it.
+- **Not a security or integrity defect** — the database constraint always won, no
+  duplicate or reciprocal row was ever possible (D5.6 holds). This is purely about
+  the service translating a DB truth into an honest HTTP answer.
+
+**Proven by inversion, not assertion.** `tests/test_friend_repo.py` blinds the first
+`friendships` SELECT — which is exactly what losing the race does to it — and lets
+everything downstream run for real against the real index. Only the missed SELECT is
+simulated; a genuinely concurrent commit cannot be staged deterministically
+single-threaded.
+
+**What inversion actually shows** (re-run in the forty-first session with the
+`begin_nested()` replaced by a bare `if True:`, rather than carried over as a claim):
+both new tests fail, but *not* with the `IntegrityError` surfacing on COMMIT as this
+entry first said. Without the savepoint the failing `flush()` raises `IntegrityError`
+immediately and **poisons the enclosing transaction**, so the recovery SELECT dies
+first with `sqlalchemy.exc.InvalidRequestError: Can't operate on closed transaction
+inside context manager`. The conclusion is unchanged and the fix is unchanged — an
+uncaught exception out of `request()` is a 500 either way — but the mechanism is
+worth stating correctly: a savepoint is what makes the error *recoverable at all*,
+not merely *catchable here*. Once the outer transaction is poisoned there is nothing
+left to re-read with.
+
+**Method note, the fourth instance in Phase 5.** D5.2/D5.3/D5.4/D5.5 were all "a
+brief or a convention was trusted where the schema or spec should have been read."
+This one is different and worth naming separately: **the invariant was correctly
+enforced in the database and the service simply had no story for being told so.**
+A CHECK or unique index is a guarantee, not an error handler — every place that can
+provoke one needs a decision about what the user sees when it fires.
+
+---
+
+## D5.8 — The exam calendar ships with a real table and no dates (P5.5 chunk C)
+
+**Decision: build `exam_dates`, build a strict ingestion path, and ship the
+student surface honestly empty. Do not populate a single row.**
+
+### The measurement that forced it
+
+There is **no CAIE timetable data anywhere on this machine.** `Sources/` holds
+AdditionalMathematics/Mathematics/Physics *mark schemes* and four solved
+scripts; the PaperScraper corpus at `/home/sico/PaperScraper/papers/CAIE/`
+holds 648 question papers and grade-boundary documents. Neither contains a
+timetable, and `find -iname "*timetable*" -o -iname "*calendar*"` over both
+returns nothing. The scraper has no timetable route — the artifact lives in a
+separate official CAIE timetable PDF this build has no path to.
+
+MISSION §4 Phase 5 says "auto-populated official CAIE session dates". The
+*auto-populated* half is unbuildable without the source document. Three
+options existed:
+
+1. **Invent plausible dates.** Rejected. IGCSE sessions do cluster in May/June
+   and Oct/Nov, so a generated date would look right and be wrong by days.
+2. **Skip the feature.** Rejected — the table and ingestion are the expensive,
+   design-bearing part, and deferring them means P5.8's screen has nothing to
+   consume and the work lands twice.
+3. **Table + ingestion + honest empty state.** Chosen. The tri-state
+   availability pattern P4.5 established for the practice generator (D4.10),
+   applied to a second surface that must refuse rather than fabricate.
+
+### Why inventing here is worse than inventing anywhere else
+
+UI spec §1.4 forbids invented precision generally. This screen sharpens it: the
+exam calendar's entire purpose is a **countdown a student plans revision
+around**. A missing date disappoints. A wrong date actively misdirects study
+scheduling toward the wrong week, and the student has no way to detect it —
+the app is the authority they are consulting precisely because they do not
+know the date. A wrong exam date is not a degraded feature; it is harm
+delivered confidently, which is the same failure shape as D3.21's paper 22.
+
+### The design decisions inside the table
+
+- **The grain is the paper *variant*, not the paper number.** The official
+  timetable dates components (`0625/22`), and variants of one paper number can
+  sit on different days in different zones. Storing at number grain would have
+  forced the ingester to pick one real date and discard the others — invented
+  precision arriving through the back door. `paper_number` is stored *beside*
+  the variant because it is the only key the read path can join on
+  (`student_enrolment_papers.paper_number` is what a student declares, P4.3),
+  and it comes from the source document rather than from parsing a digit out
+  of the variant string.
+- **`source` is `NOT NULL`.** A row that cannot name the document it came from
+  is indistinguishable from an invented one. It is also on the wire, so a
+  student or teacher who believes a date is wrong can name the timetable
+  rather than argue with the app.
+- **`uq_exam_dates_variant` makes ingestion idempotent by database, not by
+  care** — the fourth table in Phase 5 to make that choice (0013, 0015, 0016).
+  Timetables get republished with corrections, so re-ingest must *update in
+  place*; appending would put one paper on a student's calendar twice with two
+  different dates, which is worse than having no calendar.
+- **A batch that contradicts itself is rejected whole.** Two lines claiming the
+  same variant with different dates means the document disagrees with itself.
+  Last-one-wins would let a stale line silently overwrite a correct one.
+- **Nothing is defaulted at parse time.** A missing `paperNumber` is not
+  inferred from the variant, a missing `sessionYear` is not taken from the
+  current year, and one bad entry rejects the document rather than ingesting
+  the good rows. Each convenience would manufacture a fact about a real exam.
+- **`starts_at_local` is a string, not a `Time`.** The document prints a
+  wall-clock time in a zone this table does not model; coercing it to a typed
+  time would imply a precision about *which* zone we do not have. A missing
+  time is `None`, never midnight.
+
+### Three empty causes, kept apart
+
+`no_enrolment` (the student has not said what they are sitting),
+`no_timetable` (they have, and we hold no official dates), and per-paper
+`no_session` (that enrolment names no session). Collapsing the first two would
+tell a student who never onboarded that *Cambridge* has not published dates —
+a false statement about a third party, and one that hides the action the
+student could actually take. Pinned by tests.
+
+### Past dates are deliberately not filtered
+
+The read path does not compare anything to "now" — the service takes no clock.
+A session's components sit within a few weeks of each other, so dropping past
+dates would empty a student's calendar halfway through their own exam series
+and make `no_timetable` — the state that means "we have no data" — fire when
+we hold all of it. The screen decides what a past date looks like.
+
+### There is no ingestion route
+
+Loading a timetable is an operator act against a published document, not a
+request any authenticated user makes. Exposing it over HTTP would put the one
+write path capable of publishing a wrong exam date behind nothing but a role
+check. Pinned by a test asserting the router's OpenAPI surface is exactly one
+`GET`.
+
+### The honest gap, stated rather than hidden
+
+**There is no CLI wrapper around `ExamCalendarService.ingest` yet.** The
+ingestion path is the service plus `parse_timetable_payload`, both fully
+tested; loading a real timetable today means calling them. A `lemely
+ingest-exam-timetable <file>` command is a thin wrapper and the natural next
+step, deliberately not built speculatively (MISSION §8b) while no document
+exists to feed it. **Carry this into the Phase-5 limitations list**, together
+with the empty table itself — neither is a defect to quietly fix, and neither
+may be closed by generating data.
+
+## D5.9 — The notification spec: the inbox is the record, push is a side effect (P5.6, written before any implementation)
+
+**MISSION §4 Phase 5 mandates spec-before-code for the engagement layer, the
+same ordering P5.1/D5.1 followed for XP.** This is that spec. Every claim about
+existing schema below was verified by reading the models on 2026-08-10, not
+carried from the phase plan — five earlier Phase-5 tasks were mis-briefed by a
+note paraphrasing the codebase from memory (D5.2, D5.4, D5.5, and both of
+P5.5's deps predictions).
+
+### 0. What already exists, measured
+
+- **`notifications` (`lemely/db/models/ops.py:140`) exists and has zero
+  writers.** Columns: `id`, `user_id`, `type`, `title`, `body`, `payload`
+  (JSONB, defaults `{}`), `read_at`, indexed on `(user_id, read_at)`.
+  `grep -rln "Notification("` over `lemely/` excluding `models/` returns
+  nothing — no repo, no service, no route, no call site. **No migration is
+  needed for the inbox**, same situation P5.2 found for `xp_events`.
+- **`NotificationType` has exactly five values** (`enums.py:164`):
+  `grade_ready`, `announcement`, `streak_warning`, `study_plan_reminder`,
+  `at_risk_alert`. These are precisely MISSION §4's four student triggers plus
+  the teacher/parent at-risk alert. **No enum value needs adding.**
+- **`notification_preferences` (`ops.py:335`) already carries one boolean per
+  type, under the same five names**, all `NOT NULL DEFAULT true`, plus
+  `quiet_hours_start`/`quiet_hours_end` (nullable `Time`).
+  `NotificationPreferencesService.get/set` reads and writes them today and
+  `routers/me.py` exposes them. **So "make preferences gate delivery" needs no
+  schema work at all** — the toggles have existed since migration 0008 and
+  what is missing is a consumer.
+- **Nothing anywhere mentions VAPID or push subscriptions.** The
+  push-subscription table is this task's **only** migration.
+- **There is no scheduler in this build** — no cron, no Celery, no APScheduler,
+  nothing in `pyproject.toml`. This constrains §5 below.
+
+### 1. The inbox row is the source of truth; push is a best-effort side effect
+
+A notification is **a row in `notifications`**. Web push is one *delivery* of
+that row to one device. Push therefore:
+
+- never decides whether a notification exists,
+- never fails the user action that produced it,
+- never fails the inbox write.
+
+This is D5.1 §3's fail-open reasoning ("the learning wins") applied a second
+time, and it reuses the shape already proven in
+`lemely/web/xp_awards.py::award_xp_safely`: the notify call sits at the router
+layer after the action has committed, wrapped in a helper that logs and
+swallows. A student whose grade is ready must not get a 500 because a push
+endpoint was unreachable.
+
+### 2. A type toggle suppresses the row; quiet hours suppress only the push
+
+These two preferences mean different things and must not be collapsed:
+
+- **A type toggle off is a content preference** — "do not notify me about
+  this". So it suppresses **the row as well as the push**. An inbox that fills
+  with items the user explicitly said they did not want is not a feature.
+- **Quiet hours are a timing preference** — "do not buzz my phone at 2am". So
+  they suppress **the push only; the row is always written** and the user sees
+  it when they next open the app.
+
+**Suppressing a row loses no information, and that is what makes this safe.**
+No notification is the sole record of anything: a ready grade is on the results
+screen, an announcement is in P5.5's announcements list (which owns its own
+read-receipts), a streak is on the dashboard, a study-plan session is in the
+plan. The notification is a pointer, never the data. If that ever stops being
+true for a new type, this decision must be revisited rather than extended.
+
+**Default is opted-in.** `NotificationPreferencesService.get` returns an
+all-defaults row for a user who has never configured anything, so "no row"
+means "wants everything" — the gate must never read a missing row as opt-out.
+
+### 3. Parent at-risk alerts consult the parent's own preferences
+
+MISSION §4: at-risk alerts go "to the teacher and (if opted-in) parent". The
+opt-in is **the parent's**, read from the parent's own
+`notification_preferences.at_risk_alert` row. Reading the *student's* row
+would let a student silence alerts about themselves to their own parent, which
+inverts the point of the feature and quietly breaks UI spec §1.4's teacher
+authority.
+
+### 4. The transport seam, and why it is a protocol
+
+Web push cannot be exercised from a headless test, and MISSION §4's acceptance
+explicitly asks for "push delivery (headless push mock)". So:
+
+- a `NotificationTransport` **protocol** with `send(subscription, payload)`,
+- a real VAPID implementation,
+- a **recording in-memory double** that captures what would have been sent,
+- selected in `deps.py` like every other service, and reset by
+  `reset_singletons()`.
+
+**VAPID keys come from `lemely/runtime/config.py` `Settings` and their absence
+is not an error.** With no keys configured the transport reports itself
+unavailable, logs once, and the inbox keeps working — this build has no keys,
+so a hard requirement would make every notification fail in the exact
+environment the tests run in. Same tri-state honesty as D4.10/D5.8: available,
+unavailable-for-a-named-reason, empty.
+
+**A dead subscription is deleted, not retried.** A push service answering 404
+or 410 means the browser subscription is permanently gone; keeping it produces
+a growing table of endpoints that can never succeed.
+
+### 5. What cannot be built here, stated now rather than discovered later
+
+`streak_warning` and `study_plan_reminder` are **time-triggered, not
+action-triggered** — nothing a user does produces them. With no scheduler in
+this build, P5.6 ships the *service method* that computes and sends each one,
+plus a manual entry point, and **nothing invokes them on a timer**. That is the
+honest deliverable and it goes in the Phase-5 limitations; inventing a
+scheduler daemon in an engagement task is out of scope and would be untested
+infrastructure. `grade_ready`, `announcement` and `at_risk_alert` are all
+action-triggered and are wired to real seams.
+
+### 6. Dedupe: the same lesson as D5.3, applied before it bites
+
+`grade_ready` keys on **the upload**, not the attempt. `persist_correction`
+inserts a fresh `Attempt` on every call, so an attempt-keyed notification
+re-fires every time a student re-runs a correction on one PDF — this is
+exactly the defect D5.3 found in the XP paper seam, and it is written down here
+*before* implementation so it is not re-discovered a second time.
+`announcement` keys on `(announcement_id, user_id)`.
+
+## D5.10 — Push carries no payload: VAPID auth only, and the service worker fetches the inbox (P5.6 chunk B)
+
+D5.9 §4 fixed the *seam* (a `NotificationTransport` protocol, a real VAPID
+implementation, a recording double, chosen in `deps.py`) but deliberately left
+the wire format open. This is that choice, made before the implementation
+because it is load-bearing and hard to reverse once a service worker ships
+against it.
+
+**The decision: send RFC 8030 push messages with an empty body, authorised by
+an RFC 8292 VAPID `Authorization` header, and no RFC 8291 content encryption.**
+The push tells the browser *that* something happened; the service worker then
+calls the authenticated inbox API to find out *what*.
+
+### Why this is the right shape, not merely the cheap one
+
+D5.9 §1 already fixed the architecture: **the inbox row is the source of truth
+and a push is one delivery of it.** A payload-carrying push contradicts that by
+making the push message a second, independent copy of the notification — one
+that can disagree with the row, and one that must be encrypted precisely
+because it holds content. A payload-less push is the same architecture stated
+on the wire.
+
+It also removes a real disclosure. An encrypted-payload push still routes a
+student's notification title and body through Google's, Mozilla's or Apple's
+push infrastructure. Payload-less, **nothing about a student ever transits a
+third-party push service** — the endpoint URL and a signed assertion that we
+are who we say we are, and that is all. The content is fetched from us, over
+the same authenticated API that already gates every other read.
+
+### What it costs, stated now
+
+A browser requires that *some* notification be shown for each push it
+delivers. With no payload, the service worker must fetch the inbox first, so a
+push that arrives while the device is offline — or whose fetch fails — shows a
+generic "You have a new notification" rather than the real title. That is a
+genuine degradation and it belongs in P5.9's service-worker brief and the
+Phase-5 limitations, not hidden here.
+
+### The dependency arithmetic that made the alternative unattractive
+
+`pywebpush` is the standard payload-carrying implementation and it **is**
+installable here (verified: `uv pip install --dry-run pywebpush` resolves
+cleanly). It would add **11 packages**, including `aiohttp` — an entire second
+HTTP stack alongside the `httpx` this project already depends on — plus
+`http-ece` and `py-vapid`. The alternative, hand-rolling RFC 8291's
+ECDH/HKDF/AES128GCM against `cryptography`, was rejected for a different and
+stronger reason: **it could not be honestly verified here.** Correct-looking
+content encryption is only provable against a published test vector or a live
+push service, and this build has neither. Generating a "test vector" from my
+own implementation and asserting against it is exactly the invented precision
+UI spec §1.4 forbids — it would prove the code agrees with itself.
+
+Payload-less push needs neither. The VAPID JWT is ES256 over a three-claim
+body and is verifiable *by decoding it*, which a test does directly with the
+public key. **Zero new dependencies:** `pyjwt[crypto]` is already in the `db`
+extra and `httpx` is already in the `web` extra.
+
+### Reversibility
+
+Swapping to payload-carrying push later means implementing one protocol method
+behind the same seam. Nothing outside the transport module knows a payload
+exists or does not — `NotificationService` never touches it, the routers never
+touch it, and the recording double's shape does not change.
+
+### Settings, and the absence of keys
+
+VAPID material lands in a `[push]` block (`LEMELY_PUSH__*`): an application
+server public/private key pair and a `sub` contact URI. **Their absence is not
+an error** (D5.9 §4): with no keys the transport reports itself unavailable,
+logs once, and the inbox keeps working. This machine has no keys, so any harder
+requirement would fail every notification in exactly the environment the tests
+run in. A `404`/`410` from a push service deletes the subscription through
+`NotificationService.forget_endpoint`, per D5.9 §4 — a permanently gone browser
+subscription is not a retryable failure.
+
+## D5.11 — At-risk alerts fire on correction and dedupe per student, reason and day (P5.6 chunk C2c)
+
+D5.9 fixed the transport, the gate and the fail-open rule, but left the
+`at_risk_alert` seam open because at-risk had no event to hang on. This is that
+choice, recorded before the code per MISSION §4's Phase-5 ordering.
+
+**1. The seam is the post-correction point, and that is a real constraint, not
+a convenience.** At-risk is computed **on read** today — `assess_at_risk` is
+called from `routers/classes.py` when a teacher opens a class — so there is no
+existing "a student became at-risk" event anywhere in the build. Manufacturing
+one would mean either a scheduler (D5.9 §5 says there is none) or an
+assessment-state table nothing else needs. A newly marked paper is the thing
+that actually changes the answer: it is the input to rule 1 (declining trend
+across the last N papers) and rule 2 (predicted grade below target). So the
+alert is raised immediately after `grade_ready`, on the same already-committed
+correction.
+
+**2. Rule 3 cannot fire here, and this is stated rather than quietly omitted.**
+"≥14 days inactive" is true of a student who is doing *nothing* — a student who
+has just uploaded a paper is by definition active. Rule 3 is time-triggered and
+joins `streak_warning` and `study_plan_reminder` in D5.9 §5's no-scheduler
+limitation. The consequence is concrete: **the one at-risk reason most likely
+to matter for a disengaging student is the one this build cannot deliver.**
+That belongs in the Phase-5 limitations, not in a comment.
+
+**3. The dedupe key is `(student_id, reason, civil date)`.** At-risk is a
+*state*, not an event: a student whose trend is declining stays declining
+across every paper they upload that week. Keying on the upload — the right
+answer for `grade_ready`, which announces one specific artifact — would send a
+teacher of thirty students one alert per upload per student, and a notification
+stream nobody can read is worse than none. Keying on nothing but the reason
+would collapse a term into one alert. A civil day is the cheapest honest bound,
+and it is **`Africa/Cairo`, via `civil_date_in_zone`** — the same day boundary
+D5.1 §4 fixed for streaks, reusing that helper rather than re-deriving one
+(Cairo is UTC+3 in summer, so a hardcoded offset is wrong for half the year).
+The recipient half of the key comes free from migration 0018's
+`(user_id, type, dedupe_key)` unique index, as established in chunk C2b.
+
+**4. Recipients are derived server-side, per recipient, from their own
+preferences.** Teachers come from a new narrow `ClassService.teachers_for_student`
+— the chunk's recon predicted `student_classes` would serve, and **it does
+not**: `StudentClassRow` carries `class_id`/`name`/`subject_code`/`school_name`
+and no teacher id at all. (Seventh time this phase that reading the model beat
+paraphrasing a note.) Parents come from `ParentLinkService.list_parents`. Each
+recipient's row is gated by **their own** `notification_preferences.at_risk_alert`
+(D5.9 §3) — `notify_safely` already reads the recipient's prefs, so this is
+free, but it is pinned by a test, because the failure it prevents is a student
+silencing alerts about themselves.
+
+**5. The alert names the student and the reason, never a mark or a grade.**
+D5.9 §2 and UI spec §1.4 hold here even though the audience is staff: the row
+is a pointer to the teacher's own at-risk view, which already renders the
+evidence with its confidence intact. A grade on a lock screen is a grade on a
+lock screen regardless of who is holding the phone.
+
+---
+
+## D5.12 — The device limit is disclosed by a 409 challenge on a re-authenticated login, never by an unauthenticated device list (P5.7, written before any code)
+
+**Context.** UI spec G-10 ("Device limit reached") says the screen contains *a
+list of the three currently signed-in devices, a clear statement that signing in
+here will sign out the oldest, and a confirm action*. The backend already
+implements the policy — `DeviceRegistry.register_login` (D1.11) locks the user
+row `FOR UPDATE`, registers the new device, and evicts the oldest beyond
+`MAX_DEVICES = 3` in the same transaction. Two things are missing, and neither is
+the policy: **no route exposes a user's devices at all** (G-11's list and
+individual sign-out), and **eviction is silent** — `DeviceRegistration` carries
+`evicted_session_ids`, but `AuthService._register_device` returns only
+`session_id` and drops them, so the client cannot know a device was signed out.
+Verified by reading `lemely/db/device_repo.py`, `lemely/auth/service.py:123-140`
+and `lemely/web/routers/auth.py`, not by trusting a note.
+
+**1. The device list is never shown to an unauthenticated caller.** The naive
+reading of G-10 — show the three devices *before* signing in, so the user can
+decide — requires enumerating a stranger's devices from an email address alone.
+That hands anyone who knows an email address a list of that person's browsers and
+activity times. It is refused: **credentials are proven first, the challenge is
+returned second.**
+
+**2. The challenge is a 409 on the login itself, and the confirm is a re-sent
+login.** When a login would evict, `POST /api/auth/login` answers **409** with
+the three device summaries and **mints no token and evicts nothing**. The client
+shows G-10 and, on confirm, re-sends the same login with
+`confirmDeviceEviction: true`, which registers and evicts normally. The
+alternative — a stateful, short-lived "confirmation ticket" — was rejected as the
+more expensive and less reversible of the two: it adds a token kind, an expiry, a
+store and a revocation story, to save a second credential check on a path that
+fires only when a user is genuinely at three devices. Re-authenticating is also
+the *stronger* guarantee: the confirm cannot be replayed by anyone who did not
+just prove the password again.
+
+**3. "Would this evict?" is answered inside the same lock that does the
+evicting, never before it.** `register_login` grows `allow_eviction: bool = True`
+and raises `DeviceLimitReachedError` from *inside* the existing `FOR UPDATE`
+transaction when eviction is needed and not permitted. A separate preflight query
+would be a TOCTOU: two tabs could both be told "no eviction needed" and both
+evict. The default stays `True` so every existing caller — signup, phone-OTP,
+the E2E seed — is unchanged.
+
+**4. A re-login on a known device is never a challenge.** The `client_device_id`
+match path reuses its slot and evicts nothing, so a user with three devices
+signing in again on one of them sees no G-10. This is the common case and it must
+stay silent, or the limit reads as broken.
+
+**5. Rough location is deliberately absent from the device list.** G-10 asks for
+it; this build has **no geo-IP source and does not store an IP address**, so a
+location would have to be inferred or invented. UI spec §1.4 (never invent
+precision) forbids that outright, and a wrong city beside "sign out this device"
+is worse than no city — it is the field a user would make the decision on. The
+list ships with device label, user-agent-derived description, and last-active
+time, all of which are real. Carried to the Phase-5 limitations as an honest gap,
+not silently dropped.
+
+**6. Signing a device out is a revocation, not a delete, and is idempotent.**
+`DeviceRegistry.revoke` already scopes to the caller's own devices and is
+idempotent; the route reuses it. Revoking the *current* device is permitted and
+is simply "sign out this browser" — the liveness check in `get_auth_context`
+turns the caller's own next request into a 401 without any special case.
+
+---
+
+## D5.13 — The XP profile read route, and the level curve D5.1 §10 deferred to P5.8 (P5.8 chunk A, written before any code)
+
+D5.1 §10 named two S-31 questions and explicitly left them here: *"the mapping
+from XP to level is a display concern with no schema implication; P5.8 fixes it
+and records it, so long as it is a pure function of total XP"*, and
+*"achievements/milestones … out of scope unless P5.8 finds the screen
+unbuildable without them"*. This is that record, plus the route S-31 needs.
+
+### 0. The correction that made this a chunk at all
+
+P5.8's brief said every backend these four screens need was already built and
+gate-green. That is true of S-28, S-29 and S-30 and **false of S-31**.
+`XpService` is wired into the web layer at **write seams only** — `deps.py`,
+`xp_awards.py`, and the four award call sites in `student.py`, `quiz.py`,
+`flashcards.py`, `study_plan.py`. Nothing reads. The read *methods* exist and
+are covered (`xp_repo.py`: `total_xp`, `xp_breakdown(start, end)`,
+`streak(now)`), so this is one thin router in the shape of P5.3's
+`leaderboard.py`, not an engine. Eighth instance this phase of the codebase
+beating a note; the standing rule holds.
+
+### 1. The level curve
+
+**`level(total) = isqrt(total // 100) + 1`.** Equivalently, level *N* begins at
+**100·(N−1)² XP**: 0, 100, 400, 900, 1600, 2500, 3600 …
+
+Why quadratic rather than linear. A linear curve makes every level cost the
+same, so the number stops meaning anything once a student is past the first
+month — it becomes a slow restatement of total XP. The quadratic makes the
+first few levels arrive quickly (one paper corrected, at D5.1 §2's 50 XP, puts
+a new student halfway to level 2 on their first day) and later ones a genuine
+record of accumulated work, which is what UI spec S-31 asks the screen to feel
+like: a training log. Against D5.1 §2's real earning rates — a student
+correcting one paper a day earns 350 XP/week — that is level 2 on day 2, level
+3 on day 8, level 4 on day 18, level 5 on day 32. A level roughly every two to
+three weeks by mid-game, without a cap or a prestige mechanic to design.
+
+**It is integer arithmetic on purpose:** `math.isqrt(total // 100)`. The
+integer form is *exactly* the rule in the paragraph above — `isqrt(x // 100) >=
+N` iff `x // 100 >= N²` iff `x >= 100N²`, because N² is an integer — so the
+prose and the code cannot drift apart, and the equivalence is provable by hand
+rather than by sampling.
+
+> **Corrected in place after the code, and the correction matters more than the
+> decision.** This paragraph first said the float form `floor(sqrt(total /
+> 100))` is *wrong* at the boundaries, citing `sqrt(1600 / 100)` landing at
+> 3.9999999999999996. **That was inverted and it is false**: swapping the
+> implementation to the float form leaves all 62 tests in
+> `tests/test_xp_levels.py` green, because at a boundary `100·N²` both the
+> division and the square root are exact in IEEE 754 for any total this product
+> can reach (the first inexact case needs a total above 2⁵³). The integer form
+> is still what ships — its correctness does not *depend* on that
+> floating-point argument holding for every input forever, while the float
+> form's does — but the original reason was a failure mode nobody had
+> reproduced. Same shape as P5.6 chunk C2b, where a guard was removed for being
+> justified by a false comment, and D5.7, where an inherited "proven by
+> inversion" claim turned out not to be the test it described. **Writing the
+> reason before running the inversion is how a decision record acquires a
+> confident sentence that is not true.** Invert first, then write why.
+
+The route returns `levelStartXp` and `nextLevelXp` beside `level` so the screen
+draws a progress bar without re-deriving the curve in TypeScript. **The curve
+exists in exactly one place** (`lemely/web/xp_levels.py`); a second
+implementation on the client is the sort of duplicate that stays right for a
+year and then disagrees after one tweak.
+
+### 2. The week is one definition, shared with the leaderboard
+
+S-31's "XP earned this week" and S-29's weekly board must be the same week, or
+a student reads two different numbers for one fact on two screens they can
+switch between in a tap. `_week_bounds` was private to
+`lemely/db/leaderboard_repo.py`; it moves to `lemely/db/xp_repo.py` as
+**`week_bounds`**, beside `civil_date_in_zone` and `DEFAULT_ZONE`, which
+`leaderboard_repo` already imports from. One definition, D5.1 §6's Monday
+00:00 → Sunday 23:59:59 Cairo, used by both. Same reasoning as P5.6 chunk C2b,
+where the announcement seam and the student read path were made to share one
+predicate rather than derive the audience twice.
+
+### 3. What the screen may show, and the thing it must not
+
+UI spec S-31 lists "lifetime stats (papers marked, questions answered, hours
+studied)". **Those are not shipped, and the reason is not that they were hard.**
+The tempting source is `xp_events`: count the `paper_corrected` rows and call it
+papers marked. That number is **wrong by construction** — D5.1 §3's daily caps
+mean a capped award writes *no row at all*, so a student who corrected eight
+papers in a day has five rows, and D5.1 §8's dedupe means a re-corrected paper
+has one row for two markings. It would read as a precise lifetime count and be
+neither precise nor a count. UI spec §1.4 forbids exactly that, and a wrong
+number on a "record of real work" screen is worse than an absent one because the
+student has no way to tell.
+
+So the route is deliberately about **XP and the streak only**: total, level,
+this week split by source, and the streak. `bySource` is XP per source, labelled
+as XP, never as an activity tally. "Hours studied" has no source in this
+schema at all and is not approximated. Carry to the Phase-5 limitations.
+
+**Achievements/milestones stay out of scope** on D5.1 §10's own terms: S-31 is
+fully buildable without them (streak, level and the weekly breakdown carry the
+screen), no schema exists, and MISSION §4's Phase-5 bullet does not list them.
+
+### 4. The streak calendar needs per-day data, so the route carries it
+
+S-31 asks for "current streak with its calendar visualisation", and
+`Standings.tsx`'s header comment records a 28-cell streak heatmap that P5.0
+deliberately removed rather than mock. `StreakState` carries lengths and
+`last_active_on` — enough for a number, not for a calendar. So `XpService`
+gains one narrow reader, **`xp_by_day(user_id, start, end)`**, and the route
+returns the last 28 days as `(date, xp)` pairs for days that earned XP.
+
+It reports **XP per day, not a boolean "active"**, because the honest thing the
+table knows is how much XP a day earned; "active" would be a derived claim about
+attendance that the caps and dedupe rules can falsify in the same way §3
+describes. Days with no XP are simply absent from the list — the client fills
+the 28-cell grid from the window it asked for, so an empty day and a missing
+day cannot be rendered differently by accident.
+
+### 5. Route shape
+
+`GET /api/student/xp`, its own thin router
+(`lemely/web/routers/xp.py`), `require_role(Role.student)` at the router level,
+mirroring P5.3's `leaderboard.py` exactly. **Identity is structurally
+`auth.user_id`** — no caller-supplied user id parameter exists on the route, so
+one student cannot request another's profile, and that is a property of the
+signature rather than a check that a later edit could drop.
+
+Non-students get 403 from the router guard rather than an empty profile; unlike
+P5.6's deliberately role-agnostic notification router, this surface has exactly
+one intended reader, because D5.1 §10 already fixed that XP is awarded to
+students only.
+
+## D5.14 — S-29/S-30 need two small backend additions, and one spec element is deliberately not invented (P5.8 chunk C, written before any code)
+
+P5.8's brief says "every backend these screens need is already built". That was
+true for S-28 and it is **nearly** true here — `GET /api/student/leaderboard`
+and `GET/POST/DELETE /api/student/friends` are complete and gate-green. Reading
+the code before writing the screen found two places where the built backend
+cannot express what UI spec §S-29 names, and one place where it should not try.
+This is the ninth time this phase that a note lost to the codebase, and the
+correction is recorded here before the screen, not after it.
+
+### 1. `scope=class` is unreachable from the student SPA today
+
+`GET /api/student/leaderboard?scope=class` requires a `class_id`, and **no
+student-facing route lists a student's classes**. `grep '@router.get'` over
+`lemely/web/routers/student.py` returns overview / subject / result / standings
+/ parent-links and nothing else; `/student/classes/join` is a POST. The only
+readers of `ClassService.student_classes` are the *parent* portal's P-01 and
+P-02 (`routers/parent.py:347`).
+
+So the class tab is not "hard" — it is unaddressable. The two options were to
+drop a quarter of the spec'd scope selector and record it, or to add the thin
+read route. **Added: `GET /api/student/classes`**, reusing
+`ClassService.student_classes` directly rather than deriving a second
+`ClassEnrollment` query — that method's own docstring asks callers not to write
+one ("do not write a second `ClassEnrollment` query anywhere else for that
+purpose"), and honouring it is the reason the parent portal and this screen
+cannot drift about what class a student is in.
+
+`StudentClassRow` already carries exactly the four fields a tab needs
+(`class_id`, `name`, `subject_code`, `school_name`), so the DTO is a projection
+with nothing new computed. Identity is `auth.user_id` structurally — no
+caller-supplied student id exists on the route, matching P5.3's and chunk A's
+shape, so one student cannot enumerate another's classes.
+
+### 2. The per-row streak indicator is built, not dropped
+
+§S-29 fixes each row as "rank, avatar, display name, XP, streak indicator".
+`LeaderboardRowDTO` carries the first, third and fourth and **has no streak
+field**. Shipping without it was the cheaper path and was rejected for a reason
+stronger than spec-completeness: **S-30 already shows a friend's streak**
+(`FriendDTO.streak`, D5.6 §5), so the leaderboard's own `friends` scope would
+render the same people, on an adjacent screen, with the streak silently missing.
+An inconsistency between two screens about the same fact is read as a bug, and
+here it would be one.
+
+A streak is effort, not attainment, so it is squarely inside MISSION §3's
+"leaderboards show XP (effort), never grades" and adds no grade-shaped field —
+D5.1 §0's structural guarantee is untouched, and
+`tests/test_schemas_leaderboard.py`'s field-set introspection is updated
+deliberately in the same commit, which is exactly the acknowledgement that test
+exists to force.
+
+`LeaderboardService.streaks_for(user_ids)` mirrors the existing
+`display_names_for(user_ids)` exactly: one batched read keyed by the ids already
+resolved for the board, never a per-row query. **`streak` is `int | None`, and
+`None` means "no `streaks` row", never a rendered `0`** — the same rule
+`FriendDTO.xp`/`streak` already follow (D5.6 §5, UI spec §1.4). A student who
+broke their streak legitimately has `current_length = 0` and that is a real
+zero; the two must stay distinguishable.
+
+**No opt-out hole is opened by this.** An opted-out student is removed in the
+query's own WHERE clause (P5.3 chunk A) and never reaches `rows`, so their
+streak is not resolvable through this surface at all.
+
+### 3. The avatar is a monogram, because there is no avatar
+
+Nothing in this schema stores an avatar, an image URL, or a colour preference.
+The row renders the display name's initial in a tinted disc — a *rendering* of
+data we hold, not a fabricated field, and it degrades correctly for the
+`"Student"` fallback D5.5 installed for unnamed users. No placeholder photo, no
+generated identicon keyed on a user id: both would look like stored identity
+the account does not have. Carry "no avatar storage" to the Phase-5 limitations
+rather than implying one exists.
+
+### 4. Opt-out sits on S-29 itself, and its endpoint is `/me/student-profile`
+
+§S-29 requires the opt-out be "available and easy to find — this matters for
+students who find ranking stressful". A settings screen two navigations away is
+not that, so the control lives on the board it governs.
+
+**The brief names `PATCH /me/profile`; the real route is
+`PATCH /api/me/student-profile`** and `leaderboardOptOut` is on
+`StudentProfileUpdateDTO` (`schemas_student_profile.py:85`). The frontend's
+`meTypes.ts` mirror of that DTO predates P5.3 and is missing the field entirely
+— it is added to both `StudentProfile` and `StudentProfileUpdate` here.
+`leaderboard_opt_out` is NOT NULL on the model, so an explicit `null` is a 422,
+never a coerced `false`; the toggle therefore always sends a real boolean.
+
+**Opting out hides you; it does not lock you out.** The service keeps returning
+the board to an opted-out viewer (`viewer_opted_out=True`, absent from `rows`,
+`rank` null). That is deliberate on the backend and the screen states it
+plainly with a one-tap undo, rather than blanking the screen — a student who
+wants motivation without exposure is exactly who this setting is for, and
+hiding the board from them would punish using it.
+
+### 5. S-30 adds by friend code, and the code is the invite link
+
+§S-30 says "add by username or invite link". **`users` has no username column**
+(D5.6) and searching by display name (not unique, enumerable) or email (the
+exact leak D5.5 killed) are both closed. `users.friend_code` is the built
+mechanism and serves both halves: the student shows or copies their own code,
+and pastes a friend's. The submitted value is normalised server-side with
+`.strip().upper()` already, so a code copied out of a screenshot in lowercase
+works — the screen does not re-implement that normalisation and cannot drift
+from it.
+
+`POST /requests` returns `status: "accepted"` in the crossed-requests case, so
+the screen says "you are now friends" from the response rather than inferring
+"request sent" from the 201. Decline, cancel and unfriend are one `DELETE`
+(D5.6 §3) and one confirm-free action each — the row is recoverable by asking
+again, so a modal would cost more than the mistake.
+
+### 6. The weekly reset is stated in civil days
+
+`weekStart`/`weekEnd` are dates (D5.1 §6, Monday..Sunday Cairo), so the screen
+says "resets Sunday" / "N days left" and never an hour-precise countdown it has
+no data for. Same reasoning as S-28's `daysUntil` (chunk B): a boundary the
+student watches must not move while they sleep.
+
+## D5.15 — The service worker: `injectManifest`, and a push handler that never holds a credential (P5.9, written before any code)
+
+D5.10 fixed the wire — a push carries **no payload**, only a VAPID
+`Authorization` header — on the reasoning that the inbox row is the source of
+truth (D5.9 §1) and student notification titles/bodies must stay off Google's,
+Mozilla's and Apple's push infrastructure. It left one thing unstated: **where
+the `push` event handler actually lives**, and how it gets the content it was
+deliberately not sent.
+
+### 1. `generateSW` cannot host a push handler, so the strategy changes
+
+`web/vite.config.ts` runs `VitePWA` with a `workbox: {...}` block and no
+`strategies` key — that is the **generateSW** strategy, which emits a service
+worker with **no `push` event listener at all**, and there is no service-worker
+source anywhere in `web/src` (`web/dist/sw.js` is a build artefact, not an
+input). So D5.10's transport is, today, invisible: the backend can send a push
+and nothing on the client would render it.
+
+Two ways to add the listener:
+
+- **`workbox.importScripts: ["push-sw.js"]`** — keeps generateSW untouched and
+  `importScripts()` a hand-written file in `public/`. Smallest diff.
+- **`strategies: "injectManifest"` + `src/sw.ts`** — the SW becomes a real
+  source file that vite compiles.
+
+**Chosen: `injectManifest`**, for one reason that outweighs the smaller diff —
+**the handler's decision logic must be testable, and `public/` is invisible to
+every gate this build runs.** A file in `public/` is copied verbatim: not
+typechecked by `tsc -b`, not linted by oxlint, not reachable by vitest. Putting
+the only new client-side logic in this phase somewhere no gate can see it is
+exactly the shape MISSION §4's "proven by a test" forbids. `src/sw.ts` is
+compiled, linted and can import from `src/lib/`.
+
+The cost was measured, not assumed: **all four workbox runtime packages are
+already installed** (`workbox-precaching`, `workbox-routing`, `workbox-core`,
+`workbox-window`, all 7.4.1, transitive from `vite-plugin-pwa` 1.3.0), so this
+is **zero new downloads**. They are promoted to explicit `devDependencies`
+because `src/sw.ts` imports them directly, and depending on a transitive
+package without declaring it is how a lockfile bump breaks a build silently.
+
+`injectManifest` means the precache setup is now ours to write rather than
+generated, so the existing behaviour must be reproduced deliberately and not
+lost: `precacheAndRoute(self.__WB_MANIFEST)`, the `navigateFallback` to
+`/index.html` with the **`/^\/api/` denylist preserved**, and
+`skipWaiting`/`clientsClaim` to keep `registerType: "autoUpdate"` meaning what
+it meant before. The denylist is load-bearing — the original config's comment
+records that `/api/*` must never be cached because marks and grades are live.
+
+### 2. The finding that D5.10 did not have: **a service worker cannot authenticate**
+
+D5.10 says "the service worker fetches the inbox over the authenticated API".
+**As written, that is not implementable in this codebase.** The session — and
+the bearer token with it — is persisted to **`localStorage`**
+(`web/src/lib/auth/storage.ts:33/44`), and `localStorage` does not exist in a
+`ServiceWorkerGlobalScope`. `lib/api.ts:45` builds `Authorization: Bearer
+${token}` from that same store. A SW `fetch` would go out unauthenticated and
+get a 401.
+
+Three ways out, and the rejection matters more than the choice:
+
+- **Rejected — mirror the token into IndexedDB** (which a SW *can* read). It is
+  the only option that works with no tab open, and it is the wrong trade: it
+  creates a second, longer-lived copy of a bearer credential in a store with an
+  independent lifecycle, which every logout, token refresh and device eviction
+  must now also clear. A single missed invalidation leaves a background process
+  holding a valid token after the user believes they have left. This build spent
+  all of P5.7/D5.12 making session boundaries real — deciding *at the login
+  itself* whether a device may be admitted — and duplicating the credential into
+  a store nothing else touches would quietly undo that to save one fetch.
+- **Rejected — always render a generic notification and never fetch.** Honest,
+  but it throws away the case that actually works.
+- **Chosen — the SW asks an open client for the content.**
+  `clients.matchAll({type: "window", includeUncontrolled: true})` plus a
+  `postMessage` round-trip with a short timeout: the page, which *can* read
+  `localStorage`, does the authenticated fetch and posts the title/body back.
+  **The credential never leaves the page context** and no second copy is
+  created.
+
+### 3. The honest consequence, recorded rather than papered over
+
+With **no tab open, every push renders the generic "You have a new
+notification"** — the fallback P5.6 chunk B already predicted. The window where
+push carries real content is a tab that is **open but backgrounded**. That is a
+genuine reduction against a payload-carrying push, and it is the compound price
+of D5.10's privacy choice and §2's credential choice. Both are still right; the
+limitation is real and belongs in the Phase-5 limitations, not in a comment.
+
+The fallback is **mandatory, not a nicety**: browsers require *some*
+notification per push, and a `push` handler that resolves without calling
+`showNotification` triggers the engine's own "This site has been updated in the
+background" message in several of them. So there is no "show nothing" branch to
+design.
+
+### 4. Where the test seam is
+
+`vitest` here runs `environment: "node"` with **no jsdom** (a deliberate choice,
+`vitest.config.ts:25`), and there is no `ServiceWorkerGlobalScope` to mount in
+any case. So the logic is split: a **pure function** that takes whatever the
+client handshake returned (or `null`) and returns the notification to show, and
+a thin `src/sw.ts` adapter that wires real events to it. The pure function is
+what the tests drive, and the branch that matters — *content vs. fallback* — is
+entirely inside it.
+
+### 5. What cannot be claimed
+
+This machine has **no VAPID keys**, so `GET /api/notifications/push/config`
+reports the transport unavailable by design (D5.9 §4) and **no real push can be
+delivered in any harness in this build**. The push path is verified by unit
+tests over the pure function and by the screen's handling of the `unavailable`
+state — never by an end-to-end delivery. Do not write "push delivery verified"
+in the Phase-5 report; write what was actually exercised.
+
+---
+
+## D5.16 — G-12 states what it cannot do rather than offering a control that cannot work (P5.9 chunk C)
+
+Recorded **after** the code rather than before it, and the distinction is worth
+being honest about: MISSION §4's spec-before-code ordering for this phase was
+served by D5.15, which settled the architectural question (the service worker
+and the credential boundary). Everything below is a set of smaller calls made
+while building G-12 that the file comments alone would lose.
+
+### 1. The route is `PUT`, and the update is partial anyway
+
+The task brief said `PATCH /api/me/notification-preferences`. The router
+declares **`@router.put`** (`lemely/web/routers/me.py:176`). It is still a
+genuine partial update — pydantic's `model_fields_set` tells "omitted" from
+"explicitly sent", so an omitted field is left untouched server-side.
+
+The screen therefore sends **exactly one key per toggle flip**. That is not a
+bandwidth argument. A whole-object body would carry `atRiskAlert`, which the
+router answers with a **422** for any role but teacher/parent whether the value
+is `true` or `false`; and it would silently clobber a change made on another
+device between this screen's load and its save. The partial body is what makes
+the wire shape match what the reader actually asked for.
+
+This is the seventh time in Phase 5 that a note paraphrasing the codebase has
+been wrong where the code was right (D5.2, D5.4, D5.5, P5.5's header, the two
+deps predictions). The rule holds: **read the router; where a brief restates
+it, the code wins.**
+
+### 2. `atRiskAlert: null` is information, not an absent value
+
+The DTO returns `null` for every role except teacher and parent. That null does
+not mean "off" — it means *this caller's role has no such preference*. So the
+toggle is **filtered out of the list**, never rendered unchecked. Rendering it
+unchecked would offer a student a switch that 422s on use, and would tell them
+they had opted out of something that was never theirs.
+
+### 3. Three push states, and the order between two of them is load-bearing
+
+UI spec §G-12 asks for permission state to be shown "clearly with a route to fix
+it rather than toggles that silently do nothing". `resolvePushState` collapses
+four independent facts — server availability, browser support, permission,
+subscription — into one state, and two orderings inside it are decisions:
+
+**Server availability is checked before browser support.** Both mean push
+cannot happen here. Only the browser one *looks* actionable, and acting on it
+achieves nothing while the server has no VAPID keys to sign an assertion with —
+so telling the reader to switch browsers would be an errand that ends in the
+same place. The binding constraint no user action can change is stated first.
+
+**`granted` without a live subscription resolves to `prompt`, not `enabled`.**
+The permission is the browser's memory of an earlier answer; the subscription is
+what the server can actually push to. Cleared site data, a new browser profile,
+or a `410` the server acted on (D5.9 §4) leaves the first without the second.
+Reporting "on" there is the single failure a settings screen exists to prevent.
+Re-enabling from `prompt` shows no permission dialog when permission is already
+granted, so the recovery costs a click and no interruption.
+
+Both verified by inversion: dropping `subscribed` from the enabled check fails
+`reports prompt, not enabled…`; swapping the two precedence lines fails `puts
+server unavailability ahead of browser support`.
+
+### 4. The test-notification button is a device check and says so
+
+**No route in this backend sends a test push**, and on a build with no VAPID
+keys none could. Rather than ship a button that pretends otherwise, it shows a
+notification from the device itself and the copy beside it states plainly that
+it does not check the server can reach you.
+
+What it does prove is the half that actually breaks: permission is granted, the
+service worker is registered and active, and the operating system will surface a
+Lemely notification rather than swallowing it. It goes through
+`registration.showNotification` rather than `new Notification()` — that
+constructor is unsupported on Android Chrome, which is exactly where a
+hand-rolled test button silently does nothing on the platform most of these
+students are on.
+
+### 5. Five toggles, and the sixth is refused structurally
+
+UI spec §G-12 lists "weekly summary". `NotificationType` has five members, no
+`weekly_summary` column, no sender and no row — a sixth switch would gate
+nothing (UI spec §1.4). `NOTIFICATION_TOGGLES`'s key list is asserted **exactly**
+in `tests/unit/notificationPrefs.test.ts`, so it cannot be added without the
+backend growing the enum value first. Carried to the Phase-5 limitations.
+
+### 6. Quiet hours refuse a half-filled pair before the server does
+
+`NotificationPreferencesService.set` raises on a merged result with exactly one
+bound set, and the router turns that into a 422. Catching it client-side is not
+duplication: without it, a reader who types a start time and tabs away is shown
+a server error for a form they have not finished filling in.
+
+Start equal to end is deliberately **allowed through** — the backend accepts it,
+and a client stricter than the server it mirrors is the same dishonesty in
+reverse. An overnight window says out loud that it wraps past midnight, because
+"22:00 to 07:00" read literally is an empty range and the reader has no other
+way to check we understood them short of waiting until 2am.
+
+### 7. What no gate exercises, and why it stays that way
+
+The G-12 audit-registry entry runs under a student session against a build with
+no VAPID keys. So **the `prompt`, `denied` and `enabled` push states, the enable
+button and the test-notification button are covered by unit tests only** — never
+by axe, Lighthouse or a browser — and a student-session audit sees four toggles
+rather than five. Covering them would need a mocked push config, i.e. auditing a
+screen this deployment never shows. Both non-coverages are written into the
+registry entry itself and carried to the Phase-5 limitations. Do not write "push
+enablement verified" in the Phase-5 report.
+
+## D5.17 — Four Phase-5 acceptance flows, and the four judgment calls the E2E pass forced (P5.11)
+
+MISSION §4 Phase 5 names four acceptance flows: XP accrual, leaderboard ordering,
+push delivery (mock), announcement flow. Before P5.11 there was **zero** E2E
+coverage of any Phase-5 surface. Building all four forced four calls worth
+recording, because each one is a place where the obvious choice is wrong in a way
+that still goes green.
+
+**1. Two flows ride on `correct-paper.spec.ts` rather than getting their own spec.**
+`POST /student/correct` is *both* the `paper_corrected` XP seam and the
+`grade_ready` notification seam. A dedicated driver for either would re-run an
+upload→mark journey the suite already runs, for no new coverage. The XP number is
+exact (50) rather than a range because that spec signs up a **fresh** account, so
+there is no prior XP to account for and no clock control needed.
+
+The XP assertion is worth more than its size suggests, and this is why it must not
+later be "simplified" into a smoke check: `award_xp_safely` is deliberately
+**fail-open** (D5.1 §3 — an already-committed student action must never become an
+error response), and `xp_events.subject_code` is a live FK whose violation that
+helper swallows. So a missing `subjects` row costs a real student 50 XP while the
+correction, the result screen and every other gate in this build stay green. This
+is the **first test in the build that would catch a fail-open seam failing.**
+
+**2. "Push delivery" is scoped to the notification row, and no push is mocked into
+a pass.** This machine has no VAPID keys, so the transport reports itself
+unavailable by design (D5.9 §4) and `notify_safely` records
+`push_suppressed_reason="transport_unavailable"` *after* writing the row. The row
+is the assertable fact. Asserting a "delivered push" here would mean asserting a
+mock of our own construction — a test that proves the harness, not the product.
+`grade_ready` is additionally asserted to render with **no** Open button: its
+payload carries an upload UUID and `/student/result/:paperId` addresses papers by
+history index, so a link would be a guaranteed dead one. The absence is pinned so
+a later session does not "fix" it into one.
+
+**3. S-31's label/value pairs diverge from C-2 `MarkDisplay`, deliberately.**
+The established repo pattern puts the value inside the element's own `aria-label`
+(`"12 out of 20 marks"`). Two problems with copying it here: it names a generic
+`<div>`, which has no accessible name in the ARIA spec, and it duplicates the
+number into a second place that can drift from the first. P5.11 instead names a
+`role="group"` with the **label** and leaves the value as its content — the pair
+is associated, the number is stated exactly once, and `getByRole("group", {name})`
+is still a stable locator. This is a deliberate improvement on the house pattern,
+not an oversight; C-2 itself was left alone (changing it would touch an assertion
+in `correct-paper.spec.ts` for no behavioural gain).
+
+**4. `BoardRow` takes its element as a prop, and G-10 declines Lighthouse.**
+Two "the natural fix is the wrong one" cases in the same chunk:
+* Making `BoardRow`'s root `<li>` unconditionally — the obvious way to get list
+  semantics — turns the *pinned viewer row*, which renders outside the `<ol>` on
+  purpose because its rank is out of sequence, into a listitem with no list
+  parent. That is a **serious** axe violation on a route already in the registry,
+  and no cheap gate catches it: there is no `Standings` component test and no
+  vitest test imports axe, so all four web gates go green and it surfaces ~28
+  minutes into a run.
+* G-10's registry entry sets `lighthouse: false`. `runLighthouseAudit` drives its
+  own navigation and never replays the entry's `ready`, so it would score the
+  plain login form and file the number under G-10's slug — a measurement of a
+  state it never reached. `/login` is already scored on its own entry. A wrong
+  number is worse than no number (UI spec §1.4).
+
+**Also recorded, because it is the same lesson a third time.** The audit
+registry's exclusion list named four student routes as "still on mock data" and
+every word of it was false by P5.11 — and the stale sentence was the one
+*documenting the two previous times this happened*. Adding the three genuinely
+unaudited routes immediately found that **none of them rendered an `<h1>`**.
+Three more real screen-reader defects that a hand-maintained exclusion list had
+been hiding, on top of the one the G-13 entry found the session before. The
+generalisable rule, now paid for four times (`EXPECTED_TABLES` P5.4, the
+`SeedContract` mirror P4.11, G-13 P5.9, this): **a hand-kept list that nothing
+regenerates fails silently and in the direction of false confidence.** Write the
+registry entry in the same chunk as the screen.

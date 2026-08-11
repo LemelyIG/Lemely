@@ -22,9 +22,23 @@ import { getDeviceId, getSession, setSession, clearSession, type Session } from 
  * surface as a real ApiError, never silently resolve.
  */
 
+/**
+ * Login variables. `confirmDeviceEviction` is the second half of the D5.12
+ * handshake: the first attempt is sent without it and may come back 409 with
+ * the account's signed-in devices (G-10); the same credentials are re-sent with
+ * it once the user has agreed to sign the oldest device out. The password is
+ * therefore verified again on confirm, which is what makes the confirmation
+ * unforgeable by anyone who did not just type it.
+ */
+export interface LoginVariables {
+  email: string
+  password: string
+  confirmDeviceEviction?: boolean
+}
+
 interface AuthContextValue {
   session: Session | null
-  login: UseMutationResult<TokenResponse, Error, { email: string; password: string }>
+  login: UseMutationResult<TokenResponse, Error, LoginVariables>
   signup: UseMutationResult<
     TokenResponse,
     Error,
@@ -56,13 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const login = useMutation({
-    mutationFn: ({ email, password }: { email: string; password: string }) =>
+    mutationFn: ({ email, password, confirmDeviceEviction }: LoginVariables) =>
       request<TokenResponse>("/auth/login", {
         method: "POST",
         body: JSON.stringify({
           email,
           password,
           deviceId: getDeviceId(),
+          confirmDeviceEviction: confirmDeviceEviction ?? false,
         } satisfies LoginRequest),
       }),
     onSuccess: applySession,

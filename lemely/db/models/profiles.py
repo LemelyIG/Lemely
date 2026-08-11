@@ -76,6 +76,12 @@ class StudentProfile(TimestampMixin, Base):
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    leaderboard_opt_out: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.false()
+    )
+    """D5.1 §9: absent from every board when ``True``, including boards their
+    own friends see. Enforced in ``lemely.db.leaderboard_repo``'s query WHERE
+    clause, never filtered in a DTO/route layer — see that module's docstring."""
 
     # No ORM relationship to StudentSubjectEnrolment here: that table's
     # user_id is its own independent FK to users.id (see class docstring),

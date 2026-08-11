@@ -101,11 +101,59 @@ class Announcement(TimestampMixin, Base):
     publish_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
 
+class AnnouncementRead(TimestampMixin, Base):
+    """A read receipt: this user opened this announcement, at this time.
+
+    The receipt **is** the row. There is no "unread" row and no boolean —
+    ``announcements`` holds one row per audience rather than per recipient
+    (a class-wide post is a single row hundreds of students see), so unread
+    can only be expressed as the absence of a receipt. See migration
+    ``0016_announcement_reads`` for why that shape was chosen over a flag.
+
+    ``uq_announcement_reads_pair`` is what makes marking-as-read idempotent
+    under concurrency; ``read_at`` is the *first* read and is never moved by
+    a re-open.
+    """
+
+    __tablename__ = "announcement_reads"
+    __table_args__ = (
+        sa.UniqueConstraint("announcement_id", "user_id", name="uq_announcement_reads_pair"),
+        sa.Index("ix_announcement_reads_user_id_announcement_id", "user_id", "announcement_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    announcement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("announcements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    read_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+
+
 class Notification(TimestampMixin, Base):
     """An in-app notification delivered to a specific user."""
 
     __tablename__ = "notifications"
-    __table_args__ = (sa.Index("ix_notifications_user_id_read_at", "user_id", "read_at"),)
+    __table_args__ = (
+        sa.Index("ix_notifications_user_id_read_at", "user_id", "read_at"),
+        sa.Index(
+            "uq_notifications_user_type_dedupe",
+            "user_id",
+            "type",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=sa.text("dedupe_key IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -127,6 +175,53 @@ class Notification(TimestampMixin, Base):
         JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")
     )
     read_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(sa.String, nullable=True)
+
+
+class PushSubscription(TimestampMixin, Base):
+    """One browser's Web Push subscription for one user (P5.6, D5.9 §4).
+
+    **This is not** :class:`~lemely.db.models.users.Device`. A ``devices`` row
+    is a *session* the 3-device limit counts (D1.11); a row here is a *push
+    endpoint* a browser handed us. The two are deliberately separate: a user
+    can revoke a push subscription without ending their session, a session can
+    exist on a browser that never granted notification permission, and the
+    push service can kill an endpoint without the session being affected.
+    Folding push keys into ``devices`` would make one of those three states
+    unrepresentable.
+
+    **``endpoint`` is unique across the whole table, not per user, and that is
+    a privacy constraint rather than a tidiness one.** The endpoint URL
+    identifies a browser install. If two users sign in on one browser, the
+    second subscription carries the *same* endpoint, and a per-user unique
+    would leave the first user's row in place — so the first user's
+    notifications would keep being pushed to a browser now being used by the
+    second. Global uniqueness forces the re-subscribe to *move* the row to the
+    new user instead (see :meth:`~lemely.db.notification_repo.NotificationService.subscribe`).
+
+    ``p256dh`` and ``auth`` are the browser's public encryption material,
+    handed to us by ``PushSubscription.toJSON()``. They are useless without
+    the browser's private key, so they are not secrets — but they are also
+    never returned on any wire DTO, because nothing a client needs is in them.
+    """
+
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (sa.Index("ix_push_subscriptions_user_id", "user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    endpoint: Mapped[str] = mapped_column(sa.Text, nullable=False, unique=True)
+    p256dh: Mapped[str] = mapped_column(sa.String, nullable=False)
+    auth: Mapped[str] = mapped_column(sa.String, nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(sa.String, nullable=True)
 
 
 class AtRiskAcknowledgement(TimestampMixin, Base):
@@ -321,5 +416,6 @@ __all__ = [
     "AtRiskAcknowledgement",
     "Notification",
     "NotificationPreference",
+    "PushSubscription",
     "ReviewQueueItem",
 ]

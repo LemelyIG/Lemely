@@ -220,6 +220,43 @@ class StorageSettings(BaseModel):
     signed_url_ttl_seconds: int = Field(default=3600, ge=1)
 
 
+class PushSettings(BaseModel):
+    """Web-push (VAPID) application-server credentials (P5.6 chunk B, D5.10).
+
+    Overrides via ``lemely.toml`` under the ``[push]`` section or
+    ``LEMELY_PUSH__*`` env vars.
+
+    **All three credential fields default to ``None`` and that is a supported
+    state, not a misconfiguration** (D5.9 §4): with any of them missing the
+    transport reports itself unavailable and the notification inbox keeps
+    working. This machine has no VAPID keys, so treating their absence as an
+    error would fail every notification in exactly the environment the tests
+    run in.
+
+    ``vapid_public_key`` is deliberately a plain ``str`` and not a
+    :class:`SecretStr`: it is handed to every browser that subscribes, so
+    wrapping it would imply a confidentiality it does not have. The private
+    key is a secret and is typed as one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    # Base64url-encoded uncompressed P-256 point (65 bytes), the value the
+    # browser passes to ``pushManager.subscribe`` as ``applicationServerKey``.
+    vapid_public_key: str | None = None
+    # Base64url-encoded 32-byte P-256 private scalar.
+    vapid_private_key: SecretStr | None = None
+    # RFC 8292 ``sub`` claim: a ``mailto:`` or ``https:`` contact for whoever
+    # operates this application server, so a push service can reach us.
+    vapid_subject: str | None = None
+    # RFC 8030 ``TTL``: how long the push service may hold an undelivered
+    # message. A day matches the cadence of the notifications this build sends.
+    ttl_seconds: int = Field(default=86400, ge=0)
+    # Per-request timeout when talking to a push service. Kept short because
+    # every push is a best-effort side effect of an already-committed action
+    # (D5.9 §1) and must never make a student wait.
+    timeout_seconds: float = Field(default=10.0, gt=0)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -240,6 +277,7 @@ class Settings(BaseSettings):
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
     storage: StorageSettings = StorageSettings()
+    push: PushSettings = PushSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()

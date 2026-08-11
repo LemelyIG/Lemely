@@ -29,20 +29,22 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import Role, XpSource
 from lemely.db.study_plan_repo import (
     StudyPlanError,
     StudyPlanNotFoundError,
     StudyPlanOwnershipError,
     StudyPlanService,
 )
-from lemely.web.deps import AuthContext, get_study_plan_service, require_role
+from lemely.db.xp_repo import XpService
+from lemely.web.deps import AuthContext, get_study_plan_service, get_xp_service, require_role
 from lemely.web.schemas_study_plan import (
     CreateStudyPlanRequestDTO,
     CurrentStudyPlanDTO,
     StudyPlanSessionDTO,
     StudyPlanWeekDTO,
 )
+from lemely.web.xp_awards import award_xp_safely
 
 if TYPE_CHECKING:
     from lemely.db.study_plan_repo import PlanView, SessionView
@@ -130,6 +132,7 @@ def complete_study_plan_session(
     session_id: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     service: Annotated[StudyPlanService, Depends(get_study_plan_service)],
+    xp_service: Annotated[XpService, Depends(get_xp_service)],
 ) -> StudyPlanSessionDTO:
     """Mark one of the caller's own sessions complete.
 
@@ -137,6 +140,10 @@ def complete_study_plan_session(
     ``session_id`` raises ``ValueError`` from the service's ``_as_uuid`` and
     is mapped to 422, not a 500; an unknown or another student's session id
     is a 404 with the identical body (see this module's docstring).
+
+    P5.2 chunk B, D5.1: ``study_session_completed`` XP is deduped on the
+    session id, so re-completing an already-completed session (a legitimate,
+    idempotent no-op per the service docstring) never double-awards.
     """
     try:
         session = service.complete_session(auth.user_id, session_id)
@@ -144,6 +151,14 @@ def complete_study_plan_session(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    award_xp_safely(
+        xp_service,
+        user_id=auth.user_id,
+        source=XpSource.study_session_completed,
+        dedupe_key=str(session.id),
+        subject_code=session.subject_code,
+        seam="study_session_completed",
+    )
     return _session_to_dto(session)
 
 

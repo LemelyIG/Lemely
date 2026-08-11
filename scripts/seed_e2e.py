@@ -308,14 +308,17 @@ from lemely.core.schemas import (
     GradePrediction,
     WeaknessReport,
 )
+from lemely.db.models.engagement import XpEvent
 from lemely.db.models.enums import (
     DifficultySource,
     QuestionSource,
     QuizQuestionStatus,
     Role,
+    XpSource,
 )
 from lemely.db.models.flashcards import DeckOrigin, ReviewGrade
 from lemely.db.models.quizzes import QuestionBank
+from lemely.db.models.users import Device
 from lemely.db.practice_repo import PracticeRequest
 from lemely.db.question_bank_repo import NewBankQuestion
 from lemely.db.session import get_sessionmaker
@@ -952,6 +955,7 @@ def build_result_payload(
     placement: dict[str, Any],
     practice: dict[str, Any],
     study_plan: dict[str, Any],
+    engagement: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the documented output contract from already-computed pieces.
 
@@ -960,8 +964,9 @@ def build_result_payload(
     touching Postgres or GoTrue. ``reviewItem``/``quiz``/``emptyTeacher``/
     ``emptyParent`` are additive (P3.10 chunk e1); ``placement`` is additive
     on top of those (P4.8 chunk C); ``practice`` is additive on top of all of
-    it (P4.9 chunk C); ``studyPlan`` is additive on top of that (P4.10 chunk C)
-    — every key present before it is unchanged.
+    it (P4.9 chunk C); ``studyPlan`` is additive on top of that (P4.10 chunk C);
+    ``engagement`` is additive on top of all of it (P5.11) — every key present
+    before it is unchanged.
     """
     return {
         "runTag": run_tag,
@@ -978,6 +983,7 @@ def build_result_payload(
         "placement": placement,
         "practice": practice,
         "studyPlan": study_plan,
+        "engagement": engagement,
     }
 
 
@@ -1748,6 +1754,123 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         },
     }
 
+    # -- Engagement (P5.11) ---------------------------------------------------
+    # Two independent preconditions Phase 5's acceptance criteria stand on and
+    # nothing else in this seed provides: a populated, deterministically
+    # ordered weekly leaderboard, and an account that has already used all
+    # three of its device slots.
+
+    # Purge first, for the same reason P4.9 chunk C purges the question bank —
+    # but the failure mode here is worse, so it is worth stating plainly.
+    # A capped award is a SUCCESSFUL call that writes no row (xp_repo.py's
+    # XpCapReason path, D5.1 §3): no exception, nothing logged, the seed
+    # reports success. So an accumulating table does not fail loudly, it
+    # first drifts every total upward and then freezes them all at the
+    # 250/day global cap — and P5.3 chunk A deliberately made equal XP read as
+    # EQUAL RANK (equal effort, equal standing), so the ordering assertion
+    # would collapse into an all-tied board that looks like a considered
+    # product decision rather than a seed defect.
+    with get_sessionmaker()() as xp_purge_session:
+        purged_xp = len(xp_purge_session.execute(sa_delete(XpEvent).returning(XpEvent.id)).all())
+        xp_purge_session.commit()
+    _log(f"Purged {purged_xp} xp_event row(s) from previous seed runs")
+
+    # Every event lands on the seed run's own Cairo civil date, deliberately
+    # with no spread across days. `LeaderboardService.board` filters
+    # `awarded_on` to a Monday..Sunday window around *today* in Africa/Cairo,
+    # so (a) any hardcoded calendar date renders an empty-and-successful board
+    # the moment the week rolls over, and (b) the realistic-looking fix —
+    # `today - N` — crosses the Monday boundary when the run happens early in
+    # the week and silently drops that student's events into last week. A spec
+    # built on a spread passes Tuesday through Sunday and fails only on
+    # Monday, which reads as flake. Same-day costs nothing: 250 XP/day is
+    # ample for an ordering, and each total below is a whole number of real
+    # papers (4/3/2 x 50), so the board is fixture data without being a state
+    # the real award path could not have produced.
+    _log("Awarding the class board's weekly XP — real XpService awards, all on today's Cairo date")
+    xp_service = deps.get_xp_service()
+    leaderboard_xp = {"declining": 4, "inactive": 3, "control": 2}
+    weekly_xp_by_student: dict[str, int] = {}
+    for student_key, paper_count in leaderboard_xp.items():
+        student_uuid = uuid.UUID(students[student_key]["userId"])
+        for index in range(paper_count):
+            xp_service.award(
+                student_uuid,
+                XpSource.paper_corrected,
+                dedupe_key=f"seed-{run_tag}-{student_key}-paper-{index}",
+                subject_code=PLACEMENT_SUBJECT_CODE,
+            )
+        total = xp_service.total_xp(student_uuid)
+        weekly_xp_by_student[student_key] = total
+    # Read back rather than trusting the awards: a silently capped or deduped
+    # award is a successful call, so the only honest proof the board is
+    # ordered is three distinct descending totals.
+    ordered = sorted(weekly_xp_by_student.items(), key=lambda kv: kv[1], reverse=True)
+    if len({xp for _, xp in ordered}) != len(ordered):
+        raise RuntimeError(
+            f"Seeded weekly XP is not strictly distinct across the roster: {ordered!r}. "
+            "Equal totals read as EQUAL RANK by design (D5.1/P5.3 chunk A), so the "
+            "leaderboard-ordering assertion would collapse into an all-tied board that "
+            "looks like a product decision rather than a seed defect."
+        )
+
+    # G-10's precondition (P5.7 recorded it as "a seed precondition, not a
+    # navigation"). The three rows are trivial; the load-bearing part is that
+    # the account is DEDICATED. Any other test logging in as it mints its own
+    # fresh deviceId and, on a path that permits eviction, silently consumes a
+    # slot — after which G-10 stops reproducing and its audit entry goes green
+    # by rendering the ordinary logged-in screen. That failure is silent and
+    # order-dependent, which is the expensive kind. Nothing else may use this
+    # account.
+    _log("Signing up the dedicated device-limit account and filling all three of its slots")
+    device_limit = _signup_account("device-limit", Role.student, run_tag)
+    device_limit_uuid = uuid.UUID(device_limit["userId"])
+    # `client_device_id` stays NULL so no browser can ever accidentally match
+    # one of these rows: `_match_existing` returns None immediately for a NULL
+    # fingerprint, which is exactly the "a fresh browser always needs a fourth
+    # slot" property G-10 depends on.
+    # Distinct labels and staggered `last_seen_at` are not decoration either:
+    # the 409 challenge names the device a confirmed retry would sign out as
+    # the LAST of a most-recently-active-first list, and DeviceLimitNotice
+    # highlights precisely that one. Three indistinguishable rows would
+    # screenshot as three identical lines, and the single behaviour G-10
+    # exists to prove — that the UI names the device it will sign out — would
+    # not be visible in the evidence.
+    seeded_devices = [
+        ("Chrome on Windows", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126", 5),
+        ("Safari on iPhone", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5) Safari/605.1.15", 60),
+        ("Chrome on Android", "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/126", 60 * 26),
+    ]
+    with get_sessionmaker()() as device_session:
+        for label, user_agent, minutes_ago in seeded_devices:
+            device_session.add(
+                Device(
+                    user_id=device_limit_uuid,
+                    client_device_id=None,
+                    device_label=label,
+                    user_agent=user_agent,
+                    last_seen_at=now - timedelta(minutes=minutes_ago),
+                )
+            )
+        device_session.commit()
+
+    engagement_dict = {
+        "deviceLimit": {
+            **device_limit,
+            "deviceCount": len(seeded_devices),
+            # The row a confirmed eviction would sign out — least recently
+            # active, which is the last of the challenge's list.
+            "oldestDeviceLabel": seeded_devices[-1][0],
+        },
+        "leaderboard": {
+            "classId": str(class_row.class_id),
+            "weeklyXpByStudentKey": weekly_xp_by_student,
+            # Highest first — the order the class board must render. Derived
+            # from the awards actually read back, never restated as a literal.
+            "expectedOrderByStudentKey": [key for key, _ in ordered],
+        },
+    }
+
     _log("Seeding complete")
     return build_result_payload(
         run_tag=run_tag,
@@ -1764,6 +1887,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         placement=placement_dict,
         practice=practice_dict,
         study_plan=study_plan_dict,
+        engagement=engagement_dict,
     )
 
 

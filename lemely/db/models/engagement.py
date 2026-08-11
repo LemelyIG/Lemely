@@ -14,10 +14,27 @@ from lemely.db.models.enums import TimestampMixin, XpSource
 
 
 class XpEvent(TimestampMixin, Base):
-    """A single XP award earned by a user for completing an activity."""
+    """A single XP award earned by a user for completing an activity.
+
+    ``subject_code`` and ``dedupe_key`` were added in migration ``0013``
+    (P5.2 chunk A, D5.1 §7/§8, corrected by D5.2) — see that migration's
+    docstring for why ``dedupe_key`` is nullable with a *partial* unique
+    index rather than ``NOT NULL``.
+    """
 
     __tablename__ = "xp_events"
-    __table_args__ = (sa.Index("ix_xp_events_user_id_awarded_on", "user_id", "awarded_on"),)
+    __table_args__ = (
+        sa.Index("ix_xp_events_user_id_awarded_on", "user_id", "awarded_on"),
+        sa.Index("ix_xp_events_subject_code", "subject_code"),
+        sa.Index(
+            "uq_xp_events_user_source_dedupe",
+            "user_id",
+            "source",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=sa.text("dedupe_key IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -35,6 +52,12 @@ class XpEvent(TimestampMixin, Base):
     )
     amount: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     awarded_on: Mapped[date] = mapped_column(sa.Date, nullable=False)
+    subject_code: Mapped[str | None] = mapped_column(
+        sa.String,
+        sa.ForeignKey("subjects.code", ondelete="SET NULL"),
+        nullable=True,
+    )
+    dedupe_key: Mapped[str | None] = mapped_column(sa.String, nullable=True)
     event_metadata: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
         JSONB, nullable=False, server_default=sa.text("'{}'::jsonb"), name="metadata"
     )

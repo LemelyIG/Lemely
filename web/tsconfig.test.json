@@ -14,6 +14,17 @@
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
+    /* Tests import React components directly (S-28's `Announcements.tsx`
+       exports its date helpers, S-29's `Standings.tsx` its week/monogram
+       helpers), so this project compiles `.tsx` and needs the same JSX
+       transform as `tsconfig.app.json`. Without it every such import is
+       TS6142 "--jsx is not set".
+
+       This was missing since P5.8 chunk B and did not surface, because
+       `tsc -b` is incremental: a `node_modules/.tmp` tsbuildinfo left over
+       from before the test existed reported success. `rm -rf
+       node_modules/.tmp` before believing a green `tsc -b`. */
+    "jsx": "react-jsx",
     "paths": { "@/*": ["./src/*"] },
 
     /* Linting */

@@ -25,15 +25,25 @@ export function Landing() {
           <div className="font-mono text-[11.5px] tracking-[0.09em] uppercase text-accent">
             {landingHero.eyebrow}
           </div>
-          <div className="font-serif text-[62px] leading-[1.04] mt-4 -tracking-[0.01em]">
+          {/* The hero title is the page's heading, so it is an <h1> rather
+              than a large <div>. It rendered as a div until P5.11, which went
+              unnoticed because this route had no audit-registry entry — the
+              same silent shape as G-13's missing heading. */}
+          <h1 className="font-serif text-[62px] leading-[1.04] mt-4 -tracking-[0.01em]">
             {landingHero.titleTop}
             <br />
             {landingHero.titleBottom}
-          </div>
+          </h1>
           <div className="text-[16.5px] text-t2 leading-[1.55] mt-5 max-w-[52ch] text-pretty">
             {landingHero.body}
           </div>
-          <div className="flex gap-3 mt-7">
+          {/* `flex-wrap`, not a narrower button: Button carries
+              `whitespace-nowrap`, so at 380px the secondary CTA cannot shrink
+              and instead ran to x=409 — a horizontal-scroll violation, which
+              `check_ui_gates.py` fails the build on (zero tolerated). Wrapping
+              stacks the two CTAs and keeps both labels intact; truncating
+              "For centres & teachers" would hide who the link is for. */}
+          <div className="flex flex-wrap gap-3 mt-7">
             <Button
               variant="accent"
               size="lg"

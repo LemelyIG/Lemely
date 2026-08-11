@@ -56,6 +56,14 @@ export interface StudentProfile {
   hasExternalLessons: boolean | null
   weeklyStudyHours: number | null
   onboardingCompletedAt: string | null
+  /**
+   * Whether this student is hidden from public leaderboards (P5.3 chunk A).
+   *
+   * `NOT NULL` on the model with a `false` default, so unlike every field
+   * above it is a plain boolean and never `null` — the column has no "not
+   * answered" state to represent.
+   */
+  leaderboardOptOut: boolean
 }
 
 /** `GET /api/me/student-profile` response (mirrors `StudentProfileWithEnrolmentsDTO`). */
@@ -74,6 +82,13 @@ export interface StudentProfileUpdate {
   schoolName?: string | null
   hasExternalLessons?: boolean | null
   weeklyStudyHours?: number | null
+  /**
+   * Deliberately `boolean | undefined`, **not** `boolean | null` like its
+   * siblings above: `leaderboard_opt_out` is NOT NULL on the model, so an
+   * explicit `null` is a 422 rather than a coerced `false`. Omit the key to
+   * leave it alone; send a real boolean to change it.
+   */
+  leaderboardOptOut?: boolean
 }
 
 /** One item of a `PUT /api/me/student-profile/enrolments` body (mirrors

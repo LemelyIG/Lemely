@@ -141,6 +141,11 @@ class SessionView:
     duration_minutes: int
     focus: str
     completed_at: datetime | None
+    subject_code: str
+    """The owning plan's subject (P5.2 chunk B) — not part of the wire DTO
+    (``lemely.web.routers.study_plan._session_to_dto`` doesn't read it); it
+    exists so the web layer can award ``study_session_completed`` XP with the
+    right subject attribution (D5.1 §7/D5.2) without a second query."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,17 +330,17 @@ class StudyPlanService:
         session_uuid = _as_uuid(session_id)
         moment = now if now is not None else self._now()
         with self._sessionmaker() as session, session.begin():
-            row = self._owned_session(session, student_uuid, session_uuid)
+            row, plan = self._owned_session(session, student_uuid, session_uuid)
             if row.completed_at is None:
                 row.completed_at = moment
             session.flush()
-            return self._to_session_view(row)
+            return self._to_session_view(row, plan.subject_code)
 
     # -- Internals ----------------------------------------------------------------
 
     def _owned_session(
         self, session: Session, student_uuid: uuid.UUID, session_uuid: uuid.UUID
-    ) -> DbStudyPlanSession:
+    ) -> tuple[DbStudyPlanSession, DbStudyPlan]:
         row = session.get(DbStudyPlanSession, session_uuid)
         if row is None:
             raise StudyPlanNotFoundError(f"Unknown study-plan session: {session_uuid}")
@@ -344,7 +349,7 @@ class StudyPlanService:
             raise StudyPlanOwnershipError(
                 f"Study-plan session {session_uuid} is not owned by student {student_uuid}"
             )
-        return row
+        return row, plan
 
     def _weaknesses(
         self, session: Session, student_uuid: uuid.UUID, subject_code: str
@@ -525,10 +530,10 @@ class StudyPlanService:
             available=row.available,
             reason=row.reason,
             generated_at=row.generated_at,
-            sessions=[self._to_session_view(s) for s in sessions],
+            sessions=[self._to_session_view(s, row.subject_code) for s in sessions],
         )
 
-    def _to_session_view(self, row: DbStudyPlanSession) -> SessionView:
+    def _to_session_view(self, row: DbStudyPlanSession, subject_code: str) -> SessionView:
         return SessionView(
             id=row.id,
             date=row.date,
@@ -537,6 +542,7 @@ class StudyPlanService:
             duration_minutes=row.duration_minutes,
             focus=row.focus,
             completed_at=row.completed_at,
+            subject_code=subject_code,
         )
 
 

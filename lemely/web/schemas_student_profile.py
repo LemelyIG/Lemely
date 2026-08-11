@@ -53,6 +53,11 @@ class StudentProfileDTO(ApiModel):
     hasExternalLessons: bool | None = None
     weeklyStudyHours: int | None = None
     onboardingCompletedAt: datetime | None = None
+    leaderboardOptOut: bool = False
+    """D5.1 §9: ``True`` hides this student from every board, including one
+    their own friends see. Reversible — opting back in restores the exact
+    previous ranked position, since no XP history is ever touched by this
+    flag."""
 
 
 class StudentProfileWithEnrolmentsDTO(ApiModel):
@@ -77,6 +82,11 @@ class StudentProfileUpdateDTO(ApiModel):
     schoolName: str | None = None
     hasExternalLessons: bool | None = None
     weeklyStudyHours: int | None = None
+    leaderboardOptOut: bool | None = None
+    """Not nullable on the model (D5.1 §9), so unlike every other field on
+    this DTO an explicit ``null`` here is rejected rather than clearing
+    anything -- see the route for the exact check. ``None`` here only ever
+    means "omitted"."""
 
 
 class EnrolmentUpsertDTO(ApiModel):

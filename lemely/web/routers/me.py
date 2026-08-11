@@ -17,11 +17,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.auth.mirror import UserMirror
+from lemely.db.device_repo import MAX_DEVICES, DeviceRegistry
 from lemely.db.models.enums import Role, SessionMonth
 from lemely.db.notification_prefs_repo import (
     UNSET,
     NotificationPreferencesRow,
     NotificationPreferencesService,
+    _UnsetType,
 )
 from lemely.db.student_profile_repo import (
     ConfidenceRatingRow,
@@ -34,10 +36,16 @@ from lemely.db.student_profile_repo import (
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
+    get_device_registry,
     get_notification_prefs_service,
     get_student_profile_service,
     get_user_mirror,
     require_role,
+)
+from lemely.web.devices import to_device_dto
+from lemely.web.schemas_devices import (
+    DeviceListDTO,
+    DeviceRevokedDTO,
 )
 from lemely.web.schemas_me import (
     NotificationPreferencesDTO,
@@ -216,6 +224,7 @@ def _profile_to_dto(row: StudentProfileRow) -> StudentProfileDTO:
         hasExternalLessons=row.has_external_lessons,
         weeklyStudyHours=row.weekly_study_hours,
         onboardingCompletedAt=row.onboarding_completed_at,
+        leaderboardOptOut=row.leaderboard_opt_out,
     )
 
 
@@ -284,9 +293,19 @@ def patch_student_profile(
     Only fields present in the request body are changed (``payload.model_fields_set``,
     the same mechanism ``put_notification_preferences`` uses); an omitted
     field is left as-is, an explicit ``null`` clears it (every field here is
-    skippable per S-02).
+    skippable per S-02) -- except ``leaderboardOptOut``, which is not
+    nullable on the model (D5.1 §9): an explicit ``null`` for it is a 422,
+    not a silent no-op or a coerced ``False``.
     """
     provided = payload.model_fields_set
+    leaderboard_opt_out: bool | _UnsetType = UNSET
+    if "leaderboardOptOut" in provided:
+        if payload.leaderboardOptOut is None:
+            raise HTTPException(
+                status_code=422,
+                detail="leaderboardOptOut cannot be null; omit it to leave unchanged",
+            )
+        leaderboard_opt_out = payload.leaderboardOptOut
     try:
         row = service.update_profile(
             auth.user_id,
@@ -301,6 +320,7 @@ def patch_student_profile(
             weekly_study_hours=(
                 payload.weeklyStudyHours if "weeklyStudyHours" in provided else UNSET
             ),
+            leaderboard_opt_out=leaderboard_opt_out,
         )
     except StudentProfileValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -378,6 +398,52 @@ def post_complete_onboarding(
     """Mark the caller's onboarding as complete (``onboarding_completed_at = now``)."""
     row = service.mark_onboarding_complete(auth.user_id)
     return _profile_to_dto(row)
+
+
+# -- Devices (G-11) --------------------------------------------------------
+#
+# Role-agnostic, like the notification preferences above: every role signs in on
+# a device and every role is subject to the same 3-device limit (D1.11). The
+# caller's own id is always the token's ``sub`` — no route here takes a user id,
+# so one account cannot read or revoke another's sessions.
+
+
+@router.get("/devices", response_model=DeviceListDTO)
+def list_devices(
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    devices: Annotated[DeviceRegistry, Depends(get_device_registry)],
+) -> DeviceListDTO:
+    """List the caller's signed-in devices, most recently active first."""
+    rows = devices.active_devices(auth.user_id)
+    return DeviceListDTO(
+        devices=[to_device_dto(row, current_session_id=auth.session_id) for row in rows],
+        maxDevices=MAX_DEVICES,
+    )
+
+
+@router.delete("/devices/{device_id}", response_model=DeviceRevokedDTO)
+def revoke_device(
+    device_id: str,
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    devices: Annotated[DeviceRegistry, Depends(get_device_registry)],
+) -> DeviceRevokedDTO:
+    """Sign one of the caller's devices out (idempotent).
+
+    A device id that does not exist, is already revoked, or belongs to another
+    account all answer ``removed: false`` rather than a 404 — otherwise the route
+    would report whether an id exists on somebody else's account. A malformed id
+    is the same answer for the same reason. Revoking the caller's **own** device
+    is allowed and is simply "sign out this browser": the liveness check in
+    :func:`~lemely.web.deps.get_auth_context` turns the very next request into a
+    401 with no special case here, and ``wasCurrent`` tells the client to stop
+    using the token now instead of discovering it then.
+    """
+    was_current = auth.session_id is not None and device_id == auth.session_id
+    try:
+        removed = devices.revoke(auth.user_id, device_id)
+    except ValueError:
+        removed = False
+    return DeviceRevokedDTO(removed=removed, wasCurrent=was_current and removed)
 
 
 __all__ = ["router"]

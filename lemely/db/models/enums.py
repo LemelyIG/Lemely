@@ -180,6 +180,20 @@ class XpSource(enum.Enum):
     study_session_completed = "study_session_completed"
 
 
+class FriendshipStatus(enum.Enum):
+    """Lifecycle state of a :class:`~lemely.db.models.users.Friendship` row (P5.4, D5.1).
+
+    Exactly two values — there is no ``declined``/``blocked`` state. A
+    decline, a cancel and an unfriend are all the same database act (deleting
+    the row, see ``lemely.db.friend_repo.FriendService.remove``), so there is
+    no terminal-but-not-accepted state for this enum to represent; a removed
+    friendship simply stops existing and the pair can be re-requested later.
+    """
+
+    pending = "pending"
+    accepted = "accepted"
+
+
 class QuizKind(enum.Enum):
     """What a ``quizzes`` row *is*, and therefore which owner column it uses (D4.6 §1).
 
@@ -318,6 +332,7 @@ __all__ = [
     "ConfidenceBand",
     "DifficultySource",
     "ExamBoard",
+    "FriendshipStatus",
     "MarkerSource",
     "MembershipRole",
     "NotificationType",

@@ -121,9 +121,17 @@ const SHAPE: Record<string, "string" | "number"> = {
   "studyPlan.activeSessionTopic": "string",
   "studyPlan.activeSessionCount": "number",
   "studyPlan.completedSessionCount": "number",
+
+  ...account("engagement.deviceLimit"),
+  "engagement.deviceLimit.deviceCount": "number",
+  "engagement.deviceLimit.oldestDeviceLabel": "string",
+  "engagement.leaderboard.classId": "string",
+  // `weeklyXpByStudentKey` and `expectedOrderByStudentKey` are not primitive
+  // leaves, and "is an object" is exactly the resolution at which an empty
+  // board still looks correct. They get their own test below.
 }
 
-/** The 14 keys `build_result_payload` returns (scripts/seed_e2e.py). */
+/** The 15 keys `build_result_payload` returns (scripts/seed_e2e.py). */
 const TOP_LEVEL_KEYS = [
   "runTag",
   "generatedAt",
@@ -139,6 +147,7 @@ const TOP_LEVEL_KEYS = [
   "placement",
   "practice",
   "studyPlan",
+  "engagement",
 ] as const
 
 function resolve(root: unknown, dotted: string): unknown {
@@ -239,4 +248,47 @@ test("the at-risk reason arrays and the corrected-paper id keep their shapes", (
   // under practice/placement. A spec written against `studyPlan.students`
   // would silently find nothing, so pin the absence rather than describe it.
   expect(resolve(seed, "studyPlan.students")).toBeUndefined()
+})
+
+test("the engagement group can actually carry a leaderboard-ordering assertion", () => {
+  const seed = readSeedRaw()
+
+  // A `Record`/array typechecks as "object" in SHAPE above, which is exactly
+  // the resolution at which an empty board still looks correct. These are the
+  // properties the ordering assertion actually stands on, and every one of
+  // them fails silently rather than loudly if the seed regresses: an empty
+  // board renders as the honest "no XP earned here yet this week" state, and
+  // tied totals render as a considered equal-rank decision.
+  const order = resolve(seed, "engagement.leaderboard.expectedOrderByStudentKey") as string[]
+  const xpByKey = resolve(seed, "engagement.leaderboard.weeklyXpByStudentKey") as Record<
+    string,
+    number
+  >
+
+  expect(Array.isArray(order), "expectedOrderByStudentKey should be an array").toBe(true)
+  expect(order.length, "an ordering needs at least two rows to be an ordering").toBeGreaterThan(1)
+
+  for (const key of order) {
+    expect(resolve(seed, `students.${key}`), `"${key}" is not a seeded student`).toBeDefined()
+    expect(typeof xpByKey[key], `"${key}" has no seeded XP total`).toBe("number")
+  }
+
+  // Strictly descending AND strictly distinct. Equal XP is equal rank by
+  // design (D5.1, P5.3 chunk A), so a tie would make an ordering assertion
+  // pass on a board it cannot actually distinguish.
+  const totals = order.map((key) => xpByKey[key])
+  expect(totals, "expectedOrderByStudentKey is not sorted highest-XP-first").toEqual(
+    [...totals].sort((a, b) => b - a),
+  )
+  expect(new Set(totals).size, `seeded XP totals are not distinct: ${totals.join(", ")}`).toBe(
+    totals.length,
+  )
+
+  // Every ranked student must be in the class the board is scoped to,
+  // otherwise the assertion is reading a different board than the seed built.
+  expect(resolve(seed, "engagement.leaderboard.classId")).toEqual(resolve(seed, "class.classId"))
+
+  // Three full slots is what makes the next login from any fresh browser take
+  // the G-10 challenge; MAX_DEVICES is 3 (device_repo.py).
+  expect(resolve(seed, "engagement.deviceLimit.deviceCount")).toBe(3)
 })

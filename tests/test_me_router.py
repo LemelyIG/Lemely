@@ -270,6 +270,7 @@ def test_get_student_profile_new_student_reads_as_all_null(
         "hasExternalLessons": None,
         "weeklyStudyHours": None,
         "onboardingCompletedAt": None,
+        "leaderboardOptOut": False,
     }
     assert body["enrolments"] == []
 

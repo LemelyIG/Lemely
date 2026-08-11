@@ -11,7 +11,7 @@ from __future__ import annotations
 # Re-export model classes for convenient ``from lemely.db.models import User`` usage.
 # These imports must come before import_all_models so they are always available
 # regardless of whether the caller has already triggered the lazy imports.
-from lemely.db.models.academic import MarkScheme, Paper, Subject
+from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.billing import PlanTier, Subscription
 from lemely.db.models.engagement import Streak, XpEvent
@@ -22,6 +22,7 @@ from lemely.db.models.enums import (
     ConfidenceBand,
     DifficultySource,
     ExamBoard,
+    FriendshipStatus,
     MarkerSource,
     MembershipRole,
     NotificationType,
@@ -52,9 +53,11 @@ from lemely.db.models.flashcards import (
 from lemely.db.models.flashcards import ReviewGrade as FlashcardReviewGrade
 from lemely.db.models.ops import (
     Announcement,
+    AnnouncementRead,
     AtRiskAcknowledgement,
     Notification,
     NotificationPreference,
+    PushSubscription,
     ReviewQueueItem,
 )
 from lemely.db.models.orgs import ClassEnrollment, School, SchoolClass, SchoolMembership, Seat
@@ -75,7 +78,7 @@ from lemely.db.models.quizzes import (
 from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
-from lemely.db.models.users import Device, ParentChildLink, User
+from lemely.db.models.users import Device, Friendship, ParentChildLink, User
 
 
 def import_all_models() -> None:
@@ -105,6 +108,7 @@ __all__ = [
     "SESSION_MONTH_LABELS",
     # Models
     "Announcement",
+    "AnnouncementRead",
     "AtRiskAcknowledgement",
     "Attempt",
     # Enums and mixins
@@ -117,10 +121,13 @@ __all__ = [
     "Device",
     "DifficultySource",
     "ExamBoard",
+    "ExamDate",
     "Flashcard",
     "FlashcardDeck",
     "FlashcardReview",
     "FlashcardReviewGrade",
+    "Friendship",
+    "FriendshipStatus",
     "MarkScheme",
     "MarkerSource",
     "MembershipRole",
@@ -131,6 +138,7 @@ __all__ = [
     "ParentChildLink",
     "PlanInterval",
     "PlanTier",
+    "PushSubscription",
     "QualificationLevel",
     "QuestionBank",
     "QuestionDifficulty",
