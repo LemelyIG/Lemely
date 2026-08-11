@@ -482,7 +482,23 @@ Measured, not assumed — every line below was checked on disk this session:
       the hard cap stops being a cap.
 - [ ] doing — **P6.6** Full-suite pass: all 13 gates green on the final tree, E2E across all 5 roles
       on seeded realistic data. Launch with `setsid` per the environment note below.
-      **Session 96: a run is IN FLIGHT — `/tmp/check_p66b.log`, launched detached (PPID 1) on the
+      **Session 98: session 96's run COMPLETED — `/tmp/check_p66b.log`, `EXIT=1`, 12 of 13 gates
+      PASS. The one failure was real and is now fixed (`6005b20`, D6.7); a re-run is IN FLIGHT at
+      `/tmp/check_p66c.log` (PID 540503, detached). Do not launch a second one; poll for `EXIT=`.**
+      Green on that run: ruff-check, ruff-format, mypy, import-linter, web-typecheck, web-lint,
+      web-build, web-test, impeccable-detect, playwright-e2e, puppeteer-audit, ui-thresholds.
+      **The failure was `tests/test_push_transport.py:170`, and it was a TIME BOMB, not a flake.**
+      The test signs a VAPID assertion at the injected `FIXED_NOW = 2026-08-10 12:00 UTC` and then
+      verified it with `jwt.decode` against the **real wall clock**; RFC 8292 caps the assertion at
+      24h, so it was green on the day it was written (P5.6) and red in every run after
+      2026-08-11 12:00 UTC. Phase 5's own closing run predates the expiry, which is why the phase
+      shipped "all gates green" honestly and this still surfaced. Product code is correct and was
+      not touched. Fixed with `verify_exp: False` on that one decode, **inverted twice** (wrong
+      audience → `InvalidAudienceError`, foreign key → `InvalidSignatureError`) so it is not a
+      weakened test. **Generalise it: any test that pins a clock on the write path and reads back
+      with the real clock is a dated assertion whose failure arrives on a calendar, not on a code
+      change** — invisible to per-commit CI, and exactly what a phase-end full run is for.
+      Previous session's note follows. **Session 96: a run is IN FLIGHT — `/tmp/check_p66b.log`, launched detached (PPID 1) on the
       clean tree at `179f9f6`. Do not launch a second one; poll for the `EXIT=` line.** Session 95
       had launched `/tmp/check_p66.log` and died immediately; I killed it 5 minutes in on a **wrong
       diagnosis** and relaunched, which is the lesson worth carrying:
