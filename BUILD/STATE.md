@@ -2,7 +2,22 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-11T22:40:00Z   # **Ninety-eighth session: found session 96's P6.6 run STILL ALIVE
+last_updated: 2026-08-11T23:15:00Z   # **Ninety-ninth session: session 98's P6.6 re-run was only 2 minutes
+#                                    old on arrival (PID 540503, started 02:06:42 local, mid-`pytest`) — so for the
+#                                    third consecutive session the correct move was to NOT relaunch, and this time the
+#                                    84-byte log was genuinely 2 minutes of work rather than 20. Held to the standing
+#                                    rule (no code while a run is in flight) and did doc-only work.
+#                                    **Found and fixed a false claim already committed to the tree:** `DELIVERY.md` §7
+#                                    (landed in `ed0f6b7`) and the P6.8 README draft both advertise
+#                                    `make seed  # reference data + demo accounts`, but `lemely/db/seed.py:26-51` are
+#                                    still stubs with a bare `pass` — zero rows, zero accounts, cheerful `db.seed.done`.
+#                                    Session 97 deliberately held the README commit over exactly this claim; the same
+#                                    claim then shipped anyway inside DELIVERY.md a session later. Both now state what
+#                                    the command does today and point at `scripts/seed_e2e.py` (`2bee4cb`). **The notes
+#                                    come out at P6.10 and nowhere earlier** — P6.10 owns making the sentence true.
+#                                    Transferable: holding one file back does not contain a false claim if the same
+#                                    fact is restated in a second file by a different task.
+#                                    Previous session's note follows. **Ninety-eighth session: found session 96's P6.6 run STILL ALIVE
 #                                    (PID 424176, pytest 424249, ~20 min in, 84-byte log) and again did NOT relaunch —
 #                                    the same trap, now sprung-and-avoided twice. Cleaned the dirty tree with an
 #                                    explicit `wip(docs)` commit (`12dff56`) whose message states which two README
