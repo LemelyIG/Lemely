@@ -2,14 +2,19 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-12T00:55:00Z   # **Ninety-fifth session: P6.3 done, 3/12 into Phase 6.** Tree was clean,
+last_updated: 2026-08-12T02:10:00Z   # **Ninety-fifth session: P6.3 + P6.4 done, 4/12 into Phase 6.** Tree was clean,
 #                                    INBOX had no unhandled items, no orphaned pytest. The security re-review found
 #                                    **nothing to fix** — all 121 route operations were already guarded and every
 #                                    Phase-4/5 row-level path already keys on `auth.user_id`. What changed is the
 #                                    *method*: the authz matrix is now generated from the app rather than hand-listed,
 #                                    so the drift that silently froze P1.6's coverage at Phase 3 now fails a test.
-#                                    Next: P6.4 (Docker Compose), which P6.0 established is greenfield — no
-#                                    Dockerfile, no compose file, no deployment doc exists anywhere in the repo.
+#                                    P6.4 then built the deployment story from zero and it is verified working:
+#                                    `make up` brings up backend + nginx-served SPA on Supabase's own docker network,
+#                                    and I re-ran every check myself rather than trusting the subagent's report.
+#                                    Next: **P6.5 deployment docs**, which now has real artifacts to document —
+#                                    including the two things P6.4 flagged for it: the entrypoint's unconditional
+#                                    `alembic upgrade head` (wrong for production) and the local-dev JWT secret
+#                                    that MUST be overridden anywhere real.
 #                                    Previous session's note follows. **Ninety-fourth session: PHASE 6 STARTED.** Tree was clean, INBOX had no
 #                                    unhandled items, BLOCKERS B1-B3 all resolved, no orphaned pytest. Branched
 #                                    `feature/phase-6-hardening` off develop at `76450ff` and did P6.0 — the
