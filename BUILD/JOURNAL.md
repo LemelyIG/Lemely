@@ -1946,3 +1946,26 @@ them whether or not Phase 6 fixes them.
 - **Next:** P6.3 security re-review (authz matrix over every Phase-4/5 route + a
   reviewer sweep), then P6.4 Docker Compose — which is greenfield: no Dockerfile,
   compose file, deployment doc or DELIVERY.md exists anywhere in the repo.
+
+## 2026-08-12 — session 95 (P6.3)
+
+- **Did:** the Phase-6 security re-review. Rewrote the authz matrix as a *generated*
+  one (`tests/test_authz_matrix_complete.py`): it derives the route set from the app
+  and asserts it equals a declared table, so an undeclared route now fails the build.
+  Added 21 real-minted-token cases and a recursive mass-assignment gate over all 39
+  request-body models. Started P6.4 (Docker Compose) — greenfield.
+- **Found:** nothing to fix. All 121 route operations were already guarded and every
+  Phase-4/5 route keys its query on `auth.user_id`. **No production code changed in
+  P6.3**, and that is the honest result rather than a shortfall — what was actually
+  broken was the *method*, a hand-typed list whose coverage silently froze at Phase 3.
+- **Learned — a test that mocks the thing upstream of the guarantee is not testing the
+  guarantee.** My 403 sweep overrode `get_auth_context`, so it proved `require_role`
+  given a correct context while being structurally blind to a token-decoding break.
+  The reviewer caught it; the fix was tokens that are actually minted.
+- **Learned — do not run a read-only reviewer against a checkout with an inversion in
+  flight.** The reviewer read `deps.py` during the two minutes I had the role guard
+  deliberately disabled and filed a Critical "something is mutating the auth guard on
+  disk". Its observation was exact and its conclusion was wrong; I only knew because I
+  was the cause. Serialise them, or say so in the brief.
+- **Next:** finish P6.4 (verify the images actually build and the nginx `/api` proxy
+  really reaches the backend), then P6.5 deployment docs.
