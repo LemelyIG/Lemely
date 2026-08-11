@@ -1894,3 +1894,34 @@ it becomes a strict-mode violation the day any session seeds one.
 **Next.** Read `/tmp/p59b-gate.log` (PID **1232550**) for the `EXIT=` line — do
 not relaunch it. Green closes **both P5.9 and P5.10** → 11/12, and P5.11 is next
 with a brief that is now fourteen points deep and covers both of its legs.
+
+---
+
+## 2026-08-11 — session 93 — **P5.12: Phase 5 is complete, merged and reported**
+
+**Did.** Wrote `reports/phase-5/REPORT.md` (`1f6354a`) against the section structure
+Phase 4 established, merged `feature/phase-5-engagement` into develop (`322118b`),
+pushed, and retitled PR #3 to "Phases 0–5" with a Phase-5 section **appended** —
+then verified all seven phase sections were still present afterwards, because
+P3.11 found the PR body had silently lost a section once before. Nothing was
+re-implemented and no gate was re-run: session 92's `EXIT=0` run is the tree that
+merged. Pruned the Phase-5 section of `BUILD/STATE.md` from ~1930 lines to a
+summary block per MISSION §8b (the file went 2351 → 396 lines).
+
+**Learned.** Every headline figure was recomputed from the committed artifacts
+instead of copied from STATE, and one of them was wrong: the axe route-state count
+is **73** (`axe/_summary.json`'s own row count, one row per audited state), not the
+**146** STATE carried — exactly double. Phase 4's report has the same shape (122
+against a 61-row summary), so it is a propagated arithmetic error rather than a
+coverage regression, and the verdict is unaffected: zero violations at every impact
+however the states are counted. Corrected in the report with the reasoning, not
+quietly restated. Two smaller ones fell out of the same recompute (8 routes below
+Lighthouse performance 80, not 9; 44 route reports, floor 96 on `teacher-review`),
+and testing every appendix path for existence caught two wrong file locations. This
+is the same lesson the phase paid for four times in code — **a hand-copied figure
+that nothing regenerates drifts, and it drifts toward looking better.**
+
+**Next.** Phase 6 (hardening + ship) on a fresh `feature/phase-6-*` branch off
+develop. P6.0 is reconnaissance; it should start from the `### Honest limitations`
+blocks in every phase section of STATE, since `DELIVERY.md` must account for all of
+them whether or not Phase 6 fixes them.
