@@ -429,7 +429,7 @@ Measured, not assumed — every line below was checked on disk this session:
       **Carry to P6.5/DELIVERY.md:** the entrypoint runs `alembic upgrade head` on every start. Right
       for a one-command local bring-up, wrong for a production deploy where migration is a separate
       gated step — the deployment doc must say so.
-- [ ] todo — **P6.5** Deployment docs for a future free-tier cloud deploy (Supabase cloud +
+- [ ] doing — **P6.5** Deployment docs for a future free-tier cloud deploy (Supabase cloud +
       container host) at `docs/deployment.md`. Written, not hosted — MISSION §3 says no live hosting.
 - [ ] todo — **P6.6** Full-suite pass: all 13 gates green on the final tree, E2E across all 5 roles
       on seeded realistic data. Launch with `setsid` per the environment note below.

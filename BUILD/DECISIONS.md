@@ -6226,3 +6226,52 @@ must be overridden in any real deployment. Both belong in `docs/deployment.md`.
 downloads Chrome and the image has no `unzip`. `ENV PUPPETEER_SKIP_DOWNLOAD=true` in the
 builder stage is the fix; puppeteer is audit-runner tooling and nothing at build time
 imports it.
+
+---
+
+## D6.6 — Deployment docs written from the config surface, and the two blockers they found (P6.5)
+
+`docs/deployment.md` covers the working local `make up` stack, a Supabase-Cloud +
+container-host recipe, the configuration reference, and a copy-paste checklist. **The
+cloud half has never been executed and the document says so in its opening lines.** Every
+claim in it is anchored to a file and line in this repo so a reader can check rather than
+trust — the alternative (a confident deploy narrative for a deploy that never happened) is
+exactly the invented precision this build keeps paying to avoid. P6.4's two handoffs (the
+unconditional `alembic upgrade head`, the well-known local JWT secret) are both discharged.
+
+**Writing it surfaced two facts nothing had previously stated, both found by reading the
+code rather than by reasoning about the deployment:**
+
+**(a) The backend cannot run more than one replica.** Two pieces of state are
+process-local, not persisted: `JobRegistry` (`lemely/web/jobs.py:31-37`), the dict behind
+every in-flight correction job and its SSE progress stream, and the parent phone-OTP
+challenge store (`lemely/auth/service.py:107`). With two replicas a student's browser
+reconnects to a replica that has never heard of their job, and a parent's OTP is issued on
+one instance and verified on another — the second one fails intermittently and
+unreproducibly, which is the worst possible failure shape. Neither is hard to fix
+(Postgres or Redis for both); neither is fixed. This is the single most consequential line
+in the document, because a host that autoscales by default will trip it silently and no
+test in this build would catch it.
+
+**(b) `lemely/db/seed.py` creates nothing, and this is a P6.10 problem.**
+`seed_reference_data` and `seed_demo_accounts` are stubs — both bodies are a bare `pass`
+(`lemely/db/seed.py:26-51`) — so `make seed` inserts zero rows and creates zero demo
+accounts while logging `db.seed.done`. The only working path is `scripts/seed_e2e.py`,
+which does create all five roles, but under a per-run random `run_tag`, so emails and
+passwords differ on every run. **P6.10's acceptance criterion is a fresh clone reaching a
+working product with seeded demo accounts for all five roles**, and stable credentials a
+document can name do not currently exist. Recorded now rather than discovered at P6.10.
+
+**Not fixed here, deliberately.** The entrypoint's unconditional migration is documented
+with the guard flag a production deploy would want (`LEMELY_RUN_MIGRATIONS`) described but
+**not implemented** — P6.5 is a documentation task, and adding an untested env-gated
+branch to the container start path at phase end is the kind of change that breaks the
+`make up` that P6.4 just verified. The doc names it as a small honest change, which is what
+it is.
+
+**Also carried into the doc from measurements already on disk:** the `/api/teacher/overview`
+N+1 shape (p50 396ms vs 8-150ms elsewhere, `reports/phase-6/load-sanity.md`), and one
+consequence of containerising that nothing had noted — the $8 Gemini spend ledger lives
+under `/app/.lemely-cache` on the **ephemeral container filesystem**, so a host that
+recycles containers resets the measured spend to zero while the real bill keeps climbing.
+Mount a volume there or the hard cap silently stops being a cap.
