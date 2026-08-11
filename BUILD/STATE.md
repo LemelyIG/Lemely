@@ -296,7 +296,7 @@ Measured, not assumed — every line below was checked on disk this session:
 
 ### Task checklist
 - [x] done — **P6.0** Reconnaissance + phase plan (this block), branch created.
-- [ ] todo — **P6.1** Gate-affecting hardening fixes, done FIRST so every later gate run exercises
+- [ ] doing — **P6.1** Gate-affecting hardening fixes, done FIRST so every later gate run exercises
       the final tree. (a) Put `web/e2e/` + `playwright.config.ts` into a tsconfig `include` and fix
       what 30 never-typechecked test blocks turn up (D3.20, carried since Phase 3). (b) Add the
       Lighthouse **performance** check to `scripts/check_ui_gates.py` — MISSION §11 scopes the ≥80

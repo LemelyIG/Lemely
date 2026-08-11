@@ -860,9 +860,15 @@ async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsi
 
       if (st.lighthouse !== false) {
         log(`${route.screenId} ${route.path} [${st.state}] — Lighthouse...`)
-        lighthouseSummary.push(
-          await runLighthouseAudit(url, page, st.slug, { authed: route.authed }),
-        )
+        // `path` rides along so `scripts/check_ui_gates.py` can apply MISSION
+        // §11's performance floor to the student routes specifically. The route
+        // path is the actual routing fact; keying that gate on the slug's
+        // "student-" prefix instead would mean a future student screen slugged
+        // without the prefix silently escapes the floor.
+        lighthouseSummary.push({
+          path: route.path,
+          ...(await runLighthouseAudit(url, page, st.slug, { authed: route.authed })),
+        })
       }
     } finally {
       if (st.teardown) {
@@ -2363,11 +2369,12 @@ async function main() {
     await page.goto(`${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
     await waitForText(page, "Correct a paper")
     axeSummary.push(await runAxe(page, "student-correct"))
-    lighthouseSummary.push(
-      await runLighthouseAudit(`${PREVIEW_URL}/student/correct`, page, "student-correct", {
+    lighthouseSummary.push({
+      path: "/student/correct",
+      ...(await runLighthouseAudit(`${PREVIEW_URL}/student/correct`, page, "student-correct", {
         authed: true,
-      }),
-    )
+      })),
+    })
 
     log("Uploading the golden fixture to reach a real corrected-paper state...")
     await page.goto(`${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
@@ -2398,9 +2405,13 @@ async function main() {
     await page.goto(resultUrl, { waitUntil: "networkidle0" })
     await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
     axeSummary.push(await runAxe(page, "student-result"))
-    lighthouseSummary.push(
-      await runLighthouseAudit(resultUrl, page, "student-result", { authed: true }),
-    )
+    lighthouseSummary.push({
+      // Derived from the URL rather than written out, because this one carries a
+      // real paper id — a hand-typed "/student/result" would be a path no run
+      // actually visited.
+      path: resultUrl.slice(PREVIEW_URL.length),
+      ...(await runLighthouseAudit(resultUrl, page, "student-result", { authed: true })),
+    })
 
     // ── G-13 · Notification inbox — POPULATED (P5.11) ──────────────────────
     // The registry's G-13 entry audits the EMPTY state, which is the state the
@@ -2434,11 +2445,12 @@ async function main() {
     await page.goto(`${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
     await waitForText(page, "Subjects this session")
     axeSummary.push(await runAxe(page, "student-overview"))
-    lighthouseSummary.push(
-      await runLighthouseAudit(`${PREVIEW_URL}/student`, page, "student-overview", {
+    lighthouseSummary.push({
+      path: "/student",
+      ...(await runLighthouseAudit(`${PREVIEW_URL}/student`, page, "student-overview", {
         authed: true,
-      }),
-    )
+      })),
+    })
     // ── The 15 declaratively-registered routes (teacher/parent/G-05/
     // student-parents) — each role gets its own fresh page with a real
     // session injected (see `injectSession`), rather than re-driving 4

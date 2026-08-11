@@ -1,11 +1,9 @@
+import { lazy, Suspense } from "react"
+import { RouteFallback } from "@/components/ui/state-views"
 import { createBrowserRouter, Navigate } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
-import { Login } from "@/portals/auth/Login"
-import { ParentLogin } from "@/portals/auth/ParentLogin"
-import { DeviceSettings } from "@/portals/settings/DeviceSettings"
-import { NotificationSettings } from "@/portals/settings/NotificationSettings"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 
@@ -19,6 +17,28 @@ import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
  * role for the portal -> the portal that does match. Root "/" and both login
  * routes resolve against the session too (see Root/LoginRoute below).
  */
+
+// P6.1b: these four top-level screens sit outside any portal layout (no
+// shared chrome to keep painted around them, unlike the three portals below,
+// which each wrap their own Outlet in one Suspense boundary — see e.g.
+// `portals/student/index.tsx`). With no shared wrapper to hang a single
+// boundary off, each lazy element gets its own inline `<Suspense>` at the
+// route definition instead of one boundary around the whole router tree —
+// that keeps a slow-loading DeviceSettings chunk from blanking an
+// already-rendered Login screen if a session is mid-navigation between them.
+const Login = lazy(() => import("@/portals/auth/Login").then((m) => ({ default: m.Login })))
+const ParentLogin = lazy(() =>
+  import("@/portals/auth/ParentLogin").then((m) => ({ default: m.ParentLogin })),
+)
+const DeviceSettings = lazy(() =>
+  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettings })),
+)
+const NotificationSettings = lazy(() =>
+  import("@/portals/settings/NotificationSettings").then((m) => ({
+    default: m.NotificationSettings,
+  })),
+)
+
 
 const STUDENT_ROLES = ["student"] as const
 const PARENT_ROLES = ["parent"] as const
@@ -45,17 +65,35 @@ function LoginRoute({ children }: { children: React.ReactNode }) {
 
 export const router = createBrowserRouter([
   { path: "/", element: <Root /> },
-  { path: "/login", element: <LoginRoute><Login /></LoginRoute> },
+  {
+    path: "/login",
+    element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" />}><Login /></Suspense></LoginRoute>,
+  },
   // G-05. A separate route rather than a tab on /login: the parent flow shares
   // no field with email/password, and the spec's whole framing for it is
   // "the lowest-friction entry in the product".
-  { path: "/login/parent", element: <LoginRoute><ParentLogin /></LoginRoute> },
+  {
+    path: "/login/parent",
+    element: (
+      <LoginRoute>
+        <Suspense fallback={<RouteFallback className="p-8" />}>
+          <ParentLogin />
+        </Suspense>
+      </LoginRoute>
+    ),
+  },
   // G-11 (devices section). Top-level rather than inside a portal subtree: the
   // 3-device limit applies to every account, so all five roles reach the same
   // screen — the same reason `/api/me/devices` is role-agnostic (P5.7).
   {
     path: "/settings/devices",
-    element: <RequireAuth allowedRoles={ALL_ROLES}><DeviceSettings /></RequireAuth>,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <Suspense fallback={<RouteFallback className="p-8" />}>
+          <DeviceSettings />
+        </Suspense>
+      </RequireAuth>
+    ),
   },
   // G-12. Top-level for the same reason, and one it does not share: the
   // at-risk-alert preference belongs to the **teacher and the parent**
@@ -64,7 +102,13 @@ export const router = createBrowserRouter([
   // applies to.
   {
     path: "/settings/notifications",
-    element: <RequireAuth allowedRoles={ALL_ROLES}><NotificationSettings /></RequireAuth>,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <Suspense fallback={<RouteFallback className="p-8" />}>
+          <NotificationSettings />
+        </Suspense>
+      </RequireAuth>
+    ),
   },
   {
     ...teacherRoute,

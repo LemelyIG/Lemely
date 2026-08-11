@@ -22,8 +22,24 @@ checks" — P3.10 chunk b makes the latter two real gates instead of numbers
 only ever read by a human):
   - zero serious or critical axe violations, per route
   - Lighthouse accessibility score >= 95, per route
+  - Lighthouse performance score >= 80, **student routes only**
   - zero console errors, across the whole run
   - zero horizontal-scroll violations, across the whole run
+
+The performance gate arrived in P6.1, closing D4.25. From Phase 2.5 to Phase 5
+this script had no performance check at all, while MISSION §11 and four phase
+reports described "performance >= 80 on the student routes" as a standing
+automated check — so a green ``ui-thresholds`` was cited as a performance pass
+it never measured. By Phase 5 eight routes sat below 80 and the gate stayed
+green.
+
+Scoped to the student portal because that is exactly how MISSION §11 words the
+floor ("performance >= 80 on the student routes"); it has never claimed one for
+teacher or parent routes. Their scores are reported in the phase report and
+DELIVERY.md rather than gated, which is the honest reading — inventing a floor
+MISSION does not state would be as wrong as ignoring the one it does. A route
+counts as a student route by ``path`` (the ``/student`` subtree), not by slug
+prefix, so a future student screen slugged off-convention cannot escape it.
 """
 
 from __future__ import annotations
@@ -45,6 +61,23 @@ LH_SUMMARY = REPORT_DIR / "lighthouse/_summary.json"
 CONSOLE_ERRORS = REPORT_DIR / "console-errors.json"
 RESPONSIVE_SUMMARY = REPORT_DIR / "responsive-summary.json"
 ACCESSIBILITY_FLOOR = 95
+PERFORMANCE_FLOOR = 80
+STUDENT_PATH_PREFIX = "/student"
+
+
+def is_student_route(route: dict) -> bool:
+    """True for rows in the ``/student`` portal subtree.
+
+    ``path`` is written by ``web/scripts/audit.mjs`` from P6.1 onward. Report
+    dirs baselined before that (phases 2.5-5) have no ``path`` key, so the slug
+    prefix is the documented fallback rather than a silent "not a student
+    route" — which would make the gate pass by omission on an old corpus, the
+    exact failure mode this gate exists to end.
+    """
+    path = route.get("path")
+    if path is not None:
+        return path == STUDENT_PATH_PREFIX or path.startswith(STUDENT_PATH_PREFIX + "/")
+    return route["slug"].startswith("student-")
 
 
 def main() -> int:
@@ -73,6 +106,15 @@ def main() -> int:
             failures.append(
                 f"lighthouse: {route['slug']} accessibility score {score} < "
                 f"{ACCESSIBILITY_FLOOR} — see {REPORT_DIR}/lighthouse/{route['slug']}.json"
+            )
+        if not is_student_route(route):
+            continue
+        performance = route["scores"].get("performance")
+        if performance is None or performance < PERFORMANCE_FLOOR:
+            failures.append(
+                f"lighthouse: {route['slug']} performance score {performance} < "
+                f"{PERFORMANCE_FLOOR} (MISSION §11 floor, student routes) — "
+                f"see {REPORT_DIR}/lighthouse/{route['slug']}.json"
             )
 
     # console-errors.json/responsive-summary.json predate this gate in some
@@ -105,9 +147,12 @@ def main() -> int:
             print(f"  - {f}")
         return 1
 
+    student_routes = [r for r in lighthouse if is_student_route(r)]
     print(
         f"UI gates clean: {len(axe)} route(s) zero serious/critical axe, "
-        f"Lighthouse accessibility >= {ACCESSIBILITY_FLOOR} on all, zero console errors, "
+        f"Lighthouse accessibility >= {ACCESSIBILITY_FLOOR} on all "
+        f"({len(lighthouse)} route report(s)), performance >= {PERFORMANCE_FLOOR} on "
+        f"{len(student_routes)} student route(s), zero console errors, "
         f"zero horizontal-scroll violations."
     )
     return 0

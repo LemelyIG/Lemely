@@ -5973,3 +5973,79 @@ generalisable rule, now paid for four times (`EXPECTED_TABLES` P5.4, the
 `SeedContract` mirror P4.11, G-13 P5.9, this): **a hand-kept list that nothing
 regenerates fails silently and in the direction of false confidence.** Write the
 registry entry in the same chunk as the screen.
+
+## D6.1 — `web/e2e/` gets its own tsconfig project, not a seat in the vitest one (P6.1a)
+
+D3.20 recorded that `web/e2e/` and `playwright.config.ts` were in no tsconfig
+`include`, so the most expensive gate in the build — 34 tests across 13 files by
+Phase 6 — had never once been typechecked. Three phases carried it forward. P6.1
+closes it.
+
+**The obvious fix is wrong.** Adding `"e2e"` to `tsconfig.test.json`'s `include`
+is one word and would have compiled. That project declares
+`"types": ["node", "vitest/globals"]`, so every Playwright spec would then be
+typechecked against **vitest's** ambient `expect`/`test` rather than the ones it
+imports from `@playwright/test`. The two APIs overlap enough to typecheck and
+differ enough to matter (`expect(locator).toBeVisible()` exists in one and not the
+other), so the gate would pass while checking the specs against the wrong runner's
+types — a green that means less than no green at all. Two runners, two projects.
+
+`moduleResolution: "bundler"` rather than `nodenext` for the same class of reason:
+the specs import `./seed` extensionlessly and Playwright's own transpiler resolves
+that, so `nodenext` would report errors the runtime does not have — a gate that
+fails on correct code teaches the next session to disable it.
+
+**It found exactly one error, and it was real.** `webServer.env` was spread from
+`process.env` (`string | undefined` per key) into a field requiring `string`.
+Fixed by filtering the undefined-valued keys, not by casting: a cast would keep the
+type system quiet while a genuinely-undefined value reached the subprocess as the
+literal string `"undefined"`.
+
+**The gate is now non-incremental (`tsc -b --force`).** `tsc -b` reuses
+`node_modules/.tmp` tsbuildinfo, which is exactly how `tsconfig.test.json` shipped
+without `jsx` for a whole phase while `npm run build` reported success. A gate that
+can be green because of a stale cache is not a gate. `build` stays incremental;
+only the gate forces.
+
+## D6.2 — The Lighthouse performance floor becomes a real gate, scoped exactly as MISSION words it (P6.1b)
+
+D4.25 recorded that `scripts/check_ui_gates.py` had **no performance check at
+all**, while MISSION §11 and four phase reports described "performance ≥ 80 on the
+student routes" as a standing automated check. By Phase 5, eight routes sat below
+80 and `ui-thresholds` was green. Every citation of that green as a performance
+pass was, without anyone intending it, false.
+
+**Scope: the `/student` subtree only.** That is precisely what MISSION §11 claims a
+floor for; it has never stated one for teacher or parent routes. Inventing a floor
+MISSION does not state would be as dishonest as ignoring the one it does — so the
+teacher/parent numbers are reported in the phase report and DELIVERY.md rather than
+gated. The teacher routes are genuinely the worse ones (`teacher-quiz-detail` 65),
+which is exactly why gating them here would look like diligence while actually
+being an unrequested scope change made at the moment it would fail.
+
+**Keyed on `path`, not on the slug prefix.** `audit.mjs` now writes each
+Lighthouse row's route `path`, and the gate treats `/student…` as the student
+subtree. Keying on the slug's `student-` prefix would mean a future student screen
+slugged off-convention silently escapes the floor — the same shape of hole this
+decision is closing. Report dirs baselined before P6.1 carry no `path`, so the slug
+prefix is a documented fallback rather than a silent "not a student route", which
+would let the gate pass by omission on an old corpus.
+
+**The fix is code splitting, not a lowered bar.** The build emitted a single
+1.3 MB `index-*.js` for all 44 routes — zero splitting, so every route paid for
+every screen of every portal, and the scores clustered in a 65–87 band that had
+little to do with any individual route's complexity. Screens are now `React.lazy`
+with one `Suspense` boundary per portal wrapping the `<Outlet />` (portal chrome
+stays painted and interactive while a screen chunk arrives). Entry chunk
+**1.3 MB → 387 kB across 91 chunks**, with no test changes required (456/456 web
+unit tests still pass).
+
+`RouteFallback` lives in the C-11 state-view family rather than in each router
+file. It was written as four local copies that had **already** drifted to three
+different type/padding combinations before they were merged — the concrete version
+of the Phase-2.5 rule that cross-cutting UI is composed from the library, not
+re-invented per call site. It is deliberately not a `StateView`: those are terminal
+answers about data ("there is nothing here"), while this is a sub-second gap that
+should not flash a heading nobody needed to read. It keeps `role="status"` so a
+screen-reader user hears something between activating a link and the screen
+arriving.

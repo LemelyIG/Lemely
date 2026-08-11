@@ -1,12 +1,24 @@
 import type { RouteObject } from "react-router-dom"
+import { lazy, Suspense } from "react"
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom"
 import { Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useChildren } from "@/lib/hooks/useParentApi"
-import { Children } from "./screens/Children"
-import { ChildOverview } from "./screens/ChildOverview"
-import { SubjectDetail } from "./screens/SubjectDetail"
-import { Weaknesses } from "./screens/Weaknesses"
+import { RouteFallback } from "@/components/ui/state-views"
+
+// P6.1b: screens are `React.lazy`, not static imports — see the same note in
+// `portals/student/index.tsx`. Only four screens here, but the parent portal
+// still shipped every one of them (plus the other two portals') on first
+// paint before this; the spec's own "two taps to the answer" goal is better
+// served by that first paint being as small as possible.
+const Children = lazy(() => import("./screens/Children").then((m) => ({ default: m.Children })))
+const ChildOverview = lazy(() =>
+  import("./screens/ChildOverview").then((m) => ({ default: m.ChildOverview })),
+)
+const SubjectDetail = lazy(() =>
+  import("./screens/SubjectDetail").then((m) => ({ default: m.SubjectDetail })),
+)
+const Weaknesses = lazy(() => import("./screens/Weaknesses").then((m) => ({ default: m.Weaknesses })))
 
 /*
  * Parent portal shell.
@@ -123,12 +135,19 @@ function Header() {
   )
 }
 
+// One boundary around the Outlet (not per-route): the header (logo, child
+// switcher, settings, sign out) stays mounted and interactive while a screen
+// chunk loads. Fallback is the shared `RouteFallback` (C-11 state-view
+// family), same as the other two portals — see the student portal for why.
+
 function ParentLayout() {
   return (
     <div data-portal="parent" className="flex min-h-screen flex-col bg-bg">
       <Header />
       <main className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-container-mobile py-8">
-        <Outlet />
+        <Suspense fallback={<RouteFallback />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   )

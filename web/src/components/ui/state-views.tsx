@@ -122,3 +122,35 @@ export function ErrorState(props: Omit<StateViewProps, "kind">) {
 export function OfflineState(props: Omit<StateViewProps, "kind">) {
   return <StateView kind="offline" {...props} />
 }
+
+/*
+ * Route-chunk fallback (P6.1b). Deliberately NOT a `StateView`: those three are
+ * terminal answers about the *data* ("there is nothing here", "this failed"),
+ * with an icon, a heading and actions. This is a sub-second gap while a lazy
+ * route chunk downloads, and dressing that up as a full panel makes a fast
+ * navigation flash a heading the reader never needed to read.
+ *
+ * It lives here rather than being redeclared in each router file because
+ * Phase 2.5 fixed the rule that cross-cutting UI is composed from this library,
+ * not re-invented per call site — four verbatim copies is how a "loading" state
+ * drifts into four slightly different ones.
+ *
+ * `role="status"` (an aria-live polite region) rather than silence: without it
+ * a screen-reader user navigating to a lazily-loaded route hears nothing at all
+ * between activating the link and the screen arriving.
+ *
+ * `className` exists because the call sites genuinely differ: the portal
+ * boundaries render inside a padded content area and on dense surfaces
+ * (`text-dense-lg`), while the top-level routes in `App.tsx` have no layout
+ * around them and supply their own padding. That is one component with a
+ * documented override, not four components — `cn` is tailwind-merge-backed and
+ * knows our type-scale classes are font-sizes, so a passed `text-*` correctly
+ * replaces the default rather than stacking with it.
+ */
+export function RouteFallback({ className }: { className?: string }) {
+  return (
+    <div role="status" className={cn("text-body-md text-t2", className)}>
+      Loading…
+    </div>
+  )
+}
