@@ -393,8 +393,37 @@ Measured, not assumed — every line below was checked on disk this session:
       `deps.py` while the guard was deliberately off, and filed a Critical "something is mutating
       the auth guard on disk". Correct observation, wrong conclusion. **Never run a read-only
       reviewer against the same checkout as an in-flight inversion.**
-- [ ] todo — **P6.4** Docker Compose: one command brings up Supabase-local + backend + the built
-      SPA served with correct CORS/proxy. Backend + web Dockerfiles, compose file, Makefile target.
+- [x] done — **P6.4** Docker Compose (`e81f2f9`, D6.5). `Dockerfile` (backend, multi-stage,
+      non-root, binds 0.0.0.0), `web/Dockerfile` (npm build → nginx serving `dist/` + proxying
+      `/api`), `web/nginx.conf`, `docker-compose.yml`, two `.dockerignore`s, `docker-entrypoint.sh`,
+      `scripts/up.sh` behind **`make up`** as the single command. No application code changed.
+      **Two design points a later session must not undo.** The backend joins Supabase's own
+      **`supabase_network_Lemely`** as an `external` network and addresses `supabase_db_Lemely:5432`
+      / `supabase_kong_Lemely:8000` by container name — *not* the host-published 54322/54321, which
+      do not exist inside a container. Declaring the network instead of joining it would silently
+      stand up an empty one the backend cannot reach Postgres through; `external: true` fails loudly
+      when Supabase is down, which is the correct behaviour.
+      **And no CORS middleware was added — deliberately.** nginx proxies `/api` to the backend on
+      the same origin the SPA was loaded from, so the browser issues no cross-origin request and
+      there is nothing for CORS to permit; adding `allow_origins` would widen the attack surface
+      without enabling anything. Full reasoning (and what a real split-origin deploy would need:
+      config-driven allowlist, `allow_credentials=False` since auth is bearer-token not cookie)
+      is a comment block at the top of `docker-compose.yml`. **`grep -rn CORSMiddleware lemely/`
+      is still empty and that is the intended state, not an omission to be "fixed".**
+      **Verified by me on a `make up` stack, not taken on the subagent's report:** health 200 direct
+      *and* 200 through the nginx proxy; SPA index served; `alembic upgrade head` runs in the
+      entrypoint with the DB at `0018` and the container reaching Postgres over the Supabase
+      network (1610 seeded users read from inside the container); and the whole auth chain works
+      behind the proxy — **401 no token / 200 real minted student token / 403 teacher token on a
+      student route**, which also proves nginx forwards `Authorization`. The hardcoded local JWT
+      secret was checked against the *running* `supabase_auth_Lemely`'s `GOTRUE_JWT_SECRET` rather
+      than assumed to match.
+      **One snag worth not rediscovering:** `npm ci` fails in a slim node image because puppeteer's
+      postinstall downloads Chrome and there is no `unzip`. Fixed with `ENV PUPPETEER_SKIP_DOWNLOAD=true`
+      in the builder stage — puppeteer is audit-runner tooling only and nothing at build time imports it.
+      **Carry to P6.5/DELIVERY.md:** the entrypoint runs `alembic upgrade head` on every start. Right
+      for a one-command local bring-up, wrong for a production deploy where migration is a separate
+      gated step — the deployment doc must say so.
 - [ ] todo — **P6.5** Deployment docs for a future free-tier cloud deploy (Supabase cloud +
       container host) at `docs/deployment.md`. Written, not hosted — MISSION §3 says no live hosting.
 - [ ] todo — **P6.6** Full-suite pass: all 13 gates green on the final tree, E2E across all 5 roles

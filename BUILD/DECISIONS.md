@@ -6172,3 +6172,57 @@ watched it revert — and reported a Critical "something is mutating the auth gu
 on disk". It was right about what it saw and wrong about what it meant. **Do not
 run a read-only reviewer concurrently with an inversion run on the same checkout**;
 either serialise them or tell the reviewer an inversion is in flight.
+
+---
+
+## D6.5 — The deployment stack joins Supabase's network, and ships no CORS on purpose (P6.4)
+
+MISSION §3 asks for one command bringing up Supabase-local + backend + the built SPA
+"with correct CORS/proxy configured". P6.0 established this was greenfield: no
+Dockerfile, no compose file, nothing.
+
+**Supabase local stays CLI-managed; our compose joins it.** The Supabase CLI owns its
+own compose project, so the choice was to reimplement its stack (GoTrue, Kong, Storage,
+Realtime…) in our file or to join the one it already runs. Joining is right, and the
+mechanism matters: the network `supabase_network_Lemely` is declared **`external: true`**
+and the backend addresses `supabase_db_Lemely:5432` and `supabase_kong_Lemely:8000` by
+container name. **The host-published ports 54322/54321 do not exist inside a container**
+— reaching for them is the obvious mistake here. Declaring the network rather than
+marking it external would also let `docker compose up` silently create an empty network
+the backend cannot reach Postgres through; `external` fails loudly instead, which is the
+behaviour you want when the dependency is genuinely absent.
+
+**No CORS middleware, and that is the configured-correctly state.** nginx serves the
+built SPA and reverse-proxies `/api` to the backend, so the browser only ever makes
+**same-origin** requests. CORS exists to relax the same-origin policy for cross-origin
+traffic; there is none here, so there is nothing to relax and `Access-Control-*` headers
+would be dead weight. Adding `allow_origins=["*"]` would strictly widen the attack
+surface — it would let any origin that finds the directly-exposed backend port script
+authenticated requests against it — while enabling no functionality. A future genuine
+split-origin deployment needs an explicit config-driven allowlist with
+`allow_credentials=False` (auth is a bearer token in a header, never a cookie, so
+credentialed CORS is never required). **`grep -rn CORSMiddleware lemely/` returning
+nothing is the intended state; a later session must not "fix" it.** The reasoning lives
+as a comment block in `docker-compose.yml` so it cannot be lost with this file.
+
+**Verification was re-done by the orchestrator, and it is worth noting why.** MISSION §5
+requires verifying a subagent's work rather than trusting the claim. Beyond re-running
+its curls on a `make up` stack, two checks it had not made were added: the container
+actually reaching Postgres over the Supabase network (read 1610 seeded users and
+`alembic_version = 0018` from inside the container), and the **auth chain end-to-end
+behind the proxy** — 401 with no token, 200 with a real minted student token, 403 with a
+teacher token on a student route. That last one is the only evidence that nginx forwards
+the `Authorization` header at all; a health-endpoint 200 proves nothing about it. The
+hardcoded local JWT secret was likewise compared against the *running*
+`supabase_auth_Lemely` container's `GOTRUE_JWT_SECRET` rather than assumed to match.
+
+**Two things handed to P6.5 rather than solved here.** The entrypoint runs
+`alembic upgrade head` unconditionally on every start — correct for a one-command local
+bring-up, wrong for production where schema migration is a separate gated step. And the
+local-dev JWT secret baked into the compose file is a well-known Supabase default that
+must be overridden in any real deployment. Both belong in `docs/deployment.md`.
+
+**Environment fact:** `npm ci` fails in a slim node image because puppeteer's postinstall
+downloads Chrome and the image has no `unzip`. `ENV PUPPETEER_SKIP_DOWNLOAD=true` in the
+builder stage is the fix; puppeteer is audit-runner tooling and nothing at build time
+imports it.
