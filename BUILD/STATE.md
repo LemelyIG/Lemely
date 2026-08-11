@@ -2,7 +2,20 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-12T01:35:00Z   # **Ninety-seventh session: found session 96's P6.6 run ALIVE and healthy
+last_updated: 2026-08-11T22:40:00Z   # **Ninety-eighth session: found session 96's P6.6 run STILL ALIVE
+#                                    (PID 424176, pytest 424249, ~20 min in, 84-byte log) and again did NOT relaunch —
+#                                    the same trap, now sprung-and-avoided twice. Cleaned the dirty tree with an
+#                                    explicit `wip(docs)` commit (`12dff56`) whose message states which two README
+#                                    claims are NOT true yet, rather than quietly freezing them as fact. Then did the
+#                                    only work that cannot corrupt an in-flight gate run: **docs**. Wrote `DELIVERY.md`
+#                                    (P6.9) skeleton — §5 Honest limitations carries every Phase-2..5 item plus the
+#                                    Phase-6 operational ones; two placeholder markers (`<!-- FEATURE-TABLE -->`,
+#                                    `<!-- EVIDENCE -->`) are filled once the feature map and P6.6's numbers land.
+#                                    **Rule this session applied and the next should too: while a gate run is in
+#                                    flight, touch no code.** P6.6's whole purpose is "13 gates green on the FINAL
+#                                    tree"; editing `lemely/` mid-run silently makes the verdict about a tree that no
+#                                    longer exists, and nothing in the log would show it.
+#                                    Previous session's note follows. **Ninety-seventh session: found session 96's P6.6 run ALIVE and healthy
 #                                    (PID 424176, PPID 1, 84-byte log, mid-`pytest`) and did NOT relaunch it — the
 #                                    exact trap STATE warns about. While it ran I did the docs half of **P6.8**
 #                                    (README + CHANGELOG rewritten for the shipped product), which is safe because no
@@ -489,9 +502,15 @@ Measured, not assumed — every line below was checked on disk this session:
       Phase-2.5 baselines is a blocker (MISSION §4). Read `removed` (must be 0), not `changed`.
 - [ ] todo — **P6.8** README + CHANGELOG rewritten for the shipped product; version bumped in both
       `pyproject.toml` and `web/package.json`.
-- [ ] todo — **P6.9** `DELIVERY.md`: every feature in MISSION §9's inventory with status, files and
+- [ ] doing — **P6.9** `DELIVERY.md`: every feature in MISSION §9's inventory with status, files and
       the tests that prove it, links to all seven phase reports, and an honest limitations section
       carrying **every** `### Honest limitations` item from Phases 2–5 whether or not P6 fixed it.
+      **Session 98: written and committed with two holes left deliberately open**, marked in the file
+      by `<!-- FEATURE-TABLE -->` and `<!-- EVIDENCE -->`. §1/§2/§4/§5/§7 are complete — §5 already
+      carries every Phase-2..5 limitation plus P6.5/P6.6's operational ones, with D6.1/D6.2 shown as
+      struck-through-and-closed rather than deleted. The feature table is being built by a scout that
+      must `ls` every path before listing it (report drift is the recurring failure here), and the
+      evidence section needs P6.6's own numbers, so it cannot be honest before that run exits.
 - [ ] todo — **P6.10** Fresh-clone acceptance: `git clone` → the documented commands → working
       product with seeded demo accounts for all 5 roles.
       **Known before you start (found at P6.5, D6.6 — do not re-derive): the seeding path this
