@@ -1,5 +1,6 @@
 .PHONY: install dev test lint typecheck imports lock pre-commit fmt clean \
-	db-up db-down db-stop db-status db-reset db-migrate db-revision db-downgrade seed
+	db-up db-down db-stop db-status db-reset db-migrate db-revision db-downgrade seed \
+	up down
 
 PYTHON ?= python
 ALEMBIC ?= alembic
@@ -72,3 +73,13 @@ db-downgrade:
 # Seed demo/reference data (idempotent). Requires the schema to be migrated.
 seed:
 	$(PYTHON) -m lemely.db.seed
+
+# ── Packaged product (Docker Compose) ────────────────────────────────────────
+# One command: Supabase-local + backend + built SPA (nginx, proxying /api to
+# the backend). See scripts/up.sh and docker-compose.yml for details and the
+# CORS decision. MISSION.md §3.
+up:
+	./scripts/up.sh
+
+down:
+	docker compose down

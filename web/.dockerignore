@@ -1,0 +1,14 @@
+# Web build context exclusions (context is ./web). Keeps `npm ci` fast and
+# the image free of dev artifacts.
+node_modules
+dist
+.git
+e2e
+playwright-report
+test-results
+reports
+coverage
+*.log
+.DS_Store
+Dockerfile
+.dockerignore
