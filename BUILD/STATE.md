@@ -329,7 +329,7 @@ Measured, not assumed — every line below was checked on disk this session:
       of hole to check for whenever a gate grows a new per-route field.
       **E2E re-verified after the split (MISSION §6 gate 4 — this change touches every flow):
       34/34 passed, `E2E_EXIT=0`, 3.7m.** Lazy routes broke nothing.
-- [ ] todo — **P6.2** Concurrency + load sanity (MISSION §4 P6 bullet 1). Parallel
+- [x] done — **P6.2** Concurrency + load sanity (MISSION §4 P6 bullet 1). Parallel
       uploads/markings against the real DB proving no cross-request state bleed or lost update, and
       a basic API load-sanity script with recorded numbers. Gemini stays mocked.
 - [ ] todo — **P6.3** Security re-review: authz matrix re-verified over **every** route including

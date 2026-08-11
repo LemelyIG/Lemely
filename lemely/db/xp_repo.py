@@ -293,6 +293,22 @@ class XpService:
             ValueError: ``dedupe_key`` is empty.
             XpUserNotFoundError: no user exists for ``user_id``.
             XpIneligibleUserError: the user exists but is not a student.
+
+        Concurrency:
+            The owning ``users`` row is locked ``FOR UPDATE`` for the duration
+            of this call (mirroring
+            :meth:`~lemely.db.device_repo.DeviceRegistry.register_login`'s
+            lock on the same table, for the same reason). Without it, the
+            per-source/global daily-cap check below is a classic
+            read-then-write TOCTOU: two concurrent awards for the same
+            student/source, each with a distinct ``dedupe_key`` (so migration
+            ``0013``'s unique-dedupe constraint can't save it), could both
+            read "under the cap" and both insert, letting concurrent callers
+            defeat D5.1 §3's anti-farming caps (see ``tests/test_concurrency.py``,
+            which reproduced this with 8 concurrent awards succeeding against a
+            cap of 3 before this lock existed). Locking the user row
+            serialises concurrent awards for that student, so the second
+            caller's count read always sees the first's write.
         """
         if not dedupe_key:
             raise ValueError("dedupe_key must be non-empty")
@@ -302,7 +318,7 @@ class XpService:
         amount = XP_AMOUNTS[source]
 
         with self._sessionmaker() as session, session.begin():
-            user = session.get(User, student_uuid)
+            user = session.get(User, student_uuid, with_for_update=True)
             if user is None:
                 raise XpUserNotFoundError(f"Unknown user: {student_uuid}")
             if user.role != Role.student:

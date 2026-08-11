@@ -6049,3 +6049,65 @@ answers about data ("there is nothing here"), while this is a sub-second gap tha
 should not flash a heading nobody needed to read. It keeps `role="status"` so a
 screen-reader user hears something between activating a link and the screen
 arriving.
+
+## D6.3 — The concurrency pass found a real race in the XP cap, and one of its own tests was decoration (P6.2)
+
+MISSION §4 Phase 6 asks for a concurrency test and basic load sanity. Neither
+existed: grepping `tests/` for `concurren|asyncio.gather` hit only two files, both
+incidentally. `tests/test_concurrency.py` and `scripts/load_sanity.py` are new.
+
+**The finding: `XpService.award` could be defeated by concurrency.** The daily
+anti-farming caps of D5.1 §3 were implemented as a plain read-then-write —
+`session.get(User, ...)`, count today's awards, decide, insert — with no lock. Eight
+concurrent awards against a cap of three all succeeded. Distinct `dedupe_key`s mean
+migration 0013's unique constraint cannot save it. Fixed with
+`with_for_update=True`, which is not an invention but the idiom already used on the
+same `users` table by `DeviceRegistry.register_login` for the identical TOCTOU.
+
+**Verified by inversion, not by reading.** With the lock reverted the test fails;
+with it restored it passes. Worth recording because the inverted run failed with a
+*different* symptom than the one that motivated the fix — a `uq_streaks_user_id`
+UniqueViolation from concurrent streak-row creation, rather than the cap bypass. One
+missing lock, two failure modes, and which one surfaces depends on thread timing. A
+future session that sees only one of them should not conclude the other was
+misdiagnosed.
+
+That second symptom is the more dangerous one in production: `award_xp_safely` is
+deliberately fail-open (D5.1 §3), so an IntegrityError there is swallowed and a real
+student silently loses XP with every gate in this build still green.
+
+**And the pass caught one of its own tests being decoration.** The same inversion
+applied to `test_device_cap_holds_under_concurrent_logins` — removing
+`device_repo.py`'s `FOR UPDATE` — left it **passing**, while its docstring claimed it
+confirmed that lock holds under concurrency. It did not.
+
+The cause was not the code but the test's own thread scheduling: with 4 unsynchronised
+threads, the GIL plus a short critical section meant they often never actually
+overlapped inside `register_login`, so the race window was simply missed. Measured
+before the fix, with the lock removed: **8 pass / 12 fail over 20 runs** — a test that
+catches its regression barely half the time reads as green often enough to be believed.
+Fixed in the test only (`threading.Barrier` so every thread enters at the same instant,
+and 11 threads rather than 4); `device_repo.py` was not touched. Re-measured by me
+independently of the agent that wrote it: **lock removed → 0 pass / 10 fail; lock
+restored → 3/3 green.**
+
+A test that cannot fail is worse than no test, because it is cited as evidence. The rule
+this establishes for the rest of Phase 6: **a test written to prove a concurrency
+guarantee must be shown to fail when that guarantee is removed — repeatedly, not once —
+and the inversion counts belong in the report.** Note also that a single inversion run is
+not enough to *clear* a test: the first crude check I ran looked mixed because of how I
+parsed pytest's output, and only a counted 10-run loop settled it. Count, don't eyeball.
+
+**Load sanity is reported as numbers, with no verdict.** MISSION states no API latency
+threshold, so grading against an invented one would be manufactured precision (UI spec
+§1.4). `reports/phase-6/load-sanity.{json,md}` carry real measured output — 8
+endpoints, concurrency 10, **zero errors across ~10,000 requests** — plus the caveats
+that make the numbers readable (single machine, dev uvicorn, synthetic seed, Gemini
+mocked).
+
+One signal in that data is worth carrying into DELIVERY.md rather than losing in a
+table: **`/api/teacher/overview` is 10-40x slower than every other endpoint measured**
+(p50 396ms / p95 458ms, against 8-150ms for the rest). That is the shape of an N+1
+across a teacher's classes and students. Not chased here — it is a performance
+observation on seeded data, not a defect with a failing test — but it is the first
+place to look if the teacher console feels slow, and it should not be discovered twice.
