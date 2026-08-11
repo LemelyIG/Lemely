@@ -6111,3 +6111,64 @@ table: **`/api/teacher/overview` is 10-40x slower than every other endpoint meas
 across a teacher's classes and students. Not chased here — it is a performance
 observation on seeded data, not a defect with a failing test — but it is the first
 place to look if the teacher console feels slow, and it should not be discovered twice.
+
+---
+
+## D6.4 — The authz matrix becomes generated, and the security sweep found nothing to fix (P6.3)
+
+MISSION §4 Phase 6 asks for the authz matrix to be re-verified over every route
+including the Phase-4/5 additions, plus an adversarial security sweep.
+
+**The matrix was re-verified by replacing the method, not by extending the list.**
+`tests/test_authz_matrix.py` (P1.6) proves RBAC on a *hand-listed* spread that
+stopped growing at Phase 3 — flashcards, friends, leaderboard, xp, notifications,
+practice, placement, announcements, the exam calendar and the parent portal were
+essentially unrepresented in it, and nothing made adding a route fail a test.
+Extending the list by hand would have re-created that failure mode one phase later.
+`tests/test_authz_matrix_complete.py` instead derives the route set from the app and
+asserts it is **equal** to a declared table, so a new route with no declaration
+fails, and a stale declaration for a deleted route fails too. The old file is kept,
+not replaced: it carries per-route rationale that a generated file cannot.
+
+**What the sweep actually found: nothing to fix.** All 121 route operations already
+carry a guard — 5 public (the four auth entrypoints plus `/api/health`), 12
+deliberately role-agnostic-but-authenticated (`/api/me`, notifications), 104
+role-gated. The `reviewer` pass traced every caller-supplied identifier on the
+Phase-4/5 routers from route parameter to SQL and found identity keyed on
+`auth.user_id` in every case, with ownership failures collapsed to 404 rather than
+403 where an existence oracle would otherwise leak. **No production code changed in
+P6.3.** That is the honest result and it is recorded as such rather than dressed up.
+
+**Three things worth carrying forward.**
+
+1. **Provenance of the declared table is stated in the file, because it matters.**
+   `EXPECTED`'s rows were seeded from the wired guards and then reviewed, not
+   derived independently — so the guard-match property is a *freeze* of a reviewed
+   state, not an independent check of it. The completeness and behavioural
+   properties are independent of how the table was produced. A future reader must
+   not over-trust that one property.
+2. **The override-shaped blind spot the sweep named was real.** A 403 test that
+   overrides `get_auth_context` proves `require_role` given a correct context but
+   cannot see a break in token decoding, because the code building the context is
+   the code it replaces. Twenty-one real-minted-token cases and four
+   malformed-credential cases now cover the whole chain. This generalises: **a test
+   that mocks the thing upstream of the guarantee is not testing the guarantee.**
+3. **Mass assignment is now gated, and the gate had to be recursive to be worth
+   anything.** Four separate `ApiModel` bases set `extra="forbid"`, but nothing
+   proved every body inherits one, and a strict outer model with a lax nested
+   element type still accepts unknown keys. The new test walks the dependency tree
+   transitively — 39 models, all strict — and asserts pydantic *acts* on the flag
+   rather than trusting the flag.
+
+**Every guarantee was inverted and counted, per P6.2's rule.** Disabling the role
+check fails 333/333 role-gated cases and 21/21 real-token cases while the 401
+sweeps correctly still pass (a different guarantee); adding one undeclared route
+fails all three structural tests; making one nested model lax fails exactly its two
+cases.
+
+**One process note.** The `reviewer` agent ran concurrently with inversion A and
+read `deps.py` during the ~2 minutes the guard was deliberately disabled, then
+watched it revert — and reported a Critical "something is mutating the auth guard
+on disk". It was right about what it saw and wrong about what it meant. **Do not
+run a read-only reviewer concurrently with an inversion run on the same checkout**;
+either serialise them or tell the reviewer an inversion is in flight.

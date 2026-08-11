@@ -2,7 +2,15 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-11T09:00:00Z   # **Ninety-fourth session: PHASE 6 STARTED.** Tree was clean, INBOX had no
+last_updated: 2026-08-12T00:55:00Z   # **Ninety-fifth session: P6.3 done, 3/12 into Phase 6.** Tree was clean,
+#                                    INBOX had no unhandled items, no orphaned pytest. The security re-review found
+#                                    **nothing to fix** — all 121 route operations were already guarded and every
+#                                    Phase-4/5 row-level path already keys on `auth.user_id`. What changed is the
+#                                    *method*: the authz matrix is now generated from the app rather than hand-listed,
+#                                    so the drift that silently froze P1.6's coverage at Phase 3 now fails a test.
+#                                    Next: P6.4 (Docker Compose), which P6.0 established is greenfield — no
+#                                    Dockerfile, no compose file, no deployment doc exists anywhere in the repo.
+#                                    Previous session's note follows. **Ninety-fourth session: PHASE 6 STARTED.** Tree was clean, INBOX had no
 #                                    unhandled items, BLOCKERS B1-B3 all resolved, no orphaned pytest. Branched
 #                                    `feature/phase-6-hardening` off develop at `76450ff` and did P6.0 — the
 #                                    reconnaissance and the twelve-task plan below. The headline recon finding is
@@ -356,9 +364,35 @@ Measured, not assumed — every line below was checked on disk this session:
       measured** (p50 396ms / p95 458ms vs 8–150ms) — the shape of an N+1 across a teacher's classes
       and students. Not chased (an observation on seeded data, not a failing test), but it is the
       first place to look if the teacher console feels slow.
-- [ ] todo — **P6.3** Security re-review: authz matrix re-verified over **every** route including
-      all Phase 4/5 additions, plus a `reviewer` adversarial sweep (authz, tenancy, IDOR,
-      injection). Findings fixed or recorded.
+- [x] done — **P6.3** Security re-review (`b8913cb`, `7e3e012`, D6.4). **No production code
+      changed — the sweep found nothing to fix, and that is the result, not a shortfall.**
+      **(a) The matrix is now generated, not hand-listed.** `tests/test_authz_matrix_complete.py`
+      derives the route set from the app and asserts it **equals** a declared table, so adding a
+      route with no declaration fails and a stale declaration fails too — the drift gate P1.6's
+      hand-list never had, and the reason its coverage silently stopped growing at Phase 3 (the
+      whole Phase-4/5 surface was unrepresented). The old file is kept: it carries per-route
+      rationale a generated file cannot.
+      **Measured, all 121 route operations:** 5 public (4 auth entrypoints + `/api/health`), 12
+      authenticated-but-deliberately-role-agnostic (`/api/me`, notifications), 104 role-gated.
+      **Nothing unguarded.** 573 new test cases across the two files.
+      **(b) Two gaps the `reviewer` sweep named, both closed.** The 403 sweep overrides
+      `get_auth_context`, so it proves `require_role` given a correct context but is blind to a
+      break in token decoding — *the code building the context is the code it replaces*. 21
+      real-minted-token cases across all six guard classes plus 4 malformed-credential cases now
+      cover the chain. And `extra="forbid"` was declared on four `ApiModel` bases but never proven
+      to reach every body; `tests/test_request_schema_hardening.py` walks the dependency tree
+      **transitively** (a strict outer model with a lax nested element type still takes unknown
+      keys) — 39 models, all strict — and proves pydantic acts on the flag.
+      **(c) Row-level ownership traced clean.** Every caller-supplied identifier on the Phase-4/5
+      routers goes route → service → SQL keyed on `auth.user_id`; ownership failures collapse to
+      404 where a 403 would be an existence oracle.
+      **Everything inverted and counted (P6.2's rule):** guard disabled → 333/333 role-gated and
+      21/21 real-token cases fail while the 401 sweeps correctly still pass; one undeclared route
+      → all three structural tests fail; one nested model made lax → exactly its two cases fail.
+      **Process trap worth not repeating:** the `reviewer` ran concurrently with inversion A, read
+      `deps.py` while the guard was deliberately off, and filed a Critical "something is mutating
+      the auth guard on disk". Correct observation, wrong conclusion. **Never run a read-only
+      reviewer against the same checkout as an in-flight inversion.**
 - [ ] todo — **P6.4** Docker Compose: one command brings up Supabase-local + backend + the built
       SPA served with correct CORS/proxy. Backend + web Dockerfiles, compose file, Makefile target.
 - [ ] todo — **P6.5** Deployment docs for a future free-tier cloud deploy (Supabase cloud +
