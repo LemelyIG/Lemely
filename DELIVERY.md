@@ -100,7 +100,7 @@ cell, and the fuller version is in §5.
 | Placement test (~15 min, real past-paper questions) | 4 | Delivered | `lemely/core/placement.py`, `lemely/db/placement_repo.py` | `tests/test_placement_assembly.py`, `tests/test_web_placement.py` |
 | Onboarding questionnaire | 4 | Delivered | `lemely/db/student_profile_repo.py`, `web/src/portals/student/screens/Onboarding.tsx` | `tests/test_student_profile_repo.py`, `web/tests/unit/onboarding.test.ts` |
 | Data-collection fields (subjects, session, school, target grades) | 4 | Delivered | `lemely/db/student_profile_repo.py` (migration 0009) | `tests/test_student_profile_repo.py` |
-| Adaptive study plan (regenerates weekly, concrete sessions) | 4 | Delivered | `lemely/core/study_plan.py`, `lemely/db/study_plan_repo.py` | `tests/test_study_plan.py`, `tests/test_web_study_plan.py` |
+| Adaptive study plan (week-scoped, concrete sessions; regeneration is student-triggered, not timed — §5.3) | 4 | Delivered | `lemely/core/study_plan.py`, `lemely/db/study_plan_repo.py` | `tests/test_study_plan.py`, `tests/test_web_study_plan.py` |
 | **Engagement** | | | | |
 | XP + streaks with anti-farming caps | 5 | Delivered | `lemely/db/xp_repo.py`, `lemely/web/xp_awards.py` | `tests/test_xp_repo.py`, `tests/test_web_xp_awards.py`, `tests/test_concurrency.py` |
 | Leaderboards (friends / class / school / global / per-subject / total, weekly XP, opt-out) | 5 | Delivered | `lemely/db/leaderboard_repo.py`, `lemely/web/routers/leaderboard.py` | `tests/test_leaderboard_repo.py`, `tests/test_web_leaderboard.py`, `web/e2e/engagement.spec.ts` |
@@ -176,6 +176,13 @@ readable rather than quietly rewritten.
   **at-risk rule 3 (≥14 days inactive) cannot fire at its seam** — the alert
   fires on correction, and a student who just uploaded is by definition active.
   These are not delivered notification types.
+- **The study plan is week-*scoped*, not weekly-*regenerated*.** A plan carries a
+  `week_start` and `POST /api/study-plan` supersedes the current week's row
+  (`lemely/db/study_plan_repo.py:243-253`), but the only caller is the student
+  (`lemely/web/routers/study_plan.py:112`). Nothing advances the plan when a new
+  week begins: the student sees the honest "not generated yet" state until they
+  ask. Earlier drafts of this file and the CHANGELOG said "regenerates weekly",
+  which reads as a timer that does not exist.
 - **No VAPID keys exist on the build machine,** so the push transport is
   unavailable by design and no real push can be delivered in any harness here.
   What is assertable is the notification inbox row and G-12's unavailable state.

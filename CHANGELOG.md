@@ -18,6 +18,11 @@ Per-phase detail, command outputs and screenshots are in `reports/phase-*/`;
 the feature-by-feature status — including what was deliberately **not** built —
 is in [`DELIVERY.md`](DELIVERY.md).
 
+Entries below are marked *(limited)* where the feature exists and is tested but
+cannot fully operate in this build; `DELIVERY.md` §5 says why in each case. An
+unmarked entry is not thereby proof of anything — read §5 before relying on any
+line here.
+
 ### Added
 
 #### Data, identity and tenancy
@@ -44,15 +49,24 @@ is in [`DELIVERY.md`](DELIVERY.md).
 - Grade-boundary ingestion from cambridgeinternational.org, per paper variant.
 - Plagiarism and AI-detection advisory flags (signals, never verdicts).
 - Accuracy harness with ten golden fixtures across 0580 / 0606 / 0625, plus an
-  end-to-end measurement against two real solved scripts.
+  end-to-end measurement against two real solved scripts *(limited)*: the
+  synthetic accuracy target is **not met** — 83.8% mark-level agreement against
+  a ≥95% goal, with flag recall 27.3%. Both real papers landed inside the stated
+  tolerance, but one of them was confidently wrong (all 40 marks at confidence
+  1.0, zero flags, three marks of pure transcription error), because MCQ
+  confidence measures the marker while the error happens in the extractor.
 - Question-stem extractor and a syllabus taxonomy transcribed from the official
-  CAIE documents, which together populate the question bank.
+  CAIE documents, which together populate the question bank — 72 papers into 273
+  banked 0625 stems. The ceiling is mark-scheme parse coverage (32 of 72), not
+  stem extraction.
 
 #### Teacher, parent and school surfaces
 
 - Class model with real per-teacher row-level ownership.
 - At-risk flagging on three labelled rules: declining trend, predicted grade
-  below target, and prolonged inactivity.
+  below target, and prolonged inactivity — the third *(limited)*: it is
+  implemented and tested, but no scheduler exists to fire it, and its current
+  seam (correction upload) can never observe an inactive student.
 - Teacher analytics — per class, per student, and aggregate weakness topics.
 - Review queue with an override-and-annotate flow; overrides are recorded
   corrections.
@@ -66,13 +80,17 @@ is in [`DELIVERY.md`](DELIVERY.md).
 
 #### Content and study plans
 
-- Topic-classified practice generation targeting a student's weak topics.
+- Topic-classified practice generation targeting a student's weak topics
+  *(limited)*: only 0625 has ingested questions, so 0580 and 0606 honestly
+  refuse; and a generated set is marked but no route exposes its result yet.
 - Flashcards with SM-2 spaced repetition.
 - A ~15-minute placement test assembled from real past-paper questions, reusing
-  the quiz engine.
+  the quiz engine *(limited)*: 0625 only, for the same reason.
 - Onboarding questionnaire capturing subjects, session, school, study time,
   grade level and target grades.
-- Adaptive study plan with concrete sessions, regenerated weekly.
+- Adaptive study plan with concrete sessions, scoped to an ISO week.
+  Regeneration is student-triggered and supersedes that week's plan; nothing
+  advances it on a timer, so a new week starts in the "not generated yet" state.
 
 #### Engagement
 
@@ -80,7 +98,10 @@ is in [`DELIVERY.md`](DELIVERY.md).
 - Weekly-XP leaderboards across friends, class, school, global and per subject,
   with an opt-out flag. **Leaderboards show effort, never grades.**
 - Friends by friend code.
-- Notification inbox and VAPID web push, gated by per-user preferences.
+- Notification inbox and payload-less VAPID web push, gated by per-user
+  preferences *(limited)*: no VAPID keys exist on the build machine, so the
+  transport is unavailable by design and no real push has been delivered in any
+  harness here. The inbox row and the unavailable state are what is assertable.
 
 #### Frontend
 
@@ -89,7 +110,10 @@ is in [`DELIVERY.md`](DELIVERY.md).
 - Design-token layer sourced from `DESIGN.md` (Tailwind v4 theme plus CSS custom
   properties) and a documented cross-cutting component library.
 - PWA foundation: manifest, service worker, installability, and camera capture
-  producing a multi-page PDF client-side.
+  producing a multi-page PDF client-side *(limited)*: installability and the
+  camera path were verified by inspection and manual trace only — there is no
+  Chromium with a camera in this environment, so neither has had a real-device
+  pass.
 - Route-level code splitting.
 
 #### Build, test and deploy

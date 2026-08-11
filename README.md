@@ -19,7 +19,8 @@ parser plugins.
 
 ## Status
 
-All six build phases are complete. What is built, which files implement it,
+Phases 0–5 are complete and merged; Phase 6 (hardening and ship) is the
+current one. What is built, which files implement it,
 which tests prove it, and — equally — what is **not** built and why, is in
 [`DELIVERY.md`](DELIVERY.md). Read that before assuming a feature works; it
 carries the honest limitations, not a marketing list.
@@ -80,7 +81,7 @@ pre-commit install
 
 make db-up                     # supabase start
 make db-migrate                # alembic upgrade head
-make seed                      # reference data + demo accounts
+make seed                      # currently a no-op — see below
 
 cd web && npm ci && npm run dev
 ```
