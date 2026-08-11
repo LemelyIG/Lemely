@@ -296,15 +296,39 @@ Measured, not assumed — every line below was checked on disk this session:
 
 ### Task checklist
 - [x] done — **P6.0** Reconnaissance + phase plan (this block), branch created.
-- [ ] doing — **P6.1** Gate-affecting hardening fixes, done FIRST so every later gate run exercises
-      the final tree. (a) Put `web/e2e/` + `playwright.config.ts` into a tsconfig `include` and fix
-      what 30 never-typechecked test blocks turn up (D3.20, carried since Phase 3). (b) Add the
-      Lighthouse **performance** check to `scripts/check_ui_gates.py` — MISSION §11 scopes the ≥80
-      floor to **student routes only**, so gate exactly that, then fix the student routes now
-      failing it (`student-standings` 70, `student-result` 73, `student-announcements` 78,
-      `student-placement-test` 79). The teacher-route figures are outside MISSION's stated floor and
-      get recorded in DELIVERY.md, not silently gated away. **Do not close D4.25 by deleting the
-      claim** — the fix is enforcement, not a reworded limitation.
+- [x] done — **P6.1** Gate-affecting hardening fixes. Both carried limitations CLOSED — D3.20 by
+      `3eb0c5e`, D4.25 by `23a5261`. Decisions D6.1/D6.2.
+      **(a) `web/e2e/` is typechecked for the first time.** New `web/tsconfig.e2e.json`, referenced
+      from `tsconfig.json`, so the existing `web-typecheck` gate covers it with no `check.sh` change.
+      It is a *separate* project rather than a line added to `tsconfig.test.json` — that one declares
+      `vitest/globals`, so a Playwright spec compiled under it would typecheck against vitest's
+      ambient `expect`/`test` instead of the ones it imports. It found exactly one error and it was
+      real (`webServer.env` spread from `process.env`, `string | undefined` into a `string` field;
+      fixed by filtering, not casting). The gate is now `tsc -b --force` — incremental `tsc -b` is
+      how `tsconfig.test.json` shipped without `jsx` for a whole phase while the build stayed green.
+      **The real count is 34 tests in 13 files, not the 30 STATE has carried since P5.11** —
+      measured with `playwright test --list`.
+      **(b) The Lighthouse performance floor is now enforced, and the routes were fixed rather than
+      the bar lowered.** Root cause was a **single 1.3 MB `index-*.js` serving all 44 routes** — zero
+      code splitting, which is why every score sat in a 65–87 band regardless of the route. Screens
+      are now `React.lazy` behind one `Suspense` per portal around the `<Outlet />`.
+      **Measured on a full audit run (`AUDIT_EXIT=0`), not estimated: entry chunk 1.3 MB → 397 kB
+      across 90 chunks; student-route performance minimum 70 → 89 with none below 80**
+      (`student-standings` 70→92, `student-result` 73→90, `student-placement-test` 79→92,
+      `student-announcements` 78→89). Teacher routes improved too though they are deliberately NOT
+      gated (`teacher-quiz-detail` 65→81, `teacher-schemes` 74→88) — MISSION §11 states a floor for
+      student routes only, and inventing one for the others at the moment it would fail is a scope
+      change, not diligence. `ui-thresholds` EXIT=0 on that run: 73 axe route-states zero
+      serious/critical, 44 Lighthouse reports a11y ≥ 95, zero console errors, zero horizontal scroll.
+      **Two things a later session must not misread.** The audit that produced those numbers built
+      the tree *before* the `RouteFallback` consolidation that followed it (a refactor merging four
+      already-drifted local copies into the C-11 family — no runtime effect), so P6.6's full run is
+      the figure of record for the final tree. And three bespoke journey steps in `audit.mjs` call
+      `runLighthouseAudit` outside the route registry; they were missing the new `path` field and
+      silently riding the slug-prefix fallback meant for old corpora. Fixed — but that is the shape
+      of hole to check for whenever a gate grows a new per-route field.
+      **E2E re-verified after the split (MISSION §6 gate 4 — this change touches every flow):
+      34/34 passed, `E2E_EXIT=0`, 3.7m.** Lazy routes broke nothing.
 - [ ] todo — **P6.2** Concurrency + load sanity (MISSION §4 P6 bullet 1). Parallel
       uploads/markings against the real DB proving no cross-request state bleed or lost update, and
       a basic API load-sanity script with recorded numbers. Gemini stays mocked.
