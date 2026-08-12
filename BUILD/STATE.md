@@ -765,7 +765,7 @@ Measured, not assumed — every line below was checked on disk this session:
       ECONNRESET` during `npm ci`** — a transient registry network failure, not a code defect
       (`docker compose up -d --build backend` right after it succeeded and pip fetched fine).
       If the fresh-clone command fails that way again, retry before diagnosing.
-- [ ] todo — **P6.11** Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
+- [ ] doing — **P6.11** (session 105 started 2026-08-12T03:17Z) Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
       `status: COMPLETE` (the supervisor stops on that value — it is the last write of the build).
 
 ### Environment facts worth not re-deriving (cost real work to find)
