@@ -235,6 +235,22 @@ source.**
   target, non-heading empty/error tags, no mobile BottomNav, raw `max-[1180px]:`
   literals outside the retrofitted screens, and a momentum-chart/TrendSparkline
   duplication blocked on a DTO change.
+- **Two frontend gaps measured at P6.7 and left open on purpose**
+  (`reports/phase-6/visual-qa.md` §3, from the `/impeccable audit` pass that
+  scored 15/20 Good):
+  - **[P1] ~600 arbitrary Tailwind literals across 41 files bypass tokens that
+    already exist for them.** Not a cosmetic tidy — it is the Phase-2.5
+    acceptance criterion ("the token file is the only source of design values")
+    holding for the retrofitted screens but not across the whole surface. Left
+    because a 600-site rewrite at ship time has no honest acceptance signal:
+    the only check that would catch a mistake is a screenshot compare that
+    **cannot be pixel-clean** (see the `run_tag` note above). It wants its own
+    pass with a stable seed, not a ship-day sweep.
+  - **[P2] 54 `size="sm"` controls sit near 31px.** WCAG 2.2 **AA (24px) is
+    met; AAA (44px) is not.** This is the Phase-2.5 §8 touch-target gap
+    re-confirmed by measurement, not a newly discovered one.
+  - Counterweight, from the same audit: **zero hardcoded colours anywhere in
+    `web/src`.**
 
 ### 5.6 Operational
 
