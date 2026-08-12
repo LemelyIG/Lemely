@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
@@ -144,6 +145,8 @@ from lemely.web.upload_utils import (
     safe_upload_name,
     write_upload_capped,
 )
+
+log = structlog.get_logger(__name__)
 
 # Every teacher-portal route is staff-only. Gating at the router level means a
 # 401 (no/invalid token) or 403 (student/parent) is enforced uniformly and any
@@ -418,8 +421,14 @@ async def upload_paper(
     _write_upload_capped(await scan.read(), scan_path)
 
     if mark_scheme is not None:
-        ms_path = upload_dir / _safe_upload_name(mark_scheme.filename, "mark_scheme.pdf")
-        _write_upload_capped(await mark_scheme.read(), ms_path)
+        # Fixed server-side name, deliberately NOT the sanitised client basename:
+        # `resolve_mark_scheme` locates an attached scheme by looking for a
+        # sibling called exactly `mark_scheme.pdf` next to the scan — the same
+        # contract `routers/student.py` writes to. Saving it as the teacher's own
+        # filename (e.g. `0625_s20_ms_31.pdf`) left the bytes on disk with nothing
+        # in the codebase able to read them back, so every uploaded paper reached
+        # `grade_paper_endpoint` scheme-less and stalled at `queued` forever.
+        _write_upload_capped(await mark_scheme.read(), upload_dir / "mark_scheme.pdf")
 
     detected: list[DetectedFieldDTO] = []
     metadata: ExamMetadata | None = None
@@ -453,9 +462,48 @@ def _require_paper(paper_id: str) -> _PaperEntry:
     return entry
 
 
+def _entry_mark_scheme(
+    entry: _PaperEntry,
+    settings: Settings,
+    gemini_client: GeminiClient,
+) -> MarkScheme | None:
+    """Return — and memoise onto ``entry`` — the parsed mark scheme for a paper.
+
+    Resolution is deferred to first use rather than performed in
+    :func:`upload_paper`, because parsing a scheme PDF runs the deterministic
+    parser with a Gemini fallback: far too slow to hold a multipart upload open
+    for, and both callers here already run inside a worker thread that streams
+    progress. ``routers/student.py`` defers it the same way (it resolves at
+    correct-time, not at upload-time).
+
+    Delegates to :func:`lemely.web.routers.student.resolve_mark_scheme` rather
+    than reimplementing the lookup, so the two portals cannot drift on what
+    counts as "the scheme for this scan": it prefers the sibling
+    ``mark_scheme.pdf`` the teacher attached at upload, and otherwise matches the
+    parsed-scheme corpus in ``output_dir/schemes`` (populated by ``POST
+    /api/schemes``) against this paper's detected metadata. That second branch is
+    why a teacher who has already uploaded the scheme once can grade a scan
+    without re-attaching it.
+
+    Returns ``None`` when neither source yields a scheme; callers warn rather
+    than invent marks.
+    """
+    if entry.mark_scheme is not None:
+        return entry.mark_scheme
+    if entry.scan_path is None:
+        return None
+    from lemely.web.routers.student import resolve_mark_scheme
+
+    entry.mark_scheme = resolve_mark_scheme(
+        entry.scan_path, settings, gemini_client, metadata=entry.metadata
+    )
+    return entry.mark_scheme
+
+
 @router.post("/papers/{paper_id}/extract")
 def extract_paper(
     paper_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
 ) -> StreamingResponse:
     """Extract student answers for a paper and stream ``EXTRACTION_PROGRESS`` over SSE.
@@ -473,7 +521,8 @@ def extract_paper(
 
     def run() -> None:
         try:
-            if entry.mark_scheme is None or entry.scan_path is None:
+            mark_scheme = _entry_mark_scheme(entry, settings, gemini_client)
+            if mark_scheme is None or entry.scan_path is None:
                 bus.publish(
                     EventType.WARNING,
                     paper_id=paper_id,
@@ -482,8 +531,18 @@ def extract_paper(
                 return
             extract_answers(
                 entry.scan_path,
-                entry.mark_scheme,
+                mark_scheme,
                 gemini_client=gemini_client,
+            )
+        except Exception as exc:
+            # Same reasoning as `grade_paper_endpoint`: an exception escaping
+            # this worker thread would end the stream silently. See the comment
+            # there.
+            log.exception("teacher_extract_failed", paper_id=paper_id)
+            bus.publish(
+                EventType.ERROR,
+                paper_id=paper_id,
+                message=f"Answer extraction failed: {exc}",
             )
         finally:
             bus.publish_done()
@@ -494,6 +553,7 @@ def extract_paper(
 @router.post("/papers/{paper_id}/grade")
 def grade_paper_endpoint(
     paper_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
 ) -> StreamingResponse:
@@ -519,14 +579,15 @@ def grade_paper_endpoint(
 
     def run() -> None:
         try:
-            if entry.mark_scheme is not None and entry.scan_path is not None:
+            mark_scheme = _entry_mark_scheme(entry, settings, gemini_client)
+            if mark_scheme is not None and entry.scan_path is not None:
                 extracted = extract_answers(
                     entry.scan_path,
-                    entry.mark_scheme,
+                    mark_scheme,
                     gemini_client=gemini_client,
                 )
                 report = grade_paper(
-                    entry.mark_scheme,
+                    mark_scheme,
                     extracted,
                     gemini_client=gemini_client,
                     student_id=entry.student_id,
@@ -572,6 +633,20 @@ def grade_paper_endpoint(
             )
             history_store.append(entry.student_id, record)
             entry.kind = _paper_kind(cached_report)
+        except Exception as exc:
+            # `bus_event_stream` starts this in a bare thread and never inspects
+            # it, so an escaping exception would kill the worker while the
+            # `finally` below still published DONE — the stream would close
+            # cleanly having said nothing, and the console would show the exact
+            # "queued forever, no explanation" symptom as the missing-scheme bug,
+            # with an entirely different cause. Marking is a long Gemini/parser
+            # call chain and can genuinely fail, so name the failure.
+            log.exception("teacher_grade_failed", paper_id=paper_id)
+            bus.publish(
+                EventType.ERROR,
+                paper_id=paper_id,
+                message=f"Grading failed: {exc}",
+            )
         finally:
             bus.publish_done()
 

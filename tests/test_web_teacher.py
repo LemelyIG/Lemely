@@ -457,6 +457,109 @@ def test_upload_sets_error_status_on_detection_failure(
 # ---------------------------------------------------------------------------
 
 
+def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan uploaded *with* a mark scheme grades end to end.
+
+    The regression this pins: ``upload_paper`` used to write the scheme PDF to
+    disk under the teacher's own filename and then build the ``_PaperEntry``
+    without a ``mark_scheme=``, so ``entry.mark_scheme`` was ``None`` for every
+    uploaded paper. ``grade_paper_endpoint``'s marking branch was therefore
+    unreachable, it fell through to the "No mark scheme or graded correction
+    attached" warning, ``entry.kind`` was never reassigned, and the console sat
+    on "Queued / 0 auto-graded / N processing" forever.
+
+    Every pre-existing grade test seeded ``papers_store`` with a hand-built
+    entry that already carried a ``report``, which is exactly why a green suite
+    never noticed. This one goes through the HTTP upload route, as a teacher
+    does.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    scheme = object()
+    marked_with: dict[str, object] = {}
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: scheme)
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+
+    def _grade(mark_scheme: object, _extracted: object, **_kwargs: object) -> AccuracyReport:
+        marked_with["scheme"] = mark_scheme
+        return report
+
+    monkeypatch.setattr(grading_service, "grade_paper", _grade)
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={
+            "scan": ("scan.pdf", b"%PDF-1.4 scan", "application/pdf"),
+            # A realistic teacher filename: nothing like "mark_scheme.pdf".
+            "mark_scheme": ("0625_s20_ms_31.pdf", b"%PDF-1.4 scheme", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    paper_id = resp.json()["paperId"]
+
+    # Saved under the fixed sibling name `resolve_mark_scheme` looks for, not
+    # the client basename — otherwise the resolver could never find it.
+    entry = papers_store.get(paper_id)
+    assert entry is not None
+    assert entry.scan_path is not None
+    assert (entry.scan_path.parent / "mark_scheme.pdf").exists()
+
+    with client.stream("POST", f"/api/papers/{paper_id}/grade") as stream:
+        text = "".join(stream.iter_text())
+    assert "No mark scheme or graded correction attached" not in text
+
+    # The resolved scheme is what actually reached the marker.
+    assert marked_with["scheme"] is scheme
+
+    # The paper left the queue, and the console's counters move with it.
+    graded = papers_store.get(paper_id)
+    assert graded is not None
+    assert graded.kind == "graded"
+    assert graded.report is report
+    counts = {tab["id"]: tab["count"] for tab in client.get("/api/papers").json()["tabs"]}
+    assert counts == {"all": "1", "review": "0", "graded": "1", "processing": "0"}
+
+
+def test_grade_reports_worker_failure_as_an_error_frame(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash inside the grading worker is named, not swallowed into silence.
+
+    ``bus_event_stream`` runs ``run()`` on a bare thread it never inspects, and
+    the ``finally`` publishes DONE regardless — so before this, an exception
+    closed the stream cleanly with nothing said, which looks identical to the
+    stuck-at-queued bug above but has a completely different cause.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("gemini exploded")
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", _boom)
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={
+            "scan": ("scan.pdf", b"%PDF-1.4 scan", "application/pdf"),
+            "mark_scheme": ("ms.pdf", b"%PDF-1.4 scheme", "application/pdf"),
+        },
+    )
+    paper_id = resp.json()["paperId"]
+
+    with client.stream("POST", f"/api/papers/{paper_id}/grade") as stream:
+        text = "".join(stream.iter_text())
+
+    assert '"type": "error"' in text
+    assert "gemini exploded" in text
+
+
 def test_list_papers_empty(client: TestClient) -> None:
     """With no papers, the grid is empty and every tab count is zero."""
     body = client.get("/api/papers").json()
