@@ -2,13 +2,14 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-12T04:05:00Z
+last_updated: 2026-08-12T06:05:00Z
 #
 # ## READ THIS FIRST — the operational rules five sessions paid for
-# - **No gate run is in flight.** `/tmp/check_p610b.log` (tree at `310fade`) ended **`EXIT=1`:
-#   12 gates PASS, `ui-thresholds` FAIL on `student-standings` performance 74 < 80.** The
-#   config change is clean — pytest, mypy, import-linter, all five web gates and playwright-e2e
-#   all passed. **The failure is CLS 0.386 and it is P6.7's, diagnosed on that task's entry.**
+# - **No gate run is in flight.** P6.7 closed the last open gate failure: `student-standings` CLS is
+#   fixed and measured (0.386 -> 0.000, performance 74 -> 93). `ui-thresholds` passes on the
+#   phase-6 corpus. P6.11 re-runs the whole suite on the final tree; that run is the figure of record.
+#   The last full-suite run (`/tmp/check_p610b.log`, tree at `310fade`) ended `EXIT=1` with
+#   12 gates PASS and that one failure; nothing else in it was red.
 # - **`/tmp/check_p610.log` LANDED: `EXIT=0`, all 13 gates PASS, 0 skipped, 04:29 on 2026-08-12.**
 #   The second fully green full-suite run of the build, and the first covering `lemely/db/seed.py`
 #   + `lemely/runtime/supabase_env.py`. It ran on the tree at `b5bc7c7`, but
@@ -514,7 +515,38 @@ Measured, not assumed — every line below was checked on disk this session:
       hit a second time on a different binary: **"executable not found" is an environment answer,
       never a verdict** — and here it nearly became a verdict about *Docker containers*, one level
       further from the missing binary than the earlier case, which is why it was convincing.
-- [ ] doing — **P6.7** Full-product visual QA sweep: regenerate the **entire** screenshot corpus,
+- [x] done — **P6.7** (2026-08-12, session 104). **`AUDIT_EXIT=0`, `check_ui_gates.py` EXIT=0,
+      `removed: 0` against both baselines.** Full write-up `reports/phase-6/visual-qa.md`;
+      the source audit is `reports/phase-6/impeccable-audit.md` (15/20, Good).
+      **The headline number: every route in the product is now ≥80 Lighthouse performance
+      (floor 80, `teacher-quiz-detail`), where Phase 5 had EIGHT routes below 80 and a floor of
+      65.** 73 axe route-states, **0 violations at any impact**; 44 Lighthouse reports, a11y floor
+      96; 0 console errors; 0 horizontal-scroll violations; 48 screens / 246 screenshots.
+      **The live defect and its fix:** `student-standings` at performance 74 on **CLS 0.386 and
+      nothing else**. Fixed in `Standings.tsx` (`46bd5f7`) → **CLS 0.000, zero shifts recorded,
+      performance 93.** Zero shifts rather than a smaller number is what makes it a fixed defect
+      instead of a luckier run. Detail is on the P6.1 note below and in `visual-qa.md` §4.
+      **Three things a later session must not re-derive.**
+      (a) **The corpus has THREE producers and running one silently drops the others.** The audit
+      runner covers 43 screen ids; `web/e2e/screenshots.spec.ts` owns S-06/S-10/S-14/S-15/S-17 and
+      `web/e2e/correct-paper.spec.ts` owns the two `p2.10-*` captures. The first pass here ran only
+      the audit runner and the compare reported those seven as **`removed`** — the exact signal
+      MISSION §4 defines a blocker by, from screens that had not regressed but had never been asked
+      for. `TOKENSAVE_DISABLE_GREP_HOOK=1 grep -ln "SCREENS_DIR" web/e2e/*.ts` names every producer
+      in one line; run it before believing any `removed` count.
+      (b) **`compare_screens.mjs --json` takes a REPO-relative path and rejects `../`** even when
+      your cwd is `web/`. It fails *after* printing the whole comparison, so the lists scroll past
+      and look like a successful run that wrote nothing.
+      (c) **Per-role contact sheets did not exist.** `audit.mjs` writes one flat sheet; MISSION §4
+      asks for per-role. New `web/scripts/contact_sheets.mjs` (`npm run contact-sheets`) reads only
+      what is on disk, so sheets regenerate from a committed corpus without an 11-minute audit.
+      `G-` gets its own sheet rather than being copied into all three roles, and an id matching no
+      prefix lands on **Unclassified** and is named on stdout — which caught `DEV-01` immediately.
+      **Left undone deliberately, both in DELIVERY.md rather than silently fixed:** the ~600
+      arbitrary Tailwind literals across 41 files (a 600-site rewrite at ship time whose only
+      acceptance signal is a compare that cannot be pixel-clean), and the 54 sub-44px `size="sm"`
+      controls (WCAG 2.2 AA met, AAA not — the Phase-2.5 §8 gap, re-confirmed not rediscovered).
+      Superseded task text follows for the record. Full-product visual QA sweep: regenerate the **entire** screenshot corpus,
       per-role contact sheets, `/impeccable audit` across frontend source, `npx impeccable detect
       src/` with every finding resolved, axe + Lighthouse over every route. Regression against the
       Phase-2.5 baselines is a blocker (MISSION §4). Read `removed` (must be 0), not `changed`.

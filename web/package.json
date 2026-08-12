@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "audit": "node scripts/audit.mjs",
-    "compare-screens": "node scripts/compare_screens.mjs"
+    "compare-screens": "node scripts/compare_screens.mjs",
+    "contact-sheets": "node scripts/contact_sheets.mjs"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
