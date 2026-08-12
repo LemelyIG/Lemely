@@ -1987,3 +1987,21 @@ them whether or not Phase 6 fixes them.
   re-tags every run) but the pattern is the point.
 - **Next:** poll `/tmp/check_p610.log` for `EXIT=`; then the fresh-clone acceptance run that
   closes P6.10, then P6.7's visual sweep, P6.9's §6 evidence, and P6.11.
+
+## 2026-08-12 — session 102
+- **Did:** found session 101's gate run alive at 4 minutes (PID 847893, 84-byte log) and did
+  not relaunch — sixth consecutive session to make that call correctly. Cleaned the tree
+  (harness MCP config only, `1e23540`), then closed **P6.9** by writing DELIVERY.md §6
+  Evidence (`2b0e506`) and pruned STATE.md's header from 126 narrative lines to a 30-line
+  read-this-first block (`7a38185`).
+- **Learned:** the discipline §6 asks for pays immediately when you apply it to yourself.
+  Re-running the measurements instead of copying them corrected two live figures — the E2E
+  suite is 34 tests in 13 files, not the 30 STATE had carried since P5.11, and Phase-5's
+  Lighthouse directory holds 45 files but **44 route reports**, because `_summary.json` is a
+  list rather than a route and a naive `ls | wc -l` counts it. The a11y floor (96,
+  `teacher-review`) and the 8 sub-80 performance routes both reconfirmed, so the phase report
+  was right where it mattered.
+- **Also:** §6.3 lists the figures no artifact holds yet as deliberately blank, each named
+  with the task that fills it. A blank with an owner is honest; an estimate is not.
+- **Next:** the `EXIT=` line, then P6.7's visual sweep, the fresh-clone run that closes P6.10,
+  and P6.11.
