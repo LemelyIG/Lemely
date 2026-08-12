@@ -6624,3 +6624,50 @@ shipped functionality to satisfy a cleanup item. Both are less reversible than k
 share the product's identity model. That is a product call for Habeeby, not a refactor.
 Recorded in `DELIVERY.md` §5 with this reason rather than the previous wording, which implied
 unfinished work. **The build now has zero open checklist items.**
+
+## D6.12 — Sign-in was broken outside a secure context, and every gate in the build was blind to it
+
+**What.** `getDeviceId` (`web/src/lib/auth/storage.ts`) minted the client device fingerprint
+with a bare `crypto.randomUUID()`. That method is **secure-context-gated**: it exists on
+`https://` and on `http://localhost`, and is simply absent anywhere else. `getDeviceId` runs on
+the **login path** — a fresh browser profile mints an id before a session exists — so on any
+plain-HTTP non-localhost origin the first call threw `TypeError: crypto.randomUUID is not a
+function`, the sign-in form caught it and rendered the TypeError as its own error message, and
+nobody could log in. That set includes the LAN IP, `*.local` hostname and tunnel cases, i.e.
+exactly how the Docker-Compose deployment MISSION §3 calls "done for deployment" gets reached
+from a second device. Some older in-app webviews lack the method on `https` too.
+
+**Fix.** `web/src/lib/uuid.ts` exposes `randomUuid()`, which tries `crypto.randomUUID`, then
+`crypto.getRandomValues` — **not** secure-context-gated, so the hand-built RFC 4122 v4 layout is
+a genuinely cryptographic UUID in precisely the environments missing the one-liner — then
+`Math.random` for a host with no Web Crypto at all. Committed as `7bbf256`, pinned by
+`web/tests/unit/uuid.test.ts` (one case per host tier, plus a 500-draw uniqueness check).
+
+**Why a shared helper rather than a guard at the call site.** `CameraCapture` already carried
+its own inline `typeof crypto !== "undefined" && "randomUUID" in crypto` guard with a
+`page-${Date.now()}-${Math.random()}` fallback, so the codebase already had one private copy of
+this workaround and `storage.ts` would have made two. Same reasoning as the `initialsOf`
+consolidation in P3.7 chunk c.
+
+**The `Math.random` tier is documented as non-cryptographic, deliberately.** Both current
+callers need uniqueness, not unguessability: one is a React list key, and the device id is a
+slot label the server matches against (`client_device_id` is an unvalidated nullable string
+column) — never a credential, since the session is the bearer token. The docstring says so, so
+that the third caller does not quietly inherit a weak random source for something that must be
+unguessable.
+
+**The part worth keeping.** This build's closing figures are 13/13 gates, 3508 tests, 73 axe
+route-states, 44 Lighthouse reports, 246 screenshots — all green, all over a codebase where
+sign-in was dead outside localhost. **Not one of them could have caught it**, because every
+harness in the build (Playwright, Puppeteer, Lighthouse, the E2E server) drives the app at
+`http://localhost`, and `localhost` is a secure context by definition. The gates were not
+weak; they were *uniform*. Same family as D6.9 (`impeccable detect` vacuous on this machine)
+and P6.6's dated VAPID assertion: **a green gate is a statement about the conditions the gate
+runs under, and a condition every harness shares is a condition no harness tests.**
+
+**Not done, and why.** The visual/a11y leg was not re-run for `7bbf256`: a UUID here is a React
+list key and a `localStorage` value, neither of which renders, so the screenshot corpus and axe
+results are unchanged by construction. Web test/typecheck/oxlint/build and all ten pre-commit
+hooks were run and are green. **What would genuinely close this class** is a harness that
+exercises the SPA over a non-localhost HTTP origin; that is a new test-infrastructure task, not
+a line in this fix, and it is recorded here rather than started unattended.

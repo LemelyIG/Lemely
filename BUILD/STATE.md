@@ -50,11 +50,30 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   Note when reading run history: `31566210283` and `31566944458` show `cancelled`, which is **not
   a red** — GHA's concurrency group cancels an in-flight `ci-refs/pull/3/merge` run when a newer
   push supersedes it. Two docs pushes in four minutes produced both.
+- **A real defect was found and fixed AFTER the ship — `7bbf256`, pushed to `develop`.**
+  This is the first code commit since PR #3 merged, and it means `main` is now behind by a
+  user-facing bug fix rather than by nothing. **`crypto.randomUUID` is secure-context-only**,
+  so on any plain-HTTP non-localhost origin (a LAN IP, a `*.local` host, a tunnel — i.e. the
+  Docker-Compose deployment §3 defines as done) it is `undefined`. `getDeviceId`
+  (`web/src/lib/auth/storage.ts`) called it bare on the **login path**, so the first thing a
+  fresh browser profile did when signing in was throw, and the form rendered
+  "crypto.randomUUID is not a function" as its own error. Sign-in was dead for every
+  non-localhost HTTP deployment. `web/src/lib/uuid.ts` now builds the v4 layout from
+  `crypto.getRandomValues` (not secure-context-gated), and `CameraCapture`'s pre-existing
+  private guard was folded into the same helper. Pinned by `web/tests/unit/uuid.test.ts`
+  (4 cases, one per host tier).
+  **Worth noting for the record: no gate in this build could see it.** 13/13 gates, 3508
+  tests, 73 axe route-states and 44 Lighthouse reports all ran green over a codebase where
+  sign-in was broken outside localhost — because every harness in the build drives the app at
+  `http://localhost`, which is a secure context. Same shape as D6.9 and the P6.6 dated-VAPID
+  assertion: **a green gate is a statement about the conditions the gate runs under.**
 - **SHIPPED 2026-08-12 — Habeeby merged PR #3. Neither PR is open any more.**
   **#3** (develop → main, Phases 0–6) is **MERGED** as `74d33e6`; **#4** (Copilot's
   CI-alignment attempt — superseded by `7f11f58`/`f980fbc` and partly harmful; see D6.10 and
-  the note below) is **CLOSED**. `git diff origin/main..origin/develop` is **empty** and main
-  is exactly one commit (the merge) ahead, so every phase of this build is now on `main`.
+  the note below) is **CLOSED**. Every phase of this build is on `main`.
+  **`git diff origin/main..origin/develop` is no longer empty** — it now carries `7bbf256`
+  (the secure-context sign-in fix above) plus the docs commits. PR **#5** puts that fix on
+  `main`; it is Habeeby's to merge, never the orchestrator's.
   **This was the last thing the build was waiting on.** There is no remaining orchestrator
   action of any kind — not a task, not a PR to open, not a gate to re-run. A session that
   resumes here should read `BUILD/INBOX.md`, and if there is no unhandled `- [ ]` item,
@@ -73,7 +92,13 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   first session to actually cost it out found it was a contract change, not a cleanup: the DB
   store rejects the CLI's non-UUID student ids outright. Six sessions had deferred it as
   "opportunistic" without reading either store. **Defer-without-looking is how a decision
-  masquerades as a chore.** **Docs-only is the safe work on a shipped tree.**
+  masquerades as a chore.**
+  **"Docs-only is the safe work on a shipped tree" is retired as guidance.** It is the rule
+  that kept six sessions writing prose, and `7bbf256` is its counter-example: a genuine,
+  test-covered, login-breaking defect sitting in the tree the whole time. The distinction that
+  actually matters is not docs-vs-code, it is **changed-input vs unchanged-input**. Re-running
+  a gate over a tree no session has touched is the waste; fixing a defect no gate can see is
+  not.
   **Correction (session 114): that diff is NOT empty, and this file asserted it was for four
   sessions.** `git diff 66950f3..HEAD -- lemely web scripts tests` returns **10 changed lines
   across `lemely/db/notification_prefs_repo.py` and `lemely/db/student_profile_repo.py`** — the
