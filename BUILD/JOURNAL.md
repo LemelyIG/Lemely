@@ -2320,3 +2320,31 @@ them whether or not Phase 6 fixes them.
 - **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
 - **Next:** nothing. The build is COMPLETE, **merged to `main`**, zero open checklist items,
   zero open PRs. A future session should read INBOX and, absent a new directive, stop.
+
+## 2026-08-12 — session 116: the shipped tree had a login-breaking bug, uncommitted, untested by design
+
+- **Did:** found a real, complete, *uncommitted* fix in the working tree (`web/src/lib/uuid.ts`
+  + its test, both untracked; `storage.ts` and `CameraCapture.tsx` modified). Verified it rather
+  than wip-committing it: web tests **460 passed / 16 files**, `tsc -b --force`, oxlint, build,
+  and all ten pre-commit hooks green. Committed as `7bbf256`, pushed, recorded **D6.12**, opened
+  **PR #6** to `main`.
+- **The bug:** `crypto.randomUUID` is **secure-context-only**. `getDeviceId` called it bare on
+  the **login path**, so on any plain-HTTP non-localhost origin — LAN IP, `*.local`, tunnel,
+  i.e. the Docker-Compose deployment reached from a second device — sign-in threw and the form
+  rendered `crypto.randomUUID is not a function` as its own error. `crypto.getRandomValues` is
+  not gated, so the v4 layout is now built from it.
+- **Learned — a condition every harness shares is a condition no harness tests.** 13/13 gates,
+  3508 tests, 73 axe route-states, 44 Lighthouse reports, all green over a codebase where
+  sign-in was dead outside localhost. Every harness in this build drives `http://localhost`,
+  and localhost is a secure context by definition. The gates were uniform, not weak. Third of
+  its family after D6.9 (vacuous detector) and P6.6 (dated VAPID assertion).
+- **Learned — "docs-only is the safe work on a shipped tree" was itself the trap.** It is the
+  rule that kept six sessions writing prose, and it was false the whole time: real, tested,
+  user-facing code was sitting in the tree unread. The resume protocol's "clean up a dirty tree
+  with a wip commit" would have buried it under a `wip:` message. **Read the dirty tree before
+  deciding what it is.** The real distinction is changed-input vs unchanged-input, not
+  docs-vs-code.
+- **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
+- **Next:** PR #6 is Habeeby's to merge. The one open piece of work D6.12 names but does not do:
+  a harness that exercises the SPA over a **non-localhost HTTP origin** — the only thing that
+  would close this defect class rather than this defect.

@@ -72,8 +72,9 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   CI-alignment attempt — superseded by `7f11f58`/`f980fbc` and partly harmful; see D6.10 and
   the note below) is **CLOSED**. Every phase of this build is on `main`.
   **`git diff origin/main..origin/develop` is no longer empty** — it now carries `7bbf256`
-  (the secure-context sign-in fix above) plus the docs commits. PR **#5** puts that fix on
-  `main`; it is Habeeby's to merge, never the orchestrator's.
+  (the secure-context sign-in fix above) plus the docs commits. **PR #6** puts that fix on
+  `main`; it is Habeeby's to merge, never the orchestrator's. (Numbering note: #5 was never
+  this build's — do not infer PR numbers, read them off `gh pr create`'s output.)
   **This was the last thing the build was waiting on.** There is no remaining orchestrator
   action of any kind — not a task, not a PR to open, not a gate to re-run. A session that
   resumes here should read `BUILD/INBOX.md`, and if there is no unhandled `- [ ]` item,
