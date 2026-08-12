@@ -3,7 +3,7 @@
 status: COMPLETE           # RUNNING | COMPLETE | HALTED
 current_phase: 6            # ALL PHASES COMPLETE — merged to develop, reported, PR #3 open
 last_updated: 2026-08-12T05:30:00Z
-gemini_spend_usd: 0.19641   # MEASURED from `outputs/gemini_spend.json`. This line is a
+gemini_spend_usd: 0.19750   # MEASURED from `outputs/gemini_spend.json`. This line is a
 # hand-copied mirror and has drifted before (it read 0.1612 against a real 0.18429).
 # Re-read the ledger, never this line, before quoting a spend.
 
@@ -17,7 +17,7 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   failed — 90.92% coverage**; 73 axe route-states with 0 violations at any impact; 44
   Lighthouse reports, a11y floor 96, **performance floor 80 with zero routes below it**;
   0 console errors; 0 horizontal-scroll violations; 48 screens / 246 screenshots;
-  **`removed: 0`** against both the Phase-2.5 and Phase-5 baselines. Gemini **$0.19641 / $8.00**.
+  **`removed: 0`** against both the Phase-2.5 and Phase-5 baselines. Gemini **$0.19750 / $8.00** (read from `outputs/gemini_spend.json`, not carried).
 - **CI is green on HEAD.** Run `31564822523` on `36074a2`: `completed / success`, all five jobs
   (`test` 3.12/3.13/3.14, `web`, `pre-commit`) — the first green CI run of the build; every run
   before it failed back through 2026-08-09. Sessions 106–107 diagnosed and fixed it, session 108
