@@ -208,7 +208,7 @@ own additions:
 
 ## 8. Decisions recorded this phase
 
-`BUILD/DECISIONS.md` **D6.1–D6.8**:
+`BUILD/DECISIONS.md` **D6.1–D6.9**:
 
 | ID | Decision |
 |---|---|
@@ -220,6 +220,7 @@ own additions:
 | D6.6 | Deployment docs written from the config surface, and the two blockers they found |
 | D6.7 | The full-suite run found a time-bomb test, not a flake |
 | D6.8 | The fresh-clone run found four defects, and the product one was a claim with nothing behind it |
+| D6.9 | The CLS defect was fixed in the route, never in the threshold; and one gate is vacuous |
 
 **The recurring bug of this build, named once here because it appeared four separate times:** a
 hand-written mirror of a fact that nothing regenerates. `gemini_spend_usd` in STATE drifted from

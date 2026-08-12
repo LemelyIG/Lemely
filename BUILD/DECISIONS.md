@@ -6428,3 +6428,74 @@ running the documented commands as written instead of the ones you know work.** 
 here was invisible to all 13 gates — which had just gone green, 0 skipped, on this same tree.
 The gates run inside an environment that is already correct; the criterion is about the
 environment being *reachable* from a clone.
+
+---
+
+## D6.9 — The CLS defect was fixed in the route, never in the threshold; and one gate is vacuous (P6.7)
+
+Two judgment calls came out of the full-product visual QA sweep. Both were made in the
+direction that costs more work and keeps the gate honest, and neither is visible from the
+green `ui-thresholds` verdict that followed.
+
+### 1. `student-standings` scored 74 on CLS 0.386, and the fix was to reserve the space
+
+The failing run (`/tmp/check_p610b.log`) was **12 gates PASS + `ui-thresholds` FAIL** on a
+single line: `lighthouse: student-standings performance score 74 < 80`. TBT (120 ms), LCP
+(2.8 s) and speed-index (2.3 s) were all healthy — **the whole deficit was cumulative layout
+shift**, 0.386 against the 0.1 "good" threshold.
+
+**The previous session's stated hypothesis was wrong and is recorded here so it is not
+re-adopted.** It named P6.1's `React.lazy` split — specifically `RouteFallback`'s sizing — as
+the likely cause. The attribution was done instead from a committed artifact:
+`reports/phase-5/lighthouse/student-standings.json` already carried the `layout-shifts` audit
+for this route at **CLS 0.220**, so the defect *predates the code split* and is not a
+regression caused by it. Both recorded shifts name `<section aria-labelledby="s29-subjects">`
+— "Your subjects" being pushed down the page — not the route fallback. P6.1 raised the other
+four metrics and left this one untouched, which is why the same tree could score 92 on one run
+and 74 on another: **the shifts only count when the skeleton paints before the data arrives, so
+a fast run hides them entirely.** That intermittency is what made it look like noise near a
+floor, and it was not.
+
+Three blocks above that section grow after first paint: the board card (one "Loading the
+board…" line → a real board, ~335 px on seeded data at 380 px wide), `OptOutControl` (rendered
+`null` while its profile read is in flight, then ~124 px), and the XP-basis tab row (~34 px).
+
+Fixed in `web/src/portals/student/screens/Standings.tsx` (`46bd5f7`):
+
+- The two null-until-loaded blocks now render their own frame with the **real copy** marked
+  `invisible` + `aria-hidden` + `inert` while pending. Reserving with the actual text rather
+  than a `min-h-*` guess is what makes the reservation correct at every breakpoint — the height
+  comes from the same wrapping in the same box, so it cannot drift from the content it reserves.
+- The board card gets a `min-h-96` floor **in every state, not only while loading**. 384 px is
+  the height of the smallest real board on seeded data (a C-11 empty panel plus the pinned
+  viewer row), so it is a measurement rather than a round number, and it also stops the page
+  jumping when the student switches Friends / Class / School / Everyone — the same defect seen
+  by a person instead of by Lighthouse.
+
+Result: **CLS 0.000 — zero shifts recorded, not a smaller number — and performance 74 → 93.**
+Zero shifts is what makes it a fixed defect instead of a luckier run.
+
+**The threshold was never touched, and that is the decision.** D4.25 exists because this floor
+went unenforced for two entire phases; P6.1 (D6.2) made it a real gate. Loosening it at the
+first route that failed it would have been worse than never having enforced it at all — the
+gate would then be a record of what we were willing to measure, not of what the product does.
+
+### 2. `npx impeccable detect` is vacuous on this machine, and is reported as such
+
+MISSION §4 asks Phase 6 to "run `npx impeccable detect src/` and resolve every finding".
+impeccable 3.5.0 returns `[]` for `src/` — **and also for files written deliberately to trip
+it**: an inline `style={{color:"#ff0000"}}`, a CSS file with an off-scale `font-size: 13.7px`,
+and an em-dash-overuse file. With `--json`, `--quiet` and `--no-config` alike: exit 0, zero
+bytes, every time. No `.impeccable` config suppresses anything (`config.local.json` holds only
+hook consent).
+
+So the criterion is satisfied **trivially**, and the honest report of it is that **a green
+`impeccable-detect` gate is evidence of nothing** — not that the frontend is clean. It is
+written that way in the phase report §4 and in `DELIVERY.md` rather than counted among the
+passes.
+
+Not chased further, deliberately: it is third-party tooling, the deterministic checks that do
+bite (axe, Lighthouse, console-error, horizontal-scroll) are unaffected and all pass on real
+findings, and the `/impeccable audit` *skill* pass is a separate and non-vacuous leg of the
+same task (`reports/phase-6/impeccable-audit.md`, 15/20, Good). **A gate that cannot fail is a
+reporting problem, not a licence to claim a pass.**
