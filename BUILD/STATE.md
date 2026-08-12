@@ -18,11 +18,15 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   Lighthouse reports, a11y floor 96, **performance floor 80 with zero routes below it**;
   0 console errors; 0 horizontal-scroll violations; 48 screens / 246 screenshots;
   **`removed: 0`** against both the Phase-2.5 and Phase-5 baselines. Gemini **$0.19750 / $8.00** (read from `outputs/gemini_spend.json`, not carried).
-- **CI is green on HEAD.** Run `31564822523` on `36074a2`: `completed / success`, all five jobs
-  (`test` 3.12/3.13/3.14, `web`, `pre-commit`) — the first green CI run of the build; every run
-  before it failed back through 2026-08-09. Sessions 106–107 diagnosed and fixed it, session 108
-  watched the runner prove it. The whole failure class was *CI resolves fresh, this venv does
-  not*, so only the runner could.
+- **CI is green on HEAD.** Run `31567025713` on `e32a3d1`: `completed / success`, all five jobs
+  (`test` 3.12/3.13/3.14, `web`, `pre-commit`) — the **second** green run, confirming `31564822523`
+  on `36074a2` was not a one-off. That was the first green of the build; every run before it failed
+  back through 2026-08-09. Sessions 106–107 diagnosed and fixed it, 108 watched the runner prove
+  it, 110 confirmed it holds. The whole failure class was *CI resolves fresh, this venv does not*,
+  so only the runner could.
+  Note when reading run history: `31566210283` and `31566944458` show `cancelled`, which is **not
+  a red** — GHA's concurrency group cancels an in-flight `ci-refs/pull/3/merge` run when a newer
+  push supersedes it. Two docs pushes in four minutes produced both.
 - **Two PRs are open and both are Habeeby's call (MISSION §4 — never merge one yourself):**
   **#3** (develop → main, Phases 0–6) and **#4** (Copilot's CI-alignment attempt — superseded by
   `7f11f58`/`f980fbc` and partly harmful; see D6.10 and the note below).
