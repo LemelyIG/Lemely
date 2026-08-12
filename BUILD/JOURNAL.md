@@ -2093,3 +2093,20 @@ them whether or not Phase 6 fixes them.
   four separate times (`EXPECTED_TABLES`, the seed contract, the version string, the seeder stub).
 - **Next:** nothing. The supervisor stops on `status: COMPLETE`. PR #3 is open for Habeeby to
   merge — it is deliberately not merged (MISSION §4). `DELIVERY.md` is the entry point.
+
+## Session 106 — 2026-08-12
+- **Did:** nothing to the product. Resumed on `status: COMPLETE`, clean tree, no unhandled INBOX
+  item, B1–B3 resolved, develop pushed, PR #3 open. Declined to start Phase 1's opportunistic
+  D1.9 backlog: product code landing after P6.11's `EXIT=0` would break the one property that run
+  established, that the verdict describes the shipped tree.
+- **Found:** **GitHub Actions has been red on PR #3 since ~2026-08-09 while all 13 local gates are
+  green.** CI installs the dev extra fresh and `pyproject.toml:45` pins only `ruff>=0.7`, so the
+  runner resolved **ruff 0.16.2** against this venv's **0.15.20**. 0.16 enforces **RUF036**;
+  `notification_prefs_repo.py:110-111` and `student_profile_repo.py:164+` write
+  `X | None | _UnsetType`. Locally ruff check and ruff format --check both pass.
+- **Learned:** *an unpinned linter is a gate whose verdict changes without a commit.* Same shape as
+  P6.6's VAPID assertion — a red that arrives on a calendar rather than on a change, invisible to
+  every local run. A phase-end full suite catches the dated ones; only CI catches this one.
+- **Next:** nothing autonomous. Copilot's PR #4 already proposes the dependency alignment, so the
+  fix is in flight and merging is not mine (MISSION §4). One line either way: cap `ruff` in the dev
+  extra, or take the two RUF036 autofixes.

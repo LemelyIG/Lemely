@@ -4,6 +4,27 @@ status: COMPLETE           # RUNNING | COMPLETE | HALTED
 current_phase: 6            # ALL PHASES COMPLETE — Phase 6 merged to develop, reported, PR #3 updated
 last_updated: 2026-08-12T04:35:00Z
 #
+# ## Session 106 — resumed on a complete build, nothing to continue, ONE thing found
+# Tree clean, INBOX has no unhandled item, B1–B3 all RESOLVED, `origin/develop` up to date, PR #3
+# open and unmerged. No task was started: the first non-done item in this file is Phase 1's
+# opportunistic D1.9 backlog, and beginning it would put product code after P6.11's closing
+# `EXIT=0` — the one property that run went out of its way to establish (`git diff 66950f3..HEAD
+# -- lemely web scripts tests …` empty). Docs-only is the safe work on a shipped tree.
+# **The finding, which nothing on disk recorded: GitHub Actions has been RED on PR #3 since at
+# least 2026-08-09, while all 13 local gates are green — and both statements are true.** The CI
+# job installs the `dev` extra fresh, `pyproject.toml:45` pins only `ruff>=0.7`, so runner 3.14
+# resolved **ruff 0.16.2** where this venv holds **0.15.20**. 0.16 enforces **RUF036** (`None` not
+# last in a type union), which 0.15 does not: `lemely/db/notification_prefs_repo.py:110-111` and
+# `lemely/db/student_profile_repo.py:164+` carry `X | None | _UnsetType`. Locally
+# `.venv/bin/ruff check .` says *All checks passed* and `ruff format --check .` says 340 files
+# formatted. **So this is toolchain drift, not a code defect — an unpinned linter is a gate whose
+# verdict changes without a commit**, the same shape as P6.6's dated VAPID assertion (a red that
+# arrives on a calendar, not on a change). Not fixed here: **PR #4 already exists** from Copilot
+# ("align pre-commit dependencies and normalize formatter outputs") targeting develop, so touching
+# the same files would collide with a fix in flight, and merging a PR is never mine (MISSION §4).
+# The fix is one line either way — pin an upper bound on `ruff` in the dev extra, or apply the two
+# `RUF036` autofixes. Habeeby's call.
+#
 # ## THE BUILD IS COMPLETE. What the last session established
 # - **`/tmp/check_p611.log` LANDED: `EXIT=0`, all 13 gates PASS, 0 skipped**, 06:53 local on
 #   2026-08-12, on the tree at `66950f3`. `git diff 66950f3..HEAD -- lemely web scripts tests
