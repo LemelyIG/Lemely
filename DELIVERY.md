@@ -260,6 +260,14 @@ source.**
 - **The CLI and Gradio surfaces still use the JSON `HistoryStore`** rather than
   Postgres (D1.9). Parity was proven; the migration was left as opportunistic
   backlog. Gradio is an internal debug tool, not a product surface.
+- **A blank credential env var used to read as a configured one, and the health
+  endpoint said so (D6.8).** Fixed in Phase 6 — `${VAR:-}` in `docker-compose.yml`
+  made pydantic build `SecretStr("")`, which is not `None`, so `/api/health`
+  answered `apiKeyConfigured: true` on a stack with no Gemini key at all and
+  GoTrue's explicit "key is not configured" error never fired. Recorded here
+  rather than deleted because the *shape* survives the fix: any check of the form
+  `if value is None` is a claim about presence, not about usability, and this
+  build has been bitten by that family repeatedly.
 - **No CORS middleware exists, and that is the intended state (D6.5).** nginx
   proxies `/api` to the backend on the same origin the SPA was loaded from, so
   the browser issues no cross-origin request. A split-origin deploy would need a
@@ -331,6 +339,7 @@ rather than estimated, and **must be filled from the run's own artifacts**:
 | Test count and coverage on the final tree | P6.11 | the `Total coverage:` line of the run's pytest leg — **not** `scripts/check.sh`'s log, which prints nothing for a passing gate and therefore contains no count and no coverage figure at all |
 | The 13-gate verdict on the final tree | P6.11 | `EXIT=` line of the run log. P6.6 reached `EXIT=0` (all 13 gates, 0 skipped — the first fully green full-suite run of this build), but three commits landed after it, one of them product code, so that verdict is true of `6005b20` and not of the shipped tree |
 | Phase-6 axe / Lighthouse / screenshot corpus | P6.7 | `reports/phase-6/{axe,lighthouse,screens}/` plus the contact sheet |
+| ~~Fresh-clone acceptance~~ | ~~P6.10~~ | **Filled.** [`reports/phase-6/fresh-clone.md`](reports/phase-6/fresh-clone.md) — `make up` from a clone of `be49d34` reached `EXIT=0` with both containers healthy, and all five demo roles authenticate **through nginx on :8080**, each confirmed by reading `/api/me/profile` back. Four defects the thirteen gates could not see came out of it, fixed in `310fade` (D6.8) |
 | Visual regression against the Phase-2.5 baselines | P6.7 | the cross-phase compare's **`removed`** count, which must be 0. `changed` is not a regression signal — the seed's `run_tag` is random per run, so every screen rendering a class name changes on every re-baseline (§5.5) |
 
 ## 7. Running it

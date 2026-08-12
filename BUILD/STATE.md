@@ -5,6 +5,9 @@ current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 
 last_updated: 2026-08-12T04:05:00Z
 #
 # ## READ THIS FIRST — the operational rules five sessions paid for
+# - **A GATE RUN IS IN FLIGHT: `/tmp/check_p610b.log`, launched with `setsid` at 05:12 on the
+#   tree at `310fade`. Do NOT launch a second one — poll for the `EXIT=` line.** It is needed
+#   because `310fade` changes `lemely/runtime/config.py`, which every surface loads.
 # - **`/tmp/check_p610.log` LANDED: `EXIT=0`, all 13 gates PASS, 0 skipped, 04:29 on 2026-08-12.**
 #   The second fully green full-suite run of the build, and the first covering `lemely/db/seed.py`
 #   + `lemely/runtime/supabase_env.py`. It ran on the tree at `b5bc7c7`, but
@@ -22,6 +25,15 @@ last_updated: 2026-08-12T04:05:00Z
 # - **`check.sh`'s log holds a verdict and nothing else** — no test count, no coverage figure.
 #   Any number quoted anywhere must come from an artifact that actually holds it.
 #
+# Session 103: **P6.10's fresh-clone acceptance run is DONE and it passed** — `make up` from a
+# real clone brought the product up and all five demo roles authenticate through nginx on :8080.
+# It also found four defects no gate could see, fixed in `310fade` (D6.8). The one to carry:
+# **an empty env var is not an unset one.** `${VAR:-}` in compose made pydantic build
+# `SecretStr("")`, so every `is None` "not configured" check answered *configured* — `/api/health`
+# said `apiKeyConfigured: true` on a stack that cannot mark a paper, and GoTrue's explicit
+# "key is not configured" AuthError never fired, sending an empty `apikey` that local Kong
+# accepts and Supabase Cloud would not. **A fresh-clone test earns its keep by running the
+# documented commands as written rather than the ones you know work.**
 # Session 102: cleaned the tree (harness MCP config only), then closed **P6.9** — DELIVERY.md
 # §6 Evidence, the last open hole. Built as three tables: what is measured today with the
 # command that re-derives each figure, the Phase-5 UI baseline recomputed from the committed
@@ -524,8 +536,39 @@ Measured, not assumed — every line below was checked on disk this session:
       and the 8 sub-80 performance routes both reconfirmed.
       **P6.7 and P6.11 must fill §6.3 from their own artifacts** — that is the only thing left
       in this file, and it is structural, not a hole.
-- [ ] doing — **P6.10** Fresh-clone acceptance: `git clone` → the documented commands → working
-      product with seeded demo accounts for all 5 roles.
+- [x] done — **P6.10** Fresh-clone acceptance: `git clone` → the documented commands → working
+      product with seeded demo accounts for all 5 roles. **RUN FOR REAL AND PASSED**
+      (session 103, `310fade`, D6.8) — a clone of this branch at `be49d34` into
+      `/tmp/lemely-fresh-1`, the documented commands executed verbatim from it, every claim
+      checked against the running containers.
+      **`make up` from the clone: `EXIT=0`, both containers healthy, SPA served on :8080.**
+      All five roles authenticate **through nginx, not against the backend directly** — four by
+      password login, the parent by phone-OTP — each confirmed by reading `/api/me/profile` back
+      with the returned token and seeing the right role. That chain (DNS → proxy →
+      `Authorization` forwarding → JWT validation → RBAC) had **never been exercised with a real
+      GoTrue login before**; P6.4 only ever used backend-minted tokens.
+      **Four defects found, all invisible to the 13 gates that had just gone green on this same
+      tree** — the gates run inside an environment that is already correct, and this criterion is
+      about reaching it from a clone. Full text in D6.8; the one that matters:
+      **an empty env var is not an unset one.** `docker-compose.yml` forwards optional credentials
+      as `${VAR:-}`, so pydantic built `SecretStr("")` — not `None` — and every "is not
+      configured" check answered *configured*. `/api/health` returned **`apiKeyConfigured: true`
+      on a stack with no Gemini key at all**, and `GoTrueClient._anon_key`'s explicit AuthError
+      never fired, sending an empty `apikey` header that **local Kong tolerates and Supabase Cloud
+      would reject as an unrelated-looking 401**. Fixed with a blank→None `BeforeValidator` on the
+      optional credential fields only (both Supabase keys, Gemini, the three VAPID fields).
+      Also fixed: `DEMO_PARENT.display_name` was declared and applied nowhere (the parent answered
+      `displayName: null` while the other four carried theirs), README's
+      `pip install -e ".[dev,ui]"` omitted the `db`/`web` extras so `make db-migrate` and
+      `make seed` both failed outright from a clone, and `python` is not a command on
+      Debian-family systems (README + the Makefile's `PYTHON` default).
+      **What it did NOT prove, stated rather than rounded off:** the Supabase stack was already
+      running, so `up.sh` took its already-running branch and a cold `supabase start` is still
+      unexercised; and `make seed` reported `demo_accounts: 0` because the accounts existed —
+      correct idempotent behaviour, with creation-from-empty proven separately at session 101.
+      Session 101's groundwork (the real seeder, the `supabase_env` extraction, 12 hermetic
+      tests, `b5bc7c7`/`e2ed097`) is what made this run possible; its lesson stands —
+      **a hermetic test of an entry point tests everything except that it is an entry point.**
       **Known before you start (found at P6.5, D6.6 — do not re-derive): the seeding path this
       criterion names does not exist.** `seed_reference_data` and `seed_demo_accounts` in
       `lemely/db/seed.py:26-51` are **stubs with a bare `pass`**, so `make seed` inserts zero
@@ -588,6 +631,15 @@ Measured, not assumed — every line below was checked on disk this session:
       container, so both keys must be set explicitly there.
       **Still open for P6.10: the fresh-clone acceptance run itself** (`git clone` into a temp dir →
       the documented commands → all five roles usable). Everything it needs now exists.
+- [ ] todo — **P6.10-followup** (small, do inside P6.7 or P6.11 — needs a running container, so
+      **not** while a gate run holds :8000). README and DELIVERY.md §7 both say the parent's OTP
+      code is "printed to the backend log". Verified true under `configure_logging()`
+      (`{"event": "Mock SMS to …: your Lemely code is 424242"}`), but it did **not** appear in
+      `docker compose logs backend` on the fresh-clone run. Hypothesis from reading, not measured:
+      the container's uvicorn installs its own `dictConfig` and drops a bare stdlib INFO record
+      from `lemely.auth.sms`. Either fix the container logging or correct both documents — the
+      flow itself is fine, the code comes back as `devCode`. Full note in
+      `reports/phase-6/fresh-clone.md` §6.
 - [ ] todo — **P6.11** Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
       `status: COMPLETE` (the supervisor stops on that value — it is the last write of the build).
 
