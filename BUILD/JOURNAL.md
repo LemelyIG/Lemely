@@ -1925,3 +1925,152 @@ that nothing regenerates drifts, and it drifts toward looking better.**
 develop. P6.0 is reconnaissance; it should start from the `### Honest limitations`
 blocks in every phase section of STATE, since `DELIVERY.md` must account for all of
 them whether or not Phase 6 fixes them.
+
+## 2026-08-11/12 — session 94 (Phase 6 started)
+
+- **Did:** P6.0 recon + the 12-task Phase-6 plan; P6.1 closed both long-carried gate
+  holes (D3.20 `web/e2e/` never typechecked → own tsconfig project, found one real
+  `string | undefined` bug; D4.25 Lighthouse perf floor never enforced → real gate,
+  scoped to `/student` as MISSION words it); P6.2 built the concurrency + load-sanity
+  pass that never existed. Branch `feature/phase-6-hardening`, 5 commits.
+- **Learned:** the 65–87 Lighthouse band across all 44 routes was one cause — a single
+  1.3 MB bundle serving every route. Splitting took the entry chunk to 397 kB and the
+  student floor from 70 to 89. Also: `XpService.award` had a live TOCTOU that let
+  concurrency defeat the anti-farming caps, fixed with the lock idiom already used
+  next door.
+- **The lesson worth keeping:** two things I was handed as "verified" were not. A
+  subagent's device-cap test passed with the lock it claimed to verify removed, and my
+  own first inversion check misread pytest's output and looked flaky. Both were only
+  settled by a counted loop. Inversion, repeated and counted, is the only thing that
+  distinguishes a regression test from decoration.
+- **Next:** P6.3 security re-review (authz matrix over every Phase-4/5 route + a
+  reviewer sweep), then P6.4 Docker Compose — which is greenfield: no Dockerfile,
+  compose file, deployment doc or DELIVERY.md exists anywhere in the repo.
+
+## 2026-08-12 — session 95 (P6.3)
+
+- **Did:** the Phase-6 security re-review. Rewrote the authz matrix as a *generated*
+  one (`tests/test_authz_matrix_complete.py`): it derives the route set from the app
+  and asserts it equals a declared table, so an undeclared route now fails the build.
+  Added 21 real-minted-token cases and a recursive mass-assignment gate over all 39
+  request-body models. Started P6.4 (Docker Compose) — greenfield.
+- **Found:** nothing to fix. All 121 route operations were already guarded and every
+  Phase-4/5 route keys its query on `auth.user_id`. **No production code changed in
+  P6.3**, and that is the honest result rather than a shortfall — what was actually
+  broken was the *method*, a hand-typed list whose coverage silently froze at Phase 3.
+- **Learned — a test that mocks the thing upstream of the guarantee is not testing the
+  guarantee.** My 403 sweep overrode `get_auth_context`, so it proved `require_role`
+  given a correct context while being structurally blind to a token-decoding break.
+  The reviewer caught it; the fix was tokens that are actually minted.
+- **Learned — do not run a read-only reviewer against a checkout with an inversion in
+  flight.** The reviewer read `deps.py` during the two minutes I had the role guard
+  deliberately disabled and filed a Critical "something is mutating the auth guard on
+  disk". Its observation was exact and its conclusion was wrong; I only knew because I
+  was the cause. Serialise them, or say so in the brief.
+- **Next:** finish P6.4 (verify the images actually build and the nginx `/api` proxy
+  really reaches the backend), then P6.5 deployment docs.
+
+## 2026-08-12 — session 101
+
+- **Did:** confirmed P6.6 green (`EXIT=0`, all 13 gates, 0 skipped — the build's first
+  fully green full-suite run) and closed P6.8. Built P6.10's seeder against the untracked
+  `tests/test_seed.py` found on arrival, extracted `ensure_supabase_env` to
+  `lemely/runtime/supabase_env.py`, and retired the `make seed` caveats from README,
+  DELIVERY.md and `docs/deployment.md` (`b5bc7c7`, `e2ed097`).
+- **Learned:** a hermetic test of an entry point tests everything except that it is an
+  entry point — 12 green tests and a clean `mypy` did not stop `make seed` dying on the
+  live stack. Verify entry points by running them, on a *clean slate*: an already-seeded
+  DB cannot tell you whether `created` is right.
+- **Also learned, the hard way:** a demo-data cleanup filter must be anchored to the demo
+  constants, never to a domain suffix another seeder shares. `%parents.lemely.local`
+  matched 206 rows, not 5. Harmless here (auth/mirror stayed consistent, and `seed_e2e.py`
+  re-tags every run) but the pattern is the point.
+- **Next:** poll `/tmp/check_p610.log` for `EXIT=`; then the fresh-clone acceptance run that
+  closes P6.10, then P6.7's visual sweep, P6.9's §6 evidence, and P6.11.
+
+## 2026-08-12 — session 102
+- **Did:** found session 101's gate run alive at 4 minutes (PID 847893, 84-byte log) and did
+  not relaunch — sixth consecutive session to make that call correctly. Cleaned the tree
+  (harness MCP config only, `1e23540`), then closed **P6.9** by writing DELIVERY.md §6
+  Evidence (`2b0e506`) and pruned STATE.md's header from 126 narrative lines to a 30-line
+  read-this-first block (`7a38185`).
+- **Learned:** the discipline §6 asks for pays immediately when you apply it to yourself.
+  Re-running the measurements instead of copying them corrected two live figures — the E2E
+  suite is 34 tests in 13 files, not the 30 STATE had carried since P5.11, and Phase-5's
+  Lighthouse directory holds 45 files but **44 route reports**, because `_summary.json` is a
+  list rather than a route and a naive `ls | wc -l` counts it. The a11y floor (96,
+  `teacher-review`) and the 8 sub-80 performance routes both reconfirmed, so the phase report
+  was right where it mattered.
+- **Also:** §6.3 lists the figures no artifact holds yet as deliberately blank, each named
+  with the task that fills it. A blank with an owner is honest; an estimate is not.
+- **Next:** the `EXIT=` line, then P6.7's visual sweep, the fresh-clone run that closes P6.10,
+  and P6.11.
+
+## 2026-08-12 — session 103
+
+- **Did:** closed **P6.10** by actually running the fresh-clone acceptance — cloned this branch
+  at `be49d34` into `/tmp/lemely-fresh-1`, ran the documented commands from it, and checked
+  every claim against the running containers. `make up` reached `EXIT=0` with both containers
+  healthy, and **all five demo roles authenticate through nginx on :8080**, each confirmed by
+  reading `/api/me/profile` back. Four defects fixed in `310fade` (D6.8), evidence artifact at
+  `reports/phase-6/fresh-clone.md` (`fe8f514`), and DELIVERY.md §6.3's fresh-clone row filled.
+  Also confirmed the earlier in-flight run: `/tmp/check_p610.log`, `EXIT=0`, all 13 gates.
+- **Learned:** **an empty environment variable is not an unset one.** `docker-compose.yml`
+  forwards optional credentials as `${VAR:-}`, so pydantic built `SecretStr("")` — not `None` —
+  and every `is None` "not configured" check answered *configured*. `/api/health` returned
+  `apiKeyConfigured: true` on a stack with no Gemini key at all, and GoTrue's explicit "key is
+  not configured" error never fired: an empty `apikey` header went out instead, which **local
+  Kong accepts and Supabase Cloud would reject**. Works locally, every test green, broken in the
+  deploy that matters. The general form: `if value is None` is a claim about *presence*, never
+  about *usability*.
+- **Also learned:** the value of this task was entirely in running the documented commands **as
+  written** rather than the ones I knew worked. `pip install -e ".[dev,ui]"` omits the `db` and
+  `web` extras, so `make db-migrate` and `make seed` both failed outright from a clone, and
+  `python` is not a command on Debian-family systems. All 13 gates had gone green with 0 skipped
+  on this same tree hours earlier and saw none of it — gates run inside an environment that is
+  already correct.
+- **Then:** re-ran the full suite on `310fade` because config.py is loaded by every surface.
+  **`EXIT=1` — the first non-green run since P6.6.** The config change is clean; the one failure
+  is `ui-thresholds` on `student-standings` (performance 74 < 80), and pulling the JSON before
+  the scratch dir was overwritten shows it is **CLS 0.386, not bundle weight** — TBT, LCP and
+  Speed Index are all healthy. Plausibly a cost of P6.1's own `React.lazy` fix on the very route
+  P6.1 reported as 70→92.
+- **Next:** P6.7's visual sweep, which now starts with that finding already diagnosed on its
+  STATE entry rather than rediscovering it. Then the P6.10 follow-up (the OTP-code-in-the-log
+  claim, unconfirmed inside the container) and P6.11.
+
+## 2026-08-12 — session 104 (P6.7 closed, P6.10-followup closed, P6.11's run launched)
+
+- **Did:** closed **P6.7**, the full-product visual QA sweep. `AUDIT_EXIT=0`,
+  `check_ui_gates.py` EXIT=0, **`removed: 0` against both the Phase-2.5 and Phase-5 baselines**.
+  48 screens / 246 screenshots, 73 axe route-states with zero violations at any impact, 44
+  Lighthouse reports with an a11y floor of 96, zero console errors, zero horizontal scroll.
+  Fixed the one live defect (`student-standings` CLS), added the per-role contact sheets MISSION
+  asks for and nothing produced (`web/scripts/contact_sheets.mjs`), and wrote
+  `reports/phase-6/visual-qa.md` + `impeccable-audit.md`. Then closed **P6.10-followup** by
+  fixing the container's logging rather than weakening the two documents that described it.
+  Launched P6.11's full-suite run detached on the clean tree at `66950f3`.
+- **Learned — the artifact you already committed may hold the answer you were about to re-measure.**
+  The standing hypothesis for the CLS failure was `RouteFallback`. It was wrong, and
+  `reports/phase-5/lighthouse/student-standings.json` had said so for a phase: its `layout-shifts`
+  audit names `<section aria-labelledby="s29-subjects">` in both recorded shifts. Reading it cost
+  one command and replaced an 11-minute measurement plus a plausible wrong fix. It also showed
+  CLS was **0.220 back in Phase 5**, so this was never the P6.1 regression it looked like — the
+  shifts only score when the skeleton paints before the data lands, which is the whole reason the
+  same tree scored 92 on one run and 74 on the next.
+- **Also learned — the corpus has three producers and running one silently drops the others.**
+  The audit runner covers 43 screen ids; `screenshots.spec.ts` and `correct-paper.spec.ts` own
+  the other seven. Running only the first made the compare report those seven as **`removed`** —
+  the exact signal MISSION §4 defines a blocker by, from screens that had never regressed. A
+  regression detector that is fed a partial candidate reports a catastrophe. Enumerate the
+  producers before believing the count: `grep -ln "SCREENS_DIR" web/e2e/*.ts`.
+- **Also learned — a silent gate is not a passing gate.** `npx impeccable detect` returns `[]`
+  for `web/src/` and also for a file written deliberately to trip it, so MISSION §6 gate 8 has
+  been green and vacuous. The tell was cheap: feed the detector something it should catch. Worth
+  doing to any check whose output is "nothing".
+- **Also learned — `logging.lastResort` is pinned at WARNING, and that is how a container loses
+  every INFO record without an error.** uvicorn's `LOGGING_CONFIG` has no `root` entry, so
+  `dictConfig` leaves root handler-less and `lemely.*` INFO propagates into nothing. P6.10 saw
+  the missing OTP line; the real scope was every `lemely.*` record below WARNING.
+- **Next:** P6.11 — poll `/tmp/check_p611.log` for `EXIT=`, write `reports/phase-6/REPORT.md`,
+  merge to develop, push, update PR #3, ntfy, then set `status: COMPLETE`.

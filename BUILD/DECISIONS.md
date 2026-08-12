@@ -5973,3 +5973,529 @@ generalisable rule, now paid for four times (`EXPECTED_TABLES` P5.4, the
 `SeedContract` mirror P4.11, G-13 P5.9, this): **a hand-kept list that nothing
 regenerates fails silently and in the direction of false confidence.** Write the
 registry entry in the same chunk as the screen.
+
+## D6.1 — `web/e2e/` gets its own tsconfig project, not a seat in the vitest one (P6.1a)
+
+D3.20 recorded that `web/e2e/` and `playwright.config.ts` were in no tsconfig
+`include`, so the most expensive gate in the build — 34 tests across 13 files by
+Phase 6 — had never once been typechecked. Three phases carried it forward. P6.1
+closes it.
+
+**The obvious fix is wrong.** Adding `"e2e"` to `tsconfig.test.json`'s `include`
+is one word and would have compiled. That project declares
+`"types": ["node", "vitest/globals"]`, so every Playwright spec would then be
+typechecked against **vitest's** ambient `expect`/`test` rather than the ones it
+imports from `@playwright/test`. The two APIs overlap enough to typecheck and
+differ enough to matter (`expect(locator).toBeVisible()` exists in one and not the
+other), so the gate would pass while checking the specs against the wrong runner's
+types — a green that means less than no green at all. Two runners, two projects.
+
+`moduleResolution: "bundler"` rather than `nodenext` for the same class of reason:
+the specs import `./seed` extensionlessly and Playwright's own transpiler resolves
+that, so `nodenext` would report errors the runtime does not have — a gate that
+fails on correct code teaches the next session to disable it.
+
+**It found exactly one error, and it was real.** `webServer.env` was spread from
+`process.env` (`string | undefined` per key) into a field requiring `string`.
+Fixed by filtering the undefined-valued keys, not by casting: a cast would keep the
+type system quiet while a genuinely-undefined value reached the subprocess as the
+literal string `"undefined"`.
+
+**The gate is now non-incremental (`tsc -b --force`).** `tsc -b` reuses
+`node_modules/.tmp` tsbuildinfo, which is exactly how `tsconfig.test.json` shipped
+without `jsx` for a whole phase while `npm run build` reported success. A gate that
+can be green because of a stale cache is not a gate. `build` stays incremental;
+only the gate forces.
+
+## D6.2 — The Lighthouse performance floor becomes a real gate, scoped exactly as MISSION words it (P6.1b)
+
+D4.25 recorded that `scripts/check_ui_gates.py` had **no performance check at
+all**, while MISSION §11 and four phase reports described "performance ≥ 80 on the
+student routes" as a standing automated check. By Phase 5, eight routes sat below
+80 and `ui-thresholds` was green. Every citation of that green as a performance
+pass was, without anyone intending it, false.
+
+**Scope: the `/student` subtree only.** That is precisely what MISSION §11 claims a
+floor for; it has never stated one for teacher or parent routes. Inventing a floor
+MISSION does not state would be as dishonest as ignoring the one it does — so the
+teacher/parent numbers are reported in the phase report and DELIVERY.md rather than
+gated. The teacher routes are genuinely the worse ones (`teacher-quiz-detail` 65),
+which is exactly why gating them here would look like diligence while actually
+being an unrequested scope change made at the moment it would fail.
+
+**Keyed on `path`, not on the slug prefix.** `audit.mjs` now writes each
+Lighthouse row's route `path`, and the gate treats `/student…` as the student
+subtree. Keying on the slug's `student-` prefix would mean a future student screen
+slugged off-convention silently escapes the floor — the same shape of hole this
+decision is closing. Report dirs baselined before P6.1 carry no `path`, so the slug
+prefix is a documented fallback rather than a silent "not a student route", which
+would let the gate pass by omission on an old corpus.
+
+**The fix is code splitting, not a lowered bar.** The build emitted a single
+1.3 MB `index-*.js` for all 44 routes — zero splitting, so every route paid for
+every screen of every portal, and the scores clustered in a 65–87 band that had
+little to do with any individual route's complexity. Screens are now `React.lazy`
+with one `Suspense` boundary per portal wrapping the `<Outlet />` (portal chrome
+stays painted and interactive while a screen chunk arrives). Entry chunk
+**1.3 MB → 387 kB across 91 chunks**, with no test changes required (456/456 web
+unit tests still pass).
+
+`RouteFallback` lives in the C-11 state-view family rather than in each router
+file. It was written as four local copies that had **already** drifted to three
+different type/padding combinations before they were merged — the concrete version
+of the Phase-2.5 rule that cross-cutting UI is composed from the library, not
+re-invented per call site. It is deliberately not a `StateView`: those are terminal
+answers about data ("there is nothing here"), while this is a sub-second gap that
+should not flash a heading nobody needed to read. It keeps `role="status"` so a
+screen-reader user hears something between activating a link and the screen
+arriving.
+
+## D6.3 — The concurrency pass found a real race in the XP cap, and one of its own tests was decoration (P6.2)
+
+MISSION §4 Phase 6 asks for a concurrency test and basic load sanity. Neither
+existed: grepping `tests/` for `concurren|asyncio.gather` hit only two files, both
+incidentally. `tests/test_concurrency.py` and `scripts/load_sanity.py` are new.
+
+**The finding: `XpService.award` could be defeated by concurrency.** The daily
+anti-farming caps of D5.1 §3 were implemented as a plain read-then-write —
+`session.get(User, ...)`, count today's awards, decide, insert — with no lock. Eight
+concurrent awards against a cap of three all succeeded. Distinct `dedupe_key`s mean
+migration 0013's unique constraint cannot save it. Fixed with
+`with_for_update=True`, which is not an invention but the idiom already used on the
+same `users` table by `DeviceRegistry.register_login` for the identical TOCTOU.
+
+**Verified by inversion, not by reading.** With the lock reverted the test fails;
+with it restored it passes. Worth recording because the inverted run failed with a
+*different* symptom than the one that motivated the fix — a `uq_streaks_user_id`
+UniqueViolation from concurrent streak-row creation, rather than the cap bypass. One
+missing lock, two failure modes, and which one surfaces depends on thread timing. A
+future session that sees only one of them should not conclude the other was
+misdiagnosed.
+
+That second symptom is the more dangerous one in production: `award_xp_safely` is
+deliberately fail-open (D5.1 §3), so an IntegrityError there is swallowed and a real
+student silently loses XP with every gate in this build still green.
+
+**And the pass caught one of its own tests being decoration.** The same inversion
+applied to `test_device_cap_holds_under_concurrent_logins` — removing
+`device_repo.py`'s `FOR UPDATE` — left it **passing**, while its docstring claimed it
+confirmed that lock holds under concurrency. It did not.
+
+The cause was not the code but the test's own thread scheduling: with 4 unsynchronised
+threads, the GIL plus a short critical section meant they often never actually
+overlapped inside `register_login`, so the race window was simply missed. Measured
+before the fix, with the lock removed: **8 pass / 12 fail over 20 runs** — a test that
+catches its regression barely half the time reads as green often enough to be believed.
+Fixed in the test only (`threading.Barrier` so every thread enters at the same instant,
+and 11 threads rather than 4); `device_repo.py` was not touched. Re-measured by me
+independently of the agent that wrote it: **lock removed → 0 pass / 10 fail; lock
+restored → 3/3 green.**
+
+A test that cannot fail is worse than no test, because it is cited as evidence. The rule
+this establishes for the rest of Phase 6: **a test written to prove a concurrency
+guarantee must be shown to fail when that guarantee is removed — repeatedly, not once —
+and the inversion counts belong in the report.** Note also that a single inversion run is
+not enough to *clear* a test: the first crude check I ran looked mixed because of how I
+parsed pytest's output, and only a counted 10-run loop settled it. Count, don't eyeball.
+
+**Load sanity is reported as numbers, with no verdict.** MISSION states no API latency
+threshold, so grading against an invented one would be manufactured precision (UI spec
+§1.4). `reports/phase-6/load-sanity.{json,md}` carry real measured output — 8
+endpoints, concurrency 10, **zero errors across ~10,000 requests** — plus the caveats
+that make the numbers readable (single machine, dev uvicorn, synthetic seed, Gemini
+mocked).
+
+One signal in that data is worth carrying into DELIVERY.md rather than losing in a
+table: **`/api/teacher/overview` is 10-40x slower than every other endpoint measured**
+(p50 396ms / p95 458ms, against 8-150ms for the rest). That is the shape of an N+1
+across a teacher's classes and students. Not chased here — it is a performance
+observation on seeded data, not a defect with a failing test — but it is the first
+place to look if the teacher console feels slow, and it should not be discovered twice.
+
+---
+
+## D6.4 — The authz matrix becomes generated, and the security sweep found nothing to fix (P6.3)
+
+MISSION §4 Phase 6 asks for the authz matrix to be re-verified over every route
+including the Phase-4/5 additions, plus an adversarial security sweep.
+
+**The matrix was re-verified by replacing the method, not by extending the list.**
+`tests/test_authz_matrix.py` (P1.6) proves RBAC on a *hand-listed* spread that
+stopped growing at Phase 3 — flashcards, friends, leaderboard, xp, notifications,
+practice, placement, announcements, the exam calendar and the parent portal were
+essentially unrepresented in it, and nothing made adding a route fail a test.
+Extending the list by hand would have re-created that failure mode one phase later.
+`tests/test_authz_matrix_complete.py` instead derives the route set from the app and
+asserts it is **equal** to a declared table, so a new route with no declaration
+fails, and a stale declaration for a deleted route fails too. The old file is kept,
+not replaced: it carries per-route rationale that a generated file cannot.
+
+**What the sweep actually found: nothing to fix.** All 121 route operations already
+carry a guard — 5 public (the four auth entrypoints plus `/api/health`), 12
+deliberately role-agnostic-but-authenticated (`/api/me`, notifications), 104
+role-gated. The `reviewer` pass traced every caller-supplied identifier on the
+Phase-4/5 routers from route parameter to SQL and found identity keyed on
+`auth.user_id` in every case, with ownership failures collapsed to 404 rather than
+403 where an existence oracle would otherwise leak. **No production code changed in
+P6.3.** That is the honest result and it is recorded as such rather than dressed up.
+
+**Three things worth carrying forward.**
+
+1. **Provenance of the declared table is stated in the file, because it matters.**
+   `EXPECTED`'s rows were seeded from the wired guards and then reviewed, not
+   derived independently — so the guard-match property is a *freeze* of a reviewed
+   state, not an independent check of it. The completeness and behavioural
+   properties are independent of how the table was produced. A future reader must
+   not over-trust that one property.
+2. **The override-shaped blind spot the sweep named was real.** A 403 test that
+   overrides `get_auth_context` proves `require_role` given a correct context but
+   cannot see a break in token decoding, because the code building the context is
+   the code it replaces. Twenty-one real-minted-token cases and four
+   malformed-credential cases now cover the whole chain. This generalises: **a test
+   that mocks the thing upstream of the guarantee is not testing the guarantee.**
+3. **Mass assignment is now gated, and the gate had to be recursive to be worth
+   anything.** Four separate `ApiModel` bases set `extra="forbid"`, but nothing
+   proved every body inherits one, and a strict outer model with a lax nested
+   element type still accepts unknown keys. The new test walks the dependency tree
+   transitively — 39 models, all strict — and asserts pydantic *acts* on the flag
+   rather than trusting the flag.
+
+**Every guarantee was inverted and counted, per P6.2's rule.** Disabling the role
+check fails 333/333 role-gated cases and 21/21 real-token cases while the 401
+sweeps correctly still pass (a different guarantee); adding one undeclared route
+fails all three structural tests; making one nested model lax fails exactly its two
+cases.
+
+**One process note.** The `reviewer` agent ran concurrently with inversion A and
+read `deps.py` during the ~2 minutes the guard was deliberately disabled, then
+watched it revert — and reported a Critical "something is mutating the auth guard
+on disk". It was right about what it saw and wrong about what it meant. **Do not
+run a read-only reviewer concurrently with an inversion run on the same checkout**;
+either serialise them or tell the reviewer an inversion is in flight.
+
+---
+
+## D6.5 — The deployment stack joins Supabase's network, and ships no CORS on purpose (P6.4)
+
+MISSION §3 asks for one command bringing up Supabase-local + backend + the built SPA
+"with correct CORS/proxy configured". P6.0 established this was greenfield: no
+Dockerfile, no compose file, nothing.
+
+**Supabase local stays CLI-managed; our compose joins it.** The Supabase CLI owns its
+own compose project, so the choice was to reimplement its stack (GoTrue, Kong, Storage,
+Realtime…) in our file or to join the one it already runs. Joining is right, and the
+mechanism matters: the network `supabase_network_Lemely` is declared **`external: true`**
+and the backend addresses `supabase_db_Lemely:5432` and `supabase_kong_Lemely:8000` by
+container name. **The host-published ports 54322/54321 do not exist inside a container**
+— reaching for them is the obvious mistake here. Declaring the network rather than
+marking it external would also let `docker compose up` silently create an empty network
+the backend cannot reach Postgres through; `external` fails loudly instead, which is the
+behaviour you want when the dependency is genuinely absent.
+
+**No CORS middleware, and that is the configured-correctly state.** nginx serves the
+built SPA and reverse-proxies `/api` to the backend, so the browser only ever makes
+**same-origin** requests. CORS exists to relax the same-origin policy for cross-origin
+traffic; there is none here, so there is nothing to relax and `Access-Control-*` headers
+would be dead weight. Adding `allow_origins=["*"]` would strictly widen the attack
+surface — it would let any origin that finds the directly-exposed backend port script
+authenticated requests against it — while enabling no functionality. A future genuine
+split-origin deployment needs an explicit config-driven allowlist with
+`allow_credentials=False` (auth is a bearer token in a header, never a cookie, so
+credentialed CORS is never required). **`grep -rn CORSMiddleware lemely/` returning
+nothing is the intended state; a later session must not "fix" it.** The reasoning lives
+as a comment block in `docker-compose.yml` so it cannot be lost with this file.
+
+**Verification was re-done by the orchestrator, and it is worth noting why.** MISSION §5
+requires verifying a subagent's work rather than trusting the claim. Beyond re-running
+its curls on a `make up` stack, two checks it had not made were added: the container
+actually reaching Postgres over the Supabase network (read 1610 seeded users and
+`alembic_version = 0018` from inside the container), and the **auth chain end-to-end
+behind the proxy** — 401 with no token, 200 with a real minted student token, 403 with a
+teacher token on a student route. That last one is the only evidence that nginx forwards
+the `Authorization` header at all; a health-endpoint 200 proves nothing about it. The
+hardcoded local JWT secret was likewise compared against the *running*
+`supabase_auth_Lemely` container's `GOTRUE_JWT_SECRET` rather than assumed to match.
+
+**Two things handed to P6.5 rather than solved here.** The entrypoint runs
+`alembic upgrade head` unconditionally on every start — correct for a one-command local
+bring-up, wrong for production where schema migration is a separate gated step. And the
+local-dev JWT secret baked into the compose file is a well-known Supabase default that
+must be overridden in any real deployment. Both belong in `docs/deployment.md`.
+
+**Environment fact:** `npm ci` fails in a slim node image because puppeteer's postinstall
+downloads Chrome and the image has no `unzip`. `ENV PUPPETEER_SKIP_DOWNLOAD=true` in the
+builder stage is the fix; puppeteer is audit-runner tooling and nothing at build time
+imports it.
+
+---
+
+## D6.6 — Deployment docs written from the config surface, and the two blockers they found (P6.5)
+
+`docs/deployment.md` covers the working local `make up` stack, a Supabase-Cloud +
+container-host recipe, the configuration reference, and a copy-paste checklist. **The
+cloud half has never been executed and the document says so in its opening lines.** Every
+claim in it is anchored to a file and line in this repo so a reader can check rather than
+trust — the alternative (a confident deploy narrative for a deploy that never happened) is
+exactly the invented precision this build keeps paying to avoid. P6.4's two handoffs (the
+unconditional `alembic upgrade head`, the well-known local JWT secret) are both discharged.
+
+**Writing it surfaced two facts nothing had previously stated, both found by reading the
+code rather than by reasoning about the deployment:**
+
+**(a) The backend cannot run more than one replica.** Two pieces of state are
+process-local, not persisted: `JobRegistry` (`lemely/web/jobs.py:31-37`), the dict behind
+every in-flight correction job and its SSE progress stream, and the parent phone-OTP
+challenge store (`lemely/auth/service.py:107`). With two replicas a student's browser
+reconnects to a replica that has never heard of their job, and a parent's OTP is issued on
+one instance and verified on another — the second one fails intermittently and
+unreproducibly, which is the worst possible failure shape. Neither is hard to fix
+(Postgres or Redis for both); neither is fixed. This is the single most consequential line
+in the document, because a host that autoscales by default will trip it silently and no
+test in this build would catch it.
+
+**(b) `lemely/db/seed.py` creates nothing, and this is a P6.10 problem.**
+`seed_reference_data` and `seed_demo_accounts` are stubs — both bodies are a bare `pass`
+(`lemely/db/seed.py:26-51`) — so `make seed` inserts zero rows and creates zero demo
+accounts while logging `db.seed.done`. The only working path is `scripts/seed_e2e.py`,
+which does create all five roles, but under a per-run random `run_tag`, so emails and
+passwords differ on every run. **P6.10's acceptance criterion is a fresh clone reaching a
+working product with seeded demo accounts for all five roles**, and stable credentials a
+document can name do not currently exist. Recorded now rather than discovered at P6.10.
+
+**Not fixed here, deliberately.** The entrypoint's unconditional migration is documented
+with the guard flag a production deploy would want (`LEMELY_RUN_MIGRATIONS`) described but
+**not implemented** — P6.5 is a documentation task, and adding an untested env-gated
+branch to the container start path at phase end is the kind of change that breaks the
+`make up` that P6.4 just verified. The doc names it as a small honest change, which is what
+it is.
+
+**Also carried into the doc from measurements already on disk:** the `/api/teacher/overview`
+N+1 shape (p50 396ms vs 8-150ms elsewhere, `reports/phase-6/load-sanity.md`), and one
+consequence of containerising that nothing had noted — the $8 Gemini spend ledger lives
+under `/app/.lemely-cache` on the **ephemeral container filesystem**, so a host that
+recycles containers resets the measured spend to zero while the real bill keeps climbing.
+Mount a volume there or the hard cap silently stops being a cap.
+
+---
+
+## D6.7 — The full-suite run found a time-bomb test, not a flake (P6.6)
+
+**Context.** P6.6's whole point is "all 13 gates green on the final tree". The run came
+back **12 of 13 PASS with `EXIT=1`**, the single failure being
+`tests/test_push_transport.py::test_authorization_header_verifies_against_the_public_key`.
+
+**What it actually was.** The test mints a VAPID assertion through a transport whose clock
+is injected as `FIXED_NOW = 2026-08-10 12:00 UTC`, then verifies it with `jwt.decode`
+against the **real wall clock**. RFC 8292 caps the assertion's lifetime at 24 hours, so the
+token is expired for any run later than 2026-08-11 12:00 UTC. **The test was green on the
+day it was written (P5.6, 2026-08-10) and has been red in every run since.** It went
+unnoticed because nothing ran the full backend suite in that window — Phase 5's own closing
+run predates the expiry.
+
+**Product code is correct and was not touched.** The transport is properly clock-injected,
+and the 24-hour cap has its own dedicated test (`test_the_assertion_expires_inside_rfc_
+8292s_24_hour_cap`) which judges expiry against `FIXED_NOW` — the honest clock for it. The
+defect was entirely in the *verification* step of a sibling test, which pinned the clock for
+signing and then forgot to pin it for checking.
+
+**Fix:** `options={"verify_exp": False}` on that one decode, with a comment saying why it is
+required rather than convenient. This is **not** weakening a test to get green: the
+assertion under test is the signature and the audience, and expiry is separately and better
+covered.
+
+**Inverted and counted, per P6.2's rule.** With the audience changed to a wrong origin the
+test fails with `InvalidAudienceError`; with the assertion verified against a freshly
+generated keypair instead of the signing one it fails with `InvalidSignatureError`. Both
+still bite, so `verify_exp: False` did not gut the test. The other two `jwt.decode` calls in
+the file pass `verify_signature: False`, which in PyJWT disables the other checks too, so
+they carry no clock dependency and needed no change.
+
+**The transferable lesson, and it is not about JWTs.** A test that pins a clock on the write
+path and reads it back with the real clock is green until it silently isn't, and the
+interval between those two states can be a single day. `grep -rn "jwt.decode" tests/` was
+run to find siblings with the same shape; there were none. **Any test mixing an injected
+clock with a real one is a dated assertion — the failure arrives on a calendar, not on a
+code change**, which is exactly the kind a phase-end run is for and a per-commit CI never
+catches.
+
+---
+
+## D6.8 — The fresh-clone run found four defects, and the product one was a claim with nothing behind it (P6.10)
+
+**The acceptance criterion is MISSION §4 Phase 6's last line: `git clone` → the documented
+commands → a working product with seeded demo accounts for all five roles.** It was run for
+real — a clone of `feature/phase-6-hardening` at `be49d34` into `/tmp/lemely-fresh-1`, the
+documented commands executed verbatim from it, and every claim checked against the running
+containers rather than against the source.
+
+**The headline is that it passes: `make up` from a fresh clone brought the product up
+(`EXIT=0`, both containers healthy) and all five demo roles authenticate through it.** Four
+password roles by `POST /api/auth/login` and the parent by phone-OTP, each verified through
+nginx on :8080 (not against the backend directly) by reading `/api/me/profile` back:
+
+| Role | `/api/me/profile` |
+|---|---|
+| student | `{"displayName":"Demo Student","email":"student@demo.lemely.local","role":"student"}` |
+| teacher | `{"displayName":"Demo Teacher",…,"role":"teacher"}` |
+| school_admin | `{"displayName":"Demo School Admin",…,"role":"school_admin"}` |
+| platform_admin | `{"displayName":"Demo Platform Admin",…,"role":"platform_admin"}` |
+| parent | `{"displayName":null,"email":"phone+10000000000@parents.lemely.local","role":"parent"}` |
+
+That last row is finding 4 below. **Verifying through the proxy is the point** — it exercises
+DNS, `Authorization` forwarding, JWT validation and RBAC in one pass, which is exactly the
+cheapest end-to-end proof `docs/deployment.md` §6 names. P6.4 had only ever verified this
+chain with *backend-minted* tokens; a real GoTrue password login through the packaged product
+had never been run before this task.
+
+### 1. The documented dev install omits two extras, so the next two documented commands fail
+
+`README.md` said `pip install -e ".[dev,ui]"`, then `make db-migrate`, then `make seed`.
+`db` (Alembic, SQLAlchemy, psycopg) and `web` (FastAPI, httpx — how `lemely.db.seed` reaches
+GoTrue) are **separate extras**, so from a fresh clone the documented sequence produced:
+
+```
+make db-migrate → make: alembic: No such file or directory       (exit 127)
+make seed       → ModuleNotFoundError: No module named 'sqlalchemy'
+```
+
+Both re-run green after `pip install -e ".[dev,ui,web,db]"` — the set `make dev` already
+installed, so the Makefile was right and the README had drifted from it. Fixed in the README,
+with the reason each extra is needed, because a bare corrected command would drift again.
+
+### 2. `python` is not a command on Debian-family systems
+
+`python3 -m venv .venv` works; the documented `python -m venv .venv` exits 127. The Makefile
+carried the same assumption in `PYTHON ?= python`, which is what `make seed` invokes — so
+`make seed` outside an activated venv failed for a reason that has nothing to do with the
+seeder. Both now say `python3`, which inside an activated venv resolves to that venv's
+interpreter anyway, so nothing is lost.
+
+### 3. An empty environment variable is not "unset" — and `/api/health` was lying because of it
+
+**The product defect, and the one worth carrying.** `docker-compose.yml` forwards optional
+credentials as `${GEMINI_API_KEY:-}`. On a `make up` stack with nothing exported the variable
+is *present and empty*, so pydantic built `SecretStr("")` — which is not `None`. Every
+`is None` "not configured" check in the codebase therefore answered **configured**, with
+nothing behind it. Measured inside the running container, not reasoned about:
+
+```
+GEMINI_API_KEY=            → gemini_api_key is None: False | secret length: 0
+LEMELY_SUPABASE__ANON_KEY= → anon_key is None: False | length: 0
+GET /api/health            → {"status":"ok","apiKeyConfigured":true}
+```
+
+**`apiKeyConfigured: true` on a stack that cannot mark a single paper.** That is the same
+family as this build's other recurring bug — a claim nothing regenerates — except this one is
+served to the product's own health endpoint. It also makes `docs/deployment.md` §6's
+"(or accept `apiKeyConfigured:false` and no marking)" describe a branch that is *unreachable*
+through Compose.
+
+The second consequence is quieter and worse. `GoTrueClient._anon_key` / `_service_key` raise
+an explicit `AuthError("… is not configured.")` on `None` — the guard exists precisely so this
+fails legibly. With an empty string they never fire, and an empty `apikey` header goes to
+GoTrue instead. **Local Kong tolerates it, so login works locally and every test stays green**;
+Supabase Cloud rejects it as an unrelated-looking 401. This is the exact failure shape
+`scripts/seed_e2e.py`'s docstring already warns about ("reads like a broken script rather than
+'you forgot to export two variables'"), reappearing one layer down.
+
+**Fix:** a `BeforeValidator` in `lemely/runtime/config.py` mapping a blank/whitespace-only
+string to `None`, applied to the optional *credential* fields only — `gemini_api_key`, both
+Supabase keys, and the three VAPID fields, which fail the same way (a blank key would report
+the push transport available and then fail). Deliberately **not** applied to ordinary strings,
+where a blank value can be meaningful. Five tests; inverted per P6.2's rule, and 4 of the 5
+fail with the guard neutered while `test_a_real_credential_is_not_stripped_or_dropped`
+correctly still passes — it is not testing the guard's firing, and a test that fails under
+every inversion is measuring the wrong thing.
+
+### 4. `DEMO_PARENT.display_name` was declared and applied nowhere
+
+The parent is the one demo account created through the OTP flow rather than
+`AuthService.signup`, and `verify_otp` mirrors a row with no display name — hence the `null`
+in the table above while the other four carry theirs. Fixed in `_create_or_recover_parent`,
+**including on the recognise path**, so a database seeded before this fix is corrected by the
+next `make seed` rather than staying nameless forever. Two tests, both inverted.
+
+### What this run did not prove
+
+The Supabase stack was **already running**, so `scripts/up.sh` took its documented
+already-running branch and `supabase start` from a cold machine is still unexercised here.
+`make seed` from the clone reported `demo_accounts: 0` because the accounts already existed —
+correct idempotent behaviour, and creation-from-empty was proven separately at session 101 on
+a cleared demo slate. Both are stated rather than rounded off.
+
+**The transferable lesson: a fresh-clone test is not a formality, and its value is entirely in
+running the documented commands as written instead of the ones you know work.** Every finding
+here was invisible to all 13 gates — which had just gone green, 0 skipped, on this same tree.
+The gates run inside an environment that is already correct; the criterion is about the
+environment being *reachable* from a clone.
+
+---
+
+## D6.9 — The CLS defect was fixed in the route, never in the threshold; and one gate is vacuous (P6.7)
+
+Two judgment calls came out of the full-product visual QA sweep. Both were made in the
+direction that costs more work and keeps the gate honest, and neither is visible from the
+green `ui-thresholds` verdict that followed.
+
+### 1. `student-standings` scored 74 on CLS 0.386, and the fix was to reserve the space
+
+The failing run (`/tmp/check_p610b.log`) was **12 gates PASS + `ui-thresholds` FAIL** on a
+single line: `lighthouse: student-standings performance score 74 < 80`. TBT (120 ms), LCP
+(2.8 s) and speed-index (2.3 s) were all healthy — **the whole deficit was cumulative layout
+shift**, 0.386 against the 0.1 "good" threshold.
+
+**The previous session's stated hypothesis was wrong and is recorded here so it is not
+re-adopted.** It named P6.1's `React.lazy` split — specifically `RouteFallback`'s sizing — as
+the likely cause. The attribution was done instead from a committed artifact:
+`reports/phase-5/lighthouse/student-standings.json` already carried the `layout-shifts` audit
+for this route at **CLS 0.220**, so the defect *predates the code split* and is not a
+regression caused by it. Both recorded shifts name `<section aria-labelledby="s29-subjects">`
+— "Your subjects" being pushed down the page — not the route fallback. P6.1 raised the other
+four metrics and left this one untouched, which is why the same tree could score 92 on one run
+and 74 on another: **the shifts only count when the skeleton paints before the data arrives, so
+a fast run hides them entirely.** That intermittency is what made it look like noise near a
+floor, and it was not.
+
+Three blocks above that section grow after first paint: the board card (one "Loading the
+board…" line → a real board, ~335 px on seeded data at 380 px wide), `OptOutControl` (rendered
+`null` while its profile read is in flight, then ~124 px), and the XP-basis tab row (~34 px).
+
+Fixed in `web/src/portals/student/screens/Standings.tsx` (`46bd5f7`):
+
+- The two null-until-loaded blocks now render their own frame with the **real copy** marked
+  `invisible` + `aria-hidden` + `inert` while pending. Reserving with the actual text rather
+  than a `min-h-*` guess is what makes the reservation correct at every breakpoint — the height
+  comes from the same wrapping in the same box, so it cannot drift from the content it reserves.
+- The board card gets a `min-h-96` floor **in every state, not only while loading**. 384 px is
+  the height of the smallest real board on seeded data (a C-11 empty panel plus the pinned
+  viewer row), so it is a measurement rather than a round number, and it also stops the page
+  jumping when the student switches Friends / Class / School / Everyone — the same defect seen
+  by a person instead of by Lighthouse.
+
+Result: **CLS 0.000 — zero shifts recorded, not a smaller number — and performance 74 → 93.**
+Zero shifts is what makes it a fixed defect instead of a luckier run.
+
+**The threshold was never touched, and that is the decision.** D4.25 exists because this floor
+went unenforced for two entire phases; P6.1 (D6.2) made it a real gate. Loosening it at the
+first route that failed it would have been worse than never having enforced it at all — the
+gate would then be a record of what we were willing to measure, not of what the product does.
+
+### 2. `npx impeccable detect` is vacuous on this machine, and is reported as such
+
+MISSION §4 asks Phase 6 to "run `npx impeccable detect src/` and resolve every finding".
+impeccable 3.5.0 returns `[]` for `src/` — **and also for files written deliberately to trip
+it**: an inline `style={{color:"#ff0000"}}`, a CSS file with an off-scale `font-size: 13.7px`,
+and an em-dash-overuse file. With `--json`, `--quiet` and `--no-config` alike: exit 0, zero
+bytes, every time. No `.impeccable` config suppresses anything (`config.local.json` holds only
+hook consent).
+
+So the criterion is satisfied **trivially**, and the honest report of it is that **a green
+`impeccable-detect` gate is evidence of nothing** — not that the frontend is clean. It is
+written that way in the phase report §4 and in `DELIVERY.md` rather than counted among the
+passes.
+
+Not chased further, deliberately: it is third-party tooling, the deterministic checks that do
+bite (axe, Lighthouse, console-error, horizontal-scroll) are unaffected and all pass on real
+findings, and the `/impeccable audit` *skill* pass is a separate and non-vacuous leg of the
+same task (`reports/phase-6/impeccable-audit.md`, 15/20, Good). **A gate that cannot fail is a
+reporting problem, not a licence to claim a pass.**

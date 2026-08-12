@@ -1,0 +1,135 @@
+{
+  "startedAt": "2026-08-11T20:58:55.403828+00:00",
+  "finishedAt": "2026-08-11T20:59:35.841852+00:00",
+  "baseUrl": "http://127.0.0.1:8000",
+  "concurrency": 10,
+  "durationSecondsPerEndpoint": 5.0,
+  "caveats": [
+    "Single machine, dev-grade uvicorn server (scripts/e2e_server.py), not production infra.",
+    "Data is scripts/seed_e2e.py's synthetic seed corpus, not production-scale data.",
+    "Gemini is mocked for this server (fixture-backed, per MISSION's mocking requirement) \u2014 these numbers say nothing about live-model latency.",
+    "This is a sanity check, not a benchmark: no throughput/latency threshold is asserted or graded against, because MISSION.md states none for the API."
+  ],
+  "endpoints": [
+    {
+      "label": "health",
+      "path": "/api/health",
+      "request_count": 5534,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "p50_ms": 8.37,
+      "p95_ms": 14.46,
+      "max_ms": 48.5,
+      "mean_ms": 9.04,
+      "status_counts": {
+        "200": 5534
+      },
+      "sample_errors": []
+    },
+    {
+      "label": "me_profile",
+      "path": "/api/me/profile",
+      "request_count": 982,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "p50_ms": 48.19,
+      "p95_ms": 77.86,
+      "max_ms": 111.94,
+      "mean_ms": 51.08,
+      "status_counts": {
+        "200": 982
+      },
+      "sample_errors": []
+    },
+    {
+      "label": "student_overview",
+      "path": "/api/student/overview",
+      "request_count": 481,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "p50_ms": 102.51,
+      "p95_ms": 144.79,
+      "max_ms": 208.61,
+      "mean_ms": 104.55,
+      "status_counts": {
+        "200": 481
+      },
+      "sample_errors": []
+    },
+    {
+      "label": "student_xp",
+      "path": "/api/student/xp",
+      "request_count": 438,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "p50_ms": 113.51,
+      "p95_ms": 145.43,
+      "max_ms": 171.51,
+      "mean_ms": 114.65,
+      "status_counts": {
+        "200": 438
+      },
+      "sample_errors": []
+    },
+    {
+      "label": "student_leaderboard",
+      "path": "/api/student/leaderboard",
+      "request_count": 329,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "p50_ms": 150.13,
+      "p95_ms": 200.34,
+      "max_ms": 275.12,
+      "mean_ms": 153.57,
+      "status_counts": {
+        "200": 329
+      },
+      "sample_errors": []
+    },
+    {
+      "label": "student_friends",
+      "path": "/api/student/friends",
+      "request_count": 441,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "p50_ms": 111.78,
+      "p95_ms": 149.14,
+      "max_ms": 196.15,
+      "mean_ms": 114.12,
+      "status_counts": {
+        "200": 441
+      },
+      "sample_errors": []
+    },
+    {
+      "label": "teacher_overview",
+      "path": "/api/teacher/overview",
+      "request_count": 130,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "p50_ms": 395.73,
+      "p95_ms": 458.1,
+      "max_ms": 517.88,
+      "mean_ms": 394.15,
+      "status_counts": {
+        "200": 130
+      },
+      "sample_errors": []
+    },
+    {
+      "label": "teacher_papers",
+      "path": "/api/papers",
+      "request_count": 1916,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "p50_ms": 26.42,
+      "p95_ms": 34.86,
+      "max_ms": 48.4,
+      "mean_ms": 26.15,
+      "status_counts": {
+        "200": 1916
+      },
+      "sample_errors": []
+    }
+  ]
+}

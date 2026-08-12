@@ -1,7 +1,13 @@
 .PHONY: install dev test lint typecheck imports lock pre-commit fmt clean \
-	db-up db-down db-stop db-status db-reset db-migrate db-revision db-downgrade seed
+	db-up db-down db-stop db-status db-reset db-migrate db-revision db-downgrade seed \
+	up down
 
-PYTHON ?= python
+# `python3`, not `python`: Debian-family systems ship no bare `python`, so
+# `make seed` outside an activated venv failed with "No such file or directory"
+# on the Phase-6 fresh-clone run. Inside an activated venv `python3` resolves to
+# that venv's interpreter too, so this is strictly the safer default. Override
+# with `make seed PYTHON=...` for a specific interpreter.
+PYTHON ?= python3
 ALEMBIC ?= alembic
 
 install:
@@ -72,3 +78,13 @@ db-downgrade:
 # Seed demo/reference data (idempotent). Requires the schema to be migrated.
 seed:
 	$(PYTHON) -m lemely.db.seed
+
+# ── Packaged product (Docker Compose) ────────────────────────────────────────
+# One command: Supabase-local + backend + built SPA (nginx, proxying /api to
+# the backend). See scripts/up.sh and docker-compose.yml for details and the
+# CORS decision. MISSION.md §3.
+up:
+	./scripts/up.sh
+
+down:
+	docker compose down

@@ -57,6 +57,23 @@ const supabaseEnv = resolveSupabaseEnv()
 // itself.
 Object.assign(process.env, supabaseEnv)
 
+/**
+ * `process.env` is typed `string | undefined` per key, but Playwright's
+ * `webServer.env` requires `string`. Node never actually *stores* an undefined
+ * value — the type is wide because reading an unset key yields `undefined` — so
+ * dropping those keys matches the runtime exactly. Filtering rather than
+ * asserting keeps the guarantee real: if a value ever genuinely is undefined it
+ * is omitted, instead of reaching the subprocess as the literal "undefined".
+ *
+ * Found by P6.1 when `e2e/` and this file entered a tsconfig for the first time
+ * since Phase 3 (D3.20) — it was the only error in 13 files and 30 test blocks.
+ */
+function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  )
+}
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
@@ -122,10 +139,7 @@ export default defineConfig({
       port: 8000,
       timeout: 60_000,
       reuseExistingServer: !process.env.CI,
-      env: {
-        ...process.env,
-        ...supabaseEnv,
-      },
+      env: definedEnv({ ...process.env, ...supabaseEnv }),
     },
     {
       // vite (v8) binds "localhost" to [::1] only by default, which Playwright's

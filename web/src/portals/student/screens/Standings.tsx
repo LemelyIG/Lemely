@@ -254,12 +254,38 @@ function OptOutControl() {
 
   // No control at all rather than a control defaulted to "visible": guessing
   // wrong in that direction shows a student on a public board they may have
-  // asked to leave.
-  if (isPending || isError || !data) return null
+  // asked to leave. An *error* is therefore still nothing — but a *pending*
+  // read is not, see below.
+  if (isError) return null
 
-  const optedOut = data.profile.leaderboardOptOut
+  // `data` is undefined for exactly as long as the read is in flight, so this
+  // is the pending test — `isPending` alone would leave the render below
+  // dereferencing an undefined profile.
+  const pending = isPending || !data
+  const optedOut = data?.profile.leaderboardOptOut === true
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3">
+    <div
+      /* P6.7 — while the profile read is in flight this renders its own frame
+         with the copy present but `invisible`, rather than returning null and
+         then appearing. Returning null shifted every section below this one
+         down by the block's full height the moment the read landed, and that
+         was one of the two layout shifts Lighthouse recorded on this route
+         (CLS 0.386, performance 74 < 80). Reserving the space with the real
+         strings — not a fixed `min-h-*` — is what makes the reservation match
+         at every breakpoint, because the height comes from the same text
+         wrapping in the same box.
+         `invisible` (visibility: hidden) and not `opacity-0`: the placeholder
+         must not be reachable, and `aria-hidden` + `inert` keep it out of the
+         accessibility tree and off the tab order while it holds the space.
+         It states nothing about the student's setting, which is the property
+         the note above actually protects. */
+      aria-hidden={pending || undefined}
+      inert={pending || undefined}
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3",
+        pending && "invisible",
+      )}
+    >
       <div className="min-w-0">
         <p className="text-body-md text-t1">
           {optedOut ? "You are hidden from other students" : "You appear on public boards"}
@@ -276,7 +302,7 @@ function OptOutControl() {
         // Always a real boolean, never `null`: the column is NOT NULL, so an
         // explicit null is a 422 rather than a coerced false.
         onClick={() => patch.mutate({ leaderboardOptOut: !optedOut })}
-        disabled={patch.isPending}
+        disabled={patch.isPending || pending}
         className="flex-none"
       >
         {optedOut ? "Show me again" : "Hide me"}
@@ -402,7 +428,20 @@ export function Standings() {
           </div>
         ) : null}
 
-        {subjects.length > 0 ? (
+        {/* P6.7 — the same reservation as `OptOutControl`, for the same reason
+            and one row smaller: this selector cannot be rendered until the
+            profile names the student's subjects, and appearing from nothing
+            pushed the whole board and the section under it down. A single
+            `invisible` tab holds one row's height while the read is in
+            flight. It collapses to nothing once we know there are no subjects,
+            which is correct — that is an answer, not a wait. */}
+        {profile.isPending ? (
+          <div className="flex flex-wrap gap-2" aria-hidden="true" inert>
+            <TabButton active={false} onClick={() => {}}>
+              <span className="invisible">All subjects</span>
+            </TabButton>
+          </div>
+        ) : subjects.length > 0 ? (
           <div className="flex flex-wrap gap-2" role="group" aria-label="XP basis">
             <TabButton active={basis === "total"} onClick={() => setBasis("total")}>
               All subjects
@@ -420,7 +459,19 @@ export function Standings() {
         ) : null}
 
         <Card>
-          <CardBody>
+          {/* P6.7 — a floor on the board's height, applied in every state
+              rather than only while loading. The board is the largest
+              variable-height block on the screen and it sat directly above
+              `s29-subjects`, the element Lighthouse named in both recorded
+              shifts: a one-line "Loading the board…" growing into a real board
+              moved that section ~335px down the page. 384px is the height of
+              the smallest *real* board state on seeded data (a C-11 empty
+              panel plus the pinned viewer row), so the floor is a measurement
+              of the content, not a number chosen to satisfy a metric.
+              It also stops the page jumping when the student switches between
+              the Friends/Class/School/Everyone tabs, which is the same defect
+              seen by a person instead of by Lighthouse. */}
+          <CardBody className="min-h-96">
             {scope === "class" && classList.length === 0 && !classes.isPending ? (
               <EmptyState
                 heading="You are not in a class yet"

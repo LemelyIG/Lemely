@@ -1,4 +1,6 @@
 import type { RouteObject } from "react-router-dom"
+import { lazy, Suspense } from "react"
+import { RouteFallback } from "@/components/ui/state-views"
 import { Link, NavLink, Outlet } from "react-router-dom"
 import {
   SquaresFour,
@@ -14,21 +16,35 @@ import { cn } from "@/lib/utils"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { navItems, type NavItem } from "./data"
-import { Overview } from "./screens/Overview"
-import { Grading } from "./screens/Grading"
-import { Review } from "./screens/Review"
-import { ReviewItem } from "./screens/ReviewItem"
-import { Classes } from "./screens/Classes"
-import { ClassDetailLayout } from "./screens/ClassDetail"
-import { ClassRoster } from "./screens/ClassRoster"
-import { ClassAnalytics } from "./screens/ClassAnalytics"
-import { StudentDetail } from "./screens/StudentDetail"
-import { AtRiskList } from "./screens/AtRiskList"
-import { MarkSchemes } from "./screens/MarkSchemes"
-import { Quizzes } from "./screens/Quizzes"
-import { QuizBuilder } from "./screens/QuizBuilder"
-import { QuizResults } from "./screens/QuizResults"
-import { Announcements } from "./screens/Announcements"
+
+// P6.1b: screens are `React.lazy`, not static imports — see the same note in
+// `portals/student/index.tsx`. QuizBuilder and ClassAnalytics in particular
+// are heavy screens that most teacher sessions (grading, review) never open;
+// they no longer ride along in the bundle every route pays for. Named
+// exports (not default), hence the `.then((m) => ({ default: m.X }))` shape.
+const Overview = lazy(() => import("./screens/Overview").then((m) => ({ default: m.Overview })))
+const Grading = lazy(() => import("./screens/Grading").then((m) => ({ default: m.Grading })))
+const Review = lazy(() => import("./screens/Review").then((m) => ({ default: m.Review })))
+const ReviewItem = lazy(() => import("./screens/ReviewItem").then((m) => ({ default: m.ReviewItem })))
+const Classes = lazy(() => import("./screens/Classes").then((m) => ({ default: m.Classes })))
+const ClassDetailLayout = lazy(() =>
+  import("./screens/ClassDetail").then((m) => ({ default: m.ClassDetailLayout })),
+)
+const ClassRoster = lazy(() => import("./screens/ClassRoster").then((m) => ({ default: m.ClassRoster })))
+const ClassAnalytics = lazy(() =>
+  import("./screens/ClassAnalytics").then((m) => ({ default: m.ClassAnalytics })),
+)
+const StudentDetail = lazy(() =>
+  import("./screens/StudentDetail").then((m) => ({ default: m.StudentDetail })),
+)
+const AtRiskList = lazy(() => import("./screens/AtRiskList").then((m) => ({ default: m.AtRiskList })))
+const MarkSchemes = lazy(() => import("./screens/MarkSchemes").then((m) => ({ default: m.MarkSchemes })))
+const Quizzes = lazy(() => import("./screens/Quizzes").then((m) => ({ default: m.Quizzes })))
+const QuizBuilder = lazy(() => import("./screens/QuizBuilder").then((m) => ({ default: m.QuizBuilder })))
+const QuizResults = lazy(() => import("./screens/QuizResults").then((m) => ({ default: m.QuizResults })))
+const Announcements = lazy(() =>
+  import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
+)
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -215,13 +231,20 @@ function Sidebar() {
   )
 }
 
+// One boundary around the Outlet (not per-route): sidebar and chrome stay
+// mounted and interactive while a screen chunk loads. Fallback is the shared
+// `RouteFallback` (C-11 state-view family); see the student portal for the
+// reasoning, and `state-views.tsx` for why it is not a full `StateView`.
+
 function TeacherLayout() {
   return (
     <div data-portal="teacher" className="flex min-h-screen">
       <Sidebar />
       <main className="flex-1 min-w-0 flex flex-col">
         <div className="flex-1 min-w-0 overflow-x-hidden px-[34px] py-[30px] max-w-[1480px] w-full">
-          <Outlet />
+          <Suspense fallback={<RouteFallback className="text-dense-lg" />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>

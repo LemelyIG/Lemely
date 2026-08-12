@@ -501,7 +501,7 @@ The agent hit something it couldn't resolve and moved on. Details attached." "wa
   fi
 
   # --- outcome -----------------------------------------------------------
-  if tail -n 80 "$LOG" | grep -qiE "usage limit|rate limit|limit reached|overloaded|429"; then
+  if tail -n 80 "$LOG" | grep -qiE "session limit|usage limit|rate limit|limit reached|overloaded|429"; then
     wait_secs="$(parse_reset_seconds "$LOG")"
     if [ -n "$wait_secs" ]; then wait_secs=$((wait_secs + LIMIT_RESUME_MARGIN)); precision="from the limit message"
     else wait_secs="$BACKOFF_LIMIT_FALLBACK"; precision="estimated — no reset time given"; fi

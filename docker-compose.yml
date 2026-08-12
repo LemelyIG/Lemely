@@ -1,0 +1,111 @@
+# Docker Compose for the packaged Lemely product (MISSION.md §3 "Definition
+# of done for deployment"): one command brings up the backend + built SPA,
+# joined onto the already-running local Supabase stack. No live hosting —
+# this is a local/dev-machine artifact only (Supabase itself stays managed by
+# the `supabase` CLI, not by this file — see scripts/up.sh).
+#
+# ── CORS decision (security-relevant; read before changing) ─────────────────
+# NO CORSMiddleware is installed anywhere in lemely/web/app.py, and this
+# compose file does not add one either. That is deliberate, not an oversight:
+#
+#   The `web` service's nginx (web/nginx.conf) reverse-proxies /api/* to the
+#   `backend` service on the SAME origin the browser loaded the SPA from
+#   (this host, port 8080 by default — see the port mapping below). A
+#   same-origin request never triggers a CORS preflight and needs no
+#   Access-Control-* response headers at all; CORS exists to relax the
+#   same-origin policy for CROSS-origin requests, and this deployment
+#   deliberately has none. Adding `allow_origins=["*"]` (or any origin) to a
+#   backend that already only receives same-origin traffic would do nothing
+#   for functionality and would only widen the attack surface (dropping the
+#   browser's own same-origin protection for any origin that guesses the
+#   backend's exposed port directly).
+#
+#   If a future deployment needs the backend reachable from a genuinely
+#   different origin (e.g. a mobile app's WebView, or splitting web/API onto
+#   separate hosts), the correct fix is an explicit, narrow
+#   `CORSMiddleware(allow_origins=[<config-driven allowlist>])` with
+#   `allow_credentials=False` (this app authenticates via a bearer token in
+#   the Authorization header, not cookies, so credentialed CORS is never
+#   needed) — never `allow_origins=["*"]`. That is a code change in
+#   lemely/web/app.py, not a compose-file change, and belongs in
+#   docs/deployment.md (P6.5) when a real split-origin deployment is planned.
+#
+# Port mapping:
+#   8080  -> web (nginx)     the product's one entry point: http://localhost:8080
+#   8000  -> backend (uvicorn) exposed directly too, for curl/debugging and
+#            so `LEMELY_WEB_HOST=0.0.0.0` binding can be verified without
+#            going through nginx; the SPA never talks to this port directly.
+#   Supabase's own ports (54321 API / 54322 Postgres / 54323 Studio) are
+#   unchanged — this file does not touch them, `supabase start` already
+#   publishes them on the host.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lemely-backend:local
+    environment:
+      # Postgres inside the external Supabase network is reached by the
+      # container name Supabase's own compose project gives it (verified
+      # with `docker inspect supabase_db_Lemely` — DNS alias `db` also
+      # resolves, but the container name is stable across Supabase CLI
+      # versions in a way an internal alias is not documented to be).
+      LEMELY_DATABASE__URL: postgresql+psycopg://postgres:postgres@supabase_db_Lemely:5432/postgres
+      # Kong (the API gateway GoTrue/Storage sit behind) on its internal
+      # port 8000 — NOT the host-published 54321, which only exists on the
+      # Docker host's network namespace, not inside this container.
+      LEMELY_SUPABASE__URL: http://supabase_kong_Lemely:8000
+      # Local-dev well-known secret (matches `supabase status`'s JWT_SECRET
+      # for a freshly-initialised project; override if this project's stack
+      # was customised). Never used for a production deploy.
+      LEMELY_SUPABASE__JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      # Passed through from the host shell if set (see scripts/up.sh); the
+      # anon/service-role keys and Gemini key are secrets and never
+      # hardcoded here. Empty defaults mean "same as not configured" —
+      # `lemely doctor` / health already treat that as a documented state,
+      # not a crash.
+      LEMELY_SUPABASE__ANON_KEY: ${LEMELY_SUPABASE__ANON_KEY:-}
+      LEMELY_SUPABASE__SERVICE_ROLE_KEY: ${LEMELY_SUPABASE__SERVICE_ROLE_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    networks:
+      - supabase_network_Lemely
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    image: lemely-web:local
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - supabase_network_Lemely
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  # Supabase's own `supabase start` creates this network (named after the
+  # project — `Lemely` — by the Supabase CLI); joining it as `external`
+  # rather than declaring it ourselves means `docker compose up` never tries
+  # to create/own a network Supabase already manages, and fails loudly if
+  # Supabase local isn't running yet instead of silently standing up an
+  # empty network the backend can't reach Postgres through.
+  supabase_network_Lemely:
+    external: true

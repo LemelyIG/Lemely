@@ -1,0 +1,2231 @@
+{
+  "baseline": "reports/phase-5/screens",
+  "candidate": "reports/phase-6/screens",
+  "thresholds": {
+    "channelTolerance": 8,
+    "pixelRatioThreshold": 0.001,
+    "note": "A pixel differs when any RGB channel differs by more than 8/255; a file is 'changed' when more than 0.1% of its pixels differ. Alpha is dropped. This is not a pixel-exact comparison."
+  },
+  "counts": {
+    "baselineFiles": 246,
+    "candidateFiles": 246,
+    "added": 0,
+    "removed": 0,
+    "changed": 112,
+    "unchanged": 134
+  },
+  "added": [],
+  "removed": [],
+  "changed": [
+    {
+      "file": "G-01/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1980",
+      "differingPixels": 25151,
+      "totalPixels": 2851200,
+      "ratio": 0.008821
+    },
+    {
+      "file": "G-04/error--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 34026,
+      "totalPixels": 1296000,
+      "ratio": 0.026255
+    },
+    {
+      "file": "G-04/error--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 34026,
+      "totalPixels": 786432,
+      "ratio": 0.043266
+    },
+    {
+      "file": "S-06/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 39972,
+      "totalPixels": 1296000,
+      "ratio": 0.030843
+    },
+    {
+      "file": "S-06/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 30970,
+      "totalPixels": 320720,
+      "ratio": 0.096564
+    },
+    {
+      "file": "S-06/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 44466,
+      "totalPixels": 786432,
+      "ratio": 0.056541
+    },
+    {
+      "file": "S-06/empty--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 24115,
+      "totalPixels": 1296000,
+      "ratio": 0.018607
+    },
+    {
+      "file": "S-06/empty--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 21842,
+      "totalPixels": 320720,
+      "ratio": 0.068103
+    },
+    {
+      "file": "S-06/empty--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 23560,
+      "totalPixels": 786432,
+      "ratio": 0.029958
+    },
+    {
+      "file": "S-06/loading--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 437,
+      "totalPixels": 320720,
+      "ratio": 0.001363
+    },
+    {
+      "file": "S-10/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 8183,
+      "totalPixels": 1296000,
+      "ratio": 0.006314
+    },
+    {
+      "file": "S-10/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 20353,
+      "totalPixels": 786432,
+      "ratio": 0.02588
+    },
+    {
+      "file": "S-14/error--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 5202,
+      "totalPixels": 1296000,
+      "ratio": 0.004014
+    },
+    {
+      "file": "S-14/error--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1266",
+      "differingPixels": 5316,
+      "totalPixels": 481080,
+      "ratio": 0.01105
+    },
+    {
+      "file": "S-15/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1074",
+      "differingPixels": 54597,
+      "totalPixels": 1546560,
+      "ratio": 0.035302
+    },
+    {
+      "file": "S-15/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1349",
+      "differingPixels": 32063,
+      "totalPixels": 512620,
+      "ratio": 0.062547
+    },
+    {
+      "file": "S-15/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1175",
+      "differingPixels": 56634,
+      "totalPixels": 902400,
+      "ratio": 0.062759
+    },
+    {
+      "file": "S-17/expanded--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1107",
+      "differingPixels": 128500,
+      "totalPixels": 1594080,
+      "ratio": 0.080611
+    },
+    {
+      "file": "S-17/expanded--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1382",
+      "differingPixels": 1007,
+      "totalPixels": 525160,
+      "ratio": 0.001918
+    },
+    {
+      "file": "S-17/expanded--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1208",
+      "differingPixels": 1300,
+      "totalPixels": 927744,
+      "ratio": 0.001401
+    },
+    {
+      "file": "S-20/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1335",
+      "differingPixels": 636,
+      "totalPixels": 507300,
+      "ratio": 0.001254
+    },
+    {
+      "file": "S-21/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 7272,
+      "totalPixels": 1296000,
+      "ratio": 0.005611
+    },
+    {
+      "file": "S-21/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 7272,
+      "totalPixels": 786432,
+      "ratio": 0.009247
+    },
+    {
+      "file": "S-21/print--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x2324",
+      "differingPixels": 24506,
+      "totalPixels": 3346560,
+      "ratio": 0.007323
+    },
+    {
+      "file": "S-21/print--380.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "380x3388",
+      "candidate": "380x3410"
+    },
+    {
+      "file": "S-21/print--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x2454",
+      "differingPixels": 30108,
+      "totalPixels": 1884672,
+      "ratio": 0.015975
+    },
+    {
+      "file": "S-21/working--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 4955,
+      "totalPixels": 1296000,
+      "ratio": 0.003823
+    },
+    {
+      "file": "S-21/working--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1032",
+      "differingPixels": 5633,
+      "totalPixels": 392160,
+      "ratio": 0.014364
+    },
+    {
+      "file": "S-21/working--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 4880,
+      "totalPixels": 786432,
+      "ratio": 0.006205
+    },
+    {
+      "file": "S-22/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x999",
+      "differingPixels": 930,
+      "totalPixels": 379620,
+      "ratio": 0.00245
+    },
+    {
+      "file": "S-22/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 930,
+      "totalPixels": 786432,
+      "ratio": 0.001183
+    },
+    {
+      "file": "S-22/no-weaknesses--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1194",
+      "differingPixels": 7807,
+      "totalPixels": 453720,
+      "ratio": 0.017207
+    },
+    {
+      "file": "S-22/settled--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 1507,
+      "totalPixels": 1296000,
+      "ratio": 0.001163
+    },
+    {
+      "file": "S-22/settled--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x983",
+      "differingPixels": 1507,
+      "totalPixels": 373540,
+      "ratio": 0.004034
+    },
+    {
+      "file": "S-22/settled--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 1507,
+      "totalPixels": 786432,
+      "ratio": 0.001916
+    },
+    {
+      "file": "S-23/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 6920,
+      "totalPixels": 1296000,
+      "ratio": 0.00534
+    },
+    {
+      "file": "S-23/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 3213,
+      "totalPixels": 320720,
+      "ratio": 0.010018
+    },
+    {
+      "file": "S-23/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 6920,
+      "totalPixels": 786432,
+      "ratio": 0.008799
+    },
+    {
+      "file": "S-23/settled--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 1434,
+      "totalPixels": 1296000,
+      "ratio": 0.001106
+    },
+    {
+      "file": "S-23/settled--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 1434,
+      "totalPixels": 320720,
+      "ratio": 0.004471
+    },
+    {
+      "file": "S-23/settled--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 1434,
+      "totalPixels": 786432,
+      "ratio": 0.001823
+    },
+    {
+      "file": "S-24/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1335",
+      "differingPixels": 15884,
+      "totalPixels": 1922400,
+      "ratio": 0.008263
+    },
+    {
+      "file": "S-24/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1806",
+      "differingPixels": 15520,
+      "totalPixels": 686280,
+      "ratio": 0.022615
+    },
+    {
+      "file": "S-24/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1335",
+      "differingPixels": 15884,
+      "totalPixels": 1025280,
+      "ratio": 0.015492
+    },
+    {
+      "file": "S-24/week-complete--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1369",
+      "differingPixels": 6861,
+      "totalPixels": 1971360,
+      "ratio": 0.00348
+    },
+    {
+      "file": "S-24/week-complete--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1725",
+      "differingPixels": 6861,
+      "totalPixels": 655500,
+      "ratio": 0.010467
+    },
+    {
+      "file": "S-24/week-complete--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1369",
+      "differingPixels": 6861,
+      "totalPixels": 1051392,
+      "ratio": 0.006526
+    },
+    {
+      "file": "S-25/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 9185,
+      "totalPixels": 1296000,
+      "ratio": 0.007087
+    },
+    {
+      "file": "S-25/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 7598,
+      "totalPixels": 320720,
+      "ratio": 0.02369
+    },
+    {
+      "file": "S-25/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 9185,
+      "totalPixels": 786432,
+      "ratio": 0.011679
+    },
+    {
+      "file": "S-29/default--1440.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "1440x1190",
+      "candidate": "1440x1215"
+    },
+    {
+      "file": "S-29/default--768.png",
+      "verdict": "changed",
+      "reason": "dimensions",
+      "baseline": "768x1190",
+      "candidate": "768x1215"
+    },
+    {
+      "file": "S-30/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x877",
+      "differingPixels": 994,
+      "totalPixels": 333260,
+      "ratio": 0.002983
+    },
+    {
+      "file": "S-30/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 994,
+      "totalPixels": 786432,
+      "ratio": 0.001264
+    },
+    {
+      "file": "S-32-provisional/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 881,
+      "totalPixels": 320720,
+      "ratio": 0.002747
+    },
+    {
+      "file": "S-32-provisional/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 881,
+      "totalPixels": 786432,
+      "ratio": 0.00112
+    },
+    {
+      "file": "T-01/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1525",
+      "differingPixels": 3326,
+      "totalPixels": 2196000,
+      "ratio": 0.001515
+    },
+    {
+      "file": "T-01/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x2575",
+      "differingPixels": 1801,
+      "totalPixels": 978500,
+      "ratio": 0.001841
+    },
+    {
+      "file": "T-01/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1873",
+      "differingPixels": 3317,
+      "totalPixels": 1438464,
+      "ratio": 0.002306
+    },
+    {
+      "file": "T-02/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 5048,
+      "totalPixels": 1296000,
+      "ratio": 0.003895
+    },
+    {
+      "file": "T-02/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 1922,
+      "totalPixels": 320720,
+      "ratio": 0.005993
+    },
+    {
+      "file": "T-02/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 4558,
+      "totalPixels": 786432,
+      "ratio": 0.005796
+    },
+    {
+      "file": "T-03/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 3816,
+      "totalPixels": 1296000,
+      "ratio": 0.002944
+    },
+    {
+      "file": "T-03/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1308",
+      "differingPixels": 2264,
+      "totalPixels": 497040,
+      "ratio": 0.004555
+    },
+    {
+      "file": "T-03/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 3771,
+      "totalPixels": 786432,
+      "ratio": 0.004795
+    },
+    {
+      "file": "T-04/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1498",
+      "differingPixels": 5134,
+      "totalPixels": 2157120,
+      "ratio": 0.00238
+    },
+    {
+      "file": "T-04/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x2441",
+      "differingPixels": 3609,
+      "totalPixels": 927580,
+      "ratio": 0.003891
+    },
+    {
+      "file": "T-04/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1970",
+      "differingPixels": 5120,
+      "totalPixels": 1512960,
+      "ratio": 0.003384
+    },
+    {
+      "file": "T-05/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1144",
+      "differingPixels": 1915,
+      "totalPixels": 1647360,
+      "ratio": 0.001162
+    },
+    {
+      "file": "T-05/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1381",
+      "differingPixels": 1915,
+      "totalPixels": 1060608,
+      "ratio": 0.001806
+    },
+    {
+      "file": "T-06/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 12049,
+      "totalPixels": 1296000,
+      "ratio": 0.009297
+    },
+    {
+      "file": "T-06/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 2350,
+      "totalPixels": 320720,
+      "ratio": 0.007327
+    },
+    {
+      "file": "T-06/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 6049,
+      "totalPixels": 786432,
+      "ratio": 0.007692
+    },
+    {
+      "file": "T-07/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 4445,
+      "totalPixels": 1296000,
+      "ratio": 0.00343
+    },
+    {
+      "file": "T-07/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 595,
+      "totalPixels": 320720,
+      "ratio": 0.001855
+    },
+    {
+      "file": "T-07/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 2756,
+      "totalPixels": 786432,
+      "ratio": 0.003504
+    },
+    {
+      "file": "T-08/error--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 1514,
+      "totalPixels": 1296000,
+      "ratio": 0.001168
+    },
+    {
+      "file": "T-08/error--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 1514,
+      "totalPixels": 786432,
+      "ratio": 0.001925
+    },
+    {
+      "file": "T-08/loading--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 3545,
+      "totalPixels": 1296000,
+      "ratio": 0.002735
+    },
+    {
+      "file": "T-08/loading--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 890,
+      "totalPixels": 320720,
+      "ratio": 0.002775
+    },
+    {
+      "file": "T-08/loading--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 3545,
+      "totalPixels": 786432,
+      "ratio": 0.004508
+    },
+    {
+      "file": "T-08/low-confidence--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x948",
+      "differingPixels": 3234,
+      "totalPixels": 1365120,
+      "ratio": 0.002369
+    },
+    {
+      "file": "T-08/low-confidence--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1396",
+      "differingPixels": 1025,
+      "totalPixels": 530480,
+      "ratio": 0.001932
+    },
+    {
+      "file": "T-08/low-confidence--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1241",
+      "differingPixels": 3143,
+      "totalPixels": 953088,
+      "ratio": 0.003298
+    },
+    {
+      "file": "T-08/teacher-corrected--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 3234,
+      "totalPixels": 1296000,
+      "ratio": 0.002495
+    },
+    {
+      "file": "T-08/teacher-corrected--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1251",
+      "differingPixels": 1025,
+      "totalPixels": 475380,
+      "ratio": 0.002156
+    },
+    {
+      "file": "T-08/teacher-corrected--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1140",
+      "differingPixels": 3143,
+      "totalPixels": 875520,
+      "ratio": 0.00359
+    },
+    {
+      "file": "T-09-detail/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 3456,
+      "totalPixels": 1296000,
+      "ratio": 0.002667
+    },
+    {
+      "file": "T-09-detail/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1034",
+      "differingPixels": 4158,
+      "totalPixels": 392920,
+      "ratio": 0.010582
+    },
+    {
+      "file": "T-09-detail/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 3456,
+      "totalPixels": 786432,
+      "ratio": 0.004395
+    },
+    {
+      "file": "T-09-detail/error--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 1514,
+      "totalPixels": 1296000,
+      "ratio": 0.001168
+    },
+    {
+      "file": "T-09-detail/error--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 1514,
+      "totalPixels": 786432,
+      "ratio": 0.001925
+    },
+    {
+      "file": "T-09-detail/loading--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 3278,
+      "totalPixels": 1296000,
+      "ratio": 0.002529
+    },
+    {
+      "file": "T-09-detail/loading--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 582,
+      "totalPixels": 320720,
+      "ratio": 0.001815
+    },
+    {
+      "file": "T-09-detail/loading--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 2131,
+      "totalPixels": 786432,
+      "ratio": 0.00271
+    },
+    {
+      "file": "T-09/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 3910,
+      "totalPixels": 1296000,
+      "ratio": 0.003017
+    },
+    {
+      "file": "T-09/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 1597,
+      "totalPixels": 320720,
+      "ratio": 0.004979
+    },
+    {
+      "file": "T-09/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 3536,
+      "totalPixels": 786432,
+      "ratio": 0.004496
+    },
+    {
+      "file": "T-10/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1295",
+      "differingPixels": 6597,
+      "totalPixels": 1864800,
+      "ratio": 0.003538
+    },
+    {
+      "file": "T-10/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x2059",
+      "differingPixels": 3947,
+      "totalPixels": 782420,
+      "ratio": 0.005045
+    },
+    {
+      "file": "T-10/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1780",
+      "differingPixels": 4821,
+      "totalPixels": 1367040,
+      "ratio": 0.003527
+    },
+    {
+      "file": "T-10/error--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 1514,
+      "totalPixels": 1296000,
+      "ratio": 0.001168
+    },
+    {
+      "file": "T-10/error--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 1514,
+      "totalPixels": 786432,
+      "ratio": 0.001925
+    },
+    {
+      "file": "T-10/loading--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 1514,
+      "totalPixels": 1296000,
+      "ratio": 0.001168
+    },
+    {
+      "file": "T-10/loading--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 1514,
+      "totalPixels": 786432,
+      "ratio": 0.001925
+    },
+    {
+      "file": "T-12/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x1056",
+      "differingPixels": 2780,
+      "totalPixels": 1520640,
+      "ratio": 0.001828
+    },
+    {
+      "file": "T-12/default--380.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "380x1168",
+      "differingPixels": 1265,
+      "totalPixels": 443840,
+      "ratio": 0.00285
+    },
+    {
+      "file": "T-12/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1092",
+      "differingPixels": 2780,
+      "totalPixels": 838656,
+      "ratio": 0.003315
+    },
+    {
+      "file": "T-13-provisional/default--1440.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 1514,
+      "totalPixels": 1296000,
+      "ratio": 0.001168
+    },
+    {
+      "file": "T-13-provisional/default--768.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 1514,
+      "totalPixels": 786432,
+      "ratio": 0.001925
+    },
+    {
+      "file": "p2.10-01-student-dashboard.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1280x720",
+      "differingPixels": 26216,
+      "totalPixels": 921600,
+      "ratio": 0.028446
+    },
+    {
+      "file": "p2.10-02-paper-result.png",
+      "verdict": "changed",
+      "reason": "pixels",
+      "dimensions": "1280x1074",
+      "differingPixels": 42095,
+      "totalPixels": 1374720,
+      "ratio": 0.030621
+    }
+  ],
+  "unchanged": [
+    {
+      "file": "DEV-01/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x1167",
+      "differingPixels": 0,
+      "totalPixels": 1680480,
+      "ratio": 0
+    },
+    {
+      "file": "DEV-01/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1691",
+      "differingPixels": 0,
+      "totalPixels": 642580,
+      "ratio": 0
+    },
+    {
+      "file": "DEV-01/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1185",
+      "differingPixels": 0,
+      "totalPixels": 910080,
+      "ratio": 0
+    },
+    {
+      "file": "G-01/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x4828",
+      "differingPixels": 0,
+      "totalPixels": 1834640,
+      "ratio": 0
+    },
+    {
+      "file": "G-01/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x4010",
+      "differingPixels": 0,
+      "totalPixels": 3079680,
+      "ratio": 0
+    },
+    {
+      "file": "G-04/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "G-04/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "G-04/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "G-04/error--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "G-04/loading--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "G-04/loading--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "G-04/loading--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "G-05/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "G-05/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "G-05/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "G-10/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 51,
+      "totalPixels": 1296000,
+      "ratio": 0.000039
+    },
+    {
+      "file": "G-10/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 51,
+      "totalPixels": 320720,
+      "ratio": 0.000159
+    },
+    {
+      "file": "G-10/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 51,
+      "totalPixels": 786432,
+      "ratio": 0.000065
+    },
+    {
+      "file": "G-11/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "G-11/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "G-11/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "G-12/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x930",
+      "differingPixels": 0,
+      "totalPixels": 1339200,
+      "ratio": 0
+    },
+    {
+      "file": "G-12/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1098",
+      "differingPixels": 0,
+      "totalPixels": 417240,
+      "ratio": 0
+    },
+    {
+      "file": "G-12/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "G-13/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "G-13/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "G-13/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "G-13/populated--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "P-01/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x973",
+      "differingPixels": 0,
+      "totalPixels": 1401120,
+      "ratio": 0
+    },
+    {
+      "file": "P-01/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1098",
+      "differingPixels": 0,
+      "totalPixels": 417240,
+      "ratio": 0
+    },
+    {
+      "file": "P-01/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "P-01/empty--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "P-01/empty--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "P-01/empty--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "P-02/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x973",
+      "differingPixels": 0,
+      "totalPixels": 1401120,
+      "ratio": 0
+    },
+    {
+      "file": "P-02/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1098",
+      "differingPixels": 0,
+      "totalPixels": 417240,
+      "ratio": 0
+    },
+    {
+      "file": "P-02/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "P-03/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "P-03/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x925",
+      "differingPixels": 0,
+      "totalPixels": 351500,
+      "ratio": 0
+    },
+    {
+      "file": "P-03/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "P-04/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "P-04/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "P-04/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-01/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-01/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1050",
+      "differingPixels": 0,
+      "totalPixels": 399000,
+      "ratio": 0
+    },
+    {
+      "file": "S-01/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-02/questionnaire--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-02/questionnaire--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-02/questionnaire--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-02/questionnaire-skipped--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-02/questionnaire-skipped--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-02/questionnaire-skipped--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-03/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-03/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-03/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-03/unavailable--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-03/unavailable--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-03/unavailable--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-04/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 94,
+      "totalPixels": 1296000,
+      "ratio": 0.000073
+    },
+    {
+      "file": "S-04/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1036",
+      "differingPixels": 65,
+      "totalPixels": 393680,
+      "ratio": 0.000165
+    },
+    {
+      "file": "S-04/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 108,
+      "totalPixels": 786432,
+      "ratio": 0.000137
+    },
+    {
+      "file": "S-05/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-05/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-05/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-06/error--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-06/error--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-06/error--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-06/loading--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-06/loading--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 160,
+      "totalPixels": 786432,
+      "ratio": 0.000203
+    },
+    {
+      "file": "S-08/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x1043",
+      "differingPixels": 0,
+      "totalPixels": 1501920,
+      "ratio": 0
+    },
+    {
+      "file": "S-08/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1597",
+      "differingPixels": 0,
+      "totalPixels": 606860,
+      "ratio": 0
+    },
+    {
+      "file": "S-08/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1430",
+      "differingPixels": 0,
+      "totalPixels": 1098240,
+      "ratio": 0
+    },
+    {
+      "file": "S-10/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1219",
+      "differingPixels": 3,
+      "totalPixels": 463220,
+      "ratio": 0.000006
+    },
+    {
+      "file": "S-10/file-selected--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 33,
+      "totalPixels": 1296000,
+      "ratio": 0.000025
+    },
+    {
+      "file": "S-10/file-selected--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1219",
+      "differingPixels": 0,
+      "totalPixels": 463220,
+      "ratio": 0
+    },
+    {
+      "file": "S-10/file-selected--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-14/error--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1033",
+      "differingPixels": 45,
+      "totalPixels": 793344,
+      "ratio": 0.000057
+    },
+    {
+      "file": "S-14/marking-in-progress--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-14/marking-in-progress--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1219",
+      "differingPixels": 0,
+      "totalPixels": 463220,
+      "ratio": 0
+    },
+    {
+      "file": "S-14/marking-in-progress--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-20/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x1152",
+      "differingPixels": 636,
+      "totalPixels": 1658880,
+      "ratio": 0.000383
+    },
+    {
+      "file": "S-20/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1152",
+      "differingPixels": 636,
+      "totalPixels": 884736,
+      "ratio": 0.000719
+    },
+    {
+      "file": "S-20/no-questions--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x929",
+      "differingPixels": 0,
+      "totalPixels": 1337760,
+      "ratio": 0
+    },
+    {
+      "file": "S-20/no-questions--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1112",
+      "differingPixels": 0,
+      "totalPixels": 422560,
+      "ratio": 0
+    },
+    {
+      "file": "S-20/no-questions--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-20/no-weaknesses--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x1152",
+      "differingPixels": 303,
+      "totalPixels": 1658880,
+      "ratio": 0.000183
+    },
+    {
+      "file": "S-20/no-weaknesses--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1333",
+      "differingPixels": 303,
+      "totalPixels": 506540,
+      "ratio": 0.000598
+    },
+    {
+      "file": "S-20/no-weaknesses--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1174",
+      "differingPixels": 302,
+      "totalPixels": 901632,
+      "ratio": 0.000335
+    },
+    {
+      "file": "S-21/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-21/marking--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 157,
+      "totalPixels": 1296000,
+      "ratio": 0.000121
+    },
+    {
+      "file": "S-21/marking--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 130,
+      "totalPixels": 320720,
+      "ratio": 0.000405
+    },
+    {
+      "file": "S-21/marking--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 123,
+      "totalPixels": 786432,
+      "ratio": 0.000156
+    },
+    {
+      "file": "S-21/not-submitted--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-21/not-submitted--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-21/not-submitted--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-22/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 930,
+      "totalPixels": 1296000,
+      "ratio": 0.000718
+    },
+    {
+      "file": "S-22/empty--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-22/empty--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x953",
+      "differingPixels": 0,
+      "totalPixels": 362140,
+      "ratio": 0
+    },
+    {
+      "file": "S-22/empty--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-22/no-weaknesses--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-22/no-weaknesses--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-24/not-generated--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-24/not-generated--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-24/not-generated--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-24/refused--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-24/refused--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-24/refused--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-25/not-in-current-week--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-25/not-in-current-week--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "S-25/not-in-current-week--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-28/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "S-28/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x900",
+      "differingPixels": 0,
+      "totalPixels": 342000,
+      "ratio": 0
+    },
+    {
+      "file": "S-28/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "S-29/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1337",
+      "differingPixels": 43,
+      "totalPixels": 508060,
+      "ratio": 0.000085
+    },
+    {
+      "file": "S-30/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 994,
+      "totalPixels": 1296000,
+      "ratio": 0.000767
+    },
+    {
+      "file": "S-31/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 78,
+      "totalPixels": 1296000,
+      "ratio": 0.00006
+    },
+    {
+      "file": "S-31/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1111",
+      "differingPixels": 78,
+      "totalPixels": 422180,
+      "ratio": 0.000185
+    },
+    {
+      "file": "S-31/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1046",
+      "differingPixels": 78,
+      "totalPixels": 803328,
+      "ratio": 0.000097
+    },
+    {
+      "file": "S-32-provisional/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 881,
+      "totalPixels": 1296000,
+      "ratio": 0.00068
+    },
+    {
+      "file": "T-01/empty--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x1035",
+      "differingPixels": 0,
+      "totalPixels": 1490400,
+      "ratio": 0
+    },
+    {
+      "file": "T-01/empty--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1607",
+      "differingPixels": 0,
+      "totalPixels": 610660,
+      "ratio": 0
+    },
+    {
+      "file": "T-01/empty--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1257",
+      "differingPixels": 0,
+      "totalPixels": 965376,
+      "ratio": 0
+    },
+    {
+      "file": "T-01/offline--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x900",
+      "differingPixels": 0,
+      "totalPixels": 1296000,
+      "ratio": 0
+    },
+    {
+      "file": "T-01/offline--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "T-01/offline--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x1024",
+      "differingPixels": 0,
+      "totalPixels": 786432,
+      "ratio": 0
+    },
+    {
+      "file": "T-05/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x1392",
+      "differingPixels": 401,
+      "totalPixels": 528960,
+      "ratio": 0.000758
+    },
+    {
+      "file": "T-08/error--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "T-09-detail/error--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "T-10/error--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "T-10/loading--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x844",
+      "differingPixels": 0,
+      "totalPixels": 320720,
+      "ratio": 0
+    },
+    {
+      "file": "T-13-provisional/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x992",
+      "differingPixels": 0,
+      "totalPixels": 376960,
+      "ratio": 0
+    },
+    {
+      "file": "T-14-provisional/default--1440.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "1440x2002",
+      "differingPixels": 1514,
+      "totalPixels": 2882880,
+      "ratio": 0.000525
+    },
+    {
+      "file": "T-14-provisional/default--380.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "380x2171",
+      "differingPixels": 0,
+      "totalPixels": 824980,
+      "ratio": 0
+    },
+    {
+      "file": "T-14-provisional/default--768.png",
+      "verdict": "unchanged",
+      "reason": "pixels",
+      "dimensions": "768x2002",
+      "differingPixels": 1514,
+      "totalPixels": 1537536,
+      "ratio": 0.000985
+    }
+  ]
+}

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from lemely import __version__
 from lemely.runtime.budget_notify import register_budget_ntfy
 from lemely.web.routers import (
     announcements,
@@ -47,7 +48,11 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Lemely API",
         description="Backend for the Lemely Teacher and Student portals.",
-        version="0.1.0",
+        # Sourced from the installed package metadata, never hand-edited: a
+        # literal here silently drifts from pyproject.toml (it sat at 0.1.0
+        # through five phases). An editable install needs `pip install -e .`
+        # after a version bump before this reports the new number.
+        version=__version__,
     )
     app.include_router(meta.router)
     app.include_router(auth.router)

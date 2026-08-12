@@ -287,9 +287,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import shutil
-import subprocess
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -322,6 +319,7 @@ from lemely.db.models.users import Device
 from lemely.db.practice_repo import PracticeRequest
 from lemely.db.question_bank_repo import NewBankQuestion
 from lemely.db.session import get_sessionmaker
+from lemely.runtime.supabase_env import ensure_supabase_env
 from lemely.web import deps
 
 if TYPE_CHECKING:
@@ -995,63 +993,6 @@ def build_result_payload(
 
 def _log(message: str) -> None:
     print(message, file=sys.stderr)
-
-
-#: The two settings the seed needs that live only in the running stack, never
-#: in ``lemely.toml`` (they are per-stack secrets). Same pair
-#: ``web/scripts/audit.mjs::resolveSupabaseEnv`` resolves.
-_STACK_ENV_KEYS = ("LEMELY_SUPABASE__SERVICE_ROLE_KEY", "LEMELY_SUPABASE__ANON_KEY")
-
-
-def ensure_supabase_env() -> None:
-    """Fill the stack's service-role/anon keys from ``supabase status`` if unset.
-
-    Without this the script dies on the first signup with a bare
-    ``AuthError: Supabase service-role key is not configured`` — which reads
-    like a broken script rather than "you forgot to export two variables".
-    Both harnesses already resolve these the same way
-    (``web/scripts/audit.mjs::resolveSupabaseEnv``, mirroring
-    ``web/playwright.config.ts``); doing it here too is what lets this be the
-    *one* seeding path, runnable bare from any shell.
-
-    An already-exported value always wins, so a caller can point the seed at a
-    different stack. ``supabase`` lives at ``~/.local/bin`` and is absent from
-    this sandbox's non-interactive ``PATH`` (P3.7), hence the explicit prefix.
-    Must be called BEFORE the first ``deps.get_*`` call, which is what reads
-    settings into the process-wide singletons.
-    """
-    if all(os.environ.get(key) for key in _STACK_ENV_KEYS):
-        return
-    search_path = f"{os.path.expanduser('~/.local/bin')}:{os.environ['PATH']}"
-    binary = shutil.which("supabase", path=search_path)
-    if binary is None:
-        raise SystemExit(
-            "`supabase` is not on PATH (checked ~/.local/bin too), so the stack keys "
-            f"cannot be resolved. Export {' and '.join(_STACK_ENV_KEYS)} yourself, "
-            "or install the Supabase CLI."
-        )
-    try:
-        # S603 is suppressed deliberately: no untrusted input reaches this
-        # call — `binary` is a `shutil.which` result and every argument below
-        # is a literal. (Do not open this comment with the four letters ruff
-        # reads as a blanket directive, or it becomes one.)
-        raw = subprocess.run(  # noqa: S603
-            [binary, "status", "-o", "json"],
-            capture_output=True,
-            check=True,
-            text=True,
-            env={**os.environ, "PATH": search_path},
-        ).stdout
-    except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover - env-dependent
-        raise SystemExit(
-            "Could not read `supabase status -o json` to resolve the stack keys. "
-            "Start the local stack (`supabase start`), or export "
-            f"{' and '.join(_STACK_ENV_KEYS)} yourself."
-        ) from exc
-    status = json.loads(raw)
-    for key, field in zip(_STACK_ENV_KEYS, ("SERVICE_ROLE_KEY", "ANON_KEY"), strict=True):
-        if not os.environ.get(key):
-            os.environ[key] = status[field]
 
 
 def _signup_account(role_label: str, role: Role, run_tag: str) -> dict[str, Any]:

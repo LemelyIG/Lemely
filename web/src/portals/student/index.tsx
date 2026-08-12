@@ -1,4 +1,5 @@
 import type { RouteObject } from "react-router-dom"
+import { lazy, Suspense } from "react"
 import {
   Link,
   NavLink,
@@ -8,39 +9,76 @@ import {
 } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { RouteFallback } from "@/components/ui/state-views"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { navGroups, resolveCrumb } from "./data"
-import { Overview } from "./screens/Overview"
-import { Subject } from "./screens/Subject"
-import { PaperResult } from "./screens/PaperResult"
-import { CorrectPaper } from "./screens/CorrectPaper"
-import { StudyPlanSession } from "./screens/studyplan/StudyPlanSession"
-import { StudyPlanWeek } from "./screens/studyplan/StudyPlanWeek"
-import { Standings } from "./screens/Standings"
-import { Announcements } from "./screens/Announcements"
-import { Notifications } from "./screens/Notifications"
-import { Friends } from "./screens/Friends"
-import { Profile } from "./screens/Profile"
-import { Onboarding } from "./screens/Onboarding"
-import { PlacementInvite } from "./screens/placement/PlacementInvite"
-import { PlacementTest } from "./screens/placement/PlacementTest"
-import { PlacementResult } from "./screens/placement/PlacementResult"
-import { PracticeGenerator } from "./screens/practice/PracticeGenerator"
-import { PracticeSet } from "./screens/practice/PracticeSet"
-import { PracticeResult } from "./screens/practice/PracticeResult"
-import { PracticePrint } from "./screens/practice/PracticePrint"
-import { FlashcardDecks } from "./screens/flashcards/FlashcardDecks"
-import { FlashcardReview } from "./screens/flashcards/FlashcardReview"
-import { Landing } from "./screens/Landing"
-import { Directions } from "./screens/Directions"
-import { Parents } from "./screens/Parents"
 
 /*
  * Student portal (terracotta). Grouped sidebar nav + a sticky top header
  * (breadcrumb, search, streak pill, "Correct a paper" CTA) wrap an <Outlet/>.
  * The layout root sets data-portal="student" so the token layer resolves to the
  * terracotta accent + neutrals (student is also the default scope).
+ *
+ * P6.1b: every screen below is `React.lazy`, not a static import. This portal
+ * alone pulled in ~24 screens' worth of JS (subject drilldowns, the whole
+ * practice/placement/flashcards/studyplan flow) into the ONE bundle every
+ * route paid for, regardless of which screen a session actually visited.
+ * Splitting at the screen boundary means a student who only ever opens
+ * Overview and Subject never downloads QuizBuilder-sized code they'll never
+ * run. Screens are named exports (not default), so each lazy import needs the
+ * `.then((m) => ({ default: m.X }))` adapter — `React.lazy` only accepts a
+ * default-export module.
  */
+const Overview = lazy(() => import("./screens/Overview").then((m) => ({ default: m.Overview })))
+const Subject = lazy(() => import("./screens/Subject").then((m) => ({ default: m.Subject })))
+const PaperResult = lazy(() => import("./screens/PaperResult").then((m) => ({ default: m.PaperResult })))
+const CorrectPaper = lazy(() => import("./screens/CorrectPaper").then((m) => ({ default: m.CorrectPaper })))
+const StudyPlanSession = lazy(() =>
+  import("./screens/studyplan/StudyPlanSession").then((m) => ({ default: m.StudyPlanSession })),
+)
+const StudyPlanWeek = lazy(() =>
+  import("./screens/studyplan/StudyPlanWeek").then((m) => ({ default: m.StudyPlanWeek })),
+)
+const Standings = lazy(() => import("./screens/Standings").then((m) => ({ default: m.Standings })))
+const Announcements = lazy(() =>
+  import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
+)
+const Notifications = lazy(() =>
+  import("./screens/Notifications").then((m) => ({ default: m.Notifications })),
+)
+const Friends = lazy(() => import("./screens/Friends").then((m) => ({ default: m.Friends })))
+const Profile = lazy(() => import("./screens/Profile").then((m) => ({ default: m.Profile })))
+const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ default: m.Onboarding })))
+const PlacementInvite = lazy(() =>
+  import("./screens/placement/PlacementInvite").then((m) => ({ default: m.PlacementInvite })),
+)
+const PlacementTest = lazy(() =>
+  import("./screens/placement/PlacementTest").then((m) => ({ default: m.PlacementTest })),
+)
+const PlacementResult = lazy(() =>
+  import("./screens/placement/PlacementResult").then((m) => ({ default: m.PlacementResult })),
+)
+const PracticeGenerator = lazy(() =>
+  import("./screens/practice/PracticeGenerator").then((m) => ({ default: m.PracticeGenerator })),
+)
+const PracticeSet = lazy(() =>
+  import("./screens/practice/PracticeSet").then((m) => ({ default: m.PracticeSet })),
+)
+const PracticeResult = lazy(() =>
+  import("./screens/practice/PracticeResult").then((m) => ({ default: m.PracticeResult })),
+)
+const PracticePrint = lazy(() =>
+  import("./screens/practice/PracticePrint").then((m) => ({ default: m.PracticePrint })),
+)
+const FlashcardDecks = lazy(() =>
+  import("./screens/flashcards/FlashcardDecks").then((m) => ({ default: m.FlashcardDecks })),
+)
+const FlashcardReview = lazy(() =>
+  import("./screens/flashcards/FlashcardReview").then((m) => ({ default: m.FlashcardReview })),
+)
+const Landing = lazy(() => import("./screens/Landing").then((m) => ({ default: m.Landing })))
+const Directions = lazy(() => import("./screens/Directions").then((m) => ({ default: m.Directions })))
+const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
 
 /**
  * Sidebar identity block. Wired to `GET /api/me/profile` (`useProfile()`) —
@@ -191,6 +229,17 @@ function Header() {
   )
 }
 
+// One boundary around the Outlet, not one per <Route element>: the sidebar,
+// header and chrome above stay mounted and interactive while a screen chunk
+// downloads, so navigating never blanks the whole page — only the content
+// slot shows the loading state, then swaps to the real screen. Matches the
+// "Loading…" `role="status"` text every screen below already uses for its own
+// data-pending state (see e.g. `screens/Overview.tsx`), so a chunk load reads
+// as the same kind of wait, not a new visual language. The fallback itself is
+// `RouteFallback` from the C-11 state-view family — one shared component, since
+// all three portals and `App.tsx` need it and four local copies had already
+// drifted to three different type/padding combinations before they were merged.
+
 function StudentLayout() {
   return (
     <div data-portal="student" className="flex min-h-screen">
@@ -198,7 +247,9 @@ function StudentLayout() {
       <main className="flex-1 min-w-0 flex flex-col">
         <Header />
         <div className="lm-body flex-1 p-[34px] max-w-[1320px] w-full">
-          <Outlet />
+          <Suspense fallback={<RouteFallback className="text-dense-lg" />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>
