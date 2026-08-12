@@ -514,7 +514,7 @@ Measured, not assumed — every line below was checked on disk this session:
       hit a second time on a different binary: **"executable not found" is an environment answer,
       never a verdict** — and here it nearly became a verdict about *Docker containers*, one level
       further from the missing binary than the earlier case, which is why it was convincing.
-- [ ] todo — **P6.7** Full-product visual QA sweep: regenerate the **entire** screenshot corpus,
+- [ ] doing — **P6.7** Full-product visual QA sweep: regenerate the **entire** screenshot corpus,
       per-role contact sheets, `/impeccable audit` across frontend source, `npx impeccable detect
       src/` with every finding resolved, axe + Lighthouse over every route. Regression against the
       Phase-2.5 baselines is a blocker (MISSION §4). Read `removed` (must be 0), not `changed`.
@@ -545,6 +545,40 @@ Measured, not assumed — every line below was checked on disk this session:
       before calling it either**, and never by loosening the threshold (D4.25 exists because this
       floor went unenforced for two phases; re-disabling it now would be worse than never having
       enforced it).
+
+      **Session 104 — the CLS was attributed from a committed artifact, not from a re-run, and the
+      previous session's stated hypothesis was WRONG.** `reports/phase-5/lighthouse/
+      student-standings.json` already carried the `layout-shifts` audit for this route (CLS 0.220
+      there, so the defect predates P6.1 and is not a regression *caused* by the code split — P6.1
+      raised the other four metrics and left this one, which is why the route could score 92 on one
+      run and 74 on another: **the shifts only count when the skeleton paints before the data
+      arrives, so a fast run hides them entirely**). Both recorded shifts name the same element:
+      `<section aria-labelledby="s29-subjects">`, i.e. "Your subjects" being pushed down the page —
+      **not `RouteFallback`**, which the previous entry told this session to check first. Three
+      blocks above it grow after first paint: the board card (one "Loading the board…" line → a real
+      board, ~335px on seeded data at 380px wide), `OptOutControl` (rendered `null` while its
+      profile read is in flight, then ~124px), and the XP-basis tab row (~34px).
+      **Fixed in `web/src/portals/student/screens/Standings.tsx` by reserving the space, never by
+      touching the threshold.** The two null-until-loaded blocks now render their own frame with the
+      real copy `invisible` + `aria-hidden` + `inert` while pending — reserving with the actual text
+      rather than a `min-h-*` guess is what makes the reservation correct at every breakpoint,
+      because the height comes from the same wrapping in the same box. The board card gets a
+      `min-h-96` floor **in every state, not only while loading**: 384px is the height of the
+      smallest real board on seeded data (a C-11 empty panel plus the pinned viewer row), so it is a
+      measurement of the content, and it also stops the page jumping when the student switches
+      Friends/Class/School/Everyone — the same defect seen by a person instead of by Lighthouse.
+      Typecheck, oxlint and the 113 standings/design-token unit tests all green on the change.
+      **Second finding, and it is about a gate rather than the product: `npx impeccable detect` is
+      VACUOUS on this machine.** impeccable 3.5.0 returns `[]` for `src/`, and also for a file
+      deliberately written to trip it (inline `style={{color:"#ff0000"}}`), for a CSS file with an
+      off-scale `font-size: 13.7px`, and for an em-dash-overuse file — with `--json`, `--quiet` and
+      `--no-config` alike, exit 0 and zero bytes every time. No `.impeccable` config suppresses
+      anything (`config.local.json` holds only hook consent). So MISSION §4's "resolve every
+      finding" is satisfied trivially and **a green `impeccable-detect` gate is not evidence of
+      anything** — it must be reported that way in the phase report and DELIVERY.md rather than
+      counted as a pass. Not chased further: it is third-party tooling, the deterministic checks
+      that do bite (axe, Lighthouse, console-error, horizontal-scroll) are unaffected, and the
+      `/impeccable audit` skill pass is a separate, non-vacuous leg of this task.
 - [x] done — **P6.8** README + CHANGELOG rewritten for the shipped product (`12dff56` draft, made
       true across `2bee4cb`/`818e269`/`33270b4` as each claim was verified), version bumped to
       **1.0.0** in `pyproject.toml` and `web/package.json`, and `lemely/web/app.py` now imports
