@@ -1,8 +1,8 @@
 # BUILD STATE — single source of truth
 
 status: COMPLETE           # RUNNING | COMPLETE | HALTED
-current_phase: 6            # ALL PHASES COMPLETE — merged to develop, reported, PR #3 open
-last_updated: 2026-08-12T06:25:00Z
+current_phase: 6            # ALL PHASES COMPLETE AND MERGED TO main (PR #3, 74d33e6). Nothing outstanding.
+last_updated: 2026-08-12T00:00:00Z  # session 115
 gemini_spend_usd: 0.19750   # MEASURED from `outputs/gemini_spend.json`. This line is a
 # hand-copied mirror and has drifted before (it read 0.1612 against a real 0.18429).
 # Re-read the ledger, never this line, before quoting a spend.
@@ -50,15 +50,56 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   Note when reading run history: `31566210283` and `31566944458` show `cancelled`, which is **not
   a red** — GHA's concurrency group cancels an in-flight `ci-refs/pull/3/merge` run when a newer
   push supersedes it. Two docs pushes in four minutes produced both.
-- **Two PRs are open and both are Habeeby's call (MISSION §4 — never merge one yourself):**
-  **#3** (develop → main, Phases 0–6) and **#4** (Copilot's CI-alignment attempt — superseded by
-  `7f11f58`/`f980fbc` and partly harmful; see D6.10 and the note below).
+- **A real defect was found and fixed AFTER the ship — `7bbf256`, pushed to `develop`.**
+  This is the first code commit since PR #3 merged, and it means `main` is now behind by a
+  user-facing bug fix rather than by nothing. **`crypto.randomUUID` is secure-context-only**,
+  so on any plain-HTTP non-localhost origin (a LAN IP, a `*.local` host, a tunnel — i.e. the
+  Docker-Compose deployment §3 defines as done) it is `undefined`. `getDeviceId`
+  (`web/src/lib/auth/storage.ts`) called it bare on the **login path**, so the first thing a
+  fresh browser profile did when signing in was throw, and the form rendered
+  "crypto.randomUUID is not a function" as its own error. Sign-in was dead for every
+  non-localhost HTTP deployment. `web/src/lib/uuid.ts` now builds the v4 layout from
+  `crypto.getRandomValues` (not secure-context-gated), and `CameraCapture`'s pre-existing
+  private guard was folded into the same helper. Pinned by `web/tests/unit/uuid.test.ts`
+  (4 cases, one per host tier).
+  **Worth noting for the record: no gate in this build could see it.** 13/13 gates, 3508
+  tests, 73 axe route-states and 44 Lighthouse reports all ran green over a codebase where
+  sign-in was broken outside localhost — because every harness in the build drives the app at
+  `http://localhost`, which is a secure context. Same shape as D6.9 and the P6.6 dated-VAPID
+  assertion: **a green gate is a statement about the conditions the gate runs under.**
+- **SHIPPED 2026-08-12 — Habeeby merged PR #3. Neither PR is open any more.**
+  **#3** (develop → main, Phases 0–6) is **MERGED** as `74d33e6`; **#4** (Copilot's
+  CI-alignment attempt — superseded by `7f11f58`/`f980fbc` and partly harmful; see D6.10 and
+  the note below) is **CLOSED**. Every phase of this build is on `main`.
+  **`git diff origin/main..origin/develop` is no longer empty** — it now carries `7bbf256`
+  (the secure-context sign-in fix above) plus the docs commits. **PR #6** puts that fix on
+  `main`; it is Habeeby's to merge, never the orchestrator's. (Numbering note: #5 was never
+  this build's — do not infer PR numbers, read them off `gh pr create`'s output.)
+  **This was the last thing the build was waiting on.** There is no remaining orchestrator
+  action of any kind — not a task, not a PR to open, not a gate to re-run. A session that
+  resumes here should read `BUILD/INBOX.md`, and if there is no unhandled `- [ ]` item,
+  **stop without inventing work.** The build's most repeated failure mode was manufacturing a
+  verification task on an unchanged tree (sessions 108, 110–114 each spent a full run watching
+  a CI job no session had given new input); "PR #3 is open" was the last fact left that could
+  be mistaken for something to do.
+  **`develop` now sits one docs-only commit ahead of `main` (this record correction), and no
+  PR was opened for it — deliberately.** MISSION §4 ties a `develop → main` PR to a *phase*,
+  and there is no phase 7. Do **not** treat that ahead-count as an outstanding task: opening a
+  PR to land a STATE.md paragraph would put a review on Habeeby's desk for a file only the
+  orchestrator reads. If a later directive does start real work, that work's PR carries this
+  commit along with it.
 - **Nothing is in flight, and there is now nothing outstanding.** Phase 1's D1.9 backlog — the
   last non-done item in the build — was **closed as won't-do on 2026-08-12 (D6.11)** after the
   first session to actually cost it out found it was a contract change, not a cleanup: the DB
   store rejects the CLI's non-UUID student ids outright. Six sessions had deferred it as
   "opportunistic" without reading either store. **Defer-without-looking is how a decision
-  masquerades as a chore.** **Docs-only is the safe work on a shipped tree.**
+  masquerades as a chore.**
+  **"Docs-only is the safe work on a shipped tree" is retired as guidance.** It is the rule
+  that kept six sessions writing prose, and `7bbf256` is its counter-example: a genuine,
+  test-covered, login-breaking defect sitting in the tree the whole time. The distinction that
+  actually matters is not docs-vs-code, it is **changed-input vs unchanged-input**. Re-running
+  a gate over a tree no session has touched is the waste; fixing a defect no gate can see is
+  not.
   **Correction (session 114): that diff is NOT empty, and this file asserted it was for four
   sessions.** `git diff 66950f3..HEAD -- lemely web scripts tests` returns **10 changed lines
   across `lemely/db/notification_prefs_repo.py` and `lemely/db/student_profile_repo.py`** — the

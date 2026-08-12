@@ -3,6 +3,7 @@ import { PDFDocument } from "pdf-lib"
 import { Camera, Trash, X } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { randomUuid } from "@/lib/uuid"
 import { cn } from "@/lib/utils"
 
 /*
@@ -160,11 +161,7 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
     canvas.toBlob(
       (blob) => {
         if (!blob) return
-        const id =
-          typeof crypto !== "undefined" && "randomUUID" in crypto
-            ? crypto.randomUUID()
-            : `page-${Date.now()}-${Math.random()}`
-        setPages((prev) => [...prev, { id, blob, url: URL.createObjectURL(blob) }])
+        setPages((prev) => [...prev, { id: randomUuid(), blob, url: URL.createObjectURL(blob) }])
       },
       "image/jpeg",
       0.92,

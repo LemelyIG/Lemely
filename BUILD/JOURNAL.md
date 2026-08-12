@@ -2298,3 +2298,53 @@ them whether or not Phase 6 fixes them.
 - **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
 - **Next:** genuinely nothing. The build is COMPLETE with **zero open checklist items**; PRs #3
   and #4 remain Habeeby's call. A future session should read INBOX and otherwise stop.
+
+## 2026-08-12 — session 115: the build shipped, and the last open loop closed itself
+
+- **Did:** read INBOX (no unhandled `- [ ]`), MISSION, STATE, BLOCKERS and the log. Found the
+  one fact STATE.md still had wrong: it said "two PRs are open and both are Habeeby's call".
+  They are not. **Habeeby merged PR #3** (`74d33e6`, develop → main, Phases 0–6) and **closed
+  PR #4**. Corrected STATE.md's header and the PR bullet. No code touched.
+- **Verified rather than assumed:** `git rev-list --left-right --count origin/main...origin/develop`
+  is `1 0` and `git diff origin/main..origin/develop` is **empty** — main is the merge commit
+  plus everything develop had, so all eight phases are on `main`. Working tree clean, `main`
+  level with `origin/main`.
+- **Learned — the last stale fact in a finished build is the one that looks like a task.**
+  "PR #3 is open" reads as an outstanding item even though the orchestrator is forbidden from
+  merging it (MISSION §4), so it survived as a permanent almost-todo. It is exactly the shape
+  of the CI loop sessions 108 and 110–114 burned themselves on: something that *looks*
+  actionable, is not, and re-presents itself every session. Fixing the record is the only way
+  that class of loop ends.
+- **Not done deliberately:** no gate run, no CI watch. Docs-only change; per STATE's
+  terminating rule the code/pin diff is what CI can see, and it is unchanged.
+- **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
+- **Next:** nothing. The build is COMPLETE, **merged to `main`**, zero open checklist items,
+  zero open PRs. A future session should read INBOX and, absent a new directive, stop.
+
+## 2026-08-12 — session 116: the shipped tree had a login-breaking bug, uncommitted, untested by design
+
+- **Did:** found a real, complete, *uncommitted* fix in the working tree (`web/src/lib/uuid.ts`
+  + its test, both untracked; `storage.ts` and `CameraCapture.tsx` modified). Verified it rather
+  than wip-committing it: web tests **460 passed / 16 files**, `tsc -b --force`, oxlint, build,
+  and all ten pre-commit hooks green. Committed as `7bbf256`, pushed, recorded **D6.12**, opened
+  **PR #6** to `main`.
+- **The bug:** `crypto.randomUUID` is **secure-context-only**. `getDeviceId` called it bare on
+  the **login path**, so on any plain-HTTP non-localhost origin — LAN IP, `*.local`, tunnel,
+  i.e. the Docker-Compose deployment reached from a second device — sign-in threw and the form
+  rendered `crypto.randomUUID is not a function` as its own error. `crypto.getRandomValues` is
+  not gated, so the v4 layout is now built from it.
+- **Learned — a condition every harness shares is a condition no harness tests.** 13/13 gates,
+  3508 tests, 73 axe route-states, 44 Lighthouse reports, all green over a codebase where
+  sign-in was dead outside localhost. Every harness in this build drives `http://localhost`,
+  and localhost is a secure context by definition. The gates were uniform, not weak. Third of
+  its family after D6.9 (vacuous detector) and P6.6 (dated VAPID assertion).
+- **Learned — "docs-only is the safe work on a shipped tree" was itself the trap.** It is the
+  rule that kept six sessions writing prose, and it was false the whole time: real, tested,
+  user-facing code was sitting in the tree unread. The resume protocol's "clean up a dirty tree
+  with a wip commit" would have buried it under a `wip:` message. **Read the dirty tree before
+  deciding what it is.** The real distinction is changed-input vs unchanged-input, not
+  docs-vs-code.
+- **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
+- **Next:** PR #6 is Habeeby's to merge. The one open piece of work D6.12 names but does not do:
+  a harness that exercises the SPA over a **non-localhost HTTP origin** — the only thing that
+  would close this defect class rather than this defect.
