@@ -81,16 +81,32 @@ pre-commit install
 
 make db-up                     # supabase start
 make db-migrate                # alembic upgrade head
-make seed                      # currently a no-op — see below
+make seed                      # reference data + the five demo accounts
 
 cd web && npm ci && npm run dev
 ```
 
-`make seed` is currently a no-op — `seed_reference_data` and
-`seed_demo_accounts` (`lemely/db/seed.py:26-51`) are stubs, so it inserts zero
-rows and creates zero demo accounts while logging success. Use
-`scripts/seed_e2e.py` for a populated database (all five roles, but under a
-random per-run tag). See `DELIVERY.md` §7.
+`make seed` is idempotent: run it as often as you like. It inserts the three
+supported subjects (0580, 0606, 0625) and creates one demo account per role:
+
+| Role | Sign in with | Password |
+| --- | --- | --- |
+| student | `student@demo.lemely.local` | `Demo-Lemely-1!` |
+| teacher | `teacher@demo.lemely.local` | `Demo-Lemely-1!` |
+| school_admin | `school-admin@demo.lemely.local` | `Demo-Lemely-1!` |
+| platform_admin | `platform-admin@demo.lemely.local` | `Demo-Lemely-1!` |
+| parent | phone `+10000000000` | one-time code, no password |
+
+These are **local demo credentials on a reserved `.local` domain** (RFC 6762) —
+they are not secrets, and nothing here should ever be seeded into a real
+deployment. The parent signs in by phone OTP; the SMS provider is the mock one,
+so the code is printed to the backend log rather than sent (`Mock SMS to
++10000000000: your Lemely code is ...`).
+
+These accounts are empty. For a database populated with realistic marked
+papers, classes and analytics, use `scripts/seed_e2e.py` — but note its emails
+carry a random per-run tag, so they cannot be written down the way the table
+above can.
 
 Supported Python: 3.12, 3.13, 3.14. Node 24+ is required for the frontend
 tooling.

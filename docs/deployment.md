@@ -283,18 +283,33 @@ alert fires on correction, and a student who just uploaded is by definition acti
 Deploying does not create a scheduler. If you need these, add a cron/worker that
 calls them; do not report them as delivered notification types.
 
-### 5.3 `lemely/db/seed.py` creates nothing
+### 5.3 `make seed` seeds demo credentials — never run it against production
 
-`seed_reference_data` and `seed_demo_accounts` are **stubs** — both bodies are a bare
-`pass` (`lemely/db/seed.py:26-51`). `make seed` therefore inserts **zero** rows and
-creates **zero** demo accounts, while logging a cheerful `db.seed.done`.
+**Resolved in P6.10** (this section previously recorded that `seed_reference_data`
+and `seed_demo_accounts` were stubs with a bare `pass`, so `make seed` inserted zero
+rows and created zero accounts while logging a cheerful `db.seed.done`).
 
-The only working seeding path is **`scripts/seed_e2e.py`**, which creates all five
-roles plus scenario fixtures and writes a JSON manifest of credentials. Its accounts
-use a **per-run random `run_tag`**, so emails and passwords differ on every run —
-fine for tests, wrong for a documented "log in as `teacher@demo`" experience.
+`make seed` now inserts the three supported subjects and creates one account per
+role, with **fixed, published credentials** — `<role>@demo.lemely.local` /
+`Demo-Lemely-1!`, plus a phone-OTP parent on `+10000000000`. The full table is in
+[`README.md`](../README.md).
 
-*(This is a P6.10 finding, recorded here because that is where a deployer meets it.)*
+That is the deployment-relevant part: **these are documented credentials, so seeding
+a real deployment hands anyone who has read this repository a `platform_admin`
+login.** `make seed` is a local-development and demo convenience. A production
+bring-up runs `alembic upgrade head` and nothing else; create real accounts through
+the normal signup/invite path.
+
+`scripts/seed_e2e.py` remains the path that populates a database with realistic
+marked papers, classes and analytics. Its accounts carry a **per-run random
+`run_tag`**, so its emails and passwords differ on every run — fine for tests, and
+the reason it cannot be the thing a document names.
+
+One containerisation note: `ensure_supabase_env` (`lemely/runtime/supabase_env.py`)
+resolves the stack keys by shelling out to `supabase status`, which does not exist in
+a deployed container. Set `LEMELY_SUPABASE__SERVICE_ROLE_KEY` and
+`LEMELY_SUPABASE__ANON_KEY` explicitly there — an already-exported value always wins,
+so the helper is a no-op when they are set.
 
 ### 5.4 Performance and cost
 

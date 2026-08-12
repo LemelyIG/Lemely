@@ -38,6 +38,10 @@ line here.
 - Parent phone-OTP login behind a provider abstraction, with a mock SMS
   provider that logs the code.
 - Supabase Storage for uploaded scans and PDFs.
+- `make seed` creates reference data and one demo account per role with fixed,
+  documented credentials, and is idempotent. It had been a stub since Phase 0 —
+  inserting nothing while logging success. Credentials are in `README.md`; they
+  are local demo logins and must never be seeded into a real deployment.
 
 #### The correction loop
 

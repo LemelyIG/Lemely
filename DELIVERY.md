@@ -283,12 +283,20 @@ make seed           # reference data + demo accounts
 make up             # backend + built SPA, one command
 ```
 
-> **`make seed` does not do what that line says yet.**
-> `seed_reference_data` and `seed_demo_accounts`
-> (`lemely/db/seed.py:26-51`) are stubs with a bare `pass`: the command inserts
-> zero rows and creates zero accounts, then logs a successful
-> `db.seed.done`. The only working seeding path today is
-> `scripts/seed_e2e.py`, which does create all five roles — but under a random
-> per-run `run_tag`, so its emails and passwords differ on every run and cannot
-> be documented as demo credentials. Making `seed.py` real is Phase-6 task
-> P6.10; this note goes when that lands, not before.
+`make seed` is idempotent and creates one demo account per role. The full
+credential table is in [`README.md`](README.md); the short version is
+`<role>@demo.lemely.local` / `Demo-Lemely-1!` for the four password roles, and
+phone `+10000000000` (mock-SMS one-time code, printed to the backend log) for
+the parent. They are local demo credentials on a reserved `.local` domain, not
+secrets, and must never be seeded into a real deployment.
+
+The accounts are empty by design. `scripts/seed_e2e.py` is what populates a
+database with realistic marked papers, classes and analytics — but it tags every
+run randomly, so its credentials cannot be written down.
+
+> Until Phase 6 this section carried a warning that `make seed` inserted zero
+> rows and created zero accounts while logging a successful `db.seed.done` —
+> `seed_reference_data`/`seed_demo_accounts` were Phase-0 stubs with a bare
+> `pass`. P6.10 made them real; the warning is retired rather than deleted
+> because the shape of that bug is worth remembering: a command that logs
+> success while doing nothing is invisible to every gate in this build.
