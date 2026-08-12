@@ -273,9 +273,19 @@ source.**
   across a teacher's classes and students. Observed on seeded data during the
   Phase-6 load-sanity pass; not chased, but it is the first place to look if the
   teacher console feels slow.
-- **The CLI and Gradio surfaces still use the JSON `HistoryStore`** rather than
-  Postgres (D1.9). Parity was proven; the migration was left as opportunistic
-  backlog. Gradio is an internal debug tool, not a product surface.
+- **The CLI and Gradio surfaces use the JSON `HistoryStore` rather than Postgres —
+  deliberately, not as unfinished work (D1.9, closed by D6.11).** The product
+  surface is fully on Postgres: `get_history_store()` returns `DbHistoryStore`
+  unconditionally, so every student, teacher and parent route is DB-backed, and
+  parity between the two backends is proven by `tests/test_history_repo_parity.py`.
+  The two stores are kept because they have **incompatible id contracts**:
+  `DbHistoryStore` requires a UUID that already exists in `users` (the FK is
+  enforced), while the CLI's `--student-id` is a free-form local label. Migrating
+  the CLI would therefore give three offline commands (`correct --record`,
+  `compare-performance`, `study-plan`) a hard dependency on a running Postgres and
+  a provisioned user row — a regression traded for a deletion. Gradio is an
+  internal debug tool, not a product surface. Reopening this is a product decision
+  about whether the CLI shares the product's identity model.
 - **A blank credential env var used to read as a configured one, and the health
   endpoint said so (D6.8).** Fixed in Phase 6 — `${VAR:-}` in `docker-compose.yml`
   made pydantic build `SecretStr("")`, which is not `None`, so `/api/health`

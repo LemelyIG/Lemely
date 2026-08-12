@@ -53,9 +53,12 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
 - **Two PRs are open and both are Habeeby's call (MISSION §4 — never merge one yourself):**
   **#3** (develop → main, Phases 0–6) and **#4** (Copilot's CI-alignment attempt — superseded by
   `7f11f58`/`f980fbc` and partly harmful; see D6.10 and the note below).
-- **Nothing is in flight.** The only non-done checklist item in the entire build is Phase 1's
-  opportunistic D1.9 backlog, left deliberately: starting product work now would put code after
-  P6.11's closing `EXIT=0`. **Docs-only is the safe work on a shipped tree.**
+- **Nothing is in flight, and there is now nothing outstanding.** Phase 1's D1.9 backlog — the
+  last non-done item in the build — was **closed as won't-do on 2026-08-12 (D6.11)** after the
+  first session to actually cost it out found it was a contract change, not a cleanup: the DB
+  store rejects the CLI's non-UUID student ids outright. Six sessions had deferred it as
+  "opportunistic" without reading either store. **Defer-without-looking is how a decision
+  masquerades as a chore.** **Docs-only is the safe work on a shipped tree.**
   **Correction (session 114): that diff is NOT empty, and this file asserted it was for four
   sessions.** `git diff 66950f3..HEAD -- lemely web scripts tests` returns **10 changed lines
   across `lemely/db/notification_prefs_repo.py` and `lemely/db/student_profile_repo.py`** — the
@@ -99,9 +102,17 @@ Phase 6 task detail (P6.0–P6.12) is pruned per MISSION §8b — see `reports/p
 `reports/phase-6/visual-qa.md`, `reports/phase-6/fresh-clone.md`, `reports/phase-6/load-sanity.md`,
 D6.1–D6.10, or this file's git history (`git log -p BUILD/STATE.md`).
 
-### Carried backlog from Phase 1 (non-blocking, opportunistic — NOT started, see above)
-- [ ] todo — (D1.9) Migrate CLI + Gradio history to the DB (or retire Gradio), then delete
-      `lemely/io/history_store.py` + `tests/test_history_store.py`. Parity already proven.
+### Carried backlog from Phase 1 — CLOSED 2026-08-12 (D6.11)
+- [x] done — (D1.9) **Won't-do, with a measured reason.** `DbHistoryStore` cannot store what the
+      CLI stores: `parse_user_id` (`lemely/db/history_repo.py:128`) raises on any non-UUID id and
+      the `users` FK is enforced, while the CLI's `--student-id` is a free-form label (its own
+      tests pass `alice`, `bob`, `test_student`). "Migrate" therefore means *the CLI grows a hard
+      Postgres dependency*, not a backend swap. A third consumer D1.9 never named:
+      `tests/test_web_teacher.py` uses the JSON store as the in-process double for
+      `HistoryStoreProtocol`. The product surface is already 100% on Postgres
+      (`lemely/web/deps.py:83`), parity is proven (`tests/test_history_repo_parity.py`), and the
+      protocol isolates callers — two stores behind one protocol is the right end state, not debt.
+      **The build now has zero open checklist items.**
 
 ### Honest limitations
 **They live in `DELIVERY.md` §5** (148 lines, six subsections: marking accuracy, content corpus,

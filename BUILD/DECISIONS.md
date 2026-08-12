@@ -6576,3 +6576,51 @@ it narrows `ruff format --check .` to `lemely tests`, dropping `web/` and `scrip
 format gate, and it guards two steps with `if: matrix.python-version == "3.13"` — GitHub Actions
 expressions require single-quoted strings, so that workflow would not have parsed. **A stale
 fix-it PR is not a reason to leave a gate red; check whether it predates the failure.**
+
+## D6.11 — D1.9 is closed as won't-do: the two history stores have incompatible id contracts
+
+D1.9 has sat as the build's last open checklist item since Phase 1, carried across every
+subsequent phase as "opportunistic backlog, parity already proven". It reads: *migrate CLI +
+Gradio history to the DB (or retire Gradio), then delete `lemely/io/history_store.py` +
+`tests/test_history_store.py`.* Six sessions deferred it without looking at it. This is the
+first session to actually cost it out, and the framing was wrong: **it is not a mechanical
+cleanup that nobody got round to, it is a change of contract on a shipped surface.**
+
+**The blocking fact.** `DbHistoryStore` cannot store what the CLI stores.
+`lemely/db/history_repo.py:128` (`parse_user_id`) raises `ValueError` for any `student_id` that
+is not a UUID, and `append`'s docstring states the id "must be a UUID string that already exists
+in `users` (the FK is enforced; see D1.8)". The CLI's `--student-id` is a free-form local label:
+its own tests pass `test_student`, `alice`, `bob`, `nobody` (`tests/test_cli_new_commands.py`).
+Every one of those raises under the DB store. So "migrate the CLI" is not a swap of backends —
+it means the CLI grows a hard dependency on a running Postgres **and** on the student already
+existing as a provisioned user row, for three commands that today run entirely offline:
+`correct --record` (`cli.py:330-352`), `compare-performance` (`:374-383`), `study-plan`
+(`:583-605`).
+
+**A third consumer D1.9's text never mentions.** `tests/test_web_teacher.py` uses the JSON
+`HistoryStore` as the in-process test double for `HistoryStoreProtocol`, via
+`dependency_overrides[get_history_store]` — roughly a thousand lines of teacher-analytics tests
+hang off it. Deleting the class does not just touch CLI and Gradio; it forces those tests either
+onto a live Postgres or onto a newly written fake. That is a substantial test-infrastructure
+change landing after P6.11's closing `EXIT=0`, to delete 147 lines of working, tested code.
+
+**Why this is not a limitation to apologise for.** The product surface is already fully
+migrated: `get_history_store()` (`lemely/web/deps.py:83`) returns `DbHistoryStore`
+unconditionally, so every student, teacher and parent route runs on Postgres today. Parity
+between the two backends is proven by `tests/test_history_repo_parity.py`, and
+`HistoryStoreProtocol` (`lemely/core/history.py:143`) already isolates every caller from the
+concrete class. What remains on JSON is exactly the set of surfaces that *should* be: a
+standalone CLI used for offline accuracy work, and Gradio, which MISSION §3 designates an
+internal debug tool, not a product surface. Two stores behind one protocol, chosen per surface,
+is the right end state — not debt.
+
+**Alternatives rejected.** (a) *Migrate the CLI to Postgres* — breaks offline CLI use and makes
+the accuracy tooling require a provisioned user row per student id; a real regression traded for
+a deletion. (b) *Retire Gradio and drop the three CLI history commands* — deletes working,
+shipped functionality to satisfy a cleanup item. Both are less reversible than keeping a
+147-line class that has a passing test file and a proven-equivalent sibling.
+
+**What would reopen it:** a decision that the CLI is a first-class product surface and should
+share the product's identity model. That is a product call for Habeeby, not a refactor.
+Recorded in `DELIVERY.md` §5 with this reason rather than the previous wording, which implied
+unfinished work. **The build now has zero open checklist items.**

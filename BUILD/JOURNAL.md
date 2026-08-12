@@ -2271,3 +2271,30 @@ them whether or not Phase 6 fixes them.
   No Gemini calls this session.
 - **Next:** nothing queued, and deliberately no CI re-check. The build is COMPLETE; PRs #3 and
   #4 are Habeeby's call. A future session should read INBOX and otherwise leave the tree alone.
+
+## 2026-08-12 — session 115: the last open item was a decision wearing a chore's clothes
+
+- **Did — closed D1.9, the build's last non-done checklist item, as won't-do (D6.11).** The
+  previous session's rule held: I did not re-verify CI. Instead I read the one thing six
+  sessions had deferred without opening. D1.9 reads like cleanup ("migrate CLI + Gradio history
+  to the DB, then delete `lemely/io/history_store.py`"), and STATE justified skipping it on
+  process grounds — *code after P6.11's closing `EXIT=0`*. Both framings were wrong.
+- **Learned — the two history stores have incompatible id contracts, so there was never a
+  migration to do.** `parse_user_id` (`lemely/db/history_repo.py:128`) raises on any non-UUID
+  `student_id`, and `append` requires a row that already exists in `users` (FK enforced). The
+  CLI's `--student-id` is a free-form label — its own tests pass `alice`, `bob`, `test_student`,
+  every one of which raises under the DB store. "Migrate the CLI" therefore means *give three
+  offline commands a hard Postgres dependency*, which is a regression traded for a deletion.
+- **Learned — D1.9's text under-counted its own blast radius.** It names CLI and Gradio; it
+  never mentions that `tests/test_web_teacher.py` uses the JSON store as the in-process double
+  for `HistoryStoreProtocol`. Deleting the class drags ~1000 lines of teacher-analytics tests
+  onto live Postgres or a new fake, to remove 147 lines of working, tested code.
+- **Learned — "opportunistic backlog" is where an unmade decision hides.** Six sessions carried
+  this as a chore because the checklist called it one, and a chore is easy to defer without
+  reading. The cost of finally reading it was three greps. **A deferred item nobody has opened
+  has an unknown size, not a small one.**
+- **Not done deliberately:** no code touched, so no gate run and no CI watch — docs-only, per
+  STATE's terminating rule (verified `pre-commit` locally, code/pin diff unchanged).
+- **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
+- **Next:** genuinely nothing. The build is COMPLETE with **zero open checklist items**; PRs #3
+  and #4 remain Habeeby's call. A future session should read INBOX and otherwise stop.
