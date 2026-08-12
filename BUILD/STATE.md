@@ -1,16 +1,24 @@
 # BUILD STATE — single source of truth
 
-status: RUNNING            # RUNNING | COMPLETE | HALTED
-current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-12T06:05:00Z
+status: COMPLETE           # RUNNING | COMPLETE | HALTED
+current_phase: 6            # ALL PHASES COMPLETE — Phase 6 merged to develop, reported, PR #3 updated
+last_updated: 2026-08-12T04:35:00Z
 #
-# ## READ THIS FIRST — the operational rules five sessions paid for
-# - **A GATE RUN IS IN FLIGHT: `/tmp/check_p611.log`, launched detached (setsid) at the end of
-#   session 104 on the clean tree at `66950f3`. DO NOT LAUNCH A SECOND ONE — poll for the
-#   `EXIT=` line, and decide liveness from `pgrep -af check.sh`, never from the log size.**
-#   This is P6.11's run and the figure of record for the phase. The four backend gates had
-#   already passed when the session ended. **While it runs, touch no code — docs are the safe
-#   work**, and the phase report is exactly that.
+# ## THE BUILD IS COMPLETE. What the last session established
+# - **`/tmp/check_p611.log` LANDED: `EXIT=0`, all 13 gates PASS, 0 skipped**, 06:53 local on
+#   2026-08-12, on the tree at `66950f3`. `git diff 66950f3..HEAD -- lemely web scripts tests
+#   Makefile pyproject.toml` is **empty** (everything after it is docs), so unlike P6.6's run
+#   this verdict is a true statement about the shipped code. That one command is the whole
+#   difference between the two, and it is why the report writes it out.
+# - **Counts came from a SEPARATE, SERIAL `pytest` run** (`/tmp/pytest_p611.log`, `EXIT=0`),
+#   because `check.sh` prints nothing for a passing gate and holds neither a count nor a
+#   coverage figure: **3508 tests — 3502 passed / 6 skipped / 0 failed — 90.92% coverage**
+#   (from Phase 5's 2927 / 90.91%, so coverage never dropped). Serial matters — a concurrent
+#   pytest + check.sh pair has already produced a convincing but wrong coverage regression here.
+#   All 6 skips were re-derived, not carried: 2 live *billed* accuracy tests
+#   (`LEMELY_LIVE_ACCURACY`), 4 live Supabase tests gated on keys being exported. None broken.
+# - Merged to develop (`dd260f2`), pushed. PR #3 retitled "Phases 0–6" with a full Phase-6
+#   section, **still OPEN and NOT merged** (MISSION §4 — never merge it yourself).
 # - P6.7 closed the last known gate failure: `student-standings` CLS 0.386 -> **0.000** (zero
 #   shifts recorded, not a smaller number), performance 74 -> 93, and `ui-thresholds` EXIT=0 on
 #   the committed phase-6 corpus. The run before it (`/tmp/check_p610b.log`, tree at `310fade`)
@@ -765,8 +773,26 @@ Measured, not assumed — every line below was checked on disk this session:
       ECONNRESET` during `npm ci`** — a transient registry network failure, not a code defect
       (`docker compose up -d --build backend` right after it succeeded and pip fetched fine).
       If the fresh-clone command fails that way again, retry before diagnosing.
-- [ ] doing — **P6.11** (session 105 started 2026-08-12T03:17Z) Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
-      `status: COMPLETE` (the supervisor stops on that value — it is the last write of the build).
+- [x] done — **P6.11** (2026-08-12, session 105). **The build is complete.**
+      `reports/phase-6/REPORT.md` (322 lines) committed, merged to develop (`dd260f2`), pushed,
+      PR #3 retitled "Phases 0–6" with a full Phase-6 section and left **OPEN**, ntfy sent.
+      **Closing figures, each from an artifact that actually holds it:** 13/13 gates PASS with
+      **0 skipped** (`EXIT=0`); **3508 tests / 3502 passed / 6 skipped / 0 failed / 90.92%
+      coverage**; 73 axe route-states with **0 violations at any impact**; 44 Lighthouse reports,
+      a11y floor 96, **performance floor 80 with zero routes below it** (Phase 5 had eight below,
+      floor 65); 0 console errors; 0 horizontal-scroll violations; 48 screens / 246 screenshots;
+      **`removed: 0` against both the Phase-2.5 and Phase-5 baselines**, which is the regression
+      gate. Gemini cumulative **$0.19641 / $8.00** — Phase 6 itself spent **$0.00**.
+      **Two things this task did rather than assume.** It proved the gate verdict applies to the
+      shipped tree with `git diff <run-tree>..HEAD -- lemely web scripts tests …` (empty), because
+      P6.6's `EXIT=0` was true of a tree that HEAD had already moved past. And it re-derived the
+      six skips instead of carrying "6 skipped" forward — the same class of hand-written mirror
+      that this build paid for four separate times (see the report §8).
+      **D6.9 was added at this task**, recording P6.7's two judgment calls: the CLS defect was
+      fixed in the route and never in the threshold (and the *previous* session's attribution to
+      P6.1's `React.lazy` split is recorded as **wrong** — Phase 5's own Lighthouse JSON already
+      carried CLS 0.220 for that route, so the defect predates the code split), and
+      `npx impeccable detect` is vacuous on this machine and is reported as evidence of nothing.
 
 ### Environment facts worth not re-deriving (cost real work to find)
 - **`pre-commit` needs `.venv/bin` on `PATH`, or two hooks fail for the wrong reason.**

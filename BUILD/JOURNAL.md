@@ -2074,3 +2074,22 @@ them whether or not Phase 6 fixes them.
   the missing OTP line; the real scope was every `lemely.*` record below WARNING.
 - **Next:** P6.11 — poll `/tmp/check_p611.log` for `EXIT=`, write `reports/phase-6/REPORT.md`,
   merge to develop, push, update PR #3, ntfy, then set `status: COMPLETE`.
+
+## 2026-08-12 — session 105 — P6.11: the build is complete
+
+- **Did:** polled the in-flight gate run to `EXIT=0` (**all 13 gates PASS, 0 skipped**), then ran
+  a **separate serial** `pytest` for the figures `check.sh` does not hold — **3508 tests, 3502
+  passed / 6 skipped / 0 failed, 90.92% coverage** (Phase 5: 2927 / 90.91%, so no drop). Wrote
+  `reports/phase-6/REPORT.md`, closed the last two `DELIVERY.md` §6.3 rows, added **D6.9**,
+  merged to develop (`dd260f2`), pushed, retitled PR #3 to "Phases 0–6" with a full Phase-6
+  section and left it **open**, and set `status: COMPLETE`.
+- **Learned:** *a green gate is a statement about a tree, not about a branch.* P6.6 ended `EXIT=0`
+  and three commits landed after it, one of them product code — so the verdict was true of a tree
+  HEAD had already left. The cheap fix is one command: `git diff <run-tree>..HEAD -- lemely web
+  scripts tests …` must be empty before the verdict is quoted. Ran it; it was.
+- **Learned:** the six skips had been carried as a number for three phases. Re-derived them in two
+  short targeted runs: 2 live *billed* accuracy tests, 4 gated on Supabase keys being exported.
+  None broken — but "6 skipped" was a hand-written mirror, the exact failure this build paid for
+  four separate times (`EXPECTED_TABLES`, the seed contract, the version string, the seeder stub).
+- **Next:** nothing. The supervisor stops on `status: COMPLETE`. PR #3 is open for Habeeby to
+  merge — it is deliberately not merged (MISSION §4). `DELIVERY.md` is the entry point.
