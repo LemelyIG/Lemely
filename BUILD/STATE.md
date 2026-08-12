@@ -2,7 +2,7 @@
 
 status: COMPLETE           # RUNNING | COMPLETE | HALTED
 current_phase: 6            # ALL PHASES COMPLETE — merged to develop, reported, PR #3 open
-last_updated: 2026-08-12T05:40:00Z
+last_updated: 2026-08-12T06:25:00Z
 gemini_spend_usd: 0.19750   # MEASURED from `outputs/gemini_spend.json`. This line is a
 # hand-copied mirror and has drifted before (it read 0.1612 against a real 0.18429).
 # Re-read the ledger, never this line, before quoting a spend.
@@ -18,14 +18,22 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   Lighthouse reports, a11y floor 96, **performance floor 80 with zero routes below it**;
   0 console errors; 0 horizontal-scroll violations; 48 screens / 246 screenshots;
   **`removed: 0`** against both the Phase-2.5 and Phase-5 baselines. Gemini **$0.19750 / $8.00** (read from `outputs/gemini_spend.json`, not carried).
-- **CI is green on HEAD.** Run `31567949171` on `4b042e6`: `completed / success` — the **third**
-  consecutive green (`31564822523`/`36074a2`, `31567025713`/`e32a3d1` before it). That first one
-  was the first green of the build; every run before it failed back through 2026-08-09. Sessions
-  106–107 diagnosed and fixed it, 108 watched the runner prove it, 110–112 confirmed it holds.
-  The whole failure class was *CI resolves fresh, this venv does not*, so only the runner could.
+- **CI is green on HEAD.** Run `31568906164` on `24e223f` — **all five jobs `success`**
+  (`pre-commit`, `web`, `test (3.12)`, `test (3.13)`, `test (3.14)`) — the **fourth** consecutive
+  green (`31564822523`/`36074a2`, `31567025713`/`e32a3d1`, `31567949171`/`4b042e6` before it).
+  That first one was the first green of the build; every run before it failed back through
+  2026-08-09. Sessions 106–107 diagnosed and fixed it, 108 watched the runner prove it, 110–113
+  confirmed it holds. The whole failure class was *CI resolves fresh, this venv does not*, so only
+  the runner could.
   **Watch the run rather than inferring from the previous one** — `gh run watch <id> --exit-status`
   settles it in one call; session 111 recorded a verdict for `e32a3d1` while `4b042e6`'s run was
-  still `in_progress` and unmentioned.
+  still `in_progress` and unmentioned. Note that **every docs push re-opens this question**: each
+  commit to `develop` triggers a fresh `ci-refs/pull/3/merge` run, so the session that records
+  "green on HEAD" is itself the reason the next session's HEAD is unverified.
+  **`gh run watch ... | tail` reports `tail`'s exit code, not `gh`'s** — the `--exit-status` flag
+  is swallowed by the pipe and `WATCH_EXIT=0` prints even for a red run. Confirm with
+  `gh run view <id> --json conclusion,jobs`, which is also the only form that shows *which* jobs
+  passed.
   Note when reading run history: `31566210283` and `31566944458` show `cancelled`, which is **not
   a red** — GHA's concurrency group cancels an in-flight `ci-refs/pull/3/merge` run when a newer
   push supersedes it. Two docs pushes in four minutes produced both.

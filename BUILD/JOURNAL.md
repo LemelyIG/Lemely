@@ -2225,3 +2225,24 @@ them whether or not Phase 6 fixes them.
   work on a shipped tree.
 - **Next:** nothing queued. A future session should re-check INBOX, re-confirm CI against the
   then-current HEAD, and otherwise leave the tree alone until Habeeby merges or sends a directive.
+
+## 2026-08-12 — session 113 (verification only; no product change)
+- **Resumed on a shipped, COMPLETE tree.** INBOX had no unhandled items, `git status -sb` showed
+  `develop...origin/develop` with no divergence and no leftovers, and BLOCKERS B1 is RESOLVED. The
+  only non-done checklist item is Phase 1's opportunistic D1.9 backlog, left unstarted on purpose.
+- **Acted on the previous session's own directive.** `24e223f` ("watch CI on HEAD instead of
+  inheriting the previous run's verdict") had itself pushed HEAD past the last verified SHA, so the
+  green in STATE was again about a parent commit. Watched run `31568906164` on `24e223f` to
+  completion: **all five jobs `success`** — the fourth consecutive green.
+- **Learned (a trap that would have let a red through).** `gh run watch <id> --exit-status | tail`
+  prints `WATCH_EXIT=0` regardless of the run's outcome — the pipeline returns `tail`'s status, not
+  `gh`'s. The verdict came from `gh run view --json conclusion,jobs` instead, which is also the
+  only form that names which jobs passed. Recorded in STATE beside the green claim.
+- **Noted the recursion, not just the fact.** Every docs push to `develop` triggers a fresh
+  `ci-refs/pull/3/merge` run, so the session that records "CI green on HEAD" is the reason the next
+  session's HEAD is unverified. That is now written down so session 114 expects it rather than
+  rediscovering it.
+- **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00** (read from the
+  ledger, not from STATE's mirror). No Gemini calls this session.
+- **Next:** nothing queued. Re-check INBOX, re-confirm CI against the then-current HEAD, and
+  otherwise leave the tree alone until Habeeby merges PR #3/#4 or sends a directive.
