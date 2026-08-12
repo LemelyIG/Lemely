@@ -529,12 +529,20 @@ Measured, not assumed — every line below was checked on disk this session:
       `/app/.lemely-cache` on the **ephemeral container filesystem**, so a host that recycles
       containers resets measured spend to zero while the real bill climbs. Mount a volume or
       the hard cap stops being a cap.
-- [ ] doing — **P6.6** Full-suite pass: all 13 gates green on the final tree, E2E across all 5 roles
-      on seeded realistic data. Launch with `setsid` per the environment note below.
-      **Session 98: session 96's run COMPLETED — `/tmp/check_p66b.log`, `EXIT=1`, 12 of 13 gates
-      PASS. The one failure was real and is now fixed (`6005b20`, D6.7); a re-run is IN FLIGHT at
-      `/tmp/check_p66c.log` (PID 540503, detached). Do not launch a second one; poll for `EXIT=`.**
-      Green on that run: ruff-check, ruff-format, mypy, import-linter, web-typecheck, web-lint,
+- [x] done — **P6.6** Full-suite pass. **`/tmp/check_p66c.log` ended `EXIT=0` at 02:44 on
+      2026-08-12: all 13 gates PASS, 0 skipped**, on the tree at `6005b20` — the first fully green
+      full-suite run of the build. Session 101 confirmed it (four sessions in a row had correctly
+      declined to relaunch while it ran; the discipline paid).
+      **Two caveats a later session must carry rather than round off.**
+      (a) `check.sh` prints nothing for a passing gate, so **that log contains no test count and no
+      coverage figure** — only the verdict. Any number quoted in DELIVERY.md/the phase report must
+      come from an artifact that actually holds it, not from this log.
+      (b) **Three commits landed after the run** — `2266841` (supervisor.sh, not shipped code),
+      `33270b4`/`818e269` (docs) and **`7e5a999`, which touched real code** (`lemely/web/app.py`
+      now imports `__version__` instead of hardcoding it) plus both version manifests. So EXIT=0 is
+      a true statement about `6005b20`, **not about HEAD**. P6.11 re-runs the suite on the final
+      tree; that run, not this one, is the figure of record.
+      Green here: ruff-check, ruff-format, mypy, import-linter, pytest, web-typecheck, web-lint,
       web-build, web-test, impeccable-detect, playwright-e2e, puppeteer-audit, ui-thresholds.
       **The failure was `tests/test_push_transport.py:170`, and it was a TIME BOMB, not a flake.**
       The test signs a VAPID assertion at the injected `FIXED_NOW = 2026-08-10 12:00 UTC` and then
@@ -565,8 +573,12 @@ Measured, not assumed — every line below was checked on disk this session:
       per-role contact sheets, `/impeccable audit` across frontend source, `npx impeccable detect
       src/` with every finding resolved, axe + Lighthouse over every route. Regression against the
       Phase-2.5 baselines is a blocker (MISSION §4). Read `removed` (must be 0), not `changed`.
-- [ ] todo — **P6.8** README + CHANGELOG rewritten for the shipped product; version bumped in both
-      `pyproject.toml` and `web/package.json`.
+- [x] done — **P6.8** README + CHANGELOG rewritten for the shipped product (`12dff56` draft, made
+      true across `2bee4cb`/`818e269`/`33270b4` as each claim was verified), version bumped to
+      **1.0.0** in `pyproject.toml` and `web/package.json`, and `lemely/web/app.py` now imports
+      `__version__` rather than carrying a hand-copied `"0.1.0"` (`7e5a999`). Verified at HEAD.
+      **Note the editable install:** `__version__` reads installed metadata, so the CLI/API keep
+      reporting the old number until `pip install -e .` is re-run.
 - [ ] doing — **P6.9** `DELIVERY.md`: every feature in MISSION §9's inventory with status, files and
       the tests that prove it, links to all seven phase reports, and an honest limitations section
       carrying **every** `### Honest limitations` item from Phases 2–5 whether or not P6 fixed it.
@@ -576,7 +588,7 @@ Measured, not assumed — every line below was checked on disk this session:
       struck-through-and-closed rather than deleted. The feature table is being built by a scout that
       must `ls` every path before listing it (report drift is the recurring failure here), and the
       evidence section needs P6.6's own numbers, so it cannot be honest before that run exits.
-- [ ] todo — **P6.10** Fresh-clone acceptance: `git clone` → the documented commands → working
+- [ ] doing — **P6.10** Fresh-clone acceptance: `git clone` → the documented commands → working
       product with seeded demo accounts for all 5 roles.
       **Known before you start (found at P6.5, D6.6 — do not re-derive): the seeding path this
       criterion names does not exist.** `seed_reference_data` and `seed_demo_accounts` in
@@ -587,6 +599,50 @@ Measured, not assumed — every line below was checked on disk this session:
       a document that must name credentials. P6.10 has to make `seed.py` real (stable demo
       accounts, idempotent as its docstring already promises) before the fresh-clone test can
       pass honestly. Budget for it: this is implementation work, not a verification pass.
+      **Session 101 progress.** `tests/test_seed.py` was found untracked on arrival — a complete,
+      coherent hermetic spec (12 tests, real `AuthService` over `tests/auth_fakes.py`) that no
+      session note mentions. Treated as the authoritative spec and implemented against it;
+      `lemely/db/seed.py` is now real (subjects 0580/0606/0625, five-role demo accounts on a
+      reserved `.local` domain with a fixed password, phone-OTP parent, idempotent).
+      **The lesson of this task is what the hermetic test could NOT see.** All 12 passed, ruff/mypy/
+      import-linter clean — and `make seed` then died on a live stack with
+      `AuthError: Supabase service-role key is not configured` (`lemely/auth/gotrue.py:88`), on the
+      first run and the second. The seeding *decisions* were right; the *entry point* had never been
+      run. **A hermetic test of an entry point tests everything except that it is an entry point** —
+      the same shape as this build's other recurring bug, a claim nothing regenerates.
+      `scripts/seed_e2e.py:998-1056` already carried the fix (`ensure_supabase_env`, resolving the
+      key pair from `supabase status -o json`), and its docstring already warned that this exact
+      `AuthError` "reads like a broken script rather than 'you forgot to export two variables'".
+      Being fixed by **extracting** that helper to `lemely/runtime/supabase_env.py` and importing it
+      from both, not by pasting a fourth copy — `web/scripts/audit.mjs::resolveSupabaseEnv` and
+      `web/playwright.config.ts` are copies two and three. `SystemExit` was kept deliberately
+      (called only from a CLI `main()`; the reasoning is in the new module's docstring).
+      **Verified by me on the live stack, not taken on the subagent's report**, and specifically on
+      a *clean demo slate* so the fresh-clone claim is honest rather than inferred from an
+      already-seeded DB: `make seed` → `demo_accounts: 5`, immediately re-run → `demo_accounts: 0`,
+      with all five roles present in `public.users` at the right role and display name, and
+      `auth.users` consistent with the mirror (0 orphans). `reference_rows: 0` on both is correct,
+      not a bug — 0580/0606/0625 were already there. Second runs take the 422-recover-via-login
+      path, so idempotency is proven against real GoTrue, not only against the fakes.
+      **One counting imprecision survives and is deliberately not chased:** the recovery path infers
+      `created` vs `skipped` by comparing what `login` mirrored against the declared role, so a
+      *fresh* recovery of the **student** account specifically (where `login`'s fallback role and the
+      declared role coincide) would report `skipped` when it created. The mirror is correct either
+      way — only the count is affected — and the hermetic recovery test uses the teacher, so the
+      student edge is unexercised. It is a log figure, not a behaviour.
+      **A mistake of mine to not misread later: I deleted 206 rows from `public.users`, not 5.**
+      Clearing the demo accounts to prove fresh creation, I matched `email like '%parents.lemely.local'`
+      — which is also the synthetic email convention `scripts/seed_e2e.py` mints for **every** e2e
+      parent, so ~201 parent mirror rows from previous harness runs went with them. Harmless and
+      confirmed so: `auth.users` and `public.users` are consistent afterwards (1499 = 1499, 0
+      orphans), and `seed_e2e.py` mints a fresh random `run_tag` per run, so no gate reads a prior
+      run's rows. **The transferable bit is the pattern, not the damage: a demo-data cleanup filter
+      must be anchored to the demo constant (`DEMO_ACCOUNTS`/`DEMO_PARENT`), never to a domain
+      suffix another seeder also uses.**
+      Remaining for P6.10 after that: the fresh-clone run itself (`git clone` → documented commands),
+      and documenting the demo credentials in README/`docs/deployment.md`/DELIVERY.md — at which
+      point the `make seed` caveat notes added in `2bee4cb`/`818e269` come out (and **nowhere
+      earlier**).
 - [ ] todo — **P6.11** Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
       `status: COMPLETE` (the supervisor stops on that value — it is the last write of the build).
 
