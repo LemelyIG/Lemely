@@ -74,9 +74,9 @@ cloud deploy are in [`docs/deployment.md`](docs/deployment.md).
 ### Local development
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev,ui]"     # ui extra adds Gradio
+pip install -e ".[dev,ui,web,db]"   # same set as `make dev`
 pre-commit install
 
 make db-up                     # supabase start
@@ -85,6 +85,14 @@ make seed                      # reference data + the five demo accounts
 
 cd web && npm ci && npm run dev
 ```
+
+All four extras are needed for the three `make` commands above: `db` carries
+Alembic, SQLAlchemy and psycopg, and `web` carries FastAPI and httpx, which
+`lemely.db.seed` reaches GoTrue through. (`ui` adds Gradio, the internal debug
+tool; `dev` adds the test and lint tooling.) `python3` rather than `python`
+because Debian-family systems ship no bare `python`. Both were found by the
+Phase-6 fresh-clone run, where `make db-migrate` answered
+`alembic: No such file or directory`.
 
 `make seed` is idempotent: run it as often as you like. It inserts the three
 supported subjects (0580, 0606, 0625) and creates one demo account per role:

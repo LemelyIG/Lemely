@@ -2,7 +2,12 @@
 	db-up db-down db-stop db-status db-reset db-migrate db-revision db-downgrade seed \
 	up down
 
-PYTHON ?= python
+# `python3`, not `python`: Debian-family systems ship no bare `python`, so
+# `make seed` outside an activated venv failed with "No such file or directory"
+# on the Phase-6 fresh-clone run. Inside an activated venv `python3` resolves to
+# that venv's interpreter too, so this is strictly the safer default. Override
+# with `make seed PYTHON=...` for a specific interpreter.
+PYTHON ?= python3
 ALEMBIC ?= alembic
 
 install:

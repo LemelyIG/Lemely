@@ -117,6 +117,63 @@ class SettingsTests(unittest.TestCase):
         assert s.gemini_api_key is not None
         self.assertEqual(s.gemini_api_key.get_secret_value(), "sk-lemely")
 
+    # ── Blank credentials read as unset (P6.10 / D6.8) ──────────────────────
+    # `docker-compose.yml` forwards optional credentials as `${VAR:-}`, so on a
+    # `make up` stack with nothing exported the variable is PRESENT and empty.
+    # Before the fix that produced `SecretStr("")`, which is not None, so every
+    # `is None` "not configured" check answered "configured" with nothing behind
+    # it — /api/health claimed `apiKeyConfigured: true` on a stack that could not
+    # mark a single paper. Observed on the real container, not hypothesised.
+
+    def test_blank_gemini_api_key_reads_as_unset(self) -> None:
+        with _IsolatedEnv(GEMINI_API_KEY=""), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertIsNone(s.gemini_api_key)
+
+    def test_whitespace_only_gemini_api_key_reads_as_unset(self) -> None:
+        with _IsolatedEnv(LEMELY_GEMINI_API_KEY="   "), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertIsNone(s.gemini_api_key)
+
+    def test_blank_supabase_keys_read_as_unset(self) -> None:
+        """So ``GoTrueClient._anon_key`` raises its explicit AuthError rather than
+        sending an empty ``apikey`` header — which local Kong tolerates (it works!)
+        and Supabase Cloud rejects with an unrelated-looking 401.
+        """
+        with (
+            _IsolatedEnv(LEMELY_SUPABASE__ANON_KEY="", LEMELY_SUPABASE__SERVICE_ROLE_KEY=""),
+            TemporaryDirectory() as tmp,
+        ):
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertIsNone(s.supabase.anon_key)
+        self.assertIsNone(s.supabase.service_role_key)
+
+    def test_blank_vapid_credentials_read_as_unset(self) -> None:
+        """Same mechanism, same file: a blank key would report the push transport
+        available (D5.9 §4 gates availability on these being None) and then fail.
+        """
+        with (
+            _IsolatedEnv(
+                LEMELY_PUSH__VAPID_PUBLIC_KEY="",
+                LEMELY_PUSH__VAPID_PRIVATE_KEY="",
+                LEMELY_PUSH__VAPID_SUBJECT="",
+            ),
+            TemporaryDirectory() as tmp,
+        ):
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertIsNone(s.push.vapid_public_key)
+        self.assertIsNone(s.push.vapid_private_key)
+        self.assertIsNone(s.push.vapid_subject)
+
+    def test_a_real_credential_is_not_stripped_or_dropped(self) -> None:
+        """The guard must only fire on blank input — an ordinary key is untouched,
+        including one with incidental surrounding whitespace preserved verbatim.
+        """
+        with _IsolatedEnv(GEMINI_API_KEY=" sk-real "), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        assert s.gemini_api_key is not None
+        self.assertEqual(s.gemini_api_key.get_secret_value(), " sk-real ")
+
     def test_toml_discovery_prefers_cwd_lemely_toml(self) -> None:
         with TemporaryDirectory() as tmp:
             cwd = Path(tmp) / "cwd"

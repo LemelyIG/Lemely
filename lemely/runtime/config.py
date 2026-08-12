@@ -4,10 +4,42 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+
+def _blank_to_none(value: object) -> object:
+    """Map an empty/whitespace-only string to ``None`` so it reads as *unset*.
+
+    Found by P6.10's fresh-clone run. ``docker-compose.yml`` passes optional
+    credentials through as ``${GEMINI_API_KEY:-}``, and a shell ``export VAR=``
+    does the same thing: the variable is *present* and its value is the empty
+    string. Pydantic then builds ``SecretStr("")``, which is not ``None`` — so
+    every ``is None`` "not configured" check in the codebase silently reads as
+    *configured*, with nothing behind it.
+
+    Two live consequences, both observed on a `make up` stack with no keys
+    exported: ``/api/health`` answered ``apiKeyConfigured: true`` while marking
+    could not work (making ``docs/deployment.md``'s "or accept
+    apiKeyConfigured:false" branch unreachable through Compose), and
+    ``GoTrueClient._anon_key`` sent an empty ``apikey`` header instead of
+    raising its explicit ``AuthError`` — which local Kong tolerates, so it
+    works locally and fails confusingly against Supabase Cloud.
+
+    Applied to the optional *credential* fields only. A blank value there can
+    never be meaningful, whereas a blank ordinary string may be.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+#: An optional secret where a blank env var means "not set" — see :func:`_blank_to_none`.
+OptionalSecret = Annotated[SecretStr | None, BeforeValidator(_blank_to_none)]
+#: The plain-text counterpart, for credential fields that are deliberately not secrets.
+OptionalCredential = Annotated[str | None, BeforeValidator(_blank_to_none)]
 
 
 class GradioSettings(BaseModel):
@@ -172,9 +204,9 @@ class SupabaseSettings(BaseModel):
     # Expected `aud` claim for user tokens.
     jwt_audience: str = "authenticated"
     # Public anon key (client-side). Populated from `supabase status` for local dev.
-    anon_key: SecretStr | None = None
+    anon_key: OptionalSecret = None
     # Service-role key (server-side admin: create users, etc.).
-    service_role_key: SecretStr | None = None
+    service_role_key: OptionalSecret = None
 
 
 class AuthSettings(BaseModel):
@@ -242,12 +274,12 @@ class PushSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Base64url-encoded uncompressed P-256 point (65 bytes), the value the
     # browser passes to ``pushManager.subscribe`` as ``applicationServerKey``.
-    vapid_public_key: str | None = None
+    vapid_public_key: OptionalCredential = None
     # Base64url-encoded 32-byte P-256 private scalar.
-    vapid_private_key: SecretStr | None = None
+    vapid_private_key: OptionalSecret = None
     # RFC 8292 ``sub`` claim: a ``mailto:`` or ``https:`` contact for whoever
     # operates this application server, so a push service can reach us.
-    vapid_subject: str | None = None
+    vapid_subject: OptionalCredential = None
     # RFC 8030 ``TTL``: how long the push service may hold an undelivered
     # message. A day matches the cadence of the notifications this build sends.
     ttl_seconds: int = Field(default=86400, ge=0)
@@ -288,7 +320,7 @@ class Settings(BaseSettings):
     # ``GEMINI_API_KEY`` got a working CLI/Gradio but a silently-degraded web
     # portal (which gates AI features on ``settings.gemini_api_key``). One env
     # var now works everywhere. Priority follows declaration order.
-    gemini_api_key: SecretStr | None = Field(
+    gemini_api_key: OptionalSecret = Field(
         default=None,
         validation_alias=AliasChoices("LEMELY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )

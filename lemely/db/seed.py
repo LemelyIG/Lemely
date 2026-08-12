@@ -254,6 +254,7 @@ def _create_or_recover_parent(
     """
     existing = mirror.get_by_phone(DEMO_PARENT.phone)
     if existing is not None:
+        _apply_parent_display_name(mirror, existing.id)
         return SeededAccount(phone=DEMO_PARENT.phone, role=Role.parent, user_id=existing.id), False
 
     code = auth_service.request_otp(DEMO_PARENT.phone)
@@ -265,7 +266,33 @@ def _create_or_recover_parent(
             "provider, or seed the parent manually."
         )
     result = auth_service.verify_otp(DEMO_PARENT.phone, code)
+    _apply_parent_display_name(mirror, result.user_id)
     return SeededAccount(phone=DEMO_PARENT.phone, role=Role.parent, user_id=result.user_id), True
+
+
+def _apply_parent_display_name(mirror: UserMirror, user_id: uuid.UUID) -> None:
+    """Give the mirrored demo-parent row :data:`DEMO_PARENT`'s display name.
+
+    The parent is the one demo account created through the OTP flow rather than
+    :meth:`AuthService.signup`, and ``verify_otp`` mirrors a row with no display
+    name — so ``DEMO_PARENT.display_name`` was declared and applied nowhere.
+    Found by P6.10's fresh-clone run: the four password roles answered
+    ``/api/me/profile`` with their demo names and the parent answered
+    ``displayName: null``.
+
+    Applied on the recognise path too, so a database seeded before this fix is
+    corrected by the next ``make seed`` rather than staying nameless forever.
+    """
+    user = mirror.get_by_id(user_id)
+    if user is None or user.display_name == DEMO_PARENT.display_name:
+        return
+    mirror.upsert(
+        user_id=user.id,
+        email=user.email,
+        role=Role.parent,
+        phone=user.phone,
+        display_name=DEMO_PARENT.display_name,
+    )
 
 
 # ---------------------------------------------------------------------------

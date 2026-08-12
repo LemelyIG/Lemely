@@ -6317,3 +6317,114 @@ run to find siblings with the same shape; there were none. **Any test mixing an 
 clock with a real one is a dated assertion — the failure arrives on a calendar, not on a
 code change**, which is exactly the kind a phase-end run is for and a per-commit CI never
 catches.
+
+---
+
+## D6.8 — The fresh-clone run found four defects, and the product one was a claim with nothing behind it (P6.10)
+
+**The acceptance criterion is MISSION §4 Phase 6's last line: `git clone` → the documented
+commands → a working product with seeded demo accounts for all five roles.** It was run for
+real — a clone of `feature/phase-6-hardening` at `be49d34` into `/tmp/lemely-fresh-1`, the
+documented commands executed verbatim from it, and every claim checked against the running
+containers rather than against the source.
+
+**The headline is that it passes: `make up` from a fresh clone brought the product up
+(`EXIT=0`, both containers healthy) and all five demo roles authenticate through it.** Four
+password roles by `POST /api/auth/login` and the parent by phone-OTP, each verified through
+nginx on :8080 (not against the backend directly) by reading `/api/me/profile` back:
+
+| Role | `/api/me/profile` |
+|---|---|
+| student | `{"displayName":"Demo Student","email":"student@demo.lemely.local","role":"student"}` |
+| teacher | `{"displayName":"Demo Teacher",…,"role":"teacher"}` |
+| school_admin | `{"displayName":"Demo School Admin",…,"role":"school_admin"}` |
+| platform_admin | `{"displayName":"Demo Platform Admin",…,"role":"platform_admin"}` |
+| parent | `{"displayName":null,"email":"phone+10000000000@parents.lemely.local","role":"parent"}` |
+
+That last row is finding 4 below. **Verifying through the proxy is the point** — it exercises
+DNS, `Authorization` forwarding, JWT validation and RBAC in one pass, which is exactly the
+cheapest end-to-end proof `docs/deployment.md` §6 names. P6.4 had only ever verified this
+chain with *backend-minted* tokens; a real GoTrue password login through the packaged product
+had never been run before this task.
+
+### 1. The documented dev install omits two extras, so the next two documented commands fail
+
+`README.md` said `pip install -e ".[dev,ui]"`, then `make db-migrate`, then `make seed`.
+`db` (Alembic, SQLAlchemy, psycopg) and `web` (FastAPI, httpx — how `lemely.db.seed` reaches
+GoTrue) are **separate extras**, so from a fresh clone the documented sequence produced:
+
+```
+make db-migrate → make: alembic: No such file or directory       (exit 127)
+make seed       → ModuleNotFoundError: No module named 'sqlalchemy'
+```
+
+Both re-run green after `pip install -e ".[dev,ui,web,db]"` — the set `make dev` already
+installed, so the Makefile was right and the README had drifted from it. Fixed in the README,
+with the reason each extra is needed, because a bare corrected command would drift again.
+
+### 2. `python` is not a command on Debian-family systems
+
+`python3 -m venv .venv` works; the documented `python -m venv .venv` exits 127. The Makefile
+carried the same assumption in `PYTHON ?= python`, which is what `make seed` invokes — so
+`make seed` outside an activated venv failed for a reason that has nothing to do with the
+seeder. Both now say `python3`, which inside an activated venv resolves to that venv's
+interpreter anyway, so nothing is lost.
+
+### 3. An empty environment variable is not "unset" — and `/api/health` was lying because of it
+
+**The product defect, and the one worth carrying.** `docker-compose.yml` forwards optional
+credentials as `${GEMINI_API_KEY:-}`. On a `make up` stack with nothing exported the variable
+is *present and empty*, so pydantic built `SecretStr("")` — which is not `None`. Every
+`is None` "not configured" check in the codebase therefore answered **configured**, with
+nothing behind it. Measured inside the running container, not reasoned about:
+
+```
+GEMINI_API_KEY=            → gemini_api_key is None: False | secret length: 0
+LEMELY_SUPABASE__ANON_KEY= → anon_key is None: False | length: 0
+GET /api/health            → {"status":"ok","apiKeyConfigured":true}
+```
+
+**`apiKeyConfigured: true` on a stack that cannot mark a single paper.** That is the same
+family as this build's other recurring bug — a claim nothing regenerates — except this one is
+served to the product's own health endpoint. It also makes `docs/deployment.md` §6's
+"(or accept `apiKeyConfigured:false` and no marking)" describe a branch that is *unreachable*
+through Compose.
+
+The second consequence is quieter and worse. `GoTrueClient._anon_key` / `_service_key` raise
+an explicit `AuthError("… is not configured.")` on `None` — the guard exists precisely so this
+fails legibly. With an empty string they never fire, and an empty `apikey` header goes to
+GoTrue instead. **Local Kong tolerates it, so login works locally and every test stays green**;
+Supabase Cloud rejects it as an unrelated-looking 401. This is the exact failure shape
+`scripts/seed_e2e.py`'s docstring already warns about ("reads like a broken script rather than
+'you forgot to export two variables'"), reappearing one layer down.
+
+**Fix:** a `BeforeValidator` in `lemely/runtime/config.py` mapping a blank/whitespace-only
+string to `None`, applied to the optional *credential* fields only — `gemini_api_key`, both
+Supabase keys, and the three VAPID fields, which fail the same way (a blank key would report
+the push transport available and then fail). Deliberately **not** applied to ordinary strings,
+where a blank value can be meaningful. Five tests; inverted per P6.2's rule, and 4 of the 5
+fail with the guard neutered while `test_a_real_credential_is_not_stripped_or_dropped`
+correctly still passes — it is not testing the guard's firing, and a test that fails under
+every inversion is measuring the wrong thing.
+
+### 4. `DEMO_PARENT.display_name` was declared and applied nowhere
+
+The parent is the one demo account created through the OTP flow rather than
+`AuthService.signup`, and `verify_otp` mirrors a row with no display name — hence the `null`
+in the table above while the other four carry theirs. Fixed in `_create_or_recover_parent`,
+**including on the recognise path**, so a database seeded before this fix is corrected by the
+next `make seed` rather than staying nameless forever. Two tests, both inverted.
+
+### What this run did not prove
+
+The Supabase stack was **already running**, so `scripts/up.sh` took its documented
+already-running branch and `supabase start` from a cold machine is still unexercised here.
+`make seed` from the clone reported `demo_accounts: 0` because the accounts already existed —
+correct idempotent behaviour, and creation-from-empty was proven separately at session 101 on
+a cleared demo slate. Both are stated rather than rounded off.
+
+**The transferable lesson: a fresh-clone test is not a formality, and its value is entirely in
+running the documented commands as written instead of the ones you know work.** Every finding
+here was invisible to all 13 gates — which had just gone green, 0 skipped, on this same tree.
+The gates run inside an environment that is already correct; the criterion is about the
+environment being *reachable* from a clone.

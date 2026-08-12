@@ -179,3 +179,34 @@ class TestCreateDemoAccounts:
         parent = mirror.get_by_phone(DEMO_PARENT.phone)
         assert parent is not None
         assert parent.role is Role.parent
+
+    def test_parent_gets_the_declared_display_name(self) -> None:
+        """P6.10: `verify_otp` mirrors a row with no display name, so
+        `DEMO_PARENT.display_name` was declared and applied nowhere — the four
+        password roles answered /api/me/profile with their demo names and the
+        parent answered `displayName: null`.
+        """
+        service, mirror = _service()
+
+        create_demo_accounts(auth_service=service, mirror=mirror)
+
+        parent = mirror.get_by_phone(DEMO_PARENT.phone)
+        assert parent is not None
+        assert parent.display_name == DEMO_PARENT.display_name
+
+    def test_a_nameless_parent_from_an_earlier_seed_is_backfilled(self) -> None:
+        """The recognise path applies it too, so a database seeded before the fix
+        is corrected by the next `make seed` instead of staying nameless.
+        """
+        service, mirror = _service()
+        create_demo_accounts(auth_service=service, mirror=mirror)
+        parent = mirror.get_by_phone(DEMO_PARENT.phone)
+        assert parent is not None
+        parent.display_name = None
+
+        result = create_demo_accounts(auth_service=service, mirror=mirror)
+
+        assert result.created == 0  # recognised, not recreated
+        refreshed = mirror.get_by_phone(DEMO_PARENT.phone)
+        assert refreshed is not None
+        assert refreshed.display_name == DEMO_PARENT.display_name

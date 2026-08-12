@@ -5,10 +5,12 @@ current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 
 last_updated: 2026-08-12T04:05:00Z
 #
 # ## READ THIS FIRST — the operational rules five sessions paid for
-# - **A GATE RUN IS IN FLIGHT: `/tmp/check_p610.log`, PID 847893, launched with `setsid` at
-#   03:47 on the tree at `b5bc7c7`. Do NOT launch a second one — poll for the `EXIT=` line.**
-#   It is needed because `scripts/seed_e2e.py` changed, and that is the one seeding path both
-#   harnesses use.
+# - **`/tmp/check_p610.log` LANDED: `EXIT=0`, all 13 gates PASS, 0 skipped, 04:29 on 2026-08-12.**
+#   The second fully green full-suite run of the build, and the first covering `lemely/db/seed.py`
+#   + `lemely/runtime/supabase_env.py`. It ran on the tree at `b5bc7c7`, but
+#   `git diff b5bc7c7..HEAD -- lemely web scripts tests Makefile pyproject.toml` is **empty** —
+#   every commit since is docs/BUILD only — so the verdict holds for HEAD's code. It still holds
+#   no test count and no coverage figure (`check.sh` prints nothing for a passing gate).
 # - **An 84-byte log stuck after the four backend gates is the NORMAL shape of a healthy run
 #   mid-`pytest`, not a stall.** `check.sh` prints nothing for a passing gate. Decide liveness
 #   from `pgrep -af bin/pytest`, never from the log size or from a `FAIL` line (the script does
