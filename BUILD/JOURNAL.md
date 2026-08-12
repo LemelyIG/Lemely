@@ -2203,3 +2203,25 @@ them whether or not Phase 6 fixes them.
 - **Next:** the green CI verdict (`31564822523`, `36074a2`) still covers HEAD's code —
   `git diff 36074a2..HEAD -- lemely web scripts tests Makefile pyproject.toml .github` is empty,
   so every commit since is docs. Both PRs stay open; merging is Habeeby's call (MISSION §4).
+
+## 2026-08-12 — session 112 (verification only; no product change)
+
+- **Resume checks, all clean.** INBOX has no unhandled `- [ ]`; working tree clean; `git status -sb`
+  shows `develop...origin/develop` with **no ahead/behind** (the check session 110 added after
+  finding three unpushed commits); no orphaned `check.sh`/`pytest` under PID 1; no `BUILD/PAUSE`;
+  BLOCKERS' last entry is RESOLVED. `status: COMPLETE` stands — all phases done, PRs #3 and #4 open
+  and Habeeby's call.
+- **The one thing that was not settled: CI on HEAD.** STATE's green claim named `31567025713` on
+  `e32a3d1`, but a run was **`in_progress` on `4b042e6`** at that moment and went unmentioned — so
+  the recorded verdict was about the parent commit, not HEAD. Watched it to completion rather than
+  inferring: `31567949171` on `4b042e6` → **`completed / success`**, the third consecutive green.
+- **Learned.** "CI is green on HEAD" decays silently the moment another commit lands; the previous
+  run's conclusion says nothing about the newest SHA. `gh run watch <id> --exit-status` settles it
+  in one blocking call for ~the cost of guessing wrong. Recorded in STATE next to the green claim,
+  which is the only place a future session will look.
+- **Deliberately did nothing else.** The remaining non-done item in the whole build is Phase 1's
+  opportunistic D1.9 backlog, left unstarted on purpose: touching `lemely/` would put code after
+  P6.11's closing `EXIT=0`, the one property that run exists to establish. Docs-only is the safe
+  work on a shipped tree.
+- **Next:** nothing queued. A future session should re-check INBOX, re-confirm CI against the
+  then-current HEAD, and otherwise leave the tree alone until Habeeby merges or sends a directive.

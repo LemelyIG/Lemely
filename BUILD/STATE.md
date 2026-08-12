@@ -18,12 +18,14 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   Lighthouse reports, a11y floor 96, **performance floor 80 with zero routes below it**;
   0 console errors; 0 horizontal-scroll violations; 48 screens / 246 screenshots;
   **`removed: 0`** against both the Phase-2.5 and Phase-5 baselines. Gemini **$0.19750 / $8.00** (read from `outputs/gemini_spend.json`, not carried).
-- **CI is green on HEAD.** Run `31567025713` on `e32a3d1`: `completed / success`, all five jobs
-  (`test` 3.12/3.13/3.14, `web`, `pre-commit`) — the **second** green run, confirming `31564822523`
-  on `36074a2` was not a one-off. That was the first green of the build; every run before it failed
-  back through 2026-08-09. Sessions 106–107 diagnosed and fixed it, 108 watched the runner prove
-  it, 110 confirmed it holds. The whole failure class was *CI resolves fresh, this venv does not*,
-  so only the runner could.
+- **CI is green on HEAD.** Run `31567949171` on `4b042e6`: `completed / success` — the **third**
+  consecutive green (`31564822523`/`36074a2`, `31567025713`/`e32a3d1` before it). That first one
+  was the first green of the build; every run before it failed back through 2026-08-09. Sessions
+  106–107 diagnosed and fixed it, 108 watched the runner prove it, 110–112 confirmed it holds.
+  The whole failure class was *CI resolves fresh, this venv does not*, so only the runner could.
+  **Watch the run rather than inferring from the previous one** — `gh run watch <id> --exit-status`
+  settles it in one call; session 111 recorded a verdict for `e32a3d1` while `4b042e6`'s run was
+  still `in_progress` and unmentioned.
   Note when reading run history: `31566210283` and `31566944458` show `cancelled`, which is **not
   a red** — GHA's concurrency group cancels an in-flight `ci-refs/pull/3/merge` run when a newer
   push supersedes it. Two docs pushes in four minutes produced both.
