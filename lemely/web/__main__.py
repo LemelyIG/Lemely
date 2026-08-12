@@ -38,6 +38,34 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # P6.10-followup. Without this, **no `lemely.*` log record below WARNING is
+    # emitted by this process at all** — which is how the parent's mock OTP came
+    # to be documented as "printed to the backend log" and then not appear in
+    # `docker compose logs backend` on the fresh-clone run.
+    #
+    # The chain: uvicorn's default `LOGGING_CONFIG` declares handlers for the
+    # `uvicorn*` loggers only and carries no `root` entry, so `dictConfig` leaves
+    # the root logger untouched — handler-less. A bare `logging.getLogger(
+    # "lemely.auth.sms").info(...)` then propagates to a root with no handler and
+    # falls through to `logging.lastResort`, which is fixed at WARNING and drops
+    # it silently. Nothing errors; the record simply never exists.
+    #
+    # `configure_logging()` installs the structlog bridge on root, so it has to
+    # run *before* `uvicorn.run` applies its dictConfig. That ordering is safe in
+    # both directions: dictConfig will not remove our root handler (no `root`
+    # key), and uvicorn's own loggers set `propagate: False`, so its access log
+    # is not duplicated through the bridge.
+    #
+    # This is the container's entry point (`docker-entrypoint.sh` runs
+    # `python -m lemely.web`), so the fix lands exactly where the gap was
+    # observed. It is deliberately *not* in `create_app()`: that factory is also
+    # imported by the test suite and `scripts/e2e_server.py`, and reconfiguring
+    # global logging as a side effect of building the app would reach into
+    # processes that never asked for it.
+    from lemely.runtime.logging import configure_logging
+
+    configure_logging()
+
     uvicorn.run(
         "lemely.web.app:create_app",
         factory=True,

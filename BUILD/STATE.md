@@ -729,15 +729,37 @@ Measured, not assumed — every line below was checked on disk this session:
       container, so both keys must be set explicitly there.
       **Still open for P6.10: the fresh-clone acceptance run itself** (`git clone` into a temp dir →
       the documented commands → all five roles usable). Everything it needs now exists.
-- [ ] todo — **P6.10-followup** (small, do inside P6.7 or P6.11 — needs a running container, so
-      **not** while a gate run holds :8000). README and DELIVERY.md §7 both say the parent's OTP
-      code is "printed to the backend log". Verified true under `configure_logging()`
-      (`{"event": "Mock SMS to …: your Lemely code is 424242"}`), but it did **not** appear in
-      `docker compose logs backend` on the fresh-clone run. Hypothesis from reading, not measured:
-      the container's uvicorn installs its own `dictConfig` and drops a bare stdlib INFO record
-      from `lemely.auth.sms`. Either fix the container logging or correct both documents — the
-      flow itself is fine, the code comes back as `devCode`. Full note in
-      `reports/phase-6/fresh-clone.md` §6.
+- [x] done — **P6.10-followup** (2026-08-12, session 104). **The container was fixed; neither
+      document was weakened.** The previous session's hypothesis was right about the mechanism and
+      **understated the scope: the defect was not the OTP line, it was that NO `lemely.*` record
+      below WARNING was emitted by the container at all.**
+      `docker-entrypoint.sh` runs `python -m lemely.web`, which never called `configure_logging()`.
+      uvicorn's default `LOGGING_CONFIG` declares handlers for the `uvicorn*` loggers and **carries
+      no `root` entry**, so `dictConfig` leaves root handler-less; a bare
+      `logging.getLogger("lemely.auth.sms").info(...)` propagates to that empty root and falls
+      through to `logging.lastResort`, which is **pinned at WARNING** and drops it. Nothing raises,
+      nothing is logged about the loss — invisible to every gate for five phases.
+      Fixed by calling `configure_logging()` in `lemely/web/__main__.py` **before** `uvicorn.run`.
+      Ordering is safe in both directions and the comment says why: `dictConfig` will not remove our
+      root handler (no `root` key) and uvicorn's own loggers set `propagate: False`, so the access
+      log is not duplicated through the bridge. Deliberately **not** in `create_app()` — the test
+      suite and `scripts/e2e_server.py` import that factory, and reconfiguring global logging as a
+      side effect of building the app would reach into processes that never asked for it.
+      `tests/test_web_entrypoint.py` (3 tests) pins it, **inverted per the P6.2 rule**: deleting the
+      call fails `test_main_configures_logging_before_starting_uvicorn`. Only that one of the three
+      fails on inversion, and that is correct — the other two characterise uvicorn's behaviour, so
+      they are the reason the fix is needed rather than a test of our code.
+      **Verified on a real container, not inferred from the entry point:** `docker compose up -d
+      --build backend` → healthy → `POST /api/auth/otp/request` → `{"status":"sent",
+      "devCode":"977289"}`, and `docker compose logs backend` then carried
+      `{"event": "Mock SMS to +10000000000: your Lemely code is 977289", "level": "info", …}` —
+      same code, through the documented command. `PYTHONUNBUFFERED=1` in the Dockerfile rules out
+      buffering as an alternative explanation. `reports/phase-6/fresh-clone.md` §6 struck through
+      and closed rather than deleted.
+      **One environment note for P6.11: `make up` FAILED on the web image with `npm error code
+      ECONNRESET` during `npm ci`** — a transient registry network failure, not a code defect
+      (`docker compose up -d --build backend` right after it succeeded and pip fetched fine).
+      If the fresh-clone command fails that way again, retry before diagnosing.
 - [ ] todo — **P6.11** Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
       `status: COMPLETE` (the supervisor stops on that value — it is the last write of the build).
 

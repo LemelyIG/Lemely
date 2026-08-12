@@ -140,20 +140,34 @@ Stated rather than rounded off:
   cleared demo slate: `demo_accounts: 5`, then `0` on an immediate re-run, with
   all five roles present at the right role and `auth.users` consistent with the
   mirror.
-- **The mock-SMS log line is confirmed under the app's logging config, and
-  unconfirmed inside the container.** `README.md` and `DELIVERY.md` §7 both say
-  the parent's code is printed to the backend log. Calling
-  `MockSmsProvider.send_code` after `configure_logging()` does emit it —
-  `{"event": "Mock SMS to +1…: your Lemely code is 424242", "level": "info", …}`
-  — so the claim is true of the CLI and of any surface that configures logging
-  the way this build does. It did **not** appear in `docker compose logs backend`
-  around the OTP request. The plausible mechanism is that the container's uvicorn
-  installs its own `dictConfig`, whose root level and `disable_existing_loggers`
-  would drop a bare stdlib `INFO` record from `lemely.auth.sms` — but that is a
-  hypothesis from reading, not a measurement, and it is recorded as one. The
-  parent login does not depend on it (the code comes back as `devCode`), so this
-  is a documentation-accuracy question rather than a broken flow. **Check it
-  against a running container before quoting the claim again.**
+- ~~**The mock-SMS log line is confirmed under the app's logging config, and
+  unconfirmed inside the container.**~~ **RESOLVED 2026-08-12 (session 104,
+  P6.10-followup) — measured, and the hypothesis above was right about the
+  mechanism but understated the scope.**
+
+  The container's entry point is `python -m lemely.web`, which never called
+  `configure_logging()`. uvicorn's default `LOGGING_CONFIG` declares handlers
+  for the `uvicorn*` loggers and **carries no `root` entry at all**, so
+  `dictConfig` left the root logger handler-less; a bare
+  `logging.getLogger("lemely.auth.sms").info(...)` propagated to that empty root
+  and fell through to `logging.lastResort`, which is pinned at WARNING and drops
+  it. Nothing raised. **So the defect was not the OTP line — it was that no
+  `lemely.*` record below WARNING was emitted by the container at all.**
+
+  Fixed by calling `configure_logging()` in `lemely/web/__main__.py` before
+  `uvicorn.run`, which is where the gap was observed and not in `create_app()`
+  (the test suite and `scripts/e2e_server.py` import that factory, and
+  reconfiguring global logging as a side effect of building the app would reach
+  into processes that never asked for it). `tests/test_web_entrypoint.py` pins
+  it, and the fix was **inverted**: removing the call fails
+  `test_main_configures_logging_before_starting_uvicorn`.
+
+  Verified on a real container, not inferred: `docker compose up -d --build
+  backend` → healthy → `POST /api/auth/otp/request` returned
+  `{"status":"sent","devCode":"977289"}` and `docker compose logs backend` then
+  carried `{"event": "Mock SMS to +10000000000: your Lemely code is 977289",
+  "level": "info", …}` — the same code, through the documented command. README
+  and DELIVERY.md §7 are now true as written; neither was weakened.
 
 ## 7. The transferable lesson
 
