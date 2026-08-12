@@ -5,9 +5,10 @@ current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 
 last_updated: 2026-08-12T04:05:00Z
 #
 # ## READ THIS FIRST — the operational rules five sessions paid for
-# - **A GATE RUN IS IN FLIGHT: `/tmp/check_p610b.log`, launched with `setsid` at 05:12 on the
-#   tree at `310fade`. Do NOT launch a second one — poll for the `EXIT=` line.** It is needed
-#   because `310fade` changes `lemely/runtime/config.py`, which every surface loads.
+# - **No gate run is in flight.** `/tmp/check_p610b.log` (tree at `310fade`) ended **`EXIT=1`:
+#   12 gates PASS, `ui-thresholds` FAIL on `student-standings` performance 74 < 80.** The
+#   config change is clean — pytest, mypy, import-linter, all five web gates and playwright-e2e
+#   all passed. **The failure is CLS 0.386 and it is P6.7's, diagnosed on that task's entry.**
 # - **`/tmp/check_p610.log` LANDED: `EXIT=0`, all 13 gates PASS, 0 skipped, 04:29 on 2026-08-12.**
 #   The second fully green full-suite run of the build, and the first covering `lemely/db/seed.py`
 #   + `lemely/runtime/supabase_env.py`. It ran on the tree at `b5bc7c7`, but
@@ -34,6 +35,10 @@ last_updated: 2026-08-12T04:05:00Z
 # "key is not configured" AuthError never fired, sending an empty `apikey` that local Kong
 # accepts and Supabase Cloud would not. **A fresh-clone test earns its keep by running the
 # documented commands as written rather than the ones you know work.**
+# It also re-ran the full suite on `310fade`: **`EXIT=1`, the first non-green run since P6.6.**
+# The config fix is clean (pytest, mypy, import-linter, all five web gates, playwright-e2e);
+# the single failure is `ui-thresholds` on `student-standings`, and it is **CLS 0.386, not
+# bundle weight**. Diagnosed on the P6.7 entry so that task starts with it.
 # Session 102: cleaned the tree (harness MCP config only), then closed **P6.9** — DELIVERY.md
 # §6 Evidence, the last open hole. Built as three tables: what is measured today with the
 # command that re-derives each figure, the Phase-5 UI baseline recomputed from the committed
@@ -513,6 +518,33 @@ Measured, not assumed — every line below was checked on disk this session:
       per-role contact sheets, `/impeccable audit` across frontend source, `npx impeccable detect
       src/` with every finding resolved, axe + Lighthouse over every route. Regression against the
       Phase-2.5 baselines is a blocker (MISSION §4). Read `removed` (must be 0), not `changed`.
+      **START HERE — session 103's gate run handed P6.7 its first finding, already diagnosed.**
+      `/tmp/check_p610b.log` ended **`EXIT=1`: 12 gates PASS, `ui-thresholds` FAIL** —
+      `lighthouse: student-standings performance score 74 < 80`. Do not re-derive the cause; the
+      breakdown was pulled from the JSON before `reports/.scratch` was overwritten:
+
+      | metric | score | value |
+      |---|---|---|
+      | cumulative-layout-shift | **0.27** | **0.386** |
+      | first-contentful-paint | 0.76 | 2.3 s |
+      | largest-contentful-paint | 0.84 | 2.8 s |
+      | total-blocking-time | 0.97 | 120 ms |
+      | speed-index | 0.99 | 2.3 s |
+
+      **It is CLS, not bundle weight.** TBT/LCP/SI are all healthy, so this is *not* a regression
+      of P6.1's code-splitting fix in the direction P6.1 was measuring — and 0.386 against the
+      0.1 "good" threshold is a real defect, not noise near a floor. **The likely cause is P6.1's
+      own fix**: `React.lazy` behind one `Suspense` per portal means the fallback is swapped for
+      real content after paint, and a fallback that does not reserve the content's height shifts
+      the page. `student-standings` (the leaderboard) is the plausible worst case — rows arrive
+      in bulk. Check `RouteFallback`'s sizing first.
+      **The honest framing for the report: P6.1 raised this route 70→92 by fixing the metric it
+      was looking at, and the same change plausibly cost CLS on the same route.** The previous
+      run (`/tmp/check_p610.log`, 04:29, same web tree) passed `ui-thresholds`, so either it is
+      genuinely intermittent or the earlier run got a luckier layout — **measure the spread
+      before calling it either**, and never by loosening the threshold (D4.25 exists because this
+      floor went unenforced for two phases; re-disabling it now would be worse than never having
+      enforced it).
 - [x] done — **P6.8** README + CHANGELOG rewritten for the shipped product (`12dff56` draft, made
       true across `2bee4cb`/`818e269`/`33270b4` as each claim was verified), version bumped to
       **1.0.0** in `pyproject.toml` and `web/package.json`, and `lemely/web/app.py` now imports

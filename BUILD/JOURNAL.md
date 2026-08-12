@@ -2005,3 +2005,36 @@ them whether or not Phase 6 fixes them.
   with the task that fills it. A blank with an owner is honest; an estimate is not.
 - **Next:** the `EXIT=` line, then P6.7's visual sweep, the fresh-clone run that closes P6.10,
   and P6.11.
+
+## 2026-08-12 — session 103
+
+- **Did:** closed **P6.10** by actually running the fresh-clone acceptance — cloned this branch
+  at `be49d34` into `/tmp/lemely-fresh-1`, ran the documented commands from it, and checked
+  every claim against the running containers. `make up` reached `EXIT=0` with both containers
+  healthy, and **all five demo roles authenticate through nginx on :8080**, each confirmed by
+  reading `/api/me/profile` back. Four defects fixed in `310fade` (D6.8), evidence artifact at
+  `reports/phase-6/fresh-clone.md` (`fe8f514`), and DELIVERY.md §6.3's fresh-clone row filled.
+  Also confirmed the earlier in-flight run: `/tmp/check_p610.log`, `EXIT=0`, all 13 gates.
+- **Learned:** **an empty environment variable is not an unset one.** `docker-compose.yml`
+  forwards optional credentials as `${VAR:-}`, so pydantic built `SecretStr("")` — not `None` —
+  and every `is None` "not configured" check answered *configured*. `/api/health` returned
+  `apiKeyConfigured: true` on a stack with no Gemini key at all, and GoTrue's explicit "key is
+  not configured" error never fired: an empty `apikey` header went out instead, which **local
+  Kong accepts and Supabase Cloud would reject**. Works locally, every test green, broken in the
+  deploy that matters. The general form: `if value is None` is a claim about *presence*, never
+  about *usability*.
+- **Also learned:** the value of this task was entirely in running the documented commands **as
+  written** rather than the ones I knew worked. `pip install -e ".[dev,ui]"` omits the `db` and
+  `web` extras, so `make db-migrate` and `make seed` both failed outright from a clone, and
+  `python` is not a command on Debian-family systems. All 13 gates had gone green with 0 skipped
+  on this same tree hours earlier and saw none of it — gates run inside an environment that is
+  already correct.
+- **Then:** re-ran the full suite on `310fade` because config.py is loaded by every surface.
+  **`EXIT=1` — the first non-green run since P6.6.** The config change is clean; the one failure
+  is `ui-thresholds` on `student-standings` (performance 74 < 80), and pulling the JSON before
+  the scratch dir was overwritten shows it is **CLS 0.386, not bundle weight** — TBT, LCP and
+  Speed Index are all healthy. Plausibly a cost of P6.1's own `React.lazy` fix on the very route
+  P6.1 reported as 70→92.
+- **Next:** P6.7's visual sweep, which now starts with that finding already diagnosed on its
+  STATE entry rather than rediscovering it. Then the P6.10 follow-up (the OTP-code-in-the-log
+  claim, unconfirmed inside the container) and P6.11.
