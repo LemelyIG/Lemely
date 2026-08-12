@@ -5,11 +5,16 @@ current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 
 last_updated: 2026-08-12T06:05:00Z
 #
 # ## READ THIS FIRST — the operational rules five sessions paid for
-# - **No gate run is in flight.** P6.7 closed the last open gate failure: `student-standings` CLS is
-#   fixed and measured (0.386 -> 0.000, performance 74 -> 93). `ui-thresholds` passes on the
-#   phase-6 corpus. P6.11 re-runs the whole suite on the final tree; that run is the figure of record.
-#   The last full-suite run (`/tmp/check_p610b.log`, tree at `310fade`) ended `EXIT=1` with
-#   12 gates PASS and that one failure; nothing else in it was red.
+# - **A GATE RUN IS IN FLIGHT: `/tmp/check_p611.log`, launched detached (setsid) at the end of
+#   session 104 on the clean tree at `66950f3`. DO NOT LAUNCH A SECOND ONE — poll for the
+#   `EXIT=` line, and decide liveness from `pgrep -af check.sh`, never from the log size.**
+#   This is P6.11's run and the figure of record for the phase. The four backend gates had
+#   already passed when the session ended. **While it runs, touch no code — docs are the safe
+#   work**, and the phase report is exactly that.
+# - P6.7 closed the last known gate failure: `student-standings` CLS 0.386 -> **0.000** (zero
+#   shifts recorded, not a smaller number), performance 74 -> 93, and `ui-thresholds` EXIT=0 on
+#   the committed phase-6 corpus. The run before it (`/tmp/check_p610b.log`, tree at `310fade`)
+#   ended `EXIT=1` with 12 gates PASS and that single failure; nothing else in it was red.
 # - **`/tmp/check_p610.log` LANDED: `EXIT=0`, all 13 gates PASS, 0 skipped, 04:29 on 2026-08-12.**
 #   The second fully green full-suite run of the build, and the first covering `lemely/db/seed.py`
 #   + `lemely/runtime/supabase_env.py`. It ran on the tree at `b5bc7c7`, but

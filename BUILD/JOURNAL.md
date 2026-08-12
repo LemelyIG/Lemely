@@ -2038,3 +2038,39 @@ them whether or not Phase 6 fixes them.
 - **Next:** P6.7's visual sweep, which now starts with that finding already diagnosed on its
   STATE entry rather than rediscovering it. Then the P6.10 follow-up (the OTP-code-in-the-log
   claim, unconfirmed inside the container) and P6.11.
+
+## 2026-08-12 — session 104 (P6.7 closed, P6.10-followup closed, P6.11's run launched)
+
+- **Did:** closed **P6.7**, the full-product visual QA sweep. `AUDIT_EXIT=0`,
+  `check_ui_gates.py` EXIT=0, **`removed: 0` against both the Phase-2.5 and Phase-5 baselines**.
+  48 screens / 246 screenshots, 73 axe route-states with zero violations at any impact, 44
+  Lighthouse reports with an a11y floor of 96, zero console errors, zero horizontal scroll.
+  Fixed the one live defect (`student-standings` CLS), added the per-role contact sheets MISSION
+  asks for and nothing produced (`web/scripts/contact_sheets.mjs`), and wrote
+  `reports/phase-6/visual-qa.md` + `impeccable-audit.md`. Then closed **P6.10-followup** by
+  fixing the container's logging rather than weakening the two documents that described it.
+  Launched P6.11's full-suite run detached on the clean tree at `66950f3`.
+- **Learned — the artifact you already committed may hold the answer you were about to re-measure.**
+  The standing hypothesis for the CLS failure was `RouteFallback`. It was wrong, and
+  `reports/phase-5/lighthouse/student-standings.json` had said so for a phase: its `layout-shifts`
+  audit names `<section aria-labelledby="s29-subjects">` in both recorded shifts. Reading it cost
+  one command and replaced an 11-minute measurement plus a plausible wrong fix. It also showed
+  CLS was **0.220 back in Phase 5**, so this was never the P6.1 regression it looked like — the
+  shifts only score when the skeleton paints before the data lands, which is the whole reason the
+  same tree scored 92 on one run and 74 on the next.
+- **Also learned — the corpus has three producers and running one silently drops the others.**
+  The audit runner covers 43 screen ids; `screenshots.spec.ts` and `correct-paper.spec.ts` own
+  the other seven. Running only the first made the compare report those seven as **`removed`** —
+  the exact signal MISSION §4 defines a blocker by, from screens that had never regressed. A
+  regression detector that is fed a partial candidate reports a catastrophe. Enumerate the
+  producers before believing the count: `grep -ln "SCREENS_DIR" web/e2e/*.ts`.
+- **Also learned — a silent gate is not a passing gate.** `npx impeccable detect` returns `[]`
+  for `web/src/` and also for a file written deliberately to trip it, so MISSION §6 gate 8 has
+  been green and vacuous. The tell was cheap: feed the detector something it should catch. Worth
+  doing to any check whose output is "nothing".
+- **Also learned — `logging.lastResort` is pinned at WARNING, and that is how a container loses
+  every INFO record without an error.** uvicorn's `LOGGING_CONFIG` has no `root` entry, so
+  `dictConfig` leaves root handler-less and `lemely.*` INFO propagates into nothing. P6.10 saw
+  the missing OTP line; the real scope was every `lemely.*` record below WARNING.
+- **Next:** P6.11 — poll `/tmp/check_p611.log` for `EXIT=`, write `reports/phase-6/REPORT.md`,
+  merge to develop, push, update PR #3, ntfy, then set `status: COMPLETE`.
