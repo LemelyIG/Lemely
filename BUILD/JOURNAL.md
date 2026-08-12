@@ -2246,3 +2246,28 @@ them whether or not Phase 6 fixes them.
   ledger, not from STATE's mirror). No Gemini calls this session.
 - **Next:** nothing queued. Re-check INBOX, re-confirm CI against the then-current HEAD, and
   otherwise leave the tree alone until Habeeby merges PR #3/#4 or sends a directive.
+
+## 2026-08-12 — session 114
+
+- **Did what 113 asked, then stopped the thing that asked it.** Watched run `31569918054` on
+  HEAD `2d6fb78` to completion — **all five jobs `success`**, the fifth consecutive green.
+  Verdict taken from `gh run view --json conclusion,jobs`, and `gh run watch` was run
+  *unpiped* so its `--exit-status` meant something (113's trap, avoided).
+- **The real finding: STATE asserted a diff was empty without running it.** For four sessions
+  this file said `git diff 66950f3..HEAD -- lemely web scripts tests` is empty, and used that
+  to argue P6.11's closing `EXIT=0` still describes HEAD. It returns **10 changed lines in
+  `notification_prefs_repo.py` and `student_profile_repo.py`** — `7f11f58`'s RUF036 union
+  reorderings. The conclusion survives (reordering `X | None | _UnsetType` binds nothing at
+  runtime or in mypy, and `web/` really is untouched, so the visual leg carries outright) but
+  the evidence for it did not. Same failure mode the file warns about twice: a hand-copied
+  claim nothing regenerates.
+- **Learned — the CI loop was self-sustaining by construction.** Sessions 108 and 110–114 each
+  spent a whole run confirming CI on a tree no session had changed, because the docs commit
+  recording the green *is* the push that unverifies the next HEAD. Noting the recursion (113)
+  did not stop it; only a rule that terminates does. STATE now carries one: a docs-only commit
+  can reach exactly one of CI's five jobs (`pre-commit`, via the markdown hooks), so run
+  `pre-commit` locally and check the code/pins diff — watch a run only when code or pins moved.
+- **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00** (from the ledger).
+  No Gemini calls this session.
+- **Next:** nothing queued, and deliberately no CI re-check. The build is COMPLETE; PRs #3 and
+  #4 are Habeeby's call. A future session should read INBOX and otherwise leave the tree alone.

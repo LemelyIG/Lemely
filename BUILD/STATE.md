@@ -18,9 +18,22 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   Lighthouse reports, a11y floor 96, **performance floor 80 with zero routes below it**;
   0 console errors; 0 horizontal-scroll violations; 48 screens / 246 screenshots;
   **`removed: 0`** against both the Phase-2.5 and Phase-5 baselines. Gemini **$0.19750 / $8.00** (read from `outputs/gemini_spend.json`, not carried).
-- **CI is green on HEAD.** Run `31568906164` on `24e223f` — **all five jobs `success`**
-  (`pre-commit`, `web`, `test (3.12)`, `test (3.13)`, `test (3.14)`) — the **fourth** consecutive
-  green (`31564822523`/`36074a2`, `31567025713`/`e32a3d1`, `31567949171`/`4b042e6` before it).
+- **CI is green on HEAD.** Run `31569918054` on `2d6fb78` — **all five jobs `success`**
+  (`pre-commit`, `web`, `test (3.12)`, `test (3.13)`, `test (3.14)`) — the **fifth** consecutive
+  green (`31564822523`/`36074a2`, `31567025713`/`e32a3d1`, `31567949171`/`4b042e6`,
+  `31568906164`/`24e223f` before it).
+  **STOP RE-VERIFYING THIS. Sessions 108 and 110–114 each spent their entire run watching a CI
+  job whose input no session had changed.** The loop is self-sustaining by construction: the
+  docs commit recording "green on HEAD" *is* the push that makes the next HEAD unverified, so
+  the task recreates itself forever and the ledger of greens grows while nothing ships.
+  **The terminating rule — apply it instead of watching a run:** CI's five jobs are ruff, mypy,
+  import-linter, pytest ×3 Pythons, `pre-commit run --all-files`, and web
+  typecheck/lint/build. A **docs-only** commit can only reach one of those: `pre-commit`, whose
+  whitespace/EOF/markdown hooks do read `.md`. So after a docs-only push, run
+  `PATH="/home/sico/Lemely/.venv/bin:$PATH" .venv/bin/pre-commit run --all-files` **locally**;
+  green there plus an unchanged `git diff <last-green-sha>..HEAD -- lemely web scripts tests
+  pyproject.toml uv.lock .github` means CI's verdict on HEAD is already known and watching it
+  adds nothing. Only *touch code or pins* → watch the run.
   That first one was the first green of the build; every run before it failed back through
   2026-08-09. Sessions 106–107 diagnosed and fixed it, 108 watched the runner prove it, 110–113
   confirmed it holds. The whole failure class was *CI resolves fresh, this venv does not*, so only
@@ -42,9 +55,16 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   `7f11f58`/`f980fbc` and partly harmful; see D6.10 and the note below).
 - **Nothing is in flight.** The only non-done checklist item in the entire build is Phase 1's
   opportunistic D1.9 backlog, left deliberately: starting product work now would put code after
-  P6.11's closing `EXIT=0`, which is the one property that run went out of its way to establish
-  (`git diff 66950f3..HEAD -- lemely web scripts tests …` is empty). **Docs-only is the safe
-  work on a shipped tree.**
+  P6.11's closing `EXIT=0`. **Docs-only is the safe work on a shipped tree.**
+  **Correction (session 114): that diff is NOT empty, and this file asserted it was for four
+  sessions.** `git diff 66950f3..HEAD -- lemely web scripts tests` returns **10 changed lines
+  across `lemely/db/notification_prefs_repo.py` and `lemely/db/student_profile_repo.py`** — the
+  RUF036 fixes from `7f11f58`, reordering `X | None | _UnsetType` to `X | _UnsetType | None`.
+  Plus `pyproject.toml` (the gate-tool pins) and `.github/workflows/ci.yml`. The changes are
+  semantically inert — union member order binds nothing at runtime and nothing in mypy — so the
+  closing verdict does still carry. **But "inert" and "empty" are different claims, and only one
+  of them was checked.** `web/` is genuinely untouched since `66950f3`, so the visual/a11y leg's
+  verdict carries unconditionally.
 
 ## Rules for maintaining this file
 - Update BEFORE starting and AFTER finishing every task. Assume sudden death.
