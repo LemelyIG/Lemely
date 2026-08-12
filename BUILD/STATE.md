@@ -2,7 +2,29 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-12T00:05:00Z   # **Hundredth session: session 99's P6.6 re-run was 7 minutes old on
+last_updated: 2026-08-12T01:05:00Z   # **Session 101: P6.6 CLOSED GREEN, P6.8 closed, P6.10 mostly
+#                                    built. A GATE RUN IS IN FLIGHT — `/tmp/check_p610.log`, launched
+#                                    detached with `setsid` on the tree at `b5bc7c7`. **Do not launch a
+#                                    second one; poll for the `EXIT=` line.** An 84-byte log mid-`pytest`
+#                                    is the normal healthy shape — check `pgrep -af bin/pytest` before
+#                                    calling it stalled. It is needed because `scripts/seed_e2e.py`
+#                                    changed, and that is the one seeding path both harnesses use.
+#                                    P6.6's own run had ended `EXIT=0` — **all 13 gates, 0 skipped, the
+#                                    first fully green full-suite run of the build.** Four sessions in a
+#                                    row correctly declined to relaunch it; that discipline is what
+#                                    produced it.
+#                                    **The lesson of this session is P6.10's.** `tests/test_seed.py` was
+#                                    found untracked — a complete hermetic spec no session note mentions.
+#                                    Implemented against it: 12 tests green, ruff/mypy/import-linter
+#                                    clean — and `make seed` then died on the live stack with
+#                                    `service-role key is not configured`. **A hermetic test of an entry
+#                                    point tests everything except that it is an entry point.** The fix
+#                                    already existed in `seed_e2e.py`, whose docstring already warned
+#                                    this error "reads like a broken script"; extracted to
+#                                    `lemely/runtime/supabase_env.py` and imported from both rather than
+#                                    pasted as copy #4. **Verify an entry point by running it, and on a
+#                                    clean slate — an already-seeded DB cannot tell you `created` is
+#                                    right.** Previous session's note follows. **Hundredth session: session 99's P6.6 re-run was 7 minutes old on
 #                                    arrival (PID 540503, 84-byte log, mid-`pytest`) — the FOURTH consecutive session
 #                                    where the correct move was to NOT relaunch. Held the standing rule (no code while
 #                                    a gate run is in flight) and did doc-only work.
@@ -639,10 +661,19 @@ Measured, not assumed — every line below was checked on disk this session:
       run's rows. **The transferable bit is the pattern, not the damage: a demo-data cleanup filter
       must be anchored to the demo constant (`DEMO_ACCOUNTS`/`DEMO_PARENT`), never to a domain
       suffix another seeder also uses.**
-      Remaining for P6.10 after that: the fresh-clone run itself (`git clone` → documented commands),
-      and documenting the demo credentials in README/`docs/deployment.md`/DELIVERY.md — at which
-      point the `make seed` caveat notes added in `2bee4cb`/`818e269` come out (and **nowhere
-      earlier**).
+      **Committed: `b5bc7c7`** (seeder + `supabase_env` extraction + the 12 hermetic tests) and
+      **`e2ed097`** (docs). All ten pre-commit hooks pass on both.
+      The `make seed` caveats are **out of all three documents** — DELIVERY.md's note said "this
+      note goes when that lands, not before", and it landed. README carries the credential table
+      (read out of `lemely.db.seed`, not hand-copied): `<role>@demo.lemely.local` /
+      `Demo-Lemely-1!` for the four password roles, phone `+10000000000` for the OTP parent.
+      Each note was **retired rather than deleted**. `docs/deployment.md` §5.3 gained the
+      consequence nobody had stated: these are *published* credentials, so **seeding a real
+      deployment hands anyone who has read this repo a `platform_admin` login** — and
+      `ensure_supabase_env` shells out to `supabase status`, which does not exist in a deployed
+      container, so both keys must be set explicitly there.
+      **Still open for P6.10: the fresh-clone acceptance run itself** (`git clone` into a temp dir →
+      the documented commands → all five roles usable). Everything it needs now exists.
 - [ ] todo — **P6.11** Phase-6 report, merge to develop, push, update PR #3, ntfy, then set
       `status: COMPLETE` (the supervisor stops on that value — it is the last write of the build).
 

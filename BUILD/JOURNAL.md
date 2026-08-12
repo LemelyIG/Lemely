@@ -1969,3 +1969,21 @@ them whether or not Phase 6 fixes them.
   was the cause. Serialise them, or say so in the brief.
 - **Next:** finish P6.4 (verify the images actually build and the nginx `/api` proxy
   really reaches the backend), then P6.5 deployment docs.
+
+## 2026-08-12 — session 101
+
+- **Did:** confirmed P6.6 green (`EXIT=0`, all 13 gates, 0 skipped — the build's first
+  fully green full-suite run) and closed P6.8. Built P6.10's seeder against the untracked
+  `tests/test_seed.py` found on arrival, extracted `ensure_supabase_env` to
+  `lemely/runtime/supabase_env.py`, and retired the `make seed` caveats from README,
+  DELIVERY.md and `docs/deployment.md` (`b5bc7c7`, `e2ed097`).
+- **Learned:** a hermetic test of an entry point tests everything except that it is an
+  entry point — 12 green tests and a clean `mypy` did not stop `make seed` dying on the
+  live stack. Verify entry points by running them, on a *clean slate*: an already-seeded
+  DB cannot tell you whether `created` is right.
+- **Also learned, the hard way:** a demo-data cleanup filter must be anchored to the demo
+  constants, never to a domain suffix another seeder shares. `%parents.lemely.local`
+  matched 206 rows, not 5. Harmless here (auth/mirror stayed consistent, and `seed_e2e.py`
+  re-tags every run) but the pattern is the point.
+- **Next:** poll `/tmp/check_p610.log` for `EXIT=`; then the fresh-clone acceptance run that
+  closes P6.10, then P6.7's visual sweep, P6.9's §6 evidence, and P6.11.
