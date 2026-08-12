@@ -268,7 +268,70 @@ source.**
 
 ## 6. Evidence
 
-<!-- EVIDENCE -->
+Every figure in this document is re-derivable from a committed artifact. This
+section says which artifact, and with what command. That is not ceremony: this
+build was burned repeatedly by numbers that were hand-carried between documents
+until nothing regenerated them — an axe count that was double the truth (146
+against a 73-row summary), a Gemini spend line that read `$0.1612` against a
+real ledger of `$0.18429`, an e2e suite reported as 30 tests that `playwright
+test --list` put at 34, and a "regenerates weekly" study plan with no scheduler
+anywhere in the codebase. **Re-derive before quoting; do not copy from
+`BUILD/STATE.md` prose, including this file's own earlier drafts.**
+
+### 6.1 Measured from committed artifacts
+
+Verified on the Phase-6 tree at the time of writing, by running the command in
+the right-hand column — not carried forward.
+
+| Claim | Value | Artifact / re-derivation |
+| --- | --- | --- |
+| Route operations, all guarded | **121** — 5 public (4 auth entrypoints + `/api/health`), 12 authenticated-but-role-agnostic, 104 role-gated | `tests/test_authz_matrix_complete.py` derives the route set *from the app* and asserts it equals the declared `EXPECTED` table, so an undeclared route and a stale declaration both fail. `pytest tests/test_authz_matrix_complete.py` |
+| Schema migrations | **18**, additive-only | `ls lemely/db/migrations/versions/*.py`; `alembic check` clean in both directions |
+| Backend test files | **128** | `ls tests/test_*.py \| wc -l` |
+| Web unit test files | **16** | `find web -path web/node_modules -prune -o -name '*.test.*' -print \| grep -v '^web/e2e'` |
+| Playwright E2E | **13 spec files / 34 tests** | `cd web && npx playwright test --list` — the count, not the file count, is the one that drifted |
+| API load sanity | 8 endpoints, concurrency 10, ~10k requests, **zero errors**; `/api/teacher/overview` p50 **395.73 ms** / p95 **458.1 ms** against 8–150 ms elsewhere | [`reports/phase-6/load-sanity.json`](reports/phase-6/load-sanity.json) and its rendered [`.md`](reports/phase-6/load-sanity.md). No verdict is printed — MISSION states no latency threshold, and grading against an invented one would be manufactured precision (§5.6) |
+| Gemini spend against the $8 cap | read the ledger, never this document | `outputs/gemini_spend.json` (`cumulative_usd`) |
+
+### 6.2 The UI baseline this build is measured against
+
+Phase 5's committed audit artifacts, recomputed from the JSON this session
+rather than quoted from the phase report — and they agree with it:
+
+- **73 axe route-states, zero violations at any impact** — `reports/phase-5/axe/_summary.json`, one row per audited state.
+- **44 Lighthouse route reports** — `reports/phase-5/lighthouse/*.json`. The directory holds 45 files; the 45th is `_summary.json` and is not a route.
+- **Accessibility floor 96** (`teacher-review`; 100 on the rest), against the ≥95 gate.
+- **8 routes below performance 80** at Phase 5 (floor 65, `teacher-quiz-detail`) — the gap P6.1 closed for the student routes, which MISSION §11's floor actually covers. See §5.5.
+
+```bash
+# recompute the a11y floor and the sub-80 performance list from the artifacts
+python3 - <<'PY'
+import json, pathlib
+rows = []
+for f in sorted(pathlib.Path('reports/phase-5/lighthouse').glob('*.json')):
+    j = json.loads(f.read_text())
+    if not isinstance(j, dict) or not isinstance(j.get('categories'), dict):
+        continue  # _summary.json is a list, not a route report
+    c = j['categories']
+    pick = lambda k: round(c[k]['score'] * 100) if isinstance(c.get(k, {}).get('score'), (int, float)) else None
+    rows.append((f.stem, pick('accessibility'), pick('performance')))
+print('route reports:', len(rows))
+print('a11y floor:', min(r[1] for r in rows))
+print('perf < 80:', sorted(((r[0], r[2]) for r in rows if r[2] is not None and r[2] < 80), key=lambda t: t[1]))
+PY
+```
+
+### 6.3 Pending the Phase-6 closing runs
+
+These are the figures no artifact holds yet. They are deliberately left blank
+rather than estimated, and **must be filled from the run's own artifacts**:
+
+| Figure | Filled by | Source once it exists |
+| --- | --- | --- |
+| Test count and coverage on the final tree | P6.11 | the `Total coverage:` line of the run's pytest leg — **not** `scripts/check.sh`'s log, which prints nothing for a passing gate and therefore contains no count and no coverage figure at all |
+| The 13-gate verdict on the final tree | P6.11 | `EXIT=` line of the run log. P6.6 reached `EXIT=0` (all 13 gates, 0 skipped — the first fully green full-suite run of this build), but three commits landed after it, one of them product code, so that verdict is true of `6005b20` and not of the shipped tree |
+| Phase-6 axe / Lighthouse / screenshot corpus | P6.7 | `reports/phase-6/{axe,lighthouse,screens}/` plus the contact sheet |
+| Visual regression against the Phase-2.5 baselines | P6.7 | the cross-phase compare's **`removed`** count, which must be 0. `changed` is not a regression signal — the seed's `run_tag` is random per run, so every screen rendering a class name changes on every re-baseline (§5.5) |
 
 ## 7. Running it
 
