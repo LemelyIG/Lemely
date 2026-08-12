@@ -281,27 +281,220 @@ class ThresholdTests(unittest.TestCase):
             ignored_answers=[],
         )
 
-    def _make_mark(self, confidence: float):
+    def _make_mark(self, confidence: float, awarded_marks: int = 1):
         from lemely.core.schemas import AIMarkResponse
 
         return AIMarkResponse(
-            awarded_marks=1,
+            awarded_marks=awarded_marks,
             confidence=confidence,
             matched_point_ids=[],
             feedback="test",
         )
 
-    def test_review_fires_below_0_80(self):
+    # The review threshold is 0.90 as of D2.2 (was a hardcoded 0.80 that only
+    # coincidentally matched ``escalation_confidence_threshold``). These tests
+    # assert against the single shared constant so they cannot re-fossilise a
+    # literal, and they pin the boundary as inclusive-at-threshold.
+    def test_review_fires_just_below_threshold(self):
+        from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
         from lemely.io.correction_ai import _build_ai_corrected
 
-        cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.75))
+        mark = self._make_mark(REVIEW_CONFIDENCE_THRESHOLD - 0.05)
+        cq = _build_ai_corrected(self._make_question(), "answer", mark)
         self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("below review threshold", cq.review_reason or "")
 
-    def test_review_false_at_0_80(self):
+    def test_review_false_at_threshold(self):
+        from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        mark = self._make_mark(REVIEW_CONFIDENCE_THRESHOLD)
+        cq = _build_ai_corrected(self._make_question(), "answer", mark)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+    def test_old_0_80_threshold_now_flags(self):
+        """Regression guard for D2.2: 0.80 used to auto-grade, now it flags."""
         from lemely.io.correction_ai import _build_ai_corrected
 
         cq = _build_ai_corrected(self._make_question(), "answer", self._make_mark(0.80))
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_out_of_range_award_flags_despite_full_confidence(self):
+        """A marker asking for more marks than exist is clamped AND flagged."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        # Question is worth 2 marks; the marker asks for 4 at confidence 1.0.
+        cq = _build_ai_corrected(
+            self._make_question(), "answer", self._make_mark(1.0, awarded_marks=4)
+        )
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("clamped", cq.review_reason or "")
+
+    def test_in_range_award_at_full_confidence_is_auto_graded(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(), "answer", self._make_mark(1.0, awarded_marks=2)
+        )
+        self.assertEqual(cq.awarded_marks, 2)
         self.assertFalse(cq.needs_teacher_review)
+
+
+class CalculatedAnswerVerificationTests(unittest.TestCase):
+    """D2.3 marking-quality fix: an accuracy mark gated on a specific numerical
+    result must be rejected if that value never appears in the student's
+    answer/working, regardless of the marker's stated confidence."""
+
+    def _make_question(self, calc_kwargs: dict | None = None):
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        calc = CalculatedAnswer(**(calc_kwargs or {"value": 20.0}))
+        return Question.model_construct(
+            id="2",
+            marks=2,
+            type=QuestionType.EXPLANATION,
+            answer_points=[
+                AnswerPoint(id="p1", point="method", marks=1),
+                AnswerPoint(id="p2", point="final answer", marks=1, calculated_answer=calc),
+            ],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def _make_mark(self, awarded_marks: int, matched: list[str], confidence: float = 1.0):
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=awarded_marks,
+            confidence=confidence,
+            matched_point_ids=matched,
+            feedback="test",
+        )
+
+    def test_missing_calculated_value_rejects_the_point_despite_full_confidence(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(),
+            "v = u + at, so the answer is 15",
+            self._make_mark(2, ["p1", "p2"]),
+            student_working="working shows 15",
+        )
+        self.assertEqual(cq.awarded_marks, 1)  # p2's mark stripped
+        self.assertEqual(cq.matched_point_ids, ["p1"])
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("unverified accuracy mark", cq.review_reason or "")
+
+    def test_present_calculated_value_is_credited(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(),
+            "v = u + at, so the answer is 20",
+            self._make_mark(2, ["p1", "p2"]),
+        )
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertEqual(cq.matched_point_ids, ["p1", "p2"])
+        self.assertFalse(cq.needs_teacher_review)
+
+    def test_value_within_stated_dp_is_credited(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question({"value": 3.14159, "dp": 2}),
+            "the answer is 3.14",
+            self._make_mark(2, ["p1", "p2"]),
+        )
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertFalse(cq.needs_teacher_review)
+
+    def test_value_found_in_working_not_answer_is_credited(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(),
+            "see working",
+            self._make_mark(2, ["p1", "p2"]),
+            student_working="v = u + at = 20",
+        )
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertFalse(cq.needs_teacher_review)
+
+    def test_point_without_calculated_answer_is_untouched(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(),
+            "no numbers here",
+            self._make_mark(1, ["p1"]),  # only claims the non-numeric point
+        )
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertEqual(cq.matched_point_ids, ["p1"])
+        self.assertFalse(cq.needs_teacher_review)
+
+    def test_fraction_form_matches_decimal_calculated_answer(self):
+        """D2.3 fix regression guard: a student writing '3/8' must match a
+        scheme value of 0.375 (accept_equivalent_forms) instead of being
+        wrongly rejected — this exact case regressed a real golden fixture
+        (0606 q1) when the deterministic backstop first shipped."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question({"value": 0.375, "accept_equivalent_forms": True}),
+            "a = 4, b = 3/8, c = -2",
+            self._make_mark(2, ["p1", "p2"]),
+        )
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertFalse(cq.needs_teacher_review)
+
+    def test_division_shown_as_working_does_not_launder_a_wrong_final_value(self):
+        """Regression guard: a fraction regex that evaluates ANY 'a/b' text
+        would recompute the student's division itself (148/16.6=8.9...) and
+        accidentally validate a wrong stated final answer (89, a decimal-place
+        slip) because the *correct* arithmetic happens to appear earlier in
+        the same line as working. Only the actually-stated final value must
+        be checked, not intermediate working the fix could "correct" for."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question({"value": 8.9}),
+            "density = mass / volume = 148 / 16.6 = 89 g/cm3",
+            self._make_mark(2, ["p1", "p2"]),
+        )
+        self.assertEqual(cq.awarded_marks, 1)  # p2 correctly rejected
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_correct_working_does_not_launder_a_wrong_stated_answer(self):
+        """Regression guard: extraction splits the student's final numeric
+        answer from their working into separate fields. A wrong stated answer
+        ('9') sitting next to genuinely-correct working ('36 / 8', which
+        evaluates to the target 4.5) must still be rejected — the working
+        must never be consulted when the answer field already has a number."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question({"value": 4.5}),
+            "9 mg",
+            self._make_mark(2, ["p1", "p2"]),
+            student_working="idea of three half-lives, so 36 / 8",
+        )
+        self.assertEqual(cq.awarded_marks, 1)  # p2 correctly rejected
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_unmatched_point_id_is_ignored_not_crashed(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(),
+            "answer is 20",
+            self._make_mark(1, ["p_unknown"]),
+        )
+        self.assertEqual(cq.matched_point_ids, ["p_unknown"])
+        self.assertEqual(cq.awarded_marks, 1)
 
 
 class ThinkingRetryTests(unittest.TestCase):

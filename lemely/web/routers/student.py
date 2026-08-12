@@ -6,8 +6,13 @@ touching ``app.py`` — the app factory already mounts this router.
 **Data provenance.** Every response is computed from real core logic and the
 :class:`~lemely.io.history_store.HistoryStore`: cross-paper aggregation via
 :mod:`lemely.core.analytics`, grade + boundary resolution via
-:mod:`lemely.io.grade_boundaries`, scheduling via :mod:`lemely.core.study_plan`,
-and integrity via :mod:`lemely.core.plagiarism` / :mod:`lemely.io.integrity`.
+:mod:`lemely.io.grade_boundaries`, and integrity via
+:mod:`lemely.core.plagiarism` / :mod:`lemely.io.integrity`. Study-plan
+scheduling and onboarding are **not** here: they live on
+:mod:`lemely.web.routers.study_plan` (``/api/student/study-plan``, persisted
+per ISO week) and :mod:`lemely.web.routers.me` (``/api/me/student-profile*``)
+since P4.10 chunk D retired this router's superseded ``/student/plan`` pair and
+``/student/onboarding`` (D4.22).
 Where a frontend field has *no* backing data source (leaderboard peers, streak
 history beyond recorded-paper days, marketing copy, or the per-question detail
 that history records do not persist), the response returns a typed-neutral
@@ -17,44 +22,83 @@ converter docstring calls out which fields are data-backed vs structurally empty
 
 from __future__ import annotations
 
-from typing import Annotated
+import tempfile
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Annotated, TypedDict
 
-from fastapi import APIRouter, Depends, HTTPException
+import structlog
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
-# WeaknessReport and HistoryStore stay as runtime imports (noqa: TC001): FastAPI
-# dependency injection and the response converters resolve their annotations at
-# call time, so they cannot move into a TYPE_CHECKING block.
+# WeaknessReport and HistoryStoreProtocol stay as runtime imports (noqa: TC001):
+# FastAPI dependency injection and the response converters resolve their
+# annotations at call time, so they cannot move into a TYPE_CHECKING block.
 from lemely.core.analytics import aggregate_weaknesses_from_history
-from lemely.core.history import PaperRecord, StudentHistory
-from lemely.core.schemas import WeaknessReport
-from lemely.core.study import StudentProfile, StudyPlan
-from lemely.core.study_plan import build_study_plan
+from lemely.core.at_risk import AtRiskReason, assess_at_risk
+from lemely.core.history import (
+    HistoryStoreProtocol,
+    PaperRecord,
+    StudentHistory,
+    grade_bearing,
+    is_grade_bearing,
+    is_paper,
+)
+from lemely.core.loose_schemas import MarkScheme
+from lemely.core.schemas import ExamMetadata, WeaknessReport
+from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.class_repo import ClassService, JoinCodeError
+from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
+from lemely.db.notification_repo import NotificationService
+from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
+from lemely.db.student_profile_repo import StudentProfileService
+from lemely.db.upload_repo import StudentUploadRepository
+from lemely.db.xp_repo import DEFAULT_ZONE, XpService, civil_date_in_zone
+from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.io.history_store import HistoryStore
-from lemely.io.study_plan_ai import StudyPlanNarrator
+from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
+from lemely.io.scan_metadata import ScanMetadataExtractor
+from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
     AuthContext,
-    get_auth_context,
+    get_attempt_repo,
+    get_class_service,
     get_gemini_client,
     get_history_store,
+    get_notification_service,
+    get_parent_link_service,
+    get_push_transport,
     get_settings,
+    get_storage_backend,
+    get_student_profile_service,
+    get_student_upload_repo,
+    get_xp_service,
+    require_role,
 )
+from lemely.web.notify import notify_safely
+
+# NotificationTransport is a **runtime** import for the same reason as the two
+# above: FastAPI resolves every ``Annotated[...]`` parameter through pydantic,
+# and with ``from __future__ import annotations`` a type-checking-only name
+# leaves an unresolvable ForwardRef that raises PydanticUserError on the
+# route's *first request* rather than at import (P5.6 chunk C1).
+from lemely.web.push import NotificationTransport
+from lemely.web.schemas import question_to_dto
+from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
+from lemely.web.schemas_parent import LinkedParentDTO, LinkParentRequestDTO, ParentLinkListDTO
 from lemely.web.schemas_student import (
+    CorrectRequest,
     IntegrityRowDTO,
     MomentumDTO,
-    OnboardingRequest,
     OverviewDTO,
     PaperBarDTO,
     PaperBreakdownDTO,
     PaperHistoryRowDTO,
-    PlanSessionDTO,
     ResultDTO,
     StandingsDTO,
-    StudentProfileDTO,
-    StudyPlanDTO,
-    StudyPlanRequest,
+    StudentUploadResponse,
     SubjectDTO,
     SubjectHeaderDTO,
     SubjectRankDTO,
@@ -63,13 +107,28 @@ from lemely.web.schemas_student import (
     VizColor,
     WeakThreadDTO,
 )
+from lemely.web.services.grading import extract_answers, grade_paper
+from lemely.web.upload_utils import check_upload_cap, safe_upload_name
+from lemely.web.xp_awards import award_xp_safely
 
 router = APIRouter(prefix="/api")
 
-# Default weekly study budget when the GET plan endpoint has no caller-supplied
-# figure (the POST path takes an explicit ``weeklyHours``). Kept as a named
-# constant rather than a mock demo number.
-_DEFAULT_WEEKLY_HOURS = 11.0
+log = structlog.get_logger(__name__)
+
+#: Notification-body wording per at-risk reason (P5.6 chunk C2c, D5.11 §5).
+#: Deliberately **not** ``AtRiskFlag.summary``, which renders the evidence —
+#: percentages, predicted grades, a target — and is written for the teacher's
+#: at-risk view where that evidence appears with its confidence intact. A
+#: notification body reaches a lock screen, so it names the *reason* and sends
+#: the reader to the surface that can show them the rest.
+#: ``INACTIVE`` is included for completeness of the mapping even though rule 3
+#: cannot fire at this seam (D5.11 §2) — a map missing a case is a KeyError
+#: waiting for the day a scheduler exists.
+AT_RISK_REASON_LABELS: dict[AtRiskReason, str] = {
+    AtRiskReason.DECLINING_TREND: "Recent papers show a declining trend.",
+    AtRiskReason.BELOW_TARGET: "Tracking below their target grade.",
+    AtRiskReason.INACTIVE: "No activity recorded for a while.",
+}
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -108,9 +167,16 @@ def _weak_threads(weaknesses: WeaknessReport, *, limit: int | None = None) -> li
     return threads
 
 
-def _subject_records(history: StudentHistory, code: str) -> list[PaperRecord]:
-    """Return this student's records for one subject code, oldest-first."""
-    return [r for r in history.records if r.metadata.subject_code == code]
+def _subject_records(history: StudentHistory, code: str) -> list[tuple[int, PaperRecord]]:
+    """Return ``(original_index, record)`` pairs for one subject, oldest-first.
+
+    ``original_index`` is the record's position in the FULL, unfiltered
+    ``history.records`` list — the same addressing scheme
+    ``GET /student/result/{paper_id}`` uses — not a position in this
+    subject-filtered subset. Callers that only need the records (not the
+    index) can drop the first element of each pair.
+    """
+    return [(i, r) for i, r in enumerate(history.records) if r.metadata.subject_code == code]
 
 
 def _momentum(records: list[PaperRecord]) -> MomentumDTO:
@@ -119,8 +185,14 @@ def _momentum(records: list[PaperRecord]) -> MomentumDTO:
     Uses the same coordinate transform as ``web/src/portals/student/data.ts``
     (300x88 viewbox, 55-100 % band). Returns empty ``path``/``area`` when fewer
     than two papers exist (a polyline needs at least two points).
+
+    Filters to grade-bearing records itself rather than trusting each caller to
+    do it (``docs/quiz-model.md`` §5) — this is a percentage-over-time claim,
+    and one quiz scoring 40% on a hard topic would draw a dive in a line the
+    student reads as "my papers are getting worse".
     """
-    series = [r.percentage for r in records]
+    papers = grade_bearing(records)
+    series = [r.percentage for r in papers]
     if len(series) < 2:
         return MomentumDTO(path="", area="", lastX="0.0", lastY="88.0", labels=[])
 
@@ -132,7 +204,7 @@ def _momentum(records: list[PaperRecord]) -> MomentumDTO:
 
     path = " ".join(f"{'L' if i else 'M'}{mx(i):.1f} {my(v):.1f}" for i, v in enumerate(series))
     last_i = len(series) - 1
-    labels = [r.recorded_at[:7] for r in records]
+    labels = [r.recorded_at[:7] for r in papers]
     return MomentumDTO(
         path=path,
         area=f"{path} L300 88 L0 88 Z",
@@ -150,10 +222,17 @@ def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
     resolves against real boundaries. ``name``/``detail`` are neutral (history
     records carry no human subject name or teacher), so ``name`` echoes the code
     and ``detail`` reports the paper count only.
+
+    Grade-bearing records only (``docs/quiz-model.md`` §5): every number on
+    this row — the mark-weighted mean, the first-to-last delta, and a grade
+    resolved against real CAIE boundaries — is a paper claim. A quiz total
+    folded into that weighted mean would move a student's forecast grade with
+    marks the boundaries were never drawn for. A subject the student has only
+    quizzed produces no row, which is honest: they have no standing in it yet.
     """
     boundary_store = GradeBoundaryStore()
     by_code: dict[str, list[PaperRecord]] = {}
-    for record in history.records:
+    for record in grade_bearing(history.records):
         by_code.setdefault(record.metadata.subject_code, []).append(record)
 
     rows: list[SubjectRowDTO] = []
@@ -184,8 +263,8 @@ def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
 
 @router.get("/student/overview", response_model=OverviewDTO)
 def student_overview(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> OverviewDTO:
     """Return the student Overview: subject rows, global weak threads, momentum.
 
@@ -212,19 +291,35 @@ def student_overview(
 @router.get("/student/subject/{code}", response_model=SubjectDTO)
 def student_subject(
     code: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> SubjectDTO:
     """Return one subject's papers breakdown, topic map, and paper history.
 
     Data-backed: per-paper breakdown bars (percentage per recorded paper),
     weighted mean, predicted grade + boundary, per-topic accuracy tiles, and the
     paper-history table. 404 when the student has no papers for ``code``.
+
+    Every number here except the topic map is a paper claim, so the paper
+    surfaces read grade-bearing records only (``docs/quiz-model.md`` §5) —
+    otherwise a quiz would open a bogus "Paper 1" breakdown card (1/1 is the
+    synthetic paper identity the marking call needed) and drag the weighted
+    mean the forecast grade is resolved from. ``topicMap`` deliberately keeps
+    *all* of the subject's records, quizzes included: a weakness is a weakness
+    whatever revealed it, and a topic quiz is precisely the kind of evidence
+    that map exists to show.
     """
     history = history_store.load(auth.user_id)
-    records = _subject_records(history, code)
-    if not records:
+    all_subject_records = _subject_records(history, code)
+    if not all_subject_records:
         raise HTTPException(status_code=404, detail=f"No history for subject {code}")
+    # Index-preserving: ``_subject_records`` pairs each record with its position
+    # in the FULL history list, which is how ``GET /student/result/{id}``
+    # addresses it — filtering the pairs keeps those ids correct.
+    indexed_records = [(i, r) for i, r in all_subject_records if is_grade_bearing(r)]
+    records = [record for _, record in indexed_records]
+    if not records:
+        raise HTTPException(status_code=404, detail=f"No papers for subject {code}")
 
     boundary_store = GradeBoundaryStore()
     awarded = sum(r.awarded_marks for r in records)
@@ -262,7 +357,7 @@ def student_subject(
             )
         )
 
-    weaknesses = _subject_weaknesses(records)
+    weaknesses = _subject_weaknesses([record for _, record in all_subject_records])
     topic_map = [
         TopicTileDTO(
             name=area.topic,
@@ -275,6 +370,7 @@ def student_subject(
 
     paper_history = [
         PaperHistoryRowDTO(
+            id=str(index),
             paper=_paper_label(record),
             note="",
             marks=f"{record.awarded_marks}/{record.maximum_marks}",
@@ -283,7 +379,7 @@ def student_subject(
             gradeColor=_bar_color(record.percentage),
             tab=f"p{record.metadata.paper_number}",
         )
-        for record in reversed(records)
+        for index, record in reversed(indexed_records)
     ]
 
     header = SubjectHeaderDTO(
@@ -317,14 +413,63 @@ def _paper_label(record: PaperRecord) -> str:
     return f"{m.subject_code}/{m.paper_number}{m.paper_variant}{year}"
 
 
+class _ResultHeaderFields(TypedDict):
+    """Return shape of :func:`_result_header_fields`.
+
+    CamelCase, matching :class:`~lemely.web.schemas_student.ResultDTO`'s field
+    names directly. A plain ``dict[str, str | int]`` would force every
+    read-site to re-narrow the value type, so a TypedDict is used instead.
+    """
+
+    code: str
+    paper: str
+    session: str
+    boundaryYear: str
+    railLeft: int
+    railFoot: str
+
+
+def _result_header_fields(
+    metadata: ExamMetadata, awarded: int, maximum: int
+) -> _ResultHeaderFields:
+    """Compute the code/paper/session/boundaryYear/railLeft/railFoot header fields.
+
+    Shared by GET /student/result/{id} and the POST /student/correct SSE
+    complete frame — same boundary-store call, same format strings, so the two
+    paths are provably consistent rather than duplicated logic that could
+    silently drift.
+
+    Returns camelCase keys matching :class:`ResultDTO`'s field names directly —
+    ``student_result`` spreads them straight into the DTO constructor.
+    ``student_correct``'s SSE call site renames ``boundaryYear``/``railLeft``/
+    ``railFoot`` to snake_case explicitly when spreading these into
+    ``bus.publish(...)`` kwargs, since raw SSE frames use snake_case top-level
+    keys (``EventBus.publish`` forwards kwargs as-is, bypassing the DTO alias
+    layer that ``ResultDTO`` relies on).
+    """
+    boundaries, _ = GradeBoundaryStore().resolve(metadata)
+    a_pct = boundaries.get("A")
+    a_marks = round((a_pct / 100.0) * maximum) if a_pct is not None else None
+    rail_foot = f"A boundary sat at {a_marks}/{maximum}" if a_marks is not None else ""
+    year = metadata.session_year
+    return {
+        "code": metadata.subject_code,
+        "paper": f"Paper {metadata.paper_number} - Variant {metadata.paper_variant}",
+        "session": metadata.session_month + (f" {year}" if year else ""),
+        "boundaryYear": str(year) if year else "",
+        "railLeft": round((awarded / maximum) * 100) if maximum else 0,
+        "railFoot": rail_foot,
+    }
+
+
 # ── Paper result (flagship) ───────────────────────────────────────────────────
 
 
 @router.get("/student/result/{paper_id}", response_model=ResultDTO)
 def student_result(
     paper_id: str,
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> ResultDTO:
     """Return the flagship per-paper result for ``paper_id`` (a record index).
 
@@ -348,16 +493,12 @@ def student_result(
         raise HTTPException(status_code=404, detail=f"No paper {paper_id}")
     record = history.records[index]
 
-    boundaries, _ = GradeBoundaryStore().resolve(record.metadata)
-    a_pct = boundaries.get("A")
     max_marks = record.maximum_marks
-    a_marks = round((a_pct / 100.0) * max_marks) if a_pct is not None else None
-    rail_foot = f"A boundary sat at {a_marks}/{max_marks}" if a_marks is not None else ""
-    year = record.metadata.session_year
+    header = _result_header_fields(record.metadata, record.awarded_marks, max_marks)
     return ResultDTO(
-        code=record.metadata.subject_code,
-        paper=f"Paper {record.metadata.paper_number} - Variant {record.metadata.paper_variant}",
-        session=record.metadata.session_month + (f" {year}" if year else ""),
+        code=header["code"],
+        paper=header["paper"],
+        session=header["session"],
         markerLabel="",
         headline=f"{record.awarded_marks} out of {record.maximum_marks}.",
         summary="",
@@ -365,9 +506,9 @@ def student_result(
         max=max_marks,
         pct=round(record.percentage),
         grade=record.grade,
-        boundaryYear=str(year) if year else "",
-        railLeft=round(record.percentage),
-        railFoot=rail_foot,
+        boundaryYear=header["boundaryYear"],
+        railLeft=header["railLeft"],
+        railFoot=header["railFoot"],
         railNote="",
         theory=[],
         integrity=_integrity_summary(record),
@@ -386,8 +527,9 @@ def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
     _, source = GradeBoundaryStore().resolve(record.metadata)
     detail = {
         "exact": "Official CAIE boundary matched for this exact variant.",
-        "subject_default": "Subject-default boundary used (no exact-variant data).",
-        "global_default": "Global-default boundary used (no subject data).",
+        "subject_default": "Estimated from this subject's historical average boundary "
+        "(no exact-variant data for this session).",
+        "global_default": "Estimated from a global average boundary (no subject data).",
     }[source]
     return [
         IntegrityRowDTO(
@@ -399,128 +541,416 @@ def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
     ]
 
 
+# ── Upload a scan (self-mark ingest) ──────────────────────────────────────────
+
+
+@router.post("/student/uploads", response_model=StudentUploadResponse)
+async def student_upload(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    settings: Annotated[Settings, Depends(get_settings)],
+    upload_repo: Annotated[StudentUploadRepository, Depends(get_student_upload_repo)],
+    storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
+    scan: Annotated[UploadFile, File()],
+    mark_scheme: Annotated[UploadFile | None, File()] = None,
+) -> StudentUploadResponse:
+    """Persist a student's scanned paper (+ optional mark scheme) and register it.
+
+    The scan is uploaded to Supabase Storage under
+    ``uploads/{user_id}/{paperId}/{filename}`` — the object key is namespaced by
+    both the authenticated user id and a server-generated ``paperId`` (the
+    :class:`Upload` row's id), and the client filename is sanitised to a
+    basename. The returned ``paperId`` is passed back to ``POST
+    /api/student/correct`` to run the self-mark pipeline over this scan.
+    """
+    paper_id = uuid.uuid4()
+    object_prefix = f"uploads/{auth.user_id}/{paper_id.hex}"
+
+    scan_bytes = await scan.read()
+    check_upload_cap(scan_bytes)
+    object_path = f"{object_prefix}/{safe_upload_name(scan.filename, 'scan.pdf')}"
+    storage_backend.upload(settings.storage.bucket, object_path, scan_bytes, scan.content_type)
+
+    if mark_scheme is not None:
+        # Fixed name so ``resolve_mark_scheme`` can find the sibling scheme object.
+        scheme_bytes = await mark_scheme.read()
+        check_upload_cap(scheme_bytes)
+        storage_backend.upload(
+            settings.storage.bucket,
+            f"{object_prefix}/mark_scheme.pdf",
+            scheme_bytes,
+            mark_scheme.content_type,
+        )
+
+    upload_repo.create_upload(
+        user_id=auth.user_id,
+        storage_path=object_path,
+        original_filename=scan.filename,
+        content_type=scan.content_type,
+        byte_size=len(scan_bytes),
+        upload_id=paper_id,
+    )
+    return StudentUploadResponse(paperId=str(paper_id))
+
+
 # ── Correct a paper (SSE self-mark) ───────────────────────────────────────────
+
+
+def _metadata_matches(scheme_meta: object, detected: ExamMetadata) -> bool:
+    """Return True when a stored scheme's metadata matches the detected paper.
+
+    Compares subject_code / paper_number / paper_variant always, and the session
+    (month + year) only when the scan detected one — a scan without a resolved
+    session should still match a scheme for the same paper.
+    """
+    if getattr(scheme_meta, "subject_code", None) != detected.subject_code:
+        return False
+    if getattr(scheme_meta, "paper_number", None) != detected.paper_number:
+        return False
+    if getattr(scheme_meta, "paper_variant", None) != detected.paper_variant:
+        return False
+    if detected.session_year is not None:
+        return bool(getattr(scheme_meta, "session_year", None) == detected.session_year)
+    return True
+
+
+def resolve_mark_scheme(
+    scan_path: Path,
+    settings: Settings,
+    gemini_client: GeminiClient,
+    *,
+    metadata: ExamMetadata | None = None,
+) -> MarkScheme | None:
+    """Resolve a mark scheme for a scan: sibling PDF first, then scheme corpus.
+
+    Preference order:
+
+    1. A ``mark_scheme.pdf`` sitting next to the scan (uploaded with it) — parsed
+       via the deterministic parser with a Gemini fallback.
+    2. When ``metadata`` was detected, a parsed scheme JSON in
+       ``output_dir/schemes`` whose metadata matches the detected paper.
+
+    Returns ``None`` when neither source yields a scheme (the caller then warns
+    and marks the upload failed rather than inventing marks).
+    """
+    sibling = scan_path.parent / "mark_scheme.pdf"
+    if sibling.exists():
+        from lemely.io.det import DeterministicMarkSchemeParser
+
+        parser = ChainedMarkSchemeParser(
+            DeterministicMarkSchemeParser(cfg=settings.det_parser),
+            GeminiMarkSchemeParser(gemini_client),
+        )
+        return parser(sibling)
+
+    if metadata is None:
+        return None
+
+    import json
+
+    from pydantic import ValidationError
+
+    schemes_dir = settings.paths.output_dir / "schemes"
+    if not schemes_dir.exists():
+        return None
+    for path in sorted(schemes_dir.glob("*.json")):
+        try:
+            scheme = MarkScheme.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        except (ValidationError, json.JSONDecodeError, OSError):
+            continue
+        if _metadata_matches(scheme.metadata, metadata):
+            return scheme
+    return None
+
+
+def _alert_teachers_and_parents(
+    notification_service: NotificationService,
+    push_transport: NotificationTransport,
+    *,
+    history_store: HistoryStoreProtocol,
+    profile_service: StudentProfileService,
+    class_service: ClassService,
+    parent_service: ParentLinkService,
+    student_id: str,
+) -> None:
+    """Raise ``at_risk_alert`` for a freshly corrected student's staff (D5.11).
+
+    Runs after the correction has committed, wrapped, and never raises: the
+    at-risk assessment and both recipient lookups are queries of our own and
+    sit outside :func:`notify_safely`, so a failure anywhere in here must cost
+    an alert and nothing else (D5.9 §1).
+
+    **Rule 3 (≥14 days inactive) cannot fire at this seam and that is not an
+    oversight.** A student who has just uploaded a paper is, by definition,
+    active. Rule 3 is time-triggered and joins ``streak_warning`` and
+    ``study_plan_reminder`` in D5.9 §5's no-scheduler limitation — which means
+    the reason most likely to matter for a disengaging student is the one this
+    build cannot deliver. Stated in D5.11 §2 and carried to the Phase-5
+    limitations rather than left to be discovered.
+
+    The dedupe key is ``(student, reason, Cairo civil date)`` (D5.11 §3):
+    at-risk is a state, not an event, so an upload-keyed alert would send a
+    teacher of thirty students one notification per upload. The day boundary is
+    :func:`~lemely.db.xp_repo.civil_date_in_zone`, the same one D5.1 §4 fixed
+    for streaks — Cairo is UTC+3 in summer, so a hardcoded offset is wrong for
+    half the year.
+
+    Every recipient's row is gated by **their own** preferences, which
+    :func:`notify_safely` does for free by reading the recipient's row
+    (D5.9 §3). That is what stops a student silencing alerts about themselves.
+    """
+    try:
+        history = history_store.load(student_id)
+        assessment = assess_at_risk(
+            history,
+            now=datetime.now(UTC),
+            targets=profile_service.target_grades_for(student_id),
+        )
+        if not assessment.flags:
+            return
+
+        student_name = class_service.display_name_for(student_id)
+        recipients = [
+            *class_service.teachers_for_student(student_id),
+            *(parent.parent_id for parent in parent_service.list_parents(student_id)),
+        ]
+        if not recipients:
+            return
+
+        today = civil_date_in_zone(datetime.now(UTC), zone=DEFAULT_ZONE)
+        for flag in assessment.flags:
+            for recipient in recipients:
+                notify_safely(
+                    notification_service,
+                    push_transport,
+                    user_id=recipient,
+                    type=NotificationType.at_risk_alert,
+                    title=f"{student_name} may need support",
+                    # The reason, never the evidence. ``flag.summary`` renders
+                    # marks and predicted grades, and the teacher's own at-risk
+                    # view already shows them with their confidence intact —
+                    # a grade on a lock screen is a grade on a lock screen
+                    # whoever is holding the phone (D5.9 §2, UI spec §1.4).
+                    body=AT_RISK_REASON_LABELS[flag.reason],
+                    payload={"studentId": str(student_id), "reason": flag.reason.value},
+                    dedupe_key=f"{student_id}:{flag.reason.value}:{today.isoformat()}",
+                    seam="at_risk_alert",
+                )
+    except Exception:
+        log.exception("at_risk_alert_failed", student_id=str(student_id))
 
 
 @router.post("/student/correct")
 def student_correct(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    payload: CorrectRequest,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    upload_repo: Annotated[StudentUploadRepository, Depends(get_student_upload_repo)],
+    attempt_repo: Annotated[AttemptRepository, Depends(get_attempt_repo)],
+    gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
+    xp_service: Annotated[XpService, Depends(get_xp_service)],
+    notification_service: Annotated[NotificationService, Depends(get_notification_service)],
+    push_transport: Annotated[NotificationTransport, Depends(get_push_transport)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
+    class_service: Annotated[ClassService, Depends(get_class_service)],
+    parent_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
 ) -> StreamingResponse:
-    """Stream the self-mark pipeline (extract → grade) as Server-Sent Events.
+    """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
-    Reuses :func:`lemely.web.services.grading.extract_answers` /
-    :func:`~lemely.web.services.grading.grade_paper` over the shared event bus.
-    A concrete run requires an uploaded scan + mark scheme (multipart handling is
-    a foundation concern owned outside this router); until that lands the
-    endpoint publishes a single ``warning`` frame and terminates cleanly with the
-    ``[DONE]`` sentinel so the frontend stream reader always closes.
+    Resolves the caller-owned upload (a 404 for an unknown or foreign paper is
+    raised *before* streaming starts, so the client never has to parse a
+    mid-stream error), then runs extract → grade over the shared event bus and
+    persists the full :class:`AccuracyReport` — one attempt with per-question
+    results, weaknesses, and review-queue rows — via :class:`AttemptRepository`.
+    The stream emits ``marking_progress`` frames and ends with a ``complete``
+    summary frame plus the ``[DONE]`` sentinel; on any failure the upload is
+    marked failed and a ``warning``/``error`` frame is emitted (never a
+    traceback).
     """
     from lemely.runtime.events import EventType, bus
     from lemely.web.sse import bus_event_stream
 
+    owned = upload_repo.get_owned_upload(user_id=auth.user_id, upload_id=payload.paperId)
+    if owned is None:
+        raise HTTPException(status_code=404, detail=f"Unknown paper: {payload.paperId}")
+
     def run() -> None:
         try:
-            bus.publish(
-                EventType.WARNING,
-                message="Upload a scan and mark scheme to start self-marking.",
-                student_id=auth.user_id,
-            )
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_path = Path(tmp_dir)
+                scan_bytes = storage_backend.download(settings.storage.bucket, owned.storage_path)
+                scan_path = tmp_path / Path(owned.storage_path).name
+                scan_path.write_bytes(scan_bytes)
+
+                # A sibling mark_scheme.pdf, if the student uploaded one, lives
+                # next to the scan under the same object-key prefix.
+                scheme_object_path = f"{Path(owned.storage_path).parent.as_posix()}/mark_scheme.pdf"
+                try:
+                    scheme_bytes = storage_backend.download(
+                        settings.storage.bucket, scheme_object_path
+                    )
+                except StorageObjectNotFoundError:
+                    pass
+                else:
+                    (tmp_path / "mark_scheme.pdf").write_bytes(scheme_bytes)
+
+                metadata: ExamMetadata | None = None
+                if settings.gemini_api_key is not None:
+                    try:
+                        metadata = ScanMetadataExtractor(gemini_client)(scan_path)
+                    except Exception as exc:
+                        bus.publish(
+                            EventType.WARNING,
+                            paper_id=payload.paperId,
+                            message=f"Could not detect scan metadata: {exc}",
+                        )
+
+                mark_scheme = resolve_mark_scheme(
+                    scan_path, settings, gemini_client, metadata=metadata
+                )
+                if mark_scheme is None:
+                    bus.publish(
+                        EventType.WARNING,
+                        paper_id=payload.paperId,
+                        message="No mark scheme available for this paper; cannot mark.",
+                    )
+                    upload_repo.set_status(owned.id, UploadStatus.failed)
+                    return
+
+                extracted = extract_answers(scan_path, mark_scheme, gemini_client=gemini_client)
+                report = grade_paper(
+                    mark_scheme,
+                    extracted,
+                    gemini_client=gemini_client,
+                    student_id=None,
+                    integrity_settings=settings.integrity,
+                )
+                attempt_id = attempt_repo.persist_correction(
+                    user_id=auth.user_id, report=report, upload_id=owned.id
+                )
+                upload_repo.set_status(owned.id, UploadStatus.complete)
+                # P5.2 chunk B, D5.1: XP for the *act* of correcting a paper,
+                # never for how well it was corrected — no mark/score/grade
+                # is read here or passed to XpService.award. The attempt is
+                # already persisted and the upload already marked complete
+                # above, so a failure inside this call is caught and logged
+                # by award_xp_safely and never turns this already-successful
+                # correction into an error frame (D5.1 §3, "the learning
+                # wins").
+                #
+                # The dedupe key is the **upload** id, not the attempt id.
+                # D5.1 §8 names "the paper id" and opens with "a paper can be
+                # re-marked ... none of those may re-award XP".
+                # ``persist_correction`` inserts a fresh ``Attempt`` on every
+                # run, so keying on the attempt would mint a new key each
+                # time and award again for every re-correction of the same
+                # paper — the precise anomaly §8 exists to prevent. The
+                # upload is the stable identity of "this paper", so a student
+                # re-running the pipeline on it earns nothing new (D5.3).
+                award_xp_safely(
+                    xp_service,
+                    user_id=auth.user_id,
+                    source=XpSource.paper_corrected,
+                    dedupe_key=str(owned.id),
+                    subject_code=report.correction.metadata.subject_code,
+                    seam="paper_corrected",
+                )
+                # P5.6 chunk C2a, D5.9: tell the student their paper is marked.
+                # Fail-open for the same reason as the XP award above — the
+                # attempt is persisted and the upload is complete, so nothing
+                # here may turn a successful correction into an error frame.
+                #
+                # The dedupe key is the **upload**, exactly as the XP key is,
+                # and for exactly D5.3's reason: ``persist_correction`` mints a
+                # fresh ``Attempt`` every run, so an attempt-keyed notification
+                # would re-fire on every re-correction of the same PDF. D5.9 §6
+                # wrote this down before it could recur.
+                #
+                # Title and body are **pointers, never the data** (D5.9 §2):
+                # the paper's identity, and no mark, percentage or grade. That
+                # is what makes the preference gate lossless — a student who
+                # turns ``grade_ready`` off loses a nudge, not a result — and it
+                # keeps grades private (UI spec §1.4) on a row that a push
+                # service is told about.
+                paper_metadata = report.correction.metadata
+                notify_safely(
+                    notification_service,
+                    push_transport,
+                    user_id=auth.user_id,
+                    type=NotificationType.grade_ready,
+                    title="Your paper has been marked",
+                    # "Paper 1 Variant 2", never "Paper 1/2": a slash between two
+                    # small integers reads as a mark out of a total on a lock
+                    # screen, which is the one thing this line must not look like.
+                    body=(
+                        f"{paper_metadata.subject_code} Paper "
+                        f"{paper_metadata.paper_number} Variant {paper_metadata.paper_variant}"
+                        " is ready to review."
+                    ),
+                    payload={"uploadId": str(owned.id)},
+                    dedupe_key=str(owned.id),
+                    seam="grade_ready",
+                )
+                # P5.6 chunk C2c, D5.11: the same already-committed correction
+                # is also the only real "this student's risk may have changed"
+                # event in the build — at-risk is computed on *read* everywhere
+                # else, so there is nothing else to hang this on.
+                _alert_teachers_and_parents(
+                    notification_service,
+                    push_transport,
+                    history_store=history_store,
+                    profile_service=profile_service,
+                    class_service=class_service,
+                    parent_service=parent_service,
+                    student_id=auth.user_id,
+                )
+                # ``report.correction.metadata`` (an ``ExamMetadata``, derived from
+                # ``mark_scheme.metadata`` by ``core.correction._exam_metadata``) —
+                # not the separately-detected ``metadata`` variable above, which
+                # can be None. It's reliably present whenever a scheme was
+                # successfully resolved, whether via detected-metadata corpus
+                # lookup or a student-supplied sibling PDF, and — unlike
+                # ``mark_scheme.metadata`` itself, which is a distinct
+                # ``loose_schemas.MarkSchemeMetadata`` — it is already the
+                # ``ExamMetadata`` type ``_result_header_fields`` expects.
+                header = _result_header_fields(
+                    report.correction.metadata,
+                    report.correction.awarded_marks,
+                    report.correction.maximum_marks,
+                )
+                bus.publish(
+                    EventType.MARKING_PROGRESS,
+                    paper_id=payload.paperId,
+                    phase="complete",
+                    attempt_id=str(attempt_id),
+                    awarded=report.correction.awarded_marks,
+                    max_marks=report.correction.maximum_marks,
+                    grade=report.grade_prediction.grade,
+                    confidence=report.grade_prediction.confidence.value,
+                    needs_review=report.correction.needs_teacher_review,
+                    questions=[
+                        question_to_dto(q).model_dump(by_alias=True)
+                        for q in report.correction.questions
+                    ],
+                    # SSE frames are raw kwargs forwarded snake_case (bypassing the
+                    # camelCase DTO alias layer), so the two camelCase-named header
+                    # keys are renamed explicitly here.
+                    code=header["code"],
+                    paper=header["paper"],
+                    session=header["session"],
+                    boundary_year=header["boundaryYear"],
+                    rail_left=header["railLeft"],
+                    rail_foot=header["railFoot"],
+                    pct=round(report.grade_prediction.percentage),
+                )
+        except Exception as exc:
+            bus.publish(EventType.ERROR, paper_id=payload.paperId, message=str(exc))
+            upload_repo.set_status(owned.id, UploadStatus.failed)
         finally:
             bus.publish_done()
 
     return StreamingResponse(bus_event_stream(run), media_type="text/event-stream")
-
-
-# ── Study plan ────────────────────────────────────────────────────────────────
-
-
-def _plan_to_dto(plan: StudyPlan) -> StudyPlanDTO:
-    """Convert a core :class:`StudyPlan` into its camelCase DTO (data-backed)."""
-    return StudyPlanDTO(
-        studentId=plan.student_id,
-        weeklyHours=plan.weekly_hours,
-        sessions=[
-            PlanSessionDTO(
-                topic=s.topic,
-                subjectCode=s.subject_code,
-                hours=s.hours,
-                focus=s.focus,
-            )
-            for s in plan.sessions
-        ],
-        narrative=plan.narrative,
-    )
-
-
-@router.get("/student/plan", response_model=StudyPlanDTO)
-def student_plan_get(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
-) -> StudyPlanDTO:
-    """Return the deterministic weekly study plan (data-backed, no narrative).
-
-    Built by :func:`lemely.core.study_plan.build_study_plan` from the student's
-    aggregate weaknesses over the default weekly budget. ``narrative`` is null on
-    this path (no Gemini call).
-    """
-    history = history_store.load(auth.user_id)
-    weaknesses = aggregate_weaknesses_from_history(history)
-    subjects = sorted({r.metadata.subject_code for r in history.records})
-    profile = StudentProfile(
-        student_id=auth.user_id,
-        grade_level="",
-        subjects=subjects or ["unknown"],
-        weekly_study_hours=_DEFAULT_WEEKLY_HOURS,
-    )
-    plan = build_study_plan(profile, weaknesses, weekly_hours=profile.weekly_study_hours)
-    return _plan_to_dto(plan)
-
-
-@router.post("/student/plan", response_model=StudyPlanDTO)
-def student_plan_post(
-    payload: StudyPlanRequest,
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> StudyPlanDTO:
-    """Build a study plan for the requested student, optionally AI-narrated.
-
-    Deterministic schedule is data-backed from history weaknesses. When
-    ``narrate`` is true a :class:`StudyPlanNarrator` (Gemini) enriches it with a
-    narrative. Narration only runs when an API key is configured (mirroring the
-    upload pipeline); in the default no-key state — or if the narrator raises at
-    runtime — the endpoint returns a clean 503 rather than an unhandled 500. The
-    deterministic plan is always available, so a degraded caller can retry
-    without narration.
-    """
-    history = history_store.load(payload.studentId)
-    weaknesses = aggregate_weaknesses_from_history(history)
-    subjects = sorted({r.metadata.subject_code for r in history.records})
-    profile = StudentProfile(
-        student_id=payload.studentId,
-        grade_level="",
-        subjects=subjects or ["unknown"],
-        weekly_study_hours=payload.weeklyHours,
-    )
-    plan = build_study_plan(profile, weaknesses, weekly_hours=payload.weeklyHours)
-
-    if payload.narrate:
-        if settings.gemini_api_key is None:
-            raise HTTPException(
-                status_code=503,
-                detail="AI narration is unavailable: no API key is configured.",
-            )
-        try:
-            narrator = StudyPlanNarrator(get_gemini_client())
-            plan = narrator.narrate(plan)
-        except HTTPException:
-            raise
-        except Exception as exc:  # narrator failed at runtime — degrade cleanly.
-            raise HTTPException(
-                status_code=503,
-                detail=f"AI narration is temporarily unavailable: {exc}",
-            ) from exc
-
-    return _plan_to_dto(plan)
 
 
 # ── Standings ─────────────────────────────────────────────────────────────────
@@ -528,8 +958,8 @@ def student_plan_post(
 
 @router.get("/student/standings", response_model=StandingsDTO)
 def student_standings(
-    auth: Annotated[AuthContext, Depends(get_auth_context)],
-    history_store: Annotated[HistoryStore, Depends(get_history_store)],
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
 ) -> StandingsDTO:
     """Return the student's standings summary.
 
@@ -538,10 +968,17 @@ def student_standings(
     **Structurally empty:** each subject ``rank`` — cross-student ranking needs a
     cohort the single-student store cannot provide — and the leaderboard boards,
     which are omitted entirely (no peer data source).
+
+    The two counts that say *papers* count papers (``is_paper``, origin only —
+    a paper with an unreadable grade is still a paper the student sat);
+    ``streakDays`` counts **all** activity, quizzes included, because a quiz is
+    a day the student showed up and the whole point of a streak is to say so
+    (``docs/quiz-model.md`` §5).
     """
     history = history_store.load(auth.user_id)
+    papers = [record for record in history.records if is_paper(record)]
     by_code: dict[str, int] = {}
-    for record in history.records:
+    for record in papers:
         by_code[record.metadata.subject_code] = by_code.get(record.metadata.subject_code, 0) + 1
 
     palette: list[VizColor] = ["ok", "t1", "t2", "accent", "warn"]
@@ -559,44 +996,98 @@ def student_standings(
     streak_days = len({r.recorded_at[:10] for r in history.records})
     return StandingsDTO(
         subjectRanks=subject_ranks,
-        paperCount=len(history.records),
+        paperCount=len(papers),
         streakDays=streak_days,
     )
 
 
-# ── Onboarding ────────────────────────────────────────────────────────────────
+# ── Classes (join by code) ────────────────────────────────────────────────────
 
 
-@router.post("/student/onboarding", response_model=StudentProfileDTO)
-def student_onboarding(payload: OnboardingRequest) -> StudentProfileDTO:
-    """Build and return a :class:`StudentProfile` from onboarding slider inputs.
+@router.post("/student/classes/join", response_model=JoinClassResponseDTO)
+def student_join_class(
+    payload: JoinClassRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+) -> JoinClassResponseDTO:
+    """Self-enrol the authenticated student into a class via its join code.
 
-    Fully data-backed: subjects and per-subject confidence come from the slider
-    readings (a slider with a subject ``code`` contributes a ``pct/100``
-    confidence); ``weeklyStudyHours`` is the reported hours. Nothing is fabricated
-    — sliders without a subject code (e.g. "hours", "pressure") are treated as
-    non-subject signals and excluded from ``subjects``/``confidenceBySubject``.
+    Identity is always the authenticated caller (``auth.user_id``), never a
+    caller-supplied id (D1.6 — the IDOR pattern the two former ``studentId``
+    body fields were removed for). Idempotent: re-joining an already-enrolled
+    class is a no-op. An unknown code is a clean 404, never a 500.
     """
-    confidence: dict[str, float] = {}
-    subjects: list[str] = []
-    for slider in payload.sliders:
-        if slider.code:
-            subjects.append(slider.code)
-            confidence[slider.code] = round(slider.pct / 100.0, 4)
+    try:
+        row = service.join_by_code(auth.user_id, payload.joinCode)
+    except JoinCodeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JoinClassResponseDTO(classId=str(row.class_id), className=row.name)
 
-    profile = StudentProfile(
-        student_id=payload.studentId,
-        grade_level=payload.gradeLevel,
-        subjects=subjects,
-        school=payload.school,
-        weekly_study_hours=payload.weeklyHours,
-        confidence_by_subject=confidence,
+
+# ── Parent links (invite/list/revoke) ───────────────────────────────────────
+
+
+@router.get("/student/parent-links", response_model=ParentLinkListDTO)
+def student_list_parent_links(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> ParentLinkListDTO:
+    """Return every parent linked to the authenticated student.
+
+    Identity is always the authenticated caller (``auth.user_id``), never a
+    caller-supplied id (D1.6's IDOR discipline, matching ``student_join_class``).
+    """
+    parents = service.list_parents(auth.user_id)
+    return ParentLinkListDTO(
+        parents=[
+            LinkedParentDTO(parentId=str(p.parent_id), displayName=p.display_name, phone=p.phone)
+            for p in parents
+        ]
     )
-    return StudentProfileDTO(
-        studentId=profile.student_id,
-        gradeLevel=profile.grade_level,
-        subjects=profile.subjects,
-        school=profile.school,
-        weeklyStudyHours=profile.weekly_study_hours,
-        confidenceBySubject=profile.confidence_by_subject,
+
+
+@router.post("/student/parent-links", response_model=LinkedParentDTO)
+def student_link_parent(
+    payload: LinkParentRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> LinkedParentDTO:
+    """Invite an existing parent (by phone) to link to the authenticated student.
+
+    Resolves ``phone`` to an *existing* ``role=parent`` user only (D3.11) —
+    this never creates an account from a student-supplied phone (a stranger's
+    mistyped or spoofed number could otherwise be handed this student's
+    grades). No matching parent account is a clean 404: the parent must
+    OTP-login at least once (which auto-creates their ``role=parent`` user,
+    ``AuthService.verify_otp``) before this student can invite them again.
+    Idempotent: inviting an already-linked parent again is a no-op success,
+    not an error.
+    """
+    try:
+        parent = service.link(auth.user_id, payload.phone)
+    except ParentUserNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return LinkedParentDTO(
+        parentId=str(parent.parent_id), displayName=parent.display_name, phone=parent.phone
     )
+
+
+@router.delete("/student/parent-links/{parent_id}", status_code=204)
+def student_unlink_parent(
+    parent_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+) -> None:
+    """Revoke a parent's link to the authenticated student. Idempotent.
+
+    Revoking a link that does not exist (already revoked, or never granted)
+    is a silent no-op, not an error — mirrors ``ClassService.remove_student``.
+    """
+    try:
+        service.unlink(auth.user_id, parent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

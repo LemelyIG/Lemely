@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from lemely.core.history import PaperRecord, StudentHistory
+import pytest
+
+from lemely.core.history import (
+    HISTORY_SCHEMA_VERSION,
+    PaperRecord,
+    StudentHistory,
+    is_grade_bearing,
+)
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.io.history_store import HistoryStore
+from lemely.runtime.errors import ParseError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,3 +90,91 @@ class TestHistoryStore:
         # No temp files should remain
         tmp_files = list((tmp_path / "history").glob(".charlie_*"))
         assert tmp_files == []
+
+    def test_written_file_carries_schema_version(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        store.append("alice", _make_record())
+        data = json.loads((tmp_path / "history" / "alice.json").read_text(encoding="utf-8"))
+        assert data["schema_version"] == HISTORY_SCHEMA_VERSION
+
+    def test_corrupt_json_surfaces_not_silently_empty(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        (tmp_path / "history" / "alice.json").write_text("{not valid json", encoding="utf-8")
+        with pytest.raises(ParseError, match="invalid JSON"):
+            store.load("alice")
+
+    def test_schema_mismatch_surfaces(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        # Valid JSON, wrong shape (records must be a list of PaperRecord).
+        (tmp_path / "history" / "alice.json").write_text(
+            json.dumps({"student_id": "alice", "records": "not-a-list"}), encoding="utf-8"
+        )
+        with pytest.raises(ParseError, match="schema mismatch"):
+            store.load("alice")
+
+    def test_future_schema_version_refused(self, tmp_path: Path) -> None:
+        store = HistoryStore(tmp_path / "history")
+        (tmp_path / "history" / "alice.json").write_text(
+            json.dumps(
+                {"schema_version": HISTORY_SCHEMA_VERSION + 1, "student_id": "alice", "records": []}
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ParseError, match="unsupported schema_version"):
+            store.load("alice")
+
+    @pytest.mark.parametrize(
+        "bad_key",
+        ["../secrets", "a/b", "a\\b", "", ".", "..", "with\x00nul"],
+    )
+    def test_unsafe_student_id_rejected(self, tmp_path: Path, bad_key: str) -> None:
+        # A student_id becomes a filename ({root}/{id}.json). Some callers pass a
+        # request-supplied id, so a path separator / dot-segment / NUL byte could
+        # escape the store root. Every access path must reject it, not traverse.
+        store = HistoryStore(tmp_path / "history")
+        with pytest.raises(ValueError, match="Unsafe history store key"):
+            store.load(bad_key)
+        with pytest.raises(ValueError, match="Unsafe history store key"):
+            store.append(bad_key, _make_record())
+
+    def test_safe_student_id_with_dots_and_at_is_allowed(self, tmp_path: Path) -> None:
+        # A single-segment id that merely *contains* dots (e.g. an email-shaped id)
+        # is fine — only path separators and the bare "."/".." segments are unsafe.
+        store = HistoryStore(tmp_path / "history")
+        store.append("a.user@example.com", _make_record("a.user@example.com"))
+        assert (tmp_path / "history" / "a.user@example.com.json").exists()
+
+    def test_pre_versioning_file_loads_as_v1(self, tmp_path: Path) -> None:
+        # Files written before schema_version existed must still load (default 1).
+        store = HistoryStore(tmp_path / "history")
+        (tmp_path / "history" / "alice.json").write_text(
+            json.dumps({"student_id": "alice", "records": []}), encoding="utf-8"
+        )
+        history = store.load("alice")
+        assert history.schema_version == 1
+        assert history.records == []
+
+    def test_v1_file_with_records_loads_with_records_defaulted_to_past_paper(
+        self, tmp_path: Path
+    ) -> None:
+        """The 1 -> 2 bump (P3.5 chunk G, ``PaperRecord.origin``) is additive.
+
+        A file written before ``origin`` existed must still load, and every
+        record in it must read back as a past-paper attempt — anything else
+        would retroactively drop real papers out of the grade-bearing
+        analytics that ``origin`` gates (``docs/quiz-model.md`` §5). The file
+        is built by dumping a record and *deleting* the key, so this cannot
+        drift into asserting on a field the fixture quietly supplied.
+        """
+        store = HistoryStore(tmp_path / "history")
+        record = json.loads(_make_record("alice").model_dump_json())
+        del record["origin"]
+        (tmp_path / "history" / "alice.json").write_text(
+            json.dumps({"schema_version": 1, "student_id": "alice", "records": [record]}),
+            encoding="utf-8",
+        )
+
+        history = store.load("alice")
+        assert history.schema_version == 1
+        assert [r.origin for r in history.records] == ["past_paper"]
+        assert is_grade_bearing(history.records[0])

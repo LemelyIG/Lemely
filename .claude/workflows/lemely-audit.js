@@ -39,7 +39,7 @@ const SCHEMA = {
 }
 
 const GROUND = `
-REPO: /home/sico/Code/Lemely (branch main @ 24b6c0f, in sync with origin/main). Python venv at .venv (activate: source .venv/bin/activate). 207 tracked files.
+REPO: /home/sico/Lemely (branch main @ 24b6c0f, in sync with origin/main). Python venv at .venv (activate: source .venv/bin/activate). 207 tracked files.
 Read-only audit — DO NOT write, edit, format, or run any mutating command. Read/grep/ls/tokensave/pytest-collect only.
 Tokensave is initialised: PREFER tokensave_context / tokensave_search for code structure; use Read + Bash(grep/ls/wc) to verify exact specifics (routes, decorators, line numbers). Cite file:line for every non-obvious claim; mark anything you could not verify as "unverified".
 Already-verified baseline (do NOT re-run, just reference): pytest = 306 passed / 2 skipped / coverage 82.39% (gate 70%); ruff check clean; mypy clean (77 files); import-linter 2 contracts kept; ruff format --check FAILS on tests/test_cli_new_commands.py (exit 1); web build exit 0 (486KB bundle); oxlint 6 fast-refresh warnings; auth is an anonymous stub in lemely/web/deps.py; no Dockerfile/compose/IaC; no .env.example.

@@ -1,4 +1,5 @@
 import type { RouteObject } from "react-router-dom"
+import { lazy, Suspense } from "react"
 import {
   Link,
   NavLink,
@@ -6,39 +7,142 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom"
-import { MagnifyingGlass } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { crumbs, navGroups, studentMeta, studentName } from "./data"
-import { Overview } from "./screens/Overview"
-import { Subject } from "./screens/Subject"
-import { PaperResult } from "./screens/PaperResult"
-import { CorrectPaper } from "./screens/CorrectPaper"
-import { StudyPlan } from "./screens/StudyPlan"
-import { Standings } from "./screens/Standings"
-import { Onboarding } from "./screens/Onboarding"
-import { Landing } from "./screens/Landing"
-import { Directions } from "./screens/Directions"
+import { RouteFallback } from "@/components/ui/state-views"
+import { useProfile } from "@/lib/hooks/useMeApi"
+import { navGroups, resolveCrumb } from "./data"
 
 /*
  * Student portal (terracotta). Grouped sidebar nav + a sticky top header
  * (breadcrumb, search, streak pill, "Correct a paper" CTA) wrap an <Outlet/>.
  * The layout root sets data-portal="student" so the token layer resolves to the
  * terracotta accent + neutrals (student is also the default scope).
+ *
+ * P6.1b: every screen below is `React.lazy`, not a static import. This portal
+ * alone pulled in ~24 screens' worth of JS (subject drilldowns, the whole
+ * practice/placement/flashcards/studyplan flow) into the ONE bundle every
+ * route paid for, regardless of which screen a session actually visited.
+ * Splitting at the screen boundary means a student who only ever opens
+ * Overview and Subject never downloads QuizBuilder-sized code they'll never
+ * run. Screens are named exports (not default), so each lazy import needs the
+ * `.then((m) => ({ default: m.X }))` adapter — `React.lazy` only accepts a
+ * default-export module.
  */
+const Overview = lazy(() => import("./screens/Overview").then((m) => ({ default: m.Overview })))
+const Subject = lazy(() => import("./screens/Subject").then((m) => ({ default: m.Subject })))
+const PaperResult = lazy(() => import("./screens/PaperResult").then((m) => ({ default: m.PaperResult })))
+const CorrectPaper = lazy(() => import("./screens/CorrectPaper").then((m) => ({ default: m.CorrectPaper })))
+const StudyPlanSession = lazy(() =>
+  import("./screens/studyplan/StudyPlanSession").then((m) => ({ default: m.StudyPlanSession })),
+)
+const StudyPlanWeek = lazy(() =>
+  import("./screens/studyplan/StudyPlanWeek").then((m) => ({ default: m.StudyPlanWeek })),
+)
+const Standings = lazy(() => import("./screens/Standings").then((m) => ({ default: m.Standings })))
+const Announcements = lazy(() =>
+  import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
+)
+const Notifications = lazy(() =>
+  import("./screens/Notifications").then((m) => ({ default: m.Notifications })),
+)
+const Friends = lazy(() => import("./screens/Friends").then((m) => ({ default: m.Friends })))
+const Profile = lazy(() => import("./screens/Profile").then((m) => ({ default: m.Profile })))
+const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ default: m.Onboarding })))
+const PlacementInvite = lazy(() =>
+  import("./screens/placement/PlacementInvite").then((m) => ({ default: m.PlacementInvite })),
+)
+const PlacementTest = lazy(() =>
+  import("./screens/placement/PlacementTest").then((m) => ({ default: m.PlacementTest })),
+)
+const PlacementResult = lazy(() =>
+  import("./screens/placement/PlacementResult").then((m) => ({ default: m.PlacementResult })),
+)
+const PracticeGenerator = lazy(() =>
+  import("./screens/practice/PracticeGenerator").then((m) => ({ default: m.PracticeGenerator })),
+)
+const PracticeSet = lazy(() =>
+  import("./screens/practice/PracticeSet").then((m) => ({ default: m.PracticeSet })),
+)
+const PracticeResult = lazy(() =>
+  import("./screens/practice/PracticeResult").then((m) => ({ default: m.PracticeResult })),
+)
+const PracticePrint = lazy(() =>
+  import("./screens/practice/PracticePrint").then((m) => ({ default: m.PracticePrint })),
+)
+const FlashcardDecks = lazy(() =>
+  import("./screens/flashcards/FlashcardDecks").then((m) => ({ default: m.FlashcardDecks })),
+)
+const FlashcardReview = lazy(() =>
+  import("./screens/flashcards/FlashcardReview").then((m) => ({ default: m.FlashcardReview })),
+)
+const Landing = lazy(() => import("./screens/Landing").then((m) => ({ default: m.Landing })))
+const Directions = lazy(() => import("./screens/Directions").then((m) => ({ default: m.Directions })))
+const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
+
+/**
+ * Sidebar identity block. Wired to `GET /api/me/profile` (`useProfile()`) —
+ * replaces the mock's hardcoded "Maya Rahman / Year 11 - Helwan Science
+ * Centre" and "MR" initials, which no field anywhere supplies. This is the
+ * same fiction P3.7 chunk b removed from the *teacher* sidebar; the student
+ * side was missed then and is fixed here (P3.10 chunk c), reusing that
+ * screen's `UserBlock` shape verbatim so the two cannot drift.
+ *
+ * `displayName` is nullable (a caller who never set one); the fallback is the
+ * email's local part, never a fabricated name. The subtitle is the caller's
+ * real platform role — the only affiliation-like fact this account actually
+ * carries. There is no year-group or school-name field on `Profile`, so no
+ * "Year 11 - <school>" line is rendered at all rather than invented.
+ */
+function UserBlock() {
+  const { data, isPending, isError } = useProfile()
+
+  if (isPending || isError || !data) {
+    return (
+      <div className="flex items-center gap-2.5 px-0.5 text-xs text-t3">
+        {isPending ? "Loading…" : "Signed in"}
+      </div>
+    )
+  }
+
+  const name = data.displayName ?? data.email.split("@")[0]
+  const initials = name
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase()
+  const roleLabel = data.role
+    .split("_")
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ")
+
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="w-8 h-8 rounded-full bg-accent-subtle text-accent-subtle-on flex items-center justify-center text-dense-sm font-semibold flex-none">
+        {initials}
+      </div>
+      <div className="leading-[1.25] min-w-0">
+        <div className="text-dense font-medium truncate">{name}</div>
+        <div className="text-2xs text-t2">{roleLabel}</div>
+      </div>
+    </div>
+  )
+}
 
 function Sidebar() {
   return (
     <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       <div className="flex items-center gap-[9px] px-2">
         <div className="w-[11px] h-[11px] rounded-full bg-accent" />
-        <div className="font-serif text-[25px] tracking-[0.01em]">Lemely</div>
+        <div className="text-display-sm tracking-[0.01em]">Lemely</div>
       </div>
 
       <div className="flex flex-col gap-[22px] overflow-auto lm-scroll">
         {navGroups.map((grp) => (
           <div key={grp.label} className="flex flex-col gap-0.5">
-            <div className="text-[10.5px] tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium">
+            <div className="text-3xs tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium">
               {grp.label}
             </div>
             {grp.items.map((it) => (
@@ -48,10 +152,10 @@ function Sidebar() {
                 end={it.end}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-2.5 w-full text-left text-[13.5px] px-[9px] py-2 rounded-[9px] transition-colors",
+                    "flex items-center gap-2.5 w-full text-left text-dense-lg px-[9px] py-2 rounded transition-colors",
                     isActive
-                      ? "bg-[oklch(0.90_0.02_40)] text-t1 font-medium"
-                      : "bg-transparent text-[oklch(0.36_0.018_35)] font-normal hover:bg-[oklch(0.93_0.01_40)]",
+                      ? "bg-surface text-t1 font-medium"
+                      : "bg-transparent text-t2 font-normal hover:bg-bg",
                   )
                 }
               >
@@ -60,12 +164,12 @@ function Sidebar() {
                     <span
                       className={cn(
                         "w-1.5 h-1.5 rounded-full flex-none",
-                        isActive ? "bg-accent" : "bg-[oklch(0.85_0.008_40)]",
+                        isActive ? "bg-accent" : "bg-border",
                       )}
                     />
                     <span className="flex-1">{it.label}</span>
                     {it.tag ? (
-                      <span className="font-mono text-[10px] text-t3">
+                      <span className="font-mono text-3xs text-t3">
                         {it.tag}
                       </span>
                     ) : null}
@@ -78,18 +182,10 @@ function Sidebar() {
       </div>
 
       <div className="mt-auto border-t border-border pt-[14px] flex flex-col gap-3">
-        <Link to="/teacher" className="text-[11.5px] text-t3 px-0.5 hover:text-ink">
+        <Link to="/teacher" className="text-xs text-t3 px-0.5 hover:text-ink">
           Open the teacher portal -&gt;
         </Link>
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full bg-accent-subtle text-accent flex items-center justify-center text-[12.5px] font-semibold">
-            MR
-          </div>
-          <div className="leading-[1.25]">
-            <div className="text-[13px] font-medium">{studentName}</div>
-            <div className="text-[11px] text-t2">{studentMeta}</div>
-          </div>
-        </div>
+        <UserBlock />
       </div>
     </aside>
   )
@@ -98,21 +194,30 @@ function Sidebar() {
 function Header() {
   const location = useLocation()
   const navigate = useNavigate()
-  const crumb = crumbs[location.pathname] ?? "Home"
+  const crumb = resolveCrumb(location.pathname)
   return (
-    <header className="lm-head flex items-center gap-[18px] px-[34px] py-4 border-b border-border bg-[oklch(0.97_0.007_40/0.82)] backdrop-blur-[10px] sticky top-0 z-20">
-      <div className="font-mono text-[11.5px] text-t2">{crumb}</div>
+    // Responsive sizing here is load-bearing, not cosmetic: this row's fixed
+    // items (34px padding either side, the 138px CTA and the gaps) overflowed
+    // a 380px viewport on /student/result — a real QUALITY-BAR "no horizontal
+    // scroll from 320px up" failure, found by P3.10 chunk b's responsive gate
+    // once it covered this route. The crumb must still be able to shrink
+    // (`min-w-0 truncate`; it renders "Home / Result <uuid>", the longest
+    // string on the row) and the padding still tightens below 640px.
+    //
+    // P3.10 chunk c removed two of the fixed items this row used to carry, so
+    // it now has considerably more slack than the fix above needed:
+    //   - a `<span>` styled as a search input ("Search papers, topics,
+    //     students"). It was not an input, had no handler, and no search
+    //     endpoint exists anywhere in the API — fabricated UI.
+    //   - a "24 day streak" pill, where the 24 was a literal. The only
+    //     streak-shaped field in the API is `StandingsDTO.streakDays`, and
+    //     that is `len({distinct dates in history})` — a count of active
+    //     days, NOT consecutive ones. Wiring the pill to it would have
+    //     replaced a hardcoded lie with a mislabelled one, so the pill is
+    //     gone instead; streaks are Phase 5's to build for real.
+    <header className="lm-head flex items-center gap-[18px] px-4 min-[640px]:px-[34px] py-4 border-b border-border bg-bg/80 backdrop-blur-[10px] sticky top-0 z-20">
+      <div className="font-mono text-xs text-t2 min-w-0 truncate">{crumb}</div>
       <div className="flex-1" />
-      <div className="hidden min-[1080px]:flex items-center gap-2 bg-surface border border-border rounded-[9px] px-3 py-[7px] w-[280px]">
-        <MagnifyingGlass size={13} className="text-t3" weight="bold" />
-        <span className="text-[12.5px] text-t3">
-          Search papers, topics, students
-        </span>
-      </div>
-      <div className="flex items-center gap-[7px] border border-border bg-surface rounded-[9px] px-[11px] py-[7px]">
-        <span className="text-[12.5px] font-semibold font-mono">24</span>
-        <span className="text-[11.5px] text-t2">day streak</span>
-      </div>
       <Button
         variant="accent"
         size="md"
@@ -124,6 +229,17 @@ function Header() {
   )
 }
 
+// One boundary around the Outlet, not one per <Route element>: the sidebar,
+// header and chrome above stay mounted and interactive while a screen chunk
+// downloads, so navigating never blanks the whole page — only the content
+// slot shows the loading state, then swaps to the real screen. Matches the
+// "Loading…" `role="status"` text every screen below already uses for its own
+// data-pending state (see e.g. `screens/Overview.tsx`), so a chunk load reads
+// as the same kind of wait, not a new visual language. The fallback itself is
+// `RouteFallback` from the C-11 state-view family — one shared component, since
+// all three portals and `App.tsx` need it and four local copies had already
+// drifted to three different type/padding combinations before they were merged.
+
 function StudentLayout() {
   return (
     <div data-portal="student" className="flex min-h-screen">
@@ -131,7 +247,9 @@ function StudentLayout() {
       <main className="flex-1 min-w-0 flex flex-col">
         <Header />
         <div className="lm-body flex-1 p-[34px] max-w-[1320px] w-full">
-          <Outlet />
+          <Suspense fallback={<RouteFallback className="text-dense-lg" />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>
@@ -143,12 +261,28 @@ export const studentRoute: RouteObject = {
   element: <StudentLayout />,
   children: [
     { index: true, element: <Overview /> },
-    { path: "subject", element: <Subject /> },
-    { path: "result", element: <PaperResult /> },
+    { path: "subject/:code", element: <Subject /> },
+    { path: "result/:paperId", element: <PaperResult /> },
     { path: "correct", element: <CorrectPaper /> },
-    { path: "plan", element: <StudyPlan /> },
+    { path: "plan/:subjectCode", element: <StudyPlanWeek /> },
+    { path: "plan/:subjectCode/session/:sessionId", element: <StudyPlanSession /> },
     { path: "board", element: <Standings /> },
+    { path: "announcements", element: <Announcements /> },
+    { path: "notifications", element: <Notifications /> },
+    { path: "friends", element: <Friends /> },
+    { path: "profile", element: <Profile /> },
+    // The only place a parent_child_links row is created (D3.11).
+    { path: "parents", element: <Parents /> },
     { path: "onboard", element: <Onboarding /> },
+    { path: "placement/:subjectCode", element: <PlacementInvite /> },
+    { path: "placement/test/:assignmentId", element: <PlacementTest /> },
+    { path: "placement/result/:assignmentId", element: <PlacementResult /> },
+    { path: "practice/:subjectCode", element: <PracticeGenerator /> },
+    { path: "practice/set/:assignmentId", element: <PracticeSet /> },
+    { path: "practice/result/:assignmentId", element: <PracticeResult /> },
+    { path: "practice/print/:assignmentId", element: <PracticePrint /> },
+    { path: "flashcards/:subjectCode", element: <FlashcardDecks /> },
+    { path: "flashcards/review/:subjectCode", element: <FlashcardReview /> },
     { path: "landing", element: <Landing /> },
     { path: "directions", element: <Directions /> },
   ],

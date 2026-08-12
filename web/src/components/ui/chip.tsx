@@ -7,8 +7,12 @@ import { cn } from "@/lib/utils"
  *   ok = graded / parsed / correct, warn = pending / processing / attention,
  *   err = needs-review / dropped, neutral = queued / muted, accent = live.
  */
+// DESIGN.md "Status Chips: Pill-shaped with tight internal padding (3px
+// 9px)" — px-9px/py-3px are the exact DESIGN.md-literal tokens (index.css),
+// text-2xs is the promoted 11px type-scale rung (shared with Overview's
+// momentum labels, also 11px).
 const chip = cva(
-  "inline-flex items-center gap-1.5 rounded-full text-[11px] leading-none px-[9px] py-[3px] font-medium",
+  "inline-flex items-center gap-1.5 rounded-full text-2xs leading-none px-9px py-3px font-medium",
   {
     variants: {
       tone: {

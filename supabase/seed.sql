@@ -1,0 +1,9 @@
+-- Supabase seed file (runs during `supabase db reset`, BEFORE Alembic migrations).
+--
+-- Intentionally empty. The application's `public` schema is owned by SQLAlchemy +
+-- Alembic, not by Supabase migrations, so this file cannot reference app tables
+-- (they do not exist yet at this point in the reset lifecycle).
+--
+-- Application reference data and demo accounts are seeded AFTER the schema is
+-- migrated, via `make seed` (python -m lemely.db.seed). `make db-reset` runs the
+-- correct order for you: supabase db reset -> alembic upgrade head -> make seed.

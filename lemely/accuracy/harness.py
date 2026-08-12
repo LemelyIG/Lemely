@@ -166,10 +166,12 @@ def _assign_to_bucket(buckets: list[CalibrationBucket], score: float, correct: b
             return
 
 
-def _compute_metrics(results: list[QuestionResult]) -> AccuracyMetrics:
+def _compute_metrics(
+    results: list[QuestionResult], id_match_rate: float | None = None
+) -> AccuracyMetrics:
     total = len(results)
     if total == 0:
-        return AccuracyMetrics(0.0, 0.0, None, 0.0, 1.0)
+        return AccuracyMetrics(0.0, 0.0, id_match_rate, 0.0, 1.0)
 
     theory = [r for r in results if r.question_type == "theory"]
 
@@ -187,7 +189,7 @@ def _compute_metrics(results: list[QuestionResult]) -> AccuracyMetrics:
     return AccuracyMetrics(
         mark_accuracy=mark_accuracy,
         mark_accuracy_theory=mark_accuracy_theory,
-        id_match_rate=None,
+        id_match_rate=id_match_rate,
         flag_precision_high=flag_precision_high,
         flag_recall=flag_recall,
     )
@@ -212,28 +214,54 @@ def measure_accuracy(
     gemini_client: object,  # GeminiClient | None
     settings: object,  # Settings
 ) -> AccuracyResult:
-    """Run correction over all golden cases using ground-truth answers; compute metrics."""
+    """Run correction over all golden cases; compute metrics.
+
+    Cases with ``scan_path`` set run the real end-to-end pipeline: Gemini vision
+    extraction (:func:`lemely.web.services.grading.extract_answers`) followed by
+    correction — this is the only path that exercises answer transcription and
+    feeds ``id_match_rate``. Cases without ``scan_path`` keep the correction-only
+    bypass: ground-truth answer text is wrapped in a synthetic, full-confidence
+    ``ExtractedAnswers`` and fed straight into correction, useful for testing
+    marking logic without needing a rendered scan.
+    """
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
     from lemely.io.correction_ai import correct_paper
     from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
     from lemely.io.prompts.correction_ai import VERSION as COR_VERSION
     from lemely.io.prompts.mark_scheme_parsing import VERSION as MS_VERSION
+    from lemely.web.services.grading import extract_answers
 
     all_results: list[QuestionResult] = []
+    ran_extraction = False
+    matched_extraction_ids = 0
+    total_extraction_questions = 0
 
     for case in cases:
-        extracted = ExtractedAnswers(
-            paper_id=case.paper_id,
-            source_scan="golden",
-            answers=[
-                ExtractedAnswer(
-                    question_id=qid,
-                    answer=gt.student_answer,
-                    confidence=1.0,
-                )
-                for qid, gt in case.ground_truth.items()
-            ],
-        )
+        extracted_ids: set[str]
+        if case.scan_path is not None:
+            ran_extraction = True
+            extracted = extract_answers(
+                case.scan_path,
+                case.mark_scheme,
+                gemini_client=gemini_client,  # type: ignore[arg-type]
+            )
+            extracted_ids = {a.question_id for a in extracted.answers}
+            total_extraction_questions += len(case.ground_truth)
+            matched_extraction_ids += sum(1 for qid in case.ground_truth if qid in extracted_ids)
+        else:
+            extracted = ExtractedAnswers(
+                paper_id=case.paper_id,
+                source_scan="golden",
+                answers=[
+                    ExtractedAnswer(
+                        question_id=qid,
+                        answer=gt.student_answer,
+                        confidence=1.0,
+                    )
+                    for qid, gt in case.ground_truth.items()
+                ],
+            )
+            extracted_ids = set(case.ground_truth)
 
         correction = correct_paper(
             case.mark_scheme,
@@ -242,6 +270,10 @@ def measure_accuracy(
         )
 
         for cq in correction.questions:
+            # A question the extractor never returned an answer for has nothing
+            # to compare against; it only shows up via id_match_rate below.
+            if cq.question_id not in extracted_ids:
+                continue
             gt = case.ground_truth.get(cq.question_id)
             if gt is None:
                 continue
@@ -257,8 +289,14 @@ def measure_accuracy(
                 )
             )
 
+    id_match_rate = (
+        matched_extraction_ids / total_extraction_questions
+        if ran_extraction and total_extraction_questions > 0
+        else None
+    )
+
     return AccuracyResult(
-        metrics=_compute_metrics(all_results),
+        metrics=_compute_metrics(all_results, id_match_rate=id_match_rate),
         calibration=_build_calibration(all_results),
         question_results=all_results,
         prompt_versions={

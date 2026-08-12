@@ -8,8 +8,16 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # `reports/` holds machine-generated phase evidence (axe/Lighthouse JSON,
+      # the contact sheet, screenshot corpora). Rewriting those files makes the
+      # committed artifact differ byte-for-byte from what the tool actually
+      # emitted, so the next re-baseline run shows a spurious diff. Exempt them
+      # from the two formatting hooks only — `detect-private-key` still sees
+      # everything.
       - id: trailing-whitespace
+        exclude: ^reports/
       - id: end-of-file-fixer
+        exclude: ^reports/
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict

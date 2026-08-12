@@ -16,27 +16,27 @@ const FOOT_TONE = {
 /** The four-up metric card used on Overview, Classes and Mark schemes. */
 export function StatCard({ stat }: { stat: StatCardData }) {
   return (
-    <div className="bg-surface border border-border rounded-[13px] px-5 py-[18px]">
-      <div className="font-mono text-[10.5px] tracking-[0.1em] uppercase text-t3">
+    <div className="bg-surface border border-border rounded-md px-5 py-[18px]">
+      <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3">
         {stat.k}
       </div>
       <div className="flex items-baseline gap-1.5 mt-2">
         <div
           className={cn(
-            "font-serif text-[40px] leading-none",
+            "text-display-lg",
             VALUE_TONE[stat.valueTone ?? "t1"],
           )}
         >
           {stat.v}
         </div>
         {stat.unit ? (
-          <div className="text-[13px] text-t2">{stat.unit}</div>
+          <div className="text-dense text-t2">{stat.unit}</div>
         ) : null}
       </div>
       {stat.foot ? (
         <div
           className={cn(
-            "font-mono text-[11.5px] mt-2",
+            "font-mono text-xs mt-2",
             FOOT_TONE[stat.footTone ?? "t2"],
           )}
         >

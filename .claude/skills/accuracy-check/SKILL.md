@@ -7,8 +7,8 @@ disable-model-invocation: true
 Activate the venv and run the accuracy / golden test suite:
 
 ```bash
-source /home/sico/Code/Lemely/.venv/bin/activate && \
-  cd /home/sico/Code/Lemely && \
+source /home/sico/Lemely/.venv/bin/activate && \
+  cd /home/sico/Lemely && \
   pytest tests/accuracy/ tests/golden/ tests/test_parsers_det.py \
     -v --tb=short 2>&1 | tail -80
 ```

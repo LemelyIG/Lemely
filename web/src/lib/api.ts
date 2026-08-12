@@ -1,4 +1,5 @@
 import type { ActivityEvent } from "./types"
+import { getSession } from "./auth/storage"
 
 /*
  * Typed API client. Frontend-first this run: request() hits the FastAPI backend
@@ -14,9 +15,34 @@ const BASE = "/api"
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /**
+   * The raw `detail` value from a FastAPI error body, when present —
+   * structured (e.g. placement's 409, whose `detail` is a full
+   * `PlacementAvailabilityDTO` object, not a string) as well as scalar. A
+   * caller that needs the machine-readable shape (P4.8's "start now" retry,
+   * which must render the same honest unavailable-reason panel S-03 shows
+   * on load, not a generic failure) reads this instead of parsing `message`.
+   * `undefined` when the body wasn't JSON or carried no `detail` key.
+   */
+  detail?: unknown
+  constructor(status: number, message: string, detail?: unknown) {
     super(message)
     this.status = status
+    this.detail = detail
+  }
+}
+
+/** Build the base headers for a request: JSON content-type + bearer token
+ * (when a session is persisted), ahead of any caller-supplied headers so a
+ * caller can still override either if it ever needs to. Skips the JSON
+ * content-type for a `FormData` body — the browser must set its own
+ * multipart boundary, so a caller uploading a file (e.g. `uploadScan` in
+ * `lib/hooks/useStudentApi.ts`) can pass a `FormData` body straight through. */
+function authHeaders(isFormData = false): HeadersInit {
+  const token = getSession()?.accessToken
+  return {
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   }
 }
 
@@ -27,10 +53,43 @@ export async function request<T>(
 ): Promise<T> {
   try {
     const res = await fetch(`${BASE}${path}`, {
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      headers: { ...authHeaders(init?.body instanceof FormData), ...init?.headers },
       ...init,
     })
-    if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`)
+    if (!res.ok) {
+      // FastAPI's default exception handler responds `{"detail": "..."}` for
+      // every `HTTPException` this backend raises — a 422's "Reason X is not
+      // currently firing for this student" (T-06 acknowledge) or a 403's
+      // real tenancy message, for example. This was previously discarded
+      // entirely in favour of the generic `"422 Unprocessable Entity"`
+      // status text, which every screen's `error.message` render (Overview,
+      // Classes, ClassRoster, MarkSchemes, ...) then surfaced verbatim —
+      // real backend detail thrown away, not just here. Falls back to the
+      // status text when the body isn't JSON or carries no `detail` string
+      // (e.g. a 204, or a non-FastAPI failure upstream).
+      let message = `${res.status} ${res.statusText}`
+      let detail: unknown
+      try {
+        const body: unknown = await res.clone().json()
+        if (body && typeof body === "object" && "detail" in body) {
+          detail = (body as { detail: unknown }).detail
+          if (typeof detail === "string" && detail.length > 0) {
+            message = detail
+          } else if (detail !== undefined && detail !== null) {
+            // A structured detail (e.g. placement's 409 `PlacementAvailabilityDTO`)
+            // — no human-readable string to show verbatim, but callers that
+            // care read `ApiError.detail` directly rather than parsing this.
+            message = `${res.status} ${res.statusText}`
+          }
+        }
+      } catch {
+        // Body wasn't JSON (or empty) — keep the generic status text.
+      }
+      throw new ApiError(res.status, message, detail)
+    }
+    // A 204 (e.g. `DELETE /classes/{id}`) has no body — `res.json()` would
+    // throw on the empty string. `T` is `void` at every such call site.
+    if (res.status === 204) return undefined as T
     return (await res.json()) as T
   } catch (err) {
     if (fallback !== undefined) return fallback
@@ -48,7 +107,7 @@ export async function* streamActivity(
 ): AsyncGenerator<ActivityEvent> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { ...authHeaders(), ...init?.headers },
     ...init,
   })
   if (!res.body) return

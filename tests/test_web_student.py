@@ -6,44 +6,47 @@ seeded :class:`~lemely.io.history_store.HistoryStore` and the pure-core analytic
 theory/integrity for history-sourced papers, subject ranks) are asserted to be
 their typed-neutral defaults rather than mock demo numbers.
 
-The Gemini client is only exercised on the ``narrate`` path of ``POST /plan``,
-where it is mocked — no network calls anywhere in this module.
+No Gemini client is exercised anywhere in this module — the one path that did
+(``POST /plan``'s ``narrate`` flag) was retired with the route in P4.10 chunk D
+(D4.22). Study plans now live on ``/api/student/study-plan`` and onboarding on
+``/api/me/student-profile*``, each tested in its own module.
 """
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
-
-from pydantic import SecretStr
 
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
-from lemely.core.study import StudyPlan, StudySession
+from lemely.db.base import Base
+from lemely.db.models import User
+from lemely.db.models.enums import Role
+from lemely.db.parent_repo import ParentLinkService
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import Settings, load_settings
+from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_history_store,
-    get_settings,
+    get_parent_link_service,
 )
 
 STUDENT_ID = "maya"
-
-
-def _settings_with_key() -> Settings:
-    """A Settings copy carrying a dummy API key (enables the narrate path)."""
-    data = load_settings().model_dump()
-    data["gemini_api_key"] = SecretStr("test-key")
-    return Settings.model_validate(data)
 
 
 def _record(
@@ -231,10 +234,123 @@ def test_subject_breakdown_and_history(client: TestClient) -> None:
     assert body["paperHistory"][0]["marks"] == "38/40"
     assert body["paperHistory"][0]["grade"] == "A"
 
+    # `id` addresses the row's position in the FULL history (record 1 = the
+    # 2nd-appended 38/40 paper; record 0 = the 1st-appended 33/40 paper), and
+    # round-trips through GET /student/result/{id} to the same paper.
+    assert body["paperHistory"][0]["id"] == "1"
+    assert body["paperHistory"][1]["id"] == "0"
+    result_0 = client.get(f"/api/student/result/{body['paperHistory'][0]['id']}").json()
+    assert result_0["awarded"] == 38
+    assert result_0["max"] == 40
+    result_1 = client.get(f"/api/student/result/{body['paperHistory'][1]['id']}").json()
+    assert result_1["awarded"] == 33
+    assert result_1["max"] == 40
+
 
 def test_subject_unknown_code_is_404(client: TestClient) -> None:
     """A subject with no recorded papers returns 404."""
     assert client.get("/api/student/subject/9999").status_code == 404
+
+
+@pytest.fixture
+def interleaved_store(tmp_path: Path) -> HistoryStore:
+    """History with two subjects' papers INTERLEAVED in append order.
+
+    Full-history indices: 0=0625, 1=0620, 2=0625, 3=0620. A per-subject-filtered
+    index (e.g. enumerating only the subject's own records) would mislabel the
+    newest 0625 paper (full index 2) as index "1" — this fixture is built so
+    that bug would produce a *different, wrong* id and a broken round-trip to
+    ``GET /student/result/{id}``, rather than accidentally matching by luck.
+    """
+    store = HistoryStore(tmp_path / "history")
+    store.append(  # full index 0: 0625, oldest
+        STUDENT_ID,
+        _record(
+            subject_code="0625",
+            paper_number=1,
+            awarded=10,
+            maximum=20,
+            percentage=50.0,
+            grade="C",
+            recorded_at="2020-01-01T10:00:00+00:00",
+        ),
+    )
+    store.append(  # full index 1: 0620, oldest
+        STUDENT_ID,
+        _record(
+            subject_code="0620",
+            paper_number=1,
+            awarded=15,
+            maximum=20,
+            percentage=75.0,
+            grade="B",
+            recorded_at="2020-02-01T10:00:00+00:00",
+        ),
+    )
+    store.append(  # full index 2: 0625, newest — the row a naive bug mislabels
+        STUDENT_ID,
+        _record(
+            subject_code="0625",
+            paper_number=2,
+            awarded=18,
+            maximum=20,
+            percentage=90.0,
+            grade="A",
+            recorded_at="2020-03-01T10:00:00+00:00",
+        ),
+    )
+    store.append(  # full index 3: 0620, newest
+        STUDENT_ID,
+        _record(
+            subject_code="0620",
+            paper_number=2,
+            awarded=19,
+            maximum=20,
+            percentage=95.0,
+            grade="A",
+            recorded_at="2020-04-01T10:00:00+00:00",
+        ),
+    )
+    return store
+
+
+@pytest.fixture
+def interleaved_client(interleaved_store: HistoryStore) -> TestClient:
+    """A TestClient whose store + auth resolve to the interleaved-history student."""
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: interleaved_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
+    return TestClient(app)
+
+
+def test_subject_history_id_addresses_full_history_not_filtered_subset(
+    interleaved_client: TestClient,
+) -> None:
+    """`paperHistory[i].id` is the FULL-history index, even with interleaved subjects.
+
+    This is the D2.7 regression: a per-subject-filtered index would give the
+    newest 0625 paper (full index 2) the wrong id "1" (its position within the
+    2-item 0625-only subset) and round-trip to the wrong (0620) paper.
+    """
+    body = interleaved_client.get("/api/student/subject/0625").json()
+    rows = body["paperHistory"]
+    assert len(rows) == 2
+
+    # Newest-first: full index 2 (18/20) then full index 0 (10/20).
+    assert rows[0]["id"] == "2"
+    assert rows[0]["marks"] == "18/20"
+    assert rows[1]["id"] == "0"
+    assert rows[1]["marks"] == "10/20"
+
+    # Round-trip: each id must resolve, via the FULL-history-indexed result
+    # endpoint, back to a 0625 paper with matching marks — not the 0620 paper
+    # that a naive filtered-subset index would collide with.
+    for row in rows:
+        result = interleaved_client.get(f"/api/student/result/{row['id']}").json()
+        assert result["code"] == "0625"
+        assert f"{result['awarded']}/{result['max']}" == row["marks"]
 
 
 # ── Paper result (flagship) ───────────────────────────────────────────────────
@@ -281,128 +397,34 @@ def test_result_negative_index_is_404(client: TestClient) -> None:
 # ── Correct a paper (SSE) ─────────────────────────────────────────────────────
 
 
-def test_correct_streams_and_terminates(client: TestClient) -> None:
-    """POST /correct streams SSE frames and terminates with [DONE]."""
-    with client.stream("POST", "/api/student/correct") as response:
-        assert response.status_code == 200
-        text = "".join(response.iter_text())
-
-    frames = [f for f in text.split("\n\n") if f.strip()]
-    assert frames[-1] == "data: [DONE]"
-    assert any('"type": "warning"' in f for f in frames)
+def test_correct_requires_a_body(client: TestClient) -> None:
+    """POST /correct now takes a JSON ``{paperId}`` body; a body-less call is 422."""
+    assert client.post("/api/student/correct").status_code == 422
 
 
-# ── Study plan ────────────────────────────────────────────────────────────────
+def test_correct_unknown_paper_is_404(seeded_store: HistoryStore) -> None:
+    """POST /correct 404s for a paper the caller does not own (checked pre-stream).
 
-
-def test_plan_get_is_deterministic_without_narrative(client: TestClient) -> None:
-    """GET /plan schedules sessions from weaknesses with no AI narrative."""
-    body = client.get("/api/student/plan").json()
-
-    assert body["studentId"] == STUDENT_ID
-    assert body["weeklyHours"] == 11.0
-    assert body["narrative"] is None
-    topics = {s["topic"] for s in body["sessions"]}
-    # Weak topics across all papers become sessions.
-    assert "Thermal physics" in topics
-    assert "Moles" in topics
-
-
-def test_plan_post_narrate_uses_mocked_gemini(
-    seeded_store: HistoryStore,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """POST /plan with narrate=true runs the narrator (mocked) and returns text."""
-    narrated = StudyPlan(
-        student_id=STUDENT_ID,
-        weekly_hours=8.0,
-        sessions=[
-            StudySession(
-                week=1,
-                topic="Thermal physics",
-                subject_code="0625",
-                hours=8.0,
-                focus="Practice and review: Thermal physics",
-            )
-        ],
-        narrative="Focus on thermal physics this week.",
-    )
-    fake_client = MagicMock()
-    fake_client.generate_structured.return_value = narrated
-
-    # The router calls get_gemini_client() directly (not via Depends), so patch
-    # the module-level reference; monkeypatch restores it after the test.
-    import lemely.web.routers.student as student_router
-
-    monkeypatch.setattr(student_router, "get_gemini_client", lambda: fake_client)
-
-    app = create_app()
-    app.dependency_overrides[get_history_store] = lambda: seeded_store
-    # Narration only runs when an API key is configured, so present one.
-    app.dependency_overrides[get_settings] = lambda: _settings_with_key()
-
-    body = (
-        TestClient(app)
-        .post(
-            "/api/student/plan",
-            json={"studentId": STUDENT_ID, "weeklyHours": 8.0, "narrate": True},
-        )
-        .json()
-    )
-
-    assert body["narrative"] == "Focus on thermal physics this week."
-    fake_client.generate_structured.assert_called_once()
-
-
-def test_plan_post_narrate_without_key_is_503_not_500(
-    seeded_store: HistoryStore,
-) -> None:
-    """narrate=true with no API key returns a clean 503, never an unhandled 500.
-
-    Regression for the Gemini-absent HIGH item: on the default no-key state the
-    narrate path must degrade to 503 instead of raising through to a 500.
+    The upload-ownership lookup is stubbed to ``None`` (as it would be for an
+    unknown or foreign paperId), so the endpoint returns a clean 404 before any
+    SSE streaming begins — the full persist path is covered by
+    ``tests/test_student_correct.py`` against a real database.
     """
+    from lemely.web.deps import get_student_upload_repo
+
+    upload_repo = MagicMock()
+    upload_repo.get_owned_upload.return_value = None
+
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: seeded_store
-    # Default settings carry no API key.
-    resp = TestClient(app).post(
-        "/api/student/plan",
-        json={"studentId": STUDENT_ID, "weeklyHours": 8.0, "narrate": True},
+    app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
     )
-    assert resp.status_code == 503
-
-
-def test_plan_post_without_narrate_returns_plan_without_key(
-    seeded_store: HistoryStore,
-) -> None:
-    """Without narrate the deterministic plan still returns even with no key."""
-    app = create_app()
-    app.dependency_overrides[get_history_store] = lambda: seeded_store
-    resp = TestClient(app).post(
-        "/api/student/plan",
-        json={"studentId": STUDENT_ID, "weeklyHours": 8.0, "narrate": False},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["narrative"] is None
-    assert body["sessions"]
-
-
-def test_plan_post_without_narrate_skips_gemini(seeded_store: HistoryStore) -> None:
-    """POST /plan without narrate never touches Gemini."""
-    app = create_app()
-    app.dependency_overrides[get_history_store] = lambda: seeded_store
-    body = (
-        TestClient(app)
-        .post(
-            "/api/student/plan",
-            json={"studentId": STUDENT_ID, "weeklyHours": 6.0},
-        )
-        .json()
-    )
-
-    assert body["weeklyHours"] == 6.0
-    assert body["narrative"] is None
+    api = TestClient(app)
+    resp = api.post("/api/student/correct", json={"paperId": "missing"})
+    assert resp.status_code == 404
+    app.dependency_overrides.clear()
 
 
 # ── Standings ─────────────────────────────────────────────────────────────────
@@ -423,29 +445,173 @@ def test_standings_counts_are_data_backed_ranks_empty(client: TestClient) -> Non
     assert all(r["rank"] == "" for r in body["subjectRanks"])
 
 
-# ── Onboarding ────────────────────────────────────────────────────────────────
+# ── Parent links (invite/list/revoke, D3.11/P3.6a) ──────────────────────────
+#
+# Postgres-backed (mirrors ``tests/test_web_classes.py``'s ``student_join_by_code``
+# tests): the parent-link routes need real ``users`` rows, so ``STUDENT_ID = "maya"``
+# (the file's default, string-keyed history fixture) cannot stand in as the
+# caller here. Self-contained rather than shared via conftest, matching every
+# other ``test_web_*.py`` file's ``pg_sessionmaker`` duplication convention.
 
 
-def test_onboarding_builds_profile_from_sliders() -> None:
-    """Onboarding maps subject sliders into a StudentProfile with confidences."""
-    client = TestClient(create_app())
-    body = client.post(
-        "/api/student/onboarding",
-        json={
-            "studentId": "maya",
-            "gradeLevel": "Year 11",
-            "school": "Helwan Science Centre",
-            "weeklyHours": 11.0,
-            "sliders": [
-                {"label": "Physics", "code": "0625", "pct": 72},
-                {"label": "Chemistry", "code": "0620", "pct": 34},
-                {"label": "Hours per week", "code": "", "pct": 46},
-            ],
-        },
-    ).json()
+def _server_reachable(url: str) -> bool:
+    server_url = make_url(url).set(database="postgres")
+    engine = create_engine(server_url)
+    try:
+        with engine.connect():
+            return True
+    except OperationalError:
+        return False
+    finally:
+        engine.dispose()
 
-    assert body["studentId"] == "maya"
-    assert body["weeklyStudyHours"] == 11.0
-    # Only subject sliders (with a code) become subjects / confidences.
-    assert body["subjects"] == ["0625", "0620"]
-    assert body["confidenceBySubject"] == {"0625": 0.72, "0620": 0.34}
+
+@pytest.fixture
+def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    base_url = DatabaseSettings().url
+    if not _server_reachable(base_url):
+        pytest.skip("local Postgres not reachable")
+
+    server_url = make_url(base_url).set(database="postgres")
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_test_{uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    engine = create_engine(make_url(base_url).set(database=dbname))
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def parent_link_service(pg_sessionmaker: sessionmaker[Session]) -> ParentLinkService:
+    return ParentLinkService(pg_sessionmaker)
+
+
+@pytest.fixture
+def parent_links_client(parent_link_service: ParentLinkService) -> Iterator[TestClient]:
+    app = create_app()
+    app.dependency_overrides[get_parent_link_service] = lambda: parent_link_service
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _seed_pg_user(
+    sm: sessionmaker[Session],
+    role: Role,
+    *,
+    display_name: str | None = None,
+    phone: str | None = None,
+) -> uuid.UUID:
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            User(
+                id=uid,
+                email=f"{uid}@example.com",
+                role=role,
+                display_name=display_name,
+                phone=phone,
+            )
+        )
+    return uid
+
+
+def _auth_as_pg(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(user_id), role=role.value
+    )
+
+
+def test_student_lists_no_parents_when_none_linked(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    assert parent_links_client.get("/api/student/parent-links").json() == {"parents": []}
+
+
+def test_student_links_a_parent_by_phone_then_lists_it(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    parent = _seed_pg_user(pg_sessionmaker, Role.parent, display_name="Mum", phone="+15551230000")
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.post("/api/student/parent-links", json={"phone": "+15551230000"})
+    assert resp.status_code == 200
+    assert resp.json() == {"parentId": str(parent), "displayName": "Mum", "phone": "+15551230000"}
+
+    listing = parent_links_client.get("/api/student/parent-links").json()
+    assert listing["parents"] == [
+        {"parentId": str(parent), "displayName": "Mum", "phone": "+15551230000"}
+    ]
+
+
+def test_student_link_unknown_phone_is_a_clean_404(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """No existing ``role=parent`` account for this phone — never auto-created (D3.11)."""
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.post("/api/student/parent-links", json={"phone": "+15559999999"})
+    assert resp.status_code == 404
+
+
+def test_student_link_is_idempotent_over_http(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _seed_pg_user(pg_sessionmaker, Role.parent, phone="+15550001234")
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    first = parent_links_client.post("/api/student/parent-links", json={"phone": "+15550001234"})
+    second = parent_links_client.post("/api/student/parent-links", json={"phone": "+15550001234"})
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert len(parent_links_client.get("/api/student/parent-links").json()["parents"]) == 1
+
+
+def test_student_unlink_then_list_shows_the_parent_gone(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    parent = _seed_pg_user(pg_sessionmaker, Role.parent, phone="+15550005678")
+    _auth_as_pg(parent_links_client, student, Role.student)
+    parent_links_client.post("/api/student/parent-links", json={"phone": "+15550005678"})
+
+    resp = parent_links_client.delete(f"/api/student/parent-links/{parent}")
+
+    assert resp.status_code == 204
+    assert parent_links_client.get("/api/student/parent-links").json() == {"parents": []}
+
+
+def test_student_unlink_absent_link_is_a_silent_no_op(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.delete(f"/api/student/parent-links/{uuid.uuid4()}")
+
+    assert resp.status_code == 204
+
+
+def test_student_unlink_malformed_parent_id_is_422(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.delete("/api/student/parent-links/not-a-uuid")
+
+    assert resp.status_code == 422

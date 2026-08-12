@@ -86,86 +86,68 @@ criteria pass, the quality gates (§6) pass, the milestone report (§7) is commi
 develop is merged and pushed, a `develop → main` PR is opened via `gh` (never merge
 it yourself), and an ntfy notification is sent.
 
-### Phase 0 — Foundation repair
-- Make CI green (`ruff format`), add `web/` (typecheck, lint, build) and the `web`
-  extra to CI.
-- Evaluate `lemely/io/det/` (dead staged parser) vs the wired monolith
-  `parsers_det.py`: pick ONE (prefer whichever gives reconciliation + honors
-  `DetParserSettings`), wire it, delete the other. Record rationale in DECISIONS.md.
-- Fix the Gemini cost cap: persistent, file-backed cumulative USD tracker
-  (survives process restarts), hard ceiling **$8.00**, warning events at $4 and $6
-  (→ ntfy). Rename config to reflect reality.
-- Fix `HistoryStore.load()` silent-fail (surface corruption; add schema_version).
-  This store is interim — Phase 1 replaces it — but corruption must not be silent.
-- Collapse to a single lockfile mechanism; add `.env.example` documenting BOTH
-  `GEMINI_API_KEY` and `LEMELY_GEMINI_API_KEY` (fix the env-mapping trap: one env
-  var must work everywhere, CLI, Gradio, and web).
-- Remove other confirmed dead code (`respx`, unused `live` marker, dead
-  `lib/api.ts` gets rescued in Phase 2, leave it).
-- Acceptance: CI fully green including web; cost-cap tests prove persistence
-  across processes; `lemely doctor` reports the real Gemini reachability.
+### Phases 0–2 — COMPLETE (do not redo)
 
-### Phase 1 — Database + Auth + Tenancy
-- Local Supabase stack committed (`supabase/` config, seed scripts, Makefile
-  targets, docs).
-- Full relational schema + Alembic migrations: users/profiles (role), schools,
-  school_memberships (teacher↔school), seats, subscriptions & plan tiers (manual
-  activation flag), parent↔child links, classes, class_enrollments, subjects,
-  papers (board/subject/session/year/variant/paper#), mark_schemes,
-  uploads, attempts, question_results (marks, max, confidence, method-mark
-  breakdown), weakness_records, review_queue, announcements, notifications,
-  devices/sessions, xp_events, streaks — designed so Phases 2–5 need additive
-  migrations only.
-- Auth end-to-end: signup/login flows per role, Supabase JWT validation middleware
-  in FastAPI, RBAC dependency on EVERY route (kill both IDOR endpoints), row-level
-  ownership checks (student sees self; parent sees linked children; teacher sees
-  their classes; school_admin sees their school; platform_admin sees all).
-- Migrate `HistoryStore` JSON into Postgres; delete the JSON store after a
-  migration script + tests prove parity.
-- Seat model: school_admin invites/creates N student accounts against seat quota;
-  a student account can simultaneously hold a personal subscription.
-- Device/session registry: max **3** concurrent devices per account; logging in on
-  a 4th silently invalidates the oldest session.
-- Acceptance: E2E auth tests for all 5 roles; a security-focused adversarial
-  review pass (reviewer subagent) finds no unauthenticated or cross-tenant access;
-  every route has an authz test.
+Foundation repair, database + auth + tenancy, and the core correction loop are
+finished and merged. Their reports are in `reports/phase-0/`, `reports/phase-1/`
+and `reports/phase-2/`; read those (and `BUILD/DECISIONS.md`) rather than
+re-deriving what was built. If you find a defect in that work, fix it as a
+scoped task inside the current phase — do not reopen a completed phase.
 
-### Phase 2 — The core loop, real and end-to-end
-- Wire the SPA to the API: resurrect `lib/api.ts` + react-query, screen by screen
-  delete `student/data.ts` and `teacher/data.ts` mock imports. The `CorrectPaper`
-  setTimeout theatre becomes the real SSE-driven pipeline.
-- Upload path: PWA camera capture → client-side multi-page PDF assembly → Supabase
-  Storage → backend job. Also plain file upload. 25MB cap kept.
-- Pipeline: metadata detection (subject code/session/year/variant/paper#) →
-  fetch/parse marking scheme (from stored corpus; if absent, fetch from public
-  mirrors and persist) → answer extraction (handwritten, Gemini vision) → marking
-  with method-mark awareness → per-question confidence → grade + boundary
-  prediction → weakness detection → persist → dashboard.
-- **Grade-boundary ingestion pipeline:** scrape historical per-paper-variant grade
-  thresholds for 0580/0606/0625 (all available sessions) from public mirrors
-  (gceguide, papacambridge, xtremepapers, or any working source), parse into the
-  per-paper-variant table, with provenance. Prediction = exact lookup, falling
-  back to per-subject historical average with an "estimated" flag surfaced in UI.
-- **Accuracy harness with golden fixtures:** download real past papers + mark
-  schemes for the 3 subjects; generate synthetic handwritten answer sheets
-  (handwriting-style fonts, ink variation, scan noise/skew/blur/rotation
-  augmentation) with known ground-truth answers spanning correct, partially
-  correct (method marks), and wrong answers. Commit fixtures. Thresholds that
-  gate the phase: **≥99% MCQ agreement; ≥95% mark-level agreement on structured
-  questions; 100% of disagreements must carry confidence below the review
-  threshold** (i.e., the system knows when it doesn't know). Calibrate the review
-  threshold from harness data. Live-Gemini validation obeys the budget protocol.
-- Student dashboard on real data: overall + per-subject performance, per-paper
-  history, predicted boundaries and final grade, weakness topics, comparison to
-  past attempts.
-- Plagiarism (answer ≈ mark-scheme text) + AI-detection flags wired into results
-  as advisory teacher-review flags only — never auto-penalize; copy in UI must
-  present these as signals, not verdicts.
-- PWA installable; Lighthouse PWA checks pass.
-- Acceptance: Playwright E2E — a seeded student uploads a fixture scan and sees
-  correct marks, grade, and weaknesses in the dashboard; accuracy thresholds met;
-  screenshots in the report.
+### Phase 2.5 — Design system + frontend quality foundation
 
+**Why this phase exists.** Phases 3–5 add roughly forty new screens. Building
+them without an established design system produces forty inconsistent screens
+and an unshippable product. This phase installs the design rails, defines the
+system, retro-fits the Phase-2 screens onto it, and stands up the visual/
+accessibility test harness that every later phase is gated on.
+
+**The design skills are already installed by the human** (Impeccable, UI/UX Pro
+Max, Taste-Skill). Verify with `ls .claude/skills/` and `/impeccable check`
+equivalents at phase start; if a skill is missing, record it in BLOCKERS.md,
+notify, and proceed with `frontend-design` (the built-in skill) rather than
+stalling. Full usage rules are in §10.
+
+- **Read `docs/LEMELY_UI_SPEC.md` first.** It is the authoritative product and
+  UI specification: every screen, its contents, states, interactions, and the
+  flows between them. It also states five product principles that constrain the
+  UI (visible confidence; flags are signals not verdicts; grades private and XP
+  public; teacher has final authority; never invent precision). Those are
+  non-negotiable and any design that violates one is wrong regardless of how
+  good it looks.
+- **`DESIGN.md` and `PRODUCT.md`** exist at the repo root (written by the human
+  via `/impeccable init`). They are the brand source of truth: colours, type,
+  voice, anti-references. Never invent brand values that contradict them, and
+  never hardcode a colour or font that is not in DESIGN.md. If DESIGN.md is
+  missing or has unfilled placeholders, that is a blocker — record it, notify
+  with priority high, and continue with non-visual tasks in this phase.
+- **Design tokens in code.** Produce a single token source (Tailwind v4 theme +
+  CSS custom properties) covering colour (including the semantic scales that
+  carry meaning: confidence levels, correct/partial/wrong, grade bands),
+  spacing on a 4px scale, type scale, radii, shadows, motion durations and
+  easings, and breakpoints. Every token traceable to DESIGN.md. Delete ad-hoc
+  values from Phase-2 components as you go.
+- **Component library.** Build the cross-cutting components named in
+  §4 of the UI spec (grade badge, mark display, boundary bar, confidence
+  indicator, weakness chip, question row, paper identity line, trend sparkline,
+  XP/streak, processing state, empty/error/offline family, navigation shells) as
+  real components with every state, and document each in the component
+  catalogue. Later phases compose these; they do not invent new primitives
+  without adding them here.
+- **Retro-fit Phase 2.** Bring the existing student screens (home, upload flow,
+  scanner, marking progress, results, question detail) onto the token system and
+  component library. Run `/impeccable audit` then `/impeccable normalize` then
+  `/impeccable polish` on them, per §10.
+- **Visual + accessibility test harness** (see §11): Playwright screenshot
+  corpus across breakpoints and states, Puppeteer audit runner with axe-core and
+  Lighthouse, contact-sheet generation, and baseline snapshots committed.
+- **Acceptance:** token file is the only source of design values (grep proves no
+  stray hex codes or arbitrary spacing in components); every cross-cutting
+  component exists with all states and appears in the catalogue; every Phase-2
+  screen passes the quality bar in `BUILD/QUALITY-BAR.md`; axe reports zero
+  serious or critical violations across all existing routes; Lighthouse
+  accessibility ≥ 95 on every route; the screenshot corpus builds and the
+  contact sheet is committed to `reports/phase-2.5/`.
 ### Phase 3 — Teacher + Parent surfaces
 - Teacher: class management, per-class and per-student analytics, aggregate
   weakness topics, **at-risk flagging** (declining trend across last N papers, OR
@@ -179,7 +161,14 @@ it yourself), and an ntfy notification is sent.
   analytics.
 - Parent portal: phone-OTP login (mock provider), linked children, performance +
   weakness views (read-only), notification preferences.
-- Acceptance: E2E per role; at-risk flags verified against seeded scenarios.
+- Every screen built in this phase follows `docs/LEMELY_UI_SPEC.md` and uses
+  only Phase-2.5 tokens and components.
+- Acceptance: E2E per role (Playwright); at-risk flags verified against seeded
+  scenarios; **plus the standing UI gate** — quality bar in
+  `BUILD/QUALITY-BAR.md` met, zero serious/critical axe violations, Lighthouse
+  a11y ≥ 95, screenshot corpus captured for every new screen × state ×
+  breakpoint, Impeccable audit/polish run and clean, no visual regressions on
+  existing screens.
 
 ### Phase 4 — Content generation + study plans
 - Topic-classified practice material generator: questions from the ingested
@@ -195,7 +184,10 @@ it yourself), and an ntfy notification is sent.
   regenerates weekly; concrete sessions (topic, activity, duration) not vague
   advice; visible on dashboard; push reminders.
 - Acceptance: E2E — new student onboards, takes placement, receives a plan;
-  generated practice demonstrably targets seeded weaknesses.
+  generated practice demonstrably targets seeded weaknesses; **plus the
+  standing UI gate** (see Phase 3 acceptance and `BUILD/QUALITY-BAR.md`).
+  Question rendering (maths notation, diagrams) must be verified visually in
+  screenshots, not assumed.
 
 ### Phase 5 — Engagement layer
 - XP system (design it Duolingo-style and record the spec in DECISIONS.md before
@@ -211,7 +203,9 @@ it yourself), and an ntfy notification is sent.
 - Account-sharing friction: the 3-device limit from Phase 1 enforced in UI with
   clear device management screen.
 - Acceptance: E2E covering XP accrual, leaderboard ordering, push delivery
-  (headless push mock), announcement flow.
+  (headless push mock), announcement flow; **plus the standing UI gate**.
+  Motion added in this phase must respect `prefers-reduced-motion`, proven by
+  a test.
 
 ### Phase 6 — Hardening + ship
 - Full-suite pass: backend, frontend, E2E across all roles on seeded realistic
@@ -220,6 +214,11 @@ it yourself), and an ntfy notification is sent.
 - Docker Compose: one command brings up Supabase-local + backend + served SPA
   build with correct CORS/proxy; documented.
 - Deployment docs for future free-tier cloud (Supabase cloud + container host).
+- **Full-product visual QA sweep**: regenerate the entire screenshot corpus,
+  produce a per-role contact sheet, run `/impeccable audit` across all
+  frontend source, run `npx impeccable detect src/` and resolve every
+  finding, and run the axe + Lighthouse suite over every route in both
+  themes. Any regression against Phase-2.5 baselines is a blocker.
 - **`DELIVERY.md`**: the comprehensive final document — every feature from the
   inventory (§9), its status, what was added/fixed/changed, which files, which
   tests prove it, with links to each phase report. Plus honest "known limitations
@@ -253,6 +252,14 @@ it yourself), and an ntfy notification is sent.
   suite), and PR-wide reviews. Prefer many small workflows over one giant one —
   interrupted workflows do not survive session restarts, so keep each under ~30
   agents and checkpoint results to disk immediately after each run.
+- **Model:** you run on **Opus** for every run. There is no escalation
+  mechanism and no `next_run_model` field to set — ignore any older instruction
+  that mentions one. Opus on this plan consumes the usage window quickly, so the
+  token discipline in §8b is the binding constraint on how much you get done
+  per window: delegate reading to `scout` (Haiku), keep subagents on their
+  assigned tiers (`architect` Opus for design documents only, the
+  implementation/test/review/debug/data agents on Sonnet, `scout` and `reporter`
+  on Haiku), and checkpoint early rather than burning context on rediscovery.
 - **Stuck protocol:** 3 failed attempts on the same problem → stop, write the
   problem + attempts to `BUILD/BLOCKERS.md`, ntfy with priority=high, mark the
   task `blocked`, move to the next independent task. Revisit blocked tasks once
@@ -278,6 +285,12 @@ it yourself), and an ntfy notification is sent.
    Phase-2 thresholds.
 6. Anything touching auth/routes: authz test matrix updated and green.
 7. Reviewer subagent has adversarially reviewed the diff; findings addressed.
+8. **Any diff touching `web/`** additionally requires: `BUILD/QUALITY-BAR.md`
+   satisfied; `/impeccable audit` on the changed files with findings fixed;
+   `npx impeccable detect` clean; axe zero serious/critical; Lighthouse
+   accessibility ≥ 95 on affected routes; screenshots captured for every
+   new or changed screen × state × breakpoint; no unintended visual
+   regression against committed baselines.
 
 ## 7. Reporting protocol
 
@@ -285,12 +298,69 @@ it yourself), and an ntfy notification is sent.
   decisions made, test summary (counts, coverage, accuracy metrics), Playwright
   **screenshots** of every new/changed screen (`reports/phase-N/screens/`),
   command outputs proving gates, known issues. Commit it; it must render on GitHub.
-- ntfy (topic below): phase start, phase complete (with 2-line summary), blocker
-  raised, budget warnings, run complete, and a daily one-line heartbeat.
-  `curl -s -H "Title: Lemely" -d "<message>" ntfy.sh/lemely-ErBPK7TIRGD1sQP5`
-  Use `-H "Priority: high"` for blockers/budget/final-complete.
+- ntfy (topic `lemely-ErBPK7TIRGD1sQP5`): phase start, phase complete (with
+  2-line summary), blocker raised, budget warnings, run complete, and a daily
+  one-line heartbeat. Use the JSON publish endpoint so you get markdown, tags,
+  priority, and a click-through in one request:
+  ```
+  curl -s http://home-server/ -d '{
+    "topic": "lemely-ErBPK7TIRGD1sQP5",
+    "title": "<short title>",
+    "message": "<markdown message, e.g. **Phase 2** complete: ...>",
+    "tags": ["<emoji-shortcode-or-two>"],
+    "priority": <1-5>,
+    "markdown": true,
+    "click": "https://github.com/LemelyIG/Lemely",
+    "actions": [{"action":"view","label":"Open repo","url":"https://github.com/LemelyIG/Lemely"}]
+  }'
+  ```
+  Every message you send must open with a progress line:
+  `**Phase N** — X/Y tasks · <what just happened>`. A notification that says
+  only "task complete" is useless from a phone. Say what changed, what it means,
+  and what is next — e.g. "Boundary ingestion done: 0580 covered for 2019–2025
+  (42 variants), 0606 has gaps in 2019. Next: wiring prediction to the table."
+  The supervisor already sends heartbeats, run summaries, commit lists and
+  screenshots, so do not duplicate those — send the things only you know:
+  what a result means, what you decided, what you are worried about.
+  Send one on: phase start, each significant task completed (not every file
+  edit — roughly every 30–60 minutes of work), phase complete, blocker raised,
+  budget warning, and any decision recorded in DECISIONS.md.
+  Priority: 2=low (routine task progress), 3=default (phase start), 4=high
+  (blocker, budget warning, phase complete), 5=urgent (build complete, halted).
+  Use `sequence_id` for repeating message types so they update in place instead
+  of stacking: `lemely-task` for routine progress, `lemely-budget` for spend
+  updates. One-off events (phase complete, blockers) get no sequence_id so they
+  persist in the notification list. The supervisor owns `lemely-heartbeat`,
+  `lemely-limit`, `lemely-checkpoint` and `lemely-watchdog` — do not publish to
+  those sequence IDs yourself. Suggested tags: `rocket` (phase
+  start), `white_check_mark` (phase/gate pass), `warning` (blocker),
+  `moneybag` (budget), `tada` (build complete). When a notification concerns a
+  specific artifact (a phase report, a failing test log), attach it instead of
+  just describing it — PUT the file with a `Filename` header to
+  `http://home-server/lemely-ErBPK7TIRGD1sQP5` (truncate to under 2MB; tail is usually
+  what matters). The supervisor script (`supervisor.sh`) already applies this
+  same format to its own crash/limit/complete notifications, including
+  deduplication: it suppresses a repeat notification for a failure with the
+  same signature (log tail, timestamps/paths scrubbed) seen again within 30
+  minutes, so you don't need to replicate that dedup logic yourself — just
+  don't spam near-identical blocker notifications in a tight loop; if you're
+  re-raising the same blocker, check `BUILD/BLOCKERS.md` first and skip the
+  notification if you already recorded it recently.
 - Session journal: append a dated entry to `BUILD/JOURNAL.md` at the end of each
   session (3–6 lines: did, learned, next).
+
+## 7b. What the supervisor does for you
+
+You do not manage the process lifecycle — `supervisor.sh` does. It relaunches
+you after every exit, parses the reset time out of usage-limit messages and
+sleeps until precisely then (falling back to an hourly retry if no time is
+parseable), sends a 20-minute in-place progress heartbeat, refreshes a
+dead-man's-switch alert so the human is told if the machine dies, attaches new
+`reports/phase-N/REPORT.md` files to notifications as they appear, and stops
+cleanly if a reset is more than 14 hours out (weekly cap). It also honours
+`next_run_model: opus` for one-run escalation. Because it restarts you freely,
+**exiting is cheap and safe** — take that option rather than limping along in a
+bloated context.
 
 ## 8. Budget protocol (Gemini)
 
@@ -302,6 +372,44 @@ friend), (b) smoke-testing each AI feature once E2E. If the ceiling is reached:
 continue building with mocks/cache, record what still needs live validation in
 DELIVERY.md, ntfy priority=high. The human can top up (max +$12) but do not assume
 it.
+
+## 8b. Token discipline (treat tokens as a budget, like Gemini dollars)
+
+Every token you spend is capacity you cannot spend later in the build. These
+are requirements, not suggestions:
+
+- **Never read a large file to "get oriented."** Delegate to `scout` (Haiku)
+  and work from its summary. Read files in full only when you are about to
+  edit them, and prefer `Grep`/`Glob` with narrow patterns over `Read` on
+  anything over ~400 lines. Read specific line ranges when you know them.
+- **One gate command, not seven.** Phase 0 creates `scripts/check.sh` which
+  runs ruff + mypy + import-linter + pytest + the web checks, suppresses all
+  passing output, and prints only failures plus a one-line summary per tool
+  (`pytest -q --tb=short`, `ruff --quiet`, etc.). After Phase 0, run gates via
+  `./scripts/check.sh` and never by invoking the tools individually — verbose
+  green output is pure waste.
+- **Pipe noisy commands to a file and read the tail.** `cmd > /tmp/out 2>&1;
+  tail -n 40 /tmp/out`. Never let a full test suite, npm install, Docker build,
+  or scraper dump its entire output into context.
+- **Briefs carry paths, not contents.** When delegating, give the subagent file
+  paths and acceptance criteria; do not paste code into the brief. The subagent
+  can read what it needs.
+- **Keep the stable stuff stable.** `BUILD/MISSION.md` and `CLAUDE.md` are read
+  every session and benefit from prompt caching — do not rewrite them casually.
+  Volatile state belongs in `BUILD/STATE.md`, which stays small: a checklist,
+  not a narrative. Prune completed phases from STATE.md down to a single done
+  line once their report is committed.
+- **Checkpoint early.** Exit cleanly at ~60% context rather than pushing to the
+  limit; a fresh session re-reading a tight STATE.md is far cheaper than a
+  bloated one carrying dead context. Exiting is always safe.
+- **Don't re-derive.** Anything you learned that cost real work to discover
+  (an environment quirk, a mirror's URL pattern, a schema decision) goes into
+  `BUILD/DECISIONS.md` or `docs/` immediately so no future session pays for it
+  twice.
+- **Batch related edits.** One considered pass over a file beats five
+  re-reads and five small patches.
+- **No speculative work.** Do not build abstractions, tests, or docs for
+  features outside the current phase.
 
 ## 9. Full feature inventory (traceability — every item appears in DELIVERY.md)
 
@@ -326,4 +434,149 @@ Docker Compose + docs (P6), DELIVERY.md (P6). Deferred (documented, not built):
 payments (Paymob/Fawry), igclub calculator, Edexcel/Oxford AQA, Arabic UI, real
 SMS provider, cloud hosting.
 
-Begin: read `LEMELY_AUDIT.md` and `BUILD/STATE.md`, then execute.
+
+## 10. Design skills — how to use them
+
+Three skill packs are installed alongside the built-in `frontend-design` skill.
+They overlap; using all of them on everything wastes tokens and produces
+muddled output. Use them for what each is actually good at.
+
+**Authority order when guidance conflicts:**
+`docs/LEMELY_UI_SPEC.md` (product truth) > `DESIGN.md` / `PRODUCT.md` (brand
+truth) > `BUILD/QUALITY-BAR.md` (quality floor) > skill opinions. A skill that
+wants a bolder, more animated, or more asymmetric interface than the spec calls
+for is overruled by the spec. Record any conflict you resolve in DECISIONS.md.
+
+### Impeccable — the primary design workflow
+Command sequence for a new surface:
+`/impeccable shape <surface>` (structure and concept, before any code) → build
+the screen → `/impeccable audit <path>` (diagnose) → `/impeccable critique
+<path>` (evaluate against intent) → fix → `/impeccable normalize <path>` (align
+with our tokens) → `/impeccable polish <path>` (final pass).
+Also useful: `document` and `extract` for the component catalogue, `onboard` for
+empty/first-run states, `harden` for edge cases, `adapt` for responsive work,
+`quieter` where a surface has become noisy.
+- `/impeccable craft` is **deprecated** — never use it.
+- **Live mode is beta and needs an interactive dev server — never invoke it.**
+  This run is unattended; it will hang.
+- `npx impeccable detect src/` is the CI-side deterministic detector. It needs
+  **Node 24+**; verify with `node -v` at Phase 2.5 start and record a blocker if
+  the version is lower rather than silently skipping the check.
+- Impeccable does **not** cover accessibility testing. Run axe afterwards
+  regardless of how clean an audit comes back.
+
+### UI/UX Pro Max — the reference database
+Query it for concrete decisions: palettes, font pairings, per-product-type
+rules, UX guidelines, chart types, icon choices, motion presets. It is a
+**lookup**, not a generator of our system — DESIGN.md already fixes brand.
+Invoked through its Python search script (it requires Python 3):
+`python .claude/skills/ui-ux-pro-max/scripts/search.py "<query>" [--design-system]
+[--variance 1-10] [--motion 1-10] [--density 1-10]`
+Use `--density` high for the teacher and admin surfaces, low-to-mid for student
+screens. Do not let `--design-system` output overwrite our tokens; take from it
+only what fills a genuine gap, and record what you took in DECISIONS.md.
+
+### Taste-Skill (`design-taste-frontend`) — anti-generic pressure
+Best on the marketing/landing surface (G-01) and anywhere a screen has come out
+looking templated. **Its v2 defaults are wrong for this product and must be
+overridden explicitly in every invocation:**
+- It assumes Next.js + Framer Motion + Radix. **We are React 19 + Vite +
+  Tailwind v4.** Never introduce Next.js, and do not add a new animation or
+  component library without an explicit decision recorded in DECISIONS.md.
+- Its default dials (variance 8 / motion 6 / density 4) are "artsy and kinetic."
+  Use instead: **landing/marketing → variance 7, motion 5, density 3;
+  student app → variance 4, motion 3, density 5; teacher/admin → variance 3,
+  motion 2, density 8.** A student checking a mark at 11pm and a teacher
+  triaging thirty students both need clarity over expression.
+- It is instructed to apply taste decisions without asking. Constrain it by
+  naming the tokens and components it must use.
+
+### Built-in `frontend-design`
+The fallback if any pack is missing, and a useful second opinion on typography
+and hierarchy. Its guidance on avoiding default AI aesthetics applies
+throughout.
+
+### Token cost control for design work
+These skills are verbose. Load a skill when you are about to do the work it
+serves, not speculatively; do one audit→fix→polish cycle per screen rather than
+iterating indefinitely; batch several screens into one audit pass where they
+share a pattern; and never run all three packs on the same screen.
+
+## 11. Web testing, screenshots, and visual QA
+
+Both Playwright and Puppeteer are used, with a strict division of labour so
+they do not duplicate each other:
+
+**Playwright — behaviour and the screenshot corpus.**
+All functional E2E: user journeys per role, auth and RBAC paths, the correction
+pipeline end to end, forms, keyboard navigation, offline behaviour. Also owns
+the screenshot corpus, because it can drive the app into arbitrary states.
+Run headless, Chromium primary, WebKit for the PWA/iOS-adjacent paths.
+
+**Puppeteer — audit and measurement.**
+The standalone audit runner: axe-core injection per route, Lighthouse runs
+(performance, accessibility, best practices, PWA), full-page captures for the
+contact sheets, and console-error collection. Kept separate so audits can run
+against a built preview without the E2E suite.
+
+**Screenshot policy — capture generously.** Storage is cheap; the human is
+reviewing this remotely from a phone and screenshots are the primary evidence
+that anything actually works.
+- Capture **every screen × every state × every breakpoint**, and both themes if
+  the design is dual-mode. States means the real ones: default, loading, empty,
+  error, offline, and for anything showing a mark also low-confidence and
+  teacher-corrected. Breakpoints: **380, 768, 1440** minimum.
+- Path convention:
+  `reports/phase-N/screens/<screen-id>/<state>--<breakpoint>[--dark].png`
+  using the screen IDs from `docs/LEMELY_UI_SPEC.md` (S-15, T-08, …) so the
+  corpus is navigable and diffable across phases.
+- Also capture: every step of a multi-step flow (the upload/scanner sequence and
+  the marking progress stages especially), each meaningful interaction state of
+  the cross-cutting components, and any bug you fix — before and after.
+- Generate a **contact sheet** (an HTML index with thumbnails grouped by screen)
+  per phase, commit it, and attach it to the phase-complete ntfy notification.
+- Commit baselines. Compare against them each phase; an unintended diff is a
+  blocker, an intended diff is re-baselined with a note in the phase report.
+
+**Standing automated checks**, wired into `scripts/check.sh` and CI:
+axe-core (zero serious/critical), Lighthouse thresholds (accessibility ≥ 95,
+performance ≥ 80 on the student routes), `npx impeccable detect src/`,
+TypeScript + oxlint, Playwright suite, Puppeteer audit runner, console-error
+assertion (zero errors on every route), and the responsive check (no horizontal
+scroll at any breakpoint from 320px up).
+
+Keep the harness cheap in tokens: these runs produce enormous output. Always
+redirect to a file and read the summary plus failures only — never let a
+Lighthouse or axe JSON dump land in context.
+
+
+## 12. Taking direction mid-run (BUILD/INBOX.md)
+
+The human can send you instructions while you work, without stopping the run.
+They arrive as unhandled `- [ ]` items in `BUILD/INBOX.md`.
+
+- **Read `BUILD/INBOX.md` at the start of every session and after every
+  completed task.** It is the first file you read on resume, before MISSION.md.
+- Treat an unhandled directive as **higher priority than your current plan**.
+  If it changes what you should do next, change what you do next.
+- Act on it, then mark it `- [x]` with a one-line note on what you did. Never
+  delete an item.
+- If a directive conflicts with MISSION.md, **the directive wins** — it is the
+  human speaking now, and MISSION.md was written in advance. Record the conflict
+  and your resolution in `BUILD/DECISIONS.md`, and note it in the phase report.
+- If a directive is ambiguous or you believe it is a mistake, do the safest
+  reasonable interpretation, say so in the INBOX entry when you mark it handled,
+  and send an ntfy message explaining your reading. Do not stall waiting for
+  clarification — the human may be asleep.
+- If a directive would violate a product principle in `docs/LEMELY_UI_SPEC.md`
+  §1.4 (visible confidence, flags-not-verdicts, grades private, teacher
+  authority, no invented precision) or would require faking a passing test,
+  do not silently comply: mark it handled with a refusal note, explain why in an
+  ntfy message with priority high, and continue with the rest of the work.
+- `BUILD/PAUSE` may appear — that is the supervisor's business, not yours.
+  Finish your current task and exit cleanly as normal.
+
+---
+
+Begin: read `BUILD/STATE.md`, `docs/LEMELY_UI_SPEC.md`, `DESIGN.md`, and the
+reports for phases 0–2, then execute the current phase.

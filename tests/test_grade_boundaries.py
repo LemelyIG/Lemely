@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from lemely.core.schemas import ExamMetadata
+from lemely.data import DATA_DIR
 from lemely.io.grade_boundaries import (
     GradeBoundaryStore,
     _make_key,
@@ -16,6 +17,9 @@ from lemely.io.grade_boundaries import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+_BOUNDARIES_PATH = DATA_DIR / "grade_boundaries.json"
+_PROVENANCE_PATH = DATA_DIR / "grade_boundaries_provenance.json"
 
 # ── _make_key ──────────────────────────────────────────────────────────────
 
@@ -128,3 +132,64 @@ class TestGradeBoundaryStore:
         meta = _meta(session_year=None)
         _, source = store.resolve(meta)
         assert source == "subject_default"
+
+
+# ── Real bundled data (P2.2 ingestion) ────────────────────────────────────
+
+
+_INGESTED_SUBJECTS = ("0580", "0606", "0625")
+
+
+class TestBundledRealData:
+    """Exercise the actual shipped lemely/data/grade_boundaries.json (P2.2)."""
+
+    def test_defaults_are_computed_averages_not_guesses(self) -> None:
+        # The old bundled defaults were hand-guessed round numbers identical
+        # across all three subjects (80/70/60/50/40). Real per-subject averages
+        # computed from scraped official data should differ subject-to-subject.
+        store = GradeBoundaryStore()
+        seen = set()
+        for subject_code in _INGESTED_SUBJECTS:
+            meta = _meta(subject_code=subject_code, session_year=None)
+            boundaries, source = store.resolve(meta)
+            assert source == "subject_default"
+            seen.add(tuple(sorted(boundaries.items())))
+        assert len(seen) == len(_INGESTED_SUBJECTS), "expected distinct real averages per subject"
+
+    def test_defaults_are_monotonically_ordered(self) -> None:
+        store = GradeBoundaryStore()
+        for subject_code in _INGESTED_SUBJECTS:
+            meta = _meta(subject_code=subject_code, session_year=None)
+            boundaries, _ = store.resolve(meta)
+            ordered_grades = [g for g in ("A", "B", "C", "D", "E", "F", "G") if g in boundaries]
+            thresholds = [boundaries[g] for g in ordered_grades]
+            assert thresholds == sorted(thresholds, reverse=True)
+
+    def test_known_scraped_session_resolves_exact(self) -> None:
+        # 0580 May/June 2022 Paper 1 Variant 1 was ingested from the official
+        # CAIE grade-threshold PDF (see lemely/data/grade_boundaries_provenance.json).
+        store = GradeBoundaryStore()
+        meta = _meta(subject_code="0580", paper_number=1, paper_variant=1, session_year=2022)
+        boundaries, source = store.resolve(meta)
+        assert source == "exact"
+        assert boundaries  # non-empty real threshold map
+
+    def test_unscraped_year_falls_back_to_subject_average(self) -> None:
+        store = GradeBoundaryStore()
+        meta = _meta(subject_code="0580", session_year=2000)
+        boundaries, source = store.resolve(meta)
+        assert source == "subject_default"
+        assert boundaries
+
+
+class TestProvenance:
+    """The provenance file records where every exact boundary entry came from."""
+
+    def test_every_exact_key_has_provenance_with_source_url(self) -> None:
+        raw_data = json.loads(_BOUNDARIES_PATH.read_text(encoding="utf-8"))
+        provenance = json.loads(_PROVENANCE_PATH.read_text(encoding="utf-8"))
+        exact_keys = {k for k in raw_data if not k.startswith("_")}
+        assert exact_keys, "expected real ingested boundary keys"
+        assert exact_keys <= set(provenance)
+        for key in exact_keys:
+            assert provenance[key]["source_url"].startswith("https://cambridgeinternational.org")

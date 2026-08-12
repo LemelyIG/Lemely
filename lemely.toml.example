@@ -37,7 +37,9 @@ mark_scheme = 8000
 
 max_retries = 3
 backoff_seconds = 2.0
-# monthly_usd_ceiling = 25.0
+# Persistent cumulative-USD hard cap (survives process restarts).
+# total_usd_ceiling = 8.0
+# usd_warning_thresholds = [4.0, 6.0]
 # per_run_token_ceiling = 200000
 
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
@@ -49,3 +51,21 @@ id_match_rate_target = 0.99
 flag_precision_target = 0.99
 flag_recall_target = 0.85
 
+[database]
+# Full SQLAlchemy URL. Default targets the local Supabase Postgres
+# (`supabase start`). Override via LEMELY_DATABASE__URL in production.
+url = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+echo = false
+pool_size = 5
+max_overflow = 10
+pool_pre_ping = true
+
+[supabase]
+# Local Supabase Auth (GoTrue). Defaults are the well-known local-dev
+# values printed by `supabase status`; override for real deploys.
+url = "http://127.0.0.1:54321"
+jwt_audience = "authenticated"
+# Secrets — prefer LEMELY_SUPABASE__* env vars over this file:
+# jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"
+# anon_key = "..."
+# service_role_key = "..."

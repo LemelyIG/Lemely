@@ -4,10 +4,42 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+
+def _blank_to_none(value: object) -> object:
+    """Map an empty/whitespace-only string to ``None`` so it reads as *unset*.
+
+    Found by P6.10's fresh-clone run. ``docker-compose.yml`` passes optional
+    credentials through as ``${GEMINI_API_KEY:-}``, and a shell ``export VAR=``
+    does the same thing: the variable is *present* and its value is the empty
+    string. Pydantic then builds ``SecretStr("")``, which is not ``None`` — so
+    every ``is None`` "not configured" check in the codebase silently reads as
+    *configured*, with nothing behind it.
+
+    Two live consequences, both observed on a `make up` stack with no keys
+    exported: ``/api/health`` answered ``apiKeyConfigured: true`` while marking
+    could not work (making ``docs/deployment.md``'s "or accept
+    apiKeyConfigured:false" branch unreachable through Compose), and
+    ``GoTrueClient._anon_key`` sent an empty ``apikey`` header instead of
+    raising its explicit ``AuthError`` — which local Kong tolerates, so it
+    works locally and fails confusingly against Supabase Cloud.
+
+    Applied to the optional *credential* fields only. A blank value there can
+    never be meaningful, whereas a blank ordinary string may be.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+#: An optional secret where a blank env var means "not set" — see :func:`_blank_to_none`.
+OptionalSecret = Annotated[SecretStr | None, BeforeValidator(_blank_to_none)]
+#: The plain-text counterpart, for credential fields that are deliberately not secrets.
+OptionalCredential = Annotated[str | None, BeforeValidator(_blank_to_none)]
 
 
 class GradioSettings(BaseModel):
@@ -42,6 +74,13 @@ class GeminiSettings(BaseModel):
     integrity_model: str | None = None
     scan_metadata_model: str | None = None
     # Escalation: re-mark with a stronger model when marker confidence is low.
+    # NOTE (D2.2): this is a *budget* knob — "spend a thinking retry / a Pro call to
+    # try to improve this mark before it is final". It is NOT the human-review
+    # threshold, which is the separate, deliberately higher
+    # ``lemely.core.schemas.REVIEW_CONFIDENCE_THRESHOLD`` (0.90) and is not
+    # operator-tunable. The two were coincidentally equal (0.80) before D2.2 and
+    # are now free to move independently: raising this one costs Gemini dollars,
+    # raising that one costs teacher time.
     escalation_model: str | None = None
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
@@ -55,7 +94,12 @@ class GeminiSettings(BaseModel):
     pricing: dict[str, list[float]] = Field(default_factory=dict)
     max_retries: int = Field(default=3, ge=0)
     backoff_seconds: float = Field(default=2.0, gt=0)
-    monthly_usd_ceiling: float | None = None
+    # Persistent, file-backed cumulative-USD hard cap (see lemely.io.cost_ledger).
+    # Enforced across process restarts against the ledger, not a per-process global.
+    # Default is ACTIVE at $8 — this is the intended hard ceiling for unattended runs.
+    total_usd_ceiling: float | None = Field(default=8.0, ge=0)
+    # Cumulative-USD thresholds that emit a BUDGET_WARNING event (ntfy) exactly once.
+    usd_warning_thresholds: list[float] = Field(default_factory=lambda: [4.0, 6.0])
     per_run_token_ceiling: int | None = None
 
     def model_for(self, task_tag: str) -> str:
@@ -120,6 +164,73 @@ class DetParserSettings(BaseModel):
     escalate_on_defaulted_marks: bool = True
 
 
+class DatabaseSettings(BaseModel):
+    """Connection settings for the application Postgres (local Supabase by default).
+
+    The default URL targets the local Supabase stack (`supabase start`), whose
+    Postgres listens on ``127.0.0.1:54322`` with the well-known local dev
+    credentials (``postgres:postgres``) — these are non-secret local defaults,
+    not production credentials. Override in production via
+    ``LEMELY_DATABASE__URL`` (a full SQLAlchemy URL) or ``lemely.toml``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Full SQLAlchemy URL. psycopg (v3) sync driver by default.
+    url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+    # Echo SQL to the logger (debugging only).
+    echo: bool = False
+    # QueuePool sizing.
+    pool_size: int = Field(default=5, ge=1)
+    max_overflow: int = Field(default=10, ge=0)
+    pool_pre_ping: bool = True
+
+
+class SupabaseSettings(BaseModel):
+    """Supabase Auth (GoTrue) validation + admin settings.
+
+    All defaults are the standard local-dev values printed by ``supabase status``.
+    The JWT secret and service-role key are used only server-side (JWT validation
+    and admin user creation); the anon key is the public client key. None of these
+    are production secrets — override via ``LEMELY_SUPABASE__*`` for real deploys.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Base URL of the local Supabase API gateway (Kong).
+    url: str = "http://127.0.0.1:54321"
+    # Shared HS256 secret GoTrue signs local JWTs with (well-known local default).
+    jwt_secret: SecretStr = SecretStr("super-secret-jwt-token-with-at-least-32-characters-long")
+    # Expected `aud` claim for user tokens.
+    jwt_audience: str = "authenticated"
+    # Public anon key (client-side). Populated from `supabase status` for local dev.
+    anon_key: OptionalSecret = None
+    # Service-role key (server-side admin: create users, etc.).
+    service_role_key: OptionalSecret = None
+
+
+class AuthSettings(BaseModel):
+    """Auth lifecycle tuning (phone-OTP challenge store).
+
+    Email/password identity is delegated to Supabase GoTrue; these knobs only
+    govern the in-memory parent phone-OTP challenge lifecycle owned by
+    ``lemely.auth.service.AuthService``. Override via ``lemely.toml`` under the
+    ``[auth]`` section or via ``LEMELY_AUTH__*`` env vars.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Time-to-live for a pending OTP challenge, in seconds.
+    otp_ttl_seconds: int = Field(default=300, ge=1)
+    # Maximum verify attempts before a challenge is locked out.
+    otp_max_attempts: int = Field(default=5, ge=1)
+    # Number of digits in a generated OTP code.
+    otp_length: int = Field(default=6, ge=4, le=10)
+    # Minimum seconds between successive OTP issues for the same phone. Stops an
+    # attacker resetting the attempt counter by re-requesting before lockout.
+    otp_min_resend_seconds: int = Field(default=30, ge=0)
+
+
 class IntegritySettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     plagiarism_enabled: bool = True
@@ -128,12 +239,67 @@ class IntegritySettings(BaseModel):
     ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
 
+class StorageSettings(BaseModel):
+    """Supabase Storage settings for the student self-mark upload path (P2.5).
+
+    Overrides via ``lemely.toml`` under the ``[storage]`` section or
+    ``LEMELY_STORAGE__*`` env vars. The bucket/keys used to authenticate against
+    Storage are the same ``supabase.url``/``service_role_key`` as GoTrue.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    bucket: str = "uploads"
+    signed_url_ttl_seconds: int = Field(default=3600, ge=1)
+
+
+class PushSettings(BaseModel):
+    """Web-push (VAPID) application-server credentials (P5.6 chunk B, D5.10).
+
+    Overrides via ``lemely.toml`` under the ``[push]`` section or
+    ``LEMELY_PUSH__*`` env vars.
+
+    **All three credential fields default to ``None`` and that is a supported
+    state, not a misconfiguration** (D5.9 §4): with any of them missing the
+    transport reports itself unavailable and the notification inbox keeps
+    working. This machine has no VAPID keys, so treating their absence as an
+    error would fail every notification in exactly the environment the tests
+    run in.
+
+    ``vapid_public_key`` is deliberately a plain ``str`` and not a
+    :class:`SecretStr`: it is handed to every browser that subscribes, so
+    wrapping it would imply a confidentiality it does not have. The private
+    key is a secret and is typed as one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    # Base64url-encoded uncompressed P-256 point (65 bytes), the value the
+    # browser passes to ``pushManager.subscribe`` as ``applicationServerKey``.
+    vapid_public_key: OptionalCredential = None
+    # Base64url-encoded 32-byte P-256 private scalar.
+    vapid_private_key: OptionalSecret = None
+    # RFC 8292 ``sub`` claim: a ``mailto:`` or ``https:`` contact for whoever
+    # operates this application server, so a push service can reach us.
+    vapid_subject: OptionalCredential = None
+    # RFC 8030 ``TTL``: how long the push service may hold an undelivered
+    # message. A day matches the cadence of the notifications this build sends.
+    ttl_seconds: int = Field(default=86400, ge=0)
+    # Per-request timeout when talking to a push service. Kept short because
+    # every push is a best-effort side effect of an already-committed action
+    # (D5.9 §1) and must never make a student wait.
+    timeout_seconds: float = Field(default=10.0, gt=0)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
         env_nested_delimiter="__",
         env_file=".env",
         extra="forbid",
+        # gemini_api_key uses a validation_alias (see below). Without this,
+        # model_validate(model_dump()) round-trips (used by test fixtures and
+        # any code that reconstructs Settings from a dump) would reject the
+        # field-name key as an extra input. Allow both field name and aliases.
+        populate_by_name=True,
     )
     gradio: GradioSettings = GradioSettings()
     paths: PathsSettings = PathsSettings()
@@ -142,7 +308,22 @@ class Settings(BaseSettings):
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
-    gemini_api_key: SecretStr | None = None
+    storage: StorageSettings = StorageSettings()
+    push: PushSettings = PushSettings()
+    database: DatabaseSettings = DatabaseSettings()
+    supabase: SupabaseSettings = SupabaseSettings()
+    auth: AuthSettings = AuthSettings()
+    # Accept the app-specific ``LEMELY_GEMINI_API_KEY`` plus the two unprefixed
+    # names the google-genai SDK reads directly (``GEMINI_API_KEY`` /
+    # ``GOOGLE_API_KEY``). Without these aliases only ``LEMELY_GEMINI_API_KEY``
+    # populated ``settings.gemini_api_key``, so a user who exported only
+    # ``GEMINI_API_KEY`` got a working CLI/Gradio but a silently-degraded web
+    # portal (which gates AI features on ``settings.gemini_api_key``). One env
+    # var now works everywhere. Priority follows declaration order.
+    gemini_api_key: OptionalSecret = Field(
+        default=None,
+        validation_alias=AliasChoices("LEMELY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
 
     @classmethod
     def settings_customise_sources(

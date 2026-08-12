@@ -2,15 +2,28 @@
 
 pdfplumber sometimes detects *multiple* tables on a single page when a
 data/display grid (e.g. a logic-gate truth table) is embedded inside the
-mark-scheme table.  We want only the primary mark-scheme table per page.
+mark-scheme table, or simply because two consecutive questions' mark-scheme
+tables both land on the same physical page (common when a question is short,
+e.g. a 1-2 mark question directly followed by the next question's header row
+lower on the page).
 
-Strategy: for each page take at most the **first** table that qualifies as a
-mark-scheme table.  A table qualifies when:
+Strategy: for each page, keep **every** table that individually qualifies as
+a mark-scheme table.  A table qualifies when:
   - It has at least 2 rows with 2+ non-empty cells, AND
   - Either a marks column is detectable (via ``is_marks_column``) OR a
     header row contains standard mark-scheme keywords.
 
-Any subsequent table on the same page is treated as embedded content.
+Non-qualifying tables (embedded truth tables / data grids, which have
+neither a marks column nor mark-scheme header tokens) are dropped. Note this
+function previously kept only the *first* qualifying table per page and
+dropped any subsequent ones as "embedded content" — that was wrong: a
+second, independently-qualifying table on the same page is a second
+legitimate question block, not embedded content. The qualification check
+above is what actually distinguishes real mark-scheme tables from grids;
+capping at one-per-page silently dropped whole questions whenever a paper's
+layout put two of them on one page (confirmed via
+``0625_w24_ms_41.pdf``, where question 2's entire table was discarded this
+way).
 """
 
 from __future__ import annotations
@@ -18,6 +31,7 @@ from __future__ import annotations
 from typing import Any
 
 from lemely.io.det.marks import is_marks_column
+from lemely.io.det.symbols import desymbolize
 
 # Keywords that strongly indicate a row is a mark-scheme column header.
 _MS_HEADER_TOKENS: frozenset[str] = frozenset({"question", "answer", "marks", "guidance", "notes"})
@@ -63,6 +77,23 @@ def qualifies_as_mark_scheme_table(table: list[list[str | None]], max_mark: int 
     return _has_header_row(table) or _has_marks_column(table, max_mark)
 
 
+def _desymbolize_table(table: list[list[str | None]]) -> list[list[str | None]]:
+    """Recover Symbol-font glyphs in every cell of a qualifying table.
+
+    Applied at selection time so *every* downstream consumer of a
+    mark-scheme table — the marking engine as much as the P4 question-bank
+    ingest — sees "Δ" and "×" rather than the raw private-use-area
+    codepoints pdfplumber hands back for CAIE's embedded Symbol subset font.
+    Before this, 26 banked question rows carried mangled marking points, and
+    the marker was reading the same garbage.
+
+    Qualification runs on the *pre*-conversion table deliberately: the checks
+    look at header words and numeric marks columns, neither of which contains
+    Symbol glyphs, so converting first would only add work.
+    """
+    return [[desymbolize(cell)[0] if cell else cell for cell in row] for row in table]
+
+
 def select_tables(
     pdf: Any,
     page_start: int,
@@ -70,9 +101,11 @@ def select_tables(
 ) -> list[list[list[str | None]]]:
     """Collect mark-scheme tables from PDF pages starting at *page_start*.
 
-    For each page, at most **one** table is kept — the first qualifying
-    mark-scheme table.  Subsequent tables on the same page are dropped to
-    avoid embedded truth tables / data grids being parsed as questions.
+    Every table on every page that individually qualifies as a mark-scheme
+    table (see module docstring) is kept — a page may legitimately contain
+    more than one (e.g. a short question ending partway down a page,
+    followed by the next question's table further down the same page).
+    Non-qualifying tables (embedded grids) are dropped regardless of position.
 
     Falls back to page ``page_start - 1`` when no tables are found at
     ``page_start`` (handles short documents or unusual GMP layouts).
@@ -87,8 +120,7 @@ def select_tables(
             page_tables = page.extract_tables()
             for tbl in page_tables:
                 if qualifies_as_mark_scheme_table(tbl, max_mark):
-                    all_tables.append(tbl)
-                    break  # skip any further tables on this page
+                    all_tables.append(_desymbolize_table(tbl))
         if all_tables:
             return all_tables
 

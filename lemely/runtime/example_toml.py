@@ -54,7 +54,9 @@ def render_example_toml() -> str:
     lines.append("")
     lines.append(f"max_retries = {s.gemini.max_retries}")
     lines.append(f"backoff_seconds = {s.gemini.backoff_seconds}")
-    lines.append("# monthly_usd_ceiling = 25.0")
+    lines.append("# Persistent cumulative-USD hard cap (survives process restarts).")
+    lines.append(f"# total_usd_ceiling = {s.gemini.total_usd_ceiling}")
+    lines.append(f"# usd_warning_thresholds = {s.gemini.usd_warning_thresholds}")
     lines.append("# per_run_token_ceiling = 200000")
     lines.append("")
 
@@ -69,6 +71,29 @@ def render_example_toml() -> str:
     lines.append(f"flag_recall_target = {s.accuracy_eval.flag_recall_target}")
     lines.append("")
 
+    lines.append("[database]")
+    lines.append("# Full SQLAlchemy URL. Default targets the local Supabase Postgres")
+    lines.append("# (`supabase start`). Override via LEMELY_DATABASE__URL in production.")
+    lines.append(f'url = "{s.database.url}"')
+    lines.append(f"echo = {str(s.database.echo).lower()}")
+    lines.append(f"pool_size = {s.database.pool_size}")
+    lines.append(f"max_overflow = {s.database.max_overflow}")
+    lines.append(f"pool_pre_ping = {str(s.database.pool_pre_ping).lower()}")
+    lines.append("")
+
+    lines.append("[supabase]")
+    lines.append("# Local Supabase Auth (GoTrue). Defaults are the well-known local-dev")
+    lines.append("# values printed by `supabase status`; override for real deploys.")
+    lines.append(f'url = "{s.supabase.url}"')
+    lines.append(f'jwt_audience = "{s.supabase.jwt_audience}"')
+    lines.append("# Secrets — prefer LEMELY_SUPABASE__* env vars over this file:")
+    lines.append('# jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"')
+    lines.append('# anon_key = "..."')
+    lines.append('# service_role_key = "..."')
+
+    # No trailing blank line: pre-commit's end-of-file-fixer collapses a double
+    # trailing newline in lemely.toml.example, which would drift from this
+    # generator. Emit exactly one trailing newline to match.
     return "\n".join(lines) + "\n"
 
 

@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "note": "duration_minutes and total_marks are transcribed verbatim from the 'Assessment overview' section of the official CAIE syllabus PDF named in each record's `source`. No value here was written from memory (D4.6 §5). There is deliberately NO marks-per-minute or minutes-per-mark figure in this file: the rate is duration_minutes / total_marks, computed at read time by lemely/io/paper_timing.py, so the only numbers stored are ones a human can check against the source document.",
+  "cycle_caveat": "Each record carries the syllabus cycle it was transcribed from. A past paper sat under an earlier cycle may have had a different duration or mark total; the rate applied to it is the current cycle's. This is recorded rather than corrected because the alternative - one record per cycle - needs the older syllabus PDFs, which are not published alongside the current ones. 0625's paper structure has been stable across the ingested corpus; 0580's has not (the 2025-2027 cycle replaced a four-paper structure with different mark totals), which matters the day 0580 questions are ingested.",
+  "papers": [
+    {
+      "board": "caie",
+      "subject_code": "0625",
+      "paper_number": 1,
+      "name": "Multiple Choice (Core)",
+      "duration_minutes": 45,
+      "total_marks": 40,
+      "practical": false,
+      "source": {
+        "document": "595430-2023-2025-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/595430-2023-2025-syllabus.pdf",
+        "syllabus_version": "2023-2025",
+        "section": "2 Syllabus overview - Assessment overview",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0625",
+      "paper_number": 2,
+      "name": "Multiple Choice (Extended)",
+      "duration_minutes": 45,
+      "total_marks": 40,
+      "practical": false,
+      "source": {
+        "document": "595430-2023-2025-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/595430-2023-2025-syllabus.pdf",
+        "syllabus_version": "2023-2025",
+        "section": "2 Syllabus overview - Assessment overview",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0625",
+      "paper_number": 3,
+      "name": "Theory (Core)",
+      "duration_minutes": 75,
+      "total_marks": 80,
+      "practical": false,
+      "source": {
+        "document": "595430-2023-2025-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/595430-2023-2025-syllabus.pdf",
+        "syllabus_version": "2023-2025",
+        "section": "2 Syllabus overview - Assessment overview ('1 hour 15 minutes')",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0625",
+      "paper_number": 4,
+      "name": "Theory (Extended)",
+      "duration_minutes": 75,
+      "total_marks": 80,
+      "practical": false,
+      "source": {
+        "document": "595430-2023-2025-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/595430-2023-2025-syllabus.pdf",
+        "syllabus_version": "2023-2025",
+        "section": "2 Syllabus overview - Assessment overview ('1 hour 15 minutes')",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0625",
+      "paper_number": 5,
+      "name": "Practical Test",
+      "duration_minutes": 75,
+      "total_marks": 40,
+      "practical": true,
+      "source": {
+        "document": "595430-2023-2025-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/595430-2023-2025-syllabus.pdf",
+        "syllabus_version": "2023-2025",
+        "section": "2 Syllabus overview - Assessment overview ('1 hour 15 minutes')",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0625",
+      "paper_number": 6,
+      "name": "Alternative to Practical",
+      "duration_minutes": 60,
+      "total_marks": 40,
+      "practical": true,
+      "source": {
+        "document": "595430-2023-2025-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/595430-2023-2025-syllabus.pdf",
+        "syllabus_version": "2023-2025",
+        "section": "2 Syllabus overview - Assessment overview",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0580",
+      "paper_number": 1,
+      "name": "Non-calculator (Core)",
+      "duration_minutes": 90,
+      "total_marks": 80,
+      "practical": false,
+      "source": {
+        "document": "662466-2025-2027-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/662466-2025-2027-syllabus.pdf",
+        "syllabus_version": "2025-2027",
+        "section": "2 Syllabus overview - Assessment overview ('1 hour 30 minutes')",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0580",
+      "paper_number": 2,
+      "name": "Non-calculator (Extended)",
+      "duration_minutes": 120,
+      "total_marks": 100,
+      "practical": false,
+      "source": {
+        "document": "662466-2025-2027-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/662466-2025-2027-syllabus.pdf",
+        "syllabus_version": "2025-2027",
+        "section": "2 Syllabus overview - Assessment overview ('2 hours')",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0580",
+      "paper_number": 3,
+      "name": "Calculator (Core)",
+      "duration_minutes": 90,
+      "total_marks": 80,
+      "practical": false,
+      "source": {
+        "document": "662466-2025-2027-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/662466-2025-2027-syllabus.pdf",
+        "syllabus_version": "2025-2027",
+        "section": "2 Syllabus overview - Assessment overview ('1 hour 30 minutes')",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0580",
+      "paper_number": 4,
+      "name": "Calculator (Extended)",
+      "duration_minutes": 120,
+      "total_marks": 100,
+      "practical": false,
+      "source": {
+        "document": "662466-2025-2027-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/662466-2025-2027-syllabus.pdf",
+        "syllabus_version": "2025-2027",
+        "section": "2 Syllabus overview - Assessment overview ('2 hours')",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0606",
+      "paper_number": 1,
+      "name": "Non-calculator",
+      "duration_minutes": 120,
+      "total_marks": 80,
+      "practical": false,
+      "source": {
+        "document": "662470-2025-2027-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/662470-2025-2027-syllabus.pdf",
+        "syllabus_version": "2025-2027",
+        "section": "2 Syllabus overview - Assessment overview ('2 hours')",
+        "retrieved": "2026-08-08"
+      }
+    },
+    {
+      "board": "caie",
+      "subject_code": "0606",
+      "paper_number": 2,
+      "name": "Calculator",
+      "duration_minutes": 120,
+      "total_marks": 80,
+      "practical": false,
+      "source": {
+        "document": "662470-2025-2027-syllabus.pdf",
+        "url": "https://www.cambridgeinternational.org/Images/662470-2025-2027-syllabus.pdf",
+        "syllabus_version": "2025-2027",
+        "section": "2 Syllabus overview - Assessment overview ('2 hours')",
+        "retrieved": "2026-08-08"
+      }
+    }
+  ]
+}
