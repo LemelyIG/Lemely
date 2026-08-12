@@ -53,7 +53,41 @@ already paid for (see §8).
 
 ## 3. Test & coverage summary
 
-<!-- P6.11-FILL: figures below come from the P6.11 full-suite run, /tmp/check_p611.log -->
+| Measure | Phase 5 (develop) | **Phase 6** | Delta |
+|---|---:|---:|---:|
+| Tests run | 2,927 | **3,508** | **+581** |
+| Passed | 2,921 | **3,502** | +581 |
+| Skipped | 6 | **6** | 0 |
+| **Failed / errored** | 0 | **0** | — |
+| Coverage | 90.91% | **90.92%** | **+0.01 pp** |
+
+**Where these numbers come from, because `check.sh` does not hold them.** The gate script
+prints nothing for a passing gate, so `/tmp/check_p611.log` carries the *verdict* and no count
+and no coverage figure at all — the trap `DELIVERY.md` §6.3 was written to prevent. The figures
+above come from a **separate, serial** `pytest -q --tb=short` (`/tmp/pytest_p611.log`,
+`EXIT=0`), run after the gate run had fully exited. Serial matters: `pytest` and `check.sh`
+contend on the same `.coverage` data file, and a concurrent pair has already produced a
+convincing but wrong coverage regression in this build (89.67% against a true 90.37%). The
+count is the 49 progress lines of that log (`3502` `.` + `6` `s`, no `F` and no `E`); coverage
+is its `Total coverage: 90.92%` line.
+
+**Coverage did not drop at any point in the phase**, which is MISSION §6 gate 2. It rose by
+0.01 pp — effectively flat, and honestly so: this phase added 581 tests but most of them cover
+routes and services that were already covered, because P6.3's 573 cases are an *authorization
+matrix over existing routes* rather than new behaviour.
+
+**All 6 skips are opt-in and were re-derived rather than carried**, each named here so a green
+run cannot hide a silently disabled test:
+
+| Count | Tests | Why skipped |
+|---:|---|---|
+| 2 | `test_accuracy_real_papers.py:203,218` | The **live, billed** real-past-paper accuracy tests. Gated on `LEMELY_LIVE_ACCURACY=1` **and** a Gemini key, deliberately, so a bare `pytest` never spends money (D3.21). |
+| 4 | `test_auth_live.py:108`, `test_seat_invite_live.py:178`, `test_storage_live.py:58,78` | Live Supabase GoTrue/Storage tests, gated on service-role/anon keys being **exported into the shell**. The stack was up — these skip on the environment variables, not on the stack. |
+
+Nothing is skipped for being broken, and no test was weakened, skipped or deleted this phase to
+reach green. The one test that *was* changed (`test_push_transport.py`, D6.7) was inverted twice
+afterwards to prove it still fails on a wrong audience and a foreign key.
+
 
 ---
 
@@ -64,7 +98,41 @@ ended `EXIT=0` on `6005b20`, but three commits landed after it and one of them (
 touched real code — so that verdict was true about `6005b20` and not about HEAD. This is the
 re-run.
 
-<!-- P6.11-FILL: 13-gate table -->
+**`/tmp/check_p611.log` — `EXIT=0`, "All gates passed (0 skipped)."** Launched detached
+(`setsid`) on the clean tree at `66950f3` and finished 06:53 local on 2026-08-12, ~39 minutes
+end to end. The only commits between that tree and the shipped one are documentation
+(`755b19e`, `729fcde`, and this report's own commit):
+`git diff 66950f3..HEAD -- lemely web scripts tests Makefile pyproject.toml alembic.ini
+docker-compose.yml Dockerfile` is **empty**, so the verdict is a true statement about the
+shipped code. That check is written out rather than asserted because P6.6's `EXIT=0` was *not*
+true of HEAD for exactly this reason, and the difference between the two cases is one command.
+
+| # | Gate | MISSION §6 | Verdict |
+|---:|---|---|---|
+| 1 | `ruff-check` | 1 | **PASS** |
+| 2 | `ruff-format` | 1 | **PASS** |
+| 3 | `mypy lemely` | 1 | **PASS** |
+| 4 | `import-linter` | 1 | **PASS** |
+| 5 | `pytest` | 2 | **PASS** (counts in §3) |
+| 6 | `web-typecheck` | 3 | **PASS** — includes `web/e2e/` for the first time (D6.1) |
+| 7 | `web-lint` (oxlint) | 3 | **PASS** |
+| 8 | `web-build` | 3 | **PASS** |
+| 9 | `web-test` (vitest) | 3 | **PASS** |
+| 10 | `impeccable-detect` | 8 | **PASS, and vacuous — see below** |
+| 11 | `playwright-e2e` | 4 | **PASS** — the live-stack suite, all roles |
+| 12 | `puppeteer-audit` | 8 | **PASS** — axe + Lighthouse + console + responsive, §5 |
+| 13 | `ui-thresholds` | 8 | **PASS** — the thresholds §5 tabulates, including the performance floor D6.2 created |
+
+**0 skipped is load-bearing.** `check.sh` *skips* gates 11–13 when the local Supabase stack is
+down and still exits 0 — a green run with three skips would say nothing about the UI at all.
+This run had the stack up and ran every gate.
+
+Gates 5 and 6 of MISSION §6 (accuracy harness; authz matrix) are unchanged and green
+respectively: no marking, extraction or prediction code was touched this phase, and the authz
+matrix was not merely re-verified but rebuilt as a generated equality assertion (P6.3, D6.4).
+Gate 7 (adversarial review) ran per task, and P6.3 is a whole-surface instance of it.
+
+
 
 **One gate must be reported as vacuous rather than counted as a pass.** `npx impeccable detect`
 (impeccable 3.5.0) returns `[]` for `src/` **and for files deliberately written to trip it** — an

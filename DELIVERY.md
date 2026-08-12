@@ -329,15 +329,19 @@ print('perf < 80:', sorted(((r[0], r[2]) for r in rows if r[2] is not None and r
 PY
 ```
 
-### 6.3 Pending the Phase-6 closing runs
+### 6.3 The Phase-6 closing runs — all filled
 
-These are the figures no artifact holds yet. They are deliberately left blank
-rather than estimated, and **must be filled from the run's own artifacts**:
+This table was written with **every row deliberately blank**, because the recurring
+defect of this build is a figure whose source no longer exists. Each row named the
+task that would fill it and the artifact the number had to come from, and nothing
+was estimated in the meantime. **All five rows are now closed from their own
+artifacts**, and each is struck through rather than deleted so the discipline stays
+readable:
 
-| Figure | Filled by | Source once it exists |
+| Figure | Filled by | Source |
 | --- | --- | --- |
-| Test count and coverage on the final tree | P6.11 | the `Total coverage:` line of the run's pytest leg — **not** `scripts/check.sh`'s log, which prints nothing for a passing gate and therefore contains no count and no coverage figure at all |
-| The 13-gate verdict on the final tree | P6.11 | `EXIT=` line of the run log. P6.6 reached `EXIT=0` (all 13 gates, 0 skipped — the first fully green full-suite run of this build), but three commits landed after it, one of them product code, so that verdict is true of `6005b20` and not of the shipped tree |
+| ~~Test count and coverage on the final tree~~ | ~~P6.11~~ | **Filled: 3,508 tests — 3,502 passed / 6 skipped / 0 failed — at 90.92% coverage**, up from Phase 5's 2,927 / 90.91%, so coverage never dropped (MISSION §6 gate 2). From a **separate serial** `pytest -q` run (`EXIT=0`), *not* from `scripts/check.sh`'s log, which prints nothing for a passing gate and therefore holds no count and no coverage figure at all. All 6 skips are opt-in and are itemised in [`reports/phase-6/REPORT.md`](reports/phase-6/REPORT.md) §3 — 2 live billed accuracy tests, 4 gated on Supabase keys being exported |
+| ~~The 13-gate verdict on the final tree~~ | ~~P6.11~~ | **Filled, and it is a pass: `EXIT=0`, all 13 gates PASS, 0 skipped.** `0 skipped` is load-bearing — `check.sh` skips the three live-stack UI gates when Supabase is down and still exits 0. Launched detached on the tree at `66950f3`; the only commits between that tree and the shipped one are documentation, verified by `git diff 66950f3..HEAD -- lemely web scripts tests Makefile pyproject.toml …` being **empty**. That check is why this verdict is true of the shipped code where P6.6's `EXIT=0` was not (three commits landed after it, one of them product code). Gate table in [`reports/phase-6/REPORT.md`](reports/phase-6/REPORT.md) §4 |
 | ~~Phase-6 axe / Lighthouse / screenshot corpus~~ | ~~P6.7~~ | **Filled.** [`reports/phase-6/visual-qa.md`](reports/phase-6/visual-qa.md), recounted from the JSON in [`reports/phase-6/REPORT.md`](reports/phase-6/REPORT.md) §5: **73 axe route-states, 0 violations at any impact**; **44 Lighthouse route reports, a11y floor 96** (`teacher-review`), **performance floor 80** (`teacher-quiz-detail`) with **zero routes below 80** where Phase 5 had eight; 0 console errors; 0 horizontal-scroll violations; **48 screens / 246 screenshots** plus per-role contact sheets (`contact-sheet-index.html`) |
 | ~~Fresh-clone acceptance~~ | ~~P6.10~~ | **Filled.** [`reports/phase-6/fresh-clone.md`](reports/phase-6/fresh-clone.md) — `make up` from a clone of `be49d34` reached `EXIT=0` with both containers healthy, and all five demo roles authenticate **through nginx on :8080**, each confirmed by reading `/api/me/profile` back. Four defects the thirteen gates could not see came out of it, fixed in `310fade` (D6.8) |
 | ~~Visual regression against the Phase-2.5 baselines~~ | ~~P6.7~~ | **Filled, and it is a pass: `removed: 0` against both baselines.** [`compare-vs-phase-2.5.json`](reports/phase-6/compare-vs-phase-2.5.json) — 207 added / **0 removed** / 39 changed; [`compare-vs-phase-5.json`](reports/phase-6/compare-vs-phase-5.json) — 0 added / **0 removed** / 112 changed / 134 unchanged. `changed` is not a regression signal — the seed's `run_tag` is random per run, so every screen rendering a class name changes on every re-baseline (§5.5). One trap the run hit and the report records: **the corpus has three producers**, and running only the audit runner reported the other seven screens as `removed` — the exact blocker signal, from screens that had never been asked for |
