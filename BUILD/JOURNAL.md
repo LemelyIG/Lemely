@@ -2158,6 +2158,27 @@ them whether or not Phase 6 fixes them.
   Phase 1's opportunistic D1.9 backlog: landing product code now would break the property that both
   green verdicts describe the shipped tree.
 
+## 2026-08-12 — session 110: three sessions' worth of docs were never actually on the remote
+
+- **Did:** resumed on a complete build — tree clean, INBOX fully handled (both items `- [x]`),
+  BLOCKERS B1/B2/B3 all RESOLVED, no `BUILD/PAUSE`, no orphaned `pytest`. The one real finding was
+  in `git status -sb`, not in any of the state files: **`develop` was 3 commits ahead of
+  `origin/develop`** — `92e4beb` (the STATE prune), `49f06bc` (the DELIVERY §5.5 fix) and
+  `cb21675` (the Gemini-ledger re-read). Pushed them; `5cd56f8..cb21675`.
+- **Why it mattered more than "some docs were local."** PR #3 (develop → main) is open and is
+  Habeeby's to merge. It renders `origin/develop`, so for three sessions the PR was showing the
+  **1012-line STATE.md that session 109 had already pruned**, a `reports/phase-6/REPORT.md` whose
+  §5.5 claim was still untrue, and the stale `gemini_spend_usd` mirror. Every one of those commits
+  exists to make the record honest for a human reading it on GitHub, and none of them had reached
+  the place that human looks. A clean working tree says nothing about the remote.
+- **Learned:** the resume protocol's tree check (`git status --short`, empty) and `status: COMPLETE`
+  both passed while the shipped artifact was three commits stale. **Check `git status -sb` for the
+  ahead/behind count, not just the porcelain file list** — "clean" and "pushed" are different
+  properties and this build's own §5 requires the second.
+- **Next:** nothing product-side. The D1.9 backlog item stays deliberately unstarted (starting it
+  would put code after P6.11's closing `EXIT=0`, which that run existed to establish). Both PRs
+  stay open — merging is Habeeby's call, MISSION §4.
+
 ## 2026-08-12 — session 109: STATE.md had outgrown the one file every session must read
 
 - **Did:** resumed on a complete build — tree clean, INBOX fully handled, develop pushed, nothing

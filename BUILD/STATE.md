@@ -2,7 +2,7 @@
 
 status: COMPLETE           # RUNNING | COMPLETE | HALTED
 current_phase: 6            # ALL PHASES COMPLETE — merged to develop, reported, PR #3 open
-last_updated: 2026-08-12T05:30:00Z
+last_updated: 2026-08-12T05:40:00Z
 gemini_spend_usd: 0.19750   # MEASURED from `outputs/gemini_spend.json`. This line is a
 # hand-copied mirror and has drifted before (it read 0.1612 against a real 0.18429).
 # Re-read the ledger, never this line, before quoting a spend.
@@ -85,6 +85,11 @@ The two worth knowing before touching anything:
 
 ## Operational rules this build paid many sessions for — do not re-derive
 
+- **"Clean tree" is not "pushed."** The resume protocol checks `git status --short` for leftovers,
+  which is empty whether or not the remote has your commits. Session 110 found `develop` **3
+  commits ahead of origin** — so PR #3, the artifact Habeeby actually reads, had been rendering a
+  pruned-away 1012-line STATE.md and an already-corrected report for three sessions. **Use
+  `git status -sb` and read the ahead/behind count** at every session start.
 - **A `FAIL` line in `check.sh`'s log is NOT the end of the run.** The script does not abort on
   a failed gate. Decide liveness from `ps` and the absence of the `EXIT=` line, never from a
   gate verdict.
