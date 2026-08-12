@@ -2157,3 +2157,28 @@ them whether or not Phase 6 fixes them.
   harmful CI attempt) are open and Habeeby's to merge or close (MISSION §4). Declined again to start
   Phase 1's opportunistic D1.9 backlog: landing product code now would break the property that both
   green verdicts describe the shipped tree.
+
+## 2026-08-12 — session 109: STATE.md had outgrown the one file every session must read
+
+- **Did:** resumed on a complete build — tree clean, INBOX fully handled, develop pushed, nothing
+  in flight. Found a CI run already running on HEAD (`5cd56f8`, docs-only) and set it watching
+  rather than starting a second. Then pruned `BUILD/STATE.md` per MISSION §8b: **1012 lines /
+  ~34k tokens → 227**, collapsing eight phases of per-task narrative into a report/decision table
+  and keeping the operational and environment knowledge **verbatim**, because that is the part a
+  resuming session actually spends tokens rediscovering.
+- **Why it was worth doing on a shipped tree:** the file had passed the point where it could be
+  read in one call — my own first `Read` returned 62% of it with a "PARTIAL view" cap. A single
+  source of truth that no session can read in full is not one. Verified the record was safe
+  elsewhere *before* deleting anything: `DELIVERY.md` §5 carries all six limitation subsections
+  (148 lines), each phase's §7 carries its own, and D0.1–D6.10 all exist.
+- **Learned — the check I nearly got wrong twice.** `grep -c "^### D6\." DECISIONS.md` returned
+  **0**, which reads exactly like "the Phase-6 rationale was never recorded" — the one fact that
+  would have made this prune destructive. It is a heading-level artifact: the file is newest-first
+  and switches from `###` to `##` at D5.8. A second grep pinned to `##` then missed D4.1–D4.4.
+  **Match the identifier, not the formatting** (`grep -oE "\bD6\.[0-9]+"`); a zero from a pattern
+  pinned to incidental syntax is not evidence of absence. Recorded in STATE so the next prune
+  starts with it.
+- **Also corrected:** the phase table said D0.1–D0.6; the real range is D0.1–**D0.7**.
+- **Next:** the green CI verdict (`31564822523`, `36074a2`) still covers HEAD's code —
+  `git diff 36074a2..HEAD -- lemely web scripts tests Makefile pyproject.toml .github` is empty,
+  so every commit since is docs. Both PRs stay open; merging is Habeeby's call (MISSION §4).
