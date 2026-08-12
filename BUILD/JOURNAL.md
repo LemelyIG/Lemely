@@ -1,5 +1,29 @@
 # Session journal
 
+## 2026-08-12 — Session 107 — P6.12: CI made green again (D6.10)
+- Did: fixed the CI red session 106 diagnosed and deferred (`7f11f58`). Two toolchain defects,
+  zero product behaviour changed. `pyproject.toml` pinned only `ruff>=0.7`, so the runner
+  resolved **0.16.2** while this venv and the pre-commit `rev` both held **0.15.20** — 10 ×
+  RUF036 red in CI, green everywhere else on the identical tree. And the `pre-commit` job
+  installed `.[dev]` alone, so its `entry: mypy lemely` (`language: system`) hook could not
+  import fastapi: **291 errors that are an environment answer, not a verdict on the code**, the
+  same lesson STATE already records twice locally. Pinned `ruff==0.15.20` in lockstep with the
+  pre-commit rev (a comment on each line says to bump them together), reordered the 10
+  annotations so a future bump is unblocked, and gave the job `.[dev,ui,web,db]` — the same
+  extras as the `test` job whose identical mypy step is green.
+- Learned: **session 106 deferred to a fix-it PR that predated the failure it was named after.**
+  Copilot's PR #4 has been stale since 2026-08-05; RUF036 shipped with ruff 0.16 days later, so
+  it could never have fixed this — and two of its four changes would have hurt (narrows the format
+  gate to `lemely tests`, dropping `web/` and `scripts/`; `if: matrix.python-version == "3.13"`,
+  which GHA cannot parse). Check the dates before treating an open PR as a fix in flight.
+  Second: **a green local gate cannot prove a remote red is gone when the versions differ** —
+  verification had to be `uvx ruff@0.16.2 check .`, not `.venv/bin/ruff`. That same probe is why
+  the fix pins rather than upgrades: 0.16 would also reformat 6 files and widen the format set
+  340 → 387, trading a red lint gate for a red format gate on a shipped tree.
+- Next: nothing outstanding. Build remains COMPLETE, PR #3 open and unmerged (never mine), PR #4
+  left for Habeeby. The deliberate follow-up, if wanted, is the ruff 0.16 upgrade — now a
+  formatting decision on its own rather than a blocked one.
+
 ## 2026-08-05 — Phase 2, P2.7 steps 5b-8 (student surface complete)
 - Did: resumed on a clean tree at P2.7 step 5b. Dispatched three `implementer` rounds
   (CorrectPaper+PaperResult real upload/SSE wiring; StudyPlan+Standings+Onboarding wiring;

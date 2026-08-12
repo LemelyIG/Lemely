@@ -2,7 +2,29 @@
 
 status: COMPLETE           # RUNNING | COMPLETE | HALTED
 current_phase: 6            # ALL PHASES COMPLETE — Phase 6 merged to develop, reported, PR #3 updated
-last_updated: 2026-08-12T04:35:00Z
+last_updated: 2026-08-12T06:20:00Z
+#
+# ## Session 107 — session 106's finding was FIXED, and the deferral it rested on was wrong
+# P6.12 (`7f11f58`, D6.10) closed the CI red session 106 diagnosed. Both defects were toolchain,
+# not product: `ruff>=0.7` let the runner resolve **0.16.2** against this venv's and the
+# pre-commit rev's **0.15.20** (10 × RUF036), and the `pre-commit` CI job installed `.[dev]` only,
+# so its `entry: mypy lemely` hook could not import fastapi — **291 errors that are an environment
+# answer, not a verdict on the code** (the identical step is green in the `test` job, which
+# installs the web/db extras). Fixed by pinning `ruff==0.15.20` in lockstep with the pre-commit
+# rev, reordering the 10 annotations so a future bump is unblocked, and giving the pre-commit job
+# `.[dev,ui,web,db]`.
+# **Session 106 deferred this to Copilot's PR #4 because a fix was "in flight". It was not:
+# PR #4 has been stale since 2026-08-05 and predates the failure it is named after** — RUF036
+# shipped with ruff 0.16, days later — so it could never have fixed this red, and two of its four
+# changes would have hurt (it narrows the format gate to `lemely tests`, dropping `web/` and
+# `scripts/`, and uses `if: matrix.python-version == "3.13"`, which GHA cannot parse — expressions
+# require single-quoted strings). **Check whether a fix-it PR predates the failure before treating
+# it as a reason to leave a gate red.** PR #4 is still open and unmerged — Habeeby's call.
+# **Verified with the version CI actually resolves, not the local one** (`uvx ruff@0.16.2 check .`
+# → All checks passed), which is the only check that could prove this. The same probe is why the
+# fix pins instead of upgrading: `uvx ruff@0.16.2 format --check .` says **6 files would be
+# reformatted and the file set widens 340 → 387**, so bumping would have traded a red lint gate
+# for a red format gate on a shipped tree.
 #
 # ## Session 106 — resumed on a complete build, nothing to continue, ONE thing found
 # Tree clean, INBOX has no unhandled item, B1–B3 all RESOLVED, `origin/develop` up to date, PR #3
@@ -814,6 +836,20 @@ Measured, not assumed — every line below was checked on disk this session:
       P6.1's `React.lazy` split is recorded as **wrong** — Phase 5's own Lighthouse JSON already
       carried CLS 0.220 for that route, so the defect predates the code split), and
       `npx impeccable detect` is vacuous on this machine and is reported as evidence of nothing.
+
+- [x] done — **P6.12** (2026-08-12, session 107). **CI is fixed** (`7f11f58`, D6.10) — the red
+      session 106 diagnosed and deferred. Two toolchain defects, no product code behaviour
+      changed: an unpinned `ruff>=0.7` resolving 0.16.2 on the runner against 0.15.20 locally
+      (10 × RUF036), and the `pre-commit` job installing `.[dev]` only so its `mypy lemely` hook
+      reported 291 `Cannot find … "fastapi"` errors. Pinned `ruff==0.15.20` in lockstep with the
+      pre-commit rev, reordered the 10 annotations, gave the job `.[dev,ui,web,db]`.
+      **Verified against the version CI resolves — `uvx ruff@0.16.2 check .` → All checks passed**
+      — because a green local 0.15.20 run cannot prove a 0.16 red is gone. Also `mypy lemely`
+      (Success, 215 files), all 10 pre-commit hooks, 39 tests over the two touched repos.
+      **Do not "just upgrade ruff" as a follow-up without budgeting for the format churn:**
+      `uvx ruff@0.16.2 format --check .` reports **6 files reformatted and the file set widening
+      340 → 387**. The lint side is already clean, so that upgrade is now a formatting decision
+      on its own, not a blocked one.
 
 ### Environment facts worth not re-deriving (cost real work to find)
 - **`pre-commit` needs `.venv/bin` on `PATH`, or two hooks fail for the wrong reason.**

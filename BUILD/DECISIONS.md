@@ -6499,3 +6499,57 @@ bite (axe, Lighthouse, console-error, horizontal-scroll) are unaffected and all 
 findings, and the `/impeccable audit` *skill* pass is a separate and non-vacuous leg of the
 same task (`reports/phase-6/impeccable-audit.md`, 15/20, Good). **A gate that cannot fail is a
 reporting problem, not a licence to claim a pass.**
+
+---
+
+## D6.10 — The CI red was toolchain drift in two places, and the fix pins rather than upgrades
+
+**Date:** 2026-08-12 (session 107) · **Task:** P6.12 · **Commit:** `7f11f58`
+
+Session 106 found GitHub Actions red on PR #3 since ~2026-08-09 while all 13 local gates were
+green, and correctly refused to call either statement wrong. It deferred the fix to Copilot's
+PR #4. This session did not: **PR #4 has been stale since 2026-08-05 — it predates the failure
+it is named after** (RUF036 arrived with ruff 0.16, days later), so it could never have fixed
+the red. Two independent defects, neither in the product code.
+
+### 1. `test (3.12/3.13/3.14)` — `ruff check .`, 10 × RUF036
+
+`pyproject.toml` pinned `ruff>=0.7`, so the runner resolved **0.16.2**, while this venv *and*
+`.pre-commit-config.yaml`'s `rev` both held **0.15.20** — which does not carry the rule. Three
+ruff instances, two versions, one tree, two verdicts. **An unpinned linter is a gate whose
+verdict changes without a commit**, the same shape as P6.6's dated VAPID assertion: a red that
+arrives on a calendar rather than on a change, and therefore invisible to every local gate.
+
+**Both halves were done, because either alone leaves the trap armed:** `ruff==0.15.20` in the
+dev extra *in lockstep with the pre-commit rev* (a comment on each line says to bump them
+together), and the 10 annotations reordered so the tree is already clean when someone does.
+Verified with the version CI actually resolved rather than the local one —
+`uvx ruff@0.16.2 check .` → *All checks passed!*
+
+**Pinned rather than bumped, and the measurement is the reason.**
+`uvx ruff@0.16.2 format --check .` reports **6 files would be reformatted and a widened file
+set (340 → 387 files)**. Upgrading would have traded a red lint gate for a red format gate plus
+a 6-file reformat on a shipped tree. Pinning is the smaller, more reversible move, and the
+RUF036 fixes mean the upgrade — when it is taken deliberately, with the format churn in its own
+commit — is no longer blocked by it.
+
+### 2. `pre-commit` — 291 mypy errors, all `Cannot find implementation … "fastapi"`
+
+That job installed `.[dev]` only. The hook is `entry: mypy lemely`, `language: system`, so it
+resolves imports from the job environment — the **identical** command is green in the `test`
+job, which installs `.[dev,ui,web,db]`. Now it installs the same extras.
+
+This is the third time this build has paid for the same lesson, and the first time in CI:
+**"module/executable not found" is an environment answer, never a verdict on the code.** STATE
+already records it for `pre-commit`/`mypy` locally and for `supabase` not being on a
+non-interactive PATH. Here it produced 291 errors, which is exactly the volume that reads as a
+catastrophic code failure.
+
+### What was deliberately not done
+
+**PR #4 was not merged and not superseded on its own branch** (MISSION §4 — never merge a PR).
+Its two correct ideas are implemented here independently; its other two changes would have hurt:
+it narrows `ruff format --check .` to `lemely tests`, dropping `web/` and `scripts/` from the
+format gate, and it guards two steps with `if: matrix.python-version == "3.13"` — GitHub Actions
+expressions require single-quoted strings, so that workflow would not have parsed. **A stale
+fix-it PR is not a reason to leave a gate red; check whether it predates the failure.**
