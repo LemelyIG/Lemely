@@ -5,18 +5,25 @@
  * logins (D1.11's 3-device-limit semantics rely on a stable device id).
  */
 
+import { randomUuid } from "@/lib/uuid"
+
 const DEVICE_ID_KEY = "lemely.deviceId"
 const SESSION_KEY = "lemely.session"
 
 /**
- * Return the client's device fingerprint, minting one via `crypto.randomUUID()`
- * on first use and persisting it so every subsequent call (and every login)
+ * Return the client's device fingerprint, minting one via `randomUuid()` on
+ * first use and persisting it so every subsequent call (and every login)
  * reuses the same id.
+ *
+ * `randomUuid`, not `crypto.randomUUID` directly: this runs on the login path
+ * before a session exists, and `crypto.randomUUID` is undefined outside a
+ * secure context — over plain HTTP on a non-localhost origin the bare call
+ * threw and took the whole sign-in with it. See `lib/uuid.ts`.
  */
 export function getDeviceId(): string {
   const existing = localStorage.getItem(DEVICE_ID_KEY)
   if (existing) return existing
-  const minted = crypto.randomUUID()
+  const minted = randomUuid()
   localStorage.setItem(DEVICE_ID_KEY, minted)
   return minted
 }
