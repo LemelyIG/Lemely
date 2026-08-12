@@ -2141,3 +2141,19 @@ them whether or not Phase 6 fixes them.
 - **Next:** nothing autonomous. Copilot's PR #4 already proposes the dependency alignment, so the
   fix is in flight and merging is not mine (MISSION §4). One line either way: cap `ruff` in the dev
   extra, or take the two RUF036 autofixes.
+
+## 2026-08-12 — session 108
+- **Did:** nothing but confirm, which was the whole job. Resumed on a clean tree, `status: COMPLETE`,
+  no unhandled INBOX item, B1–B3 resolved. A CI run for HEAD (`36074a2`) was already in flight, so I
+  watched it to its verdict rather than starting work that would invalidate it.
+- **Result:** **`completed / success` — all five jobs green** (`test (3.12)`, `test (3.13)`,
+  `test (3.14)`, `web`, `pre-commit`). The **first green CI run of the build**; every run before it
+  failed back through 2026-08-09.
+- **Learned:** sessions 106/107 could diagnose the drift locally but could never *close* it locally —
+  the failure class was "CI resolves fresh and this venv does not", so only the runner's own verdict
+  settles it. `uv pip compile` predicting `gradio==6.19.0` / `mypy==2.1.0` / `ruff==0.15.20` was good
+  evidence; it was not proof. Now local gates and remote gates agree about the same tree.
+- **Next:** nothing autonomous remains. Both PRs (#3 Phases 0–6, #4 Copilot's stale and partly
+  harmful CI attempt) are open and Habeeby's to merge or close (MISSION §4). Declined again to start
+  Phase 1's opportunistic D1.9 backlog: landing product code now would break the property that both
+  green verdicts describe the shipped tree.
