@@ -161,11 +161,11 @@ class StudentProfileService:
         self,
         user_id: uuid.UUID | str,
         *,
-        qualification_level: QualificationLevel | str | None | _UnsetType = UNSET,
-        grade_level: str | None | _UnsetType = UNSET,
-        school_name: str | None | _UnsetType = UNSET,
-        has_external_lessons: bool | None | _UnsetType = UNSET,
-        weekly_study_hours: int | None | _UnsetType = UNSET,
+        qualification_level: QualificationLevel | str | _UnsetType | None = UNSET,
+        grade_level: str | _UnsetType | None = UNSET,
+        school_name: str | _UnsetType | None = UNSET,
+        has_external_lessons: bool | _UnsetType | None = UNSET,
+        weekly_study_hours: int | _UnsetType | None = UNSET,
         leaderboard_opt_out: bool | _UnsetType = UNSET,
     ) -> StudentProfileRow:
         """Partially update ``user_id``'s profile. Keywords left at :data:`UNSET` are untouched.
@@ -260,9 +260,9 @@ class StudentProfileService:
         user_id: uuid.UUID | str,
         subject_code: str,
         *,
-        target_grade: str | None | _UnsetType = UNSET,
-        session_month: SessionMonth | None | _UnsetType = UNSET,
-        session_year: int | None | _UnsetType = UNSET,
+        target_grade: str | _UnsetType | None = UNSET,
+        session_month: SessionMonth | _UnsetType | None = UNSET,
+        session_year: int | _UnsetType | None = UNSET,
     ) -> SubjectEnrolmentRow:
         """Create or partially update the ``(user_id, subject_code)`` enrolment.
 

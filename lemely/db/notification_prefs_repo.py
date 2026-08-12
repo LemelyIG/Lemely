@@ -107,8 +107,8 @@ class NotificationPreferencesService:
         streak_warning: bool | _UnsetType = UNSET,
         study_plan_reminder: bool | _UnsetType = UNSET,
         at_risk_alert: bool | _UnsetType = UNSET,
-        quiet_hours_start: time | None | _UnsetType = UNSET,
-        quiet_hours_end: time | None | _UnsetType = UNSET,
+        quiet_hours_start: time | _UnsetType | None = UNSET,
+        quiet_hours_end: time | _UnsetType | None = UNSET,
     ) -> NotificationPreferencesRow:
         """Upsert ``user_id``'s preferences. Keywords left at :data:`UNSET` are untouched.
 

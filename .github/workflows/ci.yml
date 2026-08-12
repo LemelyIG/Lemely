@@ -79,10 +79,17 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+      # The same extras as the `test` job, deliberately. `mypy` and
+      # `import-linter` are `language: system` pre-commit hooks — they resolve
+      # their target's imports from THIS environment, so `[dev]` alone made mypy
+      # report 291 errors of the form `Cannot find implementation or library
+      # stub for module named "fastapi"`. That is an environment answer, not a
+      # verdict on the code: the identical hook is green locally and in `test`,
+      # where the web/db extras are installed.
       - name: Install package + dev extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,ui,web,db]"
       - run: pre-commit run --all-files --show-diff-on-failure
 
   web:
