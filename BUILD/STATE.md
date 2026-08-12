@@ -1,8 +1,8 @@
 # BUILD STATE — single source of truth
 
 status: COMPLETE           # RUNNING | COMPLETE | HALTED
-current_phase: 6            # ALL PHASES COMPLETE — merged to develop, reported, PR #3 open
-last_updated: 2026-08-12T06:25:00Z
+current_phase: 6            # ALL PHASES COMPLETE AND MERGED TO main (PR #3, 74d33e6). Nothing outstanding.
+last_updated: 2026-08-12T00:00:00Z  # session 115
 gemini_spend_usd: 0.19750   # MEASURED from `outputs/gemini_spend.json`. This line is a
 # hand-copied mirror and has drifted before (it read 0.1612 against a real 0.18429).
 # Re-read the ledger, never this line, before quoting a spend.
@@ -50,9 +50,24 @@ is committed; every phase has a report under `reports/phase-N/`. Local gates and
   Note when reading run history: `31566210283` and `31566944458` show `cancelled`, which is **not
   a red** — GHA's concurrency group cancels an in-flight `ci-refs/pull/3/merge` run when a newer
   push supersedes it. Two docs pushes in four minutes produced both.
-- **Two PRs are open and both are Habeeby's call (MISSION §4 — never merge one yourself):**
-  **#3** (develop → main, Phases 0–6) and **#4** (Copilot's CI-alignment attempt — superseded by
-  `7f11f58`/`f980fbc` and partly harmful; see D6.10 and the note below).
+- **SHIPPED 2026-08-12 — Habeeby merged PR #3. Neither PR is open any more.**
+  **#3** (develop → main, Phases 0–6) is **MERGED** as `74d33e6`; **#4** (Copilot's
+  CI-alignment attempt — superseded by `7f11f58`/`f980fbc` and partly harmful; see D6.10 and
+  the note below) is **CLOSED**. `git diff origin/main..origin/develop` is **empty** and main
+  is exactly one commit (the merge) ahead, so every phase of this build is now on `main`.
+  **This was the last thing the build was waiting on.** There is no remaining orchestrator
+  action of any kind — not a task, not a PR to open, not a gate to re-run. A session that
+  resumes here should read `BUILD/INBOX.md`, and if there is no unhandled `- [ ]` item,
+  **stop without inventing work.** The build's most repeated failure mode was manufacturing a
+  verification task on an unchanged tree (sessions 108, 110–114 each spent a full run watching
+  a CI job no session had given new input); "PR #3 is open" was the last fact left that could
+  be mistaken for something to do.
+  **`develop` now sits one docs-only commit ahead of `main` (this record correction), and no
+  PR was opened for it — deliberately.** MISSION §4 ties a `develop → main` PR to a *phase*,
+  and there is no phase 7. Do **not** treat that ahead-count as an outstanding task: opening a
+  PR to land a STATE.md paragraph would put a review on Habeeby's desk for a file only the
+  orchestrator reads. If a later directive does start real work, that work's PR carries this
+  commit along with it.
 - **Nothing is in flight, and there is now nothing outstanding.** Phase 1's D1.9 backlog — the
   last non-done item in the build — was **closed as won't-do on 2026-08-12 (D6.11)** after the
   first session to actually cost it out found it was a contract change, not a cleanup: the DB

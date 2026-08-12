@@ -2298,3 +2298,25 @@ them whether or not Phase 6 fixes them.
 - **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
 - **Next:** genuinely nothing. The build is COMPLETE with **zero open checklist items**; PRs #3
   and #4 remain Habeeby's call. A future session should read INBOX and otherwise stop.
+
+## 2026-08-12 — session 115: the build shipped, and the last open loop closed itself
+
+- **Did:** read INBOX (no unhandled `- [ ]`), MISSION, STATE, BLOCKERS and the log. Found the
+  one fact STATE.md still had wrong: it said "two PRs are open and both are Habeeby's call".
+  They are not. **Habeeby merged PR #3** (`74d33e6`, develop → main, Phases 0–6) and **closed
+  PR #4**. Corrected STATE.md's header and the PR bullet. No code touched.
+- **Verified rather than assumed:** `git rev-list --left-right --count origin/main...origin/develop`
+  is `1 0` and `git diff origin/main..origin/develop` is **empty** — main is the merge commit
+  plus everything develop had, so all eight phases are on `main`. Working tree clean, `main`
+  level with `origin/main`.
+- **Learned — the last stale fact in a finished build is the one that looks like a task.**
+  "PR #3 is open" reads as an outstanding item even though the orchestrator is forbidden from
+  merging it (MISSION §4), so it survived as a permanent almost-todo. It is exactly the shape
+  of the CI loop sessions 108 and 110–114 burned themselves on: something that *looks*
+  actionable, is not, and re-presents itself every session. Fixing the record is the only way
+  that class of loop ends.
+- **Not done deliberately:** no gate run, no CI watch. Docs-only change; per STATE's
+  terminating rule the code/pin diff is what CI can see, and it is unchanged.
+- **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
+- **Next:** nothing. The build is COMPLETE, **merged to `main`**, zero open checklist items,
+  zero open PRs. A future session should read INBOX and, absent a new directive, stop.
