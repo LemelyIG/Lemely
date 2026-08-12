@@ -4,6 +4,21 @@ status: COMPLETE           # RUNNING | COMPLETE | HALTED
 current_phase: 6            # ALL PHASES COMPLETE — Phase 6 merged to develop, reported, PR #3 updated
 last_updated: 2026-08-12T06:20:00Z
 #
+# ## Session 107 — CI fixed, and the drift behind it was a PATTERN, not one bad pin
+# **Read this before touching `pyproject.toml`: every gate tool is now upper-bounded on purpose.**
+# The red took TWO commits because fixing it moved the failure rather than clearing it, and the
+# third instance is what turned it from a bug into a pattern: `ruff>=0.7` → runner got 0.16.2
+# (10 × RUF036); then the `pre-commit` job's `.[dev]` → `mypy lemely` could not import fastapi
+# (291 errors); then `gradio>=6.1,<7` → runner got **6.23.1**, whose event-listener typing gives
+# 12 × `"Button" has no attribute "click"`. Same shape all three times: **CI installs fresh and
+# resolves latest, this venv does not, so the two disagree about an identical tree with no commit
+# in between.** Caps now: `gradio<6.20`, `pytest<10`, `pytest-cov<8`, `mypy>=2.1,<2.2` (minor —
+# mypy adds checks in minors), `pre-commit<5`, `import-linter<3`, `ruff==0.15.20` in lockstep with
+# the pre-commit rev. Raising one is a deliberate commit that re-runs the gates; that is the point.
+# **Proved by resolving, not by reasoning:** `uv pip compile` for 3.12/3.13/3.14 all exit 0 and
+# all select `gradio==6.19.0`, `mypy==2.1.0`, `ruff==0.15.20` — the versions this tree is green on.
+# (`mypy>=1.13` had been admitting a whole major the build has never gated on; the venv is 2.1.0.)
+#
 # ## Session 107 — session 106's finding was FIXED, and the deferral it rested on was wrong
 # P6.12 (`7f11f58`, D6.10) closed the CI red session 106 diagnosed. Both defects were toolchain,
 # not product: `ruff>=0.7` let the runner resolve **0.16.2** against this venv's and the
@@ -846,6 +861,12 @@ Measured, not assumed — every line below was checked on disk this session:
       **Verified against the version CI resolves — `uvx ruff@0.16.2 check .` → All checks passed**
       — because a green local 0.15.20 run cannot prove a 0.16 red is gone. Also `mypy lemely`
       (Success, 215 files), all 10 pre-commit hooks, 39 tests over the two touched repos.
+      **It took a second commit (`f980fbc`), because the first fix moved the red rather than
+      clearing it:** the next run got past ruff and past the fastapi imports and then failed on
+      12 × `"Button" has no attribute "click"` — `gradio>=6.1,<7` resolving **6.23.1** against
+      the venv's 6.19.0. Third instance of one defect, so the pattern was closed rather than the
+      instance: every gate tool is upper-bounded now (see the header). `uv pip compile` for
+      3.12/3.13/3.14 all resolve to the exact locally-green versions.
       **Do not "just upgrade ruff" as a follow-up without budgeting for the format churn:**
       `uvx ruff@0.16.2 format --check .` reports **6 files reformatted and the file set widening
       340 → 387**. The lint side is already clean, so that upgrade is now a formatting decision

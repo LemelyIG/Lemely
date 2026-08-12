@@ -6545,6 +6545,29 @@ already records it for `pre-commit`/`mypy` locally and for `supabase` not being 
 non-interactive PATH. Here it produced 291 errors, which is exactly the volume that reads as a
 catastrophic code failure.
 
+### 3. `gradio` — the same drift again, one step further along the run (`f980fbc`)
+
+Fixing 1 and 2 moved the red rather than clearing it, which is the useful part of this record.
+The next run got past ruff and past the fastapi imports, then failed on **12 × `"Button" has no
+attribute "click"`** in `lemely/app/gradio_app.py`. Cause: `ui = ["gradio>=6.1,<7"]` let the
+runner resolve **6.23.1** against this venv's **6.19.0**. Only the type surface moved — runtime
+behaviour is unaffected — but `mypy lemely` is a gate, so it was red in CI and green locally on
+the same tree, again with no commit in between. Capped at `<6.20`.
+
+**Three instances of one defect is a pattern, so the pattern was closed rather than the third
+instance.** Every tool whose output *is* a gate verdict is now upper-bounded: `pytest >=8,<10`,
+`pytest-cov >=5,<8`, `mypy >=2.1,<2.2`, `pre-commit >=4,<5`, `import-linter >=2.1,<3`. mypy is
+minor-capped because it adds checks in minors — the same drift as ruff's. Its old floor is worth
+recording: **`>=1.13` spanned an entire major this build has never run a gate on**, while the
+venv behind every green record sits at 2.1.0.
+
+**Verified by resolving, not by reasoning.** `uv pip compile` against `pyproject.toml` for each
+CI interpreter — 3.12, 3.13, 3.14 — exits 0 on all three and selects exactly `gradio==6.19.0`,
+`mypy==2.1.0`, `ruff==0.15.20`, i.e. the versions this tree is green on. **A first attempt at
+that check was vacuous** (`... | tail -4 && echo OK` reports OK on failure too) and was caught
+and redone — the same shape as P6.2's decorative concurrency test and P6.7's vacuous
+`impeccable detect`: *a check that cannot fail is not evidence.*
+
 ### What was deliberately not done
 
 **PR #4 was not merged and not superseded on its own branch** (MISSION §4 — never merge a PR).

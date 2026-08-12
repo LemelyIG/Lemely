@@ -11,6 +11,13 @@
   pre-commit rev (a comment on each line says to bump them together), reordered the 10
   annotations so a future bump is unblocked, and gave the job `.[dev,ui,web,db]` — the same
   extras as the `test` job whose identical mypy step is green.
+  Then the run went red one step further along and the cause was the same shape a third time:
+  `gradio>=6.1,<7` resolved **6.23.1** on the runner against the venv's **6.19.0**, and 6.23's
+  event-listener typing gives 12 × `"Button" has no attribute "click"`. So the second commit
+  (`f980fbc`) closed the pattern instead of the instance — every tool whose output *is* a gate
+  verdict is upper-bounded now (`gradio<6.20`, `pytest<10`, `pytest-cov<8`, `mypy>=2.1,<2.2`,
+  `pre-commit<5`, `import-linter<3`), proved with `uv pip compile` on all three CI interpreters:
+  each exits 0 and selects exactly the versions this tree is green on.
 - Learned: **session 106 deferred to a fix-it PR that predated the failure it was named after.**
   Copilot's PR #4 has been stale since 2026-08-05; RUF036 shipped with ruff 0.16 days later, so
   it could never have fixed this — and two of its four changes would have hurt (narrows the format
