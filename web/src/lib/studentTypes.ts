@@ -309,6 +309,17 @@ export interface StudentCorrectFrame {
   // marking_progress, per-question (correction_ai.py)
   question_id?: string
   marker_source?: MarkerSource
+  // marking_progress, per-question (correction_ai.py) *and* extraction_progress
+  // (answer_extraction.py): `index` is this question's 1-based position in the
+  // stage's work list, `total` is that list's length — the real "Question 7 of
+  // 21" counter S-14 asks for. Both publishers derive `index` from `enumerate`
+  // over the source list rather than counting frames already emitted, so a
+  // question that fails and reports an `error` instead does not shift the
+  // indices after it. Absent on the terminal `marking_progress`/
+  // `phase: "complete"` frame (student.py), which summarises the whole paper
+  // rather than reporting one question.
+  index?: number
+  total?: number
   // extraction_progress (answer_extraction.py)
   has_working?: boolean
   // gemini_call_start / gemini_call_end / gemini_cache_hit / gemini_retry / gemini_escalate

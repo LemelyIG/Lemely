@@ -543,13 +543,22 @@ def grade_paper_endpoint(
                     message="No mark scheme or graded correction attached to paper.",
                 )
                 return
-            for question in cached_report.correction.questions:
+            # `index` is the enumerate position within the cached question list,
+            # matching what a live marking run publishes, so the UI counter reads
+            # the same on a replay as it does on a fresh grade. It is not a count
+            # of frames emitted — a question skipped here must not shift the
+            # numbers reported for the questions after it.
+            replayed_questions = cached_report.correction.questions
+            total_questions = len(replayed_questions)
+            for index, question in enumerate(replayed_questions, start=1):
                 bus.publish(
                     EventType.MARKING_PROGRESS,
                     paper_id=paper_id,
                     question_id=question.question_id,
                     marker_source=question.marker_source,
                     confidence=question.confidence_score,
+                    index=index,
+                    total=total_questions,
                 )
             record = PaperRecord(
                 student_id=entry.student_id,

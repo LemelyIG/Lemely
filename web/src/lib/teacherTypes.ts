@@ -1122,6 +1122,18 @@ export interface TeacherPipelineFrame {
   question_id?: string
   confidence?: number
   has_working?: boolean
+  // extraction_progress (answer_extraction.py) and the live marking loop
+  // (correction_ai.py): `index` is this question's 1-based position in the
+  // stage's work list, `total` is that list's length — the real "Question 7 of
+  // 21" counter behind C-10's per-stage progress. Both publishers derive
+  // `index` from `enumerate` over the source list rather than counting frames
+  // already emitted, so a question that fails and reports an `error` instead
+  // does not shift the indices after it. Not published by the cached-report
+  // replay branch in `grade_paper_endpoint`, which iterates an already-graded
+  // `AccuracyReport` — frames from that path carry no counter at all and the
+  // UI must render the stage without one rather than invent a denominator.
+  index?: number
+  total?: number
   // marking_progress (correction_ai.py live loop and/or the cached-report replay)
   marker_source?: MarkerSource
   awarded?: number

@@ -14,6 +14,7 @@ from lemely.core.schemas import ExtractedAnswers
 from lemely.io.answer_extraction import GeminiAnswerExtractor
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
+from lemely.runtime.events import EventType, bus
 
 
 def _minimal_mcq_mark_scheme() -> MarkScheme:
@@ -248,3 +249,81 @@ class IDNormalizationTests(unittest.TestCase):
         normalized = normalize_extracted_answers(extracted, manifest_ids)
         # Positional fallback: first extracted answer → first manifest ID
         self.assertEqual(normalized.answers[0].question_id, "1(a)(i)")
+
+
+class ExtractionProgressCounterTests(unittest.TestCase):
+    """EXTRACTION_PROGRESS carries the same per-question counter as marking.
+
+    ``index`` is the 1-based position inside the answer list being reported and
+    ``total`` is that list's length, so the extraction phase drives the UI's
+    "Question N of M" from the work actually in hand rather than an estimate.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.scan = Path(self.tmp) / "scan.png"
+        self.scan.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    def _run_capturing(self, body: dict, mark_scheme: MarkScheme) -> tuple[ExtractedAnswers, list]:
+        """Extract ``body`` and return the result plus every progress frame it published.
+
+        Subscribe/unsubscribe in try/finally: ``bus`` is a process-wide
+        singleton, so a spy left attached would keep collecting events from
+        every later test in the session.
+        """
+        extractor = GeminiAnswerExtractor(_client_with_response(self.tmp, body))
+        frames: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            frames.append(payload)
+
+        bus.subscribe(EventType.EXTRACTION_PROGRESS, _spy)
+        try:
+            result = extractor(scan_path=self.scan, mark_scheme=mark_scheme)
+        finally:
+            bus.unsubscribe(EventType.EXTRACTION_PROGRESS, _spy)
+        return result, frames
+
+    def test_indices_run_1_to_n_against_a_constant_total(self) -> None:
+        body = {
+            "answers": [
+                {"question_id": "1", "answer": "A", "confidence": 0.99, "source_region": None},
+                {"question_id": "2", "answer": "B", "confidence": 0.95, "source_region": None},
+                {"question_id": "3", "answer": "C", "confidence": 0.85, "source_region": None},
+            ]
+        }
+        _, frames = self._run_capturing(body, _minimal_mcq_mark_scheme())
+
+        self.assertEqual([f["question_id"] for f in frames], ["1", "2", "3"])
+        # 1-based and inclusive of the last question: the counter has to be able
+        # to reach its own total, or the UI ends a completed extraction at 2 of 3.
+        self.assertEqual([f["index"] for f in frames], [1, 2, 3])
+        self.assertEqual({f["total"] for f in frames}, {3})
+
+    def test_total_counts_the_answers_actually_extracted(self) -> None:
+        """The denominator is the answer list, not the mark scheme's question count.
+
+        Gemini returned two answers for a three-question paper. Both frames say
+        "of 2" because two answers are all the extractor has to report on — a
+        total of 3 would be a promise of a third frame that never arrives, and
+        the UI would sit at 2 of 3 forever. ``index`` is likewise the position in
+        that list, so the answer for question "3" is the *second* frame.
+        """
+        body = {
+            "answers": [
+                {"question_id": "1", "answer": "A", "confidence": 0.99, "source_region": None},
+                {"question_id": "3", "answer": "C", "confidence": 0.85, "source_region": None},
+            ]
+        }
+        _, frames = self._run_capturing(body, _minimal_mcq_mark_scheme())
+
+        self.assertEqual([f["question_id"] for f in frames], ["1", "3"])
+        self.assertEqual([f["index"] for f in frames], [1, 2])
+        self.assertEqual({f["total"] for f in frames}, {2})
+
+    def test_nothing_extracted_publishes_no_frames(self) -> None:
+        """An empty extraction reports nothing rather than a "1 of 0" frame."""
+        result, frames = self._run_capturing({"answers": []}, _minimal_mcq_mark_scheme())
+
+        self.assertEqual(result.answers, [])
+        self.assertEqual(frames, [])

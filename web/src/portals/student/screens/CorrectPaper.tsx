@@ -4,6 +4,12 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
 import { CameraCapture } from "@/components/CameraCapture"
+import {
+  advanceStage,
+  annotateActiveStage,
+  failActiveStage,
+  frameProgress,
+} from "@/lib/pipelineStages"
 import { runCorrection, uploadScan } from "@/lib/hooks/useStudentApi"
 import type { QuestionResult, Result, StudentCorrectFrame } from "@/lib/studentTypes"
 import { reassure } from "../data"
@@ -26,6 +32,12 @@ type ScanSource = "file" | "camera"
  * pipeline. See the stage-mapping note below for the two spec stages
  * (identifying the paper / analysing weak topics) this honestly omits because
  * no SSE frame exists for either yet.
+ *
+ * The state machine driving those stages (advance, back-fill, annotate, fail,
+ * and read a frame's real counter) lives in `lib/pipelineStages.ts`, shared
+ * with the teacher grading console so the two portals cannot describe the same
+ * pipeline differently. What stays here is only what is genuinely
+ * screen-specific: the stage list, the frame→stage mapping, and the wording.
  */
 
 /** The three stages the backend's SSE frames give us real signal for. Spec
@@ -81,39 +93,6 @@ function frameStageId(frame: StudentCorrectFrame): StageId | null {
   return null
 }
 
-/** Move a stage to active (or done, on completion), and mark every earlier
- * pending stage done too — forward progress on stage N implies stage N-1
- * finished, since the pipeline runs in this fixed order. */
-function advanceStage(
-  stages: ProcessingStage[],
-  id: StageId,
-  detail: string | undefined,
-  complete: boolean,
-): ProcessingStage[] {
-  const idx = STAGE_ORDER.indexOf(id)
-  return stages.map((s, i) => {
-    if (i < idx) return s.status === "pending" ? { ...s, status: "done" } : s
-    if (i === idx) return { ...s, status: complete ? "done" : "active", detail: detail ?? s.detail }
-    return s
-  })
-}
-
-/** Frame chatter that isn't stage-specific (gemini calls, budget notices)
- * updates whichever stage is currently active, rather than being dropped. */
-function annotateActiveStage(stages: ProcessingStage[], detail: string): ProcessingStage[] {
-  const activeIdx = stages.findIndex((s) => s.status === "active")
-  if (activeIdx === -1) return stages
-  return stages.map((s, i) => (i === activeIdx ? { ...s, detail } : s))
-}
-
-/** Fail whichever stage is running (or the first stage, if nothing had
- * started yet — e.g. the initial upload itself failed). */
-function failActiveStage(stages: ProcessingStage[], errorMessage: string): ProcessingStage[] {
-  const idx = stages.findIndex((s) => s.status === "active" || s.status === "pending")
-  if (idx === -1) return stages
-  return stages.map((s, i) => (i === idx ? { ...s, status: "error", errorMessage } : s))
-}
-
 export function CorrectPaper() {
   const navigate = useNavigate()
   const [scanFile, setScanFile] = useState<File | null>(null)
@@ -149,7 +128,22 @@ export function CorrectPaper() {
         const stageId = frameStageId(frame)
         const isComplete = frame.type === "marking_progress" && frame.phase === "complete"
         if (stageId) {
-          setStages((prev) => advanceStage(prev, stageId, describeFrame(frame), isComplete))
+          // `frameProgress` is the whole per-question counter S-14 asks for
+          // ("Question 7 of 21"): it returns a counter only when this frame
+          // actually carried `index` + `total`, and undefined otherwise — so
+          // frames without one (notably the terminal `phase: "complete"`
+          // summary) leave the last real counter alone rather than inventing
+          // or blanking a number.
+          setStages((prev) =>
+            advanceStage(
+              prev,
+              STAGE_ORDER,
+              stageId,
+              describeFrame(frame),
+              isComplete,
+              frameProgress(frame),
+            ),
+          )
         } else {
           setStages((prev) => annotateActiveStage(prev, describeFrame(frame)))
         }

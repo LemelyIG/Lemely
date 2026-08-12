@@ -265,34 +265,47 @@ def _report(
     needs_review: bool = True,
     topic: str = "Moments",
     grade: str = "D",
+    question_ids: tuple[str, ...] = ("5b",),
 ) -> AccuracyReport:
-    """Build a real AccuracyReport with one non-MCQ question."""
-    question = CorrectedQuestion(
-        question_id="5b",
-        awarded_marks=awarded,
-        maximum_marks=maximum,
-        confidence=ConfidenceBand.LOW if needs_review else ConfidenceBand.HIGH,
-        confidence_score=confidence_score,
-        needs_teacher_review=needs_review,
-        marker_source="ai",
-        topic=topic,
-    )
-    correction = CorrectionResult(metadata=_metadata(), questions=[question])
+    """Build a real AccuracyReport with one non-MCQ question per id in ``question_ids``.
+
+    ``awarded``/``maximum`` are per question; the report-level totals are scaled
+    by the question count so a multi-question report stays internally consistent
+    (a paper whose parts sum to more than its own total would be fabricated
+    data, and the grading console reads both). The single-question default is
+    unchanged — every scaling factor is 1 — so existing callers see the same
+    object they always did.
+    """
+    questions = [
+        CorrectedQuestion(
+            question_id=question_id,
+            awarded_marks=awarded,
+            maximum_marks=maximum,
+            confidence=ConfidenceBand.LOW if needs_review else ConfidenceBand.HIGH,
+            confidence_score=confidence_score,
+            needs_teacher_review=needs_review,
+            marker_source="ai",
+            topic=topic,
+        )
+        for question_id in question_ids
+    ]
+    count = len(question_ids)
+    correction = CorrectionResult(metadata=_metadata(), questions=questions)
     weaknesses = WeaknessReport(
         weak_areas=[
             WeakArea(
                 topic=topic,
-                lost_marks=maximum - awarded,
-                maximum_marks=maximum,
+                lost_marks=(maximum - awarded) * count,
+                maximum_marks=maximum * count,
                 accuracy=awarded / maximum,
-                question_ids=["5b"],
+                question_ids=list(question_ids),
             )
         ],
         needs_teacher_review=needs_review,
     )
     prediction = GradePrediction(
-        awarded_marks=awarded,
-        maximum_marks=maximum,
+        awarded_marks=awarded * count,
+        maximum_marks=maximum * count,
         percentage=round(awarded / maximum * 100, 2),
         grade=grade,
         confidence=ConfidenceBand.LOW,
@@ -532,6 +545,37 @@ def test_grade_replays_and_persists(client: TestClient, history_store: HistorySt
     assert len(records) == 1
     assert records[0].grade == "D"
     assert records[0].student_id == "jonas"
+
+
+def test_grade_replay_frames_carry_the_per_question_counter(client: TestClient) -> None:
+    """Replayed MARKING_PROGRESS frames number questions 1..N against a constant N.
+
+    The replay path is what the UI gets for an already-graded paper, so its
+    counter has to read exactly like a live marking run's: same 1-based index,
+    same constant total, same order. Otherwise the same paper appears to contain
+    a different number of questions depending on which path happened to serve
+    it. ``index`` is the enumerate position in the cached list — not a tally of
+    frames sent — so a question skipped mid-replay would leave a gap rather than
+    renumber the ones after it.
+    """
+    _seed_paper("p1", "jonas", _report(question_ids=("1", "2(a)", "2(b)")))
+
+    with client.stream("POST", "/api/papers/p1/grade") as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+
+    frames = [
+        json.loads(f.removeprefix("data: "))
+        for f in text.split("\n\n")
+        if f.strip() and f != "data: [DONE]"
+    ]
+    marking = [f for f in frames if f["type"] == "marking_progress"]
+    assert [f["question_id"] for f in marking] == ["1", "2(a)", "2(b)"]
+    assert [f["index"] for f in marking] == [1, 2, 3]
+    assert {f["total"] for f in marking} == {3}
+    # The counter's total must match the questions the paper really has — the
+    # number the grading console shows next to this same report.
+    assert len(marking) == len(client.get("/api/papers/p1").json()["questions"])
 
 
 def test_grade_unknown_paper_404(client: TestClient) -> None:

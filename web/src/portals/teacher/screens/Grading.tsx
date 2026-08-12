@@ -2,8 +2,15 @@ import { useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
+import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
 import { cn } from "@/lib/utils"
 import { ApiError } from "@/lib/api"
+import {
+  advanceStage,
+  annotateActiveStage,
+  failActiveStage,
+  frameProgress,
+} from "@/lib/pipelineStages"
 import { usePapers, usePaperDetail, uploadPaper, gradePaper } from "@/lib/hooks/useTeacherApi"
 import type { DetectedField, PaperKind, PaperSummary, TeacherPipelineFrame } from "@/lib/teacherTypes"
 
@@ -37,7 +44,23 @@ import type { DetectedField, PaperKind, PaperSummary, TeacherPipelineFrame } fro
  *  - "Drop more scans" dashed box + "Use custom mark scheme" button replaced
  *    by one real dual file-input upload control (scan required, mark scheme
  *    optional, matching `CorrectPaper.tsx`'s pattern) that auto-chains
- *    upload -> grade and streams progress into a small log.
+ *    upload -> grade and streams progress into the stepper below it.
+ *  - That progress readout used to be a raw scrolling text log (one line per
+ *    SSE frame, `max-h-[140px] overflow-auto`). It is now a C-10
+ *    `ProcessingState` stepper (S-14): three discrete stages, each with its own
+ *    state, the spinner only on the one genuinely running, and the real
+ *    "Question 7 of 21" counter the frames now carry. `describeFrame`'s text
+ *    survived the swap — it is each stage's `detail` instead of a log line, so
+ *    no wording was lost, only the unbounded scrollback. The state machine
+ *    (advance / back-fill / annotate / fail / read the counter) is the shared
+ *    reducer in `lib/pipelineStages.ts`, the same one behind the student
+ *    panel, so the two portals cannot describe one pipeline two ways. See the
+ *    note above `GRADING_STAGE_ORDER` for the stage this flow honestly omits,
+ *    and `runGrading` for what closes the last stage and what happens when a
+ *    single question fails mid-run.
+ *  - `uploadError` state dropped with that log: a thrown `uploadPaper()` now
+ *    fails the "upload" stage with the very same message, and printing it in
+ *    two places would double-report one failure.
  *  - `autoGrade` donut now derives from the real `tabs` counts; the
  *    fabricated "~2 min remaining" ETA is replaced with a live
  *    "{n} processing" line (omitted when 0).
@@ -72,7 +95,34 @@ function filterPapers(papers: PaperSummary[], tab: TabId): PaperSummary[] {
   return papers.filter((p) => p.kind === tab)
 }
 
-/** Human label for one SSE frame, appended to the running log as it arrives. */
+/** The stages this flow has real signal for, in the order the backend runs
+ * them. Deliberately no "fetching the mark scheme" stage — the student panel
+ * has one, this console must not: the teacher attaches the scheme at upload
+ * time, so `grade_paper_endpoint` marks straight from `entry.mark_scheme` and
+ * never emits a `mark_scheme_progress` frame. A stage no event could ever move
+ * out of "pending" would read as stuck, not as honest.
+ *
+ * "upload" is not an SSE stage at all: it is the awaited `uploadPaper()` call,
+ * which is real signal for exactly one thing — the POST is in flight, then it
+ * returned (or threw). It earns a row because it is the slowest part of a
+ * scan-sized request and the stream cannot begin until it lands. */
+const GRADING_STAGE_ORDER = ["upload", "extract", "mark"] as const
+type GradingStageId = (typeof GRADING_STAGE_ORDER)[number]
+
+const initialGradingStages: ProcessingStage[] = [
+  { id: "upload", label: "Uploading the scan", status: "pending" },
+  { id: "extract", label: "Reading the answers", status: "pending" },
+  { id: "mark", label: "Marking the questions", status: "pending" },
+]
+
+/** Which stage (if any) a frame type reports real progress for. */
+function frameStageId(frame: TeacherPipelineFrame): GradingStageId | null {
+  if (frame.type === "extraction_progress") return "extract"
+  if (frame.type === "marking_progress") return "mark"
+  return null
+}
+
+/** Human label for one SSE frame, used as the reported stage's detail text. */
 function describeFrame(frame: TeacherPipelineFrame): string {
   switch (frame.type) {
     case "extraction_progress":
@@ -184,27 +234,80 @@ export function Grading() {
   const [scanFile, setScanFile] = useState<File | null>(null)
   const [schemeFile, setSchemeFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [log, setLog] = useState<string[]>([])
+  const [stages, setStages] = useState<ProcessingStage[]>(initialGradingStages)
 
   const papersQuery = usePapers()
   const paperDetailQuery = usePaperDetail(selectedPaperId)
 
   const runGrading = async (paperId: string) => {
     setGradingIds((prev) => ({ ...prev, [paperId]: true }))
+    // Set once a frame has failed a stage. Two jobs. It stops the stepper
+    // advancing, because `advanceStage` would otherwise flip the failed stage
+    // straight back to "active" on the next `marking_progress` and the failure
+    // would vanish from the panel. And it lets us keep *draining* the stream
+    // rather than returning: a per-question `error` from `correct_paper` is not
+    // fatal — the backend marks the remaining questions and only then publishes
+    // done — so bailing out early would drop the card spinner and refetch the
+    // grid while the run was still going, which is a worse lie than the one we
+    // are avoiding.
+    let failed = false
     try {
       for await (const frame of gradePaper(paperId)) {
         if (frame.type === "warning" || frame.type === "error") {
-          setLog((prev) => [
-            ...prev,
-            frame.message ?? "Something went wrong while grading this paper.",
-          ])
+          // `describeFrame`'s default branch is the backend's own `message`,
+          // falling back to the raw frame type when it sent none — never
+          // invented prose, per C-10's no-generic-fallback rule.
+          const message = describeFrame(frame)
+          setStages((prev) => failActiveStage(prev, message))
+          failed = true
           continue
         }
-        setLog((prev) => [...prev, describeFrame(frame)])
+        if (failed) continue
+        const stageId = frameStageId(frame)
+        const progress = frameProgress(frame)
+        if (stageId) {
+          // This endpoint has no terminal frame — the student route's
+          // `phase: "complete"` summary belongs to `/student/correct`, not
+          // here — so the only real completion signal is the counter reaching
+          // its own denominator. Both publishers walk their work list with
+          // `enumerate`, so `index === total` is the last question of that
+          // stage, and nothing else follows it. Without this the stage that
+          // just finished would keep spinning until the next stage's first
+          // frame, and the final stage would spin forever.
+          const complete = progress != null && progress.current >= progress.total
+          setStages((prev) =>
+            advanceStage(
+              prev,
+              GRADING_STAGE_ORDER,
+              stageId,
+              describeFrame(frame),
+              complete,
+              progress,
+            ),
+          )
+        } else {
+          setStages((prev) => annotateActiveStage(prev, describeFrame(frame)))
+        }
+      }
+      if (!failed) {
+        // The stream closed with no error frame. That is the happy path when
+        // every stage reported finishing — but `grade_paper_endpoint` publishes
+        // done from a `finally`, so an exception inside its worker thread also
+        // ends the stream cleanly, with nothing said about it. Leaving the
+        // spinner running would claim work still in flight; calling it done
+        // would claim marks that do not exist. Report the one thing actually
+        // observed: the stream stopped early. The refetched grid below is the
+        // authority on whether the paper ended up graded.
+        setStages((prev) =>
+          prev.every((s) => s.status === "done")
+            ? prev
+            : failActiveStage(prev, "The grading stream ended before this stage finished."),
+        )
       }
     } catch (err) {
-      setLog((prev) => [...prev, err instanceof Error ? err.message : String(err)])
+      setStages((prev) =>
+        failActiveStage(prev, err instanceof Error ? err.message : String(err)),
+      )
     } finally {
       setGradingIds((prev) => {
         const next = { ...prev }
@@ -219,10 +322,21 @@ export function Grading() {
   const handleUpload = async () => {
     if (!scanFile || uploading) return
     setUploading(true)
-    setUploadError(null)
-    setLog([])
+    // Reset to a fresh stepper and open the upload stage in one go — a second
+    // run must not inherit the first one's ticks or its error.
+    setStages(
+      advanceStage(
+        initialGradingStages,
+        GRADING_STAGE_ORDER,
+        "upload",
+        scanFile.name,
+        false,
+      ),
+    )
     try {
       const { paperId, detected } = await uploadPaper(scanFile, schemeFile ?? undefined)
+      // `undefined` detail keeps the file name already on the row.
+      setStages((prev) => advanceStage(prev, GRADING_STAGE_ORDER, "upload", undefined, true))
       setDetectedByPaper((prev) => ({ ...prev, [paperId]: detected }))
       setSelectedPaperId(paperId)
       setScanFile(null)
@@ -230,7 +344,12 @@ export function Grading() {
       queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] })
       await runGrading(paperId)
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : String(err))
+      // Only `uploadPaper` can reach here — `runGrading` reports its own
+      // failures into the stepper and never rethrows — so this fails the
+      // "upload" stage, which is still the running one at that point.
+      setStages((prev) =>
+        failActiveStage(prev, err instanceof Error ? err.message : String(err)),
+      )
     } finally {
       setUploading(false)
     }
@@ -274,6 +393,8 @@ export function Grading() {
   const detectedFields: DetectedField[] = selectedPaperId
     ? (paperDetailQuery.data?.metadata ?? detectedByPaper[selectedPaperId] ?? [])
     : []
+
+  const hasRunStarted = stages.some((s) => s.status !== "pending")
 
   const isSelectedPaperNotGraded =
     paperDetailQuery.isError &&
@@ -470,19 +591,19 @@ export function Grading() {
               onClick={handleUpload}
               disabled={uploading || !scanFile}
             >
-              {uploading ? "Uploading…" : "Upload & grade"}
+              {/* Not "Uploading…": `uploading` stays true for the whole
+                  upload -> extract -> mark chain, so that label went on
+                  claiming an upload was in flight while the stepper below
+                  correctly showed it ticked and marking running. The button
+                  says only what it knows; the stage rows carry the specifics. */}
+              {uploading ? "Working…" : "Upload & grade"}
             </Button>
-            {uploadError ? (
-              <div className="text-xs text-accent">{uploadError}</div>
-            ) : null}
-            {log.length > 0 ? (
-              <div className="flex flex-col gap-1 max-h-[140px] overflow-auto lm-scroll border-t border-border pt-2">
-                {log.map((line, i) => (
-                  <div key={i} className="text-xs text-t2 leading-[1.4]">
-                    {line}
-                  </div>
-                ))}
-              </div>
+            {/* Hidden until a run has actually touched a stage: three pending
+                rows sitting under an empty file input would be a promise, not
+                a report. Errors surface on the stage that failed, so there is
+                no separate error line here to contradict it. */}
+            {hasRunStarted ? (
+              <ProcessingState stages={stages} className="border-t border-border pt-4" />
             ) : null}
           </div>
         </div>

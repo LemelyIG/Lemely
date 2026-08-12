@@ -419,7 +419,13 @@ def correct_paper(
     ai = AICorrector(gemini_client) if (gemini_client and not mcq_only) else None
 
     corrected: list[CorrectedQuestion] = []
-    for q in leaves:
+    # `index` comes from enumerate over `leaves` — the true position in the work
+    # list — and never from a counter of MARKING_PROGRESS frames emitted. A
+    # question whose AI call raises publishes ERROR instead of MARKING_PROGRESS
+    # (see the except branch below), so a frame counter would silently drift and
+    # the UI would show a question number that no longer matches reality.
+    total_leaves = len(leaves)
+    for index, q in enumerate(leaves, start=1):
         answer_tuple = answers.get(q.id)
         student_answer = answer_tuple[0] if answer_tuple else None
         student_working = answer_tuple[1] if answer_tuple else None
@@ -435,6 +441,8 @@ def correct_paper(
                 confidence=1.0,
                 awarded=cq.awarded_marks,
                 max_marks=q.marks,
+                index=index,  # enumerate position, not an emitted-frame count
+                total=total_leaves,
             )
             continue
         if ai is None:
@@ -448,6 +456,8 @@ def correct_paper(
                 confidence=0.0,
                 awarded=0,
                 max_marks=q.marks,
+                index=index,  # enumerate position, not an emitted-frame count
+                total=total_leaves,
             )
             continue
         sibling_prior: dict[str, int] = {}
@@ -468,6 +478,10 @@ def correct_paper(
             log.warning("ai_marking_failed", question_id=q.id, error=str(exc))
             cq = _build_missing_corrected(q, student_answer)
             corrected.append(cq.model_copy(update={"review_reason": f"AI marking failed: {exc!s}"}))
+            # Deliberately no index/total here: the per-question counter belongs to
+            # MARKING_PROGRESS, and ERROR is not a progress frame. This `index` is
+            # simply skipped — the next question still reports its own enumerate
+            # position, so the counter stays aligned with the work list.
             bus.publish(
                 EventType.ERROR,
                 message=f"AI marking failed for q={q.id}: {exc!s}",
@@ -483,6 +497,8 @@ def correct_paper(
             confidence=mark.confidence,
             awarded=cq.awarded_marks,
             max_marks=q.marks,
+            index=index,  # enumerate position, not an emitted-frame count
+            total=total_leaves,
         )
 
     return CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected)
