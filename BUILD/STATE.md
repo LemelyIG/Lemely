@@ -2,132 +2,36 @@
 
 status: RUNNING            # RUNNING | COMPLETE | HALTED
 current_phase: 6            # Phases 0-5 complete, merged and reported; Phase 6 STARTED
-last_updated: 2026-08-12T01:05:00Z   # **Session 101: P6.6 CLOSED GREEN, P6.8 closed, P6.10 mostly
-#                                    built. A GATE RUN IS IN FLIGHT — `/tmp/check_p610.log`, launched
-#                                    detached with `setsid` on the tree at `b5bc7c7`. **Do not launch a
-#                                    second one; poll for the `EXIT=` line.** An 84-byte log mid-`pytest`
-#                                    is the normal healthy shape — check `pgrep -af bin/pytest` before
-#                                    calling it stalled. It is needed because `scripts/seed_e2e.py`
-#                                    changed, and that is the one seeding path both harnesses use.
-#                                    P6.6's own run had ended `EXIT=0` — **all 13 gates, 0 skipped, the
-#                                    first fully green full-suite run of the build.** Four sessions in a
-#                                    row correctly declined to relaunch it; that discipline is what
-#                                    produced it.
-#                                    **The lesson of this session is P6.10's.** `tests/test_seed.py` was
-#                                    found untracked — a complete hermetic spec no session note mentions.
-#                                    Implemented against it: 12 tests green, ruff/mypy/import-linter
-#                                    clean — and `make seed` then died on the live stack with
-#                                    `service-role key is not configured`. **A hermetic test of an entry
-#                                    point tests everything except that it is an entry point.** The fix
-#                                    already existed in `seed_e2e.py`, whose docstring already warned
-#                                    this error "reads like a broken script"; extracted to
-#                                    `lemely/runtime/supabase_env.py` and imported from both rather than
-#                                    pasted as copy #4. **Verify an entry point by running it, and on a
-#                                    clean slate — an already-seeded DB cannot tell you `created` is
-#                                    right.** Previous session's note follows. **Hundredth session: session 99's P6.6 re-run was 7 minutes old on
-#                                    arrival (PID 540503, 84-byte log, mid-`pytest`) — the FOURTH consecutive session
-#                                    where the correct move was to NOT relaunch. Held the standing rule (no code while
-#                                    a gate run is in flight) and did doc-only work.
-#                                    **P6.8's two blockers are now cleared** (DELIVERY.md exists since `ed0f6b7`; the
-#                                    seed claim was corrected in `2bee4cb`), so I audited the whole P6.8 draft against
-#                                    the carried limitations and found a claim in THREE files that no session had
-#                                    challenged: the study plan "regenerates weekly". **It does not.** Verified in code,
-#                                    not docs — a plan carries `week_start`, `POST /api/study-plan` supersedes that
-#                                    week's row (`study_plan_repo.py:243-253`), the only caller is the student
-#                                    (`routers/study_plan.py:112`), and grepping `lemely/` for any scheduler returns
-#                                    nothing. Week-*scoped*, not weekly-*regenerated*; a new week opens "not generated
-#                                    yet" until the student asks. Fixed in DELIVERY.md's feature row, a new §5.3 bullet,
-#                                    and the CHANGELOG (`818e269`).
-#                                    **Transferable, and it is the same failure this build keeps paying for:** D5.9
-#                                    already said "no scheduler exists in this build", and DELIVERY.md §5.3 already
-#                                    carried it — yet DELIVERY.md's OWN feature table, four screens up the same file,
-#                                    said "regenerates weekly". A limitation recorded in the prose section does not
-#                                    propagate itself into the table; **cross-check a summary row against the
-#                                    limitation list in the same document before shipping it.**
-#                                    Also marked *(limited)* on every CHANGELOG entry that exists and is tested but
-#                                    cannot fully operate (at-risk rule 3, push/VAPID, placement+practice 0625-only and
-#                                    the unreadable practice result, PWA camera/installability never live-tested), and
-#                                    added the accuracy target miss (83.8% vs ≥95%, flag recall 27.3%, D3.21's
-#                                    confidently-wrong paper 22) which the draft had omitted entirely while listing the
-#                                    harness as delivered. README's "All six build phases are complete" (Phase 6 is not)
-#                                    and the surviving inline `make seed  # reference data + demo accounts` comment —
-#                                    which `2bee4cb` corrected two lines BELOW while leaving the code block itself
-#                                    false — are both fixed.
-#                                    **Still open for P6.8's commit: the version bump** (`pyproject.toml` 0.1.0,
-#                                    `web/package.json` 0.0.0, and `lemely/web/app.py:50`'s hardcoded `version="0.1.0"`
-#                                    which must import `__version__`, not be hand-edited). CHANGELOG already announces
-#                                    `[1.0.0] — 2026-08-12`, so the bump is what makes that line true. Deliberately NOT
-#                                    done this session: `web/package.json` is read by the in-flight run's web gates.
-#                                    Previous session's note follows. **Ninety-ninth session: session 98's P6.6 re-run was only 2 minutes
-#                                    old on arrival (PID 540503, started 02:06:42 local, mid-`pytest`) — so for the
-#                                    third consecutive session the correct move was to NOT relaunch, and this time the
-#                                    84-byte log was genuinely 2 minutes of work rather than 20. Held to the standing
-#                                    rule (no code while a run is in flight) and did doc-only work.
-#                                    **Found and fixed a false claim already committed to the tree:** `DELIVERY.md` §7
-#                                    (landed in `ed0f6b7`) and the P6.8 README draft both advertise
-#                                    `make seed  # reference data + demo accounts`, but `lemely/db/seed.py:26-51` are
-#                                    still stubs with a bare `pass` — zero rows, zero accounts, cheerful `db.seed.done`.
-#                                    Session 97 deliberately held the README commit over exactly this claim; the same
-#                                    claim then shipped anyway inside DELIVERY.md a session later. Both now state what
-#                                    the command does today and point at `scripts/seed_e2e.py` (`2bee4cb`). **The notes
-#                                    come out at P6.10 and nowhere earlier** — P6.10 owns making the sentence true.
-#                                    Transferable: holding one file back does not contain a false claim if the same
-#                                    fact is restated in a second file by a different task.
-#                                    Previous session's note follows. **Ninety-eighth session: found session 96's P6.6 run STILL ALIVE
-#                                    (PID 424176, pytest 424249, ~20 min in, 84-byte log) and again did NOT relaunch —
-#                                    the same trap, now sprung-and-avoided twice. Cleaned the dirty tree with an
-#                                    explicit `wip(docs)` commit (`12dff56`) whose message states which two README
-#                                    claims are NOT true yet, rather than quietly freezing them as fact. Then did the
-#                                    only work that cannot corrupt an in-flight gate run: **docs**. Wrote `DELIVERY.md`
-#                                    (P6.9) skeleton — §5 Honest limitations carries every Phase-2..5 item plus the
-#                                    Phase-6 operational ones; two placeholder markers (`<!-- FEATURE-TABLE -->`,
-#                                    `<!-- EVIDENCE -->`) are filled once the feature map and P6.6's numbers land.
-#                                    **Rule this session applied and the next should too: while a gate run is in
-#                                    flight, touch no code.** P6.6's whole purpose is "13 gates green on the FINAL
-#                                    tree"; editing `lemely/` mid-run silently makes the verdict about a tree that no
-#                                    longer exists, and nothing in the log would show it.
-#                                    Previous session's note follows. **Ninety-seventh session: found session 96's P6.6 run ALIVE and healthy
-#                                    (PID 424176, PPID 1, 84-byte log, mid-`pytest`) and did NOT relaunch it — the
-#                                    exact trap STATE warns about. While it ran I did the docs half of **P6.8**
-#                                    (README + CHANGELOG rewritten for the shipped product), which is safe because no
-#                                    gate reads either file. **Deliberately NOT committed yet:** the new README links
-#                                    `DELIVERY.md` (P6.9, does not exist) and documents `make seed` as creating demo
-#                                    accounts, which is **false today** (P6.10's stub hole). Committing either would
-#                                    put an unverifiable claim in the tree — the thing this build keeps paying for.
-#                                    So P6.8's commit lands after P6.9 and P6.10, not before.
-#                                    **Found while checking the version bump: `lemely/web/app.py:50` hardcodes
-#                                    `version="0.1.0"`** instead of importing `__version__` — another hand-copied
-#                                    mirror of a fact nothing regenerates. Fix it as part of the bump, don't just
-#                                    edit the string. `tests/test_cli_global_options.py` matches `\d` by regex, so no
-#                                    test pins the number. Note `__version__` comes from installed metadata, so an
-#                                    editable install needs a reinstall before the CLI reports the new value.
-#                                    Previous session's note follows. **Ninety-fifth session: P6.3 + P6.4 done, 4/12 into Phase 6.** Tree was clean,
-#                                    INBOX had no unhandled items, no orphaned pytest. The security re-review found
-#                                    **nothing to fix** — all 121 route operations were already guarded and every
-#                                    Phase-4/5 row-level path already keys on `auth.user_id`. What changed is the
-#                                    *method*: the authz matrix is now generated from the app rather than hand-listed,
-#                                    so the drift that silently froze P1.6's coverage at Phase 3 now fails a test.
-#                                    P6.4 then built the deployment story from zero and it is verified working:
-#                                    `make up` brings up backend + nginx-served SPA on Supabase's own docker network,
-#                                    and I re-ran every check myself rather than trusting the subagent's report.
-#                                    Next: **P6.5 deployment docs**, which now has real artifacts to document —
-#                                    including the two things P6.4 flagged for it: the entrypoint's unconditional
-#                                    `alembic upgrade head` (wrong for production) and the local-dev JWT secret
-#                                    that MUST be overridden anywhere real.
-#                                    Previous session's note follows. **Ninety-fourth session: PHASE 6 STARTED.** Tree was clean, INBOX had no
-#                                    unhandled items, BLOCKERS B1-B3 all resolved, no orphaned pytest. Branched
-#                                    `feature/phase-6-hardening` off develop at `76450ff` and did P6.0 — the
-#                                    reconnaissance and the twelve-task plan below. The headline recon finding is
-#                                    that **Phase 6 is mostly greenfield, not a polish pass**: there is no
-#                                    Dockerfile, no compose file, no deployment doc and no DELIVERY.md anywhere in
-#                                    the repo, and README/CHANGELOG still describe the 2026-08-04 (Phase-0/1)
-#                                    product. Plan ordering is deliberate — gate-affecting code fixes (P6.1) land
-#                                    before the full-suite (P6.6) and visual sweep (P6.7) so those runs exercise
-#                                    the shipping tree, and the ~25-minute gate run is spent once, not twice.
-#                                    Previous session's note follows. **Ninety-third session: PHASE 5 IS COMPLETE. P5.12 landed — the report is committed (`1f6354a`), `feature/phase-5-engagement` is merged to develop (`322118b`) and pushed, and PR #3 is retitled "Phases 0–5" with a Phase-5 section APPENDED (all seven phase sections verified present afterwards; P3.11's silent-section-loss trap did not fire).** Nothing was re-implemented and no gate was re-run: session 92's `EXIT=0` run is the tree that merged, and every figure in the report is measured off that run's own committed artifacts.
-#                                    **The one substantive finding of this session is a number correction, and it is recorded because this build keeps getting burned by hand-copied figures.** STATE and the session-92 note carried **146** axe route-states; `reports/phase-5/axe/_summary.json` has **73** rows and `audit.mjs` writes exactly one row per audited state (`axeSummary.length`, its own comment says so). 146 is double the truth. Phase 4's report carries the same shape (122 against a 61-row summary), so it is a propagated arithmetic error, not a Phase-5 coverage regression. **The verdict is unaffected — zero violations at every impact however the states are counted** — but a figure nobody can reproduce from the committed artifacts is exactly what this build has been paying for all phase, so the report states 73 and says why. Two other report figures were likewise recomputed from the JSON rather than copied: Lighthouse **44** route reports, a11y floor **96** (`teacher-review`, 100 on the other 43), and **8** routes below performance 80 (not the 9 STATE carried).
-#                                    Also corrected while writing the appendix: `xp_awards.py` is in `lemely/web/`, not `lemely/db/`, and the settings screen is `DeviceSettings.tsx`, not `DeviceManagement.tsx`. Both were caught by testing every path in the appendix for existence before committing — a 20-second check that a phase report should always get.
-#                                    **Next session starts Phase 6 on a fresh `feature/phase-6-*` branch off develop.** Read MISSION §4 Phase 6 and the carried limitations below before planning; several of them (the unenforced Lighthouse performance floor, the untypechecked `web/e2e/`, the synthetic accuracy gap) are explicitly Phase-6-shaped work, and DELIVERY.md must carry every one of them whether or not they are fixed.
+last_updated: 2026-08-12T04:05:00Z
+#
+# ## READ THIS FIRST — the operational rules five sessions paid for
+# - **A GATE RUN IS IN FLIGHT: `/tmp/check_p610.log`, PID 847893, launched with `setsid` at
+#   03:47 on the tree at `b5bc7c7`. Do NOT launch a second one — poll for the `EXIT=` line.**
+#   It is needed because `scripts/seed_e2e.py` changed, and that is the one seeding path both
+#   harnesses use.
+# - **An 84-byte log stuck after the four backend gates is the NORMAL shape of a healthy run
+#   mid-`pytest`, not a stall.** `check.sh` prints nothing for a passing gate. Decide liveness
+#   from `pgrep -af bin/pytest`, never from the log size or from a `FAIL` line (the script does
+#   not abort on a failed gate). Five consecutive sessions correctly declined to relaunch on
+#   this evidence; that discipline is what produced P6.6's first fully green run.
+# - **While a gate run is in flight, touch no code.** Editing `lemely/` or `web/` mid-run makes
+#   the verdict a statement about a tree that no longer exists, and nothing in the log shows it.
+#   Docs are the safe work.
+# - **`check.sh`'s log holds a verdict and nothing else** — no test count, no coverage figure.
+#   Any number quoted anywhere must come from an artifact that actually holds it.
+#
+# Session 102: cleaned the tree (harness MCP config only), then closed **P6.9** — DELIVERY.md
+# §6 Evidence, the last open hole. Built as three tables: what is measured today with the
+# command that re-derives each figure, the Phase-5 UI baseline recomputed from the committed
+# JSON, and the run-dependent figures left deliberately blank with the task that fills them.
+# Re-ran rather than carried: `playwright test --list` says **34 tests in 13 files** (STATE
+# carried 30 for a phase), and the Phase-5 Lighthouse directory holds **45 files but 44 route
+# reports** — the extra is `_summary.json`. a11y floor 96 (`teacher-review`) and the 8 sub-80
+# performance routes both reconfirmed from the JSON, so the phase report was right.
+# Session 101: P6.6 closed green, P6.8 closed, P6.10's seeder made real. Its lesson is on the
+# P6.10 entry below and is the one worth carrying: **a hermetic test of an entry point tests
+# everything except that it is an entry point** — 12 green tests, then `make seed` died on the
+# live stack. Verify an entry point by running it, and on a clean slate.
 gemini_spend_usd: 0.19641   # MEASURED from the real ledger `outputs/gemini_spend.json`
 # (cumulative_usd 0.1964076, updated 2026-08-10T13:15:19Z), not carried forward. Phase 4 closed
 # at $0.18429, so **Phase 5 spent $0.0121** across the whole phase — nothing in the engagement
@@ -601,15 +505,23 @@ Measured, not assumed — every line below was checked on disk this session:
       `__version__` rather than carrying a hand-copied `"0.1.0"` (`7e5a999`). Verified at HEAD.
       **Note the editable install:** `__version__` reads installed metadata, so the CLI/API keep
       reporting the old number until `pip install -e .` is re-run.
-- [ ] doing — **P6.9** `DELIVERY.md`: every feature in MISSION §9's inventory with status, files and
-      the tests that prove it, links to all seven phase reports, and an honest limitations section
-      carrying **every** `### Honest limitations` item from Phases 2–5 whether or not P6 fixed it.
-      **Session 98: written and committed with two holes left deliberately open**, marked in the file
-      by `<!-- FEATURE-TABLE -->` and `<!-- EVIDENCE -->`. §1/§2/§4/§5/§7 are complete — §5 already
-      carries every Phase-2..5 limitation plus P6.5/P6.6's operational ones, with D6.1/D6.2 shown as
-      struck-through-and-closed rather than deleted. The feature table is being built by a scout that
-      must `ls` every path before listing it (report drift is the recurring failure here), and the
-      evidence section needs P6.6's own numbers, so it cannot be honest before that run exits.
+- [x] done — **P6.9** `DELIVERY.md`. Written across three sessions: §1/§2/§4/§5/§7 at 98
+      (`ed0f6b7`), the feature table at 99 (`af87de7`, every path `ls`-checked before listing),
+      and **§6 Evidence at session 102 (`2b0e506`) — the last hole**. §5 carries every
+      Phase-2..5 limitation plus P6.5/P6.6's operational ones, with D6.1/D6.2 struck-through-
+      and-closed rather than deleted.
+      **§6 is built as three tables, not prose, because the recurring failure here is a figure
+      with no source left.** §6.1 pairs each measured number with the command that re-derives it;
+      §6.2 recomputes the Phase-5 UI baseline from the committed JSON (it agrees with the phase
+      report); §6.3 lists the run-dependent figures as **deliberately blank**, naming the task
+      that fills each and the artifact it must come from.
+      **Two corrections that came out of re-running instead of copying:** `playwright test
+      --list` reports **34 tests in 13 files** (STATE carried 30 for a whole phase), and
+      `reports/phase-5/lighthouse/` holds **45 files but 44 route reports** — `_summary.json` is
+      a list, not a route, and a naive `ls | wc -l` reads as 45. a11y floor 96 (`teacher-review`)
+      and the 8 sub-80 performance routes both reconfirmed.
+      **P6.7 and P6.11 must fill §6.3 from their own artifacts** — that is the only thing left
+      in this file, and it is structural, not a hole.
 - [ ] doing — **P6.10** Fresh-clone acceptance: `git clone` → the documented commands → working
       product with seeded demo accounts for all 5 roles.
       **Known before you start (found at P6.5, D6.6 — do not re-derive): the seeding path this
