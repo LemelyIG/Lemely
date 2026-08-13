@@ -1,0 +1,173 @@
+import { readFileSync, readdirSync, statSync } from "node:fs"
+import { join } from "node:path"
+import { describe, expect, it } from "vitest"
+
+/*
+ * P3.4 · RTL safety, as a test rather than a promise.
+ *
+ * The mission's rule from Phase 3 to the end: new and edited styles use
+ * logical properties (`margin-inline-start`, `padding-inline`,
+ * `inset-inline-end`, `text-align: start`), no hardcoded left/right in layout
+ * CSS, and direction-dependent icons flagged with a comment. English is the
+ * only language that ships, so nothing visibly breaks when this rule is
+ * broken — which is precisely why it needs a test. A rule whose violation has
+ * no symptom until a future `dir="rtl"` flip is a rule that quietly decays.
+ *
+ * Scope is the files Phase 3 created or restyled, listed explicitly rather
+ * than globbed over `src/`. Globbing would fail on the ~40 build-era screens
+ * Phase 4 has not reached yet, so it would have to be skipped, and a skipped
+ * test protects nothing. Phase 4 adds each surface to this list as it
+ * migrates it, and the list only ever grows.
+ */
+
+const RTL_CLEAN_FILES = [
+  // Kit components created in Phase 3.
+  "src/components/ui/breadcrumbs.tsx",
+  "src/components/ui/getting-started.tsx",
+  "src/components/ui/loading-shapes.tsx",
+  "src/components/ui/nav-drawer.tsx",
+  "src/components/ui/skip-link.tsx",
+  // Screens and layouts Phase 3 restyled.
+  "src/portals/misc/NotFound.tsx",
+  "src/portals/student/index.tsx",
+  "src/portals/teacher/index.tsx",
+  "src/portals/parent/index.tsx",
+  "src/portals/student/screens/Overview.tsx",
+  "src/portals/teacher/screens/Overview.tsx",
+]
+
+/**
+ * Physical-direction Tailwind utilities that have a logical counterpart.
+ *
+ * Deliberately excludes the block-axis ones (`mt`/`mb`/`pt`/`pb`/`top`/
+ * `bottom`/`inset-y`/`border-t`/`border-b`): the block axis does not flip
+ * under `dir="rtl"`, so rewriting those buys nothing and would make the rule
+ * look arbitrary. `rounded-t`/`rounded-b` are excluded for the same reason.
+ */
+const PHYSICAL = [
+  ["ml-", "ms-"],
+  ["mr-", "me-"],
+  ["pl-", "ps-"],
+  ["pr-", "pe-"],
+  ["left-", "start-"],
+  ["right-", "end-"],
+  ["border-l", "border-s"],
+  ["border-r", "border-e"],
+  ["rounded-l", "rounded-s"],
+  ["rounded-r", "rounded-e"],
+  ["text-left", "text-start"],
+  ["text-right", "text-end"],
+] as const
+
+/**
+ * Only look inside `className="..."` / `className={...}` — not at prose.
+ *
+ * Comments are stripped from the captured expression, which is not fastidious
+ * tidying: a `className={cn(...)}` block in this codebase routinely explains
+ * *why* it is not using the physical utility, naming it to do so ("`px-[9px]`
+ * not `pl-`/`pr-`", "`start-*`, not `left-*`"). Matching those made the check
+ * fail on the two files that documented the rule most carefully, which is the
+ * worst possible incentive to attach to a lint.
+ */
+function classNameText(source: string): { line: number; value: string }[] {
+  const out: { line: number; value: string }[] = []
+  const re = /className=(?:"([^"]*)"|\{([\s\S]*?)\}\s*(?=\/?>|\n\s*[a-zA-Z-]+=))/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(source)) !== null) {
+    const raw = match[1] ?? match[2] ?? ""
+    out.push({
+      line: source.slice(0, match.index).split("\n").length,
+      value: raw.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/.*$/gm, ""),
+    })
+  }
+  return out
+}
+
+describe("RTL safety on Phase 3 surfaces", () => {
+  it.each(RTL_CLEAN_FILES)("%s uses logical properties only", (relative) => {
+    const source = readFileSync(join(process.cwd(), relative), "utf8")
+    const offences: string[] = []
+
+    for (const { line, value } of classNameText(source)) {
+      for (const [physical, logical] of PHYSICAL) {
+        // Two boundaries are needed, and missing the second one is how this
+        // check first reported `rounded-lg` as a physical `rounded-l`:
+        //   - leading: the utility must start a class token, so `mr-` does not
+        //     match inside `chart-mr-2`;
+        //   - trailing: a prefix that does not already end in `-` must be
+        //     followed by a separator, not another letter. `rounded-l` is
+        //     physical; `rounded-lg` is a radius and has nothing to do with
+        //     direction. Same for `border-l` against a hypothetical
+        //     `border-lime`.
+        const trailing = physical.endsWith("-") ? "" : "(?![a-zA-Z])"
+        const re = new RegExp(
+          `(?:^|[\\s"'\`:])(${physical}${trailing}[a-z0-9.\\[\\]/-]*)`,
+          "g",
+        )
+        let hit: RegExpExecArray | null
+        while ((hit = re.exec(value)) !== null) {
+          offences.push(`${relative}:${line}  ${hit[1]}  ->  use ${logical}…`)
+        }
+      }
+    }
+
+    expect(offences, offences.join("\n")).toEqual([])
+  })
+
+  /*
+   * `transform` has no logical axis, so any keyframe that moves along the
+   * reading direction must multiply by `--lm-dir` rather than hardcode a
+   * negative. Without this the nav drawer would slide out of the viewport
+   * instead of into it under `dir="rtl"`.
+   */
+  it("carries the inline axis through --lm-dir in index.css", () => {
+    const css = readFileSync(join(process.cwd(), "src/index.css"), "utf8")
+    expect(css).toContain("--lm-dir: 1")
+    expect(css).toMatch(/\[dir="rtl"\]\s*\{[^}]*--lm-dir:\s*-1/)
+    expect(css).toContain("translateX(calc(-100% * var(--lm-dir)))")
+  })
+
+  /*
+   * The two caret glyphs in `Breadcrumbs` point along the reading direction,
+   * so they are the "direction-dependent icons" the rule says must be flagged
+   * and must mirror. A caret that keeps pointing right in an RTL layout points
+   * backwards through the trail.
+   */
+  it("mirrors the direction-dependent caret glyphs", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/ui/breadcrumbs.tsx"), "utf8")
+    expect(source).toContain("rtl:-scale-x-100")
+    expect(source).toContain("rtl:scale-x-100")
+  })
+})
+
+/*
+ * A guard on the guard. If `RTL_CLEAN_FILES` ever lists a path that has been
+ * moved or renamed, the `it.each` above would still pass by reading a file
+ * that no longer exists... it would throw, in fact. This asserts the friendlier
+ * failure, and catches the opposite mistake: a Phase 3 kit component added to
+ * `components/ui/` without being added to the list.
+ */
+describe("the RTL file list stays honest", () => {
+  const PHASE_3_KIT = [
+    "breadcrumbs.tsx",
+    "getting-started.tsx",
+    "loading-shapes.tsx",
+    "nav-drawer.tsx",
+    "skip-link.tsx",
+  ]
+
+  it.each(RTL_CLEAN_FILES)("%s exists", (relative) => {
+    expect(statSync(join(process.cwd(), relative)).isFile()).toBe(true)
+  })
+
+  it("covers every component Phase 3 added to the kit", () => {
+    const present = readdirSync(join(process.cwd(), "src/components/ui"))
+    for (const file of PHASE_3_KIT) {
+      expect(present, `${file} vanished from the kit`).toContain(file)
+      expect(
+        RTL_CLEAN_FILES,
+        `${file} is in the kit but not covered by the RTL check`,
+      ).toContain(`src/components/ui/${file}`)
+    }
+  })
+})

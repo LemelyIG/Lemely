@@ -641,7 +641,7 @@ function AnswerInput({
               aria-checked={selected}
               onClick={() => onAnswerText(option)}
               className={cn(
-                "flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-body-md cursor-pointer transition-colors",
+                "flex items-center gap-3 rounded-lg border px-4 py-3 text-start text-body-md cursor-pointer transition-colors",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                 selected
                   ? "border-accent bg-accent-subtle text-accent-subtle-on"

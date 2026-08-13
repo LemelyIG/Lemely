@@ -237,7 +237,7 @@ export function PracticeGenerator() {
               {groups.map((group) => (
                 <div key={group.syllabusGroup} className="flex flex-col gap-2">
                   <div className="text-dense-sm font-medium text-t1">{group.syllabusGroup}</div>
-                  <div className="flex flex-col gap-1.5 pl-1">
+                  <div className="flex flex-col gap-1.5 ps-1">
                     {group.topics.map((t) => (
                       <Checkbox
                         key={t.topic}

@@ -145,7 +145,7 @@ function LevelCard({ profile }: { profile: XpProfile }) {
             <Eyebrow>Level</Eyebrow>
             <div className="font-mono text-display-sm text-t1">{profile.level}</div>
           </div>
-          <div role="group" aria-label="Total XP" className="text-right">
+          <div role="group" aria-label="Total XP" className="text-end">
             <Eyebrow>Total XP</Eyebrow>
             <div className="font-mono text-display-sm text-t1">
               {profile.totalXp.toLocaleString()}
@@ -277,9 +277,9 @@ function WeekPanel({ profile }: { profile: XpProfile }) {
             </span>
             {/* Labelled "XP", never bare: this is XP from a source, not a count
                 of times the student did that thing (D5.13 §3). */}
-            <span className="w-16 flex-none text-right font-mono text-dense-lg text-t1">
+            <span className="w-16 flex-none text-end font-mono text-dense-lg text-t1">
               {s.xp}
-              <span className="ml-1 text-3xs text-t3">XP</span>
+              <span className="ms-1 text-3xs text-t3">XP</span>
             </span>
           </div>
         ))}

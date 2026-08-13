@@ -148,7 +148,7 @@ export function Overview() {
           <button
             key={s.code}
             onClick={() => navigate(`/student/subject/${s.code}`)}
-            className="flex flex-col gap-2 md:grid md:grid-subjects-row md:items-center md:gap-3.5 w-full text-left border-0 border-t border-border bg-transparent cursor-pointer px-5 py-3.5 transition-colors hover:bg-surface-2"
+            className="flex flex-col gap-2 md:grid md:grid-subjects-row md:items-center md:gap-3.5 w-full text-start border-0 border-t border-border bg-transparent cursor-pointer px-5 py-3.5 transition-colors hover:bg-surface-2"
           >
             <div className="flex items-center gap-3 md:contents">
               <span className="font-mono text-xs text-t2">{s.code}</span>
@@ -182,7 +182,7 @@ export function Overview() {
               grade={s.grade}
               size="inline"
               basis="predicted"
-              className="hidden md:block md:ml-auto"
+              className="hidden md:block md:ms-auto"
             />
           </button>
         ))}

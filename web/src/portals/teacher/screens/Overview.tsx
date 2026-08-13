@@ -39,10 +39,14 @@ import type { RecentActivity } from "@/lib/teacherTypes"
  *     and quizzes; a quiz row's `grade` is `null` by design and rendered as
  *     an honest absence (an origin label), never the student's last paper
  *     grade substituted in.
- *  5. Quick actions — quiz builder (T-09) and announcement composer (T-12)
+ *  5. Quick actions — all three are real routes. **Corrected in P3.2:** this
+ *     note used to read "quiz builder (T-09) and announcement composer (T-12)
  *     don't exist yet (P3.8); rendered as visibly disabled buttons with a
- *     "Coming soon" tag, never a button that silently does nothing. "Add a
- *     class" is real — it routes to T-02, where creation lives.
+ *     'Coming soon' tag". Both were built after it was written, and the
+ *     comment plus the two disabled buttons it described outlived them, so the
+ *     dashboard was telling teachers a shipped feature was unavailable while
+ *     linking to it from the sidebar. The buttons are enabled and this note is
+ *     no longer describing code that exists.
  *
  * Deliberate deviation from the spec's wording (D3.12, reported): "average
  * predicted grade" on the class cards is NOT computed — averaging letter
@@ -53,6 +57,11 @@ import type { RecentActivity } from "@/lib/teacherTypes"
  * (T-02) in place of the card grid. Loading / error are handled per-query
  * before the main render so a failure on one call never hides data the
  * other call already has.
+ *
+ * P3.2 adds a state in front of all of those: a genuinely new account (no
+ * classes AND no submissions anywhere) gets the `GettingStarted` view instead
+ * of a dashboard of zeroes. P3.3 replaced the loading text with skeletons that
+ * match this layout.
  */
 
 const ORIGIN_LABEL: Record<RecentActivity["origin"], string> = {
@@ -397,7 +406,7 @@ export function Overview() {
               ) : (
                 <span className="text-2xs text-t3 font-mono">{ORIGIN_LABEL[a.origin]}</span>
               )}
-              <div className="text-2xs text-t3 w-[72px] text-right">{relativeTime(a.recordedAt)}</div>
+              <div className="text-2xs text-t3 w-[72px] text-end">{relativeTime(a.recordedAt)}</div>
             </div>
           ))
         )}

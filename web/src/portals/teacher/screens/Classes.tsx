@@ -268,7 +268,7 @@ export function Classes() {
                       key={col.key}
                       scope="col"
                       aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                      className="text-left px-[18px] py-[10px]"
+                      className="text-start px-[18px] py-[10px]"
                     >
                       <button
                         type="button"
@@ -350,7 +350,7 @@ export function Classes() {
                         <span className="font-mono text-dense-sm text-t3">0</span>
                       )}
                     </td>
-                    <td className="px-[18px] py-[13px] text-right whitespace-nowrap">
+                    <td className="px-[18px] py-[13px] text-end whitespace-nowrap">
                       {editingId === c.id ? null : (
                         <>
                           <Button size="sm" variant="ghost" onClick={() => startRename(c)}>

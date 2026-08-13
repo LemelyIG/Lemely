@@ -148,7 +148,7 @@ function Header() {
           </span>
           <span className="font-serif text-body-lg text-t1">Lemely</span>
         </Link>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ms-auto flex items-center gap-3">
           <ChildSwitcher />
           {/* The parent portal has no sidebar by design (P-01: "no interest in
               learning an interface"), so until P5.9 chunk D this header was the

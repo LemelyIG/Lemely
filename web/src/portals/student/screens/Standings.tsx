@@ -159,12 +159,12 @@ function BoardRow({
       <Monogram name={row.displayName} />
       <span className="min-w-0 flex-1 truncate text-body-md text-t1">
         {row.displayName}
-        {isViewer ? <span className="ml-2 text-2xs text-t3">You</span> : null}
+        {isViewer ? <span className="ms-2 text-2xs text-t3">You</span> : null}
       </span>
       <StreakBadge streak={row.streak} />
-      <span className="w-16 flex-none text-right font-mono text-dense-lg text-t1">
+      <span className="w-16 flex-none text-end font-mono text-dense-lg text-t1">
         {row.xp.toLocaleString()}
-        <span className="ml-1 text-3xs text-t3">XP</span>
+        <span className="ms-1 text-3xs text-t3">XP</span>
       </span>
     </Root>
   )
@@ -541,7 +541,7 @@ export function Standings() {
                     </span>
                     <span className="text-2xs text-t3">{s.papers} papers</span>
                     <span
-                      className={`w-10 flex-none text-right font-mono text-dense-lg ${vizText(s.color)}`}
+                      className={`w-10 flex-none text-end font-mono text-dense-lg ${vizText(s.color)}`}
                     >
                       {s.rank}
                     </span>

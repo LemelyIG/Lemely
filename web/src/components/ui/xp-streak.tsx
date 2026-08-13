@@ -73,7 +73,7 @@ export function XPStreak({
             </div>
           </div>
           {typeof level === "number" ? (
-            <div className="text-right">
+            <div className="text-end">
               <Eyebrow>Level</Eyebrow>
               <div className="font-mono text-3xl font-semibold text-t1">{level}</div>
             </div>

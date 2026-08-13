@@ -119,7 +119,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
         // Same unread marker as S-28's, for the same reason: a bold title
         // fights the heading hierarchy and stops reading as emphasis once
         // three in a row are unread.
-        unread && "border-l-2 border-l-accent",
+        unread && "border-s-2 border-s-accent",
       )}
     >
       <CardBody className="flex flex-col gap-2">

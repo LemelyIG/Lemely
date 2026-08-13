@@ -132,7 +132,7 @@ function AnnouncementCard({
         // The unread marker is a left border rather than a bold title: a bold
         // title fights the heading hierarchy and stops being legible once three
         // in a row are unread.
-        unread && "border-l-2 border-l-accent",
+        unread && "border-s-2 border-s-accent",
       )}
     >
       <CardBody className="flex flex-col gap-2">

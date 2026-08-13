@@ -83,7 +83,7 @@ export function ConfidenceIndicator({ tier, className }: ConfidenceIndicatorProp
       {open && (
         <div
           role="tooltip"
-          className="absolute z-10 top-full mt-1.5 left-0 w-56 rounded-md border border-border bg-surface p-2.5 text-body-md text-t2 shadow-sm"
+          className="absolute z-10 top-full mt-1.5 start-0 w-56 rounded-md border border-border bg-surface p-2.5 text-body-md text-t2 shadow-sm"
         >
           {meta.explanation}
         </div>
@@ -135,13 +135,13 @@ export function ConfidenceIndicatorSummary({
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
           aria-label="What does confidence mean?"
-          className="ml-auto flex-none text-t3 hover:text-t2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded-full"
+          className="ms-auto flex-none text-t3 hover:text-t2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded-full"
         >
           <Info className="w-4 h-4" aria-hidden />
         </button>
       </div>
       {open && (
-        <p className="text-sm text-t2 mt-2.5 mb-0 pl-7">
+        <p className="text-sm text-t2 mt-2.5 mb-0 ps-7">
           Confidence tells you how sure we are about each mark. Low-confidence marks are
           checked by your teacher before they count toward your result.
         </p>
