@@ -54,9 +54,17 @@ const STATUS_LABEL: Record<string, string> = {
   archived: "Archived",
 }
 
+/*
+ * P4.5: `assigned` was `accent`. On the Study Notebook palette the accent is a
+ * warm coral-red, so the healthy live state rendered in the product's alert
+ * register while `closed` sat beside it in `ok` teal — a teacher scanning the
+ * list read alarm on the working rows and success on the finished ones.
+ * `info` is §3.6's neutral-notice pair and is what "currently live" should
+ * look like.
+ */
 const STATUS_TONE: Record<string, NonNullable<ChipProps["tone"]>> = {
   draft: "neutral",
-  assigned: "accent",
+  assigned: "info",
   closed: "ok",
   archived: "neutral",
 }
@@ -311,7 +319,7 @@ export function Quizzes() {
                     <td className="px-6 py-3.5 text-data-md text-ink">{q.questionCount}</td>
                     <td className="px-6 py-3.5">
                       {q.targetGrade ? (
-                        <GradeBadge grade={q.targetGrade} size="inline" basis="predicted" />
+                        <GradeBadge grade={q.targetGrade} size="inline" basis="target" />
                       ) : (
                         <span className="text-body-sm text-ink-faint">Not set</span>
                       )}

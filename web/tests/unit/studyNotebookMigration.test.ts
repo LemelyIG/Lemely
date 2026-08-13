@@ -101,7 +101,6 @@ const COMPAT_CLASSES: [pattern: RegExp, replacement: string][] = [
   [/\btext-dense-lg\b/, "text-body-md"],
   [/\btext-dense\b/, "text-body-sm"],
   [/\btext-display-xs\b/, "text-display-sm"],
-  [/\btext-label-sm\b/, "text-eyebrow"],
   [/\btext-metadata\b/, "text-data-sm"],
 ]
 

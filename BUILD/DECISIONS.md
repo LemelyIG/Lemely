@@ -7330,3 +7330,183 @@ field; (d) the friend-code field spanned the full card width, about 1350px at
   unchanged from D4.3's note.
 - **Placement's three em-dashes**, now visible to the widened copy gate. They
   belong to an un-migrated surface and clear when it lands.
+
+---
+
+## D4.5 — Redesign Phase 4, surface 5 (teacher portal): a class family the gate could not see, and a review queue that painted doubt green
+
+Surface 5 is the whole teacher portal — 19 files, 7,432 lines, 908 build-era
+class usages, none of them migrated. The mission names this surface "teacher
+dashboard + quiz builder", and those are its two headline screens, but no later
+surface covers Grading, Review, ReviewItem, MarkSchemes, Classes, ClassDetail,
+ClassRoster, StudentDetail or Announcements. Leaving them would ship a portal
+half in each language and fail §12's "zero pages left in the old language", so
+the surface is the portal. It landed in five commits, A–E.
+
+### The headline: the resolves-to-nothing shape, third and fourth time, inside the gate's own blind spot
+
+D4.1 was `--font-serif`, a token that never existed. D4.4 was `text-display`, a
+class that never existed, and its deliverable was `utilityExistence.test.ts` —
+a gate for the *pattern* rather than the instance, on the grounds that twice is
+a pattern.
+
+It recurred anyway, because that gate checks `text-`/`bg-`/`border-`/`font-`:
+the four families where **Tailwind** owns the vocabulary. `lm-` is the one
+family where the **project** owns it outright, and it was never scanned.
+`lm-head` and `lm-body` sat on the student shell's `<header>` and `<main>` —
+in a file the gate already listed by name. Widening it to a fifth family
+immediately found a fourth instance, `lm-cols`, on nine elements across four
+screens, two of them migrated surfaces.
+
+All six emit **zero** rules in `dist/assets/*.css`, verified by grepping the
+shipped bundle rather than by reasoning about it, and nothing selects on them
+in source, tests, scripts or the capture harness. They are removed rather than
+defined; in every case the layout was already carried entirely by the real
+utilities beside them.
+
+The `lm-` family is the *easiest* of the five to check, not the hardest: there
+is exactly one legitimate route, a literal `.lm-x` rule in `index.css`, with
+none of Tailwind's generated-utility, arbitrary-value or built-in escape
+hatches to allow for. It was unscanned because the gate was written from the
+two instances in front of it, and both happened to be Tailwind-shaped.
+
+### The second headline: the review queue called sub-floor marks confident
+
+`Review.tsx` carried its own `confidenceTone`, bucketing at **0.8**. The review
+queue exists *because* a mark scored below `REVIEW_CONFIDENCE_THRESHOLD`
+(0.90) — that is what puts an item in it. So a mark at 0.85 arrived in the
+queue as not-confident and was then painted in the same green the product uses
+for marks it is sure about, on the one screen whose entire job is directing a
+teacher's attention to doubt.
+
+This is D4.2's finding a second time, and `lib/markingConfidence.ts` was built
+in P4.2 to be the single owner of this decision precisely so it could not
+recur.
+
+**Why the gate written to prevent it missed is the part worth keeping.**
+`tests/test_web_shared_constants.py::test_no_other_web_module_invents_its_own_confidence_floor`
+greps for a bare numeric comparison against the word `confidence`. This
+function's parameter is called `score`, so the word never appeared beside the
+operator and the gate saw nothing. That is D6.12's lesson in miniature — a
+condition every harness shares is a condition no harness tests — and here the
+shared condition was an assumption about *naming*: that a variable holding a
+confidence would be called one. The gate now matches a list of aliases, skips
+comment lines so it cannot fail on its own fix note, and carries an inversion
+test asserting it catches the exact line that shipped.
+
+**The fix also drops the queue from three confidence tones to two, and that is
+the point rather than a casualty.** The old third band split "uncertain" again
+at 0.5, and no such number exists anywhere in the product: the backend has one
+threshold, so any second boundary is a frontend invention — the defect class
+the module exists to close. Nothing is lost to the reader, since the score is
+printed beside the chip.
+
+### Portal-wide findings
+
+- **Every one of the fifteen screens rendered a raw `error.message`**, at 44
+  call sites. A dropped connection put the browser's `TypeError: Failed to
+  fetch` in front of a teacher. This is surface 4's Friends finding at fifteen
+  times the scale, so it gets `lib/teacherOutcome.ts` — the third module in the
+  family after `correctionOutcome.ts` and `friendOutcome.ts`. Two entry points,
+  because a failed read asks "can I retry" and a failed write asks "did it
+  save"; the honest answer to the second is always no, since every mutation in
+  this portal is a single request. The endpoint's own `detail` still wins where
+  there is one: the at-risk acknowledge route's 422 is a real race with no
+  other spelling.
+
+- **Destructive actions were confirmed by `window.confirm`, at four sites**,
+  including deleting a class, which the dialog itself says "removes it for
+  every enrolled student". Surface 3 established `Modal dismissible={false}` as
+  the pattern and built exactly one, on the student flashcard deletes; the
+  teacher portal never used it. `window.confirm` is worse than it looks: its
+  buttons say "OK" and "Cancel" so the destructive choice is never named, it
+  cannot show the pending or failed state of the mutation behind it, and
+  browsers may suppress it after repeated use, so a confirmation the product
+  believes it is showing can silently stop appearing. C-24 `ConfirmModal` lifts
+  surface 3's implementation into the kit and `FlashcardDecks.tsx` now consumes
+  it rather than owning a private copy.
+
+  The four do not say the same thing. The component's default consequence is
+  "This cannot be undone.", true for deleting a class or an announcement and
+  **false** for removing a student from a class (reversible from the form
+  directly above it, and it does not touch their marked work) and for
+  unassigning a quiz. Each states its own real consequence; that is why
+  `consequence` is a prop rather than a constant.
+
+- **`portals/teacher/components/Avatar.tsx` was a `rounded-full` circle at six
+  call sites across five screens** — the exact violation the kit's `<Avatar>`
+  was written to prevent (§6: avatars are squircles, circles mean status). The
+  kit component had one call site product-wide. Same shape as surface 4's
+  unused `XPStreak`. Deleted; the six move over and gain an accessible name
+  they did not have.
+
+- **`StatCard`'s big number was `display-lg` Newsreader** where §4 puts the
+  data face, and the same defect recurred on the class cards' average mark, the
+  six engagement figures, and four mark inputs. Every one of those values is
+  `str(round(...))` from the server. D4.2 again: the same figures in the same
+  product set two different ways depending on which portal you were looking at.
+
+- **Ten hand-rolled inputs and three selects**, all with `outline-accent` where
+  §3.9 puts a deliberately blue focus ring, none with the disabled/error states
+  §9 gate 4 requires. One `<label>` wrapped a loading branch, so while classes
+  were fetching it pointed at no control at all.
+
+- **The teacher portal had no texture layer at all** — no `paper-grain`, which
+  the student shell has had since surface 1. It is the cheapest carrier of §1's
+  protected quality and its absence is most of why the portal read as the
+  generic dashboard §1's anti-references name.
+
+- **The brand lockup was still the placeholder** accent circle with an italic
+  `l` (audit M9, "stamped in three places"). The student copy was replaced in
+  surface 1; this one was still live. P4.2's second lesson exactly. It was also
+  a `font-serif` call site, so the placeholder was not even rendering in the
+  face it reached for.
+
+### A workaround retired because the thing it worked around was fixed
+
+`Quizzes.tsx` and `QuizBuilder.tsx` both deliberately avoided the `--t3` step
+and used `--t2` for every muted label. The reason was real and measured: axe
+put the build-era `--t3` at **4.36:1** against the default surface, below the
+4.5:1 AA floor, at the 10–13px sizes those labels use. `QuizBuilder`'s module
+doc recorded that fixing the shared token was out of that chunk's scope.
+
+Phase 2 fixed the shared token. `--ink-faint` sits at L 0.529 *specifically* so
+it clears AA against the darkest surface it ever meets — 4.94:1 on `--paper`,
+5.17:1 on `--paper-raised`, 4.60:1 on `--paper-sunk` — and DESIGN.md §3.2
+removes the lighter fifth step that made the defect reachable. All three ratios
+are pinned by `tests/test_design_tokens.py`. The divergence is retired: these
+screens are AA by construction rather than by avoidance.
+
+### The copy gate's classifier had two gaps, and the classifier was fixed rather than the source
+
+`check_copy` reports prose em-dashes and exempts placeholders. Two exemptions
+were too narrow and were reporting real placeholders:
+
+1. It bailed out of the quoted-placeholder exemption whenever a line held more
+   than one dash, so the review queue's `{awarded ?? "–"}/{maximum ?? "–"}` — a
+   row where neither figure is known — was counted as prose. The bound existed
+   only because `indexOf` cannot locate a second match.
+2. The JSX exemption looked for `>` and `<` within 12 characters *on the same
+   line*, so a dash a formatter had wrapped onto its own line was missed.
+
+Both widenings are pinned in the strict direction too: a line holding a
+placeholder **and** a prose dash must still report, and a lone dash with words
+beside it is still prose. Contorting the source to satisfy a classifier would
+have been the wrong repair — the gate encodes judgement calls, and these two
+were wrong.
+
+Count: **67 → 18**, and none of the 18 are in the teacher portal. 51 of the
+original 67 were.
+
+### Deliberately not done
+
+- **Nivo charts.** `@nivo/*` is not installed; §11's chart theme is Phase 5's
+  named work and building it here would pull that phase forward into a surface
+  pass. `ClassAnalytics`'s hand-rolled grade bars and cohort table are migrated
+  in place, and the empty-data states §11 requires already exist.
+- **A confirmation on bulk-approve.** It approves marks rather than destroying
+  rows, and every item it touches remains individually reviewable afterwards.
+  Applying surface 3's confirmation finding here would be pattern-matching
+  rather than reasoning, the same call D4.4 recorded for the friend actions.
+- **`Chip` migration.** Still build-era, still consumed by un-migrated screens,
+  unchanged from D4.3's and D4.4's notes.

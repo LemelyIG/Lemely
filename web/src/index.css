@@ -602,6 +602,28 @@ body {
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
+
+/* `eyebrow` at the same scale, weight and tracking, WITHOUT the uppercase
+   transform. P4.5 promoted this out of the build-era block, where it had been
+   parked as legacy despite being the rung the system actually needs.
+
+   §4.2 defines `eyebrow` for "uppercase kickers above headings" — one or two
+   words, set once — and §12 asks tags and badges for "eyebrow type". Those two
+   are only compatible while every tag is a word. `Chip` also renders status
+   *sentences* ("Possible AI-written answer"), and uppercasing those wraps them
+   to two lines, costs the acronym its distinction, and reads as shouting.
+
+   Note that `normal-case` cannot do this job: it is a Tailwind utility of equal
+   specificity emitted BEFORE this block, so `.text-eyebrow`'s own
+   `text-transform` wins the cascade. Verified in `dist/assets/*.css` by byte
+   offset, not assumed. A named rung is the fix; an override utility is not. */
+.text-label-sm {
+  font-family: var(--font-sans);
+  font-size: var(--fs-eyebrow);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.1em;
+}
 /* All data rungs are tabular by construction, so a score can never jitter as
    it counts up and a column of marks always aligns. */
 .text-data-lg {
@@ -658,13 +680,6 @@ body {
   font-size: var(--fs-display-sm);
   font-weight: 500;
   line-height: 1.25;
-}
-.text-label-sm {
-  font-family: var(--font-sans);
-  font-size: var(--fs-eyebrow);
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0.1em;
 }
 .text-metadata {
   font-family: var(--font-mono);

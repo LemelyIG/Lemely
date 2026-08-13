@@ -16,7 +16,18 @@ import { cn } from "@/lib/utils"
 export type Grade = "A*" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "U"
 export type GradeBand = "top" | "mid" | "borderline" | "fail"
 export type GradeBadgeSize = "hero" | "medium" | "inline"
-export type GradeBadgeBasis = "achieved" | "predicted"
+/*
+ * P4.5 added `target`. The quiz list rendered a teacher's chosen target grade
+ * with `basis="predicted"`, so a column headed "Target grade" showed a badge
+ * captioned "Predicted" — the product telling a teacher it forecasts a B when
+ * in fact they had asked for one. A target is neither achieved nor predicted;
+ * it is an intention, and it is the only one of the three the reader set
+ * themselves.
+ *
+ * It shares `predicted`'s provisional (outlined) styling, because a target is
+ * likewise not a fact about a result, and only the caption differs.
+ */
+export type GradeBadgeBasis = "achieved" | "predicted" | "target"
 
 /** A-star, A and B group into "top"; C/D group "mid"; E is "borderline"; F/G/U are "fail". */
 export function gradeBand(grade: string): GradeBand {
@@ -75,7 +86,11 @@ export interface GradeBadgeProps extends Omit<HTMLAttributes<HTMLDivElement>, "c
   /** A*, A, B, C, D, E, F, G, or U. */
   grade: string
   size?: GradeBadgeSize
-  /** achieved = confident final result (solid fill). predicted = provisional (outlined). */
+  /**
+   * achieved = a confident final result (solid fill). predicted = a forecast,
+   * provisional (outlined). target = a grade someone is aiming for, also
+   * outlined, and never to be confused with either of the other two.
+   */
   basis?: GradeBadgeBasis
   /**
    * Boundary data behind this grade is incomplete. Forces provisional
@@ -95,8 +110,14 @@ export function GradeBadge({
   ...props
 }: GradeBadgeProps) {
   const band = bandClasses[gradeBand(grade)]
-  const provisional = estimated || basis === "predicted"
-  const label = estimated ? "Estimated" : basis === "predicted" ? "Predicted" : null
+  const provisional = estimated || basis !== "achieved"
+  const label = estimated
+    ? "Estimated"
+    : basis === "predicted"
+      ? "Predicted"
+      : basis === "target"
+        ? "Target"
+        : null
 
   return (
     <div

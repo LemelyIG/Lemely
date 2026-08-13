@@ -460,9 +460,15 @@ export function Review() {
                   </th>
                   <th
                     scope="col"
-                    className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                    className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint whitespace-nowrap"
                   >
                     AI mark
+                  </th>
+                  <th
+                    scope="col"
+                    className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                  >
+                    Confidence
                   </th>
                   <th scope="col" className="px-[16px] py-[10px]">
                     <span className="sr-only">Actions</span>
@@ -522,15 +528,26 @@ export function Review() {
                     <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
                       {relativeTime(item.createdAt)}
                     </td>
+                    {/* The confidence gets its own column rather than sitting
+                        unlabelled under the mark. Stacked, a tone-coloured
+                        "85%" read as a second figure about the *mark* — the
+                        same shape as surface 4's unlabelled rank column, where
+                        a coloured number beside another number invited the two
+                        to be read as a pair. A percentage under "2/3" is
+                        especially open to being read as a score. */}
                     <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                      <div className="text-data-sm">
+                      <div className="text-data-sm text-ink">
                         {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
                       </div>
+                    </td>
+                    <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
                       {item.confidenceScore != null ? (
-                        <Chip tone={confidenceTone(item.confidenceScore)} className="mt-1">
+                        <Chip tone={confidenceTone(item.confidenceScore)}>
                           {Math.round(item.confidenceScore * 100)}%
                         </Chip>
-                      ) : null}
+                      ) : (
+                        <span className="text-body-sm text-ink-faint">–</span>
+                      )}
                     </td>
                     <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
                       <Button

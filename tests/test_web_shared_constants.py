@@ -117,7 +117,7 @@ def test_the_confidence_floor_gate_catches_a_renamed_variable() -> None:
     pattern = re.compile(
         r"\b(?:" + "|".join(_CONFIDENCE_ALIASES) + r")\b\s*[<>]=?\s*0\.\d+",
     )
-    assert pattern.search("  if (score >= 0.8) return \"ok\"")
+    assert pattern.search('  if (score >= 0.8) return "ok"')
     assert pattern.search("  if (q.confidence < 0.85) return 'uncertain'")
     assert pattern.search("  const ok = conf > 0.9")
     # And does not fire on things that merely contain a number.

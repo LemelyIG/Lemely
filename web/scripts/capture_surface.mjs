@@ -651,7 +651,220 @@ const PROFILE_STATES = {
  * The surface registry. Each entry owns its route, its file prefix, its states
  * and the stubbing those states need; everything else is the shared harness.
  */
+
+/* ── Teacher fixtures (P4.5, surface 5) ──────────────────────────────────── */
+
+/*
+ * The teacher identity. `RequireAuth` gates `/teacher` to teacher/school_admin/
+ * platform_admin, so without this every teacher capture would be a redirect to
+ * the student dashboard.
+ */
+const TEACHER_SESSION = { userId: "capture-teacher", role: "teacher" }
+const TEACHER_PROFILE = {
+  userId: "capture-teacher",
+  email: "h.sabry@example.com",
+  displayName: "Hana Sabry",
+  role: "teacher",
+}
+
+/** Field-for-field `StatCardDTO`. Invented numbers, real shape. */
+const TEACHER_STATS = [
+  { key: "Papers graded", value: "128", unit: "this term", foot: null, valueTone: "t1", footTone: "t2" },
+  { key: "Need your eyes", value: "6", unit: "items", foot: "oldest waiting 2 days", valueTone: "err", footTone: "err" },
+  { key: "Group mean", value: "64", unit: "%", foot: "up 3 since last paper", valueTone: "t1", footTone: "ok" },
+  { key: "At risk", value: "2", unit: "students", foot: null, valueTone: "err", footTone: "t2" },
+]
+
+const TEACHER_AT_RISK = [
+  {
+    name: "Yusuf Rahman",
+    grade: "D",
+    delta: -7,
+    weakTopic: "Thermal physics",
+    flags: [
+      {
+        reason: "declining_trend",
+        summary: "Down 7 marks across the last three papers, all in thermal physics.",
+        evidence: {},
+        acknowledged: null,
+      },
+    ],
+  },
+  {
+    name: "Mariam Adel",
+    grade: "E",
+    delta: -3,
+    weakTopic: "Electricity",
+    flags: [
+      {
+        reason: "below_target",
+        summary: "Two grades below the A she is aiming for in physics.",
+        evidence: {},
+        acknowledged: { acknowledgedAt: "2026-08-12T09:00:00Z", acknowledgedBy: "capture-teacher", note: "Spoke to her on Tuesday." },
+      },
+      { reason: "inactive", summary: "No submissions in 16 days.", evidence: {}, acknowledged: null },
+    ],
+  },
+]
+
+const TEACHER_ACTIVITY = [
+  { studentId: "s1", studentName: "Amina Farouk", subjectCode: "0625", percentage: 78, grade: "B", recordedAt: "2026-08-13T14:10:00Z", origin: "past_paper" },
+  { studentId: "s2", studentName: "Yusuf Rahman", subjectCode: "0625", percentage: 41, grade: null, recordedAt: "2026-08-13T11:02:00Z", origin: "quiz" },
+  { studentId: "s3", studentName: "Mariam Adel", subjectCode: "0580", percentage: 55, grade: "D", recordedAt: "2026-08-12T16:40:00Z", origin: "past_paper" },
+]
+
+const TEACHER_CLASSES = {
+  classes: [
+    { id: "c1", label: "Y11 Physics A", studentCount: 24, average: 64.2, subjectCode: "0625", schoolId: null, joinCode: "PHY11A", atRiskCount: 2, lastActivityAt: "2026-08-13T14:10:00Z", topWeakness: "Thermal physics" },
+    { id: "c2", label: "Y11 Physics B", studentCount: 22, average: 58.9, subjectCode: "0625", schoolId: null, joinCode: "PHY11B", atRiskCount: 1, lastActivityAt: "2026-08-11T09:30:00Z", topWeakness: "Electricity" },
+    { id: "c3", label: "Y10 Maths", studentCount: 28, average: null, subjectCode: "0580", schoolId: null, joinCode: "MTH10", atRiskCount: 0, lastActivityAt: null, topWeakness: null },
+  ],
+}
+
+const TEACHER_OVERVIEW = {
+  stats: TEACHER_STATS,
+  atRisk: TEACHER_AT_RISK,
+  retention: [],
+  recentActivity: TEACHER_ACTIVITY,
+}
+
+/*
+ * The first-run state is BOTH conditions, not just one: `Overview.tsx` shows
+ * `GettingStarted` only when there are no classes AND no activity, because a
+ * teacher who archived their last class mid-year should get their dashboard
+ * back rather than an onboarding screen.
+ */
+const TEACHER_OVERVIEW_FIRST_RUN = { stats: TEACHER_STATS, atRisk: [], retention: [], recentActivity: [] }
+
+const TEACHER_OVERVIEW_STATES = {
+  /** The populated dashboard: at-risk students, four stats, three classes. */
+  populated: { overview: TEACHER_OVERVIEW, classes: TEACHER_CLASSES },
+  /** Nothing flagged. The "no students flagged" line, and the zeroed stats. */
+  nothingFlagged: {
+    overview: { ...TEACHER_OVERVIEW, atRisk: [], stats: TEACHER_STATS.map((s) => (s.key === "Need your eyes" ? { ...s, value: "0", foot: null, valueTone: "t1", footTone: "t2" } : s)) },
+    classes: TEACHER_CLASSES,
+  },
+  /** A genuinely new account: the composed first-run view, not a wall of zeroes. */
+  firstRun: { overview: TEACHER_OVERVIEW_FIRST_RUN, classes: { classes: [] } },
+  /** The skeleton. Never fulfilled; the context is torn down first. */
+  loading: { delayMs: 8_000 },
+  /** The error state, with its own sentence rather than a raw message. */
+  error: { overview: null, status: 500, classes: TEACHER_CLASSES },
+}
+
+const REVIEW_ITEMS = [
+  { itemId: "r1", attemptId: "a1", questionResultId: "q1", studentId: "s1", studentDisplayName: "Amina Farouk", classId: "c1", className: "Y11 Physics A", subjectCode: "0625", paperNumber: 4, paperVariant: 1, sessionMonth: "Nov", sessionYear: 2024, questionId: "3(b)(ii)", reason: "low_confidence", status: "open", createdAt: "2026-08-11T08:00:00Z", waitingHours: 52, aiAwardedMarks: 2, maximumMarks: 3, confidenceScore: 0.62 },
+  /* 0.85: below the 0.90 review floor that put it here, and above the 0.8 the
+     queue used to call confident. This row is the capture of the chunk-D
+     finding. */
+  { itemId: "r2", attemptId: "a2", questionResultId: "q2", studentId: "s2", studentDisplayName: "Yusuf Rahman", classId: "c1", className: "Y11 Physics A", subjectCode: "0625", paperNumber: 4, paperVariant: 1, sessionMonth: "Nov", sessionYear: 2024, questionId: "5(a)", reason: "low_confidence", status: "open", createdAt: "2026-08-12T10:30:00Z", waitingHours: 26, aiAwardedMarks: 1, maximumMarks: 2, confidenceScore: 0.85 },
+  { itemId: "r3", attemptId: "a3", questionResultId: null, studentId: "s3", studentDisplayName: "Mariam Adel", classId: "c2", className: "Y11 Physics B", subjectCode: null, paperNumber: null, paperVariant: null, sessionMonth: null, sessionYear: null, questionId: "2", reason: "ai_detection_flag", status: "open", createdAt: "2026-08-13T07:15:00Z", waitingHours: 5, aiAwardedMarks: null, maximumMarks: null, confidenceScore: null },
+]
+
+const TEACHER_REVIEW_STATES = {
+  /** The queue with all three reason kinds, oldest first. */
+  populated: { queue: { items: REVIEW_ITEMS } },
+  /** Empty, which on this screen is good news and must read as such. */
+  empty: { queue: { items: [] } },
+  loading: { delayMs: 8_000 },
+  error: { queue: null, status: 500 },
+}
+
+const TEACHER_QUIZZES = {
+  quizzes: [
+    { id: "q1", title: "Y11 Thermal physics catch-up", subjectCode: "0625", status: "draft", questionCount: 0, targetGrade: "C", builderStep: 3 },
+    { id: "q2", title: "Electricity end-of-unit", subjectCode: "0625", status: "assigned", questionCount: 12, targetGrade: "B", builderStep: 6 },
+    { id: "q3", title: "Forces recap", subjectCode: "0625", status: "closed", questionCount: 8, targetGrade: null, builderStep: 6 },
+  ],
+}
+
+const TEACHER_QUIZZES_STATES = {
+  populated: { quizzes: TEACHER_QUIZZES },
+  /** The composed empty state, which is where a teacher starts. */
+  empty: { quizzes: { quizzes: [] } },
+  loading: { delayMs: 8_000 },
+  error: { quizzes: null, status: 500 },
+}
+
 const SURFACES = {
+  /* ── Teacher (P4.5, surface 5) ─────────────────────────────────────────── */
+
+  "teacher-overview": {
+    prefix: "teacher-overview",
+    route: "/teacher",
+    states: TEACHER_OVERVIEW_STATES,
+    session: TEACHER_SESSION,
+    profile: TEACHER_PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/teacher/classes", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.classes ?? TEACHER_CLASSES),
+        }),
+      )
+      await page.route("**/api/teacher/overview", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.overview ?? {}),
+        })
+      })
+    },
+  },
+
+  "teacher-review": {
+    prefix: "teacher-review",
+    route: "/teacher/review",
+    states: TEACHER_REVIEW_STATES,
+    session: TEACHER_SESSION,
+    profile: TEACHER_PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/teacher/classes", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TEACHER_CLASSES) }),
+      )
+      await page.route("**/api/teacher/review**", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.queue ?? {}),
+        })
+      })
+    },
+  },
+
+  "teacher-quizzes": {
+    prefix: "teacher-quizzes",
+    route: "/teacher/quizzes",
+    states: TEACHER_QUIZZES_STATES,
+    session: TEACHER_SESSION,
+    profile: TEACHER_PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/teacher/classes", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TEACHER_CLASSES) }),
+      )
+      await page.route("**/api/teacher/quizzes", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.quizzes ?? {}),
+        })
+      })
+    },
+  },
+
   "student-dashboard": {
     prefix: "overview",
     route: "/student",
@@ -990,12 +1203,23 @@ async function main() {
           viewport: { width: vp.width, height: vp.height },
           deviceScaleFactor: 2,
         })
+        /*
+         * P4.5 made the identity per-surface. `SESSION`/`PROFILE` were both
+         * hardcoded to `role: "student"`, which is fine while every registered
+         * surface lives under `/student` and useless the moment one does not:
+         * `RequireAuth` gates `/teacher` to teacher/school_admin/platform_admin
+         * and redirects a student straight back to `/student`, so a teacher
+         * capture would have produced ten pictures of the student dashboard.
+         * That is exactly the failure the duplicate-hash check below exists to
+         * catch, and it is cheaper to not cause it.
+         */
+        const session = { ...SESSION, ...(surface.session ?? {}) }
         await context.addInitScript(
-          ([session, key]) => {
-            window.localStorage.setItem(key, JSON.stringify(session))
+          ([sess, key]) => {
+            window.localStorage.setItem(key, JSON.stringify(sess))
             window.localStorage.setItem("lemely.deviceId", "capture-device")
           },
-          [SESSION, "lemely.session"],
+          [session, "lemely.session"],
         )
 
         const page = await context.newPage()
@@ -1019,7 +1243,11 @@ async function main() {
           route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
         )
         await page.route("**/api/me/profile", (route) =>
-          route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PROFILE) }),
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ ...PROFILE, ...(surface.profile ?? {}) }),
+          }),
         )
         await surface.stub(page, state)
         await page.goto(`${BASE}${surface.route}`, { waitUntil: "domcontentloaded" })

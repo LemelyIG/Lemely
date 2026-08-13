@@ -11,6 +11,7 @@ import {
   CardGridSkeleton,
 } from "@/components/ui/loading-shapes"
 import { cn, greetingFor, relativeTime } from "@/lib/utils"
+import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import { StatCard } from "../components/StatCard"
 import { Avatar } from "@/components/ui/avatar"
 import { useTeacherOverview, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
@@ -86,7 +87,7 @@ export function Overview() {
       <div className="lm-screen flex flex-col gap-8 min-w-0">
         <h1 className="sr-only">Overview</h1>
         <PageHeaderSkeleton />
-        <ListSkeleton rows={3} className="max-w-[620px]" />
+        <ListSkeleton rows={3} />
         <CardGridSkeleton count={3} />
         <ListSkeleton rows={4} avatar />
       </div>
@@ -99,7 +100,7 @@ export function Overview() {
         <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load the overview"
-          body={overviewQuery.error.message}
+          body={teacherLoadFailureMessage(overviewQuery.error)}
           action={{ label: "Retry", onClick: () => overviewQuery.refetch() }}
         />
       </div>
@@ -112,7 +113,7 @@ export function Overview() {
         <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load your classes"
-          body={classesQuery.error.message}
+          body={teacherLoadFailureMessage(classesQuery.error)}
           action={{ label: "Retry", onClick: () => classesQuery.refetch() }}
         />
       </div>
@@ -232,7 +233,7 @@ export function Overview() {
       </div>
 
       {/* 1. Needs you — the permanent top item */}
-      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden max-w-[620px] w-full">
+      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden w-full">
         <div className="px-6 pt-5 pb-3.5">
           <div className="text-display-md text-ink">Needs you</div>
           <div className="text-eyebrow text-ink-faint mt-1.5">
@@ -277,13 +278,13 @@ export function Overview() {
                     {r.flags.map((f) => (
                       <div
                         key={f.reason}
-                        className="flex items-start gap-2 text-body-sm text-ink-muted"
+                        className="flex items-start gap-2 flex-wrap text-body-sm text-ink-muted"
                       >
                         <span
                           aria-hidden="true"
                           className="text-err mt-[6px] w-[5px] h-[5px] rounded-full bg-err flex-none"
                         />
-                        <span className="flex-1 text-pretty">{f.summary}</span>
+                        <span className="flex-1 min-w-[24ch] text-pretty">{f.summary}</span>
                         {f.acknowledged ? (
                           <Chip tone="neutral" className="flex-none">
                             Acknowledged
