@@ -34,12 +34,16 @@ import { describe, expect, it } from "vitest"
  * that is invisible from every direction except this one: comparing the names
  * the source uses against the names the stylesheet defines.
  *
- * **Scope, stated rather than implied.** This checks the four families where
- * the design system owns the vocabulary — `text-`, `bg-`, `border-`, `font-`.
- * It does not attempt to validate all of Tailwind; the built-in utilities are
- * allow-listed by shape below. It reports a name only when it matches none of
- * the ways a class in those families can legitimately resolve, which is
- * exactly the condition both real defects met.
+ * P4.5 found it a third time, in the family this gate did not scan: `lm-head`
+ * and `lm-body` on the student shell, in a file already on the list below. See
+ * `LM_PREFIX` for that one.
+ *
+ * **Scope, stated rather than implied.** This checks the five families where
+ * the design system owns the vocabulary — `text-`, `bg-`, `border-`, `font-`
+ * and `lm-`. It does not attempt to validate all of Tailwind; the built-in
+ * utilities are allow-listed by shape below. It reports a name only when it
+ * matches none of the ways a class in those families can legitimately resolve,
+ * which is exactly the condition all three real defects met.
  */
 
 const SCANNED_FILES = [
@@ -64,6 +68,9 @@ const SCANNED_FILES = [
   "src/portals/student/screens/Friends.tsx",
   "src/portals/student/screens/Profile.tsx",
   "src/portals/student/screens/Standings.tsx",
+  // Phase 4, surface 5 — the teacher portal.
+  "src/portals/teacher/index.tsx",
+  "src/portals/teacher/components/StatCard.tsx",
 ]
 
 const CSS_PATH = "src/index.css"
@@ -75,7 +82,12 @@ function read(relative: string): string {
 /** Every class defined literally in the stylesheet, e.g. `.text-display-lg`. */
 function literalClasses(css: string): Set<string> {
   const found = new Set<string>()
-  for (const match of css.matchAll(/\.([a-z0-9][a-z0-9-]*)\s*(?:,|\{)/gi)) {
+  // `:` is a terminator alongside `,` and `{` because a rule may reach the
+  // class through a pseudo-element and still be what defines it: `.lm-scroll`
+  // exists in the stylesheet only as `.lm-scroll::-webkit-scrollbar`. Without
+  // this the `lm-` family check below would report a class that demonstrably
+  // does emit rules.
+  for (const match of css.matchAll(/\.([a-z0-9][a-z0-9-]*)\s*(?:,|\{|:)/gi)) {
     found.add(match[1])
   }
   return found
@@ -135,7 +147,27 @@ const BUILT_IN = new Set([
  * already forbids it by name in migrated files. This gate would have caught
  * `text-display`; that one catches `font-serif`. Neither alone covers both.
  */
-const PREFIXES = ["text-", "bg-", "border-", "font-"]
+const PREFIXES = ["text-", "bg-", "border-", "font-", "lm-"]
+
+/**
+ * `lm-` is the fifth family, added by P4.5 because the shape recurred a third
+ * time — and this time inside the gate's own blind spot.
+ *
+ * `lm-head` and `lm-body` were on the student shell's `<header>` and `<main>`,
+ * in a file this list already scanned, and neither is defined anywhere.
+ * Verified in the shipped bundle rather than reasoned about: `.lm-read`,
+ * `.lm-screen` and `.lm-scroll` each emit rules in `dist/assets/*.css` and
+ * those two emit zero. Nothing selected on them either, in source, tests,
+ * scripts or the capture harness, so they were removed rather than defined.
+ *
+ * The reason the existing gate could not see them is worth stating: it checked
+ * the four families where *Tailwind* owns the vocabulary, and `lm-` is the one
+ * family where the project owns it outright. That makes it the easiest family
+ * to check, not the hardest — there is exactly one legitimate route, a literal
+ * `.lm-x` rule in `index.css`, with none of Tailwind's generated-utility,
+ * arbitrary-value or built-in escape hatches to allow for.
+ */
+const LM_PREFIX = "lm-"
 
 /** Strips variants (`hover:`, `min-[820px]:`, `dark:`) and `!` important. */
 function bareClass(token: string): string {
@@ -212,6 +244,10 @@ describe("design-system utilities resolve", () => {
    * (`bg-accent/20`) — those resolve by construction.
    */
   function resolves(withModifier: string): boolean {
+    // The `lm-` family is checked before the escape hatches, not after: the
+    // project defines these by hand, so an arbitrary value or an opacity
+    // modifier on one would itself be a mistake rather than a reason to pass.
+    if (withModifier.startsWith(LM_PREFIX)) return classes.has(withModifier)
     if (withModifier.includes("[")) return true
     if (withModifier.includes("(")) return true
     // The opacity modifier is stripped first, not last: `border-current/40` is
@@ -273,6 +309,23 @@ describe("design-system utilities resolve", () => {
     expect(resolves("text-not-a-token")).toBe(false)
     expect(resolves("bg-nonexistent")).toBe(false)
     expect(resolves("font-madeup")).toBe(false)
+  })
+
+  /**
+   * The same inversion for the `lm-` family, on the two strings that actually
+   * shipped on the student shell's `<header>` and `<main>`. If this ever goes
+   * green while those classes are still undefined, the family check has been
+   * disabled and the third recurrence can quietly become a fourth.
+   */
+  it("rejects the two lm- classes the student shell actually carried", () => {
+    expect(resolves("lm-head")).toBe(false)
+    expect(resolves("lm-body")).toBe(false)
+  })
+
+  it("accepts the lm- classes the stylesheet really defines", () => {
+    for (const name of ["lm-read", "lm-prose", "lm-screen", "lm-scroll", "lm-pop"]) {
+      expect(resolves(name), name).toBe(true)
+    }
   })
 
   it("accepts the names the design system does define", () => {

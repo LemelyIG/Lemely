@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { EmptyState } from "@/components/ui/state-views"
-import { cn, initialsOf, relativeTime } from "@/lib/utils"
-import { Avatar } from "../components/Avatar"
+import { cn, relativeTime } from "@/lib/utils"
+import { Avatar } from "@/components/ui/avatar"
 import { useEnrollStudent, useRemoveStudent } from "@/lib/hooks/useTeacherApi"
 import type { StudentRow } from "@/lib/teacherTypes"
 import { useClassDetailContext } from "./ClassDetail"
@@ -303,7 +303,7 @@ export function ClassRoster() {
                 <tr key={s.studentId} className="border-b border-border last:border-b-0 align-top">
                   <td className="px-[16px] py-[13px]">
                     <div className="flex items-center gap-2.5">
-                      <Avatar initials={initialsOf(s.name)} className="w-7 h-7 text-3xs flex-none" />
+                      <Avatar name={s.name} size="sm" />
                       <Link
                         to={`/teacher/students/${s.studentId}`}
                         className="text-t1 hover:underline"

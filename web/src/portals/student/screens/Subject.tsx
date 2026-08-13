@@ -97,7 +97,7 @@ export function Subject() {
         </div>
       </div>
 
-      <div className="lm-cols grid grid-cols-2 gap-5 max-[1180px]:grid-cols-1">
+      <div className="grid grid-cols-2 gap-5 max-[1180px]:grid-cols-1">
         {papersBreakdown.map((p) => (
           <Card key={p.title} className="p-5">
             <div className="flex items-baseline gap-2.5">
@@ -144,7 +144,7 @@ export function Subject() {
         ))}
       </div>
 
-      <div className="lm-cols grid grid-cols-[1.3fr_1fr] gap-5 items-start max-[1180px]:grid-cols-1">
+      <div className="grid grid-cols-[1.3fr_1fr] gap-5 items-start max-[1180px]:grid-cols-1">
         <Card className="overflow-hidden">
           <div className="px-5 pt-[18px] pb-3 flex items-baseline gap-2.5">
             <div className="text-[15px] font-semibold">Paper history</div>
@@ -174,7 +174,7 @@ export function Subject() {
           <div className="text-[12px] text-t2 mb-4">
             Marks earned / marks available, per syllabus unit
           </div>
-          <div className="lm-cols grid grid-cols-2 gap-2 max-[1180px]:grid-cols-1">
+          <div className="grid grid-cols-2 gap-2 max-[1180px]:grid-cols-1">
             {topicMap.map((t) => (
               <div
                 key={t.name}

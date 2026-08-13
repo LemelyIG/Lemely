@@ -9,9 +9,9 @@ import {
   ListSkeleton,
   CardGridSkeleton,
 } from "@/components/ui/loading-shapes"
-import { cn, greetingFor, initialsOf, relativeTime } from "@/lib/utils"
+import { cn, greetingFor, relativeTime } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
-import { Avatar } from "../components/Avatar"
+import { Avatar } from "@/components/ui/avatar"
 import { useTeacherOverview, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { RecentActivity } from "@/lib/teacherTypes"
 
@@ -248,7 +248,7 @@ export function Overview() {
               key={r.name}
               className="border-t border-border px-5 py-[15px] flex gap-[13px] items-start"
             >
-              <Avatar initials={initialsOf(r.name)} className="w-8 h-8 text-xs" />
+              <Avatar name={r.name} size="sm" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-[9px] flex-wrap gap-y-1">
                   <div className="text-dense-lg font-medium">{r.name}</div>
@@ -396,7 +396,7 @@ export function Overview() {
               key={`${a.studentId}-${a.subjectCode}-${a.recordedAt}`}
               className="border-t border-border px-5 py-[13px] flex items-center gap-3 flex-wrap gap-y-1.5"
             >
-              <Avatar initials={initialsOf(a.studentName)} tone="neutral" className="w-7 h-7 text-3xs" />
+              <Avatar name={a.studentName} size="sm" />
               <div className="text-dense">{a.studentName}</div>
               <div className="font-mono text-xs text-t3">{a.subjectCode}</div>
               <div className="flex-1" />

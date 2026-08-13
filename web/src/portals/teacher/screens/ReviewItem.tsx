@@ -4,8 +4,8 @@ import { Flag } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { ErrorState } from "@/components/ui/state-views"
-import { initialsOf, relativeTime } from "@/lib/utils"
-import { Avatar } from "../components/Avatar"
+import { relativeTime } from "@/lib/utils"
+import { Avatar } from "@/components/ui/avatar"
 import {
   useDismissReviewItem,
   useResolveReviewItem,
@@ -411,11 +411,7 @@ export function ReviewItem() {
           ← Back to queue
         </button>
         <div className="flex items-start gap-3.5 flex-wrap gap-y-2 mt-1">
-          <Avatar
-            initials={initialsOf(detail.studentDisplayName)}
-            tone="accent"
-            className="w-9 h-9 text-dense flex-none"
-          />
+          <Avatar name={detail.studentDisplayName} size="md" />
           <div className="min-w-0">
             <h1 className="text-display-sm text-pretty">
               {detail.studentDisplayName}

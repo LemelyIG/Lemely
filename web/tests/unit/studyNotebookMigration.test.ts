@@ -48,6 +48,9 @@ const MIGRATED_FILES = [
   "src/portals/student/screens/Friends.tsx",
   "src/portals/student/screens/Profile.tsx",
   "src/portals/student/screens/Standings.tsx",
+  // Phase 4, surface 5 — the teacher portal.
+  "src/portals/teacher/index.tsx",
+  "src/portals/teacher/components/StatCard.tsx",
 ]
 
 /**

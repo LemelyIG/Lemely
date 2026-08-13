@@ -132,7 +132,7 @@ function ResultScreen({
 function ResultHeader({ res }: { res: Result }) {
   return (
     <Card className="overflow-hidden">
-      <div className="lm-cols grid grid-result-cols max-tablet:grid-cols-1">
+      <div className="grid grid-result-cols max-tablet:grid-cols-1">
         <div className="px-7 py-6">
           <div className="flex flex-wrap items-center gap-2.5">
             <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />

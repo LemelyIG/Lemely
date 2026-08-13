@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
-import { cn, initialsOf, relativeTime } from "@/lib/utils"
-import { Avatar } from "../components/Avatar"
+import { cn, relativeTime } from "@/lib/utils"
+import { Avatar } from "@/components/ui/avatar"
 import {
   useAcknowledgeAtRisk,
   useAtRiskList,
@@ -378,7 +378,7 @@ export function AtRiskList() {
                 <tr key={s.studentId} className="border-b border-border last:border-b-0 align-top">
                   <td className="px-[16px] py-[13px]">
                     <div className="flex items-center gap-2.5">
-                      <Avatar initials={initialsOf(s.displayName)} className="w-7 h-7 text-3xs flex-none" />
+                      <Avatar name={s.displayName} size="sm" />
                       <Link to={`/teacher/students/${s.studentId}`} className="text-t1 hover:underline">
                         {s.displayName}
                       </Link>

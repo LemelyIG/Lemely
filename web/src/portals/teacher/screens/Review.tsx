@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
-import { initialsOf, relativeTime } from "@/lib/utils"
-import { Avatar } from "../components/Avatar"
+import { relativeTime } from "@/lib/utils"
+import { Avatar } from "@/components/ui/avatar"
 import { useBulkApproveReview, useReviewQueue, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { BulkApproveResponse, ReviewQueueItem } from "@/lib/teacherTypes"
 
@@ -458,10 +458,7 @@ export function Review() {
                     </td>
                     <td className="px-[16px] py-[13px]">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <Avatar
-                          initials={initialsOf(item.studentDisplayName)}
-                          className="w-7 h-7 text-3xs flex-none"
-                        />
+                        <Avatar name={item.studentDisplayName} size="sm" />
                         <div className="min-w-0">
                           <Link
                             to={`/teacher/students/${item.studentId}`}

@@ -27,7 +27,7 @@ export function Landing() {
   const navigate = useNavigate()
   return (
     <div className="lm-screen flex flex-col gap-16 pb-10">
-      <div className="lm-cols grid grid-cols-[1.15fr_1fr] gap-12 items-center pt-[26px] max-[1180px]:grid-cols-1">
+      <div className="grid grid-cols-[1.15fr_1fr] gap-12 items-center pt-[26px] max-[1180px]:grid-cols-1">
         <div>
           <div className="font-mono text-[11.5px] tracking-[0.09em] uppercase text-accent">
             {landingHero.eyebrow}
@@ -99,7 +99,7 @@ export function Landing() {
         <div className="text-[14.5px] text-t2 mb-[26px] max-w-[66ch] text-pretty">
           {pillarsIntro.body}
         </div>
-        <div className="lm-cols grid grid-cols-3 gap-5 max-[1180px]:grid-cols-1">
+        <div className="grid grid-cols-3 gap-5 max-[1180px]:grid-cols-1">
           {pillars.map((p) => (
             <Card
               key={p.kicker}
@@ -139,7 +139,7 @@ export function Landing() {
             {landingProofIntro.body}
           </div>
         </div>
-        <div className="lm-cols grid grid-cols-2 gap-4 max-[1180px]:grid-cols-1">
+        <div className="grid grid-cols-2 gap-4 max-[1180px]:grid-cols-1">
           {proof.map((p) => (
             <div
               key={p.l}
@@ -169,7 +169,7 @@ export function Landing() {
             </div>
           </div>
         ) : (
-        <div className="lm-cols grid grid-cols-3 gap-5 max-[1180px]:grid-cols-1">
+        <div className="grid grid-cols-3 gap-5 max-[1180px]:grid-cols-1">
           {pricing.map((p) => (
             <div
               key={p.name}

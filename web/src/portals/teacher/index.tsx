@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
 import { RouteFallback } from "@/components/ui/state-views"
@@ -14,6 +15,7 @@ import {
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { Avatar } from "@/components/ui/avatar"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
@@ -72,24 +74,38 @@ function SidebarNavItem({ item, touch = false }: { item: NavItem; touch?: boolea
       end={item.end}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-3 w-full text-start text-sm px-3 py-[10px] rounded-md border transition-colors",
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+          // Symmetric padding has no direction, so this row needs no logical
+          // rewrite (P3.4).
+          "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 rounded-md",
+          "transition-colors duration-[var(--dur-instant)] ease-out-soft",
+          // `focus-ring`, not `accent`: DESIGN.md §3.9 makes focus deliberately
+          // blue so it stays distinguishable from the accent's own hover and
+          // selected states. This row used `outline-accent`, which made
+          // "focused" and "current" the same colour on a nav whose active row
+          // is already accent-marked. Same fix the student sidebar took.
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+          // The active rule is reserved at every state, transparent when
+          // inactive, so turning it on cannot nudge the label sideways by 2px
+          // as you navigate.
+          "border-s-2",
           touch && "min-h-11",
           isActive
-            ? "bg-surface border-border text-t1 font-medium shadow-sm"
-            : "border-transparent text-t2 font-normal hover:bg-surface-2",
+            ? "border-accent bg-paper-raised text-ink"
+            : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
         )
       }
     >
       {({ isActive }) => (
         <>
+          {/* §10 permits `fill` for a single active-state nav icon, and this is
+              it. The active row therefore carries four independent signals —
+              the accent margin rule, the raised sheet, full-strength ink, and
+              the filled glyph — so none of them carries the state alone. */}
           <Glyph
             size={16}
             weight={isActive ? "fill" : "regular"}
-            className={cn(
-              "flex-none",
-              isActive ? "text-accent" : "text-t3",
-            )}
+            className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
+            aria-hidden="true"
           />
           <span className="flex-1">{item.label}</span>
         </>
@@ -110,18 +126,16 @@ function ClassesNavSection() {
 
   return (
     <div>
-      <div className="font-mono text-3xs tracking-[0.12em] uppercase text-t3 px-3 pb-[9px] font-medium">
-        Your classes
-      </div>
+      <div className="text-eyebrow text-ink-faint px-2 pb-[9px]">Your classes</div>
       <div className="flex flex-col gap-px">
         {isPending ? (
-          <div className="px-3 py-[7px] text-dense-sm text-t3">Loading…</div>
+          <div className="px-2 py-[7px] text-body-sm text-ink-faint">Loading…</div>
         ) : isError ? (
-          <div className="px-3 py-[7px] text-dense-sm text-t3">Couldn't load classes.</div>
+          <div className="px-2 py-[7px] text-body-sm text-ink-faint">Couldn't load classes.</div>
         ) : data.classes.length === 0 ? (
           <Link
             to="/teacher/classes"
-            className="px-3 py-[7px] text-dense-sm text-accent hover:underline"
+            className="px-2 py-[7px] text-body-sm text-accent-ink hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             Add your first class →
           </Link>
@@ -131,16 +145,16 @@ function ClassesNavSection() {
               <Link
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
-                className="flex items-center gap-[11px] px-3 py-[7px] text-dense-lg text-t2 rounded hover:bg-surface-2"
+                className="flex items-center gap-2.5 px-2 py-[7px] text-body-sm text-ink-muted rounded-md hover:bg-paper hover:text-ink transition-colors duration-[var(--dur-instant)] ease-out-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
-                <span className="w-1.5 h-1.5 rounded-full flex-none bg-border" />
-                {c.label}
+                <span className="w-1.5 h-1.5 rounded-full flex-none bg-rule-strong" />
+                <span className="truncate">{c.label}</span>
               </Link>
             ))}
             {data.classes.length > 5 ? (
               <Link
                 to="/teacher/classes"
-                className="px-3 py-[7px] text-dense-sm text-t3 hover:text-ink"
+                className="px-2 py-[7px] text-body-sm text-ink-faint hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
                 See all {data.classes.length} →
               </Link>
@@ -159,39 +173,35 @@ function ClassesNavSection() {
  * one); the fallback is the email's local part, never a fabricated name. The
  * subtitle is the caller's real platform role — the only affiliation-like
  * fact this account actually carries, not an invented department/exam board.
+ *
+ * The squircle comes from the kit's `<Avatar>` rather than a local circle: see
+ * the note on the deleted `portals/teacher/components/Avatar.tsx` in the phase
+ * report. DESIGN.md §6 reserves circles for status dots so a dot never reads
+ * as a person.
  */
 function UserBlock() {
   const { data, isPending, isError } = useProfile()
 
   if (isPending || isError || !data) {
     return (
-      <div className="flex items-center gap-[11px] px-1 text-xs text-t3">
+      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-ink-faint">
         {isPending ? "Loading…" : "Signed in"}
       </div>
     )
   }
 
   const name = data.displayName ?? data.email.split("@")[0]
-  const initials = (data.displayName ?? name)
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
   const roleLabel = data.role
     .split("_")
     .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(" ")
 
   return (
-    <div className="flex items-center gap-[11px] px-1">
-      <div className="w-8 h-8 rounded-full bg-accent-subtle text-accent-subtle-on flex items-center justify-center text-xs font-semibold flex-none">
-        {initials}
-      </div>
-      <div className="leading-[1.25] min-w-0">
-        <div className="text-dense font-medium truncate">{name}</div>
-        <div className="text-2xs text-t2">{roleLabel}</div>
+    <div className="flex items-center gap-2.5">
+      <Avatar name={name} size="sm" />
+      <div className="min-w-0">
+        <div className="truncate text-body-sm font-medium text-ink">{name}</div>
+        <div className="text-body-sm text-ink-faint">{roleLabel}</div>
       </div>
     </div>
   )
@@ -205,8 +215,8 @@ function UserBlock() {
  */
 function TeacherNav({ touch = false }: { touch?: boolean }) {
   return (
-    <div className="flex flex-col gap-6">
-      <nav aria-label="Teacher sections" className="flex flex-col gap-[3px]">
+    <div className="flex flex-col gap-[22px]">
+      <nav aria-label="Teacher sections" className="flex flex-col gap-0.5">
         {navItems.map((item) => (
           <SidebarNavItem key={item.to} item={item} touch={touch} />
         ))}
@@ -238,7 +248,7 @@ function SidebarFooter() {
           settings screens link to each other. P5.9 chunk D. */}
       <Link
         to="/settings/devices"
-        className="text-xs text-t3 px-1 hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="text-body-sm text-ink-faint px-0.5 hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
         Account, devices &amp; notifications →
       </Link>
@@ -247,21 +257,43 @@ function SidebarFooter() {
   )
 }
 
+/*
+ * The real mark, replacing the accent-circle-with-an-italic-*l* that stood in
+ * for it. That placeholder is audit finding M9 ("the logo is a lowercase
+ * italic *l* in a filled circle, stamped in three places"); the student
+ * sidebar's copy was replaced when surface 1 landed and this one was still
+ * live, which is P4.2's second lesson exactly — a defect fixed on one portal
+ * can still be shipping on another.
+ *
+ * It was also the last `font-serif` call site in this file, i.e. the D4.1
+ * defect: the class resolves to Tailwind's default Georgia stack, so the
+ * placeholder was not even rendering in the display face it was reaching for.
+ *
+ * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
+ * already says "Lemely", so describing the mark too makes a screen reader
+ * announce the brand twice.
+ */
+function BrandLockup() {
+  return (
+    <div className="flex items-center gap-2.5 px-2">
+      <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+      <span className="text-display-sm text-ink">Lemely</span>
+    </div>
+  )
+}
+
 function Sidebar() {
   return (
-    <aside className="hidden md:flex w-[252px] flex-none border-e border-border px-[14px] py-[22px] flex-col gap-6 sticky top-0 h-screen">
-      <div className="flex items-center gap-2.5 px-2">
-        <div className="w-[26px] h-[26px] rounded-full bg-accent text-accent-on flex items-center justify-center font-serif text-base italic">
-          l
-        </div>
-        <div className="text-display-sm">Lemely</div>
-      </div>
+    // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
+    // is "sidebars, table headers, code blocks, inset areas".
+    <aside className="hidden md:flex w-[252px] flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+      <BrandLockup />
 
       <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
         <TeacherNav />
       </div>
 
-      <div className="mt-auto border-t border-border pt-[14px]">
+      <div className="mt-auto border-t border-rule pt-[14px]">
         <SidebarFooter />
       </div>
     </aside>
@@ -287,7 +319,12 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const trail = resolveTrail(location.pathname)
 
   return (
-    <div className="sticky top-0 z-[var(--z-index-sticky)] flex min-h-14 items-center gap-3 border-b border-border bg-bg/80 px-4 py-2.5 backdrop-blur-[10px] md:px-[34px]">
+    // `z-nav`, not the raw `z-[var(--z-index-sticky)]` this row used to carry.
+    // Both resolve to a real rung, but the bar holds the only navigation that
+    // exists below `md`, so it belongs on the nav layer with the sidebar rather
+    // than on the sticky-table-header layer beneath it — and DESIGN.md §7 wants
+    // the rung named, not reached through an arbitrary value.
+    <div className="sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile py-2.5 backdrop-blur-[10px] md:px-page-desktop">
       <NavDrawerTrigger
         onClick={onOpenNav}
         label="Open teacher navigation"
@@ -305,7 +342,11 @@ function TeacherLayout() {
   const [navOpen, setNavOpen] = useState(false)
 
   return (
-    <div data-portal="teacher" className="flex min-h-screen">
+    // `paper-grain` is DESIGN.md §8's first texture element and the cheapest
+    // carrier of the one protected quality (§1). The student shell has had it
+    // since surface 1; the teacher portal had none of the texture layer at all,
+    // which is why it read as the generic dashboard the anti-references name.
+    <div data-portal="teacher" className="paper-grain flex min-h-screen">
       <SkipLink />
       <Sidebar />
 
@@ -325,9 +366,9 @@ function TeacherLayout() {
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
-          className="flex-1 min-w-0 overflow-x-hidden px-4 py-[30px] md:px-[34px] max-w-[1480px] w-full focus:outline-none"
+          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
         >
-          <Suspense fallback={<RouteFallback className="text-dense-lg" />}>
+          <Suspense fallback={<RouteFallback className="text-body-md" />}>
             <Outlet />
           </Suspense>
         </main>

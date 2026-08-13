@@ -362,7 +362,7 @@ export function CorrectPaper() {
         )}
       </header>
 
-      <div className="lm-cols grid grid-correct-cols items-start gap-6 max-tablet:grid-cols-1">
+      <div className="grid grid-correct-cols items-start gap-6 max-tablet:grid-cols-1">
         <Card className="flex flex-col gap-6 p-6">
           <div className="flex flex-col gap-3">
             <SourceToggle
