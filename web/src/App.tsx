@@ -6,6 +6,17 @@ import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
+/*
+ * P3.1 (DECISION D1.4). Deliberately a static import, unlike every screen in
+ * this file, which are all `React.lazy`.
+ *
+ * This component is the router's `errorElement`, so one of the two things it
+ * exists to survive is a failed chunk load. A lazily-loaded error screen has
+ * to fetch a chunk from the same origin that just failed to serve one, and
+ * when that fetch fails too there is nothing left to render the failure with.
+ * It is a small screen, and it is the one worth carrying in the entry bundle.
+ */
+import { NotFound } from "@/portals/misc/NotFound"
 
 /*
  * One role-based app. The Teacher (teal), Student (terracotta) and Parent
@@ -63,10 +74,30 @@ function LoginRoute({ children }: { children: React.ReactNode }) {
   return children
 }
 
+/*
+ * P3.1 (DECISION D1.4) · error handling at the route level.
+ *
+ * `errorElement` is set on each top-level route rather than once on a wrapper,
+ * because react-router bubbles a thrown error to the nearest ancestor route
+ * that declares one — and with no `errorElement` anywhere it falls back to its
+ * own built-in screen: unstyled black-on-white, "Unexpected Application
+ * Error!", a stack trace, no layout and no route back. That was the product's
+ * real behaviour on any render error before this.
+ *
+ * This complements rather than replaces `ErrorBoundary` (C-14, Phase 2). The
+ * two catch different things at different granularities: `ErrorBoundary` is
+ * placed *inside* a screen so one broken widget degrades to a panel while the
+ * rest of the page keeps working, and Phase 4 places those as it rebuilds each
+ * surface. This is the backstop for everything that escapes them, including
+ * errors thrown by a route's own element before any inner boundary mounts.
+ */
+const errorElement = <NotFound />
+
 export const router = createBrowserRouter([
-  { path: "/", element: <Root /> },
+  { path: "/", element: <Root />, errorElement },
   {
     path: "/login",
+    errorElement,
     element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" />}><Login /></Suspense></LoginRoute>,
   },
   // G-05. A separate route rather than a tab on /login: the parent flow shares
@@ -74,6 +105,7 @@ export const router = createBrowserRouter([
   // "the lowest-friction entry in the product".
   {
     path: "/login/parent",
+    errorElement,
     element: (
       <LoginRoute>
         <Suspense fallback={<RouteFallback className="p-8" />}>
@@ -87,6 +119,7 @@ export const router = createBrowserRouter([
   // screen — the same reason `/api/me/devices` is role-agnostic (P5.7).
   {
     path: "/settings/devices",
+    errorElement,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
         <Suspense fallback={<RouteFallback className="p-8" />}>
@@ -102,6 +135,7 @@ export const router = createBrowserRouter([
   // applies to.
   {
     path: "/settings/notifications",
+    errorElement,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
         <Suspense fallback={<RouteFallback className="p-8" />}>
@@ -112,14 +146,34 @@ export const router = createBrowserRouter([
   },
   {
     ...teacherRoute,
+    errorElement,
     element: <RequireAuth allowedRoles={TEACHER_ROLES}>{teacherRoute.element}</RequireAuth>,
   },
   {
     ...studentRoute,
+    errorElement,
     element: <RequireAuth allowedRoles={STUDENT_ROLES}>{studentRoute.element}</RequireAuth>,
   },
   {
     ...parentRoute,
+    errorElement,
     element: <RequireAuth allowedRoles={PARENT_ROLES}>{parentRoute.element}</RequireAuth>,
   },
+  /*
+   * Catch-all, last so it only matches what nothing above did.
+   *
+   * It is deliberately NOT gated by `RequireAuth`. A mistyped URL from a
+   * signed-out reader is a 404, not a login prompt: bouncing them to `/login`
+   * to then land somewhere that still is not the page they asked for is two
+   * wrong answers instead of one. `NotFound` reads the session itself and
+   * offers sign-in or the reader's own dashboard accordingly.
+   *
+   * Note this also catches unmatched paths *within* a portal subtree
+   * (`/student/nonsense`), because the portal routes above enumerate their
+   * children and match none of them. Those land here rather than on a
+   * portal-shaped 404, which is a known simplification: a 404 inside the
+   * student portal loses the sidebar. Rebuilding it as a per-portal child
+   * route is Phase 4 work, once each portal layout is its final shape.
+   */
+  { path: "*", element: <NotFound />, errorElement },
 ])

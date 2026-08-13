@@ -108,3 +108,19 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     </button>
   )
 })
+
+/**
+ * The variant class recipe on its own, for the cases where the control has to
+ * be an `<a>`/`<Link>` rather than a `<button>` and must still look identical.
+ *
+ * Exported in P3.1 for the 404 screen, whose only way out of a dead end is a
+ * navigation. That wants to be a real link — right-clickable, openable in a
+ * new tab, announced as a link — and rendering it as a `<button>` with an
+ * `onClick` that navigates would take all of that away from the one screen in
+ * the product least able to spare it.
+ *
+ * Use `<Button>` for anything that acts; use this only when the element must
+ * genuinely be a link. It carries no `disabled` handling, because a disabled
+ * link is not a thing.
+ */
+export { button as buttonVariants }

@@ -333,6 +333,12 @@
   --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
   --ease-celebrate: cubic-bezier(0.18, 1.5, 0.5, 1);
 
+  /* Inline-axis sign for keyframes. `transform` is physical — there is no
+     logical translate — so any animation that moves along the reading axis
+     multiplies by this instead of hardcoding a negative. Flipped under
+     `dir="rtl"` at the end of this file (P3.4). */
+  --lm-dir: 1;
+
   /* ── Breakpoints ─────────────────────────────────────────────────────── */
   /* The four mobile widths Phase 6 verifies, plus the desktop rung. 375 and
      768 already exist as Tailwind's defaults in spirit; these are the named
@@ -727,6 +733,21 @@ body {
     transform: none;
   }
 }
+/* Drawer entry (P3.1's mobile nav). `transform` has no logical axis — there is
+   no `translate-inline` — so the direction is carried by `--lm-dir`, flipped to
+   -1 under `dir="rtl"` below. Without that the drawer would keep entering from
+   the physical left in an RTL layout while its `inset-inline-start` anchor moved
+   to the right, i.e. it would slide out of the viewport rather than into it. */
+@keyframes lm-slide-in-start {
+  from {
+    opacity: 0;
+    transform: translateX(calc(-100% * var(--lm-dir)));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 @keyframes lm-pulse {
   0%,
   100% {
@@ -755,6 +776,16 @@ body {
   border-radius: 6px;
   border: 3px solid transparent;
   background-clip: content-box;
+}
+
+/* ── §10 Direction ─────────────────────────────────────────────────────── */
+/* P3.4's RTL rule in one declaration. English is the only language that ships,
+   so this selector never matches today; it exists so that the day `dir="rtl"`
+   is set on <html>, the inline-axis keyframes flip with the layout instead of
+   animating out of the viewport. Everything else is handled by using logical
+   properties in the components themselves, which needs no counterpart here. */
+[dir="rtl"] {
+  --lm-dir: -1;
 }
 
 /* Reduced motion means REDUCED, not broken: every state change stays legible

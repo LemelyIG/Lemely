@@ -394,7 +394,7 @@
 - **Code Good:** <List<T> items={T[]}>
 - **Code Bad:** <List items={any[]}>
 - **Severity:** Medium
-- **Docs URL:** 
+- **Docs URL:**
 
 ### Result 2
 - **Category:** Components
@@ -405,7 +405,7 @@
 - **Code Good:** <UserAvatar /><UserName />
 - **Code Bad:** <UserCard /> with 500 lines
 - **Severity:** Medium
-- **Docs URL:** 
+- **Docs URL:**
 
 ### Result 3
 - **Category:** Patterns
@@ -416,7 +416,7 @@
 - **Code Good:** <Tabs><Tab/><TabPanel/></Tabs>
 - **Code Bad:** <Tabs tabs={[]} panels={[...]}/>
 - **Severity:** Low
-- **Docs URL:** 
+- **Docs URL:**
 
 ```
 
@@ -435,7 +435,7 @@
 - **Code Good:** bg-primary
 - **Code Bad:** bg-blue-500 everywhere
 - **Severity:** Medium
-- **Docs URL:** 
+- **Docs URL:**
 
 ```
 
@@ -454,7 +454,7 @@
 - **Code Good:** const Custom = ({ className }) => <div className={cn("base" className)}>
 - **Code Bad:** const Custom = ({ style }) => <div style={style}>
 - **Severity:** Medium
-- **Docs URL:** 
+- **Docs URL:**
 
 ### Result 2
 - **Category:** Components
@@ -479,4 +479,3 @@
 - **Docs URL:** https://ui.shadcn.com/docs/installation
 
 ```
-

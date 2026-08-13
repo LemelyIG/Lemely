@@ -1,10 +1,11 @@
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useState } from "react"
 import { RouteFallback } from "@/components/ui/state-views"
-import { Link, NavLink, Outlet } from "react-router-dom"
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   FileText,
+  SealQuestion,
   ChartBar,
   Warning,
   Books,
@@ -13,9 +14,12 @@ import {
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
-import { navItems, type NavItem } from "./data"
+import { navItems, resolveTrail, type NavItem } from "./data"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
 // `portals/student/index.tsx`. QuizBuilder and ClassAnalytics in particular
@@ -49,6 +53,10 @@ const Announcements = lazy(() =>
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
   grading: FileText,
+  // The review queue holds the marks the system was not confident enough to
+  // apply on its own, so the glyph is a seal with a question in it rather than
+  // a checklist: what is waiting here is doubt, not tasks.
+  review: SealQuestion,
   classes: ChartBar,
   atRisk: Warning,
   schemes: Books,
@@ -56,7 +64,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   announcements: Megaphone,
 }
 
-function SidebarNavItem({ item }: { item: NavItem }) {
+function SidebarNavItem({ item, touch = false }: { item: NavItem; touch?: boolean }) {
   const Glyph = NAV_ICON[item.icon]
   return (
     <NavLink
@@ -64,7 +72,9 @@ function SidebarNavItem({ item }: { item: NavItem }) {
       end={item.end}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-3 w-full text-left text-sm px-3 py-[10px] rounded-md border transition-colors",
+          "flex items-center gap-3 w-full text-start text-sm px-3 py-[10px] rounded-md border transition-colors",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+          touch && "min-h-11",
           isActive
             ? "bg-surface border-border text-t1 font-medium shadow-sm"
             : "border-transparent text-t2 font-normal hover:bg-surface-2",
@@ -187,9 +197,59 @@ function UserBlock() {
   )
 }
 
+/**
+ * Nav list + "Your classes", with no chrome. Shared by the desktop aside and
+ * the mobile drawer for the same reason as the student portal's `NavGroups`:
+ * the defect P3.1 fixes is navigation that exists at one width and not
+ * another, and two copies of the list is how that comes back.
+ */
+function TeacherNav({ touch = false }: { touch?: boolean }) {
+  return (
+    <div className="flex flex-col gap-6">
+      <nav aria-label="Teacher sections" className="flex flex-col gap-[3px]">
+        {navItems.map((item) => (
+          <SidebarNavItem key={item.to} item={item} touch={touch} />
+        ))}
+      </nav>
+      <ClassesNavSection />
+    </div>
+  )
+}
+
+/**
+ * Account link + identity. Also shared between aside and drawer.
+ *
+ * P3.1 removed the "Open the student portal →" link that used to sit between
+ * these two. It could not work for anyone: `RequireAuth` gates `/student` to
+ * the `student` role alone, so a teacher, school_admin or platform_admin
+ * following it was redirected straight back to `/teacher`. Its twin in the
+ * student sidebar pointed the other way and failed the same way. Both are
+ * build-era conveniences from before the guard existed.
+ */
+function SidebarFooter() {
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Settings sits here rather than in `navItems` above, and that is a
+          judgement rather than convenience. The primary nav is this teacher's
+          *work* — every entry is a route under /teacher with a NavLink active
+          state. `/settings/*` is neither: it is account-level, shared with
+          every other role, and would never render active from a list matched
+          against the teacher subtree. One entry is enough because the two
+          settings screens link to each other. P5.9 chunk D. */}
+      <Link
+        to="/settings/devices"
+        className="text-xs text-t3 px-1 hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      >
+        Account, devices &amp; notifications →
+      </Link>
+      <UserBlock />
+    </div>
+  )
+}
+
 function Sidebar() {
   return (
-    <aside className="hidden md:flex w-[252px] flex-none border-r border-border px-[14px] py-[22px] flex-col gap-6 sticky top-0 h-screen">
+    <aside className="hidden md:flex w-[252px] flex-none border-e border-border px-[14px] py-[22px] flex-col gap-6 sticky top-0 h-screen">
       <div className="flex items-center gap-2.5 px-2">
         <div className="w-[26px] h-[26px] rounded-full bg-accent text-accent-on flex items-center justify-center font-serif text-base italic">
           l
@@ -197,35 +257,12 @@ function Sidebar() {
         <div className="text-display-sm">Lemely</div>
       </div>
 
-      <nav className="flex flex-col gap-[3px]">
-        {navItems.map((item) => (
-          <SidebarNavItem key={item.to} item={item} />
-        ))}
-      </nav>
+      <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
+        <TeacherNav />
+      </div>
 
-      <ClassesNavSection />
-
-      <div className="mt-auto border-t border-border pt-[14px] flex flex-col gap-3">
-        {/* Settings sits here rather than in `navItems` above, and that is a
-            judgement rather than convenience. The primary nav is this teacher's
-            *work* — every entry is a route under /teacher with a NavLink active
-            state. `/settings/*` is neither: it is account-level, shared with
-            every other role, and would never render active from a list matched
-            against the teacher subtree. One entry is enough because the two
-            settings screens link to each other. P5.9 chunk D. */}
-        <Link
-          to="/settings/devices"
-          className="text-xs text-t3 px-1 hover:text-ink"
-        >
-          Account, devices &amp; notifications →
-        </Link>
-        <Link
-          to="/student"
-          className="text-xs text-t3 px-1 hover:text-ink"
-        >
-          Open the student portal →
-        </Link>
-        <UserBlock />
+      <div className="mt-auto border-t border-border pt-[14px]">
+        <SidebarFooter />
       </div>
     </aside>
   )
@@ -236,17 +273,65 @@ function Sidebar() {
 // `RouteFallback` (C-11 state-view family); see the student portal for the
 // reasoning, and `state-views.tsx` for why it is not a full `StateView`.
 
+/**
+ * Mobile chrome (below `md`, where the aside does not exist): the menu trigger
+ * and the breadcrumb trail on one sticky row.
+ *
+ * The trail renders at every width, not just here — it is the D1.5 back
+ * affordance, and a drilled-into screen like `/teacher/students/:id` needs a
+ * route back on a laptop too. The *bar* is mobile-only because above `md` the
+ * sidebar already carries the logo and the menu button has nothing to open.
+ */
+function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
+  const location = useLocation()
+  const trail = resolveTrail(location.pathname)
+
+  return (
+    <div className="sticky top-0 z-[var(--z-index-sticky)] flex min-h-14 items-center gap-3 border-b border-border bg-bg/80 px-4 py-2.5 backdrop-blur-[10px] md:px-[34px]">
+      <NavDrawerTrigger
+        onClick={onOpenNav}
+        label="Open teacher navigation"
+        className="-ms-2 md:hidden"
+      />
+      {/* One crumb means the trail is just the page's own name, which the page
+          heading already says. Rendering nothing is better than rendering a
+          row that repeats the <h1> underneath it. */}
+      {trail.length > 1 ? <Breadcrumbs items={trail} /> : null}
+    </div>
+  )
+}
+
 function TeacherLayout() {
+  const [navOpen, setNavOpen] = useState(false)
+
   return (
     <div data-portal="teacher" className="flex min-h-screen">
+      <SkipLink />
       <Sidebar />
-      <main className="flex-1 min-w-0 flex flex-col">
-        <div className="flex-1 min-w-0 overflow-x-hidden px-[34px] py-[30px] max-w-[1480px] w-full">
+
+      <NavDrawer
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+        title="Lemely"
+        footer={<SidebarFooter />}
+      >
+        <TeacherNav touch />
+      </NavDrawer>
+
+      <div className="flex-1 min-w-0 flex flex-col">
+        <TeacherTopBar onOpenNav={() => setNavOpen(true)} />
+        {/* `<main>` is the content area only, not the whole column: the skip
+            link's target must not contain the navigation it skips. */}
+        <main
+          id={MAIN_CONTENT_ID}
+          tabIndex={-1}
+          className="flex-1 min-w-0 overflow-x-hidden px-4 py-[30px] md:px-[34px] max-w-[1480px] w-full focus:outline-none"
+        >
           <Suspense fallback={<RouteFallback className="text-dense-lg" />}>
             <Outlet />
           </Suspense>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   )
 }

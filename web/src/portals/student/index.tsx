@@ -1,15 +1,11 @@
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense } from "react"
-import {
-  Link,
-  NavLink,
-  Outlet,
-  useLocation,
-  useNavigate,
-} from "react-router-dom"
+import { lazy, Suspense, useState } from "react"
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { RouteFallback } from "@/components/ui/state-views"
+import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { navGroups, resolveCrumb } from "./data"
 
@@ -131,67 +127,100 @@ function UserBlock() {
   )
 }
 
+/**
+ * The grouped destination list itself, with no chrome around it.
+ *
+ * Extracted from `Sidebar` in P3.1 so the desktop aside and the mobile drawer
+ * render the same list from the same code. Two copies would have been the
+ * shorter diff and the wrong answer: the whole defect being fixed here is a
+ * navigation that exists at one width and not another, and the surest way to
+ * reintroduce it is to give each width its own copy of the item list to drift.
+ *
+ * `touch` raises every row to the 44px minimum Phase 6 requires. It is on in
+ * the drawer (a phone, a thumb) and off in the desktop aside, where a 34px row
+ * is being clicked with a pointer and eleven 44px rows would push the last of
+ * them off a laptop screen.
+ */
+function NavGroups({ touch = false }: { touch?: boolean }) {
+  return (
+    <div className="flex flex-col gap-[22px]">
+      {navGroups.map((grp) => (
+        <div key={grp.label} className="flex flex-col gap-0.5">
+          <div className="text-3xs tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium">
+            {grp.label}
+          </div>
+          {grp.items.map((it) => (
+            <NavLink
+              key={it.to}
+              to={it.to}
+              end={it.end}
+              className={({ isActive }) =>
+                cn(
+                  // `px-[9px]` not `pl-`/`pr-`: symmetric padding has no
+                  // direction, so this row needs no logical rewrite (P3.4).
+                  "flex items-center gap-2.5 w-full text-start text-dense-lg px-[9px] py-2 rounded transition-colors",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                  touch && "min-h-11",
+                  isActive
+                    ? "bg-surface text-t1 font-medium"
+                    : "bg-transparent text-t2 font-normal hover:bg-bg",
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <span
+                    className={cn(
+                      "w-1.5 h-1.5 rounded-full flex-none",
+                      isActive ? "bg-accent" : "bg-border",
+                    )}
+                  />
+                  <span className="flex-1">{it.label}</span>
+                  {it.tag ? (
+                    <span className="font-mono text-3xs text-t3">{it.tag}</span>
+                  ) : null}
+                </>
+              )}
+            </NavLink>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/*
+ * P3.1: the "Open the teacher portal →" link that used to sit in this footer
+ * is gone, and so is its twin in the teacher sidebar. Neither one worked for
+ * anybody. `RequireAuth` gates `/teacher` to teacher/school_admin/
+ * platform_admin, so a student following it is redirected straight back to
+ * `/student` by `portalPathForRole` — and there is no role that holds both, so
+ * there was no user for whom either link did anything at all. They are
+ * build-era conveniences from before the guard existed, left rendering in the
+ * product as two guaranteed dead ends. Role switching for the accounts that
+ * genuinely hold two roles is a real feature and is not this.
+ */
+
 function Sidebar() {
   return (
-    <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+    <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-e border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       <div className="flex items-center gap-[9px] px-2">
         <div className="w-[11px] h-[11px] rounded-full bg-accent" />
         <div className="text-display-sm tracking-[0.01em]">Lemely</div>
       </div>
 
-      <div className="flex flex-col gap-[22px] overflow-auto lm-scroll">
-        {navGroups.map((grp) => (
-          <div key={grp.label} className="flex flex-col gap-0.5">
-            <div className="text-3xs tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium">
-              {grp.label}
-            </div>
-            {grp.items.map((it) => (
-              <NavLink
-                key={it.to}
-                to={it.to}
-                end={it.end}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center gap-2.5 w-full text-left text-dense-lg px-[9px] py-2 rounded transition-colors",
-                    isActive
-                      ? "bg-surface text-t1 font-medium"
-                      : "bg-transparent text-t2 font-normal hover:bg-bg",
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <span
-                      className={cn(
-                        "w-1.5 h-1.5 rounded-full flex-none",
-                        isActive ? "bg-accent" : "bg-border",
-                      )}
-                    />
-                    <span className="flex-1">{it.label}</span>
-                    {it.tag ? (
-                      <span className="font-mono text-3xs text-t3">
-                        {it.tag}
-                      </span>
-                    ) : null}
-                  </>
-                )}
-              </NavLink>
-            ))}
-          </div>
-        ))}
-      </div>
+      <nav aria-label="Student sections" className="overflow-auto lm-scroll">
+        <NavGroups />
+      </nav>
 
-      <div className="mt-auto border-t border-border pt-[14px] flex flex-col gap-3">
-        <Link to="/teacher" className="text-xs text-t3 px-0.5 hover:text-ink">
-          Open the teacher portal -&gt;
-        </Link>
+      <div className="mt-auto border-t border-border pt-[14px]">
         <UserBlock />
       </div>
     </aside>
   )
 }
 
-function Header() {
+function Header({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const crumb = resolveCrumb(location.pathname)
@@ -216,6 +245,14 @@ function Header() {
     //     replaced a hardcoded lie with a mislabelled one, so the pill is
     //     gone instead; streaks are Phase 5's to build for real.
     <header className="lm-head flex items-center gap-[18px] px-4 min-[640px]:px-[34px] py-4 border-b border-border bg-bg/80 backdrop-blur-[10px] sticky top-0 z-20">
+      {/* P3.1: the only navigation entry point below 820px, which is where the
+          sidebar stops existing. `-ms-2` pulls the 44px target back level with
+          the crumb's text edge without shrinking the target itself. */}
+      <NavDrawerTrigger
+        onClick={onOpenNav}
+        label="Open student navigation"
+        className="-ms-2 min-[820px]:hidden"
+      />
       <div className="font-mono text-xs text-t2 min-w-0 truncate">{crumb}</div>
       <div className="flex-1" />
       <Button
@@ -241,17 +278,42 @@ function Header() {
 // drifted to three different type/padding combinations before they were merged.
 
 function StudentLayout() {
+  const [navOpen, setNavOpen] = useState(false)
+
   return (
     <div data-portal="student" className="flex min-h-screen">
+      <SkipLink />
       <Sidebar />
-      <main className="flex-1 min-w-0 flex flex-col">
-        <Header />
-        <div className="lm-body flex-1 p-[34px] max-w-[1320px] w-full">
+
+      {/* Same list, same source, different chrome — see `NavGroups`. The
+          drawer closes itself on navigation, so nothing here has to. */}
+      <NavDrawer
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+        title="Lemely"
+        footer={<UserBlock />}
+      >
+        <nav aria-label="Student sections">
+          <NavGroups touch />
+        </nav>
+      </NavDrawer>
+
+      <div className="flex-1 min-w-0 flex flex-col">
+        <Header onOpenNav={() => setNavOpen(true)} />
+        {/* `<main>` moved inward in P3.1. It used to wrap the header as well,
+            which made the skip link's target include the navigation it exists
+            to skip past, and gave the page two competing landmarks for "the
+            content". The header is chrome; `main` is what the route rendered. */}
+        <main
+          id={MAIN_CONTENT_ID}
+          tabIndex={-1}
+          className="lm-body flex-1 p-[34px] max-w-[1320px] w-full focus:outline-none"
+        >
           <Suspense fallback={<RouteFallback className="text-dense-lg" />}>
             <Outlet />
           </Suspense>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   )
 }

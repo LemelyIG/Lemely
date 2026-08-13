@@ -5,6 +5,8 @@ import { Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useChildren } from "@/lib/hooks/useParentApi"
 import { RouteFallback } from "@/components/ui/state-views"
+import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
+import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
 // `portals/student/index.tsx`. Only four screens here, but the parent portal
@@ -81,6 +83,58 @@ function ChildSwitcher() {
   )
 }
 
+/**
+ * P3.1 (DECISION D1.5) · the parent portal's way back.
+ *
+ * The audit found no back affordance here, and this portal is the one where
+ * that matters most: PRODUCT.md defines the parent as having "no interest in
+ * learning an interface", the spec budgets two taps from login to the answer,
+ * and two of the four screens are only reachable by drilling in from a third.
+ *
+ * The subtle part is the "Your children" crumb, which is conditional on the
+ * parent having more than one child. `screens/Children.tsx:170` redirects
+ * `/parent` straight to the child when there is exactly one — so for those
+ * parents (the common case) a crumb pointing at `/parent` would land back on
+ * the page they just left, which reads as a broken tap rather than a way back.
+ * The same condition already governs `ChildSwitcher` above, and for the same
+ * reason: with one child there is nothing to go back *to*.
+ *
+ * It shares `useChildren()`'s cache with the switcher and with P-01, so the
+ * count costs no extra request. While the query is pending `children` is empty
+ * and the crumb is simply omitted, which is the safe direction to be wrong in:
+ * a missing crumb for one frame beats a crumb that leads somewhere circular.
+ */
+function ParentTrail() {
+  const location = useLocation()
+  const { childId } = useParams<{ childId: string }>()
+  const { data } = useChildren()
+
+  const hasChildList = (data?.children.length ?? 0) > 1
+  if (!childId) return null
+
+  const trail: Crumb[] = []
+  if (hasChildList) trail.push({ label: "Your children", to: "/parent" })
+
+  const childOverview = `/parent/children/${childId}`
+  const path = location.pathname.replace(/\/+$/, "")
+
+  if (path === childOverview) {
+    trail.push({ label: "Overview" })
+  } else if (path.endsWith("/weaknesses")) {
+    trail.push({ label: "Overview", to: childOverview }, { label: "Weak topics" })
+  } else if (/\/subjects\/[^/]+$/.test(path)) {
+    trail.push({ label: "Overview", to: childOverview }, { label: "This subject" })
+  } else {
+    trail.push({ label: "Overview", to: childOverview })
+  }
+
+  // One crumb is the current page's own name, which its heading already
+  // carries. Rendering nothing beats rendering a row that repeats the <h1>.
+  if (trail.length < 2) return null
+
+  return <Breadcrumbs items={trail} className="py-3" />
+}
+
 function Header() {
   const { logout } = useAuth()
   const navigate = useNavigate()
@@ -143,8 +197,19 @@ function Header() {
 function ParentLayout() {
   return (
     <div data-portal="parent" className="flex min-h-screen flex-col bg-bg">
+      <SkipLink />
       <Header />
-      <main className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-container-mobile py-8">
+      {/* The trail sits between the header and `main` rather than inside it:
+          it is wayfinding chrome, and putting it inside the skip link's target
+          would mean skipping the navigation landed you on navigation. */}
+      <div className="mx-auto w-full min-w-0 max-w-240 px-container-mobile">
+        <ParentTrail />
+      </div>
+      <main
+        id={MAIN_CONTENT_ID}
+        tabIndex={-1}
+        className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-container-mobile pb-8 pt-2 focus:outline-none"
+      >
         <Suspense fallback={<RouteFallback />}>
           <Outlet />
         </Suspense>

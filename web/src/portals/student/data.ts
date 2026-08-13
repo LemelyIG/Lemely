@@ -55,6 +55,29 @@ export interface NavGroup {
   items: NavItem[]
 }
 
+/*
+ * P3.1 (DECISION D1.1 and D1.3, both defaulted-approved on timeout).
+ *
+ * D1.1 — the "Elsewhere" group is gone. It put three internal surfaces in front
+ * of every real student: `/student/onboard` (a flow the student is *routed*
+ * into once, not a place to revisit), `/student/landing` (the marketing page,
+ * orphaned inside the authenticated app), and `/student/directions` (an
+ * internal A/B/C design-comparison gallery that exists to help us choose a
+ * result header, and means nothing to a fifteen-year-old). All three **routes
+ * survive** — they are still mounted in `portals/student/index.tsx` and still
+ * deep-linkable, which is what onboarding's redirect and our own review links
+ * depend on. Only the navigation entries are removed.
+ *
+ * D1.3 — Notifications joins the list. Until now the single entry point to
+ * `/student/notifications` was a push deep link, so a student who declined the
+ * push permission prompt, or whose browser never offered it, had no route to
+ * their own notification history from anywhere in the product.
+ *
+ * Grouping note: these labels are the sidebar's section headings, so they are
+ * read by students, not by us. "Marking" stays its own group because
+ * "Correct a paper" is the product's central action and burying it in a list
+ * of ten siblings is the one thing this nav must not do.
+ */
 export const navGroups: NavGroup[] = [
   {
     label: "Student",
@@ -67,6 +90,7 @@ export const navGroups: NavGroup[] = [
       { to: "/student/board", label: "Standings" },
       { to: "/student/friends", label: "Friends" },
       { to: "/student/profile", label: "Your profile" },
+      { to: "/student/notifications", label: "Notifications" },
       { to: "/student/announcements", label: "Announcements" },
       { to: "/student/parents", label: "Your parents" },
     ],
@@ -75,31 +99,39 @@ export const navGroups: NavGroup[] = [
     label: "Marking",
     items: [{ to: "/student/correct", label: "Correct a paper" }],
   },
-  {
-    label: "Elsewhere",
-    items: [
-      { to: "/student/onboard", label: "Onboarding" },
-      { to: "/student/landing", label: "Landing page" },
-      { to: "/student/directions", label: "Directions", tag: "A/B/C" },
-    ],
-  },
 ]
 
-/** Breadcrumb per route path (matches the mock's crumb map). */
+/**
+ * Breadcrumb per route path. **Exact pathnames only** — anything with a route
+ * parameter in it is resolved by a pattern arm in `resolveCrumb` instead.
+ *
+ * P3.1 removed four keys from this map: `/student/subject`,
+ * `/student/practice`, `/student/flashcards` and `/student/result`. All four
+ * were dead lookups. Every one of those routes is parameterised
+ * (`subject/:code`, `practice/:subjectCode`, `flashcards/:subjectCode`,
+ * `result/:paperId`), so no pathname the router can produce ever equals the
+ * bare key, and `resolveCrumb` was already answering all four from its pattern
+ * arms below. This is the same defect the note about `/student/plan` describes
+ * having deliberately avoided when P4.10 parameterised that route; its four
+ * siblings kept theirs. Behaviour is unchanged — unreachable entries cannot
+ * change what anything renders — but a map with dead keys in it is a map the
+ * next person edits the wrong half of.
+ *
+ * Found by `tests/unit/navigation.test.ts`, which asserts that every key here
+ * matches a route the router actually mounts.
+ */
 export const crumbs: Record<string, string> = {
   "/student": "Home",
-  "/student/subject": "Home / Physics 0625",
-  "/student/practice": "Home / Practice",
-  "/student/flashcards": "Home / Flashcards",
-  "/student/result": "Home / Physics / Paper result",
   "/student/correct": "Marking / Correct a paper",
-  // `/student/plan` is deliberately absent: P4.10 made the route
-  // subject-scoped (`/student/plan/:subjectCode`), so it is resolved by a
-  // pattern arm in `resolveCrumb` alongside practice and flashcards. Leaving
-  // the bare key here would be a lookup no pathname can ever hit.
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
   "/student/profile": "Home / Your profile",
+  // Absent until P3.1, and silently so: with no nav entry the only way onto
+  // this route was a push deep link, and a wrong-but-valid breadcrumb ("Home")
+  // trips no typecheck and no axe rule — the exact failure mode `resolveCrumb`
+  // is documented below as having already had once. Giving the route a nav
+  // entry (D1.3) without giving it a crumb would have repeated it.
+  "/student/notifications": "Home / Notifications",
   "/student/announcements": "Home / Announcements",
   "/student/parents": "Home / Your parents",
   "/student/onboard": "Onboarding",
