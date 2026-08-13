@@ -76,6 +76,10 @@ const SCANNED_FILES = [
   "src/portals/teacher/screens/ClassAnalytics.tsx",
   "src/lib/teacherOutcome.ts",
   "src/lib/severity.ts",
+  "src/portals/teacher/screens/Quizzes.tsx",
+  "src/portals/teacher/screens/QuizBuilder.tsx",
+  "src/portals/teacher/screens/QuizResults.tsx",
+  "src/components/ui/confirm-modal.tsx",
 ]
 
 const CSS_PATH = "src/index.css"

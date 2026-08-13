@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
-import { Modal } from "@/components/ui/modal"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Slider } from "@/components/ui/slider"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { ApiError } from "@/lib/api"
@@ -54,7 +54,7 @@ import {
  *      nothing rendered — so a failed delete left the deck on screen with no
  *      way to tell whether it had gone. `addCard.isError` and
  *      `editCard.isError` were both rendered; the two *destructive* mutations
- *      were the two that were not. Both now confirm through `ConfirmDelete`
+ *      were the two that were not. Both now confirm through `ConfirmModal`
  *      and both report their own failure.
  *   2. **The card editor hand-rolled its inputs.** `CARD_INPUT_CLASS` was a
  *      local border/padding/focus string on six raw `<input>`s, which also
@@ -73,65 +73,6 @@ function DeckOriginBadge({ origin }: { origin: DeckOrigin }) {
   if (origin === "weakness") return <Badge tone="amber">From a weakness</Badge>
   if (origin === "topic") return <Badge tone="lilac">Topic-generated</Badge>
   return <Badge tone="sage">Manual</Badge>
-}
-
-/*
- * The confirmation step for the two irreversible actions on this screen.
- *
- * `dismissible={false}` is the point of it: C-17 Modal documents that flag for
- * "destructive confirmations where an accidental Escape must not discard a
- * decision silently", and a student half-way through a delete should have to
- * say yes or no rather than have a stray keypress answer for them. The
- * cancel button is the primary weight and the destructive one is secondary,
- * so the easy path is the safe path.
- */
-function ConfirmDelete({
-  open,
-  title,
-  description,
-  confirmLabel,
-  pending,
-  error,
-  onConfirm,
-  onCancel,
-}: {
-  open: boolean
-  title: string
-  description: string
-  confirmLabel: string
-  pending: boolean
-  error: string | null
-  onConfirm: () => void
-  onCancel: () => void
-}) {
-  return (
-    <Modal
-      open={open}
-      onClose={onCancel}
-      title={title}
-      description={description}
-      size="sm"
-      dismissible={false}
-      hideCloseButton
-      footer={
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
-            Keep it
-          </Button>
-          <Button variant="accent" size="sm" onClick={onConfirm} disabled={pending}>
-            {pending ? "Deleting…" : confirmLabel}
-          </Button>
-        </div>
-      }
-    >
-      <p className="text-body-md text-ink-muted">
-        This cannot be undone.
-      </p>
-      {error ? (
-        <p className="mt-3 text-body-sm text-err">{error}</p>
-      ) : null}
-    </Modal>
-  )
 }
 
 /*
@@ -252,11 +193,12 @@ function CardRow({
           </Button>
         </div>
       )}
-      <ConfirmDelete
+      <ConfirmModal
         open={confirming}
         title="Delete this card?"
         description={card.front}
         confirmLabel="Delete card"
+        pendingLabel="Deleting…"
         pending={deletingThis}
         error={
           deleteFailedHere ? "We couldn't delete that card. Try again." : null
@@ -684,7 +626,7 @@ export function FlashcardDecks() {
         ))
       )}
 
-      <ConfirmDelete
+      <ConfirmModal
         open={deckPendingDelete !== null}
         title="Delete this deck?"
         description={
@@ -693,6 +635,7 @@ export function FlashcardDecks() {
             : ""
         }
         confirmLabel="Delete deck"
+        pendingLabel="Deleting…"
         pending={deleteDeck.isPending}
         error={deleteDeck.isError ? "We couldn't delete that deck. Try again." : null}
         onCancel={() => setDeckPendingDelete(null)}

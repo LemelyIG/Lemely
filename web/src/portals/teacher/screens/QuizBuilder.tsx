@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import type { UseQueryResult } from "@tanstack/react-query"
@@ -7,6 +8,14 @@ import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { Meter } from "@/components/ui/primitives"
 import { Stepper, type StepperStep } from "@/components/ui/stepper"
 import { cn } from "@/lib/utils"
+import { Input } from "@/components/ui/input"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
+import { Select } from "@/components/ui/select"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import {
+  teacherLoadFailureMessage,
+  teacherMutationFailureMessage,
+} from "@/lib/teacherOutcome"
 import type { Grade } from "@/lib/types"
 import {
   useCreateQuizAssignment,
@@ -88,19 +97,20 @@ import { statusLabel, statusTone } from "./Quizzes"
  * `GenerateQuizQuestionsResponseDTO.shortfall` are rendered verbatim, never
  * rounded, padded, or replaced with a plausible-looking number.
  *
- * **Uses `text-t2`, not `text-t3`, for every muted/secondary label below —
- * deliberately, not a copy-paste inconsistency with the rest of the teacher
- * portal.** Axe (run against this screen live, not the standing 4-route
- * Puppeteer gate — see the phase report) found `text-t3` at the small sizes
- * these labels use (10-13px) fails WCAG AA contrast (4.36:1 measured vs the
- * 4.5:1 minimum) against the default surface background. This is a
- * pre-existing `--t3` token defect, not something this screen introduced —
- * every other teacher screen (`Classes.tsx`, `ReviewItem.tsx`, ...) uses the
- * identical `text-t3` pattern for identical eyebrow/caption text and would
- * fail the same check; they were simply never axe-tested outside D2.10's
- * fixed 4-route scope. Fixing the shared token or retrofitting those other
- * screens is out of this chunk's scope (T-09 only, no other screen touched);
- * this file only avoids emitting the defect in the screens it owns.
+ * **P4.5 closes this screen's contrast workaround, because the thing it was
+ * working around is fixed.** This file used to avoid `--t3` entirely and use
+ * `--t2` for every muted label, because axe measured the build-era `--t3` at
+ * **4.36:1** against the default surface — below the 4.5:1 AA floor — at the
+ * 10-13px sizes these labels use. The note recorded that fixing the shared
+ * token was out of that chunk's scope. Phase 2 fixed the shared token: the
+ * Study Notebook's `--ink-faint` is set at L 0.529 *specifically* so it clears
+ * AA against the darkest surface it ever sits on, measuring 4.94:1 on
+ * `--paper`, 5.17:1 on `--paper-raised` and 4.60:1 on `--paper-sunk`, and
+ * `tests/test_design_tokens.py` pins all three. DESIGN.md §3.2 also removes
+ * the lighter fifth step that made this defect reachable in the first place.
+ * So the divergence is retired here and on `Quizzes.tsx`: muted labels use
+ * `--ink-faint` like every other screen in the portal, and they are AA by
+ * construction rather than by avoidance.
  */
 
 const STEPS: StepperStep[] = [
@@ -149,7 +159,7 @@ function shortfallSuggestions(data: QuizPoolCount, quiz: QuizSummary): string[] 
   if (!data.shortfall) return []
   const out: string[] = [`Ask for fewer questions (currently ${data.requested})`]
   if (quiz.includedTopics.length > 0) out.push("Remove or loosen a topic filter in step 2")
-  if (quiz.targetGrade) out.push("Try a different target grade in step 3 — bands are mixed differently per grade")
+  if (quiz.targetGrade) out.push("Try a different target grade in step 3, since bands are mixed differently per grade")
   out.push("Try a different question source")
   return out
 }
@@ -160,20 +170,20 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
     <div
       className={cn(
         "border rounded-md p-4 flex flex-col gap-2.5",
-        attention ? "border-warn bg-warn-bg" : "border-border bg-surface",
+        attention ? "border-warn bg-warn-wash" : "border-rule bg-paper-raised",
       )}
     >
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-display-sm">{data.matching}</span>
-        <span className="text-dense-sm text-t2">
+        <span className="text-body-sm text-ink-faint">
           matching question{data.matching === 1 ? "" : "s"} available · {data.requested} requested
         </span>
       </div>
-      {data.message ? <p className="text-dense-sm text-t1 m-0 text-pretty">{data.message}</p> : null}
+      {data.message ? <p className="text-body-sm text-ink m-0 text-pretty">{data.message}</p> : null}
       {data.shortfall ? (
         <div className="flex flex-col gap-1.5">
-          <div className="text-dense-sm text-t1">Short by band:</div>
-          <ul className="m-0 pl-4 text-dense-sm text-t2 list-disc">
+          <div className="text-body-sm text-ink">Short by band:</div>
+          <ul className="m-0 ps-4 text-body-sm text-ink-faint list-disc">
             {Object.entries(data.shortfall).map(([band, deficit]) => (
               <li key={band}>
                 {band}: {deficit} short
@@ -182,8 +192,8 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
           </ul>
           {suggestions.length > 0 ? (
             <>
-              <div className="text-dense-sm text-t1 mt-1">To fix this, try one of:</div>
-              <ul className="m-0 pl-4 text-dense-sm text-t2 list-disc">
+              <div className="text-body-sm text-ink mt-1">To fix this, try one of:</div>
+              <ul className="m-0 ps-4 text-body-sm text-ink-faint list-disc">
                 {suggestions.map((s) => (
                   <li key={s}>{s}</li>
                 ))}
@@ -192,10 +202,10 @@ function PoolCountPanel({ data, suggestions }: { data: QuizPoolCount; suggestion
           ) : null}
         </div>
       ) : !data.message ? (
-        <div className="text-dense-sm text-ok">Enough questions available for this quiz.</div>
+        <div className="text-body-sm text-ok">Enough questions available for this quiz.</div>
       ) : null}
       {data.difficultyEstimated ? (
-        <div className="text-xs text-t2">
+        <div className="text-body-sm text-ink-faint">
           Difficulty for some of these questions is estimated from mark allocation, not measured.
         </div>
       ) : null}
@@ -215,23 +225,29 @@ function QuestionCard({
   removedLabel?: boolean
 }) {
   return (
-    <div className="bg-surface border border-border rounded-md px-[18px] py-4 flex flex-col gap-2">
+    <div className="bg-paper-raised border border-rule rounded-md px-[18px] py-4 flex flex-col gap-2">
       <div className="flex items-center gap-2.5 flex-wrap">
-        <span className="font-mono text-xs text-t2">Q{question.position}</span>
+        <span className="text-data-sm text-ink-faint">Q{question.position}</span>
         <Chip tone="neutral">{question.difficulty}</Chip>
         {question.topic ? <Chip tone="accent">{question.topic}</Chip> : null}
         {removedLabel ? <Chip tone="err">Removed</Chip> : null}
         <span className="flex-1" />
-        <span className="font-mono text-xs text-t2">[{question.totalMarks}]</span>
+        <span className="text-data-sm text-ink-faint">[{question.totalMarks}]</span>
         {onRemove ? (
           <Button size="sm" variant="ghost" className="text-err" disabled={removing} onClick={onRemove}>
             Remove
           </Button>
         ) : null}
       </div>
-      <div className="font-serif italic text-base leading-[1.45] text-pretty">{question.prompt}</div>
+      {/* The question stem. It used to be `font-serif italic text-base` — the
+          D4.1 defect, so it rendered in Tailwind's default Georgia rather than
+          in any face this design system names, and it set an exam question in
+          italic. §4.2 makes italic body-copy-only and this is body copy a
+          teacher reads closely, so it is now plain `body-lg` in the UI face at
+          the measure §4.2 gives it. */}
+      <div className="text-body-lg text-ink text-pretty">{question.prompt}</div>
       {question.mcqOptions && question.mcqOptions.length > 0 ? (
-        <ul className="m-0 pl-4 text-dense text-t2 list-disc">
+        <ul className="m-0 ps-4 text-body-md text-ink-faint list-disc">
           {question.mcqOptions.map((opt, i) => (
             <li key={i}>{opt}</li>
           ))}
@@ -265,33 +281,28 @@ function StepBasics({
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-5 max-w-[520px]">
       <div>
-        <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 mb-2">Subject</div>
-        <div className="font-mono text-dense text-t2">
-          {quiz.subjectCode} <span className="text-t2">— fixed when the quiz was created</span>
+        <div className="text-eyebrow text-ink-faint mb-2">Subject</div>
+        <div className="text-data-md text-ink-faint">
+          {quiz.subjectCode} <span className="text-ink-faint">(fixed when the quiz was created)</span>
         </div>
       </div>
-      <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
-        Title
-        <input
-          required
-          disabled={!isDraft}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="border border-border bg-surface rounded-lg px-3 py-2 text-sm text-t1 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        />
-      </label>
-      <label className="flex flex-col gap-1.5 text-dense-sm text-t2 w-[220px]">
-        Time limit, minutes (optional)
-        <input
-          type="number"
-          min={1}
-          disabled={!isDraft}
-          value={timeLimit}
-          onChange={(e) => setTimeLimit(e.target.value)}
-          placeholder="No limit"
-          className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 font-mono disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        />
-      </label>
+      <Input
+        required
+        label="Title"
+        disabled={!isDraft}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+      <Input
+        type="number"
+        min={1}
+        label="Time limit, minutes (optional)"
+        disabled={!isDraft}
+        value={timeLimit}
+        onChange={(e) => setTimeLimit(e.target.value)}
+        placeholder="No limit"
+        wrapperClassName="w-[220px]"
+      />
       {isDraft ? (
         <div>
           <Button type="submit" variant="ink">
@@ -346,21 +357,19 @@ function StepContent({
 
   return (
     <div className="flex flex-col gap-5 max-w-[620px]">
-      <p className="text-dense text-t2 text-pretty m-0">
+      <p className="text-body-md text-ink-faint text-pretty m-0">
         Topics narrow the question pool the next two steps draw from. Leave this empty to draw
         from the whole subject.
       </p>
       {isDraft ? (
         <form onSubmit={handleAddSubmit} className="flex items-end gap-2">
-          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 flex-1">
-            Add a topic
-            <input
-              value={draftTopic}
-              onChange={(e) => setDraftTopic(e.target.value)}
-              placeholder="e.g. Kinetic theory"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            />
-          </label>
+          <Input
+            label="Add a topic"
+            value={draftTopic}
+            onChange={(e) => setDraftTopic(e.target.value)}
+            placeholder="e.g. Kinetic theory"
+            wrapperClassName="flex-1"
+          />
           <Button type="submit" variant="secondary">
             Add
           </Button>
@@ -368,8 +377,8 @@ function StepContent({
       ) : null}
       <div className="flex flex-wrap gap-2">
         {topics.length === 0 ? (
-          <span className="text-dense-sm text-t2">
-            No topics added — every topic in the subject is eligible.
+          <span className="text-body-sm text-ink-faint">
+            No topics added, so every topic in the subject is eligible.
           </span>
         ) : null}
         {topics.map((t) => (
@@ -390,7 +399,7 @@ function StepContent({
       </div>
       {isDraft && suggestions.length > 0 ? (
         <div>
-          <div className="font-mono text-3xs uppercase tracking-[0.09em] text-t2 mb-1.5">
+          <div className="text-eyebrow text-ink-faint mb-1.5">
             Suggested from your classes' weak topics
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -399,7 +408,7 @@ function StepContent({
                 key={s}
                 type="button"
                 onClick={() => addTopic(s)}
-                className="border border-dashed border-border rounded-full px-3 py-1 text-xs text-t2 hover:bg-surface-2 cursor-pointer"
+                className="border border-dashed border-rule rounded-md px-3 py-1 text-body-sm text-ink-faint hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
                 + {s}
               </button>
@@ -443,19 +452,19 @@ function StepDifficulty({
 
   return (
     <div className="flex flex-col gap-5 max-w-[620px]">
-      <p className="text-dense text-t2 text-pretty m-0">
-        Lemely mixes question difficulty to suit the grade you're targeting — a quiz aimed at a C
+      <p className="text-body-md text-ink-faint text-pretty m-0">
+        Lemely mixes question difficulty to suit the grade you're targeting. A quiz aimed at a C
         student made entirely of "standard" questions can't tell who's nearly a B from who's
         slipping to a D, so every target keeps at least two difficulty bands in play.
       </p>
       <div>
-        <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 mb-2">
+        <div className="text-eyebrow text-ink-faint mb-2">
           Target grade
         </div>
         <div
           role="radiogroup"
           aria-label="Target grade"
-          className="flex flex-wrap gap-1 bg-surface-2 p-[5px] rounded-md w-fit"
+          className="flex flex-wrap gap-1 bg-paper-sunk p-[5px] rounded-md w-fit"
         >
           {GRADES.map((g) => {
             const on = grade === g
@@ -468,8 +477,14 @@ function StepDifficulty({
                 disabled={!isDraft}
                 onClick={() => setGrade(g)}
                 className={cn(
-                  "border cursor-pointer font-serif text-lg w-11 py-2 rounded disabled:cursor-not-allowed",
-                  on ? "border-border bg-surface text-t1" : "border-transparent bg-transparent text-t2",
+                  // A grade letter is data, so the data face (§4), not the display
+                  // serif this reached for by a name that resolved to Georgia.
+                  // The focus ring is explicit because §3.9 says it is never
+                  // removed on any element, and a bare `<button role="radio">`
+                  // had only the browser default.
+                  "border cursor-pointer text-data-md w-11 py-2 rounded disabled:cursor-not-allowed",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+                  on ? "border-rule bg-paper-raised text-ink" : "border-transparent bg-transparent text-ink-faint",
                 )}
               >
                 {g}
@@ -483,8 +498,8 @@ function StepDifficulty({
             disabled={!isDraft}
             onClick={() => setGrade(null)}
             className={cn(
-              "border cursor-pointer text-xs px-3 py-2 rounded disabled:cursor-not-allowed",
-              grade === null ? "border-border bg-surface text-t1" : "border-transparent text-t2",
+              "border cursor-pointer text-body-sm px-3 py-2 rounded disabled:cursor-not-allowed",
+              grade === null ? "border-rule bg-paper-raised text-ink" : "border-transparent text-ink-faint",
             )}
           >
             No target
@@ -492,14 +507,14 @@ function StepDifficulty({
         </div>
       </div>
       <div>
-        <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 mb-2">
+        <div className="text-eyebrow text-ink-faint mb-2">
           Example mix for a {previewCount}-question quiz at this target
         </div>
         {poolCountQuery.isPending ? (
-          <div className="text-dense-sm text-t2">Loading…</div>
+          <div className="text-body-sm text-ink-faint">Loading…</div>
         ) : poolCountQuery.isError ? (
-          <div className="text-dense-sm text-err">
-            Couldn't load the difficulty mix: {poolCountQuery.error.message}
+          <div className="text-body-sm text-err">
+            Couldn't load the difficulty mix: {teacherLoadFailureMessage(poolCountQuery.error)}
           </div>
         ) : (
           <div className="flex flex-col gap-2.5">
@@ -508,19 +523,19 @@ function StepDifficulty({
               const total = poolCountQuery.data.requested
               return (
                 <div key={band} className="flex items-center gap-3">
-                  <span className="w-[76px] flex-none text-xs text-t2 capitalize">{band}</span>
+                  <span className="w-[76px] flex-none text-body-sm text-ink-faint capitalize">{band}</span>
                   <Meter
                     value={total > 0 ? (value / total) * 100 : 0}
                     label={`${band}: ${value} of ${total} questions`}
                     className="flex-1"
                   />
-                  <span className="w-8 flex-none text-right font-mono text-xs text-t2">{value}</span>
+                  <span className="w-8 flex-none text-end text-data-sm text-ink-faint">{value}</span>
                 </div>
               )
             })}
             {quiz.requestedCount == null || quiz.requestedCount <= 0 ? (
-              <p className="text-xs text-t2 m-0">
-                This is an example — you'll choose the real question count in the next step.
+              <p className="text-body-sm text-ink-faint m-0">
+                This is an example. You'll choose the real question count in the next step.
               </p>
             ) : null}
           </div>
@@ -573,7 +588,7 @@ function StepPool({
   return (
     <div className="flex flex-col gap-5 max-w-[640px]">
       <div>
-        <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 mb-2">
+        <div className="text-eyebrow text-ink-faint mb-2">
           Question source
         </div>
         <div role="radiogroup" aria-label="Question source" className="flex flex-col gap-2.5">
@@ -588,38 +603,36 @@ function StepPool({
                 disabled={!isDraft}
                 onClick={() => setPoolSource(opt.value)}
                 className={cn(
-                  "flex flex-col items-start gap-0.5 text-left border bg-surface rounded-md px-4 py-3 cursor-pointer disabled:cursor-not-allowed",
-                  on ? "border-accent" : "border-border hover:bg-surface-2",
+                  "flex flex-col items-start gap-0.5 text-start border bg-paper-raised rounded-md px-4 py-3 cursor-pointer disabled:cursor-not-allowed",
+                  on ? "border-accent" : "border-rule hover:bg-paper-sunk",
                 )}
               >
-                <span className="text-sm text-t1">{opt.label}</span>
-                <span className="text-xs text-t2">{opt.detail}</span>
+                <span className="text-body-md text-ink">{opt.label}</span>
+                <span className="text-body-sm text-ink-faint">{opt.detail}</span>
               </button>
             )
           })}
         </div>
       </div>
-      <label className="flex flex-col gap-1.5 text-dense-sm text-t2 w-[200px]">
-        Number of questions
-        <input
-          type="number"
-          min={1}
-          disabled={!isDraft}
-          value={requestedCount}
-          onChange={(e) => setRequestedCount(Math.max(0, Number(e.target.value) || 0))}
-          className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 font-mono disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        />
-      </label>
+      <Input
+        type="number"
+        min={1}
+        label="Number of questions"
+        disabled={!isDraft}
+        value={requestedCount}
+        onChange={(e) => setRequestedCount(Math.max(0, Number(e.target.value) || 0))}
+        wrapperClassName="w-[200px]"
+      />
 
       {poolSource == null ? (
-        <p className="text-dense-sm text-t2 m-0">
+        <p className="text-body-sm text-ink-faint m-0">
           Choose a source above to see how many matching questions are available.
         </p>
       ) : poolCountQuery.isPending ? (
-        <div className="text-dense-sm text-t2">Checking the question pool…</div>
+        <div className="text-body-sm text-ink-faint">Checking the question pool…</div>
       ) : poolCountQuery.isError ? (
-        <div className="text-dense-sm text-err">
-          Couldn't check the pool: {poolCountQuery.error.message}
+        <div className="text-body-sm text-err">
+          Couldn't check the pool: {teacherLoadFailureMessage(poolCountQuery.error)}
         </div>
       ) : (
         <PoolCountPanel data={poolCountQuery.data} suggestions={suggestions} />
@@ -692,7 +705,7 @@ function StepPreview({
                 ? "Generate more questions"
                 : "Generate questions"}
           </Button>
-          <span className="text-xs text-t2">
+          <span className="text-body-sm text-ink-faint">
             {quiz.requestedCount != null
               ? `${included.length} of ${quiz.requestedCount} requested`
               : `${included.length} question${included.length === 1 ? "" : "s"} so far`}
@@ -700,21 +713,21 @@ function StepPreview({
         </div>
       ) : null}
       {!canGenerate && isDraft ? (
-        <p className="text-dense-sm text-t2 m-0">Choose a question source in step 4 before generating.</p>
+        <p className="text-body-sm text-ink-faint m-0">Choose a question source in step 4 before generating.</p>
       ) : null}
       {generate.isError ? (
-        <div role="alert" className="text-dense-sm text-err">
-          Couldn't generate questions: {generate.error.message}
+        <div role="alert" className="text-body-sm text-err">
+          Couldn't generate questions: {teacherMutationFailureMessage(generate.error)}
         </div>
       ) : null}
       {lastGenerated ? (
-        <div className="text-dense-sm text-t2 bg-surface-2 border border-border rounded-md px-3.5 py-3">
+        <div className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-3">
           Added {lastGenerated.created.length} question{lastGenerated.created.length === 1 ? "" : "s"}.
           {lastGenerated.shortfall ? (
-            <ul className="m-0 mt-1.5 pl-4 list-disc">
+            <ul className="m-0 mt-1.5 ps-4 list-disc">
               {Object.entries(lastGenerated.shortfall).map(([band, deficit]) => (
                 <li key={band}>
-                  {band}: still {deficit} short — loosen a filter in an earlier step, or generate
+                  {band}: still {deficit} short. Loosen a filter in an earlier step, or generate
                   again once more questions are indexed.
                 </li>
               ))}
@@ -741,8 +754,8 @@ function StepPreview({
         </div>
       )}
       {removeQuestion.isError ? (
-        <div role="alert" className="text-dense-sm text-err">
-          Couldn't remove that question: {removeQuestion.error.message}
+        <div role="alert" className="text-body-sm text-err">
+          Couldn't remove that question: {teacherMutationFailureMessage(removeQuestion.error)}
         </div>
       ) : null}
 
@@ -751,7 +764,7 @@ function StepPreview({
           <button
             type="button"
             onClick={() => setShowRemoved((v) => !v)}
-            className="text-xs text-t2 hover:text-t1 bg-transparent border-0 p-0 cursor-pointer"
+            className="text-body-sm text-ink-faint hover:text-ink bg-transparent border-0 p-0 cursor-pointer"
           >
             {showRemoved ? "Hide" : "Show"} {removed.length} removed question
             {removed.length === 1 ? "" : "s"} (kept for audit, not part of the quiz)
@@ -819,72 +832,78 @@ function StepAssign({
     )
   }
 
-  function handleUnassign(assignmentId: string, className: string) {
-    if (!window.confirm(`Remove this quiz from ${className}?`)) return
-    deleteAssignment.mutate(assignmentId)
-  }
+  /*
+   * `window.confirm` used to stand here. It is an OS dialog whose buttons say
+   * "OK" and "Cancel", so the destructive choice was never named; it cannot
+   * show the pending or failed state of the mutation behind it; and browsers
+   * may suppress it after repeated use, which means a confirmation the
+   * product believes it is showing can stop appearing. C-24 `ConfirmModal` is
+   * the pattern surface 3 established for exactly this.
+   *
+   * The consequence line is overridden because this action is genuinely
+   * recoverable: unassigning does not delete the quiz, and the same class can
+   * be assigned again. Claiming "this cannot be undone" here would be the
+   * honesty defect in the other direction.
+   */
+  const [unassigning, setUnassigning] = useState<{ id: string; className: string } | null>(null)
 
   return (
     <div className="flex flex-col gap-5 max-w-[640px]">
       {quiz.questionCount === 0 ? (
-        <p className="text-dense-sm text-warn m-0">
+        <p className="text-body-sm text-warn m-0">
           Add at least one question in step 5 before assigning this quiz.
         </p>
       ) : quiz.status === "closed" || quiz.status === "archived" ? (
-        <p className="text-dense-sm text-t2 m-0">
-          This quiz is {statusLabel(quiz.status).toLowerCase()} — it can no longer be assigned to
-          any class.
+        <p className="text-body-sm text-ink-faint m-0">
+          This quiz is {statusLabel(quiz.status).toLowerCase()}, so it can no longer be assigned
+          to any class.
         </p>
       ) : canAssign ? (
         <form
           onSubmit={handleAssign}
-          className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3"
+          className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3"
         >
-          <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
-            Class
-            {classesQuery.isPending ? (
-              <span className="text-dense-sm text-t2">Loading your classes…</span>
-            ) : classesQuery.isError ? (
-              <span className="text-dense-sm text-err">
-                Couldn't load your classes: {classesQuery.error.message}
-              </span>
-            ) : (
-              <select
-                required
-                value={classId}
-                onChange={(e) => setClassId(e.target.value)}
-                className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                <option value="" disabled>
-                  Choose a class…
+          {/* The label used to wrap all three branches, so while the classes
+              were loading or had failed there was a `<label>` pointing at no
+              control at all. The kit's `<Select>` owns its own label, and the
+              two non-ready states are now plain lines beside it rather than
+              inside it. */}
+          {classesQuery.isPending ? (
+            <div className="text-body-sm text-ink-faint">Loading your classes…</div>
+          ) : classesQuery.isError ? (
+            <div className="text-body-sm text-err">
+              Couldn't load your classes: {teacherLoadFailureMessage(classesQuery.error)}
+            </div>
+          ) : (
+            <Select
+              required
+              label="Class"
+              value={classId}
+              onChange={(e) => setClassId(e.target.value)}
+            >
+              <option value="" disabled>
+                Choose a class…
+              </option>
+              {classesQuery.data.classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
                 </option>
-                {classesQuery.data.classes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            )}
-          </label>
+              ))}
+            </Select>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
-              Due (optional)
-              <input
-                type="datetime-local"
-                value={dueAt}
-                onChange={(e) => setDueAt(e.target.value)}
-                className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
-              Closes (optional)
-              <input
-                type="datetime-local"
-                value={closesAt}
-                onChange={(e) => setClosesAt(e.target.value)}
-                className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              />
-            </label>
+            <Input
+              type="datetime-local"
+              label="Due (optional)"
+              value={dueAt}
+              onChange={(e) => setDueAt(e.target.value)}
+            />
+            <Input
+              type="datetime-local"
+              label="Closes (optional)"
+              value={closesAt}
+              onChange={(e) => setClosesAt(e.target.value)}
+            />
           </div>
           <div>
             <Button type="submit" variant="ink" disabled={createAssignment.isPending || !classId}>
@@ -892,47 +911,47 @@ function StepAssign({
             </Button>
           </div>
           {createAssignment.isError ? (
-            <div role="alert" className="text-dense-sm text-err">
-              Couldn't assign: {createAssignment.error.message}
+            <div role="alert" className="text-body-sm text-err">
+              Couldn't assign: {teacherMutationFailureMessage(createAssignment.error)}
             </div>
           ) : null}
         </form>
       ) : null}
 
       <div>
-        <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t2 mb-2">
+        <div className="text-eyebrow text-ink-faint mb-2">
           Assigned to
         </div>
         {assignmentsQuery.isPending ? (
-          <div className="text-dense-sm text-t2">Loading assignments…</div>
+          <div className="text-body-sm text-ink-faint">Loading assignments…</div>
         ) : assignmentsQuery.isError ? (
-          <div className="text-dense-sm text-err">
-            Couldn't load assignments: {assignmentsQuery.error.message}
+          <div className="text-body-sm text-err">
+            Couldn't load assignments: {teacherLoadFailureMessage(assignmentsQuery.error)}
           </div>
         ) : assignmentsQuery.data.assignments.length === 0 ? (
-          <div className="text-dense-sm text-t2">Not assigned to any class yet.</div>
+          <div className="text-body-sm text-ink-faint">Not assigned to any class yet.</div>
         ) : (
           <ul className="flex flex-col gap-2 m-0 p-0 list-none">
             {assignmentsQuery.data.assignments.map((a) => (
               <li
                 key={a.id}
-                className="bg-surface border border-border rounded-md px-4 py-3 flex items-center gap-3 flex-wrap"
+                className="bg-paper-raised border border-rule rounded-md px-4 py-3 flex items-center gap-3 flex-wrap"
               >
-                <Link to={`/teacher/classes/${a.classId}`} className="text-t1 hover:underline text-dense-lg">
+                <Link to={`/teacher/classes/${a.classId}`} className="text-ink hover:underline text-body-lg">
                   {a.className}
                 </Link>
-                <span className="text-xs text-t2">
+                <span className="text-body-sm text-ink-faint">
                   {a.rosterSize} student{a.rosterSize === 1 ? "" : "s"}
                 </span>
                 {a.dueAt ? (
-                  <span className="text-xs text-t2">Due {new Date(a.dueAt).toLocaleString()}</span>
+                  <span className="text-body-sm text-ink-faint">Due {new Date(a.dueAt).toLocaleString()}</span>
                 ) : null}
                 <span className="flex-1" />
                 {/* T-09's exit to T-10. Results are per assignment, so the
                     link carries this assignment's id, not just the quiz's. */}
                 <Link
                   to={`/teacher/quizzes/${quizId}/assignments/${a.id}/results`}
-                  className="text-dense-sm text-t1 hover:underline"
+                  className="text-body-sm text-ink hover:underline"
                 >
                   View results →
                 </Link>
@@ -941,7 +960,7 @@ function StepAssign({
                   variant="ghost"
                   className="text-err"
                   disabled={deleteAssignment.isPending}
-                  onClick={() => handleUnassign(a.id, a.className)}
+                  onClick={() => setUnassigning({ id: a.id, className: a.className })}
                 >
                   Remove
                 </Button>
@@ -949,11 +968,29 @@ function StepAssign({
             ))}
           </ul>
         )}
-        {deleteAssignment.isError ? (
-          <div role="alert" className="text-dense-sm text-err mt-2">
-            Couldn't remove that assignment: {deleteAssignment.error.message}
-          </div>
-        ) : null}
+        <ConfirmModal
+          open={unassigning !== null}
+          title="Remove this quiz from the class?"
+          description={
+            unassigning ? `${unassigning.className} will no longer see this quiz.` : undefined
+          }
+          consequence="You can assign it to this class again later. Any submissions already started are not deleted."
+          confirmLabel="Remove"
+          pendingLabel="Removing…"
+          pending={deleteAssignment.isPending}
+          error={
+            deleteAssignment.isError
+              ? teacherMutationFailureMessage(deleteAssignment.error)
+              : null
+          }
+          onCancel={() => setUnassigning(null)}
+          onConfirm={() => {
+            if (!unassigning) return
+            deleteAssignment.mutate(unassigning.id, {
+              onSuccess: () => setUnassigning(null),
+            })
+          }}
+        />
       </div>
 
       <div>
@@ -988,9 +1025,11 @@ export function QuizBuilder() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Quiz builder</h1>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading quiz…
-        </div>
+        {/* The stepper plus a step panel are what arrive, so two panel
+            shapes hold that space. §12: the loading state matches the layout
+            it replaces. */}
+        <PanelSkeleton />
+        <PanelSkeleton />
       </div>
     )
   }
@@ -1001,7 +1040,7 @@ export function QuizBuilder() {
         <h1 className="sr-only">Quiz builder</h1>
         <ErrorState
           heading="Couldn't load this quiz"
-          body={quizQuery.error.message}
+          body={teacherLoadFailureMessage(quizQuery.error)}
           action={{ label: "Retry", onClick: () => quizQuery.refetch() }}
           secondaryAction={{ label: "Back to quizzes", onClick: () => history.back() }}
         />
@@ -1035,12 +1074,12 @@ export function QuizBuilder() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <Link to="/teacher/quizzes" className="text-xs text-t2 hover:text-t1 w-fit">
+        <Link to="/teacher/quizzes" className="text-body-sm text-ink-faint hover:text-ink w-fit">
           ← All quizzes
         </Link>
         <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">
-            <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t2">
+            <div className="text-eyebrow text-ink-faint">
               {loadedQuiz.subjectCode}
             </div>
             <h1 className="text-display-md mt-1 text-pretty">
@@ -1053,8 +1092,8 @@ export function QuizBuilder() {
       </div>
 
       {!isDraft ? (
-        <div className="text-dense-sm text-t2 bg-surface-2 border border-border rounded-md px-3.5 py-3 text-pretty">
-          This quiz is {statusLabel(loadedQuiz.status).toLowerCase()} — its title, topics,
+        <div className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
+          This quiz is {statusLabel(loadedQuiz.status).toLowerCase()}, so its title, topics,
           difficulty, source and questions can no longer be changed. What follows is read-only,
           showing exactly what was configured and (below) who it's assigned to.
         </div>
@@ -1067,8 +1106,8 @@ export function QuizBuilder() {
       <Stepper steps={STEPS} current={step} onSelect={(id) => goToStep(id)} completed={completed} />
 
       {isDraft && patchDraft.isError ? (
-        <div role="alert" className="text-dense-sm text-err">
-          Couldn't save your progress: {patchDraft.error.message}
+        <div role="alert" className="text-body-sm text-err">
+          Couldn't save your progress: {teacherMutationFailureMessage(patchDraft.error)}
         </div>
       ) : null}
 
