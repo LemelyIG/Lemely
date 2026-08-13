@@ -152,3 +152,30 @@ own written mandate or was a correction of something untrue:
 **B4 still blocks the e2e gate.** Port 8000 was re-checked this session and is
 still held by the foreign `python -m lemely.web` process. Unchanged, still one
 command from you, still not killed unattended.
+
+---
+
+## 2026-08-14T02:45+03:00 — DECISION D1.6, re-asked (outbound)
+
+Phase 4 reached admin views (surface 7 of 10). D1.6 was first sent
+2026-08-13T15:05Z and carries **no default on purpose** (§10: a question with
+no sane default must not be a timeout question), so it is re-asked rather than
+guessed.
+
+**Question.** No school-admin or platform-admin screens exist. Both roles are
+routed into `/teacher` today.
+
+- **A** — build them now (~7 screens, new route subtree, un-bundles the
+  `TEACHER_ROLES` guard `rbac.spec.ts` asserts against).
+- **B** — defer; both admin roles keep landing on `/teacher`.
+- **C** — scaffold routes and shells only, in the Study Notebook language,
+  with no functionality behind them.
+
+**Status: OPEN, no default, not blocking the build.** Per §10's "keep working
+on independent tasks while it waits", Phase 4 proceeds to **surface 8 (Auth)**,
+which does not depend on this answer. Admin views are taken up the moment an
+answer arrives; if none has arrived when Auth, Marketing and 404/misc are all
+done, that is the point at which Phase 4 genuinely blocks.
+
+Inbound topic polled immediately before sending: still no message from the
+human, ever.

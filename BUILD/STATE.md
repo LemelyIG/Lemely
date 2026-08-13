@@ -32,10 +32,15 @@ MISSION:            BUILD/REDESIGN-MISSION.md
 CURRENT PHASE:      4 — Surface-by-surface redesign (Phases 0-3 DONE)
 CURRENT SURFACE:    Parent views DONE (6 of 10). Next: **Admin views** ->
                     Auth -> Marketing -> 404/misc.
-NEXT ACTION:        Phase 4, surface 7: **admin views** — but
-                    **re-ask D1.6 FIRST and block there rather than guess.**
-                    It is still open, still deliberately undefaulted, and it
-                    decides whether this surface exists at all.
+NEXT ACTION:        Phase 4, surface 8: **Auth** (`portals/auth/` and the
+                    login routes). Surface 7 (admin views) is **deferred, not
+                    skipped**: D1.6 was re-asked on the steering channel at
+                    02:45 and remains open with no default, so per §10 the
+                    build continues on independent work rather than idling or
+                    guessing. Take admin up the moment an answer arrives. If
+                    Auth, Marketing and 404/misc all finish with D1.6 still
+                    unanswered, THAT is the point where Phase 4 genuinely
+                    blocks.
 
                     New since surface 6, and binding on every later surface:
                     - **The motion defaults are fixed product-wide.** A bare
@@ -115,13 +120,14 @@ NEXT ACTION:        Phase 4, surface 7: **admin views** — but
                     - **A defect fixed on one surface is often live on
                       another.** Confirmed again on surface 5, four times over.
 
-                    **Re-ask D1.6 before admin views.** Still open, still
-                    deliberately undefaulted. Block there rather than guess.
+                    **D1.6 re-asked 2026-08-14T02:45+03:00**, logged in
+                    STEERING.md. Still open, still undefaulted. Do not guess
+                    it; do not idle on it either.
 
                     **B4 blocks the e2e gate** (BUILD/BLOCKERS.md). One
                     command from the human clears it; do not kill the
                     port-8000 process unattended, it belongs to another user.
-LAST UPDATED:       2026-08-14T02:40+03:00
+LAST UPDATED:       2026-08-14T02:47+03:00
 LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
                     NOTE: still no inbound message from the human, ever. The only
                     entry on the topic remains my own Phase-0 selftest.
@@ -151,7 +157,7 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 | Gamification (XP, streaks, leaderboards) | **DONE** | `redesign/study-surfaces` | typecheck / lint / 812 unit (+60) / check:copy 67 under a **widened** gate (64 like-for-like, down from 69) / both builds / pre-commit / 30 Python token+constant tests: **green**. e2e: **still blocked, B4**. Visual round: 30 captures across 3 registered sub-surfaces, all distinct, console errors only from the deliberately-failing states. | pending |
 | Teacher dashboard + quiz builder (whole portal) | **DONE** | `redesign/study-surfaces` | typecheck / lint / 927 unit (+115) / check:copy **18** (down from 67; none in the teacher portal) / both builds / pre-commit / 31 Python token+constant tests: **green**. e2e: **still blocked, B4**. Visual round: 26 captures across 3 registered sub-surfaces, all distinct, console errors only from the deliberately-failing states. | pending |
 | Parent views | **DONE** | `redesign/study-surfaces` | typecheck / lint / 980 unit (+53) / check:copy **14** (down from 18; none in the parent portal) / both builds / pre-commit / 31 Python token+constant tests: **green**. e2e: **still blocked, B4**. Visual round: 32 captures across 4 registered sub-surfaces, all distinct, console errors only from the deliberately-failing states. | pending |
-| Admin views | QUEUED | — | — | — |
+| Admin views | **DEFERRED — D1.6** | — | — | — |
 | Auth | QUEUED | — | — | — |
 | Marketing / landing | QUEUED | — | — | — |
 | 404 / misc | QUEUED | — | — | — |
@@ -202,7 +208,7 @@ NEW CAPABILITY:     `lib/parentOutcome.ts` (4 raw error sites),
 
 | ID | Question | Options | Default | Sent | Timeout | Status |
 |---|---|---|---|---|---|---|
-| D1.6 | Build real school-admin + platform-admin screens? None exist; both roles are routed into `/teacher` today. ~7 screens, new route subtree, un-bundles the `TEACHER_ROLES` guard `rbac.spec.ts` asserts against. | A build now / B defer, stay on `/teacher` / C scaffold routes+shells only | **none — deliberately not defaulted** | 2026-08-13T15:05Z | none | OPEN |
+| D1.6 | **Re-asked 2026-08-14T02:45.** Build real school-admin + platform-admin screens? None exist; both roles are routed into `/teacher` today. ~7 screens, new route subtree, un-bundles the `TEACHER_ROLES` guard `rbac.spec.ts` asserts against. | A build now / B defer, stay on `/teacher` / C scaffold routes+shells only | **none — deliberately not defaulted** | 2026-08-13T15:05Z | none | OPEN |
 
 D1.6 carries no default on purpose: §10 says a question with no sane default must not be a
 timeout question. It does not block Phase 2 or 3. Re-ask before Phase 4 reaches admin views;
