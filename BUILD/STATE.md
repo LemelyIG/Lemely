@@ -29,23 +29,33 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      2 — Brand & Design System (Phase 1 DONE)
+CURRENT PHASE:      3 — IA & UX Flows (Phases 0, 1, 2 DONE)
 CURRENT SURFACE:    none (Phase 2 is product-wide foundation)
 CURRENT BRANCH:     redesign/phase-0  (off develop; per-phase/surface branches per §11)
-NEXT ACTION:        Phase 2 step 6, the LAST open item in this phase: the core
-                    component kit and its 8-state preview page under
-                    web/dev-previews/. Steps 1-5 are DONE (see the P2 log below).
-                    Missing entirely and needed: Input, Select, Radio, Switch,
-                    Modal, Popover, Toast, Tabs, Table, Skeleton, Avatar
-                    (squircle), Kbd, ProgressBar, Chart wrapper, ErrorState.
-                    Already exist and need restyling to the new tokens: button,
-                    card, checkbox, chip, slider, stepper, state-views,
-                    primitives, plus the product-specific set (confidence-
-                    indicator, grade-badge, mark-display, question-row,
-                    boundary-bar, paper-identity, processing-state,
-                    trend-sparkline, weakness-chip, xp-streak, nav-shells).
-                    Read DESIGN.md FIRST — it is now the real system.
-                    Then Phase 3 (IA & UX flows), implementing D1.1-5.
+NEXT ACTION:        Phase 3 — IA & UX Flows. In order:
+                    3.1 Implement the approved IA restructure (D1.1-5, DEFAULTED
+                        and therefore approved): drop the student "Elsewhere"
+                        nav, add /teacher/review to the sidebar, give students
+                        an in-app path to notifications, add a custom 404 and
+                        wire the new ErrorBoundary at the route level, and add
+                        back/breadcrumb paths in teacher + parent.
+                    3.2 First-run flows per role (impeccable shape -> onboard).
+                        Empty dashboards become composed "getting started"
+                        views, never blank. The EmptyState + marginalia
+                        vocabulary for this already exists in the kit.
+                    3.3 harden + clarify groundwork: form validation patterns
+                        (the kit's Input/Select/Radio already implement inline,
+                        near-field errors with visible labels), error copy
+                        voice, skeletons instead of spinners (Skeleton exists
+                        now), custom 404, skip-to-content link.
+                    3.4 RTL-safety rule applies from here to the end: logical
+                        properties everywhere, no hardcoded left/right.
+                    READ DESIGN.md FIRST. It is the real system now, and the
+                    component kit under web/src/components/ui/ implements it.
+                    Preview the kit with `npm run preview:kit`.
+                    NOTE: build-era screens still consume the compat token
+                    aliases in index.css. That is deliberate and documented;
+                    Phase 4 migrates them surface by surface.
 LAST UPDATED:       2026-08-13T18:10+03:00
 LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
                     NOTE: still no inbound message from the human, ever. The only
@@ -58,7 +68,7 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 |---|---|---|---|
 | 0. Setup & Verification | DONE | 2026-08-13 | All 9 skills loadable; nothing needed installing. Node 26.6.0, Python 3.13.5, Playwright 1.62.1 (web/), Gemini key in gitignored `.env`, spend $0.204/$8 (image budget for this mission ≤$3). impeccable hook already `enabled`; `context.mjs` clean apart from one stale-context finding, fixed. PRODUCT.md already existed from the build era and was corrected rather than regenerated (see notes). ntfy verified in **both** directions. |
 | 1. Audit | DONE | 2026-08-13 | Three legs, all read-only, `web/` verified untouched after each. Merged into `BUILD/DESIGN-AUDIT.md`; leg reports in `BUILD/audit/`. 6 critical, 14 major, 3 minor. Root cause is one thing: every token is still the build-era Material-3 palette, so zero pages are Study Notebook yet. Worse than that and independently confirmed by me: 3 fabrications on the landing page, no error boundary anywhere, no skeleton component anywhere. **Coverage is partial and stated so — nothing was verified against a rendered viewport, and 34 of 48 routes were reached by grep only.** |
-| 2. Brand & Design System | IN PROGRESS | — | Steps 1–5 done, step 6 (component kit) open. Brand strategy at `BUILD/BRAND.md`; logo hand-authored as SVG after the Gemini refine pass failed on all five named defects (D2 defaulted to ship it). DESIGN.md rewritten from scratch as the Study Notebook; index.css is its implementation with a documented temporary compatibility layer so un-migrated screens pick up the new palette instead of staying Material-3. `tests/test_design_tokens.py` pins every contrast claim and caught two real AA failures plus one greyscale failure in my own draft. Landing-page fabrications C1/C2 fixed, plus a third the audit missed (a stated 0.70 review threshold that is really 0.90). |
+| 2. Brand & Design System | DONE | 2026-08-13 | All 6 steps done. Brand strategy at `BUILD/BRAND.md`; logo hand-authored as SVG after the Gemini refine pass failed on all five named defects (D2 defaulted to ship it). DESIGN.md rewritten from scratch as the Study Notebook; index.css is its implementation with a documented temporary compatibility layer so un-migrated screens pick up the new palette instead of staying Material-3. `tests/test_design_tokens.py` pins every contrast claim and caught two real AA failures plus one greyscale failure in my own draft. Landing-page fabrications C1/C2 fixed, plus a third the audit missed (a stated 0.70 review threshold that is really 0.90). Component kit: 19 components, all 8 states, preview page at `web/dev-previews/` with its own Vite entry so the product can never ship it. Closed the audit's "no skeleton component" and "no error boundary" gaps. Three defects found by verifying rather than trusting the agent reports: RadioGroup did not actually have 8 states; the preview page was silently missing every utility used only inside a component (Tailwind source detection is rooted at the entry CSS, fixed with `@source`, CSS went 28KB→69KB); and a hover-pinning device I built emitted zero CSS and was removed rather than left to quietly pass review. |
 | 3. IA & UX Flows | PENDING | — | |
 | 4. Surface redesign | PENDING | — | |
 | 5. Motion & data-viz | PENDING | — | |
@@ -141,3 +151,21 @@ it so it can never be replayed as a directive.
    (mark timeouts as "DEFAULTED").
 5. `LAST STEERING TS` advances only after the message is logged AND acted on or queued.
 6. Commit STATE.md with the work it describes, same commit.
+
+### Phase 2 deliverables (for later phases to read)
+
+| Artefact | Path | Note |
+|---|---|---|
+| Design system | `DESIGN.md` | The source of truth. Read before emitting any UI. |
+| Brand strategy | `BUILD/BRAND.md` | Meaning, not values. Wins over DESIGN.md on meaning only. |
+| Tokens | `web/src/index.css` | Implementation of DESIGN.md, plus a documented temporary compat layer. |
+| Contrast guarantees | `tests/test_design_tokens.py` | 28 tests. Pins every ratio DESIGN.md claims. |
+| Logo | `web/public/brand/` | mark / mark-mono / mark-favicon. NOT yet wired into `index.html` — that is Phase 6.5. |
+| Logo candidates | `BUILD/brand/` | 4 Gemini renders + 1 refine + the D2 contact sheet. |
+| Component kit | `web/src/components/ui/` | 19 components, 8 states each. |
+| Kit preview | `web/dev-previews/` | `npm run preview:kit`. Separate Vite entry; never shipped. |
+| Generation script | `scripts/gen_brand_images.py` | Books spend into the real cost ledger and refuses to breach the ceiling. |
+
+**Budget correction, carried forward:** the mission assumed an $8 Gemini ceiling.
+The real one is **$4.99** (`lemely.toml:20`). Image spend this phase was $0.195 of
+the $3 allowance; cumulative is **$0.399 / $4.99**.
