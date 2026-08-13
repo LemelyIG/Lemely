@@ -219,7 +219,7 @@ function AnnouncementsPanel() {
     return (
       <ErrorState
         heading="Announcements could not be loaded"
-        body="This is a connection problem on our side, not an empty noticeboard — your teacher may well have posted something."
+        body="This is a connection problem on our side, not an empty noticeboard. Your teacher may well have posted something."
         action={{ label: "Try again", onClick: () => void refetch() }}
       />
     )
@@ -317,7 +317,7 @@ function ExamCalendarPanel() {
     return (
       <ErrorState
         heading="Exam dates could not be loaded"
-        body="Nothing is wrong with your timetable — this is a connection problem."
+        body="Nothing is wrong with your timetable. This is a connection problem."
         action={{ label: "Try again", onClick: () => void refetch() }}
       />
     )

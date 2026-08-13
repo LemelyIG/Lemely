@@ -83,7 +83,7 @@ export function XPStreak({
         {frozen ? (
           <div className="mt-3 flex items-center gap-1.5 rounded-md bg-surface-2 px-2.5 py-1.5 text-xs text-t2">
             <Snowflake size={12} className="text-t2" />
-            Streak freeze active — today is protected
+            Streak freeze active. Today is protected.
           </div>
         ) : null}
 

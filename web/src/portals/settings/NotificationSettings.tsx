@@ -72,7 +72,7 @@ function pushStateCopy(kind: string): { heading: string; body: string } {
     case "denied":
       return {
         heading: "You have blocked notifications for Lemely",
-        body: "We cannot ask again from here — browsers only let you undo this yourself. Open the padlock or site-settings icon next to the address bar and allow notifications, then reload this page.",
+        body: "We cannot ask again from here. Browsers only let you undo this yourself. Open the padlock or site-settings icon next to the address bar and allow notifications, then reload this page.",
       }
     case "enabled":
       return {
@@ -185,7 +185,7 @@ export function NotificationSettings() {
       setTestResult(
         shown
           ? "Sent to this device. If nothing appeared, your system notification settings are blocking it."
-          : "This device cannot show a notification yet — turn push on above first.",
+          : "This device cannot show a notification yet. Turn push on above first.",
       )
     })
   }

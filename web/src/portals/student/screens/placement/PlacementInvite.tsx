@@ -125,7 +125,7 @@ export function PlacementInvite() {
       </Card>
 
       {createPlacement.isError && !raceUnavailable ? (
-        <p className="text-dense-sm text-err">Couldn't start the test — try again.</p>
+        <p className="text-dense-sm text-err">We couldn't start the test. Try again.</p>
       ) : null}
 
       <div className="flex flex-wrap gap-3">

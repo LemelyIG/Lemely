@@ -35,13 +35,13 @@ const tierMeta: Record<ConfidenceTier, TierMeta> = {
     label: "Uncertain",
     icon: WarningCircle,
     explanation:
-      "We're not fully certain about this one — it's a close call. Your teacher may take a look.",
+      "We're not fully certain about this one. It's a close call, and your teacher may take a look.",
   },
   "needs-review": {
     label: "Needs review",
     icon: Flag,
     explanation:
-      "We're not certain about this one — your teacher will check it before it counts.",
+      "We're not certain about this one. Your teacher will check it before it counts.",
   },
 }
 

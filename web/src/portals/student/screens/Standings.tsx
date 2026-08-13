@@ -480,7 +480,7 @@ export function Standings() {
             ) : board.isError ? (
               <ErrorState
                 heading="The board could not be loaded"
-                body="This is a connection problem, not an empty board — your classmates' XP is still there."
+                body="This is a connection problem, not an empty board. Your classmates' XP is still there."
                 action={{ label: "Try again", onClick: () => void board.refetch() }}
               />
             ) : board.isPending || !board.data ? (
@@ -516,7 +516,7 @@ export function Standings() {
             {standings.isError ? (
               <ErrorState
                 heading="Subject standings could not be loaded"
-                body="A connection problem — nothing has changed about your subjects."
+                body="A connection problem. Nothing has changed about your subjects."
                 action={{
                   label: "Try again",
                   onClick: () => void standings.refetch(),

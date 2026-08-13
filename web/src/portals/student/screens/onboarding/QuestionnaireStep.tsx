@@ -64,6 +64,29 @@ function SkippableSlider({
   )
 }
 
+/*
+ * P3.3. The question heading doubles as the accessible name for whatever
+ * control the step renders inside it.
+ *
+ * The two free-text steps ("Which school are you at?", "What year or grade
+ * level are you in?") had a `placeholder` and nothing else — no `<label>`, no
+ * `aria-label`. A placeholder is not a label: it is announced inconsistently
+ * across screen readers, and it disappears the moment the student starts
+ * typing, so it fails the reader who most needs it. The mission bans exactly
+ * this ("visible labels, never placeholder-only").
+ *
+ * A separate visible `<label>` would be the obvious fix and is the wrong one
+ * here: the question already IS the visible label, in 32px serif, and adding a
+ * second smaller copy of it above the field would be the same words twice.
+ * Pointing the control at the heading with `aria-labelledby` gives the field a
+ * real name taken from text that is already on screen, with no visual change.
+ *
+ * A module constant rather than `useId` because the id has to be referenced
+ * from the sibling branches below, and exactly one `QuestionShell` is ever
+ * mounted at a time (`steps[stepIndex]`), so it cannot collide with itself.
+ */
+export const QUESTION_HEADING_ID = "onboarding-question-heading"
+
 function QuestionShell({ question, children }: { question: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-5">
@@ -71,7 +94,12 @@ function QuestionShell({ question, children }: { question: string; children: Rea
        * `QuestionShell` renders at a time (`steps[stepIndex]` above), so this
        * is the screen's single h1 — not a decorative div wearing display
        * type. QUALITY-BAR.md: "one h1 per page, heading order unbroken". */}
-      <h1 className="font-serif text-display-md leading-display text-t1 m-0">{question}</h1>
+      <h1
+        id={QUESTION_HEADING_ID}
+        className="font-serif text-display-md leading-display text-t1 m-0"
+      >
+        {question}
+      </h1>
       {children}
     </div>
   )
@@ -133,6 +161,7 @@ export function QuestionnaireStep({
           autoFocus
           value={answers.schoolName ?? ""}
           onChange={(event) => onSchoolName(event.target.value)}
+          aria-labelledby={QUESTION_HEADING_ID}
           placeholder="e.g. Greenwood International School"
           className="rounded-lg border border-border bg-surface px-4 py-3 text-body-lg text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-h-[44px]"
         />
@@ -188,6 +217,7 @@ export function QuestionnaireStep({
           autoFocus
           value={answers.gradeLevel ?? ""}
           onChange={(event) => onGradeLevel(event.target.value)}
+          aria-labelledby={QUESTION_HEADING_ID}
           placeholder="e.g. Year 11"
           className="rounded-lg border border-border bg-surface px-4 py-3 text-body-lg text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-h-[44px]"
         />

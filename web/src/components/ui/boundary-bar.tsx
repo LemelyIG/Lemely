@@ -90,7 +90,7 @@ export function BoundaryBar({
               style={{ left: `${scorePct}%` }}
             >
               <div className="bg-ink text-accent-on text-metadata px-2 py-1 rounded-md whitespace-nowrap mb-1">
-                You — {score}/{maxScore}
+                You, {score}/{maxScore}
               </div>
               <div className="w-0.5 h-2 bg-ink" aria-hidden />
             </div>

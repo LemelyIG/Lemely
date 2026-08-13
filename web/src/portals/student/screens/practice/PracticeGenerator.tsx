@@ -321,7 +321,7 @@ export function PracticeGenerator() {
             )}
 
             {createPractice.isError && !raceUnavailable ? (
-              <p className="text-dense-sm text-err">Couldn't create this set — try again.</p>
+              <p className="text-dense-sm text-err">We couldn't create this set. Try again.</p>
             ) : null}
 
             <div className="flex flex-wrap gap-3">
@@ -343,7 +343,7 @@ export function PracticeGenerator() {
       ) : previewQuery.isPending ? (
         <p className="text-dense-sm text-t3">Checking what matches…</p>
       ) : previewQuery.isError ? (
-        <p className="text-dense-sm text-err">Couldn't check availability — try changing a filter.</p>
+        <p className="text-dense-sm text-err">We couldn't check availability. Try changing a filter.</p>
       ) : null}
     </div>
   )

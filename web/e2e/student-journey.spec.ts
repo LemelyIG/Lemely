@@ -31,7 +31,12 @@ test("the corrected-paper student sees their real dashboard data and the parents
   await page.getByRole("button", { name: /sign in/i }).click()
   await expect(page).toHaveURL(/\/student$/, { timeout: 15_000 })
 
-  await expect(page.getByText("Loading overview…")).toHaveCount(0, { timeout: 15_000 })
+  // P3.3 replaced the "Loading overview…" text with layout-matching
+  // skeletons, which announce themselves as a `status` region named
+  // "Loading" instead of rendering that string.
+  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, {
+    timeout: 15_000,
+  })
   // Non-empty: the first-run view must NOT render — this student has one
   // seeded, persisted attempt (88%, subject 0625). P3.2 replaced the single
   // centred EmptyState ("Correct your first paper to see it here") with the

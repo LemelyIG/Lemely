@@ -299,8 +299,18 @@ export function Classes() {
                     <td className="px-[18px] py-[13px]">
                       {editingId === c.id ? (
                         <div className="flex items-center gap-2">
+                          {/* P3.3: this had no accessible name at all — no
+                              label, no aria-label, not even a placeholder. It
+                              appears in place of the class name when a teacher
+                              clicks rename, so a screen reader announced an
+                              anonymous textbox already containing text, with
+                              nothing to say what editing it would do. There is
+                              no room for a visible label inside a table cell
+                              that is standing in for one line of text, so the
+                              name is carried by `aria-label`. */}
                           <input
                             autoFocus
+                            aria-label={`Rename class ${c.label}`}
                             value={editName}
                             onChange={(e) => setEditName(e.target.value)}
                             className="border border-border bg-surface rounded-lg px-2.5 py-1.5 text-dense text-t1 w-[160px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"

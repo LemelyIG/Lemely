@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "audit": "node scripts/audit.mjs",
+    "check:copy": "node scripts/check_copy.mjs",
     "compare-screens": "node scripts/compare_screens.mjs",
     "contact-sheets": "node scripts/contact_sheets.mjs",
     "preview:kit": "vite --config vite.preview.config.ts",

@@ -4,6 +4,11 @@ import { Meter } from "@/components/ui/primitives"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { ErrorState } from "@/components/ui/state-views"
 import { GettingStarted } from "@/components/ui/getting-started"
+import {
+  PageHeaderSkeleton,
+  ListSkeleton,
+  PanelSkeleton,
+} from "@/components/ui/loading-shapes"
 import { greetingFor } from "@/lib/utils"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { vizBg } from "../components/colors"
@@ -20,12 +25,26 @@ export function Overview() {
   const navigate = useNavigate()
   const { data, isPending, isError, error, refetch } = useOverview()
 
+  /*
+   * P3.3: a skeleton matching this screen's real layout, replacing the single
+   * line of "Loading overview…" text that used to sit here.
+   *
+   * The line was not merely plain, it was the wrong *size*: it occupied one
+   * text row where the loaded screen renders a heading, a subjects ledger and
+   * a two-up panel row, so every load ended in the page jumping several
+   * hundred pixels as content arrived. That is the layout shift DESIGN.md §12
+   * names (CLS < 0.1) and the reason the rule is "match the layout", not
+   * "look nicer while waiting".
+   */
   if (isPending) {
     return (
       <div className="lm-screen flex flex-col gap-26px">
         <h1 className="sr-only">Overview</h1>
-        <div role="status" className="text-sm text-t2">
-          Loading overview…
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={3} />
+        <div className="lm-cols grid grid-cols-2 gap-5 max-tablet:grid-cols-1">
+          <PanelSkeleton />
+          <PanelSkeleton />
         </div>
       </div>
     )

@@ -154,7 +154,7 @@ function PhoneStep({
         </div>
         {tooShort ? (
           <p id="parent-phone-hint" className="text-body-md text-warn">
-            That looks too short — check the number and try again.
+            That looks too short. Check the number and try again.
           </p>
         ) : null}
       </div>

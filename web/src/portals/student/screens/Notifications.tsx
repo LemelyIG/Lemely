@@ -221,7 +221,7 @@ export function Notifications() {
           // An empty inbox and a failed fetch look identical if this lies, and
           // the difference matters: one means nothing has happened, the other
           // means something may have and we cannot show it.
-          body="This is a connection problem on our side. You may well have notifications waiting — nothing has been lost."
+          body="This is a connection problem on our side. You may well have notifications waiting, and nothing has been lost."
           action={{ label: "Try again", onClick: () => void refetch() }}
         />
       </div>

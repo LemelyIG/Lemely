@@ -315,7 +315,7 @@ export function Profile() {
       {xp.isError ? (
         <ErrorState
           heading="Your XP could not be loaded"
-          body="This is a connection problem. Your XP and streak are safe — nothing has been lost."
+          body="This is a connection problem. Your XP and streak are safe, and nothing has been lost."
           action={{ label: "Try again", onClick: () => void xp.refetch() }}
         />
       ) : xp.isPending || !xp.data ? (

@@ -375,7 +375,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
       await flushPendingSaves()
     } catch {
       setSubmitError(
-        "We couldn't save your latest answers, so we haven't submitted yet. Check your connection and try again — nothing you've written has been lost.",
+        "We couldn't save your latest answers, so we haven't submitted yet. Check your connection and try again. Nothing you've written has been lost.",
       )
       setConfirmingSubmit(false)
       return
@@ -385,7 +385,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
       clearCache(assignmentId)
       onSubmitted(result)
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Couldn't submit — try again.")
+      setSubmitError(err instanceof Error ? err.message : "We couldn't submit that. Try again.")
       setConfirmingSubmit(false)
     }
   }
@@ -468,7 +468,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
         {!online ? (
           <Chip tone="warn" className="gap-1">
             <WifiSlash size={12} weight="bold" aria-hidden />
-            Offline — answers save locally
+            Offline. Answers save locally.
           </Chip>
         ) : null}
         <Chip tone={timeNearlyUp ? "warn" : "neutral"} className="font-mono">
@@ -596,8 +596,8 @@ function SaveIndicator({ status, online }: { status: SaveStatus; online: boolean
     return (
       <p className="text-dense-sm text-err" role="status">
         {online
-          ? "Couldn't save this answer — it's kept on this device, and we'll send it again before you submit."
-          : "Offline — this will save once you're back online."}
+          ? "We couldn't save this answer. It's kept on this device, and we'll send it again before you submit."
+          : "Offline. This will save once you're back online."}
       </p>
     )
   }

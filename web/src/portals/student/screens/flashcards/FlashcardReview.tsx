@@ -273,7 +273,7 @@ export function FlashcardReview() {
       ) : null}
 
       {reviewCard.isError ? (
-        <p className="text-dense-sm text-err">Couldn't record that grade — try again.</p>
+        <p className="text-dense-sm text-err">We couldn't record that grade. Try again.</p>
       ) : null}
     </div>
   )

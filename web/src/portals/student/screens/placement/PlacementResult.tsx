@@ -78,7 +78,7 @@ export function PlacementResult() {
           Marking your {subjectName} placement test
         </h1>
         <p className="text-body-md text-t2">
-          This usually only takes a moment. This page will update on its own — no need to refresh.
+          This usually only takes a moment. This page will update on its own, so there is no need to refresh.
         </p>
         <Button variant="ghost" onClick={() => navigate("/student")}>
           Come back to this later

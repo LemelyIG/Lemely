@@ -133,7 +133,7 @@ function CardRow({
               />
             </label>
             {editCard.isError ? (
-              <p className="text-dense-sm text-err">Couldn't save that change — try again.</p>
+              <p className="text-dense-sm text-err">We couldn't save that change. Try again.</p>
             ) : null}
             <div className="flex gap-2">
               <Button type="submit" variant="secondary" size="sm" disabled={editCard.isPending}>
@@ -246,7 +246,7 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
           />
         </label>
         {addCard.isError ? (
-          <p className="text-dense-sm text-err">Couldn't add that card — try again.</p>
+          <p className="text-dense-sm text-err">We couldn't add that card. Try again.</p>
         ) : null}
         <div>
           <Button type="submit" variant="secondary" size="sm" disabled={addCard.isPending}>
@@ -350,7 +350,7 @@ export function FlashcardDecks() {
           {dueQuery.isPending ? (
             <p className="text-dense-sm text-t3">Checking what's due…</p>
           ) : dueQuery.isError ? (
-            <p className="text-dense-sm text-err">Couldn't check what's due — try again.</p>
+            <p className="text-dense-sm text-err">We couldn't check what's due. Try again.</p>
           ) : due?.kind === "due" ? (
             <>
               <div className="text-body-lg font-medium text-t1">
@@ -474,7 +474,7 @@ export function FlashcardDecks() {
 
           {(createDeck.isError && refusal === undefined) ||
           (generateDeck.isError && refusal === undefined) ? (
-            <p className="text-dense-sm text-err">Couldn't create that deck — try again.</p>
+            <p className="text-dense-sm text-err">We couldn't create that deck. Try again.</p>
           ) : null}
 
           <div>

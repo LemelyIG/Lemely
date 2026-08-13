@@ -4,6 +4,11 @@ import { Chip } from "@/components/ui/chip"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { GettingStarted } from "@/components/ui/getting-started"
+import {
+  PageHeaderSkeleton,
+  ListSkeleton,
+  CardGridSkeleton,
+} from "@/components/ui/loading-shapes"
 import { cn, greetingFor, initialsOf, relativeTime } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { Avatar } from "../components/Avatar"
@@ -61,13 +66,19 @@ export function Overview() {
   const overviewQuery = useTeacherOverview()
   const classesQuery = useTeacherClasses()
 
+  // P3.3: skeleton matching the real layout (header, "Needs you" list, class
+  // card grid, activity list) rather than one line of "Loading overview…"
+  // text. See the same note on the student Overview: the old line reserved a
+  // single text row for a screen that renders four stacked regions, so the
+  // page jumped every time data landed.
   if (overviewQuery.isPending || classesQuery.isPending) {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Overview</h1>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading overview…
-        </div>
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={3} className="max-w-[620px]" />
+        <CardGridSkeleton count={3} />
+        <ListSkeleton rows={4} avatar />
       </div>
     )
   }

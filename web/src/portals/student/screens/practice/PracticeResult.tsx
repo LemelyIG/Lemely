@@ -71,7 +71,7 @@ export function PracticeResult() {
         <CircleNotch size={28} className="animate-spin text-accent" aria-hidden />
         <h1 className="text-body-lg font-medium text-t1 m-0">Marking your {subjectName} practice set</h1>
         <p className="text-body-md text-t2">
-          This usually only takes a moment. This page will update on its own — no need to refresh.
+          This usually only takes a moment. This page will update on its own, so there is no need to refresh.
         </p>
         <Button variant="ghost" onClick={() => navigate("/student")}>
           Come back to this later
