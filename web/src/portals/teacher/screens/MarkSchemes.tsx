@@ -1,9 +1,15 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useRef, type ChangeEvent } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { useSchemes, useUploadScheme } from "@/lib/hooks/useTeacherApi"
+import { ListSkeleton } from "@/components/ui/loading-shapes"
+import {
+  teacherLoadFailureMessage,
+  teacherMutationFailureMessage,
+} from "@/lib/teacherOutcome"
 import type { SchemeStatus } from "@/lib/teacherTypes"
 
 /*
@@ -26,9 +32,9 @@ import type { SchemeStatus } from "@/lib/teacherTypes"
  */
 
 const STATUS_CHIP: Record<SchemeStatus, string> = {
-  parsed: "bg-ok-bg text-ok",
-  pending: "bg-accent-subtle text-accent-subtle-on",
-  custom: "bg-surface-2 text-t2",
+  parsed: "bg-ok-wash text-ok",
+  pending: "bg-accent-wash text-accent-ink",
+  custom: "bg-paper-sunk text-ink-muted",
 }
 
 const COLS = "grid grid-cols-[minmax(0,1.6fr)_84px_104px_62px_74px_92px] gap-[14px]"
@@ -53,7 +59,7 @@ export function MarkSchemes() {
   if (isPending) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-dense-lg text-t2">Loading mark schemes…</div>
+        <ListSkeleton rows={5} />
       </div>
     )
   }
@@ -61,8 +67,8 @@ export function MarkSchemes() {
   if (isError) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-dense-lg text-accent">
-          Couldn't load mark schemes: {error.message}
+        <div className="text-body-lg text-accent">
+          Couldn't load mark schemes: {teacherLoadFailureMessage(error)}
         </div>
       </div>
     )
@@ -72,9 +78,9 @@ export function MarkSchemes() {
 
   return (
     <div className="lm-screen flex flex-col gap-5">
-      <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-2.5">
+      <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-2.5">
         <div>
-          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+          <div className="text-eyebrow text-ink-faint">
             Library · {schemes.length} scheme{schemes.length === 1 ? "" : "s"}
           </div>
           {/* A real h1, not a styled div — same `page-has-heading-one`
@@ -102,8 +108,8 @@ export function MarkSchemes() {
       </div>
 
       {uploadScheme.isError ? (
-        <div className="text-dense text-accent">
-          Couldn't parse that mark scheme: {uploadScheme.error.message}
+        <div className="text-body-md text-accent">
+          Couldn't parse that mark scheme: {teacherMutationFailureMessage(uploadScheme.error)}
         </div>
       ) : null}
 
@@ -123,11 +129,11 @@ export function MarkSchemes() {
         ))}
       </div>
 
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
+      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden">
         <div
           className={cn(
             COLS,
-            "px-[22px] py-2.5 bg-surface-2 border-b border-border font-mono text-3xs tracking-[0.09em] uppercase text-t3",
+            "px-[22px] py-2.5 bg-paper-sunk border-b border-rule text-eyebrow text-ink-faint",
           )}
         >
           <div>Document</div>
@@ -142,20 +148,20 @@ export function MarkSchemes() {
             key={m.doc}
             className={cn(
               COLS,
-              "items-center px-[22px] py-[13px] border-b border-border",
+              "items-center px-[22px] py-[13px] border-b border-rule",
             )}
           >
-            <div className="font-mono text-dense-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+            <div className="text-data-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
               {m.doc}
             </div>
-            <div className="text-dense text-t2">{m.paper}</div>
-            <div className="text-dense text-t2">{m.session}</div>
-            <div className="font-mono text-dense-sm">{m.maxMarks ?? "-"}</div>
-            <div className="font-mono text-dense-sm text-t2">{m.questionCount ?? "-"}</div>
+            <div className="text-body-md text-ink-muted">{m.paper}</div>
+            <div className="text-body-md text-ink-muted">{m.session}</div>
+            <div className="text-data-sm">{m.maxMarks ?? "-"}</div>
+            <div className="text-data-sm text-ink-faint">{m.questionCount ?? "-"}</div>
             <div>
               <span
                 className={cn(
-                  "text-xs rounded-full px-[11px] py-[3px]",
+                  "text-body-sm rounded-full px-[11px] py-[3px]",
                   STATUS_CHIP[m.status],
                 )}
               >

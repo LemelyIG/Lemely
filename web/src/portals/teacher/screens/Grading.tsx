@@ -1,9 +1,15 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
 import { cn } from "@/lib/utils"
+import { CardGridSkeleton } from "@/components/ui/loading-shapes"
+import {
+  teacherLoadFailureMessage,
+  teacherMutationFailureMessage,
+} from "@/lib/teacherOutcome"
 import { failActiveStage } from "@/lib/pipelineStages"
 import {
   usePapers,
@@ -76,14 +82,14 @@ const CIRC = 2 * Math.PI * 42
 const PIPE_MARK = { done: "✓", active: "●", idle: "" } as const
 
 const CHIP_TONE: Record<PaperKind, string> = {
-  graded: "bg-ok-bg text-ok",
-  review: "bg-err-bg text-err",
-  processing: "bg-accent-subtle text-accent-subtle-on",
-  queued: "bg-surface-2 text-t2",
+  graded: "bg-ok-wash text-ok",
+  review: "bg-err-wash text-err",
+  processing: "bg-accent-wash text-accent-ink",
+  queued: "bg-paper-sunk text-ink-muted",
   // Distinct from `review`'s red: review means "a human should look at these
   // marks", failed means "there are no marks". Reading as the same state would
   // send a teacher hunting for a score that was never produced.
-  failed: "bg-surface-2 text-err border border-err",
+  failed: "bg-paper-sunk text-err border border-err",
 }
 
 type TabId = "all" | "review" | "graded" | "processing"
@@ -114,7 +120,7 @@ function PaperCard({
   const previewUrl = useScanPreview(paper.id)
   const showSpinner = paper.kind === "processing"
   const confTone =
-    paper.kind === "review" ? "text-err" : paper.kind === "graded" ? "text-t2" : "text-t3"
+    paper.kind === "review" ? "text-err" : paper.kind === "graded" ? "text-ink-muted" : "text-ink-faint"
   const confText = paper.confidence != null ? `conf ${Math.round(paper.confidence * 100)}%` : null
   const scoreText =
     paper.awardedMarks != null && paper.maxMarks != null
@@ -133,11 +139,11 @@ function PaperCard({
         }
       }}
       className={cn(
-        "rounded-md overflow-hidden bg-surface cursor-pointer transition-transform hover:-translate-y-0.5 border",
-        paper.kind === "review" ? "border-err" : "border-border",
+        "rounded-md overflow-hidden bg-paper-raised cursor-pointer transition-transform hover:-translate-y-0.5 border",
+        paper.kind === "review" ? "border-err" : "border-rule",
       )}
     >
-      <div className="relative h-[64px] bg-surface-2 border-b border-border overflow-hidden">
+      <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
         {previewUrl ? (
           // Top-anchored: a scan's identifying marks (subject, paper number,
           // candidate box) are at the head of page 1, so a 64px window onto the
@@ -151,13 +157,13 @@ function PaperCard({
           />
         ) : null}
         {paper.kind === "review" ? (
-          <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-3xs flex items-center justify-center font-mono">
+          <div className="absolute top-2.5 end-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-data-sm flex items-center justify-center">
             !
           </div>
         ) : null}
         {showSpinner ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-surface-2/70">
-            <div className="w-[26px] h-[26px] rounded-full border-[3px] border-border border-t-accent animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center bg-paper-sunk/70">
+            <div className="w-[26px] h-[26px] rounded-full border-[3px] border-rule border-t-accent animate-spin" />
           </div>
         ) : null}
       </div>
@@ -167,12 +173,12 @@ function PaperCard({
               refuses to shrink below its content, so a long name (the detected
               label is longer still — "Paper 1 V2 May/June 2020 - 2026-08-12")
               pushed the status chip off the card's right edge and clipped it. */}
-          <div className="text-dense-lg font-medium flex-1 min-w-0 truncate" title={paper.name}>
+          <div className="text-body-lg font-medium flex-1 min-w-0 truncate" title={paper.name}>
             {paper.name}
           </div>
           <div
             className={cn(
-              "text-3xs rounded-full px-[9px] py-0.5 whitespace-nowrap flex-none",
+              "text-eyebrow rounded-full px-[9px] py-1 whitespace-nowrap flex-none",
               CHIP_TONE[paper.kind],
             )}
           >
@@ -181,10 +187,10 @@ function PaperCard({
         </div>
         <div className="flex items-baseline gap-2 mt-[9px]">
           {confText ? (
-            <div className={cn("font-mono text-xs", confTone)}>{confText}</div>
+            <div className={cn("text-data-sm", confTone)}>{confText}</div>
           ) : null}
           <div className="flex-1" />
-          <div className="font-mono text-md">{scoreText}</div>
+          <div className="text-data-md text-ink">{scoreText}</div>
         </div>
       </div>
     </div>
@@ -256,7 +262,7 @@ export function Grading() {
   if (papersQuery.isPending) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-dense-lg text-t2">Loading papers…</div>
+        <CardGridSkeleton count={6} />
       </div>
     )
   }
@@ -264,8 +270,8 @@ export function Grading() {
   if (papersQuery.isError) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-dense-lg text-accent">
-          Couldn't load papers: {papersQuery.error.message}
+        <div className="text-body-lg text-accent">
+          Couldn't load papers: {teacherLoadFailureMessage(papersQuery.error)}
         </div>
       </div>
     )
@@ -289,9 +295,9 @@ export function Grading() {
 
   return (
     <div className="lm-screen flex flex-col gap-5">
-      <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-2.5">
+      <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-2.5">
         <div>
-          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+          <div className="text-eyebrow text-ink-faint">
             Grading console
           </div>
           {/* A real h1, not a styled div: axe's `page-has-heading-one` fired
@@ -310,19 +316,19 @@ export function Grading() {
       <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-6 items-start">
         {/* Left column */}
         <div className="flex flex-col gap-4">
-          <div className="bg-surface border border-border rounded-lg px-5 py-[18px]">
-            <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3">
+          <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
+            <div className="text-eyebrow text-ink-faint">
               Detected
             </div>
             {!activePaperId ? (
-              <div className="text-dense text-t2 mt-[18px]">
+              <div className="text-body-md text-ink-muted mt-[18px]">
                 Upload a scan to see detected fields.
               </div>
             ) : detectedFields.length === 0 ? (
               // Detection is the first phase of the server-side run, so an
               // in-flight paper genuinely has no answer yet — say which of the
               // two it is rather than reporting "none" for both.
-              <div className="text-dense text-t2 mt-[18px]">
+              <div className="text-body-md text-ink-muted mt-[18px]">
                 {detail && (detail.kind === "queued" || detail.kind === "processing")
                   ? "Reading this scan's exam details…"
                   : "No metadata detected for this paper."}
@@ -331,17 +337,17 @@ export function Grading() {
               <div className="grid grid-cols-2 gap-x-[14px] gap-y-4 mt-[18px]">
                 {detectedFields.map((d) => (
                   <div key={d.key}>
-                    <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3">
+                    <div className="text-eyebrow text-ink-faint">
                       {d.key}
                     </div>
-                    <div className="font-mono text-md mt-1">{d.value}</div>
+                    <div className="text-data-md text-ink mt-1">{d.value}</div>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          <div className="bg-surface border border-border rounded-lg p-5 flex gap-5 items-center">
+          <div className="bg-paper-raised border border-rule rounded-lg p-5 flex gap-5 items-center">
             <svg
               viewBox="0 0 100 100"
               className="w-[92px] h-[92px] flex-none -rotate-90"
@@ -366,16 +372,16 @@ export function Grading() {
               />
             </svg>
             <div className="flex-1">
-              <div className="text-md font-semibold">Auto-grading</div>
+              <div className="text-display-sm text-ink">Auto-grading</div>
               {processingCount > 0 ? (
-                <div className="font-mono text-xs text-t2 mt-[5px]">
+                <div className="text-data-sm text-ink-faint mt-[5px]">
                   {processingCount} processing
                 </div>
               ) : null}
               <div className="flex gap-[22px] mt-[14px]">
                 <div>
                   <div className="text-display-sm">{gradedCount}</div>
-                  <div className="font-mono text-3xs text-t3 mt-[3px]">
+                  <div className="text-data-sm text-ink-faint mt-[3px]">
                     AUTO-CONFIRMED
                   </div>
                 </div>
@@ -383,7 +389,7 @@ export function Grading() {
                   <div className="text-display-sm text-err">
                     {reviewCount}
                   </div>
-                  <div className="font-mono text-3xs text-t3 mt-[3px]">
+                  <div className="text-data-sm text-ink-faint mt-[3px]">
                     NEED REVIEW
                   </div>
                 </div>
@@ -391,17 +397,17 @@ export function Grading() {
             </div>
           </div>
 
-          <div className="bg-surface border border-border rounded-lg px-5 py-[18px]">
-            <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mb-[14px]">
+          <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
+            <div className="text-eyebrow text-ink-faint mb-[14px]">
               Pipeline
             </div>
             {!activePaperId ? (
-              <div className="text-dense text-t2">Upload a scan to see its pipeline.</div>
+              <div className="text-body-md text-ink-muted">Upload a scan to see its pipeline.</div>
             ) : paperDetailQuery.isPending ? (
-              <div className="text-dense text-t2">Loading…</div>
+              <div className="text-body-md text-ink-muted">Loading…</div>
             ) : paperDetailQuery.isError ? (
-              <div className="text-dense text-accent">
-                Couldn't load pipeline: {paperDetailQuery.error.message}
+              <div className="text-body-md text-accent">
+                Couldn't load pipeline: {teacherLoadFailureMessage(paperDetailQuery.error)}
               </div>
             ) : detail ? (
               <>
@@ -409,29 +415,29 @@ export function Grading() {
                   <div key={p.label} className="flex items-center gap-3 py-[9px]">
                     <span
                       className={cn(
-                        "w-[19px] h-[19px] flex-none rounded-full border-[1.5px] flex items-center justify-center text-3xs font-mono",
+                        "w-[19px] h-[19px] flex-none rounded-full border-[1.5px] flex items-center justify-center text-data-sm",
                         p.state === "done"
                           ? "bg-ok border-ok text-accent-on"
                           : p.state === "active"
                             ? "bg-transparent border-accent text-accent"
-                            : "bg-transparent border-border text-accent",
+                            : "bg-transparent border-rule text-accent",
                       )}
                     >
                       {PIPE_MARK[p.state]}
                     </span>
                     <span
                       className={cn(
-                        "flex-1 text-dense-lg",
-                        p.state === "idle" ? "text-t3" : "text-t1",
+                        "flex-1 text-body-lg",
+                        p.state === "idle" ? "text-ink-faint" : "text-ink",
                       )}
                     >
                       {p.label}
                     </span>
-                    <span className="font-mono text-xs text-t2">{p.count}</span>
+                    <span className="text-data-sm text-ink-faint">{p.count}</span>
                   </div>
                 ))}
                 {detail.kind === "queued" ? (
-                  <div className="text-dense text-t2 mt-2">
+                  <div className="text-body-md text-ink-muted mt-2">
                     Waiting for the marking worker.
                   </div>
                 ) : null}
@@ -439,8 +445,8 @@ export function Grading() {
                   // The specific reason, from the server — never a generic
                   // "something went wrong". A paper that produced no marks has
                   // to say why, or the teacher has nothing to act on.
-                  <div className="mt-3 pt-3 border-t border-border flex flex-col gap-2.5 items-start">
-                    <div className="text-dense text-err">{detail.error}</div>
+                  <div className="mt-3 pt-3 border-t border-rule flex flex-col gap-2.5 items-start">
+                    <div className="text-body-md text-err">{detail.error}</div>
                     <Button
                       variant="ink"
                       size="sm"
@@ -450,8 +456,8 @@ export function Grading() {
                       {regrade.isPending ? "Queueing…" : "Try again"}
                     </Button>
                     {regrade.isError ? (
-                      <div className="text-dense text-err">
-                        Couldn't re-queue: {regrade.error.message}
+                      <div className="text-body-md text-err">
+                        Couldn't re-queue: {teacherMutationFailureMessage(regrade.error)}
                       </div>
                     ) : null}
                   </div>
@@ -460,12 +466,12 @@ export function Grading() {
             ) : null}
           </div>
 
-          <div className="border border-border rounded-lg p-5 bg-surface-2 flex flex-col gap-3">
-            <div className="text-sm font-medium">Upload a scan</div>
+          <div className="border border-rule rounded-lg p-5 bg-paper-sunk flex flex-col gap-3">
+            <div className="text-body-md font-medium">Upload a scan</div>
             <div>
               <label
                 htmlFor="grading-scan-file"
-                className="text-xs font-medium block mb-1.5"
+                className="text-body-sm font-medium block mb-1.5"
               >
                 Scanned paper
               </label>
@@ -475,13 +481,13 @@ export function Grading() {
                 accept="application/pdf,image/*"
                 disabled={uploading}
                 onChange={handleScanChange}
-                className="text-xs text-t2 file:mr-3 file:border file:border-border file:bg-surface file:rounded-lg file:px-3 file:py-1.5 file:text-xs file:cursor-pointer file:font-sans"
+                className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
               />
             </div>
             <div>
               <label
                 htmlFor="grading-scheme-file"
-                className="text-xs font-medium block mb-1.5"
+                className="text-body-sm font-medium block mb-1.5"
               >
                 Mark scheme (optional)
               </label>
@@ -491,10 +497,10 @@ export function Grading() {
                 accept="application/pdf,image/*"
                 disabled={uploading}
                 onChange={handleSchemeChange}
-                className="text-xs text-t2 file:mr-3 file:border file:border-border file:bg-surface file:rounded-lg file:px-3 file:py-1.5 file:text-xs file:cursor-pointer file:font-sans"
+                className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
               />
               {!schemeFile ? (
-                <div className="font-mono text-3xs text-t3 mt-1.5">
+                <div className="text-data-sm text-ink-faint mt-1.5">
                   Attach a mark scheme unless you've already uploaded one for this
                   paper — without either, there is nothing to mark against.
                 </div>
@@ -514,10 +520,10 @@ export function Grading() {
                 separate error line here to contradict it. */}
             {hasRunStarted ? (
               <>
-                <ProcessingState stages={stages} className="border-t border-border pt-4" />
+                <ProcessingState stages={stages} className="border-t border-rule pt-4" />
                 {stages.every((s) => s.status === "done") ? (
-                  <div className="text-dense text-t2">
-                    Marking runs on the server — it keeps going if you close this
+                  <div className="text-body-md text-ink-muted">
+                    Marking runs on the server, so it keeps going if you close this
                     page. Progress is in Pipeline above.
                   </div>
                 ) : null}
@@ -529,7 +535,7 @@ export function Grading() {
         {/* Right column: tabs + papers */}
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-[14px] flex-wrap">
-            <div className="flex gap-1 bg-surface-2 p-1 rounded-md">
+            <div className="flex gap-1 bg-paper-sunk p-1 rounded-md">
               {tabs.map((t) => {
                 const on = tab === t.id
                 return (
@@ -537,17 +543,17 @@ export function Grading() {
                     key={t.id}
                     onClick={() => setTab(t.id)}
                     className={cn(
-                      "border-0 cursor-pointer text-dense px-[14px] py-2 rounded-lg",
+                      "border-0 cursor-pointer text-body-md px-[14px] py-2 rounded-lg",
                       on
-                        ? "bg-surface text-t1 font-medium shadow-sm"
-                        : "bg-transparent text-t2 font-normal",
+                        ? "bg-paper-raised text-ink font-medium shadow-sm"
+                        : "bg-transparent text-ink-muted font-normal",
                     )}
                   >
                     {t.label}{" "}
                     <span
                       className={cn(
-                        "font-mono text-xs",
-                        on ? "text-accent" : "text-t3",
+                        "text-data-sm",
+                        on ? "text-accent" : "text-ink-faint",
                       )}
                     >
                       {t.count}
@@ -560,7 +566,7 @@ export function Grading() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {filtered.length === 0 ? (
-              <div className="text-dense text-t2">No papers in this view yet.</div>
+              <div className="text-body-md text-ink-muted">No papers in this view yet.</div>
             ) : (
               filtered.map((p) => (
                 <PaperCard key={p.id} paper={p} onOpen={() => setSelectedPaperId(p.id)} />

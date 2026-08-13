@@ -80,6 +80,10 @@ const SCANNED_FILES = [
   "src/portals/teacher/screens/QuizBuilder.tsx",
   "src/portals/teacher/screens/QuizResults.tsx",
   "src/components/ui/confirm-modal.tsx",
+  "src/portals/teacher/screens/Grading.tsx",
+  "src/portals/teacher/screens/Review.tsx",
+  "src/portals/teacher/screens/ReviewItem.tsx",
+  "src/portals/teacher/screens/MarkSchemes.tsx",
 ]
 
 const CSS_PATH = "src/index.css"

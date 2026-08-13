@@ -58,18 +58,67 @@ def test_client_confidence_threshold_matches_the_backend() -> None:
     )
 
 
+#: Functions whose body is allowed to compare a bare number against a
+#: confidence-like value. Exactly one entry, and adding a second is the thing
+#: this test exists to make someone argue for.
+_CONFIDENCE_OWNER = "markingConfidence.ts"
+
+#: Identifiers that hold a confidence value under another name.
+#:
+#: P4.5 added this list, because the original regex below was defeated in the
+#: most ordinary way possible: ``Review.tsx`` bucketed with
+#: ``confidenceTone(score)`` and compared ``score >= 0.8``, so the word
+#: ``confidence`` never appeared beside the operator and the gate saw nothing.
+#: The teacher's review queue — the screen that exists *because* a mark fell
+#: below 0.90 — was therefore painting marks at 0.85 in the same green it uses
+#: for marks it is sure about.
+#:
+#: This is ``BUILD/DECISIONS.md`` D6.12's lesson in miniature: a condition
+#: every harness shares is a condition no harness tests. Here the shared
+#: condition was an assumption about *naming* — that a variable holding a
+#: confidence would be called one.
+_CONFIDENCE_ALIASES = ("confidence", "confidenceScore", "score", "conf", "certainty")
+
+
 def test_no_other_web_module_invents_its_own_confidence_floor() -> None:
     """One place decides this. A second copy is how the first one drifted."""
+    # A bare numeric comparison against a confidence-like identifier is the
+    # shape the defect had, in both its instances: `q.confidence < 0.85` and
+    # `score >= 0.8`.
+    pattern = re.compile(
+        r"\b(?:" + "|".join(_CONFIDENCE_ALIASES) + r")\b\s*[<>]=?\s*0\.\d+",
+    )
     offenders: list[str] = []
     for path in WEB_SRC.rglob("*.ts*"):
-        if path.name == "markingConfidence.ts":
+        if path.name == _CONFIDENCE_OWNER:
             continue
         text = path.read_text(encoding="utf-8")
         for line_no, line in enumerate(text.splitlines(), start=1):
-            # A bare numeric comparison against `confidence` is the shape the
-            # defect had: `q.confidence < 0.85`.
-            if re.search(r"\bconfidence\b\s*[<>]=?\s*0\.\d+", line):
-                offenders.append(f"{path.relative_to(WEB_SRC)}:{line_no}: {line.strip()}")
+            stripped = line.strip()
+            # Comments explain the thresholds; several of these files quote the
+            # old comparison in the note recording why it was removed, and a
+            # gate that fails on its own fix note is the trap
+            # `utilityExistence.test.ts` already documents.
+            if stripped.startswith(("*", "//", "/*")):
+                continue
+            if pattern.search(line):
+                offenders.append(f"{path.relative_to(WEB_SRC)}:{line_no}: {stripped}")
     assert not offenders, "confidence bucketed outside markingConfidence.ts:\n" + "\n".join(
         offenders
     )
+
+
+def test_the_confidence_floor_gate_catches_a_renamed_variable() -> None:
+    """Inversion, so the widened gate is known to fail on the real string.
+
+    The exact line that shipped in ``Review.tsx`` and that the previous
+    regex could not see.
+    """
+    pattern = re.compile(
+        r"\b(?:" + "|".join(_CONFIDENCE_ALIASES) + r")\b\s*[<>]=?\s*0\.\d+",
+    )
+    assert pattern.search("  if (score >= 0.8) return \"ok\"")
+    assert pattern.search("  if (q.confidence < 0.85) return 'uncertain'")
+    assert pattern.search("  const ok = conf > 0.9")
+    # And does not fire on things that merely contain a number.
+    assert not pattern.search("  const width = size >= 0.8 ? 'wide' : 'narrow'")

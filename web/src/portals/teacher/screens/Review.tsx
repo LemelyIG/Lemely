@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -5,6 +6,12 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { relativeTime } from "@/lib/utils"
+import { confidenceTierFor } from "@/lib/markingConfidence"
+import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import {
+  teacherLoadFailureMessage,
+  teacherMutationFailureMessage,
+} from "@/lib/teacherOutcome"
 import { Avatar } from "@/components/ui/avatar"
 import { useBulkApproveReview, useReviewQueue, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { BulkApproveResponse, ReviewQueueItem } from "@/lib/teacherTypes"
@@ -100,14 +107,41 @@ export function paperIdentityLabel(item: {
   return parts.join(" · ")
 }
 
-/** Colour-coded confidence tone. The number itself is always rendered too
- * (QUALITY-BAR: colour is never the sole carrier of meaning) — this only
- * picks which semantic token tints the chip. */
-export function confidenceTone(score: number | null): "ok" | "warn" | "err" {
+/**
+ * Colour-coded confidence tone. The number itself is always rendered too
+ * (QUALITY-BAR: colour is never the sole carrier of meaning), so this only
+ * picks which semantic token tints the chip.
+ *
+ * **P4.5: this bucketed at 0.8, on the one screen where that is worst.** The
+ * review queue exists *because* a mark scored below
+ * `REVIEW_CONFIDENCE_THRESHOLD` (0.90) — that is what put it here. Painting
+ * anything at or above 0.8 with the `ok` token meant a mark at 0.85 arrived in
+ * the queue as not-confident and was then shown to the teacher in the same
+ * green the product uses for "we are sure about this one". A teacher scanning
+ * the queue for what actually needs their judgement was being pointed away
+ * from items the marker had already said it was unsure about.
+ *
+ * This is D4.2's finding a second time. There it was the student's paper
+ * result at 0.85 against the backend's 0.90; `lib/markingConfidence.ts` was
+ * built to be the single owner of this decision precisely so it could not
+ * happen again, and this file is now a caller rather than a second authority.
+ *
+ * **It also drops from three tones to two, and that is the point rather than
+ * a casualty.** The old third band split "uncertain" again at 0.5, and there
+ * is no such number anywhere in the product: the backend has exactly one
+ * confidence threshold, so any second boundary is a frontend invention, which
+ * is the defect class this whole module exists to close. Two tones is what the
+ * data actually supports. Nothing is lost to the reader, because the score
+ * itself is always printed beside the chip: a teacher can still tell 30% from
+ * 85%, they simply are not told that the product considers one of them a
+ * different *kind* of doubt when it has no basis for saying so.
+ *
+ * `null` stays its own case: a queue item with no score at all, which the
+ * integrity checks produce, is genuinely not the same as a low score.
+ */
+export function confidenceTone(score: number | null): "ok" | "warn" {
   if (score == null) return "warn"
-  if (score >= 0.8) return "ok"
-  if (score >= 0.5) return "warn"
-  return "err"
+  return confidenceTierFor({ confidence: score }) === "confident" ? "ok" : "warn"
 }
 
 const REASON_FILTER_OPTIONS: { value: string; label: string }[] = [
@@ -216,9 +250,8 @@ export function Review() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Review queue</h1>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading review queue…
-        </div>
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={6} avatar />
       </div>
     )
   }
@@ -229,7 +262,7 @@ export function Review() {
         <h1 className="sr-only">Review queue</h1>
         <ErrorState
           heading="Couldn't load the review queue"
-          body={queueQuery.error.message}
+          body={teacherLoadFailureMessage(queueQuery.error)}
           action={{ label: "Retry", onClick: () => queueQuery.refetch() }}
         />
       </div>
@@ -245,23 +278,23 @@ export function Review() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+        <div className="text-eyebrow text-ink-faint">
           The teacher's core recurring task
         </div>
         <h1 className="text-display-md mt-1">Review queue</h1>
-        <p className="text-dense text-t2 mt-1 max-w-[560px] text-pretty">
+        <p className="text-body-md text-ink-muted mt-1 max-w-[560px] text-pretty">
           Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the
-          trivially fine ones — open anything that needs a real look.
+          trivially fine ones. Open anything that needs a real look.
         </p>
       </div>
 
       <div className="flex items-end gap-4 flex-wrap">
-        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
+        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
           Class
           <select
             value={classId}
             onChange={(e) => updateFilter("class_id", e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-w-[170px]"
+            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring min-w-[170px]"
           >
             <option value="">All classes</option>
             {(classesQuery.data?.classes ?? []).map((c) => (
@@ -271,12 +304,12 @@ export function Review() {
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
+        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
           Reason
           <select
             value={reason}
             onChange={(e) => updateFilter("reason", e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             {REASON_FILTER_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -285,12 +318,12 @@ export function Review() {
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
+        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
           Waiting at least
           <select
             value={minAgeHours}
             onChange={(e) => updateFilter("min_age_hours", e.target.value)}
-            className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             {AGE_FILTER_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -335,25 +368,25 @@ export function Review() {
                 ? "Approving…"
                 : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
             </Button>
-            <span className="text-xs text-t3">
+            <span className="text-body-sm text-ink-faint">
               Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
-              selectable here — open one to look at it properly.
+              selectable here. Open one to look at it properly.
             </span>
           </div>
 
           {bulkApprove.isError ? (
-            <div role="alert" className="text-dense-sm text-err">
-              Couldn't bulk-approve: {bulkApprove.error.message}
+            <div role="alert" className="text-body-sm text-err">
+              Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
             </div>
           ) : null}
 
           {bulkResult ? (
             <div
               role="status"
-              className="border border-border rounded-md p-4 bg-surface-2 flex flex-col gap-2"
+              className="border border-rule rounded-md p-4 bg-paper-sunk flex flex-col gap-2"
             >
               <div className="flex items-center justify-between gap-3">
-                <div className="text-dense font-medium">
+                <div className="text-body-md font-medium">
                   Approved {bulkResult.approved.length} item
                   {bulkResult.approved.length === 1 ? "" : "s"}
                   {bulkResult.skipped.length > 0 ? ` · skipped ${bulkResult.skipped.length}` : "."}
@@ -363,7 +396,7 @@ export function Review() {
                 </Button>
               </div>
               {bulkResult.skipped.length > 0 ? (
-                <ul className="flex flex-col gap-1 text-dense-sm text-t2 m-0 pl-4 list-disc">
+                <ul className="flex flex-col gap-1 text-body-sm text-ink-muted m-0 ps-4 list-disc">
                   {bulkResult.skipped.map((s) => {
                     const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
                     return (
@@ -380,54 +413,54 @@ export function Review() {
           ) : null}
 
           <div
-            className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
+            className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
             tabIndex={0}
             role="region"
             aria-label="Review queue, scrollable horizontally"
           >
-            <table className="w-full text-dense border-collapse">
+            <table className="w-full text-body-md border-collapse">
               <caption className="sr-only">
-                Review queue, oldest-waiting item first — the priority order the server already
+                Review queue, oldest-waiting item first, which is the priority order the server already
                 returns this list in
               </caption>
               <thead>
-                <tr className="bg-surface-2 border-b border-border">
+                <tr className="bg-paper-sunk border-b border-rule">
                   <th scope="col" className="px-[16px] py-[10px]">
                     <span className="sr-only">Select</span>
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
+                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
                   >
                     Student
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
+                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
                   >
                     Paper
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
+                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
                   >
                     Question
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
+                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
                   >
                     Why it's here
                   </th>
                   <th
                     scope="col"
-                    className="text-left px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
+                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
                   >
                     Waiting
                   </th>
                   <th
                     scope="col"
-                    className="text-right px-[16px] py-[10px] font-mono text-3xs tracking-[0.09em] uppercase text-t3"
+                    className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint"
                   >
                     AI mark
                   </th>
@@ -438,7 +471,7 @@ export function Review() {
               </thead>
               <tbody>
                 {items.map((item) => (
-                  <tr key={item.itemId} className="border-b border-border last:border-b-0 align-top">
+                  <tr key={item.itemId} className="border-b border-rule last:border-b-0 align-top">
                     <td className="px-[16px] py-[13px]">
                       <Checkbox
                         checked={selected.has(item.itemId)}
@@ -446,12 +479,12 @@ export function Review() {
                         onChange={() => toggleSelected(item.itemId)}
                         title={
                           isIntegrityReason(item.reason)
-                            ? "Integrity flags aren't selectable for bulk-approve — open this item instead"
+                            ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
                             : undefined
                         }
                         aria-label={
                           isIntegrityReason(item.reason)
-                            ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here — open it instead`
+                            ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
                             : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
                         }
                       />
@@ -462,23 +495,23 @@ export function Review() {
                         <div className="min-w-0">
                           <Link
                             to={`/teacher/students/${item.studentId}`}
-                            className="text-t1 hover:underline block truncate"
+                            className="text-ink hover:underline block truncate"
                           >
                             {item.studentDisplayName}
                           </Link>
                           <Link
                             to={`/teacher/classes/${item.classId}`}
-                            className="text-xs text-t3 hover:text-t1 hover:underline block truncate"
+                            className="text-body-sm text-ink-faint hover:text-ink hover:underline block truncate"
                           >
                             {item.className}
                           </Link>
                         </div>
                       </div>
                     </td>
-                    <td className="px-[16px] py-[13px] whitespace-nowrap text-dense-sm text-t2">
+                    <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
                       {paperIdentityLabel(item)}
                     </td>
-                    <td className="px-[16px] py-[13px] font-mono text-dense-sm whitespace-nowrap">
+                    <td className="px-[16px] py-[13px] text-data-sm whitespace-nowrap">
                       {item.questionId ?? "—"}
                     </td>
                     <td className="px-[16px] py-[13px]">
@@ -486,12 +519,12 @@ export function Review() {
                         {reasonLabel(item.reason)}
                       </Chip>
                     </td>
-                    <td className="px-[16px] py-[13px] whitespace-nowrap text-dense-sm text-t2">
+                    <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
                       {relativeTime(item.createdAt)}
                     </td>
-                    <td className="px-[16px] py-[13px] text-right whitespace-nowrap">
-                      <div className="font-mono text-dense-sm">
-                        {item.aiAwardedMarks ?? "—"}/{item.maximumMarks ?? "—"}
+                    <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
+                      <div className="text-data-sm">
+                        {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
                       </div>
                       {item.confidenceScore != null ? (
                         <Chip tone={confidenceTone(item.confidenceScore)} className="mt-1">
@@ -499,7 +532,7 @@ export function Review() {
                         </Chip>
                       ) : null}
                     </td>
-                    <td className="px-[16px] py-[13px] text-right whitespace-nowrap">
+                    <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
                       <Button
                         size="sm"
                         variant="secondary"
