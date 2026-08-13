@@ -1,0 +1,10 @@
+{
+  "name": "d1-negative-space",
+  "model": "gemini-3.1-flash-image",
+  "booked_usd": 0.039,
+  "cumulative_usd_after": 0.36003960000001173,
+  "reported_prompt_tokens": 335,
+  "reported_candidates_tokens": 1401,
+  "generated_at": "2026-08-13T14:22:26.576807+00:00",
+  "file": "BUILD/brand/d1-negative-space.png"
+}

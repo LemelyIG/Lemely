@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Lemely mark, single-colour cut.
+
+  For anywhere the accent cannot be relied on: one-colour print, an embossed or
+  engraved application, a foreground-colour context, or a surface where the warm
+  red would clash. Uses `currentColor` throughout, so in HTML it inherits the
+  surrounding text colour and needs no variant per background.
+
+  The hairline/heavy weight contrast does all the work here, since the colour
+  contrast between printed rule and handwritten mark is gone. That is why the
+  ratio matters more than either absolute width.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="Lemely">
+  <title>Lemely</title>
+  <g fill="none" stroke="currentColor" stroke-linecap="butt">
+    <path d="M20 10 V46" stroke-width="2" />
+    <path d="M20 46 H44" stroke-width="2" />
+  </g>
+  <path d="M27 37 L33 46 L47 19" fill="none" stroke="currentColor" stroke-width="6"
+        stroke-linecap="round" stroke-linejoin="round" />
+</svg>

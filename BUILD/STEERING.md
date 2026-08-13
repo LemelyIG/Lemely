@@ -55,3 +55,22 @@ depend on item 6), and re-ask before Phase 4 reaches admin views.
 **IN** — awaiting.
 
 ---
+
+## 2026-08-13 — DECISION D2 (logo direction)
+
+**OUT** `2026-08-13T17:32Z` (local +03) · title `DECISION D2 - logo direction` · priority high
+
+Sent **text-only**: this ntfy server returns `40014 attachments not allowed`
+(`attachment-cache-dir` is not configured on home-server), so the contact sheet
+could not be attached as REDESIGN-MISSION §5.2 assumed. It is committed to the
+repo instead, at `BUILD/brand/D2-candidates.jpg`, and the message points there.
+Worth fixing on the server if later phases want screenshot attachments — §9's
+screenshot cadence assumes attachments work.
+
+Four Gemini candidates plus one refine pass, then a hand-authored SVG. Options
+A (ship the hand-authored SVG, **default**) / B (a2) / C (d1) / D (regenerate).
+30-minute timeout.
+
+**IN** — awaiting.
+
+---

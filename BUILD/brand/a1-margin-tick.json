@@ -1,0 +1,10 @@
+{
+  "name": "a1-margin-tick",
+  "model": "gemini-3.1-flash-image",
+  "booked_usd": 0.039,
+  "cumulative_usd_after": 0.2430396000000118,
+  "reported_prompt_tokens": 364,
+  "reported_candidates_tokens": 1513,
+  "generated_at": "2026-08-13T14:22:01.855695+00:00",
+  "file": "BUILD/brand/a1-margin-tick.png"
+}
