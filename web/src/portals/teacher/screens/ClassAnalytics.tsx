@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { DownloadSimple } from "@phosphor-icons/react"
@@ -7,6 +8,8 @@ import { TrendSparkline } from "@/components/ui/trend-sparkline"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { gradeBand } from "@/components/ui/grade-badge"
 import { cn, downloadCsv } from "@/lib/utils"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import { accuracyTone, TONE_CLASS, TONE_TO_SEVERITY } from "@/lib/severity"
 import { useClassAnalytics } from "@/lib/hooks/useTeacherApi"
 import type { HeatmapCell, TopicWeakness } from "@/lib/teacherTypes"
@@ -77,10 +80,10 @@ function HeatmapCellView({ cell }: { cell: HeatmapCell | undefined }) {
     return (
       <td className="p-0.5">
         <div
-          className="w-11 h-8 flex items-center justify-center rounded bg-surface-2 border border-dashed border-border text-t3 text-2xs"
+          className="w-11 h-8 flex items-center justify-center rounded bg-paper-sunk border border-dashed border-rule text-ink-faint text-data-sm"
           role="img"
           aria-label="No data"
-          title="No data — this student has no recorded attempt on this topic"
+          title="No data. This student has no recorded attempt on this topic"
         >
           –
         </div>
@@ -93,7 +96,7 @@ function HeatmapCellView({ cell }: { cell: HeatmapCell | undefined }) {
     <td className="p-0.5">
       <div
         className={cn(
-          "w-11 h-8 flex items-center justify-center rounded font-mono text-2xs font-medium",
+          "w-11 h-8 flex items-center justify-center rounded text-data-sm",
           TONE_CLASS[tone],
         )}
         title={`${pct}% accuracy`}
@@ -118,9 +121,12 @@ export function ClassAnalytics() {
     return (
       <div className="flex flex-col gap-6 min-w-0">
         <h2 className="sr-only">Analytics</h2>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading analytics…
-        </div>
+        {/* Five panels are about to appear, so five panel shapes reserve the
+            space rather than one line of text collapsing the page to a row.
+            §12: the loading state matches the layout it replaces. */}
+        <PanelSkeleton />
+        <PanelSkeleton />
+        <PanelSkeleton />
       </div>
     )
   }
@@ -131,7 +137,7 @@ export function ClassAnalytics() {
         <h2 className="sr-only">Analytics</h2>
         <ErrorState
           heading="Couldn't load analytics for this class"
-          body={analyticsQuery.error.message}
+          body={teacherLoadFailureMessage(analyticsQuery.error)}
           action={{ label: "Retry", onClick: () => analyticsQuery.refetch() }}
         />
       </div>
@@ -155,9 +161,9 @@ export function ClassAnalytics() {
       <section className="flex flex-col gap-3 min-w-0">
         <div className="flex items-end justify-between gap-3 flex-wrap gap-y-2">
           <div>
-            <div className="text-display-sm">Topic weakness heatmap</div>
-            <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mt-1">
-              Ranked by class-wide marks lost — what to teach next week
+            <div className="text-display-md text-ink">Topic weakness heatmap</div>
+            <div className="text-eyebrow text-ink-faint mt-1">
+              Ranked by class-wide marks lost, so you can see what to teach next week
             </div>
           </div>
           {data.topicWeaknesses.length > 0 ? (
@@ -179,7 +185,7 @@ export function ClassAnalytics() {
           />
         ) : (
           <div
-            className="bg-surface border border-border rounded-lg p-3 overflow-x-auto min-w-0"
+            className="bg-paper-raised border border-rule rounded-lg p-3 overflow-x-auto min-w-0"
             tabIndex={0}
             role="region"
             aria-label="Topic weakness heatmap, scrollable horizontally"
@@ -191,7 +197,7 @@ export function ClassAnalytics() {
               </caption>
               <thead>
                 <tr>
-                  <th scope="col" className="sticky left-0 bg-surface px-2 py-1.5 text-left align-bottom">
+                  <th scope="col" className="sticky start-0 bg-paper-raised px-2 py-1.5 text-start align-bottom">
                     <span className="sr-only">Topic</span>
                   </th>
                   {students.map((s) => (
@@ -202,7 +208,7 @@ export function ClassAnalytics() {
                       title={s.name}
                     >
                       <span
-                        className="block w-11 font-mono text-3xs text-t3 truncate"
+                        className="block w-11 text-data-sm text-ink-faint truncate"
                         style={{ writingMode: "vertical-rl" }}
                       >
                         {s.name}
@@ -216,7 +222,7 @@ export function ClassAnalytics() {
                   <tr key={t.topic}>
                     <th
                       scope="row"
-                      className="sticky left-0 bg-surface px-2 py-1 text-left text-dense-sm font-normal whitespace-nowrap max-w-[180px] truncate"
+                      className="sticky start-0 bg-paper-raised px-2 py-1 text-start text-body-sm font-normal whitespace-nowrap max-w-[180px] truncate"
                       title={t.topic}
                     >
                       {t.topic}
@@ -254,19 +260,19 @@ export function ClassAnalytics() {
         ) : null}
 
         {selected ? (
-          <div className="bg-surface-2 border border-border rounded-lg p-4 flex flex-col gap-2.5">
-            <div className="text-dense-lg font-medium">
+          <div className="bg-paper-sunk border border-rule rounded-lg p-4 flex flex-col gap-2.5">
+            <div className="text-body-lg font-medium text-ink">
               Students affected by "{selected.topic}"
             </div>
             {selected.studentIds.length === 0 ? (
-              <div className="text-dense-sm text-t2">No individual students identified.</div>
+              <div className="text-body-sm text-ink-muted">No individual students identified.</div>
             ) : (
               <ul className="flex flex-wrap gap-2 list-none p-0 m-0">
                 {selected.studentIds.map((id) => (
                   <li key={id}>
                     <Link
                       to={`/teacher/students/${id}`}
-                      className="inline-flex items-center border border-border bg-surface rounded-full px-3 py-1 text-dense-sm text-t1 hover:underline"
+                      className="inline-flex items-center border border-rule bg-paper-raised rounded-md px-3 py-1 text-body-sm text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                     >
                       {studentsById.get(id) ?? id}
                     </Link>
@@ -280,18 +286,18 @@ export function ClassAnalytics() {
 
       {/* Grade distribution */}
       <section className="flex flex-col gap-3">
-        <div className="text-display-sm">Grade distribution</div>
-        <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-2.5">
+        <div className="text-display-md text-ink">Grade distribution</div>
+        <div className="bg-paper-raised border border-rule rounded-lg p-6 flex flex-col gap-2.5">
           {data.gradeDistribution.map((b) => (
             <div key={b.grade} className="flex items-center gap-3">
-              <div className="w-6 font-mono text-dense-sm text-t2 flex-none">{b.grade}</div>
-              <div className="flex-1 h-4 bg-surface-2 rounded-full overflow-hidden min-w-0">
+              <div className="w-6 text-data-sm text-ink-muted flex-none">{b.grade}</div>
+              <div className="flex-1 h-4 bg-paper-sunk rounded-full overflow-hidden min-w-0">
                 <div
                   className={cn("h-full rounded-full", GRADE_BAND_BG[gradeBand(b.grade)])}
                   style={{ width: `${(b.count / maxGradeCount) * 100}%` }}
                 />
               </div>
-              <div className="w-8 text-right font-mono text-dense-sm text-t2 flex-none">
+              <div className="w-8 text-end text-data-sm text-ink-muted flex-none">
                 {b.count}
               </div>
             </div>
@@ -302,16 +308,16 @@ export function ClassAnalytics() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
         {/* Cohort trend */}
         <section className="flex flex-col gap-3 min-w-0">
-          <div className="text-display-sm">Performance over time</div>
-          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
+          <div className="text-display-md text-ink">Performance over time</div>
+          <div className="bg-paper-raised border border-rule rounded-lg p-6 flex flex-col gap-3 min-w-0">
             {data.trend.length === 0 ? (
-              <div className="text-dense text-t2">No graded submissions yet.</div>
+              <div className="text-body-md text-ink-muted">No graded submissions yet.</div>
             ) : (
               <>
                 <div className="flex items-center gap-3 flex-wrap">
                   <TrendSparkline values={data.trend.map((p) => p.meanPercentage)} width={120} />
                   {latestTrendPoint ? (
-                    <div className="text-dense-sm text-t2">
+                    <div className="text-body-sm text-ink-muted">
                       Latest: {Math.round(latestTrendPoint.meanPercentage)}% mean, over{" "}
                       {latestTrendPoint.sampleSize} student
                       {latestTrendPoint.sampleSize === 1 ? "" : "s"}
@@ -319,40 +325,40 @@ export function ClassAnalytics() {
                   ) : null}
                 </div>
                 <div
-                  className="max-h-[180px] overflow-y-auto border-t border-border pt-2 -mx-1"
+                  className="max-h-[180px] overflow-y-auto border-t border-rule pt-2 -mx-1"
                   tabIndex={0}
                   role="region"
                   aria-label="Cohort mean percentage over time, scrollable"
                 >
-                  <table className="w-full text-xs border-collapse">
+                  <table className="w-full border-collapse">
                     <caption className="sr-only">Cohort mean percentage over time</caption>
                     <thead>
-                      <tr className="text-t3">
-                        <th scope="col" className="text-left font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
+                      <tr className="text-ink-faint">
+                        <th scope="col" className="text-start text-eyebrow px-1 py-1">
                           Date
                         </th>
-                        <th scope="col" className="text-right font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
+                        <th scope="col" className="text-end text-eyebrow px-1 py-1">
                           Mean
                         </th>
-                        <th scope="col" className="text-right font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
+                        <th scope="col" className="text-end text-eyebrow px-1 py-1">
                           Students
                         </th>
                       </tr>
                     </thead>
                     <tbody>
                       {data.trend.map((p) => (
-                        <tr key={p.timestamp} className="border-t border-border">
-                          <td className="px-1 py-1 text-t2">
+                        <tr key={p.timestamp} className="border-t border-rule">
+                          <td className="px-1 py-1 text-body-sm text-ink-muted">
                             {new Date(p.timestamp).toLocaleDateString(undefined, {
                               year: "numeric",
                               month: "short",
                               day: "numeric",
                             })}
                           </td>
-                          <td className="px-1 py-1 text-right font-mono">
+                          <td className="px-1 py-1 text-end text-data-sm text-ink">
                             {Math.round(p.meanPercentage)}%
                           </td>
-                          <td className="px-1 py-1 text-right font-mono text-t3">
+                          <td className="px-1 py-1 text-end text-data-sm text-ink-faint">
                             {p.sampleSize}
                           </td>
                         </tr>
@@ -367,43 +373,43 @@ export function ClassAnalytics() {
 
         {/* Engagement */}
         <section className="flex flex-col gap-3 min-w-0">
-          <div className="text-display-sm">Engagement</div>
-          <div className="bg-surface border border-border rounded-lg p-[18px] grid grid-cols-2 gap-4">
+          <div className="text-display-md text-ink">Engagement</div>
+          <div className="bg-paper-raised border border-rule rounded-lg p-6 grid grid-cols-2 gap-4">
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Submissions, 7 days
               </div>
-              <div className="text-display-sm mt-1">{data.engagement.submissionsLast7Days}</div>
+              <div className="text-data-lg text-ink mt-1">{data.engagement.submissionsLast7Days}</div>
             </div>
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Submissions, 30 days
               </div>
-              <div className="text-display-sm mt-1">{data.engagement.submissionsLast30Days}</div>
+              <div className="text-data-lg text-ink mt-1">{data.engagement.submissionsLast30Days}</div>
             </div>
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Active students, 7 days
               </div>
-              <div className="text-display-sm mt-1">{data.engagement.activeStudentsLast7Days}</div>
+              <div className="text-data-lg text-ink mt-1">{data.engagement.activeStudentsLast7Days}</div>
             </div>
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Active students, 30 days
               </div>
-              <div className="text-display-sm mt-1">{data.engagement.activeStudentsLast30Days}</div>
+              <div className="text-data-lg text-ink mt-1">{data.engagement.activeStudentsLast30Days}</div>
             </div>
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Never active
               </div>
-              <div className="text-display-sm mt-1">{data.engagement.neverActiveCount}</div>
+              <div className="text-data-lg text-ink mt-1">{data.engagement.neverActiveCount}</div>
             </div>
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Median days since last submission
               </div>
-              <div className="text-display-sm mt-1">
+              <div className="text-data-lg text-ink mt-1">
                 {data.engagement.medianDaysSinceLastSubmission != null
                   ? Math.round(data.engagement.medianDaysSinceLastSubmission)
                   : "—"}
@@ -415,47 +421,47 @@ export function ClassAnalytics() {
 
       {/* Per-paper comparison */}
       <section className="flex flex-col gap-3 min-w-0">
-        <div className="text-display-sm">Per-paper comparison</div>
+        <div className="text-display-md text-ink">Per-paper comparison</div>
         {data.paperComparison.length === 0 ? (
-          <div className="text-dense text-t2">No papers recorded for this class yet.</div>
+          <div className="text-body-md text-ink-muted">No papers recorded for this class yet.</div>
         ) : (
           <div
-            className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
+            className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
             tabIndex={0}
             role="region"
             aria-label="Per-paper comparison, scrollable horizontally"
           >
-            <table className="w-full text-dense border-collapse">
+            <table className="w-full text-body-md border-collapse">
               <caption className="sr-only">Cohort stats per paper</caption>
               <thead>
-                <tr className="bg-surface-2 border-b border-border">
-                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                <tr className="bg-paper-sunk border-b border-rule">
+                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
                     Paper
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
                     Mean
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
                     Attempts
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
                     Students
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {data.paperComparison.map((p) => (
-                  <tr key={p.paperId} className="border-b border-border last:border-b-0">
-                    <td className="px-4 py-2.5 font-mono text-dense-sm">
+                  <tr key={p.paperId} className="border-b border-rule last:border-b-0">
+                    <td className="px-4 py-2.5 text-data-sm text-ink">
                       {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
+                    <td className="px-4 py-2.5 text-end text-data-sm text-ink">
                       {Math.round(p.meanPercentage)}%
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
+                    <td className="px-4 py-2.5 text-end text-data-sm text-ink">
                       {p.attemptCount}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
+                    <td className="px-4 py-2.5 text-end text-data-sm text-ink">
                       {p.studentCount}
                     </td>
                   </tr>

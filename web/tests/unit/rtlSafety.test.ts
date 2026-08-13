@@ -24,6 +24,11 @@ const RTL_CLEAN_FILES = [
   // Phase 4, surface 5 — the teacher portal.
   "src/portals/teacher/index.tsx",
   "src/portals/teacher/components/StatCard.tsx",
+  "src/portals/teacher/screens/Overview.tsx",
+  "src/portals/teacher/screens/AtRiskList.tsx",
+  "src/portals/teacher/screens/ClassAnalytics.tsx",
+  "src/lib/teacherOutcome.ts",
+  "src/lib/severity.ts",
   // Kit components created in Phase 3.
   "src/components/ui/breadcrumbs.tsx",
   "src/components/ui/getting-started.tsx",

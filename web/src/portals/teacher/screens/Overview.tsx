@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useNavigate, Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
@@ -82,7 +83,7 @@ export function Overview() {
   // page jumped every time data landed.
   if (overviewQuery.isPending || classesQuery.isPending) {
     return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
+      <div className="lm-screen flex flex-col gap-8 min-w-0">
         <h1 className="sr-only">Overview</h1>
         <PageHeaderSkeleton />
         <ListSkeleton rows={3} className="max-w-[620px]" />
@@ -94,7 +95,7 @@ export function Overview() {
 
   if (overviewQuery.isError) {
     return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
+      <div className="lm-screen flex flex-col gap-8 min-w-0">
         <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load the overview"
@@ -107,7 +108,7 @@ export function Overview() {
 
   if (classesQuery.isError) {
     return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
+      <div className="lm-screen flex flex-col gap-8 min-w-0">
         <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load your classes"
@@ -151,12 +152,12 @@ export function Overview() {
    */
   if (classes.length === 0 && recentActivity.length === 0) {
     return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
+      <div className="lm-screen flex flex-col gap-8 min-w-0">
         <div>
-          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+          <div className="text-eyebrow text-ink-faint">
             {today}
           </div>
-          <h1 className="text-display-lg mt-2">{greeting}.</h1>
+          <h1 className="text-display-lg text-ink mt-2">{greeting}.</h1>
         </div>
         <GettingStarted
           heading="Start with one class"
@@ -192,7 +193,7 @@ export function Overview() {
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-6 min-w-0">
+    <div className="lm-screen flex flex-col gap-8 min-w-0">
       <div className="flex items-end gap-5 flex-wrap gap-y-2.5">
         <div>
           {/*
@@ -208,11 +209,11 @@ export function Overview() {
             * replaced: there is nothing to replace it with, and inventing an
             * affiliation is the defect, not the formatting.
             */}
-          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+          <div className="text-eyebrow text-ink-faint">
             {today}
           </div>
-          <h1 className="text-display-lg mt-2">{greeting}.</h1>
-          <div className="text-sm text-t2 mt-2 max-w-[62ch] text-pretty">
+          <h1 className="text-display-lg text-ink mt-2">{greeting}.</h1>
+          <div className="text-body-lg text-ink-muted mt-2 max-w-[62ch] text-pretty">
             {papersGraded ? `${papersGraded.value} papers graded so far. ` : ""}
             {needsEyes
               ? `${needsEyes.value} answers want your eyes`
@@ -231,34 +232,34 @@ export function Overview() {
       </div>
 
       {/* 1. Needs you — the permanent top item */}
-      <div className="bg-surface border border-border rounded-lg overflow-hidden max-w-[620px] w-full">
-        <div className="px-5 pt-[18px] pb-[13px]">
-          <div className="text-display-sm">Needs you</div>
-          <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mt-[5px]">
+      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden max-w-[620px] w-full">
+        <div className="px-6 pt-5 pb-3.5">
+          <div className="text-display-md text-ink">Needs you</div>
+          <div className="text-eyebrow text-ink-faint mt-1.5">
             Flagged by trajectory, not by one bad day
           </div>
         </div>
         {atRisk.length === 0 ? (
-          <div className="border-t border-border px-5 py-[15px] text-dense text-ok">
+          <div className="border-t border-rule px-6 py-4 text-body-md text-ok">
             No students flagged right now.
           </div>
         ) : (
           atRisk.map((r) => (
             <div
               key={r.name}
-              className="border-t border-border px-5 py-[15px] flex gap-[13px] items-start"
+              className="border-t border-rule px-6 py-4 flex gap-[13px] items-start"
             >
               <Avatar name={r.name} size="sm" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-[9px] flex-wrap gap-y-1">
-                  <div className="text-dense-lg font-medium">{r.name}</div>
-                  <div className="text-xs text-t2">Grade {r.grade}</div>
+                  <div className="text-body-lg font-medium text-ink">{r.name}</div>
+                  <div className="text-body-sm text-ink-muted">Grade {r.grade}</div>
                   <div className="flex-1" />
                   {r.delta !== null ? (
                     <div
                       className={cn(
-                        "font-mono text-xs",
-                        r.delta < 0 ? "text-err" : r.delta > 0 ? "text-ok" : "text-t2",
+                        "text-data-md",
+                        r.delta < 0 ? "text-err" : r.delta > 0 ? "text-ok" : "text-ink-muted",
                       )}
                     >
                       {r.delta > 0 ? "+" : ""}
@@ -267,7 +268,7 @@ export function Overview() {
                   ) : null}
                 </div>
                 {r.weakTopic ? (
-                  <div className="text-dense-sm text-t2 mt-[5px] leading-[1.45] text-pretty">
+                  <div className="text-body-sm text-ink-muted mt-1.5 text-pretty">
                     Weakest topic: {r.weakTopic}
                   </div>
                 ) : null}
@@ -276,7 +277,7 @@ export function Overview() {
                     {r.flags.map((f) => (
                       <div
                         key={f.reason}
-                        className="flex items-start gap-2 text-dense-sm text-t2 leading-[1.45]"
+                        className="flex items-start gap-2 text-body-sm text-ink-muted"
                       >
                         <span
                           aria-hidden="true"
@@ -315,18 +316,19 @@ export function Overview() {
         ))}
       </div>
       {needsEyesCount === 0 ? (
-        <div className="text-dense text-ok -mt-2">
-          Nothing needs your review right now — good news.
+        <div className="text-body-md text-ok -mt-2">
+          Nothing needs your review right now. Good news.
         </div>
       ) : null}
 
       {/* 3. Class summary cards */}
       <div>
-        <div className="text-display-sm mb-3">Your classes</div>
+        <div className="text-display-md text-ink mb-3">Your classes</div>
         {classes.length === 0 ? (
           <EmptyState
             heading="Add your first class"
             body="Create a class to start tracking students, marks, and at-risk flags."
+            marginalia="Everything else hangs off this"
             action={{ label: "Create a class", onClick: () => navigate("/teacher/classes") }}
           />
         ) : (
@@ -335,12 +337,12 @@ export function Overview() {
               <Link
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
-                className="block bg-surface border border-border rounded-lg p-[18px] hover:bg-surface-2 transition-colors"
+                className="block bg-paper-raised border border-rule rounded-lg p-6 hover:bg-paper-sunk transition-colors"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-display-xs">{c.label}</div>
-                    <div className="font-mono text-2xs text-t3 mt-0.5">
+                    <div className="text-display-sm text-ink">{c.label}</div>
+                    <div className="text-data-sm text-ink-faint mt-1">
                       {c.subjectCode ?? "No subject set"} · {c.studentCount} student
                       {c.studentCount === 1 ? "" : "s"}
                     </div>
@@ -353,23 +355,28 @@ export function Overview() {
                 </div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <div>
-                    <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+                    <div className="text-eyebrow text-ink-faint">
                       Average mark
                     </div>
-                    <div className="text-display-sm mt-1">
+                    {/* A percentage, so the data face, for the same reason
+                        `StatCard` moved: §4 gives the mono face every score
+                        and mark in the product. These sit in a card grid where
+                        the eye compares one class against the next, which is
+                        exactly what tabular numerals are for. */}
+                    <div className="text-data-md text-ink mt-1">
                       {c.average != null ? `${Math.round(c.average)}%` : "—"}
                     </div>
                   </div>
                   <div>
-                    <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+                    <div className="text-eyebrow text-ink-faint">
                       Top weakness
                     </div>
-                    <div className="text-dense mt-1 text-pretty">
+                    <div className="text-body-md text-ink mt-1 text-pretty">
                       {c.topWeakness ?? "Not enough data yet"}
                     </div>
                   </div>
                 </div>
-                <div className="text-xs text-t3 mt-3">
+                <div className="text-body-sm text-ink-faint mt-3">
                   {c.lastActivityAt ? `Active ${relativeTime(c.lastActivityAt)}` : "No activity yet"}
                 </div>
               </Link>
@@ -379,34 +386,34 @@ export function Overview() {
       </div>
 
       {/* 4. Recent activity */}
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="px-5 pt-[18px] pb-[13px]">
-          <div className="text-display-sm">Recent activity</div>
-          <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mt-[5px]">
+      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden">
+        <div className="px-6 pt-5 pb-3.5">
+          <div className="text-display-md text-ink">Recent activity</div>
+          <div className="text-eyebrow text-ink-faint mt-1.5">
             Submissions across your classes
           </div>
         </div>
         {recentActivity.length === 0 ? (
-          <div className="border-t border-border px-5 py-[15px] text-dense text-t2">
+          <div className="border-t border-rule px-6 py-4 text-body-md text-ink-muted">
             No submissions yet.
           </div>
         ) : (
           recentActivity.map((a) => (
             <div
               key={`${a.studentId}-${a.subjectCode}-${a.recordedAt}`}
-              className="border-t border-border px-5 py-[13px] flex items-center gap-3 flex-wrap gap-y-1.5"
+              className="border-t border-rule px-6 py-3.5 flex items-center gap-3 flex-wrap gap-y-1.5"
             >
               <Avatar name={a.studentName} size="sm" />
-              <div className="text-dense">{a.studentName}</div>
-              <div className="font-mono text-xs text-t3">{a.subjectCode}</div>
+              <div className="text-body-md text-ink">{a.studentName}</div>
+              <div className="text-data-sm text-ink-faint">{a.subjectCode}</div>
               <div className="flex-1" />
-              <div className="font-mono text-dense">{Math.round(a.percentage)}%</div>
+              <div className="text-data-md text-ink">{Math.round(a.percentage)}%</div>
               {a.grade ? (
                 <GradeBadge grade={a.grade} size="inline" basis="achieved" />
               ) : (
-                <span className="text-2xs text-t3 font-mono">{ORIGIN_LABEL[a.origin]}</span>
+                <span className="text-data-sm text-ink-faint">{ORIGIN_LABEL[a.origin]}</span>
               )}
-              <div className="text-2xs text-t3 w-[72px] text-end">{relativeTime(a.recordedAt)}</div>
+              <div className="text-data-sm text-ink-faint w-[72px] text-end">{relativeTime(a.recordedAt)}</div>
             </div>
           ))
         )}
@@ -432,7 +439,13 @@ export function Overview() {
         <Button variant="secondary" onClick={() => navigate("/teacher/announcements")}>
           Post an announcement
         </Button>
-        <Button variant="ink" onClick={() => navigate("/teacher/classes")}>
+        {/* All three are secondary. "Add a class" used to be `ink`, which put
+            two filled primary buttons on one screen alongside "Open review
+            queue" at the top — and DESIGN.md §2 gives the Operate lane a
+            single obvious primary action per screen. The review queue is that
+            action here: it is the work only this teacher can do, and the
+            reason the portal exists. */}
+        <Button variant="secondary" onClick={() => navigate("/teacher/classes")}>
           Add a class
         </Button>
       </div>
