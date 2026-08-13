@@ -373,8 +373,21 @@ max (65ch at `body-lg`). Page gutter 32px desktop, 20px tablet, 16px mobile.
 | `radius-full` | 9999 | Pills and circles. **Tags and status badges only.** |
 
 **Buttons are never pills** (§3.2 item 4). `radius-full` on an interactive
-element is a gate failure, with two exceptions: avatars (which are squircles,
-see below) and true icon-only circular controls like a close button.
+element is a gate failure, with these exceptions:
+
+1. **True icon-only circular controls**, such as a close button.
+2. **Native control affordances that are circular by platform convention**: the
+   radio dot, and a switch's thumb. A radio is round because a hundred years of
+   forms made it round, and squaring it off to satisfy a rule about *pills*
+   would make the control harder to tell apart from a checkbox. The pill ban
+   exists to stop rectangular things (buttons, inputs, cards) being rounded into
+   lozenges; it was never about the radio.
+3. **Status and live dots**, which is why avatars are squircles (below): a
+   circle has to keep meaning "status", not "person".
+
+This exception list was written after the component kit raised the radio case as
+a genuine ambiguity in the original wording. It is recorded here so it is not
+re-litigated at every new form.
 
 **Avatars are squircles**, `radius-lg` on a square, not circles. Circles are
 reserved for live/status dots so a dot never reads as a person.

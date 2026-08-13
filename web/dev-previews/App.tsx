@@ -1,0 +1,680 @@
+import { useState } from "react"
+import { MagnifyingGlass, Plus } from "@phosphor-icons/react"
+import { ComponentSection, Group, StateCell, slug } from "./harness"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Select } from "@/components/ui/select"
+import { RadioGroup, Radio } from "@/components/ui/radio"
+import { Switch } from "@/components/ui/switch"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Badge } from "@/components/ui/badge"
+import { SubjectTag } from "@/components/ui/subject-tag"
+import { Avatar } from "@/components/ui/avatar"
+import { Kbd } from "@/components/ui/kbd"
+import { ProgressBar } from "@/components/ui/progress-bar"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
+import { Tabs, TabsList, TabsPanel } from "@/components/ui/tabs"
+import { SkeletonLine, SkeletonBlock, SkeletonCircle, SkeletonText } from "@/components/ui/skeleton"
+import { Modal } from "@/components/ui/modal"
+import { Popover } from "@/components/ui/popover"
+import { ToastProvider, useToast } from "@/components/ui/toast"
+import { ErrorState } from "@/components/ui/error-state"
+import { ChartFrame } from "@/components/ui/chart-frame"
+
+/**
+ * The component-kit preview page (REDESIGN-MISSION §5 Phase 2.6).
+ *
+ * Two jobs, in this order of importance:
+ *
+ * 1. **Prove the eight states exist.** A component that has never been rendered
+ *    disabled, or in error, or loading, does not have those states, it has an
+ *    intention to have them. Every interactive component in the kit appears
+ *    here with each state rendered and labelled by how it was produced (see
+ *    `harness.tsx`).
+ * 2. **Be the reference for the tokens themselves**, so a later phase can check
+ *    a colour or a type rung by looking rather than by reading `index.css`.
+ *
+ * This page is not a product surface and is not reachable from the app. Run it
+ * with `npm run preview:kit`.
+ */
+
+/*
+ * Every Tailwind class below is written out in full, never assembled from a
+ * template literal. Tailwind v4 finds classes by scanning source text for
+ * literal strings, so `bg-pastel-${name}` generates no CSS at all and the
+ * swatch silently renders unstyled. That is easy to miss on a page whose whole
+ * job is to show colours, which is exactly why it is spelled out here.
+ */
+const PASTELS = [
+  ["rose", "Unassigned or other subjects", "bg-pastel-rose", "text-pastel-rose-ink"],
+  ["amber", "English", "bg-pastel-amber", "text-pastel-amber-ink"],
+  ["sage", "Chemistry", "bg-pastel-sage", "text-pastel-sage-ink"],
+  ["sky", "Mathematics", "bg-pastel-sky", "text-pastel-sky-ink"],
+  ["lilac", "Physics", "bg-pastel-lilac", "text-pastel-lilac-ink"],
+  ["clay", "Biology", "bg-pastel-clay", "text-pastel-clay-ink"],
+] as const
+
+const SEMANTIC = [
+  ["ok", "Correct, complete, saved, on track", "bg-ok-wash", "text-ok"],
+  ["warn", "Partial credit, uncertain, borderline", "bg-warn-wash", "text-warn"],
+  ["err", "Wrong, failed, destructive, blocked", "bg-err-wash", "text-err"],
+  ["info", "Neutral notices and tips", "bg-info-wash", "text-info"],
+] as const
+
+const SURFACES = [
+  ["paper-raised", "bg-paper-raised"],
+  ["paper", "bg-paper"],
+  ["paper-sunk", "bg-paper-sunk"],
+] as const
+
+const TYPE_RUNGS = [
+  ["text-display-hero", "Display hero, marketing only"],
+  ["text-display-xl", "Display xl"],
+  ["text-display-lg", "Display lg, in-app page titles"],
+  ["text-display-md", "Display md, section headings"],
+  ["text-display-sm", "Display sm, sub-sections"],
+  ["text-body-lg", "Body lg, the default"],
+  ["text-body-md", "Body md, dense"],
+  ["text-body-sm", "Body sm, captions"],
+  ["text-label", "Label, buttons and form labels"],
+  ["text-eyebrow", "Eyebrow, uppercase kicker"],
+  ["text-data-lg", "Data lg, the big number"],
+  ["text-data-md", "Data md, inline figures"],
+  ["text-data-sm", "Data sm, codes and metadata"],
+  ["text-hand", "Marginalia, decorative only"],
+] as const
+
+/** What to do to see the states a static render cannot show. */
+const INTERACT_NOTE: Record<string, string> = {
+  hover: "Hover this control to see it",
+  "focus-visible": "Press Tab to move focus onto this control",
+  active: "Press and hold this control to see it",
+}
+
+const SECTIONS = ["Colour", "Typography", "Texture", "Forms", "Display", "Overlays"] as const
+
+/**
+ * The eight-state grid for one component.
+ *
+ * `render` receives the state and returns the component in it. Hover and
+ * active come back wrapped in `Force`, which pins the pseudo-class so the
+ * state is visible in a static screenshot; every other state is real.
+ */
+function StateGrid({
+  render,
+  notes = {},
+}: {
+  render: (state: string) => React.ReactNode
+  notes?: Record<string, string>
+}) {
+  return (
+    <>
+      {["default", "hover", "focus-visible", "active", "disabled", "loading", "error", "success"].map(
+        (s) => {
+          const interactive = s === "hover" || s === "active" || s === "focus-visible"
+          const provenance = interactive ? "live" : "prop"
+          const body = render(s)
+          return (
+            <StateCell
+              key={s}
+              state={s as never}
+              provenance={provenance as never}
+              note={notes[s] ?? INTERACT_NOTE[s]}
+            >
+              {body}
+            </StateCell>
+          )
+        },
+      )}
+    </>
+  )
+}
+
+/** Toast needs to be triggered, so it lives behind a button inside the provider. */
+function ToastDemo() {
+  const { toast } = useToast()
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button size="sm" onClick={() => toast({ title: "Paper marked", variant: "success" })}>
+        Success
+      </Button>
+      <Button
+        size="sm"
+        onClick={() => toast({ title: "We couldn't upload that file", variant: "error" })}
+      >
+        Error
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * `Tabs` and `RadioGroup` are controlled-only by design (their own comments
+ * explain why: every real usage needs to read or drive the value from
+ * outside). The preview therefore has to own the state rather than lean on a
+ * `defaultValue` convenience prop, which is the honest way to demo them: if
+ * the preview needed an uncontrolled escape hatch that real screens do not
+ * get, the preview would be lying about the component.
+ */
+function TabsDemo() {
+  const [tab, setTab] = useState("marks")
+  return (
+    <div className="w-full">
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList
+          label="Result sections"
+          tabs={[
+            { value: "marks", label: "Marks" },
+            { value: "notes", label: "Notes" },
+            { value: "gone", label: "Disabled", disabled: true },
+          ]}
+        />
+        <TabsPanel value="marks">
+          <p className="text-body-md text-ink-muted">Sixty three out of eighty.</p>
+        </TabsPanel>
+        <TabsPanel value="notes">
+          <p className="text-body-md text-ink-muted">Two marks on the gradient.</p>
+        </TabsPanel>
+      </Tabs>
+    </div>
+  )
+}
+
+function RadioDemo({
+  name,
+  state,
+  error,
+}: {
+  name: string
+  state?: "success" | "loading"
+  error?: string
+}) {
+  const [value, setValue] = useState("41")
+  return (
+    <RadioGroup
+      label="Paper variant"
+      name={name}
+      value={value}
+      onValueChange={setValue}
+      state={state}
+      error={error}
+    >
+      <Radio value="41" label="Paper 41" />
+      <Radio value="42" label="Paper 42" />
+      <Radio value="43" label="Paper 43" />
+    </RadioGroup>
+  )
+}
+
+function ModalDemo() {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}>
+        Open modal
+      </Button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Delete this paper?">
+        <p className="text-body-md text-ink-muted">
+          The marks and the annotations go with it. This cannot be undone.
+        </p>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" onClick={() => setOpen(false)}>
+            Delete
+          </Button>
+        </div>
+      </Modal>
+    </>
+  )
+}
+
+export function App() {
+  return (
+    <ToastProvider>
+      <AppBody />
+    </ToastProvider>
+  )
+}
+
+function AppBody() {
+  return (
+    <div className="paper-grain min-h-screen">
+      <header className="sticky top-0 z-[var(--z-index-nav)] border-b border-rule bg-paper/85 backdrop-blur-[10px]">
+        <div className="mx-auto flex max-w-[var(--container-app)] flex-wrap items-center gap-4 px-6 py-4">
+          <span className="text-display-sm text-ink">Lemely component kit</span>
+          <span className="text-data-sm text-ink-faint">The Study Notebook</span>
+          <nav className="ms-auto flex flex-wrap gap-3">
+            {SECTIONS.map((s) => (
+              <a
+                key={s}
+                href={`#${slug(s)}`}
+                className="text-label text-ink-muted transition-colors duration-[var(--dur-instant)] hover:text-accent-ink"
+              >
+                {s}
+              </a>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      <main className="mx-auto flex max-w-[var(--container-app)] flex-col gap-section px-6 py-12">
+        <p className="text-body-lg max-w-[65ch] text-ink-muted">
+          Every value on this page comes from <code className="text-data-md">DESIGN.md</code> by way
+          of <code className="text-data-md">src/index.css</code>. If something here looks wrong, the
+          token is wrong, not the page. Contrast claims are pinned by{" "}
+          <code className="text-data-md">tests/test_design_tokens.py</code>.
+        </p>
+
+        <Group title="Colour">
+          <ComponentSection
+            name="Paper and ink"
+            summary="Cards sit lighter than the canvas, the way a sheet laid on a desk catches more light. Never pure white and never pure black: both read sterile and break the paper illusion. Ink faint is the floor, and there is deliberately no lighter text step."
+          >
+            <StateCell state="default" provenance="prop" note="Surfaces, lightest to darkest">
+              <div className="flex w-full flex-col gap-2">
+                {SURFACES.map(([name, bg]) => (
+                  <div
+                    key={name}
+                    className={`flex items-center justify-between rounded-md border border-rule px-3 py-2 ${bg}`}
+                  >
+                    <span className="text-body-sm text-ink">{name}</span>
+                  </div>
+                ))}
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="Text tokens, all AA on every surface">
+              <div className="flex w-full flex-col gap-1">
+                <span className="text-body-lg text-ink">ink, 11.6:1</span>
+                <span className="text-body-lg text-ink-muted">ink-muted, 6.09:1</span>
+                <span className="text-body-lg text-ink-faint">ink-faint, 4.94:1</span>
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="Accent has three values because three jobs have three contrast requirements"
+            >
+              <div className="flex w-full flex-col gap-2">
+                <span className="rounded-md bg-accent px-3 py-2 text-label text-accent-on">
+                  accent fill, white label 4.65:1
+                </span>
+                <span className="text-body-md text-accent-ink">accent-ink text, 9.75:1</span>
+                <span className="rounded-md bg-accent-wash px-3 py-2 text-body-sm text-accent-ink">
+                  accent-wash
+                </span>
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Pastels and subjects"
+            summary="The sticker set. Subject colours are semantic, not decorative: a student should find Physics by colour before reading. Never pick a subject colour at a call site."
+          >
+            {PASTELS.map(([name, use, bg, fg]) => (
+              <StateCell key={name} state="default" provenance="prop" note={use}>
+                <span className={`rounded-full px-2.5 py-1 text-eyebrow ${bg} ${fg}`}>{name}</span>
+              </StateCell>
+            ))}
+          </ComponentSection>
+
+          <ComponentSection
+            name="Semantic states"
+            summary="Teal rather than green, so the success and error pair survives deuteranopia and protanopia where green against red does not. They also descend in lightness, so the ladder survives greyscale for a reader who gets no hue at all. Colour never carries meaning alone: each pairs with a label."
+          >
+            {SEMANTIC.map(([name, use, bg, fg]) => (
+              <StateCell key={name} state="default" provenance="prop" note={use}>
+                <span className={`rounded-md px-3 py-1.5 text-body-sm ${bg} ${fg}`}>{name}</span>
+              </StateCell>
+            ))}
+          </ComponentSection>
+        </Group>
+
+        <Group title="Typography">
+          <ComponentSection
+            name="The four faces"
+            summary="Newsreader for display, Geist for interface and body, JetBrains Mono for every number (tabular by construction, so a column of marks aligns and a counting score never jitters), and Caveat for marginalia only. If losing the text would be a problem, it is not Caveat."
+          >
+            {TYPE_RUNGS.map(([cls, label]) => (
+              <StateCell key={cls} state="default" provenance="prop" note={cls}>
+                <span className={`${cls} text-ink`}>{label}</span>
+              </StateCell>
+            ))}
+          </ComponentSection>
+        </Group>
+
+        <Group title="Texture">
+          <ComponentSection
+            name="The notebook layer"
+            summary="How the one protected quality survives contact with a dashboard, and the easiest thing in the system to overdo. The restraint rule: marginalia decorates, never carries meaning alone. Remove every element here and the product must still be fully usable."
+          >
+            <StateCell state="default" provenance="prop" note=".ruled-bg, 32px">
+              <div className="ruled-bg h-24 w-full rounded-md border border-rule" />
+            </StateCell>
+            <StateCell state="default" provenance="prop" note=".dotted-bg, 24px">
+              <div className="dotted-bg h-24 w-full rounded-md border border-rule" />
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note=".margin-rule, the cheapest and most on-brand texture available"
+            >
+              <div className="margin-rule">
+                <p className="text-body-md text-ink-muted">
+                  A single hairline at the content&rsquo;s inline start, echoing the logo.
+                </p>
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note=".sticker, decorative badges only">
+              <span className="sticker rounded-sm bg-pastel-amber px-2.5 py-1 text-eyebrow text-pastel-amber-ink">
+                7 day streak
+              </span>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="The paper grain is on this page">
+              <p className="text-hand text-ink-muted">
+                Marginalia lives here, and nowhere that matters.
+              </p>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        <Group title="Forms">
+          <ComponentSection
+            name="Button"
+            summary="Solid fill, 8px radius, scale(0.98) press. Never a pill. Loading keeps the label rendered so the button does not resize mid-submit."
+          >
+            <StateGrid
+              render={(s) => (
+                <Button
+                  variant="primary"
+                  disabled={s === "disabled"}
+                  loading={s === "loading"}
+                  icon={s === "default" ? <Plus size={16} /> : undefined}
+                >
+                  Mark paper
+                </Button>
+              )}
+              notes={{
+                error: "Button has no error styling of its own: the error belongs to the form",
+                success: "Same. A button reports outcome through a toast, not through its own fill",
+              }}
+            />
+          </ComponentSection>
+
+          <ComponentSection
+            name="Button variants"
+            summary="Primary is the one obvious action on a screen. Ink is for dark panels. Secondary is the default, ghost is for Cancel."
+          >
+            <StateCell state="default" provenance="prop" note="All four, at rest">
+              <div className="flex flex-wrap gap-2">
+                <Button variant="primary" size="sm">Primary</Button>
+                <Button variant="ink" size="sm">Ink</Button>
+                <Button variant="secondary" size="sm">Secondary</Button>
+                <Button variant="ghost" size="sm">Ghost</Button>
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="Three sizes">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm">Small</Button>
+                <Button size="md">Medium</Button>
+                <Button size="lg">Large</Button>
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Input"
+            summary="Visible label always. Placeholder-as-label is forbidden. Errors render inline and adjacent to the field, never only at the top of the form."
+          >
+            <StateGrid
+              render={(s) => (
+                <Input
+                  label="Paper code"
+                  placeholder="0625_w24_qp_41"
+                  hint={s === "default" ? "Found on the front page" : undefined}
+                  disabled={s === "disabled"}
+                  state={s === "loading" || s === "success" ? s : undefined}
+                  error={s === "error" ? "We don't recognise that paper code" : undefined}
+                  leadingIcon={s === "default" ? <MagnifyingGlass size={16} /> : undefined}
+                />
+              )}
+            />
+          </ComponentSection>
+
+          <ComponentSection name="Textarea" summary="Same conventions as Input, for longer answers.">
+            <StateGrid
+              render={(s) => (
+                <Textarea
+                  label="Note to your teacher"
+                  disabled={s === "disabled"}
+                  state={s === "loading" || s === "success" ? s : undefined}
+                  error={s === "error" ? "Keep this under 500 characters" : undefined}
+                />
+              )}
+            />
+          </ComponentSection>
+
+          <ComponentSection
+            name="Select"
+            summary="A native select styled to match Input. Deliberately not a custom listbox: the native control is keyboard and screen-reader correct everywhere, and it is the right control on a phone."
+          >
+            <StateGrid
+              render={(s) => (
+                <Select
+                  label="Subject"
+                  disabled={s === "disabled"}
+                  state={s === "loading" || s === "success" ? s : undefined}
+                  error={s === "error" ? "Pick a subject to continue" : undefined}
+                >
+                  <option>Physics</option>
+                  <option>Mathematics</option>
+                  <option>Chemistry</option>
+                </Select>
+              )}
+            />
+          </ComponentSection>
+
+          <ComponentSection
+            name="Checkbox, Radio and Switch"
+            summary="The radio dot and the switch thumb are circular by platform convention, which DESIGN.md §6 explicitly exempts from the pill ban."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="flex flex-col gap-3">
+                <Checkbox label="Email me when marking finishes" />
+                <Checkbox label="Already checked" defaultChecked />
+                <Checkbox label="Disabled" disabled />
+              </div>
+            </StateCell>
+            <StateCell state="error" provenance="prop">
+              <Checkbox label="Accept the terms" error="You need to accept this to continue" />
+            </StateCell>
+            <StateCell state="default" provenance="prop">
+<RadioDemo name="variant" />
+            </StateCell>
+            <StateCell state="success" provenance="prop" note="State glyph sits on the legend, because the state belongs to the group">
+<RadioDemo name="variant-ok" state="success" />
+            </StateCell>
+            <StateCell state="error" provenance="prop">
+<RadioDemo name="variant-err" error="Pick a variant" />
+            </StateCell>
+            <StateCell state="default" provenance="prop">
+              <div className="flex flex-col gap-3">
+                <Switch label="Weekly summary" />
+                <Switch label="On by default" defaultChecked />
+                <Switch label="Disabled" disabled />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        <Group title="Display">
+          <ComponentSection
+            name="Badge and subject tags"
+            summary="The one place a pill is legal. Subject colours are fixed by DESIGN.md §3.8 and never picked at a call site."
+          >
+            <StateCell state="default" provenance="prop" note="Semantic tones">
+              <div className="flex flex-wrap gap-2">
+                <Badge tone="ok">Marked</Badge>
+                <Badge tone="warn">Needs review</Badge>
+                <Badge tone="err">Failed</Badge>
+                <Badge tone="info">Queued</Badge>
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="Subject tags, colour fixed by subject">
+              <div className="flex flex-wrap gap-2">
+                <SubjectTag subject="Mathematics" />
+                <SubjectTag subject="Physics" />
+                <SubjectTag subject="Chemistry" />
+                <SubjectTag subject="Biology" />
+                <SubjectTag subject="English" />
+                <SubjectTag subject="Sociology" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Avatar, Kbd and ProgressBar"
+            summary="Avatars are squircles, not circles: a circle has to keep meaning 'status', not 'person'."
+          >
+            <StateCell state="default" provenance="prop" note="Squircle, three sizes, initials fallback">
+              <div className="flex items-center gap-3">
+                <Avatar name="Yassin Diab" size="sm" />
+                <Avatar name="Habeeby" size="md" />
+                <Avatar name="Nour Ahmed" size="lg" />
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop">
+              <div className="flex items-center gap-2">
+                <Kbd>Ctrl</Kbd>
+                <Kbd>K</Kbd>
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="Determinate, animates transform not width">
+              <div className="w-full">
+                <ProgressBar value={62} label="Syllabus covered" />
+              </div>
+            </StateCell>
+            <StateCell state="loading" provenance="prop" note="Indeterminate">
+              <div className="w-full">
+                <ProgressBar indeterminate ariaLabel="Marking in progress" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Table"
+            summary="Sunk header, hairline row dividers, tabular numbers right-aligned so a column of marks always lines up."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="w-full">
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>Paper</TH>
+                      <TH numeric>Mark</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    <TR>
+                      <TD>0625_w24_qp_41</TD>
+                      <TD numeric>63/80</TD>
+                    </TR>
+                    <TR>
+                      <TD>0625_s23_qp_22</TD>
+                      <TD numeric>37/40</TD>
+                    </TR>
+                  </TBody>
+                </Table>
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Skeleton"
+            summary="Layout-matching, so nothing shifts when the real content arrives. The Phase 1 audit found no skeleton component existed anywhere in the product."
+          >
+            <StateCell state="loading" provenance="prop">
+              <div className="flex w-full flex-col gap-3">
+                <SkeletonLine />
+                <SkeletonText lines={3} />
+              </div>
+            </StateCell>
+            <StateCell state="loading" provenance="prop">
+              <div className="flex w-full items-center gap-3">
+                <SkeletonCircle />
+                <SkeletonBlock className="h-16 flex-1" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="ChartFrame"
+            summary="The frame and its mandatory empty state. Charts themselves are Phase 5; DESIGN.md §11 requires every chart to have an empty-data state, so the frame enforces it structurally."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="w-full">
+                <ChartFrame title="Predicted grade" subtitle="Last six papers">
+                  <div className="dotted-bg h-28 rounded-md border border-rule" />
+                </ChartFrame>
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="isEmpty always wins over children">
+              <div className="w-full">
+                <ChartFrame title="Predicted grade" isEmpty>
+                  <div className="h-28" />
+                </ChartFrame>
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        <Group title="Overlays">
+          <ComponentSection
+            name="Tabs, Popover, Modal and Toast"
+            summary="Floating layers are the only place a shadow is permitted, and only the ultra-diffuse one. Everything here is keyboard-operable."
+          >
+            <StateCell state="default" provenance="live" note="Arrow keys move between tabs">
+              <TabsDemo />
+            </StateCell>
+            <StateCell state="default" provenance="live" note="Click to open, Escape to close">
+              <Popover
+                renderTrigger={(triggerProps) => (
+                  <Button size="sm" {...triggerProps}>
+                    Open popover
+                  </Button>
+                )}
+              >
+                <p className="text-body-sm text-ink-muted">
+                  Confidence is how sure the marker is, not how right it is.
+                </p>
+              </Popover>
+            </StateCell>
+            <StateCell state="default" provenance="live" note="Focus is trapped and restored on close">
+              <ModalDemo />
+            </StateCell>
+            <StateCell state="default" provenance="live" note="Auto-dismisses, pauses on hover">
+              <ToastDemo />
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="ErrorState"
+            summary="Active voice, names what happened and what to do, and offers a retry. The Phase 1 audit found no error boundary existed anywhere; ErrorBoundary now wraps this same presentation."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <ErrorState
+                  title="We couldn't load your papers"
+                  message="The connection dropped partway through. Your work is safe."
+                  onRetry={() => undefined}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+      </main>
+    </div>
+  )
+}

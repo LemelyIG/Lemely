@@ -96,3 +96,7 @@ tests/fixtures/real-papers/
 # either. Only reports/accuracy-real/REPORT.md is committed (numbers-only,
 # no transcribed text, no imagery) — directive items 3, 4, 7.
 reports/accuracy-real/*/
+
+# Component-kit preview build output (REDESIGN-MISSION Phase 2.6). The preview
+# is a dev tool with its own Vite entry; its build artifact is never shipped.
+web/dist-previews/
