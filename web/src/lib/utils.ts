@@ -27,13 +27,23 @@ import { extendTailwindMerge } from "tailwind-merge"
  * list without removing the class from `index.css` too.
  */
 const CUSTOM_FONT_SIZE_CLASSES = [
+  // ── Study Notebook type scale (DESIGN.md §4.2) ──
   "display-hero",
+  "display-xl",
   "display-lg",
   "display-md",
   "display-sm",
-  "display-xs",
   "body-lg",
   "body-md",
+  "body-sm",
+  "label",
+  "eyebrow",
+  "data-lg",
+  "data-md",
+  "data-sm",
+  "hand",
+  // ── Build-era names, still live until Phase 4 migrates the last call site ──
+  "display-xs",
   "label-sm",
   "metadata",
   "dense-lg",
