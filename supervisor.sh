@@ -9,7 +9,7 @@ set -u
 REPO="/home/sico/Lemely"
 NTFY_TOPIC="lemely-ErBPK7TIRGD1sQP5"
 CTRL_TOPIC="lemely-ctl-9QmZR4vXpL2wDA7t"   # you PUBLISH here to steer the run
-NTFY_URL="http://home-server"
+NTFY_URL="http://home-server:7532"
 REPO_URL="https://github.com/LemelyIG/Lemely"
 
 MODEL="opus"                    # orchestrator model — Opus for everything
@@ -399,8 +399,8 @@ trap cleanup EXIT INT TERM
 
 # --------------------------- run loop --------------------------------------
 
-FIRST_PROMPT="Read BUILD/MISSION.md end to end. It is your complete mission. Then read BUILD/STATE.md, docs/LEMELY_UI_SPEC.md and DESIGN.md, and begin execution exactly as MISSION.md instructs."
-RESUME_PROMPT="You are resuming an unattended build. Read BUILD/INBOX.md FIRST and act on any unhandled directives, then BUILD/MISSION.md, BUILD/STATE.md, BUILD/DECISIONS.md and BUILD/BLOCKERS.md if present, and 'git log --oneline -15'. Clean up any dirty working tree with a wip commit, then continue from the first non-done task in STATE.md. Follow MISSION.md protocols exactly."
+FIRST_PROMPT="Read BUILD/REDESIGN-MISSION.md end to end. It is your complete mission. Then read BUILD/STATE.md, docs/LEMELY_UI_SPEC.md and DESIGN.md, and begin execution exactly as REDESIGN-MISSION.md instructs."
+RESUME_PROMPT="You are resuming an unattended build. Read BUILD/INBOX.md FIRST and act on any unhandled directives, then BUILD/REDESIGN-MISSION.md, BUILD/STATE.md, BUILD/DECISIONS.md and BUILD/BLOCKERS.md if present, and 'git log --oneline -15'. Clean up any dirty working tree with a wip commit, then continue from the first non-done task in STATE.md. Follow REDESIGN-MISSION.md protocols exactly."
 
 ntfy_publish "🚀 Supervisor started" "$(progress_block)
 Host \`$(hostname)\` · model \`$MODEL\`
