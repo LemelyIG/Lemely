@@ -74,3 +74,25 @@ A (ship the hand-authored SVG, **default**) / B (a2) / C (d1) / D (regenerate).
 **IN** — awaiting.
 
 ---
+
+## 2026-08-13 — D1 and D2 both timed out, defaults applied
+
+**IN** — nothing. The inbound topic has still never carried a message from the
+human; the only entry remains my Phase-0 selftest.
+
+- **D1.1–5 DEFAULTED** at 18:10 (+03), 60-minute timeout elapsed: proceed as
+  proposed with the five cost-free IA corrections. They are implemented in
+  Phase 3.1, not earlier, because they are IA changes and Phase 3 is where IA
+  lands.
+- **D1.6 REMAINS OPEN** and is deliberately not defaulted (§10: a question with
+  no sane default must not be a timeout question). It does not block Phase 2 or
+  3. Re-ask before Phase 4 reaches admin views; if it is still unanswered at
+  that point, that is where I block rather than guess.
+- **D2 DEFAULTED** at 18:10 (+03), 30-minute timeout elapsed: option A, ship the
+  hand-authored SVG mark.
+
+Reversing either default is cheap and I will do it on request: D2 is three SVG
+files not yet referenced anywhere in the app, and D1.1–5 has not been written
+yet at all.
+
+---
