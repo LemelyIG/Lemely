@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import {
   useMutation,
   useQuery,
@@ -5,7 +6,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
-import { request, streamActivity } from "@/lib/api"
+import { fetchBlobUrl, request, streamActivity } from "@/lib/api"
 import type {
   AcknowledgeAtRiskRequest,
   AnnouncementCreateRequest,
@@ -26,6 +27,7 @@ import type {
   GenerateQuizQuestionsResponse,
   Overview,
   PaperDetail,
+  PaperKind,
   PaperList,
   QuizAssignment,
   QuizAssignmentList,
@@ -710,26 +712,98 @@ export function useDeleteAnnouncement(): UseMutationResult<void, Error, string> 
   })
 }
 
+/** Paper states the backend is still working on, so the client should re-ask. */
+const IN_FLIGHT: ReadonlySet<PaperKind> = new Set<PaperKind>(["queued", "processing"])
+
+/** How often to re-ask while a grading run is in flight. */
+const PAPER_POLL_MS = 2000
+
+/**
+ * `GET /papers`, polling while any paper is still queued or being marked.
+ *
+ * Marking runs server-side now (D6.13), so the grid is the authority on how far
+ * it has got — but only if it actually re-asks. Without this, a teacher who
+ * reloaded the page mid-run saw a "Queued" card that never changed no matter how
+ * long they waited, because nothing on the screen was fetching any more. The
+ * interval stops the moment every paper reaches a terminal state, so an idle
+ * console makes no requests at all.
+ */
 export function usePapers(): UseQueryResult<PaperList, Error> {
   return useQuery({
     queryKey: ["teacher", "papers"],
     queryFn: () => request<PaperList>("/papers"),
+    refetchInterval: (query) =>
+      query.state.data?.papers.some((p) => IN_FLIGHT.has(p.kind)) ? PAPER_POLL_MS : false,
   })
 }
 
 /**
- * `GET /papers/{paperId}` returns HTTP 409 (not 404) when the paper exists
- * but hasn't been graded yet (`get_paper` in `teacher.py` raises
- * `HTTPException(409, ...)` when `entry.report is None`) — that surfaces
- * here as a normal query error; the screen decides how to render it (e.g.
- * "not graded yet" vs. a generic failure state).
+ * `GET /papers/{paperId}`, polling while that paper is still being worked on.
+ *
+ * Answers for ungraded papers too — it carries the live pipeline and (once
+ * detection lands) the detected fields, with `awardedMarks`/`maxMarks` null
+ * until there are real marks. It used to 409 until a report existed, which is
+ * why the Pipeline panel went blank on a mid-run refresh.
  */
 export function usePaperDetail(paperId: string | undefined): UseQueryResult<PaperDetail, Error> {
   return useQuery({
     queryKey: ["teacher", "paper", paperId],
     queryFn: () => request<PaperDetail>(`/papers/${paperId}`),
     enabled: !!paperId,
+    refetchInterval: (query) =>
+      query.state.data && IN_FLIGHT.has(query.state.data.kind) ? PAPER_POLL_MS : false,
   })
+}
+
+/**
+ * Object URL for a paper's scan thumbnail (`GET /papers/{paperId}/preview`),
+ * or `null` while it loads and for a scan the server could not render.
+ *
+ * Fetched as a blob rather than pointed at with `<img src>`: the route is behind
+ * the staff guard and `<img>` cannot carry an `Authorization` header, so a plain
+ * src would 401 on every card. The alternative — a token in the query string —
+ * would put a credential in nginx's access log.
+ *
+ * Deliberately *not* a react-query hook, unlike everything else in this file. An
+ * object URL is a resource with an owner, and the only place that can revoke it
+ * at exactly the right moment is the component holding it; parking one in a
+ * shared cache means either leaking a blob per card or guessing at eviction. The
+ * cost of owning it here is a refetch when a card remounts, which the response's
+ * own `Cache-Control: private, max-age=3600` already absorbs — the scan behind a
+ * paper id never changes.
+ */
+export function useScanPreview(paperId: string): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | null = null
+
+    fetchBlobUrl(`/papers/${paperId}/preview`)
+      .then((fetched) => {
+        if (cancelled) {
+          // Unmounted (or the id changed) while in flight — nothing will ever
+          // render this one, so release it instead of stranding it.
+          URL.revokeObjectURL(fetched)
+          return
+        }
+        objectUrl = fetched
+        setUrl(fetched)
+      })
+      .catch(() => {
+        // A scan that cannot be rendered leaves the card's thumbnail empty,
+        // which is what it looked like before previews existed. Not worth an
+        // error state of its own on a grid of cards.
+        if (!cancelled) setUrl(null)
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl)
+    }
+  }, [paperId])
+
+  return url
 }
 
 export function useSchemes(): UseQueryResult<SchemeList, Error> {
@@ -740,11 +814,37 @@ export function useSchemes(): UseQueryResult<SchemeList, Error> {
 }
 
 /**
+ * `POST /papers/{paperId}/regrade` — queue a paper for another marking run.
+ *
+ * Returns as soon as the run is queued (202); the outcome arrives through
+ * `usePapers`/`usePaperDetail` polling, since marking is server-side. The
+ * streaming sibling (`gradePaper`) is not used for this: holding a connection
+ * open for the minutes a run takes buys nothing when the grid is already
+ * watching for the result.
+ */
+export function useRegradePaper(): UseMutationResult<void, Error, string> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (paperId: string) =>
+      request<void>(`/papers/${paperId}/regrade`, { method: "POST" }),
+    onSuccess: (_data, paperId) => {
+      queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "paper", paperId] })
+    },
+  })
+}
+
+/**
  * Upload a scanned paper (+ optional mark scheme) to the grading console. Not
  * a react-query hook — mirrors `uploadScan` in `useStudentApi.ts`: builds
  * multipart `FormData` with the exact field names FastAPI's `upload_paper`
  * expects (`scan`, `mark_scheme` — the Python parameter names). Goes through
  * `request()`, which skips the JSON content-type for a `FormData` body.
+ *
+ * `detected` in the reply is always empty now: metadata detection moved off the
+ * upload request and into the background grading job (D6.13), because running
+ * it inline blocked the server's event loop for its whole ~60s duration. The
+ * detected fields arrive via `usePaperDetail` once the job has produced them.
  */
 export async function uploadPaper(scan: File, markScheme?: File): Promise<UploadResponse> {
   const form = new FormData()
@@ -774,6 +874,18 @@ export function extractPaper(paperId: string): AsyncGenerator<TeacherPipelineFra
  * `streamActivity` typed to the frame shapes `POST /papers/{id}/grade`
  * actually emits (see `TeacherPipelineFrame` in `lib/teacherTypes.ts`). No
  * request body — `paperId` here is a path param, not a JSON field.
+ *
+ * **No screen calls this today.** The grading console used to, and driving the
+ * run from a browser stream is what let one backend stall leave papers at
+ * "Queued" forever with a refresh wiping the only progress readout (D6.13).
+ * Marking is now a server-side job, so the console polls `GET /papers/{id}` —
+ * which reports the same progress, for every paper, and survives a reload.
+ *
+ * Kept because the endpoint is real, tested, and the right tool for a
+ * per-frame live view (warnings and model-call chatter that the polled
+ * pipeline summarises away) if a screen ever wants one. Use `useRegradePaper`
+ * to merely *start* a run — it returns immediately instead of holding a
+ * connection open for the length of the marking.
  */
 export function gradePaper(paperId: string): AsyncGenerator<TeacherPipelineFrame> {
   return streamActivity(`/papers/${paperId}/grade`, {

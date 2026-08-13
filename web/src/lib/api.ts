@@ -237,6 +237,41 @@ export async function request<T>(
 }
 
 /**
+ * GET a binary endpoint with the bearer token and return an object URL for it.
+ *
+ * Exists because `<img src>` / `<embed src>` cannot send an `Authorization`
+ * header, so any image behind an authenticated route (e.g. a paper's scan
+ * thumbnail, `GET /papers/{id}/preview`) has to be fetched by hand and handed to
+ * the element as a blob. Putting the token in the query string instead would
+ * write a credential into every proxy access log.
+ *
+ * The caller owns the returned URL and must `URL.revokeObjectURL` it — see
+ * `useScanPreview` in `lib/hooks/useTeacherApi.ts` for the ownership pattern.
+ *
+ * Carries the same silent-refresh handling as `request()` — pre-emptive renewal
+ * plus one replay on a 401. An image left out of that would be the one thing on
+ * the screen still showing a stale-session failure after every other panel had
+ * quietly recovered.
+ */
+export async function fetchBlobUrl(path: string, init?: RequestInit): Promise<string> {
+  const send = (token: string | undefined): Promise<Response> =>
+    fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { ...authHeaders(false, token), ...init?.headers },
+    })
+
+  let res = await send(await tokenForRequest())
+  if (res.status === 401) {
+    const renewed = await refreshSession()
+    if (renewed) res = await send(renewed)
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`)
+  }
+  return URL.createObjectURL(await res.blob())
+}
+
+/**
  * Consume an SSE job stream (POST + bearer works via fetch; native EventSource
  * cannot). Yields each parsed `data:` payload until a terminal [DONE] sentinel.
  */
