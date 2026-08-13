@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes, ReactNode } from "react"
 import {
   CheckCircle,
@@ -69,7 +70,7 @@ function StageGlyph({ status }: { status: ProcessingStageStatus }) {
   if (status === "error") {
     return <XCircle size={20} weight="fill" className="text-err" />
   }
-  return <Circle size={20} className="text-border" />
+  return <Circle size={20} className="text-rule" />
 }
 
 export function ProcessingState({
@@ -90,7 +91,7 @@ export function ProcessingState({
                 <span
                   className={cn(
                     "min-h-4 w-px flex-1",
-                    stage.status === "done" ? "bg-ok" : "bg-border",
+                    stage.status === "done" ? "bg-ok" : "bg-rule",
                   )}
                 />
               ) : null}
@@ -100,13 +101,13 @@ export function ProcessingState({
                 <span
                   className={cn(
                     "text-body-md font-medium",
-                    stage.status === "pending" ? "text-t3" : "text-t1",
+                    stage.status === "pending" ? "text-ink-faint" : "text-ink",
                   )}
                 >
                   {stage.label}
                 </span>
                 {stage.status === "active" && stage.progress ? (
-                  <span className="flex-none text-metadata text-t2">
+                  <span className="flex-none text-data-sm text-ink-muted">
                     {capitalize(stage.progress.unit ?? "item")} {stage.progress.current} of{" "}
                     {stage.progress.total}
                   </span>
@@ -115,13 +116,13 @@ export function ProcessingState({
               {stage.status === "error" && stage.errorMessage ? (
                 <p className="mt-1 text-body-md text-err">{stage.errorMessage}</p>
               ) : stage.detail ? (
-                <p className="mt-1 text-metadata text-t3">{stage.detail}</p>
+                <p className="mt-1 text-body-sm text-ink-faint">{stage.detail}</p>
               ) : null}
             </div>
           </div>
         )
       })}
-      {footer ? <div className="mt-2 border-t border-border pt-4">{footer}</div> : null}
+      {footer ? <div className="mt-2 border-t border-rule pt-4">{footer}</div> : null}
     </div>
   )
 }

@@ -31,7 +31,13 @@ const RTL_CLEAN_FILES = [
   "src/components/ui/badge.tsx",
   "src/components/ui/card.tsx",
   "src/components/ui/chart-frame.tsx",
+  "src/components/ui/boundary-bar.tsx",
+  "src/components/ui/file-drop.tsx",
+  "src/components/ui/grade-badge.tsx",
+  "src/components/ui/mark-display.tsx",
   "src/components/ui/primitives.tsx",
+  "src/components/ui/processing-state.tsx",
+  "src/components/ui/state-views.tsx",
   "src/components/ui/subject-tag.tsx",
   // Screens and layouts Phase 3 restyled.
   "src/portals/misc/NotFound.tsx",
@@ -40,6 +46,9 @@ const RTL_CLEAN_FILES = [
   "src/portals/parent/index.tsx",
   "src/portals/student/screens/Overview.tsx",
   "src/portals/teacher/screens/Overview.tsx",
+  // Phase 4, surface 2 — the correct-a-paper flow.
+  "src/portals/student/screens/CorrectPaper.tsx",
+  "src/portals/student/screens/PaperResult.tsx",
 ]
 
 /**

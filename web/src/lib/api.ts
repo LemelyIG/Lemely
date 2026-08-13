@@ -297,6 +297,36 @@ export async function* streamActivity(
     const renewed = await refreshSession()
     if (renewed) res = await open(renewed)
   }
+  /*
+   * A non-OK response is a failure, not an empty stream (P4.2).
+   *
+   * This check did not exist, and its absence was silent by construction: a
+   * 500 or a 503 from FastAPI carries a JSON body, so `res.body` was truthy,
+   * the reader found no `data:` lines in it, the generator ended, and the
+   * caller's `for await` loop simply finished. On `CorrectPaper` that meant a
+   * student pressed "Mark this paper", watched the panel sit there, and got
+   * back "Ready when you are" with no error, no result, and no way to tell
+   * that anything had gone wrong at all.
+   *
+   * `request()` and `fetchBlobUrl()` above both throw here; this was the one
+   * transport of the three that did not, which is why it is written the same
+   * way as `request()`'s branch rather than more cheaply — a caller that reads
+   * `ApiError.detail` must get the same shape from all three.
+   */
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`
+    let detail: unknown
+    try {
+      const body: unknown = await res.clone().json()
+      if (body && typeof body === "object" && "detail" in body) {
+        detail = (body as { detail: unknown }).detail
+        if (typeof detail === "string" && detail.length > 0) message = detail
+      }
+    } catch {
+      // Body wasn't JSON — keep the generic status text.
+    }
+    throw new ApiError(res.status, message, detail)
+  }
   if (!res.body) return
   const reader = res.body.getReader()
   const decoder = new TextDecoder()

@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V3 */
 import type { HTMLAttributes, ReactNode } from "react"
 import { Tray, WarningCircle, WifiSlash, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -15,6 +16,17 @@ import { Button } from "@/components/ui/button"
  * `error` kind defaults to the warn (amber) token, not err (red). `err` is
  * still available via the `tone` override for a caller that genuinely needs
  * it (e.g. a destructive/blocking failure), but nothing here defaults to it.
+ *
+ * P4.2 moved the colour names off the build-era `text-t1`/`bg-surface-2`
+ * aliases onto the names DESIGN.md defines (identical values), and added the
+ * optional `marginalia` line. §12 is specific about what an empty state is
+ * made of — "a line of Caveat marginalia, a one-sentence explanation, and the
+ * action that fills it" — and this component had the second and third and no
+ * way to supply the first, which is why `ChartFrame` grew its own
+ * `emptyMarginalia` rather than reusing this. It is optional, not defaulted:
+ * per §4.1 Caveat decorates and never carries, so a state view without one is
+ * still complete, and a generic default ("Nothing here yet") on every empty
+ * state in the product would be decoration pretending to be voice.
  */
 
 export type StateViewKind = "empty" | "error" | "offline"
@@ -31,6 +43,9 @@ export interface StateViewProps extends HTMLAttributes<HTMLDivElement> {
   icon?: ReactNode
   /** Override the default tone (icon/badge color) for this kind. */
   tone?: StateViewTone
+  /** Optional Caveat line above the heading (§12). Decorative: never put
+   * anything here that the reader would lose by not seeing it (§4.1). */
+  marginalia?: string
   heading: string
   body?: string
   action?: StateViewAction
@@ -45,15 +60,16 @@ const kindDefaults: Record<StateViewKind, { icon: Icon; tone: StateViewTone }> =
 }
 
 const toneClasses: Record<StateViewTone, { icon: string; bg: string }> = {
-  neutral: { icon: "text-t3", bg: "bg-surface-2" },
-  warn: { icon: "text-warn", bg: "bg-warn-bg" },
-  err: { icon: "text-err", bg: "bg-err-bg" },
+  neutral: { icon: "text-ink-faint", bg: "bg-paper-sunk" },
+  warn: { icon: "text-warn", bg: "bg-warn-wash" },
+  err: { icon: "text-err", bg: "bg-err-wash" },
 }
 
 export function StateView({
   kind,
   icon,
   tone,
+  marginalia,
   heading,
   body,
   action,
@@ -87,8 +103,9 @@ export function StateView({
         {icon ?? <Glyph size={22} className={toneCls.icon} />}
       </div>
       <div className="flex flex-col gap-1.5">
-        <div className="text-body-lg font-medium text-t1">{heading}</div>
-        {body ? <p className="text-body-md text-t2">{body}</p> : null}
+        {marginalia ? <p className="text-hand text-ink-muted">{marginalia}</p> : null}
+        <div className="text-body-lg font-medium text-ink">{heading}</div>
+        {body ? <p className="text-body-md text-ink-muted">{body}</p> : null}
       </div>
       {action || secondaryAction ? (
         // Two actions with `whitespace-nowrap` labels ("Take the placement
@@ -149,7 +166,7 @@ export function OfflineState(props: Omit<StateViewProps, "kind">) {
  */
 export function RouteFallback({ className }: { className?: string }) {
   return (
-    <div role="status" className={cn("text-body-md text-t2", className)}>
+    <div role="status" className={cn("text-body-md text-ink-muted", className)}>
       Loading…
     </div>
   )

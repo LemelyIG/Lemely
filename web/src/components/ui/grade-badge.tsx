@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
 
@@ -36,10 +37,26 @@ const bandClasses: Record<GradeBand, { text: string; bg: string; border: string 
   fail: { text: "text-grade-fail", bg: "bg-grade-fail-bg", border: "border-grade-fail" },
 }
 
+/*
+ * P4.2: the grade letter is mono, not serif.
+ *
+ * DESIGN.md §4's data face covers "all scores, **grades**, marks, XP, timers,
+ * paper codes, IDs", and §4.2's `data-lg` rung is named for exactly this use:
+ * "the big number: a score, a predicted grade". This component rendered the
+ * letter with `font-serif` at display rungs, so the product's headline grade
+ * was set in Newsreader on every screen that shows one. Paired with the same
+ * correction in `mark-display.tsx`, the two figures a student reads first —
+ * the mark and the grade — now share the face the system reserves for figures,
+ * instead of borrowing the heading face.
+ *
+ * `inline` keeps a distinct treatment because at 16px a mono letter beside
+ * body text reads as a code rather than as a grade; it moves to `data-md`,
+ * which is the mono rung sized for inline figures.
+ */
 const letterSize: Record<GradeBadgeSize, string> = {
-  hero: "text-display-hero",
+  hero: "text-data-lg",
   medium: "text-display-md",
-  inline: "text-base font-semibold font-sans",
+  inline: "text-data-md",
 }
 
 const padSize: Record<GradeBadgeSize, string> = {
@@ -49,9 +66,9 @@ const padSize: Record<GradeBadgeSize, string> = {
 }
 
 const labelSize: Record<GradeBadgeSize, string> = {
-  hero: "text-label-sm text-t2",
-  medium: "text-label-sm text-t2",
-  inline: "text-metadata text-t3",
+  hero: "text-eyebrow text-ink-muted",
+  medium: "text-eyebrow text-ink-muted",
+  inline: "text-data-sm text-ink-faint",
 }
 
 export interface GradeBadgeProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
@@ -89,13 +106,17 @@ export function GradeBadge({
         "inline-flex flex-col items-center justify-center leading-none border",
         padSize[size],
         provisional
-          ? cn("bg-surface", band.text, band.border, estimated && "border-dashed")
+          ? cn("bg-paper-raised", band.text, band.border, estimated && "border-dashed")
           : cn(band.bg, band.text, "border-transparent"),
         className,
       )}
       {...props}
     >
-      <span className={cn("font-serif", letterSize[size])}>{grade}</span>
+      {/* `medium` stays on the display rung: it is a section-heading-sized
+          badge inside cards whose titles are Newsreader, and a 24px mono
+          letter there reads as a paper code. The two rungs that carry a grade
+          as a *figure* — hero and inline — are mono. */}
+      <span className={cn(size === "medium" && "font-display", letterSize[size])}>{grade}</span>
       {label && <span className={labelSize[size]}>{label}</span>}
     </div>
   )

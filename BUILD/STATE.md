@@ -30,20 +30,21 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
 CURRENT PHASE:      4 — Surface-by-surface redesign (Phases 0-3 DONE)
-CURRENT SURFACE:    Student dashboard DONE (1 of 10). Next: **past-paper
-                    correction flow** -> study surfaces -> gamification ->
-                    Teacher dashboard + quiz builder -> Parent -> Admin ->
-                    Auth -> Marketing -> 404/misc.
-CURRENT BRANCH:     redesign/student-dashboard  (off redesign/phase-0; per §11)
-NEXT ACTION:        Phase 4, surface 2: **past-paper correction flow**
-                    (`screens/CorrectPaper.tsx`, `screens/PaperResult.tsx`).
-                    Read DESIGN.md, D4.1 (what surface 1 learned), D3.22, and
-                    the audit rows M4/M5 — both are about this flow and both
-                    are real: the marking wait loses all progress on refresh,
-                    and a marking failure offers no retry except re-uploading
-                    from scratch. §5's Phase 6.2 owns the full wait-experience
-                    design; do not silently pull it forward, but do not ship a
-                    redesigned failure state without a retry either.
+CURRENT SURFACE:    Past-paper correction flow DONE (2 of 10). Next: **study
+                    surfaces (classifieds, flashcards, study plans)** ->
+                    gamification -> Teacher dashboard + quiz builder ->
+                    Parent -> Admin -> Auth -> Marketing -> 404/misc.
+CURRENT BRANCH:     redesign/correct-paper  (off redesign/student-dashboard; per §11)
+NEXT ACTION:        Phase 4, surface 3: **study surfaces** — classifieds,
+                    flashcards (`screens/flashcards/`), study plans
+                    (`screens/studyplan/`), and `screens/practice/`.
+                    Read DESIGN.md, D4.1 and D4.2 (what surfaces 1 and 2
+                    learned) before emitting anything. These screens are the
+                    **Read lane** (DESIGN.md §2), not Operate: single centred
+                    column, body max 65ch, and the texture layer runs highest
+                    here of anywhere in the product. Surfaces 1 and 2 were both
+                    Operate; do not carry their sidebar-plus-well macrostructure
+                    across by habit.
 
                     New since Phase 3, inherited by every later surface:
                     - `scripts/capture_surface.mjs` is the batched visual
@@ -52,25 +53,52 @@ NEXT ACTION:        Phase 4, surface 2: **past-paper correction flow**
                       It hashes every capture and fails when two states that
                       must differ are identical — do not remove that check,
                       it caught a round where all ten images were the same
-                      error screen.
+                      error screen. **P4.2 generalised it**: it now takes a
+                      surface name (`node scripts/capture_surface.mjs
+                      <surface> [outDir]`) and each surface registers its
+                      route, states, stubs and an optional interaction in the
+                      `SURFACES` map. Add an entry; do not copy the file.
                     - `toneFill()` (badge.tsx) and `subjectToneForCode()`
                       (subject-tag.tsx) are the sanctioned ways to reach a
                       pastel outside `<Badge>`/`<SubjectTag>`.
                     - `resolveCrumbTrail` (student/data.ts) feeds the student
                       header's real `<Breadcrumbs>`. Derived from
                       `resolveCrumb` so the two cannot disagree.
+                    - `FileDrop` (`components/ui/file-drop.tsx`) is the kit's
+                      upload control, 8 states, `default`/`compact`. Use it
+                      rather than a styled `<input type="file">`.
+                    - `confidenceTierFor` / `confidenceSummaryOf`
+                      (`lib/markingConfidence.ts`) own confidence bucketing
+                      product-wide. A bare `confidence < 0.8x` anywhere else
+                      in `web/src` now fails a Python test.
+                    - `correctionFailureMessage` (`lib/correctionOutcome.ts`)
+                      is how a thrown error becomes a sentence for a student.
+                      Do not render `err.message` to a reader.
+
+                    **Two lessons from P4.2 that generalise, and are the
+                    things to look for on every remaining surface:**
+                    1. A component's docstring can state a rule the component
+                       breaks. `MarkDisplay` said "numeric figures use
+                       JetBrains Mono" and rendered its hero in Newsreader.
+                       Read what the code does, not what it says it does.
+                    2. A defect fixed on one portal can still be live on
+                       another. The student marking run still has D6.13's
+                       lost-on-refresh problem that the teacher console had
+                       fixed architecturally. When a finding lands, grep for
+                       its shape in the other three portals.
 
                     Standing rules Phase 4 inherits, all of them enforced:
-                    - `npm run check:copy` must not grow. 91 prose em-dashes
-                      remain on un-migrated screens; §9.8 binds the gate to
+                    - `npm run check:copy` must not grow. **90** prose
+                      em-dashes remain on un-migrated screens (91 before P4.2); §9.8 binds the gate to
                       new/edited copy, so each surface clears its own as it
                       lands. It is not a silent exemption.
                     - Add each migrated file to RTL_CLEAN_FILES in
                       `tests/unit/rtlSafety.test.ts`. The list only grows.
                     - Stamp every emitted surface with the hallmark pre-emit
-                      critique (§9.1). Phase 2's 19 kit components are
-                      UNSTAMPED — stamp each as you touch it, do not back-fill
-                      scores nobody re-derived.
+                      critique (§9.1). **13 of the 45 files in
+                      `components/ui/` carry it** (counted, not estimated) —
+                      stamp each as you touch it, and do not back-fill scores
+                      nobody re-derived.
                     - Replace text loaders with `loading-shapes.tsx` as each
                       surface's geometry settles. ~23 remain, deliberately:
                       a skeleton must match the layout that replaces it, and
@@ -84,7 +112,7 @@ NEXT ACTION:        Phase 4, surface 2: **past-paper correction flow**
                     **B4 blocks the e2e gate** (BUILD/BLOCKERS.md). One
                     command from the human clears it; do not kill the
                     port-8000 process unattended, it belongs to another user.
-LAST UPDATED:       2026-08-13T21:20+03:00
+LAST UPDATED:       2026-08-13T22:30+03:00
 LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
                     NOTE: still no inbound message from the human, ever. The only
                     entry on the topic remains my own Phase-0 selftest.
@@ -99,7 +127,7 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 | 1. Audit | DONE | 2026-08-13 | Three legs, all read-only, `web/` verified untouched after each. Merged into `BUILD/DESIGN-AUDIT.md`; leg reports in `BUILD/audit/`. 6 critical, 14 major, 3 minor. Root cause is one thing: every token is still the build-era Material-3 palette, so zero pages are Study Notebook yet. Worse than that and independently confirmed by me: 3 fabrications on the landing page, no error boundary anywhere, no skeleton component anywhere. **Coverage is partial and stated so — nothing was verified against a rendered viewport, and 34 of 48 routes were reached by grep only.** |
 | 2. Brand & Design System | DONE | 2026-08-13 | All 6 steps done. Brand strategy at `BUILD/BRAND.md`; logo hand-authored as SVG after the Gemini refine pass failed on all five named defects (D2 defaulted to ship it). DESIGN.md rewritten from scratch as the Study Notebook; index.css is its implementation with a documented temporary compatibility layer so un-migrated screens pick up the new palette instead of staying Material-3. `tests/test_design_tokens.py` pins every contrast claim and caught two real AA failures plus one greyscale failure in my own draft. Landing-page fabrications C1/C2 fixed, plus a third the audit missed (a stated 0.70 review threshold that is really 0.90). Component kit: 19 components, all 8 states, preview page at `web/dev-previews/` with its own Vite entry so the product can never ship it. Closed the audit's "no skeleton component" and "no error boundary" gaps. Three defects found by verifying rather than trusting the agent reports: RadioGroup did not actually have 8 states; the preview page was silently missing every utility used only inside a component (Tailwind source detection is rooted at the entry CSS, fixed with `@source`, CSS went 28KB→69KB); and a hover-pinning device I built emitted zero CSS and was removed rather than left to quietly pass review. |
 | 3. IA & UX Flows | DONE | 2026-08-13 | All four parts done, D1.1-5 implemented. The headline is what the audit could not see from source: **neither the student nor teacher portal had ANY navigation below 820px/768px** — sidebars simply `hidden`, nothing replacing them, on a product whose own brief says students live on phones. Fixed with a shared `NavDrawer` rendering the same list as the desktop aside. Also removed two cross-portal links `RequireAuth` bounces for every role that exists (dead for everyone), and 4 dead keys in the student `crumbs` map. First-run views for student + teacher (`GettingStarted`); the parent's was already right and was deliberately left alone. Four honesty defects fixed in passing: a fabricated school name and hardcoded date on the teacher dashboard, hardcoded greetings on both, and two 'Coming soon' buttons for features that shipped. Three rules got gates rather than sweeps (`check:copy`, `rtlSafety`, `navigation`), and each found a real defect while being written. 646 unit tests (+59), typecheck/lint/both builds/pre-commit clean, no horizontal scroll at 320/375/1440. **e2e blocked by B4** — environmental, verified pre-existing at `0451e5e`, not a Phase 3 regression. See D3.22. |
-| 4. Surface redesign | IN PROGRESS | — | 1 of 10 surfaces done (student dashboard). Headline finding is one nothing in this build could have caught: **`--font-serif` was never a token, so ~20 call sites across five screens were rendering Georgia, not Newsreader** — the display face DESIGN.md mandates was on screen nowhere it was reached by that name. Verified in the shipped bundle before and after, not reasoned about. A missing definition fails silently where a wrong one would not: the token gate greps for raw values *bypassing* the block, and `font-serif` is a well-formed utility resolving to somebody else's default. Also: both dashboard charts drew a blank box where §11 mandates an empty state (the momentum panel's empty case is *every* student who just marked their first paper), the trend column told a one-paper student they were improving by "+0" in teal, and "Forecast" rendered a space-joined concatenation of per-subject grades under a label promising one value. See D4.1. |
+| 4. Surface redesign | IN PROGRESS | — | 2 of 10 surfaces done (student dashboard, past-paper correction flow). **Surface 2's headline is a run that could fail in silence**: `streamActivity` never checked `res.ok`, so a 500 or 503 yielded zero frames, the loop fell out of the bottom, and the panel went back to reading "Ready when you are" — a student pressed the button, nothing happened, and the screen told them it was ready. Also: the student's confidence threshold was 0.85 against the backend's and the teacher's 0.90, so one mark was described two ways to the two people reading the same paper; and the mark and the grade, the two figures a student reads first, were both set in the heading face where DESIGN.md §4 puts the data face — `MarkDisplay`'s own docstring stated that rule while breaking it. See D4.2. Surface 1: Headline finding is one nothing in this build could have caught: **`--font-serif` was never a token, so ~20 call sites across five screens were rendering Georgia, not Newsreader** — the display face DESIGN.md mandates was on screen nowhere it was reached by that name. Verified in the shipped bundle before and after, not reasoned about. A missing definition fails silently where a wrong one would not: the token gate greps for raw values *bypassing* the block, and `font-serif` is a well-formed utility resolving to somebody else's default. Also: both dashboard charts drew a blank box where §11 mandates an empty state (the momentum panel's empty case is *every* student who just marked their first paper), the trend column told a one-paper student they were improving by "+0" in teal, and "Forecast" rendered a space-joined concatenation of per-subject grades under a label promising one value. See D4.1. |
 | 5. Motion & data-viz | PENDING | — | |
 | 6. Hardening & adaptation | PENDING | — | |
 | 7. Final QA & report | PENDING | — | |
@@ -109,7 +137,7 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 | Surface | Status | Branch | Gates | Merged |
 |---|---|---|---|---|
 | Student dashboard | **DONE** | `redesign/student-dashboard` | typecheck / lint / 662 unit / check:copy 91 (flat) / both builds / pre-commit / 28 token tests: **green**. e2e: **still blocked, B4**. Visual round: 10 captures, all distinct, 0 unexpected console errors. | pending |
-| Past-paper correction flow | QUEUED | — | — | — |
+| Past-paper correction flow | **DONE** | `redesign/correct-paper` | typecheck / lint / 694 unit (+32) / check:copy 90 (**down from 91**) / both builds / pre-commit / 30 Python token+constant tests: **green**. e2e: **still blocked, B4** (port 8000 re-verified occupied). Visual round: 28 captures across 3 surfaces, all distinct, console errors only from the deliberately-failing states. | pending |
 | Study surfaces (classifieds, flashcards, plans) | QUEUED | — | — | — |
 | Gamification (XP, streaks, leaderboards) | QUEUED | — | — | — |
 | Teacher dashboard + quiz builder | QUEUED | — | — | — |
@@ -122,25 +150,33 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 ### Gate status (current surface only)
 
 ```
-SURFACE:            Student dashboard (Overview + student portal shell)
+SURFACE:            Past-paper correction flow
+                    (CorrectPaper + PaperResult + the kit they touch)
 BUILD COMPLETE:     yes
-INSPECTION ROUND:   1 (batched, desktop 1440 + 375 together, 5 states each)
+INSPECTION ROUND:   1 (batched, desktop 1440 + 375 together; 5 states on
+                    CorrectPaper, 4 on PaperResult)
 FINDINGS TO FIX:    4, all fixed in one batch —
-                    (a) grade badges collapsed to "BPredicted" on desktop
-                        (`md:block` overrode the component's inline-flex);
-                    (b) ~600px dead space per subject row (flex share was on
-                        the text column, which is nearly empty);
-                    (c) momentum panel a third empty (88px chart pinned to the
-                        top of a card stretched to its taller sibling);
-                    (d) capture fixture incoherent (1 momentum point paired
-                        with "4 papers corrected", a state the API cannot
-                        produce).
+                    (a) on a phone the whole status panel sat ~1700px below
+                        the fold once marking started, on the flow with the
+                        real latency, on the device students actually use;
+                    (b) two identically sized drop zones stacked, so nothing
+                        distinguished the required upload from the optional;
+                    (c) two buttons reading "Start marking again" at once
+                        (header + panel), against the Operate lane's single
+                        obvious primary action;
+                    (d) the result card's integrity sidebar two-thirds empty —
+                        a short column stretched to a taller sibling with its
+                        provenance pinned by `mt-auto`. Same shape as D4.1's
+                        momentum panel, one surface later.
 CONFIRM ROUND:      1, all four confirmed fixed. Stopped there (§3.2 item 16).
-HALLMARK STAMP:     present on Overview.tsx, student/index.tsx, card.tsx,
-                    primitives.tsx. 15 of Phase 2's 19 kit components remain
-                    unstamped, per D3.22 — stamped as each is touched.
+HALLMARK STAMP:     present on CorrectPaper.tsx, PaperResult.tsx,
+                    file-drop.tsx, state-views.tsx, processing-state.tsx,
+                    boundary-bar.tsx, mark-display.tsx, grade-badge.tsx.
+                    13 of the 45 files in `components/ui/` now carry a stamp,
+                    counted rather than estimated. The rest are stamped as each
+                    is touched, per D3.22.
 HOOK FINDINGS:      0 (impeccable design hook, every touched file)
-TESTS:              662 unit (+16), all green
+TESTS:              694 unit (+32), all green; 30 Python token+constant tests
 ```
 
 ### Open DECISIONs
@@ -196,7 +232,11 @@ it so it can never be replayed as a directive.
 
 | Artefact | Path | Note |
 |---|---|---|
-| Visual round | `web/scripts/capture_surface.mjs` | Batched capture while B4 blocks the real corpus. **Stubs the API** — layout evidence, never behaviour. Fails when two states that must differ are identical. |
+| Visual round | `web/scripts/capture_surface.mjs` | Batched capture while B4 blocks the real corpus. **Stubs the API** — layout evidence, never behaviour. Fails when two states that must differ are identical. **P4.2**: takes a surface name; register a new surface in `SURFACES` rather than copying the file. |
+| Upload control | `components/ui/file-drop.tsx` | C-21. Real focusable `<input>` under a drop target, 8 states, `default`/`compact`. Never hand-roll a file input again. |
+| Confidence bucketing | `lib/markingConfidence.ts` | The 0.90 review floor, mirrored from `lemely.core.schemas` and pinned by `tests/test_web_shared_constants.py`. The only place in `web/src` allowed to compare a confidence to a number. |
+| Student-facing failure copy | `lib/correctionOutcome.ts` | Turns a thrown error into a sentence a fifteen-year-old can act on. Never render `err.message`. |
+| Cross-language pins | `tests/test_web_shared_constants.py` | Python test reading web sources, for constants both languages must agree on. |
 | Captures | `reports/redesign/p4-student-dashboard/` | 5 states x 1440/375. Fixture numbers, not product data. |
 | Tone escape hatch | `toneFill` in `components/ui/badge.tsx` | Pastel fill+text pairing without `Badge`'s pill shape. |
 | Subject colour by code | `subjectToneForCode` in `components/ui/subject-tag.tsx` | §3.8, for surfaces whose data carries a syllabus code rather than a name. |

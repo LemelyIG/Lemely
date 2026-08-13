@@ -30,8 +30,17 @@
  * capture — they are not product data, they are never shipped, and no claim in
  * any report is derived from them.
  *
- * Usage:  node scripts/capture_surface.mjs [outDir]
+ * Usage:  node scripts/capture_surface.mjs <surface> [outDir]
+ *         surface ∈ the keys of SURFACES below.
  * Assumes `npm run build` has run; serves `dist/` on a local port.
+ *
+ * P4.2 generalised this from the one screen it was written for. The harness
+ * (server, session, viewports, the catch-all route, the duplicate check, the
+ * console-error log) is now surface-agnostic; what each surface supplies is a
+ * route, a set of states, the stubs those states need, and optionally an
+ * interaction to perform before the shutter. Copying the file per surface was
+ * the alternative, and eight copies of a duplicate-detector is how the
+ * detector ends up disabled in seven of them.
  */
 
 import { spawn } from "node:child_process"
@@ -43,9 +52,7 @@ import { chromium } from "@playwright/test"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, "..", "..")
-const outDir = path.resolve(
-  process.argv[2] ?? path.join(repoRoot, "reports", "redesign", "p4-student-dashboard"),
-)
+const surfaceName = process.argv[2] ?? "student-dashboard"
 const PORT = 4319
 const BASE = `http://127.0.0.1:${PORT}`
 
@@ -158,7 +165,7 @@ const WEAK = [
  * are the two the P4.1 changes are about: `onePaper` is the exact state that
  * used to render an empty plot box with a stray dot in the corner.
  */
-const STATES = {
+const OVERVIEW_STATES = {
   populated: {
     body: overview({ subjects: SUBJECTS_FULL, momentumPoints: [58, 63, 61, 72], weak: WEAK }),
   },
@@ -184,6 +191,207 @@ const STATES = {
   loading: { delayMs: 8_000 },
   error: { status: 500, body: { detail: "Overview is temporarily unavailable." } },
 }
+
+/* ── Surface 2 (P4.2): the correct-a-paper flow ──────────────────────────── */
+
+/**
+ * A stand-in scan. `setInputFiles` needs bytes, and a real PDF is not
+ * required: nothing in these captures reaches a parser, because every request
+ * is stubbed. The name is a real CAIE filename so the chosen-file row is
+ * photographed at a realistic length rather than at "a.pdf".
+ */
+const SCAN_FIXTURE = {
+  name: "0625_w24_qp_41.pdf",
+  mimeType: "application/pdf",
+  buffer: Buffer.alloc(1_487_232, 0),
+}
+
+/** One SSE frame, in the wire format `streamActivity` parses. */
+function sse(frame) {
+  return `data: ${JSON.stringify(frame)}\n\n`
+}
+
+/**
+ * Frames that walk the panel through extraction and scheme resolution and
+ * into marking, WITHOUT the terminal `phase: "complete"` frame.
+ *
+ * That omission is the point, not a shortcut. It is exactly the condition
+ * P4.2 found unhandled: the stream closes having said nothing about a result,
+ * and the screen used to fall silently back to "Ready when you are" with two
+ * ticks and a half-drawn third stage. These captures are how that state is
+ * looked at rather than reasoned about.
+ */
+const STALLED_STREAM =
+  sse({ type: "extraction_progress", message: "Reading page 4 of 6", index: 4, total: 6 }) +
+  sse({ type: "mark_scheme_progress", message: "Matched 0625 w24 paper 41" }) +
+  sse({ type: "marking_progress", question_id: "3(b)", index: 3, total: 21 })
+
+const CORRECT_STATES = {
+  /** The screen as a student first meets it: nothing chosen, nothing running. */
+  ready: {},
+  /** A scan picked but not yet sent. The primary action becomes available. */
+  "scan-chosen": { pickScan: true },
+  /**
+   * Marking in flight. The correct stream is left hanging, which is the real
+   * first second of every run: `running` is true and no frame has arrived, so
+   * every stage is still pending. It is not a claim about mid-run progress —
+   * Playwright fulfils a body in one piece, so a partially-delivered stream
+   * cannot be staged honestly here.
+   */
+  marking: { pickScan: true, mark: true, correct: { hang: true } },
+  /** The service refuses the run. The failure names itself and offers retry. */
+  failed: {
+    pickScan: true,
+    mark: true,
+    correct: { status: 503, body: { detail: "The marking service is busy. Try again shortly." } },
+  },
+  /** The stream ends without a result. Used to be silent; now it is a failure. */
+  stalled: { pickScan: true, mark: true, correct: { sse: STALLED_STREAM } },
+}
+
+/* ── Surface 2b: the result screen the flow lands on ─────────────────────── */
+
+/** Field-for-field `ResultDTO`. Numbers are invented for the capture. */
+const RESULT_FIXTURE = {
+  code: "0625",
+  paper: "Paper 41",
+  session: "Nov 2024",
+  markerLabel: "Marked by Lemely",
+  headline: "63 out of 80, a grade B on this paper.",
+  summary:
+    "Method marks carried most of this paper. The marks that got away are clustered in two topics rather than spread across the paper.",
+  awarded: 63,
+  max: 80,
+  pct: 79,
+  grade: "B",
+  boundaryYear: "2024",
+  railLeft: 79,
+  railFoot: "63/80",
+  railNote: "Four marks below the A boundary for this session.",
+  theory: [],
+  integrity: [
+    { mark: "check", color: "ok", label: "Handwriting legible", detail: "Every page read on the first pass." },
+    { mark: "dash", color: "t2", label: "No integrity flags", detail: "Nothing on this paper was flagged for review." },
+  ],
+  provenance: "0625_w24_qp_41.pdf\nmarked 2026-08-13T18:04:11Z",
+}
+
+const RESULT_STATES = {
+  /** History view: no per-question detail is stored, and it says so. */
+  history: { result: { body: RESULT_FIXTURE } },
+  loading: { result: { delayMs: 8_000 } },
+  missing: { result: { status: 404, body: { detail: "No such paper." } } },
+  error: { result: { status: 500, body: { detail: "Result store unavailable." } } },
+}
+
+/**
+ * The surface registry. Each entry owns its route, its file prefix, its states
+ * and the stubbing those states need; everything else is the shared harness.
+ */
+const SURFACES = {
+  "student-dashboard": {
+    prefix: "overview",
+    route: "/student",
+    states: OVERVIEW_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/overview", async (route) => {
+        if (state.delayMs) {
+          // Never fulfilled: this is how the skeleton is captured. The
+          // context is torn down before the delay elapses.
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.body),
+        })
+      })
+    },
+  },
+
+  "correct-paper": {
+    prefix: "correct",
+    route: "/student/correct",
+    states: CORRECT_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/uploads", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ paperId: "capture-paper-1" }),
+        }),
+      )
+      await page.route("**/api/student/correct", async (route) => {
+        const spec = state.correct ?? {}
+        if (spec.hang) {
+          // Held open for longer than the capture takes. This is what "marking
+          // now" actually is from the client's side.
+          await new Promise((r) => setTimeout(r, 30_000))
+          return
+        }
+        if (spec.sse !== undefined) {
+          await route.fulfill({
+            status: 200,
+            contentType: "text/event-stream",
+            body: spec.sse,
+          })
+          return
+        }
+        await route.fulfill({
+          status: spec.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(spec.body ?? {}),
+        })
+      })
+    },
+    async act(page, state) {
+      if (!state.pickScan) return
+      await page.setInputFiles("#scan-file", SCAN_FIXTURE)
+      if (!state.mark) return
+      await page.getByRole("button", { name: "Mark this paper" }).click()
+      // Long enough for the upload stub to resolve and the stream to either
+      // fail or be seen hanging. Short enough that the hanging state is still
+      // hanging.
+      await page.waitForTimeout(1_200)
+    },
+    /** The hanging state never settles, so a full-page shot would wait on it. */
+    fullPage: (state) => !state.correct?.hang,
+  },
+
+  "paper-result": {
+    prefix: "result",
+    route: "/student/result/capture-paper-1",
+    states: RESULT_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/result/**", async (route) => {
+        const spec = state.result
+        if (spec.delayMs) {
+          await new Promise((r) => setTimeout(r, spec.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: spec.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(spec.body ?? {}),
+        })
+      })
+    },
+    fullPage: (state) => !state.result?.delayMs,
+  },
+}
+
+const surface = SURFACES[surfaceName]
+if (!surface) {
+  console.error(
+    `unknown surface "${surfaceName}". Known: ${Object.keys(SURFACES).join(", ")}`,
+  )
+  process.exit(2)
+}
+const STATES = surface.states
+const outDir = path.resolve(
+  process.argv[3] ?? path.join(repoRoot, "reports", "redesign", `p4-${surfaceName}`),
+)
 
 function serveDist() {
   const child = spawn(
@@ -253,26 +461,22 @@ async function main() {
         await page.route("**/api/me/profile", (route) =>
           route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PROFILE) }),
         )
-        await page.route("**/api/student/overview", async (route) => {
-          if (state.delayMs) {
-            // Never fulfilled: this is how the skeleton is captured. The
-            // context is torn down before the delay elapses.
-            await new Promise((r) => setTimeout(r, state.delayMs))
-            return
-          }
-          await route.fulfill({
-            status: state.status ?? 200,
-            contentType: "application/json",
-            body: JSON.stringify(state.body),
-          })
-        })
-        await page.goto(`${BASE}/student`, { waitUntil: "domcontentloaded" })
+        await surface.stub(page, state)
+        await page.goto(`${BASE}${surface.route}`, { waitUntil: "domcontentloaded" })
         // The screen's own entry animation is 320ms (`--dur-base`); settle past
         // it so a capture never catches a half-faded page.
         await page.waitForTimeout(state.delayMs ? 900 : 1400)
 
-        const file = path.join(outDir, `overview--${stateName}--${vp.name}.png`)
-        await page.screenshot({ path: file, fullPage: !state.delayMs })
+        // Surfaces whose states are reached by doing something rather than by
+        // answering a request differently (picking a file, pressing the
+        // primary action) put that here.
+        if (surface.act) await surface.act(page, state)
+
+        const file = path.join(outDir, `${surface.prefix}--${stateName}--${vp.name}.png`)
+        await page.screenshot({
+          path: file,
+          fullPage: surface.fullPage ? surface.fullPage(state) : !state.delayMs,
+        })
         console.log(`captured ${path.relative(repoRoot, file)}`)
         await context.close()
       }
@@ -294,7 +498,7 @@ async function main() {
   for (const vp of VIEWPORTS) {
     const seen = new Map()
     for (const stateName of Object.keys(STATES)) {
-      const file = path.join(outDir, `overview--${stateName}--${vp.name}.png`)
+      const file = path.join(outDir, `${surface.prefix}--${stateName}--${vp.name}.png`)
       const digest = createHash("sha256").update(fs.readFileSync(file)).digest("hex")
       if (seen.has(digest)) duplicates.push(`${vp.name}: ${seen.get(digest)} == ${stateName}`)
       else seen.set(digest, stateName)
@@ -305,7 +509,9 @@ async function main() {
       `identical captures for states that must differ:\n  ${duplicates.join("\n  ")}`,
     )
   }
-  console.log(`\n${VIEWPORTS.length * Object.keys(STATES).length} captures, all distinct`)
+  console.log(
+    `\n${surfaceName}: ${VIEWPORTS.length * Object.keys(STATES).length} captures, all distinct`,
+  )
 
   const logPath = path.join(outDir, "console-errors.txt")
   fs.writeFileSync(

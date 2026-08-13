@@ -1,11 +1,11 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -261,8 +261,8 @@ function Sidebar() {
 
 function Header({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
-  const navigate = useNavigate()
   const trail = resolveCrumbTrail(location.pathname)
+  const onCorrectScreen = location.pathname === "/student/correct"
   return (
     // Responsive sizing here is load-bearing, not cosmetic: this row's fixed
     // items (34px padding either side, the 138px CTA and the gaps) overflowed
@@ -303,13 +303,29 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
           mono `data-sm` scale is scoped to paper codes, IDs and timestamps,
           and a crumb label is none of those — it is words a reader reads. */}
       <Breadcrumbs items={trail} className="flex-1" />
-      <Button
-        variant="accent"
-        size="md"
-        onClick={() => navigate("/student/correct")}
-      >
-        Correct a paper
-      </Button>
+      {/*
+       * P4.2, two corrections to one control.
+       *
+       * It was a `<Button onClick={navigate(...)}>` for a pure navigation —
+       * the identical finding D4.1 fixed on the dashboard's subject rows
+       * (audit M8), sitting unremarked in the shell that renders above every
+       * student screen. As a button it could not be middle-clicked, opened in
+       * a new tab, copied as a link or previewed, and it announced to
+       * assistive technology that something would happen rather than that
+       * somewhere would be reached.
+       *
+       * And it rendered on `/student/correct` itself, where pressing it does
+       * nothing observable: the product's single most prominent call to
+       * action was a dead control on the one screen it points at.
+       */}
+      {onCorrectScreen ? null : (
+        <Link
+          to="/student/correct"
+          className={buttonVariants({ variant: "primary", size: "md" })}
+        >
+          Correct a paper
+        </Link>
+      )}
     </header>
   )
 }

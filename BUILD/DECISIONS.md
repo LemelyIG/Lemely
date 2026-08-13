@@ -6877,3 +6877,150 @@ exactly the collision §6 reserves the circle against.
   screens this surface does not gate and cannot see.
 - `check_copy` holds at 91. This surface had no prose em-dashes of its own to
   clear, so the count is unchanged rather than reduced.
+
+---
+
+## D4.2 — Redesign Phase 4, surface 2 (past-paper correction flow): a run that could fail in silence, and two numbers set in the wrong face
+
+Surface 2 is the flagship flow: `screens/CorrectPaper.tsx` (upload, the marking
+wait, the failure) and `screens/PaperResult.tsx` (the result a student comes to
+the product to read). Migrating it to the Study Notebook found five things that
+are not styling. Two of them are defects no gate in this build could see.
+
+**1. A marking run could end with no result, no error, and no way to tell.**
+`streamActivity` (`lib/api.ts`) never checked `res.ok`. A FastAPI 500 or 503
+carries a JSON body, so `res.body` was truthy, the reader found no `data:` lines
+in it, the generator ended, and `CorrectPaper`'s `for await` loop simply
+finished. `finally` set `running` to false and the panel went back to reading
+**"Ready when you are"**. A student pressed the button, watched nothing happen,
+and was told the screen was ready. `request()` and `fetchBlobUrl()` both throw
+on a non-OK response; this was the one transport of the three that did not, and
+it is the one carrying the longest-running request in the product.
+
+Fixed in two places, because there are two ways to end without a result. `api.ts`
+now throws an `ApiError` built the same way `request()` builds it (so a caller
+reading `.detail` gets the same shape from all three transports), and the screen
+now treats *falling out of the loop* — a connection that dropped mid-run — as
+the failure it is, with `STREAM_ENDED_WITHOUT_RESULT`.
+
+**Worth noting what made it invisible.** The comment directly above the missing
+check already described the failure mode: "a failure here is silent (no body,
+generator ends, the screen just never shows progress)". It was written about the
+401 path, and the fix it prompted was a token refresh. The same sentence was
+true of every other status code and nobody read it that way.
+
+**2. The student's confidence threshold disagreed with the backend's and with
+the teacher's.** `PaperResult` bucketed each mark against **0.85**, described in
+its own comment as "a frontend judgement call made for this retrofit". The real
+review floor is `lemely.core.schemas.REVIEW_CONFIDENCE_THRESHOLD` = **0.90**, it
+is not operator-tunable, and `routers/teacher.py:688` counts confidence against
+it directly. So a mark at 0.87 was called *confident* on the student's copy of
+the paper and *not confident* on the teacher's copy of the same paper, and the
+number shown to the student was the invented one.
+
+Nothing in either test suite could see it, because each side was internally
+consistent. It now lives in `lib/markingConfidence.ts` and is pinned against the
+Python constant by `tests/test_web_shared_constants.py`, which also fails on any
+*other* web module that reintroduces a bare numeric confidence comparison —
+verified by inversion, not assumed.
+
+The landing page has already been corrected on this exact number once: D2's
+record notes its stated "confidence floor" read 0.70 and the real one is 0.90.
+Same number, wrong in a second place, found eleven phases apart.
+
+**3. The mark and the grade were set in the heading face.** DESIGN.md §4 gives
+the data face "all scores, **grades**, marks, XP, timers, paper codes, IDs", and
+§4.2's `data-lg` rung is named for precisely this: "the big number: a score, a
+predicted grade". `MarkDisplay` rendered its hero as `display-hero` (60px
+Newsreader) and `GradeBadge` rendered its letter with `font-serif`. The two
+figures a student reads first on the flagship screen were both in the wrong
+family.
+
+`MarkDisplay`'s own docstring stated the rule while the code broke it: "Numeric
+figures use JetBrains Mono **at the inline size**". The rule was applied
+everywhere except the one call site it was written for. This is D4.1's
+`--font-serif` finding a second time and it fails the same way — a well-formed
+utility resolving to a face nobody chose, invisible to a token gate that greps
+for raw values *bypassing* the block. Both are corrected and verified in the
+shipped bundle (`dist/assets/*.css` carries
+`.text-data-lg{font-family:var(--font-mono)…}`), not reasoned about.
+
+**4. The page could not do what its own first sentence promised.** "Scan or drop
+the paper" has been the opening line of this screen since the build era, and
+there was no drop target anywhere on it — a bare `<input type="file">` with a
+styled `file:` pseudo-element. `FileDrop` (C-21) is a real one, and it is a real
+`<input>` underneath: visually hidden but focusable, with a bound `<label>`, so
+it works from a keyboard and on a phone where there is nothing to drop from.
+Drag-and-drop is layered on as a pointer-only enhancement, which is the correct
+direction. All 8 states, with a preview cell.
+
+**5. Retry in place (audit M5).** The only path out of a failed run was to pick
+the file again and re-upload it, redoing the one part of the run that had
+succeeded. `paperId` is now held past the failure, so the retry re-opens the
+stream against the scan the server already has, and the panel says so
+("Your scan is already uploaded"). `uploadScan` and `runCorrection` were always
+two calls; nothing about this needed a backend change.
+
+**Audit M4 is deliberately NOT done here**, and the reason is worth recording
+rather than deferring silently. The run lives in component state, so a refresh
+mid-marking loses it. The teacher console hit the identical defect and the fix
+was architectural: D6.13 records that marking became a server-side job the
+console *polls*, "precisely so a reload could not wipe the only progress
+readout". The student side still drives its run from the browser stream, i.e.
+**the defect was fixed on one side of the product and left on the other.** That
+is a backend change, Phase 6.2 owns it, and smuggling it into a design pass is
+how a phase stops being reviewable. What is done here is the half that is honest
+to do now: the failure has a way out.
+
+**What the screenshot round caught that source review did not** (four findings,
+fixed in one batch, one confirm round, stopped there per §3.2 item 16):
+
+- **On a phone, everything that reports progress sat below the whole upload
+  form.** Pressing "Mark this paper" pushed the status panel roughly 1700px off
+  the bottom of the screen. On the product's longest, highest-latency flow, on
+  the device its own brief says students live on, the panel that says what is
+  happening was the one thing you could not see while it happened. It now leads
+  on mobile once a run is in flight or has failed, and does not on desktop,
+  where both columns are visible anyway.
+- **Two identically sized drop zones stacked**, giving a reader nothing to tell
+  the required upload from the optional one. `FileDrop` grew a `compact`
+  density; the scheme field uses it.
+- **Two buttons reading "Start marking again" at once**, the header's and the
+  panel's. The header action is now hidden while a failure is showing, so the
+  screen keeps the single obvious primary action the Operate lane asks for and
+  it sits next to its reason.
+- **The result card's integrity sidebar was two-thirds empty**: a short column
+  in a grid stretched to a much taller sibling, with the provenance block pinned
+  to the bottom by `mt-auto`. Identical in shape to D4.1's momentum-panel
+  finding, one surface later.
+
+**Also fixed, smaller.** The result screen rendered two stacked kickers
+("Against the 2024 boundaries" above `BoundaryBar`'s own "Grade boundaries")
+with an indented empty widget beneath them; `BoundaryBar` now takes the label.
+`railFoot` ("63/80") was removed from the presentation — it is the same number
+`MarkDisplay` shows at 32px four lines above, the same judgement as D4.1's
+"Forecast" removal, and the DTO field is untouched. The 404 body interpolated
+the raw paper id into a sentence for the reader. The four terminal states of
+`PaperResult` were four hand-built page shells that had already drifted (two
+used a build-era 22px gap, two used 24px); they share one now. And the student
+shell's "Correct a paper" CTA was a `<Button onClick={navigate}>` — the same
+finding D4.1 fixed on the dashboard's subject rows, sitting unremarked in the
+shell that renders above *every* student screen — and it rendered on
+`/student/correct` itself, where pressing it does nothing observable. It is a
+`<Link>`, and it is not rendered on the screen it points at.
+
+**The capture harness now takes a surface.** `scripts/capture_surface.mjs` was
+written for one screen; it is now a registry of surfaces over a shared harness
+(server, session, viewports, catch-all route, duplicate detector, console-error
+log). Copying the file per surface was the alternative, and eight copies of a
+duplicate-detector is how the detector ends up disabled in seven of them.
+Surface 1 was re-run through the generalised version to prove it still produces
+its ten distinct captures.
+
+**Gates.** typecheck / lint / **694 unit tests (+32)** / `check:copy` **90, down
+from 91** / 30 Python token+constant tests / both builds / pre-commit (with
+`.venv/bin` on PATH — `mypy` and `lint-imports` are `language: system` hooks and
+are invisible to a bare `pre-commit` invocation): **all green**. 28 captures
+across three surfaces, all distinct, console errors only the deliberately-failing
+states' own 404/500/503. **e2e still blocked by B4** — port 8000 is still held by
+the foreign `python -m lemely.web` process, verified again this session.

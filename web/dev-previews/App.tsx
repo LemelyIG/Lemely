@@ -4,6 +4,7 @@ import { ComponentSection, Group, StateCell, slug } from "./harness"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { FileDrop } from "@/components/ui/file-drop"
 import { Select } from "@/components/ui/select"
 import { RadioGroup, Radio } from "@/components/ui/radio"
 import { Switch } from "@/components/ui/switch"
@@ -97,6 +98,19 @@ const INTERACT_NOTE: Record<string, string> = {
 }
 
 const SECTIONS = ["Colour", "Typography", "Texture", "Forms", "Display", "Overlays"] as const
+
+/**
+ * A stand-in for a chosen scan, so `FileDrop`'s success state can be shown
+ * without a real picker interaction. Its byte content is irrelevant — the
+ * component reads only `name` and `size` — but it is a genuine `File`, not a
+ * shape cast to one, so the preview exercises the same code path the screen
+ * does.
+ */
+const PREVIEW_FILE = new File(
+  [new Uint8Array(1_487_232)],
+  "0625_w24_qp_41.pdf",
+  { type: "application/pdf" },
+)
 
 /**
  * The eight-state grid for one component.
@@ -444,6 +458,39 @@ function AppBody() {
                   leadingIcon={s === "default" ? <MagnifyingGlass size={16} /> : undefined}
                 />
               )}
+            />
+          </ComponentSection>
+
+          <ComponentSection
+            name="File drop"
+            summary="A drop target that is also a real, focusable file input, so it works from the keyboard and on a phone where there is nothing to drop. Active is the drag-over state; success is a chosen file."
+          >
+            <StateGrid
+              render={(s) => (
+                <FileDrop
+                  // The id must differ per cell: eight `<label for>` pairs
+                  // sharing one id would all point at the first input, so
+                  // clicking any cell would open the first cell's picker.
+                  id={`preview-file-drop-${slug(s)}`}
+                  label="Scanned paper"
+                  labelNote="required"
+                  accept="application/pdf,image/*"
+                  file={s === "success" ? PREVIEW_FILE : null}
+                  onFileChange={() => {}}
+                  disabled={s === "disabled"}
+                  busy={s === "loading"}
+                  hint={s === "default" ? "One paper per upload" : undefined}
+                  error={s === "error" ? "That file is bigger than 25 MB" : undefined}
+                />
+              )}
+              notes={{
+                // Said plainly rather than faked: the other seven cells show
+                // the state they claim, and a cell that quietly showed the
+                // resting target under an "active" label would be the kind of
+                // evidence-shaped non-evidence this build keeps finding.
+                active:
+                  "Drag-over is JavaScript state, not a pseudo-class, so `Force` cannot pin it and this cell shows the target at rest. The accent rule and wash are exercised on the real screen.",
+              }}
             />
           </ComponentSection>
 

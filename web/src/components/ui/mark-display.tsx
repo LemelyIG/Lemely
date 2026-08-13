@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
 
@@ -5,8 +6,22 @@ import { cn } from "@/lib/utils"
  * C-2 Mark display. "58 / 80" plus percentage, in the two scales the product
  * needs it at: hero (results overview — "the mark is the hero" per
  * LEMELY_UI_SPEC 1.6) and inline (list rows, question rows, subject cards).
- * Numeric figures use JetBrains Mono at the inline size — DESIGN.md reserves
- * mono for exactly this ("conveys precision" in the marking process).
+ * Numeric figures use JetBrains Mono. DESIGN.md §4 reserves mono for exactly
+ * this: "All scores, grades, marks, XP, timers, paper codes, IDs. Always
+ * tabular-nums."
+ *
+ * P4.2 CORRECTED THE HERO SIZE, which is the one that mattered most and was
+ * the one that was wrong. This component applied the mono rule at the inline
+ * size only, and rendered the hero — the largest number in the product, the
+ * score a student comes to this screen to read — as `display-hero`, i.e.
+ * 60px Newsreader. Its own docstring stated the rule while the code broke it
+ * on the one call site the rule was written for.
+ *
+ * Same shape as D4.1's `--font-serif` finding: a well-formed utility quietly
+ * resolving to the wrong face, invisible to every gate, because the token
+ * discipline gate greps for raw values bypassing the token block and this was
+ * not a raw value. §4.2's `data-lg` rung is the specified treatment for "the
+ * big number: a score, a predicted grade", and it is 32px, not 60px.
  */
 
 export interface MarkDisplayProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
@@ -33,10 +48,12 @@ export function MarkDisplay({
         aria-label={`${awarded} out of ${available} marks, ${pct} percent`}
         {...props}
       >
-        <span className="text-display-hero text-t1">{awarded}</span>
-        <span className="text-display-md text-t3">/ {available}</span>
+        <span className="text-data-lg text-ink">{awarded}</span>
+        <span className="text-data-md text-ink-faint">/ {available}</span>
         {showPercent && (
-          <span className="text-metadata text-t2 bg-surface-2 rounded-full px-2.5 py-1 ml-1">
+          // `ms-1`, not `ml-1`: the percentage trails the mark and must stay
+          // trailing under `dir="rtl"` (P3.4).
+          <span className="text-data-sm text-ink-muted bg-paper-sunk rounded-full px-2.5 py-1 ms-1">
             {pct}%
           </span>
         )}
@@ -50,10 +67,10 @@ export function MarkDisplay({
       aria-label={`${awarded} out of ${available} marks, ${pct} percent`}
       {...props}
     >
-      <span className="font-mono text-sm font-medium text-t1">
+      <span className="text-data-md text-ink">
         {awarded}/{available}
       </span>
-      {showPercent && <span className="font-mono text-xs text-t3">{pct}%</span>}
+      {showPercent && <span className="text-data-sm text-ink-faint">{pct}%</span>}
     </div>
   )
 }

@@ -126,3 +126,29 @@ port 8000, so `scripts/e2e_server.py`'s mocked vision seam never loads and
 to another local user, so it was not killed unattended.
 
 ---
+
+## 2026-08-13 — Phase 4, surface 2 (past-paper correction flow)
+
+**IN** — nothing. Polled at the surface boundary
+(`?poll=1&since=1786629365`); the response was empty. The inbound topic has
+still never carried a message from the human.
+
+**OUT** — surface milestone notice with the batched capture pair.
+
+**No new DECISION was raised.** Everything this surface found fell inside its
+own written mandate or was a correction of something untrue:
+
+- The silent-failure defect in `streamActivity`, the 0.85-vs-0.90 confidence
+  disagreement, and the mark/grade typeface: all three are the code disagreeing
+  with a written spec (DESIGN.md §4, `lemely.core.schemas`), not judgement calls.
+- Retry in place is audit M5, already approved as part of the mission's Phase 4.
+- Audit M4 (progress lost on refresh) was deliberately *not* pulled forward and
+  is recorded as Phase 6.2's, with the reason: the teacher console fixed the
+  same defect architecturally (D6.13) and the student side needs the same
+  backend change, not a styling one.
+
+**D1.6 remains open and undefaulted.** Two surfaces away from admin views.
+
+**B4 still blocks the e2e gate.** Port 8000 was re-checked this session and is
+still held by the foreign `python -m lemely.web` process. Unchanged, still one
+command from you, still not killed unattended.

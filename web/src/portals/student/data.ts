@@ -285,7 +285,11 @@ export const railTicks: RailTick[] = [
 /* ── Correct a paper ────────────────────────────────────────────────────── */
 
 export const reassure: { t: string }[] = [
-  { t: "Multiple choice is matched letter for letter against the official Cambridge scheme. No judgement, no model - the same answer key a marker would use." },
+  // The spaced hyphen here was a dash used as punctuation (audit N1), which
+  // the copy gate's own classifier flags. Restructured into two sentences
+  // rather than swapped for a middle dot: a dot separates a label from a
+  // value, and this is a clause.
+  { t: "Multiple choice is matched letter for letter against the official Cambridge scheme. No judgement and no model, just the same answer key a marker would use." },
   { t: "Written answers are marked point by point, and anything the system is unsure about is handed to you rather than guessed at." },
   { t: "Set your own paper and your own mark scheme, and it will be marked to the same standard." },
 ]
