@@ -224,11 +224,30 @@ export interface ProofStat {
   l: string
 }
 
+/*
+ * Every number here must be traceable to a constant in this repo. Nothing on
+ * this band is a measurement, an average, or a projection — those need a
+ * published method before they can be shown to a prospective user.
+ *
+ * Removed 2026-08-13 (DESIGN-AUDIT C1) because they had no source at all:
+ *   "41s"   median time to mark a 40-question paper
+ *   "19.5h" saved per teacher, per month
+ * The accuracy harness (`reports/accuracy-real/REPORT.md`) is n=1 per paper
+ * across two papers, which is a test result, not a marketing statistic, so it
+ * is deliberately not substituted in here either.
+ *
+ * Also corrected: the confidence floor read "0.70", which was simply the wrong
+ * number — the human-review threshold is 0.90 and is not operator-tunable.
+ */
 export const proof: ProofStat[] = [
-  { n: "41s", l: "median time to mark a 40-question paper" },
+  // `lemely/core/correction.py::correct_mcq_answers` compares against the
+  // official answer key deterministically; `lemely/io/integrity.py` skips both
+  // integrity checks for MCQ, so no Gemini call is made on this path at all.
   { n: "0", l: "model calls on multiple choice" },
-  { n: "0.70", l: "confidence floor before a human is asked" },
-  { n: "19.5h", l: "saved per teacher, per month" },
+  // `lemely/core/schemas.py::REVIEW_CONFIDENCE_THRESHOLD`.
+  { n: "0.90", l: "confidence floor before a teacher is asked to look" },
+  // `GeminiSettings.escalation_confidence_threshold`, lemely/runtime/config.py.
+  { n: "0.80", l: "confidence below which a stronger model re-marks first" },
 ]
 
 export const pillarsIntro = {
@@ -246,11 +265,26 @@ export interface PricingPlan {
   ctaAccent: boolean
 }
 
-export const pricing: PricingPlan[] = [
-  { name: "Student", price: "Free", who: "Everything you need to mark your own practice papers.", dark: false, feats: ["5 papers a month", "Grade prediction", "Weakness report", "Basic study plan"], cta: "Start free", ctaAccent: false },
-  { name: "Student Plus", price: "EGP 180", who: "Per month. Free for every student of a partnered teacher.", dark: true, feats: ["Unlimited papers", "Classified worksheets and flashcards", "Adaptive study plan", "Marketplace booking"], cta: "Start 14-day trial", ctaAccent: true },
-  { name: "Teacher & Centre", price: "Revenue share", who: "No fee. Lemely takes a cut of marketplace bookings only.", dark: false, feats: ["Free Plus for all your students", "Automated correction and custom schemes", "CMS, sub-accounts, QR attendance", "Payments and course booking"], cta: "Talk to us", ctaAccent: false },
-]
+/*
+ * Emptied 2026-08-13 (DESIGN-AUDIT C2). The three tiers shipped here carried
+ * four separate fabrications on two lines: a price ("EGP 180"), a trial that
+ * has never existed ("Start 14-day trial"), a partner-teacher free tier, and a
+ * marketplace revenue-share arrangement. PRODUCT.md records pricing as
+ * explicitly undecided, payments as out of scope, and partner schools among
+ * the things that must not be fabricated.
+ *
+ * Kept as an empty list rather than deleted outright so the section keeps its
+ * slot on the page: Landing renders `pricingPlaceholder` while this is empty,
+ * and the moment real pricing is decided it goes back in here with no layout
+ * work. The `PricingPlan` shape above is retained for that reason.
+ */
+export const pricing: PricingPlan[] = []
+
+export const pricingPlaceholder = {
+  label: "Not announced",
+  title: "We have not set a price yet",
+  body: "Lemely is still being built, and what it costs is genuinely undecided. When there is a plan to show you it will appear here. There is no trial to sign up for in the meantime.",
+}
 
 /* ── Directions (A/B/C) ─────────────────────────────────────────────────── */
 

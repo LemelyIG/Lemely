@@ -8,13 +8,20 @@ import {
   pillars,
   pillarsIntro,
   pricing,
+  pricingPlaceholder,
   proof,
 } from "../data"
 
 /*
  * Landing (isLanding) - the public marketing page. Hero with a live result
  * card, the "one engine, three people served" pillars, a dark accuracy proof
- * band, and a three-tier pricing grid.
+ * band, and the plans section.
+ *
+ * The plans section renders `pricingPlaceholder` while `pricing` is empty. It
+ * is empty on purpose: see the DESIGN-AUDIT C2 note in ../data.ts. Do not
+ * repopulate it with example tiers to "fill the space" — the placeholder
+ * stating that pricing is undecided is the honest render, and inventing a
+ * price is the specific defect that note exists to prevent recurring.
  */
 export function Landing() {
   const navigate = useNavigate()
@@ -149,6 +156,19 @@ export function Landing() {
 
       <div>
         <div className="font-serif text-[34px] mb-6">Plans</div>
+        {pricing.length === 0 ? (
+          <div className="bg-surface border border-border rounded-xl p-[26px] flex flex-col gap-3 max-w-[560px]">
+            <div className="text-metadata uppercase text-t3">
+              {pricingPlaceholder.label}
+            </div>
+            <div className="text-display-sm text-t1">
+              {pricingPlaceholder.title}
+            </div>
+            <div className="text-body-lg text-t2 text-pretty">
+              {pricingPlaceholder.body}
+            </div>
+          </div>
+        ) : (
         <div className="lm-cols grid grid-cols-3 gap-5 max-[1180px]:grid-cols-1">
           {pricing.map((p) => (
             <div
@@ -183,6 +203,7 @@ export function Landing() {
             </div>
           ))}
         </div>
+        )}
       </div>
     </div>
   )
