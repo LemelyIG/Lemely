@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { navGroups, crumbs, resolveCrumb } from "@/portals/student/data"
+import { navGroups, crumbs, resolveCrumb, resolveCrumbTrail } from "@/portals/student/data"
 import { navItems, resolveTrail } from "@/portals/teacher/data"
 import { studentRoute } from "@/portals/student"
 import { teacherRoute } from "@/portals/teacher"
@@ -114,6 +114,100 @@ describe("student nav — D1.1 and D1.3", () => {
         `crumbs has ${path}, which no route mounts`,
       ).toBe(true)
     }
+  })
+})
+
+/*
+ * P4.1 · the student header's breadcrumb became a real `<Breadcrumbs>` trail,
+ * so the same facts the teacher's `resolveTrail` has been asserting since D1.5
+ * now need asserting on the student side. Until this phase the student portal
+ * rendered `resolveCrumb`'s flat string as inert text, which is why none of
+ * this was checkable: an unlinked string cannot have a broken link in it.
+ */
+describe("resolveCrumbTrail — the student portal's back affordance", () => {
+  it("renders a single crumb on the portal root, since the heading already says it", () => {
+    expect(resolveCrumbTrail("/student")).toEqual([{ label: "Home" }])
+  })
+
+  it("never links the crumb for the page you are already on", () => {
+    for (const item of navGroups.flatMap((group) => group.items)) {
+      const trail = resolveCrumbTrail(item.to)
+      expect(trail[trail.length - 1].to, `tail of the trail for ${item.to}`).toBeUndefined()
+    }
+  })
+
+  /*
+   * Only "Home" is linkable. The other leading labels this map produces are
+   * grouping names with no route of their own — `/student/practice` and
+   * `/student/flashcards` are not mounted paths, and `Marking` never was —
+   * so linking them would manufacture the dead ends a back affordance exists
+   * to remove.
+   */
+  it("links Home and nothing else", () => {
+    const paths = [
+      "/student",
+      "/student/correct",
+      "/student/board",
+      "/student/subject/0625",
+      "/student/practice/0625",
+      "/student/flashcards/0625",
+      "/student/plan/0625",
+      "/student/plan/0625/session/abc-123",
+      "/student/result/abc-123",
+    ]
+    for (const path of paths) {
+      for (const crumb of resolveCrumbTrail(path)) {
+        if (crumb.to !== undefined) {
+          expect(crumb.to, `linked crumb "${crumb.label}" on ${path}`).toBe("/student")
+          expect(crumb.label).toBe("Home")
+        }
+      }
+    }
+  })
+
+  it("points every link it does emit at a route the router mounts", () => {
+    const linked = [
+      "/student",
+      "/student/subject/0625",
+      "/student/result/abc-123",
+      "/student/plan/0625/session/abc-123",
+    ].flatMap((path) => resolveCrumbTrail(path).flatMap((crumb) => (crumb.to ? [crumb.to] : [])))
+
+    expect(linked.length).toBeGreaterThan(0)
+    for (const to of linked) {
+      expect(matchesSomeRoute(to, studentRoutePaths), `crumb link ${to}`).toBe(true)
+    }
+  })
+
+  /*
+   * The honesty rule the teacher trail already enforces, now enforced here
+   * too. It was being broken: `/student/result/:paperId` rendered
+   * "Home / Result <uuid>" on the product's flagship screen.
+   */
+  it("never leaks an opaque route id into a crumb label", () => {
+    const cases: Array<[string, string]> = [
+      ["/student/result/9f1c8b2e-0a44-4d33-8c21-77b0d5e6a1f2", "9f1c8b2e-0a44-4d33-8c21-77b0d5e6a1f2"],
+      ["/student/plan/0625/session/abc-123", "abc-123"],
+      ["/student/practice/set/abc-123", "abc-123"],
+      ["/student/practice/result/abc-123", "abc-123"],
+    ]
+    for (const [path, id] of cases) {
+      for (const crumb of resolveCrumbTrail(path)) {
+        expect(crumb.label, `crumb on ${path}`).not.toContain(id)
+      }
+    }
+  })
+
+  /*
+   * A syllabus code is deliberately NOT an opaque id: it is short, stable and
+   * is what a student calls the subject. Pinned so a later "no parameters in
+   * crumbs" sweep does not strip the one parameter that carries meaning.
+   */
+  it("keeps the syllabus code, which is a label rather than an id", () => {
+    expect(resolveCrumbTrail("/student/subject/0625").map((c) => c.label)).toEqual([
+      "Home",
+      "0625",
+    ])
   })
 })
 

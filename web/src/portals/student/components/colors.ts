@@ -17,11 +17,11 @@ export function vizText(color: VizColor): string {
     case "warn":
       return "text-warn"
     case "t1":
-      return "text-t1"
+      return "text-ink"
     case "t2":
-      return "text-t2"
+      return "text-ink-muted"
     case "t3":
-      return "text-t3"
+      return "text-ink-faint"
   }
 }
 
@@ -35,10 +35,10 @@ export function vizBg(color: VizColor): string {
     case "warn":
       return "bg-warn"
     case "t1":
-      return "bg-t1"
+      return "bg-ink"
     case "t2":
-      return "bg-t2"
+      return "bg-ink-muted"
     case "t3":
-      return "bg-t3"
+      return "bg-ink-faint"
   }
 }

@@ -7,6 +7,24 @@
  * from these constants, no live fetch.
  */
 
+import {
+  Atom,
+  Bell,
+  CalendarBlank,
+  Cards,
+  HandHeart,
+  House,
+  Megaphone,
+  NotePencil,
+  PencilSimpleLine,
+  Trophy,
+  UserCircle,
+  UsersThree,
+  type Icon,
+} from "@phosphor-icons/react"
+
+import type { Crumb } from "@/components/ui/breadcrumbs"
+
 /** Semantic colour keys used by data-viz rows/bars, resolved to tokens per use. */
 export type VizColor = "accent" | "ok" | "warn" | "t1" | "t2" | "t3"
 
@@ -48,6 +66,17 @@ export interface NavItem {
   label: string
   tag?: string
   end?: boolean
+  /**
+   * Phosphor glyph for the row (P4.1). DESIGN.md §10 prefers icon-plus-label
+   * "wherever space allows", and the Operate lane ranks scanability above
+   * expression — eleven identical dots gave a student nothing to aim at, so
+   * every row was read rather than recognised.
+   *
+   * The icon lives on the item, not in a lookup keyed by label, so a renamed
+   * destination cannot quietly lose its glyph and fall back to a default that
+   * means something else.
+   */
+  icon: Icon
 }
 
 export interface NavGroup {
@@ -82,22 +111,22 @@ export const navGroups: NavGroup[] = [
   {
     label: "Student",
     items: [
-      { to: "/student", label: "Overview", end: true },
-      { to: "/student/subject/0625", label: "Physics", tag: "0625" },
-      { to: "/student/practice/0625", label: "Practice", tag: "0625" },
-      { to: "/student/flashcards/0625", label: "Flashcards", tag: "0625" },
-      { to: "/student/plan/0625", label: "Study plan", tag: "0625" },
-      { to: "/student/board", label: "Standings" },
-      { to: "/student/friends", label: "Friends" },
-      { to: "/student/profile", label: "Your profile" },
-      { to: "/student/notifications", label: "Notifications" },
-      { to: "/student/announcements", label: "Announcements" },
-      { to: "/student/parents", label: "Your parents" },
+      { to: "/student", label: "Overview", end: true, icon: House },
+      { to: "/student/subject/0625", label: "Physics", tag: "0625", icon: Atom },
+      { to: "/student/practice/0625", label: "Practice", tag: "0625", icon: PencilSimpleLine },
+      { to: "/student/flashcards/0625", label: "Flashcards", tag: "0625", icon: Cards },
+      { to: "/student/plan/0625", label: "Study plan", tag: "0625", icon: CalendarBlank },
+      { to: "/student/board", label: "Standings", icon: Trophy },
+      { to: "/student/friends", label: "Friends", icon: UsersThree },
+      { to: "/student/profile", label: "Your profile", icon: UserCircle },
+      { to: "/student/notifications", label: "Notifications", icon: Bell },
+      { to: "/student/announcements", label: "Announcements", icon: Megaphone },
+      { to: "/student/parents", label: "Your parents", icon: HandHeart },
     ],
   },
   {
     label: "Marking",
-    items: [{ to: "/student/correct", label: "Correct a paper" }],
+    items: [{ to: "/student/correct", label: "Correct a paper", icon: NotePencil }],
   },
 ]
 
@@ -157,8 +186,19 @@ export function resolveCrumb(pathname: string): string {
   const subjectMatch = pathname.match(/^\/student\/subject\/([^/]+)$/)
   if (subjectMatch) return `Home / ${subjectMatch[1]}`
 
-  const resultMatch = pathname.match(/^\/student\/result\/([^/]+)$/)
-  if (resultMatch) return `Home / Result ${resultMatch[1]}`
+  // "This result", not `Result ${paperId}`. The teacher portal's `resolveTrail`
+  // states the rule and a test enforces it there: no crumb interpolates an id,
+  // because a UUID in a breadcrumb is noise and fetching a name to replace it
+  // would make navigation chrome depend on a request that can lag or fail. The
+  // student portal was doing exactly that on `/student/result/:paperId` — the
+  // product's flagship screen — and it showed. The header's own comment
+  // recorded "Home / Result <uuid>" as the longest string on the row, i.e. the
+  // one that forced the responsive fix, without anyone asking what it was for.
+  //
+  // The subject/practice/flashcard/plan arms below keep their parameter on
+  // purpose: a syllabus code is a short, meaningful, reader-facing identifier,
+  // which an opaque paper id is not.
+  if (/^\/student\/result\/[^/]+$/.test(pathname)) return "Home / This result"
 
   const practiceGeneratorMatch = pathname.match(/^\/student\/practice\/([^/]+)$/)
   if (practiceGeneratorMatch) return `Home / Practice / ${practiceGeneratorMatch[1]}`
@@ -184,6 +224,40 @@ export function resolveCrumb(pathname: string): string {
   if (planMatch) return `Home / Study plan / ${planMatch[1]}`
 
   return "Home"
+}
+
+/**
+ * The same breadcrumb as a structured trail, for `<Breadcrumbs>` (P4.1).
+ *
+ * D1.5 gave the teacher and parent portals a real trail with a working back
+ * path. The student portal was left rendering `resolveCrumb`'s flat string as
+ * inert mono text, so on every drilled-into student screen — a subject, a
+ * result, a practice set, a plan session — the only way back was the browser's
+ * own back gesture. That is the exact hole D1.5 was raised to close, and the
+ * student portal is the one the mission says lives on a phone, where that
+ * gesture is inconsistent across browsers and absent from an installed PWA.
+ *
+ * Derived from `resolveCrumb` rather than replacing it, deliberately: one
+ * function decides what a pathname is called, so the two forms cannot drift
+ * into disagreeing about the same route. `resolveCrumb` keeps its exported
+ * string contract and its existing tests.
+ *
+ * Only "Home" is linked. The other leading segments this map produces
+ * ("Marking", "Practice", "Flashcards", "Study plan") are grouping labels with
+ * no route of their own — `/student/practice` is not a mounted path, and
+ * linking it would manufacture a dead end to fix a missing back path.
+ * `Breadcrumbs` supports an unlinked intermediate crumb and collapses to the
+ * nearest *linked* ancestor below `sm`, so those rows still get a working back
+ * tap to Home.
+ */
+export function resolveCrumbTrail(pathname: string): Crumb[] {
+  const parts = resolveCrumb(pathname).split(" / ")
+  return parts.map((label, i) => {
+    // The page you are already on is never a link (`Breadcrumbs` renders the
+    // final crumb as `aria-current`).
+    if (i === parts.length - 1) return { label }
+    return label === "Home" ? { label, to: "/student" } : { label }
+  })
 }
 
 // `studentName`/`studentMeta` ("Maya Rahman" / "Year 11 - Helwan Science

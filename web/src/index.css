@@ -433,6 +433,23 @@
   --color-warn-bg: var(--warn-bg);
   --color-err-bg: var(--err-bg);
 
+  /* `font-serif` was never a token in this system, so it was resolving to
+     Tailwind's own default stack — `ui-serif, Georgia, Cambria, "Times New
+     Roman", Times, serif`. Verified in the shipped bundle, not inferred:
+     `dist/assets/index-*.css` carries that literal value, and the ~20
+     `font-serif` call sites across Landing, Subject, QuizBuilder,
+     FlashcardReview and the primitives were therefore rendering **Georgia**,
+     not Newsreader. The product's display face was not on screen anywhere it
+     was reached by this name.
+
+     Pointing the alias at `--font-display` fixes every one of those sites at
+     once, which is the whole reason it goes here rather than being swept:
+     Phase 4 migrates surfaces one at a time, and the un-migrated ones should
+     not spend the intervening phases in the wrong typeface. Each surface
+     replaces its own `font-serif` with `font-display` as it lands, and this
+     line dies with the rest of the block. */
+  --font-serif: var(--font-display);
+
   /* Build-era spacing rungs, still referenced by un-migrated screens. */
   --spacing-container-desktop: 34px;
   --spacing-container-mobile: 22px;
@@ -451,6 +468,23 @@
   --spacing-30px: 30px;
   --breakpoint-tablet: 1180px;
   --radius: 8px;
+}
+
+/* The student Overview's subject ledger (P4.1). A named utility rather than an
+   arbitrary `grid-cols-[...]` so the template is stated once and reviewable.
+   `minmax(0, 1fr)` on the text column, not `1fr`: a bare `1fr` has an `auto`
+   minimum, so one long subject name would push the row wider than its
+   container and reintroduce the horizontal scroll the mobile rules forbid. */
+@utility grid-subject-ledger {
+  /* The meter column takes the slack, not the text column. With a fixed
+     150px meter and a `1fr` text column, a wide desktop row put ~600px of
+     empty space between "4 papers corrected" and the bar, because the text
+     column absorbs everything and a subject row genuinely has little text in
+     it — `SubjectRowDTO.name` echoes the code, so the row's only prose is a
+     short "N papers corrected". Giving the meter the larger flex share fills
+     the row and spends the extra width on the one thing that gets better with
+     resolution, which is the bar itself. */
+  grid-template-columns: auto minmax(0, 1fr) minmax(150px, 2.4fr) 88px auto;
 }
 
 /* Build-era named grid templates, still referenced by un-migrated screens. */

@@ -47,6 +47,28 @@ const toneClasses: Record<BadgeTone, string> = {
   info: "bg-info-wash text-info",
 }
 
+/**
+ * The fill-and-text pairing for a tone, without `Badge`'s pill shape or
+ * `eyebrow` type (P4.1).
+ *
+ * Some things are tone-coded but are not badges. The student Overview's
+ * syllabus-code chip is the case that needed this: it carries §3.8's subject
+ * colour, but it is a *code*, so it wants the mono `data-sm` rung and
+ * `radius-sm` — DESIGN.md §6 files that shape under "chips, tags, small
+ * inline elements", while `radius-full` is reserved for actual tags and status
+ * badges. Rendering it as a `Badge` would have made it an uppercase tracked
+ * pill, which is the wrong reading of a paper code.
+ *
+ * Exported so those call sites reuse this table rather than writing
+ * `bg-pastel-lilac text-pastel-lilac-ink` inline, which is the "picked a
+ * colour at the call site" pattern §3.8 forbids — the pairing is the part
+ * that must not drift, since each fill has exactly one AA-measured text
+ * partner.
+ */
+export function toneFill(tone: BadgeTone): string {
+  return toneClasses[tone]
+}
+
 export interface BadgeProps extends Omit<HTMLAttributes<HTMLSpanElement>, "children"> {
   tone?: BadgeTone
   /** Decorative glyph rendered before the label. Optional, but recommended

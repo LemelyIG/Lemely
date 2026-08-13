@@ -27,6 +27,12 @@ const RTL_CLEAN_FILES = [
   "src/components/ui/loading-shapes.tsx",
   "src/components/ui/nav-drawer.tsx",
   "src/components/ui/skip-link.tsx",
+  // Kit components Phase 4 touched, surface by surface.
+  "src/components/ui/badge.tsx",
+  "src/components/ui/card.tsx",
+  "src/components/ui/chart-frame.tsx",
+  "src/components/ui/primitives.tsx",
+  "src/components/ui/subject-tag.tsx",
   // Screens and layouts Phase 3 restyled.
   "src/portals/misc/NotFound.tsx",
   "src/portals/student/index.tsx",

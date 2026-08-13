@@ -1,28 +1,207 @@
-import { useNavigate } from "react-router-dom"
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { Link } from "react-router-dom"
+import { ArrowDownRight, ArrowUpRight, Minus } from "@phosphor-icons/react"
 import { Card } from "@/components/ui/card"
 import { Meter } from "@/components/ui/primitives"
+import { buttonVariants } from "@/components/ui/button"
+import { ChartFrame } from "@/components/ui/chart-frame"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { ErrorState } from "@/components/ui/state-views"
 import { GettingStarted } from "@/components/ui/getting-started"
+import { subjectToneForCode } from "@/components/ui/subject-tag"
+import { toneFill } from "@/components/ui/badge"
 import {
   PageHeaderSkeleton,
   ListSkeleton,
   PanelSkeleton,
 } from "@/components/ui/loading-shapes"
-import { greetingFor } from "@/lib/utils"
+import { cn, greetingFor } from "@/lib/utils"
 import { useOverview } from "@/lib/hooks/useStudentApi"
+import type { SubjectRow } from "@/lib/studentTypes"
 import { vizBg } from "../components/colors"
 
 /*
- * Overview (isOverview). Wired to `GET /student/overview` via `useOverview()`.
- * Greeting, subjects ledger, momentum sparkline + weakest threads. The mock's
- * "what to study next" / "this week" agenda / IG-calculator cards and the
- * hardcoded "Papers marked"/"Hours saved" stats + greeting body copy had no
- * backing DTO field and were removed rather than left as stale fabricated
- * content (see D1.6 finding M2).
+ * Overview (isOverview) — the student dashboard. Wired to
+ * `GET /student/overview` via `useOverview()`. Greeting, subjects ledger,
+ * momentum sparkline + weakest threads.
+ *
+ * P4.1 (redesign Phase 4, surface 1 of 10) migrated this screen to the Study
+ * Notebook system. Four things changed that are not styling:
+ *
+ *   1. **Both panels had no empty-data state**, which DESIGN.md §11 makes
+ *      mandatory on every chart. `MomentumDTO` returns `path=""`, `area=""`,
+ *      `lastX="0.0"`, `lastY="88.0"` when fewer than two grade-bearing papers
+ *      exist (a polyline needs two points) — and this screen rendered that
+ *      unconditionally, producing an empty plot box with one stray dot pinned
+ *      to the bottom corner and an empty label row. That state is not exotic:
+ *      it is *every* student who has just marked their first paper, i.e. the
+ *      exact reader the getting-started view below hands over to. Both panels
+ *      now go through `ChartFrame`, which has no children-only render path
+ *      that can skip the check.
+ *   2. **The trend column said "+0" in teal, with an upward reading**, for
+ *      any student with one paper — `trend` is the first-to-last delta, so
+ *      first *is* last and the delta is 0, while `trendUp` is `delta >= 0`
+ *      and therefore true. A flat arm is derived here instead, from the
+ *      number rather than from the flag.
+ *   3. **The trend carried its meaning in colour alone** (teal vs red on a
+ *      bare signed integer), against DESIGN.md §3.6's "colour never carries
+ *      meaning alone". It is now colour plus a direction glyph plus a spoken
+ *      label, and the number keeps a unit in its accessible name — a bare
+ *      "+4" beside a percentage column does not say percentage *points*.
+ *   4. **The "Forecast" readout was removed.** `forecast` is built as
+ *      `" ".join(row.grade for row in subjects)`, so a student with three
+ *      subjects read "Forecast B A C" under a label that promises one value.
+ *      Every grade in that string is already rendered one row below, attached
+ *      to the subject it belongs to, which is where a grade means something.
+ *      The field is untouched on the DTO; only this presentation of it is
+ *      gone.
+ *
+ * The mock's "what to study next" / "this week" agenda / IG-calculator cards
+ * and the hardcoded "Papers marked"/"Hours saved" stats had no backing DTO
+ * field and were removed rather than left as stale fabricated content (see
+ * D1.6 finding M2).
  */
+
+/** Where the subject ledger's trend column gets its three arms. */
+function trendOf(row: SubjectRow): {
+  icon: typeof ArrowUpRight
+  tone: string
+  /** Spoken, so the direction survives greyscale and screen readers alike. */
+  spoken: string
+} {
+  const delta = Number(row.trend)
+
+  // Flat is derived from the number, not from `trendUp`. The DTO sets
+  // `trendUp = delta >= 0`, which folds "no change" into "improving" — and
+  // "no change" is the single most common value on this screen, because a
+  // student with one paper has a first-to-last delta of exactly zero.
+  // `Number.isFinite` guards the case where the field stops being numeric:
+  // falling back to the flag is worse than nothing only when we can do better.
+  if (!Number.isFinite(delta)) {
+    return row.trendUp
+      ? { icon: ArrowUpRight, tone: "text-ok", spoken: "Up since your first paper" }
+      : { icon: ArrowDownRight, tone: "text-err", spoken: "Down since your first paper" }
+  }
+
+  if (delta === 0) {
+    return {
+      icon: Minus,
+      tone: "text-ink-muted",
+      spoken: "No change since your first paper",
+    }
+  }
+  return delta > 0
+    ? {
+        icon: ArrowUpRight,
+        tone: "text-ok",
+        spoken: `Up ${delta} percentage points since your first paper`,
+      }
+    : {
+        icon: ArrowDownRight,
+        tone: "text-err",
+        spoken: `Down ${Math.abs(delta)} percentage points since your first paper`,
+      }
+}
+
+function SubjectLedgerRow({ row }: { row: SubjectRow }) {
+  const trend = trendOf(row)
+  const TrendIcon = trend.icon
+
+  return (
+    <Link
+      to={`/student/subject/${row.code}`}
+      /*
+       * A real `<Link>`, not a `<button onClick={navigate(...)}>`. This is the
+       * same finding the audit raised against the teacher portal's `PaperCard`
+       * (M8) sitting unremarked on the student side: a button that navigates
+       * cannot be opened in a new tab, middle-clicked, copied as a link, or
+       * previewed on hover, and it tells assistive technology that something
+       * will happen rather than that somewhere will be reached.
+       *
+       * The active margin rule is the notebook's own device (§8.5) used as a
+       * hover affordance — running a rule down the edge of the line you are
+       * pointing at. Reserved transparent at rest so it cannot shift the row.
+       */
+      className={cn(
+        "group flex flex-col gap-3 w-full text-start border-t border-rule px-6 py-4",
+        "md:grid md:grid-subject-ledger md:items-center md:gap-4",
+        "border-s-2 border-s-transparent hover:border-s-accent hover:bg-paper-sunk",
+        "transition-colors duration-[var(--dur-instant)] ease-out-soft",
+        "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus-ring",
+      )}
+    >
+      <div className="flex items-center gap-3 md:contents">
+        {/* The syllabus code is the row's identity, and it is genuinely a
+            code — mono `data-sm`, which §4.2 scopes to exactly "paper codes,
+            IDs, timestamps". The pastel is §3.8's subject colouring, resolved
+            from the one table allowed to decide it. */}
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center rounded-sm px-2 py-1 text-data-sm",
+            toneFill(subjectToneForCode(row.code)),
+          )}
+        >
+          {row.code}
+        </span>
+
+        <span className="flex flex-col gap-0.5 flex-1 min-w-0 md:flex-none">
+          {/* `SubjectRowDTO.name` echoes the code today, because a
+              `PaperRecord` carries no human subject name. Rendering it beside
+              the code chip in that case prints "0625" twice, so it appears
+              only when it actually says something the chip does not. No
+              client-side code-to-name table is invented to fill the gap: that
+              data has an authoritative home in the backend. */}
+          {row.name !== row.code ? (
+            <span className="truncate text-body-md font-medium text-ink">{row.name}</span>
+          ) : null}
+          <span className="truncate text-body-sm text-ink-faint">{row.detail}</span>
+        </span>
+
+        <GradeBadge
+          grade={row.grade}
+          size="inline"
+          basis="predicted"
+          className="md:hidden"
+        />
+      </div>
+
+      <span className="flex flex-col gap-1.5">
+        <Meter
+          value={row.pct}
+          label={`${row.name} mastery: ${row.pct}%`}
+          fillClassName={vizBg(row.barColor)}
+        />
+        {/* "62% · 3 papers". The separator was a spaced hyphen, which the copy
+            gate's own classifier calls a dash used as punctuation (audit N1);
+            a middle dot is what this is. */}
+        <span className="text-data-sm text-ink-faint">
+          {row.pct}% · {row.papers} {row.papers === 1 ? "paper" : "papers"}
+        </span>
+      </span>
+
+      <span className={cn("flex items-center gap-1 text-data-sm", trend.tone)}>
+        <TrendIcon size={14} aria-hidden="true" className="shrink-0" />
+        <span aria-hidden="true">{row.trend}</span>
+        <span className="sr-only">{trend.spoken}</span>
+      </span>
+
+      {/* `md:inline-flex`, not `md:block`. `GradeBadge` is an `inline-flex
+          flex-col` that stacks the letter over its "Predicted" caption, and
+          `display: block` overrode that — so on desktop the two ran together
+          as "BPredicted" on one line while the mobile copy of the same badge
+          (which gets no display override) stacked correctly. Invisible in
+          source, obvious the moment the surface was photographed. */}
+      <GradeBadge
+        grade={row.grade}
+        size="inline"
+        basis="predicted"
+        className="hidden md:inline-flex md:ms-auto"
+      />
+    </Link>
+  )
+}
+
 export function Overview() {
-  const navigate = useNavigate()
   const { data, isPending, isError, error, refetch } = useOverview()
 
   /*
@@ -38,11 +217,11 @@ export function Overview() {
    */
   if (isPending) {
     return (
-      <div className="lm-screen flex flex-col gap-26px">
+      <div className="lm-screen flex flex-col gap-8">
         <h1 className="sr-only">Overview</h1>
         <PageHeaderSkeleton />
         <ListSkeleton rows={3} />
-        <div className="lm-cols grid grid-cols-2 gap-5 max-tablet:grid-cols-1">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <PanelSkeleton />
           <PanelSkeleton />
         </div>
@@ -52,7 +231,7 @@ export function Overview() {
 
   if (isError) {
     return (
-      <div className="lm-screen flex flex-col gap-26px">
+      <div className="lm-screen flex flex-col gap-8">
         <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load your overview"
@@ -63,7 +242,7 @@ export function Overview() {
     )
   }
 
-  const { studentName, forecast, subjects, weakGlobal, momentum } = data
+  const { studentName, subjects, weakGlobal, momentum } = data
 
   // `studentName` is the authenticated user's id, not a display name (no
   // user-profile name store exists yet) — fall back to a plain greeting
@@ -98,8 +277,8 @@ export function Overview() {
    */
   if (subjects.length === 0) {
     return (
-      <div className="lm-screen flex flex-col gap-26px">
-        <h1 className="text-display-lg text-t1">
+      <div className="lm-screen flex flex-col gap-8">
+        <h1 className="text-display-lg text-ink">
           {greeting}, {greetingName}.
         </h1>
         <GettingStarted
@@ -130,119 +309,117 @@ export function Overview() {
     )
   }
 
+  const paperCount = subjects.reduce((total, row) => total + row.papers, 0)
+
   return (
-    <div className="lm-screen flex flex-col gap-26px">
-      <h1 className="text-display-lg text-t1">
-        {greeting}, {greetingName}.
-      </h1>
+    <div className="lm-screen flex flex-col gap-8">
+      {/* §8.5's margin rule: one hairline at the content's inline start,
+          echoing the logo. It is the whole texture budget for this header —
+          the Operate lane runs texture low (§13), and the paper grain on the
+          portal shell is already carrying the notebook feel underneath. */}
+      <header className="margin-rule flex flex-col gap-1">
+        <h1 className="text-display-lg text-ink">
+          {greeting}, {greetingName}.
+        </h1>
+        {/* Both numbers are counted from the rows on this page, so the sentence
+            cannot drift from what is rendered below it. */}
+        <p className="text-body-md text-ink-muted">
+          {subjects.length} {subjects.length === 1 ? "subject" : "subjects"}, {paperCount}{" "}
+          {paperCount === 1 ? "paper" : "papers"} corrected so far.
+        </p>
+      </header>
 
       <Card className="overflow-hidden">
-        <div className="flex items-baseline gap-3 px-5 pt-18px pb-3.5">
-          <div className="text-body-lg font-semibold">Subjects this session</div>
-          <div className="flex-1" />
-          <div className="text-xs text-t2">
-            Forecast <span className="font-mono text-t1">{forecast}</span>
-          </div>
-        </div>
-        {subjects.map((s) => (
-          <button
-            key={s.code}
-            onClick={() => navigate(`/student/subject/${s.code}`)}
-            className="flex flex-col gap-2 md:grid md:grid-subjects-row md:items-center md:gap-3.5 w-full text-start border-0 border-t border-border bg-transparent cursor-pointer px-5 py-3.5 transition-colors hover:bg-surface-2"
-          >
-            <div className="flex items-center gap-3 md:contents">
-              <span className="font-mono text-xs text-t2">{s.code}</span>
-              <span className="flex flex-col gap-1 flex-1 min-w-0 md:flex-none">
-                <span className="text-sm font-medium">{s.name}</span>
-                <span className="text-xs text-t2">{s.detail}</span>
-              </span>
-              <GradeBadge
-                grade={s.grade}
-                size="inline"
-                basis="predicted"
-                className="md:hidden"
-              />
-            </div>
-            <span className="flex flex-col gap-5px">
-              <Meter
-                value={s.pct}
-                label={`${s.name} mastery: ${s.pct}%`}
-                fillClassName={vizBg(s.barColor)}
-              />
-              <span className="text-xs text-t2 font-mono">
-                {s.pct}% - {s.papers} papers
-              </span>
-            </span>
-            <span
-              className={`text-xs font-mono ${s.trendUp ? "text-ok" : "text-err"}`}
-            >
-              {s.trend}
-            </span>
-            <GradeBadge
-              grade={s.grade}
-              size="inline"
-              basis="predicted"
-              className="hidden md:block md:ms-auto"
-            />
-          </button>
+        <h2 className="px-6 pt-5 pb-4 text-display-md text-ink">Subjects this session</h2>
+        {subjects.map((row) => (
+          <SubjectLedgerRow key={row.code} row={row} />
         ))}
       </Card>
 
-      <div className="lm-cols grid grid-cols-2 gap-5 max-tablet:grid-cols-1">
-        <Card className="px-5 py-18px">
-          <div className="text-body-lg font-semibold">Momentum</div>
-          <div className="text-xs text-t2 mb-4">
-            Percentage per corrected paper, all subjects
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <ChartFrame
+          title="Momentum"
+          subtitle="Percentage per corrected paper, all subjects"
+          /*
+           * `path` is the empty string until a second grade-bearing paper
+           * exists, because a polyline needs two points. Keying the empty
+           * state off the path itself — rather than off a paper count this
+           * screen would have to recompute — means the panel is empty exactly
+           * when there is nothing to draw, by construction.
+           */
+          isEmpty={momentum.path === ""}
+          emptyMarginalia="One paper down"
+          emptyBody="A line needs two points. Mark a second paper and your percentage over time starts drawing itself here."
+          emptyAction={
+            // `buttonVariants` on a `<Link>`, not a `<Button onClick>`: this
+            // is a destination, and it is the convention `GettingStarted`
+            // already uses for the same job. `Button` has no `asChild`.
+            <Link
+              to="/student/correct"
+              className={buttonVariants({ variant: "secondary", size: "sm" })}
+            >
+              Correct another paper
+            </Link>
+          }
+        >
+          {/* `flex-1` + `justify-center`: this panel sits in a two-up row and
+              is stretched to its taller sibling, so an 88px chart pinned to
+              the top left a third of the card visibly empty. Centring in the
+              space the row gives it costs nothing and stops the panel reading
+              as unfinished. */}
+          <div className="flex flex-1 flex-col justify-center gap-2">
+            <svg
+              viewBox="0 0 300 88"
+              className="w-full h-28 overflow-visible"
+              aria-hidden="true"
+            >
+              <path d={momentum.area} fill="var(--accent-wash)" />
+              <path
+                d={momentum.path}
+                fill="none"
+                stroke="var(--accent)"
+                strokeWidth={2}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+              <circle
+                cx={momentum.lastX}
+                cy={momentum.lastY}
+                r={3.6}
+                fill="var(--accent)"
+              />
+            </svg>
+            <div className="flex justify-between text-data-sm text-ink-faint">
+              {momentum.labels.map((label) => (
+                <span key={label}>{label}</span>
+              ))}
+            </div>
           </div>
-          <svg
-            viewBox="0 0 300 88"
-            className="w-full h-22 overflow-visible"
-            aria-hidden="true"
-          >
-            <path d={momentum.area} fill="var(--accent-subtle)" />
-            <path
-              d={momentum.path}
-              fill="none"
-              stroke="var(--accent)"
-              strokeWidth={2}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-            <circle
-              cx={momentum.lastX}
-              cy={momentum.lastY}
-              r={3.6}
-              fill="var(--accent)"
-            />
-          </svg>
-          <div className="flex justify-between text-2xs text-t3 font-mono mt-1.5">
-            {momentum.labels.map((l) => (
-              <span key={l}>{l}</span>
-            ))}
-          </div>
-        </Card>
+        </ChartFrame>
 
-        <Card className="px-5 py-18px">
-          <div className="text-body-lg font-semibold">Weakest threads</div>
-          <div className="text-xs text-t2 mb-4">
-            Accuracy by topic, all subjects
-          </div>
-          <div className="flex flex-col gap-13px">
-            {weakGlobal.map((w) => (
-              <div key={w.topic} className="flex flex-col gap-5px">
-                <div className="flex justify-between text-sm">
-                  <span>{w.topic}</span>
-                  <span className="font-mono text-t2">{w.acc}</span>
+        <ChartFrame
+          title="Weakest threads"
+          subtitle="Accuracy by topic, all subjects"
+          isEmpty={weakGlobal.length === 0}
+          emptyMarginalia="Nothing weak yet"
+          emptyBody="Topics appear here once a marked paper drops marks against them. An empty list means nothing has been traced to a topic so far, not that nothing needs work."
+        >
+          <div className="flex flex-col gap-3.5">
+            {weakGlobal.map((thread) => (
+              <div key={thread.topic} className="flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate text-body-md text-ink">{thread.topic}</span>
+                  <span className="shrink-0 text-data-sm text-ink-muted">{thread.acc}</span>
                 </div>
                 <Meter
-                  value={w.width}
-                  label={`${w.topic} accuracy: ${w.acc}`}
-                  fillClassName={vizBg(w.color)}
+                  value={thread.width}
+                  label={`${thread.topic} accuracy: ${thread.acc}`}
+                  fillClassName={vizBg(thread.color)}
                 />
               </div>
             ))}
           </div>
-        </Card>
+        </ChartFrame>
       </div>
     </div>
   )

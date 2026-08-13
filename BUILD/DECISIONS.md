@@ -6758,3 +6758,122 @@ fully evidenced. `reuseExistingServer` made Playwright adopt an unrelated
 `correct-paper.spec.ts` fails. Verified pre-existing (identical failure at
 `0451e5e`) and verified environmental, not a product defect. Four of the five
 specs whose assertions Phase 3 changed pass.
+
+---
+
+## D4.1 — Redesign Phase 4, surface 1 (student dashboard): the display face was never on screen, and three states nobody could see
+
+Phase 4's first surface is the student dashboard: `screens/Overview.tsx` plus
+the portal shell (`portals/student/index.tsx`) that every other student screen
+renders inside. Migrating it to the Study Notebook found more than styling.
+
+**1. The product's display typeface was not rendering anywhere.** `--font-serif`
+was never a token in this system, so Tailwind's own default
+(`ui-serif, Georgia, Cambria, "Times New Roman", Times, serif`) survived
+untouched, and the ~20 `font-serif` call sites across Landing, Subject,
+QuizBuilder, FlashcardReview and `primitives.tsx::Display` were rendering
+**Georgia**. Newsreader was installed, imported, tokenised, documented in
+DESIGN.md §4, and reached by nothing that used this class name.
+
+Verified in the shipped bundle rather than reasoned about: `dist/assets/*.css`
+carried the literal default stack before, and carries
+`.font-serif{font-family:var(--font-display)}` after. The fix is one line in
+the compatibility block, deliberately placed there rather than swept: Phase 4
+migrates surfaces one at a time, and the un-migrated ones should not spend the
+intervening phases in the wrong typeface.
+
+**The generalisable point is what made it invisible.** Every gate this build
+runs would pass a screen in the wrong font. The token-discipline gate greps for
+raw values *bypassing* the token block, and `font-serif` is not a raw value —
+it is a well-formed utility that happens to resolve to somebody else's default.
+`tests/test_design_tokens.py` pins contrast, which typeface does not affect.
+Nothing compares what DESIGN.md declares against what the bundle emits. A
+missing definition fails silently where a wrong definition would not.
+
+**2. Both dashboard panels rendered a blank chart instead of an empty state**,
+which DESIGN.md §11 makes mandatory. `MomentumDTO` returns `path=""`,
+`area=""`, `lastX="0.0"`, `lastY="88.0"` below two grade-bearing papers,
+because a polyline needs two points, and this screen drew that unconditionally:
+an empty plot box with one stray dot pinned to the bottom-left corner and an
+empty label row. That state is not an edge case, it is **every student who has
+just marked their first paper** — precisely the reader the first-run
+getting-started view hands over to. Both panels now route through `ChartFrame`,
+which has no children-only path that can skip the check.
+
+**3. The trend column told a student with one paper that they were improving.**
+`trend` is the first-to-last percentage delta, so with one paper first *is*
+last and the delta is 0, while `trendUp` is `delta >= 0` and therefore true —
+"+0" rendered in teal with an upward reading. A flat arm is now derived from
+the number rather than the flag. Separately, the column carried its meaning in
+colour alone (teal vs red on a bare signed integer) against §3.6; it now pairs
+colour with a direction glyph and a spoken label, and the bare integer gets a
+unit in its accessible name, since "+4" beside a percentage column does not say
+percentage *points*.
+
+**4. "Forecast" was a concatenation presented as a value.** The DTO builds it
+as `" ".join(row.grade for row in subjects)`, so a student with three subjects
+read "Forecast B A C" under a label promising one number. Every grade in that
+string is already rendered one row below, attached to the subject it belongs
+to. The presentation is removed; the DTO field is untouched.
+
+**5. What the screenshot round caught that source review did not.** The
+desktop grade badges rendered as "BPredicted" on one line: `GradeBadge` is an
+`inline-flex flex-col`, and the call site's `md:block` overrode its display
+mode, so the desktop copy collapsed while the mobile copy of the same component
+stacked correctly. This is D3.22's lesson arriving a third time — a defect
+invisible to a reader who never renders the thing. Also caught and fixed in the
+same batch: ~600px of dead space in each subject row (the text column held the
+flex share, and a subject row has almost no text, because `SubjectRowDTO.name`
+echoes the code), and a momentum panel a third empty because an 88px chart was
+pinned to the top of a card stretched to its taller sibling.
+
+**6. The capture harness lied once, and now cannot.** `scripts/capture_surface.mjs`
+stubs the API so the five states are deterministic, which is necessary because
+**B4 still blocks the real corpus** — the foreign `python -m lemely.web` process
+still holds port 8000, and a fresh signup against it can only ever produce the
+zero-paper view, not the populated ledger or the one-paper state these changes
+are about. Its first run produced ten images that were byte-identical per
+viewport: Playwright matches the most recently registered route first, so the
+catch-all swallowed `/api/me/profile`, `data.role.split("_")` threw, and every
+state photographed the same error screen. Nothing said so; the only tell was
+the file sizes. The script now hashes every capture and fails when two states
+that must differ do not. **A capture round that silently photographs the same
+screen five times is worse than no capture round, because it looks like
+evidence.**
+
+Worth recording that the bad round did prove one thing: Phase 2's error
+boundary caught the render exception and showed its designed error screen
+rather than white-screening, which is the gap audit finding C3 raised.
+
+**Also fixed, smaller:** the student portal's breadcrumb was an inert mono
+string while teacher and parent got D1.5's real trail, so no student sub-screen
+had a back path that was not the browser gesture; it is now `Breadcrumbs`, fed
+by a `resolveCrumbTrail` derived from `resolveCrumb` so the two cannot disagree.
+`/student/result/:paperId` was interpolating a raw UUID into that crumb on the
+flagship screen, against the honesty rule the teacher trail states and tests;
+it now reads "This result", pinned by a test verified to fail on the old
+behaviour. The sidebar's accent dot became the real Phase-2 mark (audit M9's
+fourth stamp), eleven identical nav dots became Phosphor glyphs, the nav's
+focus ring stopped being the accent (§3.9 makes focus deliberately blue so it
+is distinguishable from the *active* state, which this nav marks in accent),
+and the hand-rolled circular avatar became the kit's squircle `Avatar` — a
+circle in a sidebar footer sitting directly under eleven circular nav dots is
+exactly the collision §6 reserves the circle against.
+
+**Deferred, not silently dropped:**
+
+- `SubjectRowDTO.name` echoes the syllabus code, so the dashboard shows "0625"
+  where "Physics" would read far better. The authoritative table exists
+  (`lemely/db/seed.py::DEMO_SUBJECTS`); `_subjects` in
+  `lemely/web/routers/student.py` should resolve against it. Not done here:
+  that is a data change, and smuggling one into a design pass is how a phase
+  stops being reviewable. Subject *colour* is handled client-side in
+  `subject-tag.tsx` because which pastel means Physics is a design decision.
+- The kit uses `focus-visible:outline-accent` in several components, against
+  §3.9's deliberately-blue focus ring. Fixed in this surface's nav only;
+  product-wide it belongs to the surfaces that own those components.
+- `primitives.tsx::Eyebrow` is mono where DESIGN.md §4.2 puts the `eyebrow`
+  rung in Geist. Left alone on purpose: changing the face would restyle a dozen
+  screens this surface does not gate and cannot see.
+- `check_copy` holds at 91. This surface had no prose em-dashes of its own to
+  clear, so the count is unchanged rather than reduced.

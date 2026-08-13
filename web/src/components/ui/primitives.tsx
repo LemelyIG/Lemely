@@ -1,12 +1,25 @@
+/* Hallmark · pre-emit critique: P4 H3 E4 S4 R4 V3 */
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
+
+/*
+ * P4.1 token migration only — every change below is value-preserving (the
+ * build-era aliases already resolve to these same tokens), so no screen still
+ * on this file changes appearance.
+ *
+ * `Eyebrow` is the deliberate exception left alone: DESIGN.md §4.2 puts the
+ * `eyebrow` rung in Geist, not mono, and this component is mono. Changing the
+ * *face* would restyle a dozen screens this surface does not gate and cannot
+ * see, which is the opposite of the surface-at-a-time rule. It moves when a
+ * surface that renders it is the one under review.
+ */
 
 /** Mono uppercase eyebrow / metadata label (mock: t3, tracked, 10.5–11px). */
 export function Eyebrow({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        "font-mono text-3xs tracking-widest uppercase text-t3",
+        "font-mono text-3xs tracking-widest uppercase text-ink-faint",
         className,
       )}
       {...props}
@@ -14,14 +27,17 @@ export function Eyebrow({ className, ...props }: HTMLAttributes<HTMLDivElement>)
   )
 }
 
-/** Instrument Serif display heading. */
+/** Newsreader display heading. (Was documented as Instrument Serif, which
+ * DESIGN.md §4 replaced — and was in fact rendering neither, because the
+ * `font-serif` class it used has never been a token in this system and
+ * resolved to Tailwind's default Georgia stack.) */
 export function Display({
   className,
   ...props
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("font-serif leading-display text-t1", className)}
+      className={cn("font-display leading-display text-ink", className)}
       {...props}
     />
   )
@@ -48,7 +64,7 @@ export function Meter({
 }) {
   return (
     <div
-      className={cn("h-1.5 rounded-full bg-surface-2 overflow-hidden", className)}
+      className={cn("h-1.5 rounded-full bg-paper-sunk overflow-hidden", className)}
       role="progressbar"
       aria-valuenow={Math.round(value)}
       aria-valuemin={0}

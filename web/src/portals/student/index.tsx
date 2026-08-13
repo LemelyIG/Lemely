@@ -1,13 +1,16 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { Avatar } from "@/components/ui/avatar"
+import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { Button } from "@/components/ui/button"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { useProfile } from "@/lib/hooks/useMeApi"
-import { navGroups, resolveCrumb } from "./data"
+import { navGroups, resolveCrumbTrail } from "./data"
 
 /*
  * Student portal (terracotta). Grouped sidebar nav + a sticky top header
@@ -95,20 +98,13 @@ function UserBlock() {
 
   if (isPending || isError || !data) {
     return (
-      <div className="flex items-center gap-2.5 px-0.5 text-xs text-t3">
+      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-ink-faint">
         {isPending ? "Loading…" : "Signed in"}
       </div>
     )
   }
 
   const name = data.displayName ?? data.email.split("@")[0]
-  const initials = name
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
   const roleLabel = data.role
     .split("_")
     .map((w) => w[0].toUpperCase() + w.slice(1))
@@ -116,12 +112,17 @@ function UserBlock() {
 
   return (
     <div className="flex items-center gap-2.5">
-      <div className="w-8 h-8 rounded-full bg-accent-subtle text-accent-subtle-on flex items-center justify-center text-dense-sm font-semibold flex-none">
-        {initials}
-      </div>
-      <div className="leading-[1.25] min-w-0">
-        <div className="text-dense font-medium truncate">{name}</div>
-        <div className="text-2xs text-t2">{roleLabel}</div>
+      {/* P4.1: the hand-rolled circle is now the kit's `Avatar`, which is a
+          squircle. DESIGN.md §6 reserves the circle for status and live dots
+          "so a dot never reads as a person" — and this one sat in a sidebar
+          footer directly under eleven circular nav dots, which is the exact
+          collision that rule describes. The initials logic it carried was a
+          second copy of `Avatar`'s own; two copies of the same fallback is how
+          one of them ends up handling a single-word name differently. */}
+      <Avatar name={name} size="md" />
+      <div className="min-w-0">
+        <div className="truncate text-body-sm font-medium text-ink">{name}</div>
+        <div className="text-body-sm text-ink-faint">{roleLabel}</div>
       </div>
     </div>
   )
@@ -146,43 +147,60 @@ function NavGroups({ touch = false }: { touch?: boolean }) {
     <div className="flex flex-col gap-[22px]">
       {navGroups.map((grp) => (
         <div key={grp.label} className="flex flex-col gap-0.5">
-          <div className="text-3xs tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium">
-            {grp.label}
-          </div>
-          {grp.items.map((it) => (
-            <NavLink
-              key={it.to}
-              to={it.to}
-              end={it.end}
-              className={({ isActive }) =>
-                cn(
-                  // `px-[9px]` not `pl-`/`pr-`: symmetric padding has no
-                  // direction, so this row needs no logical rewrite (P3.4).
-                  "flex items-center gap-2.5 w-full text-start text-dense-lg px-[9px] py-2 rounded transition-colors",
-                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                  touch && "min-h-11",
-                  isActive
-                    ? "bg-surface text-t1 font-medium"
-                    : "bg-transparent text-t2 font-normal hover:bg-bg",
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <span
-                    className={cn(
-                      "w-1.5 h-1.5 rounded-full flex-none",
-                      isActive ? "bg-accent" : "bg-border",
-                    )}
-                  />
-                  <span className="flex-1">{it.label}</span>
-                  {it.tag ? (
-                    <span className="font-mono text-3xs text-t3">{it.tag}</span>
-                  ) : null}
-                </>
-              )}
-            </NavLink>
-          ))}
+          <div className="text-eyebrow text-ink-faint px-2 pb-[7px]">{grp.label}</div>
+          {grp.items.map((it) => {
+            const Glyph = it.icon
+            return (
+              <NavLink
+                key={it.to}
+                to={it.to}
+                end={it.end}
+                className={({ isActive }) =>
+                  cn(
+                    // `px-[9px]` not `pl-`/`pr-`: symmetric padding has no
+                    // direction, so this row needs no logical rewrite (P3.4).
+                    "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 rounded-md",
+                    "transition-colors duration-[var(--dur-instant)] ease-out-soft",
+                    // `focus-ring`, not `accent`. DESIGN.md §3.9 makes focus
+                    // deliberately blue so it stays distinguishable from the
+                    // accent's own hover and selected states — and this nav is
+                    // exactly where that matters, since its active row is
+                    // already accent-marked. The row used `outline-accent`,
+                    // which made "focused" and "current" the same colour.
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+                    // The active rule is reserved at every state, transparent
+                    // when inactive, so turning it on cannot nudge the label
+                    // sideways by 2px as you navigate.
+                    "border-s-2",
+                    touch && "min-h-11",
+                    isActive
+                      ? "border-accent bg-paper-raised text-ink"
+                      : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
+                  )
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    {/* §10 permits `fill` for a single active-state nav icon,
+                        and this is it. The active row therefore carries four
+                        independent signals — the accent margin rule, the
+                        raised sheet, full-strength ink, and the filled glyph —
+                        so none of them is carrying the state alone. */}
+                    <Glyph
+                      size={16}
+                      weight={isActive ? "fill" : "regular"}
+                      className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
+                      aria-hidden="true"
+                    />
+                    <span className="flex-1">{it.label}</span>
+                    {it.tag ? (
+                      <span className="text-data-sm text-ink-faint">{it.tag}</span>
+                    ) : null}
+                  </>
+                )}
+              </NavLink>
+            )
+          })}
         </div>
       ))}
     </div>
@@ -201,19 +219,40 @@ function NavGroups({ touch = false }: { touch?: boolean }) {
  * genuinely hold two roles is a real feature and is not this.
  */
 
+/*
+ * The real mark, replacing the accent dot that stood in for it (audit M9: "the
+ * logo is a lowercase italic *l* in a filled circle, stamped in three places"
+ * — the student sidebar's dot was a fourth variant of the same placeholder).
+ * `web/public/brand/mark.svg` is the asset Phase 2 authored.
+ *
+ * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
+ * already says "Lemely", so describing the mark too makes a screen reader
+ * announce the brand twice. The mark file carries its own <title>, which is
+ * correct when it is used standalone (the favicon) and is suppressed here.
+ */
+function BrandLockup() {
+  return (
+    <div className="flex items-center gap-2.5 px-2">
+      <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+      <span className="text-display-sm text-ink">Lemely</span>
+    </div>
+  )
+}
+
 function Sidebar() {
   return (
-    <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-e border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
-      <div className="flex items-center gap-[9px] px-2">
-        <div className="w-[11px] h-[11px] rounded-full bg-accent" />
-        <div className="text-display-sm tracking-[0.01em]">Lemely</div>
-      </div>
+    // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
+    // is "sidebars, table headers, code blocks, inset areas". Same value the
+    // build-era `bg-surface-2` alias resolved to; this is the name the system
+    // actually defines.
+    <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+      <BrandLockup />
 
       <nav aria-label="Student sections" className="overflow-auto lm-scroll">
         <NavGroups />
       </nav>
 
-      <div className="mt-auto border-t border-border pt-[14px]">
+      <div className="mt-auto border-t border-rule pt-[14px]">
         <UserBlock />
       </div>
     </aside>
@@ -223,7 +262,7 @@ function Sidebar() {
 function Header({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
-  const crumb = resolveCrumb(location.pathname)
+  const trail = resolveCrumbTrail(location.pathname)
   return (
     // Responsive sizing here is load-bearing, not cosmetic: this row's fixed
     // items (34px padding either side, the 138px CTA and the gaps) overflowed
@@ -244,7 +283,11 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
     //     days, NOT consecutive ones. Wiring the pill to it would have
     //     replaced a hardcoded lie with a mislabelled one, so the pill is
     //     gone instead; streaks are Phase 5's to build for real.
-    <header className="lm-head flex items-center gap-[18px] px-4 min-[640px]:px-[34px] py-4 border-b border-border bg-bg/80 backdrop-blur-[10px] sticky top-0 z-20">
+    // `backdrop-blur` on a *fixed* bar is the one glassmorphism exception
+    // DESIGN.md §7 permits, and this is that bar. `z-nav` replaces the raw
+    // `z-20`: same number, but the z-index scale is a gate and a literal
+    // bypasses it.
+    <header className="lm-head flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop py-4 border-b border-rule bg-paper/80 backdrop-blur-[10px] sticky top-0 z-nav">
       {/* P3.1: the only navigation entry point below 820px, which is where the
           sidebar stops existing. `-ms-2` pulls the 44px target back level with
           the crumb's text edge without shrinking the target itself. */}
@@ -253,8 +296,13 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
         label="Open student navigation"
         className="-ms-2 min-[820px]:hidden"
       />
-      <div className="font-mono text-xs text-t2 min-w-0 truncate">{crumb}</div>
-      <div className="flex-1" />
+      {/* P4.1: the inert mono string is now the same `Breadcrumbs` trail D1.5
+          gave the teacher and parent portals, so a student drilled into a
+          subject, a result or a plan session has a route back that is not the
+          browser's own gesture. `text-metadata` was also the wrong rung: the
+          mono `data-sm` scale is scoped to paper codes, IDs and timestamps,
+          and a crumb label is none of those — it is words a reader reads. */}
+      <Breadcrumbs items={trail} className="flex-1" />
       <Button
         variant="accent"
         size="md"
@@ -281,7 +329,13 @@ function StudentLayout() {
   const [navOpen, setNavOpen] = useState(false)
 
   return (
-    <div data-portal="student" className="flex min-h-screen">
+    // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise
+    // overlay at 0.035 opacity across the whole portal. This is the cheapest
+    // and most durable way the one protected quality — the notebook feel —
+    // reaches every student screen, including the ~20 this surface does not
+    // touch. It is fixed rather than scrolled precisely so it never repaints
+    // on scroll on the mid-range Android phones §7 keeps naming.
+    <div data-portal="student" className="paper-grain flex min-h-screen">
       <SkipLink />
       <Sidebar />
 
@@ -304,12 +358,17 @@ function StudentLayout() {
             which made the skip link's target include the navigation it exists
             to skip past, and gave the page two competing landmarks for "the
             content". The header is chrome; `main` is what the route rendered. */}
+        {/* Container and gutters are now the ones DESIGN.md §5 defines for
+            the Operate lane — 1200px content max (`max-w-app`), and a page
+            gutter that steps 16 / 20 / 32px rather than sitting at a flat
+            34px from 320px upward. The old `p-[34px]` spent 68px of a 375px
+            phone on margin, which is 18% of the viewport given to nothing. */}
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
-          className="lm-body flex-1 p-[34px] max-w-[1320px] w-full focus:outline-none"
+          className="lm-body flex-1 w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
         >
-          <Suspense fallback={<RouteFallback className="text-dense-lg" />}>
+          <Suspense fallback={<RouteFallback className="text-body-md" />}>
             <Outlet />
           </Suspense>
         </main>

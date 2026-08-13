@@ -30,15 +30,35 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
 CURRENT PHASE:      4 — Surface-by-surface redesign (Phases 0-3 DONE)
-CURRENT SURFACE:    none yet. Phase 4 order (§5): Student dashboard ->
-                    past-paper correction -> study surfaces -> gamification ->
+CURRENT SURFACE:    Student dashboard DONE (1 of 10). Next: **past-paper
+                    correction flow** -> study surfaces -> gamification ->
                     Teacher dashboard + quiz builder -> Parent -> Admin ->
                     Auth -> Marketing -> 404/misc.
-CURRENT BRANCH:     redesign/phase-0  (off develop; per-phase/surface branches per §11)
-NEXT ACTION:        Phase 4, first surface: **Student dashboard**.
-                    Before touching it, read in this order: DESIGN.md (the
-                    system), BUILD/DECISIONS.md D3.22 (what Phase 3 learned),
-                    and that surface's rows in BUILD/DESIGN-AUDIT.md.
+CURRENT BRANCH:     redesign/student-dashboard  (off redesign/phase-0; per §11)
+NEXT ACTION:        Phase 4, surface 2: **past-paper correction flow**
+                    (`screens/CorrectPaper.tsx`, `screens/PaperResult.tsx`).
+                    Read DESIGN.md, D4.1 (what surface 1 learned), D3.22, and
+                    the audit rows M4/M5 — both are about this flow and both
+                    are real: the marking wait loses all progress on refresh,
+                    and a marking failure offers no retry except re-uploading
+                    from scratch. §5's Phase 6.2 owns the full wait-experience
+                    design; do not silently pull it forward, but do not ship a
+                    redesigned failure state without a retry either.
+
+                    New since Phase 3, inherited by every later surface:
+                    - `scripts/capture_surface.mjs` is the batched visual
+                      round while B4 blocks the real corpus. It STUBS the API:
+                      its images are evidence about layout, never behaviour.
+                      It hashes every capture and fails when two states that
+                      must differ are identical — do not remove that check,
+                      it caught a round where all ten images were the same
+                      error screen.
+                    - `toneFill()` (badge.tsx) and `subjectToneForCode()`
+                      (subject-tag.tsx) are the sanctioned ways to reach a
+                      pastel outside `<Badge>`/`<SubjectTag>`.
+                    - `resolveCrumbTrail` (student/data.ts) feeds the student
+                      header's real `<Breadcrumbs>`. Derived from
+                      `resolveCrumb` so the two cannot disagree.
 
                     Standing rules Phase 4 inherits, all of them enforced:
                     - `npm run check:copy` must not grow. 91 prose em-dashes
@@ -64,7 +84,7 @@ NEXT ACTION:        Phase 4, first surface: **Student dashboard**.
                     **B4 blocks the e2e gate** (BUILD/BLOCKERS.md). One
                     command from the human clears it; do not kill the
                     port-8000 process unattended, it belongs to another user.
-LAST UPDATED:       2026-08-13T20:20+03:00
+LAST UPDATED:       2026-08-13T21:20+03:00
 LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
                     NOTE: still no inbound message from the human, ever. The only
                     entry on the topic remains my own Phase-0 selftest.
@@ -79,7 +99,7 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 | 1. Audit | DONE | 2026-08-13 | Three legs, all read-only, `web/` verified untouched after each. Merged into `BUILD/DESIGN-AUDIT.md`; leg reports in `BUILD/audit/`. 6 critical, 14 major, 3 minor. Root cause is one thing: every token is still the build-era Material-3 palette, so zero pages are Study Notebook yet. Worse than that and independently confirmed by me: 3 fabrications on the landing page, no error boundary anywhere, no skeleton component anywhere. **Coverage is partial and stated so — nothing was verified against a rendered viewport, and 34 of 48 routes were reached by grep only.** |
 | 2. Brand & Design System | DONE | 2026-08-13 | All 6 steps done. Brand strategy at `BUILD/BRAND.md`; logo hand-authored as SVG after the Gemini refine pass failed on all five named defects (D2 defaulted to ship it). DESIGN.md rewritten from scratch as the Study Notebook; index.css is its implementation with a documented temporary compatibility layer so un-migrated screens pick up the new palette instead of staying Material-3. `tests/test_design_tokens.py` pins every contrast claim and caught two real AA failures plus one greyscale failure in my own draft. Landing-page fabrications C1/C2 fixed, plus a third the audit missed (a stated 0.70 review threshold that is really 0.90). Component kit: 19 components, all 8 states, preview page at `web/dev-previews/` with its own Vite entry so the product can never ship it. Closed the audit's "no skeleton component" and "no error boundary" gaps. Three defects found by verifying rather than trusting the agent reports: RadioGroup did not actually have 8 states; the preview page was silently missing every utility used only inside a component (Tailwind source detection is rooted at the entry CSS, fixed with `@source`, CSS went 28KB→69KB); and a hover-pinning device I built emitted zero CSS and was removed rather than left to quietly pass review. |
 | 3. IA & UX Flows | DONE | 2026-08-13 | All four parts done, D1.1-5 implemented. The headline is what the audit could not see from source: **neither the student nor teacher portal had ANY navigation below 820px/768px** — sidebars simply `hidden`, nothing replacing them, on a product whose own brief says students live on phones. Fixed with a shared `NavDrawer` rendering the same list as the desktop aside. Also removed two cross-portal links `RequireAuth` bounces for every role that exists (dead for everyone), and 4 dead keys in the student `crumbs` map. First-run views for student + teacher (`GettingStarted`); the parent's was already right and was deliberately left alone. Four honesty defects fixed in passing: a fabricated school name and hardcoded date on the teacher dashboard, hardcoded greetings on both, and two 'Coming soon' buttons for features that shipped. Three rules got gates rather than sweeps (`check:copy`, `rtlSafety`, `navigation`), and each found a real defect while being written. 646 unit tests (+59), typecheck/lint/both builds/pre-commit clean, no horizontal scroll at 320/375/1440. **e2e blocked by B4** — environmental, verified pre-existing at `0451e5e`, not a Phase 3 regression. See D3.22. |
-| 4. Surface redesign | PENDING | — | |
+| 4. Surface redesign | IN PROGRESS | — | 1 of 10 surfaces done (student dashboard). Headline finding is one nothing in this build could have caught: **`--font-serif` was never a token, so ~20 call sites across five screens were rendering Georgia, not Newsreader** — the display face DESIGN.md mandates was on screen nowhere it was reached by that name. Verified in the shipped bundle before and after, not reasoned about. A missing definition fails silently where a wrong one would not: the token gate greps for raw values *bypassing* the block, and `font-serif` is a well-formed utility resolving to somebody else's default. Also: both dashboard charts drew a blank box where §11 mandates an empty state (the momentum panel's empty case is *every* student who just marked their first paper), the trend column told a one-paper student they were improving by "+0" in teal, and "Forecast" rendered a space-joined concatenation of per-subject grades under a label promising one value. See D4.1. |
 | 5. Motion & data-viz | PENDING | — | |
 | 6. Hardening & adaptation | PENDING | — | |
 | 7. Final QA & report | PENDING | — | |
@@ -88,7 +108,7 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 
 | Surface | Status | Branch | Gates | Merged |
 |---|---|---|---|---|
-| Student dashboard | QUEUED | — | — | — |
+| Student dashboard | **DONE** | `redesign/student-dashboard` | typecheck / lint / 662 unit / check:copy 91 (flat) / both builds / pre-commit / 28 token tests: **green**. e2e: **still blocked, B4**. Visual round: 10 captures, all distinct, 0 unexpected console errors. | pending |
 | Past-paper correction flow | QUEUED | — | — | — |
 | Study surfaces (classifieds, flashcards, plans) | QUEUED | — | — | — |
 | Gamification (XP, streaks, leaderboards) | QUEUED | — | — | — |
@@ -102,14 +122,25 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 ### Gate status (current surface only)
 
 ```
-SURFACE:            none
-BUILD COMPLETE:     —
-INSPECTION ROUND:   —
-FINDINGS TO FIX:    —
-CONFIRM ROUND:      —
-HALLMARK STAMP:     —
-HOOK FINDINGS:      —
-TESTS:              —
+SURFACE:            Student dashboard (Overview + student portal shell)
+BUILD COMPLETE:     yes
+INSPECTION ROUND:   1 (batched, desktop 1440 + 375 together, 5 states each)
+FINDINGS TO FIX:    4, all fixed in one batch —
+                    (a) grade badges collapsed to "BPredicted" on desktop
+                        (`md:block` overrode the component's inline-flex);
+                    (b) ~600px dead space per subject row (flex share was on
+                        the text column, which is nearly empty);
+                    (c) momentum panel a third empty (88px chart pinned to the
+                        top of a card stretched to its taller sibling);
+                    (d) capture fixture incoherent (1 momentum point paired
+                        with "4 papers corrected", a state the API cannot
+                        produce).
+CONFIRM ROUND:      1, all four confirmed fixed. Stopped there (§3.2 item 16).
+HALLMARK STAMP:     present on Overview.tsx, student/index.tsx, card.tsx,
+                    primitives.tsx. 15 of Phase 2's 19 kit components remain
+                    unstamped, per D3.22 — stamped as each is touched.
+HOOK FINDINGS:      0 (impeccable design hook, every touched file)
+TESTS:              662 unit (+16), all green
 ```
 
 ### Open DECISIONs
@@ -160,6 +191,17 @@ it so it can never be replayed as a directive.
    (mark timeouts as "DEFAULTED").
 5. `LAST STEERING TS` advances only after the message is logged AND acted on or queued.
 6. Commit STATE.md with the work it describes, same commit.
+
+### Phase 4 deliverables (for later surfaces to read)
+
+| Artefact | Path | Note |
+|---|---|---|
+| Visual round | `web/scripts/capture_surface.mjs` | Batched capture while B4 blocks the real corpus. **Stubs the API** — layout evidence, never behaviour. Fails when two states that must differ are identical. |
+| Captures | `reports/redesign/p4-student-dashboard/` | 5 states x 1440/375. Fixture numbers, not product data. |
+| Tone escape hatch | `toneFill` in `components/ui/badge.tsx` | Pastel fill+text pairing without `Badge`'s pill shape. |
+| Subject colour by code | `subjectToneForCode` in `components/ui/subject-tag.tsx` | §3.8, for surfaces whose data carries a syllabus code rather than a name. |
+| Student crumb trail | `resolveCrumbTrail` in `portals/student/data.ts` | Derived from `resolveCrumb`; feeds the header's real `<Breadcrumbs>`. |
+| Ledger grid | `grid-subject-ledger` in `index.css` | Flex share on the meter, not the text column. |
 
 ### Phase 3 deliverables (for later phases to read)
 
