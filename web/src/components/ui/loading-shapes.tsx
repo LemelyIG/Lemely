@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V3 */
 import { SkeletonBlock, SkeletonCircle, SkeletonLine } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 

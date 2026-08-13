@@ -349,3 +349,92 @@ confidence distribution that directive item 3 asks for will measure the marking
 rather than this defect.
 
 ---
+
+## B4 — The e2e suite silently runs against whatever is already on port 8000
+
+**Raised:** 2026-08-13 (redesign Phase 3 gate) · **Status:** OPEN, not fixed
+unattended. Needs one command from the human, see "Unblock" below.
+**Severity:** the Hard Gate §9.7 (functional safety) cannot be fully evidenced
+until this is cleared. It is **not** a product defect and **not** a Phase 3
+regression.
+
+### What happens
+
+`e2e/correct-paper.spec.ts` — "student can log in, upload a scan, and see the
+marked result", the product's flagship flow — fails. The upload succeeds,
+marking starts, and the run stops with an on-screen warning:
+
+> No mark scheme available for this paper; cannot mark.
+
+The page stays on `/student/correct` and never reaches `/student/result/:id`.
+
+### Why, established rather than guessed
+
+`playwright.config.ts` declares two `webServer` entries, and the backend one is
+
+```
+command: .venv/bin/python scripts/e2e_server.py
+port: 8000
+reuseExistingServer: !process.env.CI
+```
+
+`scripts/e2e_server.py` is not merely "the app on port 8000". It is the *only*
+thing that installs the offline marking seam:
+
+```python
+student.resolve_mark_scheme = lambda *a, **k: _fixture_mark_scheme()
+student.extract_answers     = lambda *a, **k: _fixture_extracted()
+```
+
+Without it, `resolve_mark_scheme` runs for real against the golden fixture's
+scan, finds no scheme it can match, returns `None`, and
+`routers/student.py:816` publishes exactly the warning above.
+
+**Port 8000 is already occupied.** A long-running plain instance of the app —
+`python -m lemely.web`, owned by a different local user (`dnsmasq`), up since
+Aug 12 — is listening there. Because `reuseExistingServer` is true outside CI,
+Playwright sees a healthy port, adopts that process, and **never starts
+`e2e_server.py` at all**. The seam is never installed.
+
+### Why this matters more than one red test
+
+The suite does not announce the substitution. Nine of the ten specs pass
+against the unmocked server because they never exercise the vision seam, so
+the run reads as "1 failed, N passed" rather than "the harness under test was
+not the harness configured". Any spec that needs the mock will fail
+mysteriously, and — worse — a spec that *should* need it could pass against
+real behaviour and be believed.
+
+This is the same class of finding as the build era's own recorded lesson
+(`BUILD/DECISIONS.md` D6.12): *a condition every harness shares is a condition
+no harness tests.* There it was "everything ran against localhost". Here it is
+"everything ran against whatever answered on 8000".
+
+### What was verified
+
+- Reproducible, not flaky: two consecutive runs, identical failure.
+- **Not a Phase 3 regression.** A clean git worktree at `0451e5e` (the Phase 3
+  starting commit, i.e. Phase 2's close) fails identically on the same spec.
+  Phase 2 therefore closed with this already red.
+- The other four specs touched by Phase 3's assertion changes
+  (`student-journey`, `teacher-journey`, `parent-journey`, and
+  `correct-paper`'s own login half) **pass**.
+
+### Unblock
+
+Free the port, then re-run. The occupying process belongs to another local
+user, so this was deliberately **not** killed unattended:
+
+```
+sudo fuser -k 8000/tcp        # or stop the `python -m lemely.web` instance
+cd web && npx playwright test correct-paper
+```
+
+### Worth fixing properly afterwards
+
+`reuseExistingServer: !process.env.CI` is the actual bug. Reusing a stranger's
+process is only safe if it is the *same* process the config would have started,
+and nothing checks that. A cheap guard: have `scripts/e2e_server.py` expose a
+marker route (`GET /__e2e__` returning the fixture id) and have
+`e2e/global-setup.ts` assert it before any spec runs, so a substituted backend
+fails loudly at setup instead of quietly at the one spec that notices.

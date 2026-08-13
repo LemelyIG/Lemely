@@ -6671,3 +6671,90 @@ results are unchanged by construction. Web test/typecheck/oxlint/build and all t
 hooks were run and are green. **What would genuinely close this class** is a harness that
 exercises the SPA over a non-localhost HTTP origin; that is a new test-infrastructure task, not
 a line in this fix, and it is recorded here rather than started unattended.
+
+---
+
+## D3.22 — Redesign Phase 3: the audit could not see the largest IA defect, because source is not a viewport
+
+Phase 3 (IA & UX flows) implemented DECISIONs D1.1–5 as approved-by-timeout, and
+found more in the doing than the audit found in the looking. The findings worth
+carrying forward:
+
+**1. Neither the student nor the teacher portal had any navigation below
+820px / 768px.** Both sidebars are `hidden` at those widths and nothing replaced
+them: no tab bar, no menu, no drawer. A student on a phone could reach the screen
+they landed on and whatever it happened to link to, and nothing else. The mission's
+framing is "students live on phones".
+
+The Phase 1 audit mapped nav *inventories* per role and got them right. It read
+them from source, and source records which items a sidebar contains, never the
+width at which that sidebar exists. The audit said so about itself — "nothing was
+verified against a rendered viewport" — and this is what that limitation was
+hiding. **The generalisable lesson is the same one D6.12 records from the build
+era, arriving from the opposite direction:** there, every harness ran under one
+condition (localhost) and so could not test it; here, the audit ran under one
+condition (source, no viewport) and so could not see a whole class of defect.
+A responsive defect is invisible to a reader who never resizes.
+
+**Why a drawer and not a bottom tab bar.** The student nav carries eleven
+destinations, the teacher's eight. A five-slot bar means ranking the survivors
+and dropping the rest, which is a product decision Phase 3 has no answer for and
+should not invent. The drawer carries every item the desktop sidebar carries.
+`BottomNav` stays in the kit, unused, as the fast path Phase 4 may add *alongside*
+it once daily-use data exists.
+
+**2. Two cross-portal links were dead for every role that exists.** "Open the
+teacher portal" in the student sidebar and "Open the student portal" in the
+teacher's. `RequireAuth` gates each portal to disjoint role sets, so following
+either one redirects straight back. No account holds both. They are build-era
+conveniences from before the guard existed, left rendering in the product.
+
+**3. Honesty defects survive in the places nobody re-reads.** The teacher
+dashboard showed "Helwan Science Centre · Sunday 27 July" — a fabricated school
+name of exactly the kind P3.7 and P3.10 had already deleted from both sidebars,
+plus a hardcoded date, to every teacher every day. Both dashboards hardcoded the
+time-of-day greeting. "Build a quiz" and "Post an announcement" sat disabled
+under "Coming soon" chips while both features shipped and sat in the sidebar.
+That last one had a *comment* above it asserting the features did not exist:
+**the comment outlived the fact it described, and made the stale code read as
+deliberate.**
+
+**4. What gets a gate, and what gets left.** Three rules this phase could have
+"swept" were instead given enforcement, because a sweep decays and a gate does not:
+`scripts/check_copy.mjs` for the em-dash ban, `tests/unit/rtlSafety.test.ts` for
+logical properties, `tests/unit/navigation.test.ts` cross-checking every nav
+destination and crumb against the routes the router actually mounts. Each found a
+defect while being written — dead keys in the student `crumbs` map, three false
+positives in the copy checker, `isRange` blind to `${...}` interpolation — which
+is the argument for writing them.
+
+§9.8 binds the copy gate to "all new/edited copy", so the 91 remaining prose
+em-dashes on un-migrated screens are Phase 4's, per surface, not a silent
+exemption.
+
+**5. Not everything should be unified.** The parent portal's first-run screen was
+reviewed and deliberately left alone rather than converted to the shared
+`GettingStarted` component. Every step there is an action somebody else takes on
+another device, and that component models steps the reader performs, each with
+somewhere to go. Forcing the shape would have produced three inert steps or three
+buttons that lead nowhere. Only its copy changed.
+
+**6. `GettingStarted` is constrained by what can be observed, not by what would
+look good.** No endpoint reports per-step onboarding progress. So `done` is
+caller-supplied and only passed with evidence, and in practice neither dashboard
+passes it. A tick we cannot substantiate is a claim about the reader's own
+history, and is worse than a fabricated statistic: it tells a student they have
+already done something they have not.
+
+**Standing gap, recorded not hidden:** Phase 2 emitted 19 kit components without
+the hallmark pre-emit critique stamp §9.1 requires on every emitted surface.
+Phase 3's six are stamped. The 19 are not, and Phase 4 should stamp each as it
+touches it rather than back-fill scores nobody re-derived.
+
+**Blocked, see `BUILD/BLOCKERS.md` B4:** the e2e functional-safety gate cannot be
+fully evidenced. `reuseExistingServer` made Playwright adopt an unrelated
+`python -m lemely.web` process squatting on port 8000 instead of starting
+`scripts/e2e_server.py`, so the mocked vision seam never loaded and
+`correct-paper.spec.ts` fails. Verified pre-existing (identical failure at
+`0451e5e`) and verified environmental, not a product defect. Four of the five
+specs whose assertions Phase 3 changed pass.

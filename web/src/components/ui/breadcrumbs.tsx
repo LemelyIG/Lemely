@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E5 S5 R4 V3 */
 import { Link } from "react-router-dom"
 import { CaretRight } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -93,17 +94,33 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
                 // `rtl:-scale-x-100` — this glyph points along the reading
                 // direction, so it is one of the direction-dependent icons
                 // P3.4 requires be flagged. It must mirror under `dir="rtl"`.
+                //
+                // Visible at every width, not `hidden sm:block`. The separator
+                // only needs hiding when the trail itself is hidden, and in
+                // collapsed mode the whole <li> already carries `hidden
+                // sm:flex` — so pinning the caret to `sm` as well did nothing
+                // there and, with `collapse={false}`, stripped the separators
+                // out on a phone and left the crumbs running together as
+                // "Overview Classes This class Analytics".
                 <CaretRight
                   size={12}
                   aria-hidden="true"
-                  className="hidden shrink-0 text-rule sm:block rtl:-scale-x-100"
+                  className="shrink-0 text-rule rtl:-scale-x-100"
                 />
               ) : null}
+              {/* Only the final crumb truncates. `truncate` on every crumb
+                  shares the squeeze equally, so a narrow container turns the
+                  whole trail into "Overvi… Clas… This cl… Analy…", which
+                  communicates less than no trail at all. Ancestors are short,
+                  controlled labels taken from the nav list, so `nowrap` is
+                  safe for them; the current page's label is the only one that
+                  can be long, and it is the one a reader can most afford to
+                  see clipped because the page heading repeats it. */}
               {item.to && !isLast ? (
                 <Link
                   to={item.to}
                   className={cn(
-                    "truncate rounded-sm transition-colors hover:text-ink",
+                    "whitespace-nowrap rounded-sm transition-colors hover:text-ink",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                   )}
                 >
@@ -111,7 +128,9 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
                 </Link>
               ) : (
                 <span
-                  className={cn("truncate", isLast && "text-ink")}
+                  className={cn(
+                    isLast ? "truncate text-ink" : "whitespace-nowrap",
+                  )}
                   aria-current={isLast ? "page" : undefined}
                 >
                   {item.label}

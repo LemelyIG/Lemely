@@ -96,3 +96,33 @@ files not yet referenced anywhere in the app, and D1.1–5 has not been written
 yet at all.
 
 ---
+
+## 2026-08-13 — Phase 3 complete
+
+**IN** — nothing, again. The inbound topic has still never carried a message
+from the human; the only entry remains my Phase-0 selftest. Polled at every
+sub-phase boundary (3.1, 3.2, 3.3, 3.4) and before this gate.
+
+**OUT** — phase start, plus a milestone notice after 3.1 and 3.2.
+
+No new DECISION was raised this phase. Everything Phase 3 found beyond D1.1–5
+fell inside its own written mandate ("no dead ends", "per-role navigation that
+makes each role's top tasks one obvious step away") or was a straightforward
+correction of something untrue, so none of it needed a question:
+
+- Mobile navigation for the student and teacher portals. The audit's D1 list
+  could not contain it because the audit read source, not viewports.
+- Two cross-portal links that `RequireAuth` bounces for every role.
+- A fabricated school name, a hardcoded date, two hardcoded greetings, and two
+  "Coming soon" buttons for features that shipped.
+
+**D1.6 remains open and undefaulted**, as agreed. It is re-asked before Phase 4
+reaches admin views, and that is where I block rather than guess.
+
+**B4 raised** (`BUILD/BLOCKERS.md`): the e2e suite adopts whatever is already on
+port 8000, so `scripts/e2e_server.py`'s mocked vision seam never loads and
+`correct-paper.spec.ts` fails. Environmental, verified pre-existing at the Phase
+3 starting commit, and needs one command from you. The occupying process belongs
+to another local user, so it was not killed unattended.
+
+---

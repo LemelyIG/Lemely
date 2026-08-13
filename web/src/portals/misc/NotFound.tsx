@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R4 V4 */
 import { Link, useRouteError, isRouteErrorResponse } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"

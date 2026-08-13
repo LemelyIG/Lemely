@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R4 V4 */
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Check } from "@phosphor-icons/react"

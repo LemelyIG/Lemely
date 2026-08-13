@@ -29,38 +29,47 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      3 — IA & UX Flows (Phases 0, 1, 2 DONE)
-CURRENT SURFACE:    none (Phase 2 is product-wide foundation)
+CURRENT PHASE:      4 — Surface-by-surface redesign (Phases 0-3 DONE)
+CURRENT SURFACE:    none yet. Phase 4 order (§5): Student dashboard ->
+                    past-paper correction -> study surfaces -> gamification ->
+                    Teacher dashboard + quiz builder -> Parent -> Admin ->
+                    Auth -> Marketing -> 404/misc.
 CURRENT BRANCH:     redesign/phase-0  (off develop; per-phase/surface branches per §11)
-NEXT ACTION:        Phase 3 — IA & UX Flows. In order:
-                    3.1 Implement the approved IA restructure (D1.1-5, DEFAULTED
-                        and therefore approved): drop the student "Elsewhere"
-                        nav, add /teacher/review to the sidebar, give students
-                        an in-app path to notifications, add a custom 404 and
-                        wire the new ErrorBoundary at the route level, and add
-                        back/breadcrumb paths in teacher + parent.
-                    3.2 First-run flows per role (impeccable shape -> onboard).
-                        Empty dashboards become composed "getting started"
-                        views, never blank. The EmptyState + marginalia
-                        vocabulary for this already exists in the kit.
-                    3.3 harden + clarify groundwork: form validation patterns
-                        (the kit's Input/Select/Radio already implement inline,
-                        near-field errors with visible labels), error copy
-                        voice, skeletons instead of spinners (Skeleton exists
-                        now), custom 404, skip-to-content link.
-                    3.4 RTL-safety rule applies from here to the end: logical
-                        properties everywhere, no hardcoded left/right.
-                    READ DESIGN.md FIRST. It is the real system now, and the
-                    component kit under web/src/components/ui/ implements it.
-                    Preview the kit with `npm run preview:kit`.
-                    NOTE: build-era screens still consume the compat token
-                    aliases in index.css. That is deliberate and documented;
-                    Phase 4 migrates them surface by surface.
-LAST UPDATED:       2026-08-13T18:10+03:00
+NEXT ACTION:        Phase 4, first surface: **Student dashboard**.
+                    Before touching it, read in this order: DESIGN.md (the
+                    system), BUILD/DECISIONS.md D3.22 (what Phase 3 learned),
+                    and that surface's rows in BUILD/DESIGN-AUDIT.md.
+
+                    Standing rules Phase 4 inherits, all of them enforced:
+                    - `npm run check:copy` must not grow. 91 prose em-dashes
+                      remain on un-migrated screens; §9.8 binds the gate to
+                      new/edited copy, so each surface clears its own as it
+                      lands. It is not a silent exemption.
+                    - Add each migrated file to RTL_CLEAN_FILES in
+                      `tests/unit/rtlSafety.test.ts`. The list only grows.
+                    - Stamp every emitted surface with the hallmark pre-emit
+                      critique (§9.1). Phase 2's 19 kit components are
+                      UNSTAMPED — stamp each as you touch it, do not back-fill
+                      scores nobody re-derived.
+                    - Replace text loaders with `loading-shapes.tsx` as each
+                      surface's geometry settles. ~23 remain, deliberately:
+                      a skeleton must match the layout that replaces it, and
+                      Phase 4 is what changes those layouts.
+                    - Build-era screens still consume the compat token aliases
+                      in index.css. Phase 4 migrates them surface by surface.
+
+                    **Re-ask D1.6 before admin views.** Still open, still
+                    deliberately undefaulted. Block there rather than guess.
+
+                    **B4 blocks the e2e gate** (BUILD/BLOCKERS.md). One
+                    command from the human clears it; do not kill the
+                    port-8000 process unattended, it belongs to another user.
+LAST UPDATED:       2026-08-13T20:20+03:00
 LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
                     NOTE: still no inbound message from the human, ever. The only
                     entry on the topic remains my own Phase-0 selftest.
 ```
+
 
 ### Phase ledger
 
@@ -69,7 +78,7 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 | 0. Setup & Verification | DONE | 2026-08-13 | All 9 skills loadable; nothing needed installing. Node 26.6.0, Python 3.13.5, Playwright 1.62.1 (web/), Gemini key in gitignored `.env`, spend $0.204/$8 (image budget for this mission ≤$3). impeccable hook already `enabled`; `context.mjs` clean apart from one stale-context finding, fixed. PRODUCT.md already existed from the build era and was corrected rather than regenerated (see notes). ntfy verified in **both** directions. |
 | 1. Audit | DONE | 2026-08-13 | Three legs, all read-only, `web/` verified untouched after each. Merged into `BUILD/DESIGN-AUDIT.md`; leg reports in `BUILD/audit/`. 6 critical, 14 major, 3 minor. Root cause is one thing: every token is still the build-era Material-3 palette, so zero pages are Study Notebook yet. Worse than that and independently confirmed by me: 3 fabrications on the landing page, no error boundary anywhere, no skeleton component anywhere. **Coverage is partial and stated so — nothing was verified against a rendered viewport, and 34 of 48 routes were reached by grep only.** |
 | 2. Brand & Design System | DONE | 2026-08-13 | All 6 steps done. Brand strategy at `BUILD/BRAND.md`; logo hand-authored as SVG after the Gemini refine pass failed on all five named defects (D2 defaulted to ship it). DESIGN.md rewritten from scratch as the Study Notebook; index.css is its implementation with a documented temporary compatibility layer so un-migrated screens pick up the new palette instead of staying Material-3. `tests/test_design_tokens.py` pins every contrast claim and caught two real AA failures plus one greyscale failure in my own draft. Landing-page fabrications C1/C2 fixed, plus a third the audit missed (a stated 0.70 review threshold that is really 0.90). Component kit: 19 components, all 8 states, preview page at `web/dev-previews/` with its own Vite entry so the product can never ship it. Closed the audit's "no skeleton component" and "no error boundary" gaps. Three defects found by verifying rather than trusting the agent reports: RadioGroup did not actually have 8 states; the preview page was silently missing every utility used only inside a component (Tailwind source detection is rooted at the entry CSS, fixed with `@source`, CSS went 28KB→69KB); and a hover-pinning device I built emitted zero CSS and was removed rather than left to quietly pass review. |
-| 3. IA & UX Flows | PENDING | — | |
+| 3. IA & UX Flows | DONE | 2026-08-13 | All four parts done, D1.1-5 implemented. The headline is what the audit could not see from source: **neither the student nor teacher portal had ANY navigation below 820px/768px** — sidebars simply `hidden`, nothing replacing them, on a product whose own brief says students live on phones. Fixed with a shared `NavDrawer` rendering the same list as the desktop aside. Also removed two cross-portal links `RequireAuth` bounces for every role that exists (dead for everyone), and 4 dead keys in the student `crumbs` map. First-run views for student + teacher (`GettingStarted`); the parent's was already right and was deliberately left alone. Four honesty defects fixed in passing: a fabricated school name and hardcoded date on the teacher dashboard, hardcoded greetings on both, and two 'Coming soon' buttons for features that shipped. Three rules got gates rather than sweeps (`check:copy`, `rtlSafety`, `navigation`), and each found a real defect while being written. 646 unit tests (+59), typecheck/lint/both builds/pre-commit clean, no horizontal scroll at 320/375/1440. **e2e blocked by B4** — environmental, verified pre-existing at `0451e5e`, not a Phase 3 regression. See D3.22. |
 | 4. Surface redesign | PENDING | — | |
 | 5. Motion & data-viz | PENDING | — | |
 | 6. Hardening & adaptation | PENDING | — | |
@@ -151,6 +160,21 @@ it so it can never be replayed as a directive.
    (mark timeouts as "DEFAULTED").
 5. `LAST STEERING TS` advances only after the message is logged AND acted on or queued.
 6. Commit STATE.md with the work it describes, same commit.
+
+### Phase 3 deliverables (for later phases to read)
+
+| Artefact | Path | Note |
+|---|---|---|
+| Mobile nav | `web/src/components/ui/nav-drawer.tsx` | The only navigation that exists below 820/768px. Same list as the desktop aside, from the same code. |
+| Breadcrumbs | `web/src/components/ui/breadcrumbs.tsx` | D1.5's back affordance. Collapses to one back link below `sm`. |
+| Skip link | `web/src/components/ui/skip-link.tsx` | Wired in all three portals. `MAIN_CONTENT_ID` is the `<main>` target. |
+| First-run panel | `web/src/components/ui/getting-started.tsx` | `done` only with evidence — no endpoint reports onboarding progress. |
+| Loading shapes | `web/src/components/ui/loading-shapes.tsx` | Composed skeletons. Use these as each surface's geometry settles. |
+| 404 + error screen | `web/src/portals/misc/NotFound.tsx` | Router `errorElement` on every top-level route, plus `path: "*"`. Static import on purpose. |
+| Copy gate | `web/scripts/check_copy.mjs` | `npm run check:copy`. Classifier unit-tested; do not let the count grow. |
+| RTL gate | `web/tests/unit/rtlSafety.test.ts` | Append each migrated file to `RTL_CLEAN_FILES`. |
+| Nav gate | `web/tests/unit/navigation.test.ts` | Cross-checks every nav destination and crumb against mounted routes. |
+| Greeting | `greetingFor` in `web/src/lib/utils.ts` | Both dashboards previously hardcoded the time of day. |
 
 ### Phase 2 deliverables (for later phases to read)
 

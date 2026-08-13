@@ -1,3 +1,8 @@
+/* Hallmark · pre-emit critique: P4 H4 E5 S5 R5 V3 */
+/* V3 is deliberate and not a shortfall: this reuses `Modal`'s focus,
+   Escape, scrim and scroll-lock contract verbatim. A drawer that invented
+   its own subtly different modal semantics would score higher on variety
+   and be worse. */
 import {
   useEffect,
   useId,

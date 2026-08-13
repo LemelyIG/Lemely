@@ -643,8 +643,17 @@ function AppBody() {
               <TabsDemo />
             </StateCell>
             <StateCell state="default" provenance="live" note="Click to open, Escape to close">
+              {/* P3 gate: this destructured the whole render argument as
+                  `triggerProps` and spread it, so the button received
+                  `open={false}` and a nested `triggerProps` object as DOM
+                  attributes, and received none of the ref, onClick or ARIA the
+                  popover supplies. React warned about it in the console and
+                  the cell could not be opened at all — a "click to open" demo
+                  that did not open, sitting on the page that exists to prove
+                  the kit works. `renderTrigger` yields
+                  `{ open, triggerProps }`; only the latter is spread. */}
               <Popover
-                renderTrigger={(triggerProps) => (
+                renderTrigger={({ triggerProps }) => (
                   <Button size="sm" {...triggerProps}>
                     Open popover
                   </Button>

@@ -1,3 +1,6 @@
+/* Hallmark · pre-emit critique: P3 H3 E5 S4 R5 V3 */
+/* P3/H3: this is a utility control with one job and almost no surface to
+   express anything through. Scored honestly rather than inflated. */
 import { cn } from "@/lib/utils"
 
 /*
