@@ -29,23 +29,25 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      0 — Setup & Verification
-CURRENT SURFACE:    none
-CURRENT BRANCH:     (create redesign base branch off develop in Phase 0)
-NEXT ACTION:        Verify §2 prerequisites: all 9 skills loadable, Python 3,
-                    Node 22.12+, Playwright+Chromium, Gemini key, ntfy topics.
-                    Install anything missing, then run context.mjs, hooks on,
-                    /impeccable init, and send the Steering Channel test message.
-LAST UPDATED:       (set on first session)
-LAST STEERING TS:   0   (poll https://ntfy.sh/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
+CURRENT PHASE:      1 — Audit
+CURRENT SURFACE:    none (audit is product-wide)
+CURRENT BRANCH:     redesign/phase-0  (off develop; per-phase/surface branches per §11)
+NEXT ACTION:        Phase 1. Run the three audits (hallmark route sweep,
+                    impeccable audit+critique per surface, redesign-skill
+                    Diagnose checklist), merge into BUILD/DESIGN-AUDIT.md, map
+                    current IA + proposed changes, then send DECISION D1
+                    (audit summary + IA changes, 60-min timeout, default
+                    "proceed as proposed").
+LAST UPDATED:       2026-08-13T14:40Z
+LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
 ```
 
 ### Phase ledger
 
 | Phase | Status | Completed | Notes |
 |---|---|---|---|
-| 0. Setup & Verification | IN PROGRESS | — | |
-| 1. Audit | PENDING | — | |
+| 0. Setup & Verification | DONE | 2026-08-13 | All 9 skills loadable; nothing needed installing. Node 26.6.0, Python 3.13.5, Playwright 1.62.1 (web/), Gemini key in gitignored `.env`, spend $0.204/$8 (image budget for this mission ≤$3). impeccable hook already `enabled`; `context.mjs` clean apart from one stale-context finding, fixed. PRODUCT.md already existed from the build era and was corrected rather than regenerated (see notes). ntfy verified in **both** directions. |
+| 1. Audit | IN PROGRESS | — | |
 | 2. Brand & Design System | PENDING | — | |
 | 3. IA & UX Flows | PENDING | — | |
 | 4. Surface redesign | PENDING | — | |
@@ -91,12 +93,22 @@ Resolved: none
 
 ### Steering log pointer
 
-Full log: `BUILD/STEERING.md` (append-only; create it in Phase 0 if missing).
-Last processed inbound message: none.
+Full log: `BUILD/STEERING.md` (created in Phase 0).
+Last processed inbound message: none from the human. The only entry on the inbound topic is
+my own Phase-0 selftest (`IOd08AgAn9Hf`, ts 1786629363), and `LAST STEERING TS` is set past
+it so it can never be replayed as a directive.
 
 ### Deferred issues (found during redesign, not blocking)
 
-- none
+- **Phase 0 note — PRODUCT.md was corrected, not regenerated.** `/impeccable init` would have
+  overwritten a build-era file that already carries five roles, the real product loop, the
+  binding anti-references, and the evidence-on-hand list. Four edits were made instead:
+  the deprecated `## Register` section became `## Modes` (impeccable v4 dropped register for
+  the four visitor modes; nothing reads `## Register` any more), §4's anti-references and the
+  protected notebook quality were added, and the line "layouts need not solve RTL yet" was
+  replaced — it directly contradicted Phase 3.4's RTL-safety rule.
+- **`DESIGN.md` at the repo root is build-era and predates the Study Notebook direction.**
+  Phase 2 replaces it. Until then no surface work should read it as the token source.
 
 ---
 
