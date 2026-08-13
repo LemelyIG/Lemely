@@ -1,9 +1,12 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState } from "react"
 import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router-dom"
 import { ErrorState } from "@/components/ui/state-views"
 import { cn, relativeTime } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { useClassDetail } from "@/lib/hooks/useTeacherApi"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { ClassDetail as ClassDetailData } from "@/lib/teacherTypes"
 
 /*
@@ -56,11 +59,11 @@ function JoinCodeChip({ code }: { code: string }) {
     <button
       type="button"
       onClick={copy}
-      className="inline-flex items-center gap-2 border border-border bg-surface rounded-lg px-3 py-1.5 font-mono text-dense tracking-[0.06em] hover:bg-surface-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      className="inline-flex items-center gap-2 border border-rule bg-paper-raised rounded-lg px-3 py-1.5 text-data-md tracking-[0.06em] hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       title="Copy join code"
     >
       {code}
-      <span className="text-2xs text-t3">{copied ? "Copied" : "Copy"}</span>
+      <span className="text-body-sm text-ink-faint">{copied ? "Copied" : "Copy"}</span>
     </button>
   )
 }
@@ -73,9 +76,7 @@ export function ClassDetailLayout() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Class detail</h1>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading class…
-        </div>
+        <PanelSkeleton />
       </div>
     )
   }
@@ -86,7 +87,7 @@ export function ClassDetailLayout() {
         <h1 className="sr-only">Class detail</h1>
         <ErrorState
           heading="Couldn't load this class"
-          body={detailQuery.error.message}
+          body={teacherLoadFailureMessage(detailQuery.error)}
           action={{ label: "Retry", onClick: () => detailQuery.refetch() }}
           secondaryAction={{ label: "Back to classes", onClick: () => history.back() }}
         />
@@ -99,12 +100,12 @@ export function ClassDetailLayout() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <Link to="/teacher/classes" className="text-xs text-t3 hover:text-t1 w-fit">
+        <Link to="/teacher/classes" className="text-body-sm text-ink-faint hover:text-ink w-fit">
           ← All classes
         </Link>
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">
-            <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+            <div className="text-eyebrow text-ink-faint">
               {classDetail.subjectCode ?? "No subject set"}
             </div>
             <h1 className="text-display-md mt-1.5 text-pretty">
@@ -114,14 +115,14 @@ export function ClassDetailLayout() {
           <div className="flex-1" />
           {classDetail.joinCode ? (
             <div className="flex flex-col items-end gap-1">
-              <span className="font-mono text-3xs uppercase tracking-[0.09em] text-t3">
+              <span className="text-eyebrow text-ink-faint">
                 Invite code
               </span>
               <JoinCodeChip code={classDetail.joinCode} />
             </div>
           ) : null}
         </div>
-        <div className="flex items-center gap-3 flex-wrap text-dense-sm text-t2 mt-1">
+        <div className="flex items-center gap-3 flex-wrap text-body-sm text-ink-muted mt-1">
           <span>{classDetail.topWeakness ? `Top weakness: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
           <span aria-hidden="true">·</span>
           <span>
@@ -148,16 +149,16 @@ export function ClassDetailLayout() {
         ))}
       </div>
 
-      <nav aria-label="Class detail sections" className="flex gap-1 border-b border-border">
+      <nav aria-label="Class detail sections" className="flex gap-1 border-b border-rule">
         <NavLink
           to="."
           end
           className={({ isActive }) =>
             cn(
-              "px-4 py-2.5 text-dense-lg border-b-2 -mb-px",
+              "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
               isActive
-                ? "border-accent text-t1 font-medium"
-                : "border-transparent text-t2 hover:text-t1",
+                ? "border-accent text-ink font-medium"
+                : "border-transparent text-ink-muted hover:text-ink",
             )
           }
         >
@@ -167,10 +168,10 @@ export function ClassDetailLayout() {
           to="analytics"
           className={({ isActive }) =>
             cn(
-              "px-4 py-2.5 text-dense-lg border-b-2 -mb-px",
+              "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
               isActive
-                ? "border-accent text-t1 font-medium"
-                : "border-transparent text-t2 hover:text-t1",
+                ? "border-accent text-ink font-medium"
+                : "border-transparent text-ink-muted hover:text-ink",
             )
           }
         >

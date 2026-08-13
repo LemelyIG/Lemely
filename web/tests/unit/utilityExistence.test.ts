@@ -84,6 +84,11 @@ const SCANNED_FILES = [
   "src/portals/teacher/screens/Review.tsx",
   "src/portals/teacher/screens/ReviewItem.tsx",
   "src/portals/teacher/screens/MarkSchemes.tsx",
+  "src/portals/teacher/screens/Classes.tsx",
+  "src/portals/teacher/screens/ClassDetail.tsx",
+  "src/portals/teacher/screens/ClassRoster.tsx",
+  "src/portals/teacher/screens/StudentDetail.tsx",
+  "src/portals/teacher/screens/Announcements.tsx",
 ]
 
 const CSS_PATH = "src/index.css"

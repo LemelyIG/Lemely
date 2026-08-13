@@ -112,3 +112,37 @@ describe("en-dashes in ranges are not findings", () => {
     expect(isRange(line, line.indexOf("—"))).toBe(false)
   })
 })
+
+/*
+ * P4.5 widened two placeholder arms. Both widenings are pinned in the
+ * permissive AND the strict direction, because the failure mode of a
+ * classifier change is silently exempting real copy — which is the one thing
+ * this gate exists to stop.
+ */
+describe("placeholder arms widened by P4.5", () => {
+  it("allows two placeholder dashes on one line", () => {
+    // The review queue's "marks awarded out of maximum" with neither value
+    // known. The old classifier bailed out whenever a line held more than one
+    // quoted dash, so this real placeholder was reported as prose.
+    expect(find('<td>{item.awarded ?? "–"}/{item.maximum ?? "–"}</td>')).toHaveLength(0)
+  })
+
+  it("still reports prose on a line that also holds a placeholder", () => {
+    // The widening must not become "a line containing any placeholder is
+    // exempt". The dash between words here is prose and has to survive.
+    expect(
+      find('<td>{a ?? "–"} — and the rest of this is a real sentence</td>'),
+    ).toHaveLength(1)
+  })
+
+  it("allows a dash that a formatter put on its own line", () => {
+    // The JSX arm looked for `>` and `<` within 12 characters on the same
+    // line, so a wrapped element hid its own placeholder from the exemption.
+    const source = ['<div', '  aria-label="No data"', '>', '  –', '</div>'].join("\n")
+    expect(find(source)).toHaveLength(0)
+  })
+
+  it("does not exempt a lone dash that has words on the same line", () => {
+    expect(find("  Nothing here — try again")).toHaveLength(1)
+  })
+})

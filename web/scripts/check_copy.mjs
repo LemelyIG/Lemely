@@ -135,12 +135,34 @@ export function findEmDashes(source) {
 
       // Placeholder: the dash is alone inside its own quoted literal, or is
       // the whole of a JSX text node between tags.
-      const quoted = line.match(/(["'`])\s*[—–]\s*\1/g) ?? []
-      if (quoted.some((q) => isPlaceholder(q)) && quoted.length === 1) {
-        const only = line.indexOf(quoted[0])
-        if (i > only && i < only + quoted[0].length) continue
+      //
+      // P4.5 widened both arms, because both were reporting real placeholders
+      // as prose and the cure for that is a better classifier, not source
+      // contorted to please one:
+      //
+      //  - The quoted arm required `quoted.length === 1`, so a line holding
+      //    TWO placeholders was reported. `{a ?? "–"}/{b ?? "–"}` in the
+      //    review queue is one row's "marks awarded out of maximum" with
+      //    neither value known, which is as placeholder as it gets. The bound
+      //    existed only because `indexOf` cannot locate the second match;
+      //    scanning positions properly removes the need for it without
+      //    loosening what counts as a placeholder.
+      //  - The JSX arm looked for `>` and `<` within 12 characters on the SAME
+      //    line, so a dash that a formatter had put on its own line was
+      //    missed. A line whose entire trimmed content is a dash is never
+      //    prose: prose needs words either side of it, and there are none on
+      //    the line at all.
+      let insidePlaceholder = false
+      for (const match of line.matchAll(/(["'`])\s*[—–]\s*\1/g)) {
+        if (!isPlaceholder(match[0])) continue
+        if (i > match.index && i < match.index + match[0].length) {
+          insidePlaceholder = true
+          break
+        }
       }
+      if (insidePlaceholder) continue
       if (/>\s*[—–]\s*</.test(line.slice(Math.max(0, i - 12), i + 12))) continue
+      if (/^[—–]$/.test(line.trim())) continue
 
       if (isRange(line, i)) continue
 

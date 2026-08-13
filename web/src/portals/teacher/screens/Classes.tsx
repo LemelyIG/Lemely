@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -11,6 +12,12 @@ import {
   useUpdateClass,
   useDeleteClass,
 } from "@/lib/hooks/useTeacherApi"
+import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
+import {
+  teacherLoadFailureMessage,
+  teacherMutationFailureMessage,
+} from "@/lib/teacherOutcome"
 import type { ClassSummary } from "@/lib/teacherTypes"
 
 /*
@@ -84,6 +91,7 @@ export function Classes() {
   const updateClass = useUpdateClass()
   const deleteClass = useDeleteClass()
   const queryClient = useQueryClient()
+  const [pendingDelete, setPendingDelete] = useState<ClassSummary | null>(null)
 
   const [search, setSearch] = useState("")
   const [sortColumn, setSortColumn] = useState<SortColumn>("label")
@@ -98,9 +106,8 @@ export function Classes() {
     return (
       <div className="lm-screen flex flex-col gap-5 min-w-0">
         <h1 className="sr-only">Classes</h1>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading classes…
-        </div>
+        <PageHeaderSkeleton />
+        <CardGridSkeleton count={6} />
       </div>
     )
   }
@@ -111,7 +118,7 @@ export function Classes() {
         <h1 className="sr-only">Classes</h1>
         <ErrorState
           heading="Couldn't load your classes"
-          body={classesQuery.error.message}
+          body={teacherLoadFailureMessage(classesQuery.error)}
           action={{ label: "Retry", onClick: () => classesQuery.refetch() }}
         />
       </div>
@@ -168,10 +175,18 @@ export function Classes() {
     )
   }
 
+  /*
+   * The most destructive action in the teacher portal, and until P4.5 the one
+   * asking for consent through a browser dialog whose buttons said "OK" and
+   * "Cancel". Deleting a class removes it for every enrolled student, so this
+   * is the case C-24 `ConfirmModal`'s default consequence line was written
+   * for, and the confirm button names the act rather than agreeing with a
+   * question.
+   */
   function handleDelete(c: ClassSummary) {
-    if (!window.confirm(`Delete "${c.label}"? This removes it for every enrolled student.`)) return
     deleteClass.mutate(c.id, {
       onSuccess: () => {
+        setPendingDelete(null)
         queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] })
       },
     })
@@ -179,9 +194,9 @@ export function Classes() {
 
   return (
     <div className="lm-screen flex flex-col gap-5 min-w-0">
-      <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-3">
+      <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-3">
         <div>
-          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+          <div className="text-eyebrow text-ink-faint">
             {classes.length} class{classes.length === 1 ? "" : "es"}
           </div>
           <h1 className="text-display-md mt-1.5">Classes</h1>
@@ -194,7 +209,7 @@ export function Classes() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search classes or subjects…"
-            className="border border-border bg-surface rounded-lg px-3.5 py-2 text-dense w-[240px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="border border-rule bg-paper-raised rounded-lg px-3.5 py-2 text-body-md w-[240px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           />
         </label>
         <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
@@ -205,33 +220,33 @@ export function Classes() {
       {showCreate ? (
         <form
           onSubmit={handleCreate}
-          className="bg-surface border border-border rounded-lg p-[18px] flex flex-wrap items-end gap-3"
+          className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-wrap items-end gap-3"
         >
-          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 flex-1 min-w-[200px]">
+          <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted flex-1 min-w-[200px]">
             Class name
             <input
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Y11 Physics"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
             />
           </label>
-          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 w-[180px]">
+          <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted w-[180px]">
             Subject code (optional)
             <input
               value={subjectCode}
               onChange={(e) => setSubjectCode(e.target.value)}
               placeholder="e.g. 0625"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
             />
           </label>
           <Button type="submit" variant="ink" disabled={createClass.isPending}>
             {createClass.isPending ? "Creating…" : "Create class"}
           </Button>
           {createClass.isError ? (
-            <div className="text-dense-sm text-err w-full">
-              Couldn't create the class: {createClass.error.message}
+            <div className="text-body-sm text-err w-full">
+              Couldn't create the class: {teacherMutationFailureMessage(createClass.error)}
             </div>
           ) : null}
         </form>
@@ -245,7 +260,7 @@ export function Classes() {
         />
       ) : (
         <div
-          className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
+          className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
           // `tabIndex`/`role`/`aria-label` are required, not decorative: a
           // horizontally scrollable container no keyboard user can reach or
           // scroll is axe's serious `scrollable-region-focusable`. Chunk c hit
@@ -257,10 +272,10 @@ export function Classes() {
           role="region"
           aria-label="Your classes, scrollable horizontally"
         >
-          <table className="w-full text-dense border-collapse">
+          <table className="w-full text-body-md border-collapse">
             <caption className="sr-only">Your classes, sortable by every column</caption>
             <thead>
-              <tr className="bg-surface-2 border-b border-border">
+              <tr className="bg-paper-sunk border-b border-rule">
                 {COLUMNS.map((col) => {
                   const active = col.key === sortColumn
                   return (
@@ -273,7 +288,7 @@ export function Classes() {
                       <button
                         type="button"
                         onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 font-mono text-3xs tracking-[0.09em] uppercase text-t3 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
+                        className="inline-flex items-center gap-1 text-eyebrow text-ink-faint hover:text-ink cursor-pointer bg-transparent border-0 p-0"
                       >
                         {col.label}
                         {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
@@ -289,13 +304,13 @@ export function Classes() {
             <tbody>
               {sorted.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1} className="px-[18px] py-6 text-t2 text-dense">
+                  <td colSpan={COLUMNS.length + 1} className="px-[18px] py-6 text-ink-muted text-body-md">
                     No classes match "{search}".
                   </td>
                 </tr>
               ) : (
                 sorted.map((c) => (
-                  <tr key={c.id} className="border-b border-border last:border-b-0">
+                  <tr key={c.id} className="border-b border-rule last:border-b-0">
                     <td className="px-[18px] py-[13px]">
                       {editingId === c.id ? (
                         <div className="flex items-center gap-2">
@@ -313,7 +328,7 @@ export function Classes() {
                             aria-label={`Rename class ${c.label}`}
                             value={editName}
                             onChange={(e) => setEditName(e.target.value)}
-                            className="border border-border bg-surface rounded-lg px-2.5 py-1.5 text-dense text-t1 w-[160px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                            className="border border-rule bg-paper-raised rounded-lg px-2.5 py-1.5 text-body-md text-ink w-[160px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                           />
                           <Button
                             size="sm"
@@ -328,26 +343,26 @@ export function Classes() {
                           </Button>
                         </div>
                       ) : (
-                        <Link to={`/teacher/classes/${c.id}`} className="text-t1 hover:underline">
+                        <Link to={`/teacher/classes/${c.id}`} className="text-ink hover:underline">
                           {c.label}
                         </Link>
                       )}
                     </td>
-                    <td className="px-[18px] py-[13px] font-mono text-dense-sm text-t2">
+                    <td className="px-[18px] py-[13px] text-data-sm text-ink-faint">
                       {c.subjectCode ?? "—"}
                     </td>
-                    <td className="px-[18px] py-[13px] font-mono text-dense-sm">{c.studentCount}</td>
-                    <td className="px-[18px] py-[13px] font-mono text-dense-sm">
+                    <td className="px-[18px] py-[13px] text-data-sm">{c.studentCount}</td>
+                    <td className="px-[18px] py-[13px] text-data-sm">
                       {c.average != null ? `${Math.round(c.average)}%` : "—"}
                     </td>
-                    <td className="px-[18px] py-[13px] text-dense-sm text-t2">
+                    <td className="px-[18px] py-[13px] text-body-sm text-ink-muted">
                       {c.lastActivityAt ? relativeTime(c.lastActivityAt) : "No activity yet"}
                     </td>
                     <td className="px-[18px] py-[13px]">
                       {c.atRiskCount ? (
                         <Chip tone="err">{c.atRiskCount}</Chip>
                       ) : (
-                        <span className="font-mono text-dense-sm text-t3">0</span>
+                        <span className="text-data-sm text-ink-faint">0</span>
                       )}
                     </td>
                     <td className="px-[18px] py-[13px] text-end whitespace-nowrap">
@@ -361,7 +376,7 @@ export function Classes() {
                             variant="ghost"
                             className={cn("text-err", deleteClass.isPending && "opacity-50")}
                             disabled={deleteClass.isPending}
-                            onClick={() => handleDelete(c)}
+                            onClick={() => setPendingDelete(c)}
                           >
                             Delete
                           </Button>
@@ -376,14 +391,28 @@ export function Classes() {
         </div>
       )}
 
+      <ConfirmModal
+        open={pendingDelete !== null}
+        title="Delete this class?"
+        description={pendingDelete ? `"${pendingDelete.label}"` : undefined}
+        consequence="This removes the class for every enrolled student, along with its roster. It cannot be undone."
+        confirmLabel="Delete class"
+        pendingLabel="Deleting…"
+        pending={deleteClass.isPending}
+        error={deleteClass.isError ? teacherMutationFailureMessage(deleteClass.error) : null}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) handleDelete(pendingDelete)
+        }}
+      />
       {deleteClass.isError ? (
-        <div className="text-dense-sm text-err">
-          Couldn't delete the class: {deleteClass.error.message}
+        <div className="text-body-sm text-err">
+          Couldn't delete the class: {teacherMutationFailureMessage(deleteClass.error)}
         </div>
       ) : null}
       {updateClass.isError ? (
-        <div className="text-dense-sm text-err">
-          Couldn't rename the class: {updateClass.error.message}
+        <div className="text-body-sm text-err">
+          Couldn't rename the class: {teacherMutationFailureMessage(updateClass.error)}
         </div>
       ) : null}
     </div>
