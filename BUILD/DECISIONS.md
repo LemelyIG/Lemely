@@ -7024,3 +7024,153 @@ are invisible to a bare `pre-commit` invocation): **all green**. 28 captures
 across three surfaces, all distinct, console errors only the deliberately-failing
 states' own 404/500/503. **e2e still blocked by B4** — port 8000 is still held by
 the foreign `python -m lemely.web` process, verified again this session.
+
+---
+
+## D4.3 — Redesign Phase 4, surface 3 (study surfaces): two destructive actions with no confirmation and no failure report, and a bar that measured something other than the number beside it
+
+Surface 3 is the Read lane's first appearance in this redesign: `screens/flashcards/`
+(decks + review), `screens/studyplan/` (week + session), `screens/practice/`
+(generator, set, result, print). Eight screens, ~1,970 lines. "Classifieds" in the
+mission's surface list has no screen of its own — it is the **classified-worksheet
+practice flow**, i.e. `PracticeGenerator`, which builds a set from topic and
+difficulty filters. Recorded here so a later reader does not go looking for a
+missing screen.
+
+**1. Deleting a deck was unconfirmed, and both deletes were silent on failure.**
+One tap on a Trash glyph destroyed a deck and every card in it. There was no
+confirmation step, and — the part no gate could see — `useDeleteDeck` and
+`useDeleteCard` both expose `isError` that **nothing rendered**. So a delete that
+failed left the deck sitting exactly where it was, with no message, which is
+indistinguishable on screen from a delete the student imagined pressing.
+
+What makes it a finding rather than an omission is which mutations were covered:
+`addCard.isError` and `editCard.isError` were both rendered, carefully, right next
+to their fields. The two mutations with no error path were the two **destructive**
+ones. The reversible operations reported their failures and the irreversible ones
+did not.
+
+This is D4.2's headline shape a second time. There it was `streamActivity` falling
+out of its loop and the panel going back to "Ready when you are"; here it is a
+DELETE returning 500 and the screen showing the deck as though nothing happened.
+Both are "the action failed and the UI's resting state is indistinguishable from
+success". Both now say so.
+
+The fix uses `Modal`'s `dismissible={false}`, whose own docstring names this exact
+case — "destructive confirmations where an accidental Escape must not discard a
+decision silently" — and which had **no call site in the product**. Phase 2 built
+the affordance; this is the first surface that needed it.
+
+**2. The week bar and the count beside it measured different things.** On
+`StudyPlanWeek`, `weekProgress().percentComplete` is completed **minutes** over
+planned minutes. The line directly above the bar counts **sessions**. So a student
+who had finished two short sessions out of four read "2 of 4 sessions done" beside
+a bar sitting at 25%, with nothing on screen accounting for the gap. Neither
+number was wrong; the screen just presented two different denominators as though
+they were one fact rendered twice. The bar now carries its own label stating its
+own denominator ("45m of 2h 5m planned study time done").
+
+Found by reading `studyPlanData.ts` rather than the screen — the screen's own
+`aria-label` said "Study time completed this week", which was *correct* and was the
+clue. `completedMinutes` was computed by the DTO and rendered nowhere.
+
+**3. That same bar animated `width`.** It was hand-rolled — `role="progressbar"`
+plus a filled `<div>` driven by `transition-[width]` — where DESIGN.md §9.2 says
+animate only `transform` and `opacity`, no exceptions. A layout-animating property
+on the one element that changes every time a session is ticked off. It is C-24
+`ProgressBar` now, which is also what `FlashcardReview` two screens away was
+already using: one surface shipped two progress bars, and the hand-rolled one was
+the one that broke the rule.
+
+**4. The Read lane rendered at four different widths.** DESIGN.md §13 fixes the
+Read container at 680px. The eight screens carried `max-w-[560px]`, `[640px]`,
+`[720px]` and `[840px]`, so the same lane changed measure depending on which link
+a student followed. They share one `lm-read` utility now, with `lm-prose` (65ch)
+separate from it, because §2 caps *prose* at 65ch while the column still has to
+hold full-width cards and rows — collapsing the two would have shrunk every card
+to text measure.
+
+**5. The texture layer had never been used.** `ruled-bg` and `dotted-bg` were
+written in Phase 2, are named by §8 item 2 **for the Read lane specifically**, and
+had **zero call sites product-wide**. Not a defect in prior work — surfaces 1 and 2
+were both Operate, where §13 turns texture down — but this is the first Read
+surface, so it is the first one where they were supposed to appear. The flashcard
+card face is ruled now, and it is the only texture element on that viewport, well
+inside §8's budget of two. `EmptyState`'s `marginalia` prop (the Caveat layer) had
+two call sites in the entire product, both on surface 2; the empty states here now
+carry it.
+
+**Also fixed, smaller.** The card editor hand-rolled six `<input>`s off a local
+`CARD_INPUT_CLASS` that pinned focus to the accent, against §3.9's deliberately-blue
+focus ring — they are C-6 `Input`s now. The new-deck size control was a raw
+`<input type="range">` while the practice generator on the same surface used the
+kit `Slider`. The keyboard shortcuts on the review screen ("(Space)", "(1)") were
+plain prose spans, so the affordance that makes that screen fast was
+typographically identical to the label it annotated; C-19 `Kbd` existed and was
+unused. Six text loaders became layout-matching skeletons. `PracticePrint` indented
+its MCQ options with a physical `pl-4` (the one real RTL violation this sweep
+found) and had no zero-questions case, so an empty export rendered as an empty
+bordered box under a Print button that would have printed a blank sheet. The
+"nothing due today" panel was drawn with a **warn** border — a colour that says
+"this needs your attention" about the one state on that screen needing nothing.
+And `PracticeResult`'s marking wait was a bare spinning glyph, where §12 permits a
+spinner only "for an indeterminate action under ~1s inside a button"; it is
+`ProgressBar`'s indeterminate mode now, which its docstring describes as being for
+exactly this.
+
+**A judgement call, stated rather than buried.** DESIGN.md §2 says the Read lane
+has "no sidebar; navigation collapses to a back path and progress". These screens
+keep the student sidebar. Removing it is a shell-level IA change affecting every
+student route, and these are screens a student moves *between* (practice →
+flashcards → plan); stranding them without the portal nav to satisfy a macrostructure
+line would cost more than it bought. What is applied is the rest of the lane: the
+680px column, the prose measure, the texture allowance. Flagged for Phase 6 rather
+than silently half-done.
+
+**QuizTaker: tokens only, deliberately.** `PracticeSet` is a thin wrapper around
+`components/quiz/QuizTaker.tsx` (708 lines), which is **shared with `PlacementTest`**
+— a screen belonging to the Auth/onboarding surface this one does not gate. Its 21
+compat-token call sites were migrated because the aliases are *value-identical*, so
+that change is provably a no-op for placement while removing this surface's last
+compat dependency. Its layout and structure were left alone. Same reasoning as
+D4.1's `Eyebrow` deferral: changing what another surface's gate has not seen is how
+a phase stops being reviewable.
+
+**The new gate, and why it is a source gate.** `tests/unit/studyNotebookMigration.test.ts`
+asserts that a migrated file names no compat-layer alias, that every Read screen
+takes its column from `lm-read` rather than an arbitrary pixel width, and that no
+migrated file animates a layout property. It has to read source rather than pixels:
+the compat aliases resolve to the correct values *today*, so `text-t1` renders
+identically to `text-ink` and no screenshot, contrast measurement or rendered check
+can tell them apart. That is the D4.1 `--font-serif` failure shape exactly — a
+class that is well-formed, resolves to something, and is therefore invisible to
+every gate that looks at output. All three assertions were **verified by inversion**
+(a real violation reintroduced, the gate observed failing, then reverted), and the
+comment-stripping needed a cross-line block-state machine rather than a per-line
+test — assuming per-line was enough is what made the gate first report the middle
+line of a JSX comment describing the very fix it was checking for.
+
+**Gates.** typecheck / lint / **752 unit tests (+58)** / `check:copy` **69, down
+from 90** (21 cleared; the surface's own em-dashes were page titles of the form
+"Flashcards — Physics", replaced by restructuring rather than by swapping
+punctuation) / 30 Python token+constant tests / both builds / pre-commit with
+`.venv/bin` on PATH: **all green**. Visual round: 28 captures across four
+registered sub-surfaces at 1440 and 375, all distinct, console errors only from the
+deliberately-failing state. Four findings from the round, fixed in one batch, one
+confirm round, stopped there (§3.2 item 16): the revealed answer was the quietest
+thing on the card that exists to show it; a whole sentence was set in the data face
+where §4 gives that face figures only; two deck counts with no delimiter scanned as
+one run-on string; and the review card floated in the top third of a tall empty
+desktop well, D4.2's integrity-sidebar shape on the screen least able to carry it.
+**e2e still blocked by B4** — port 8000 re-verified occupied this session.
+
+**Deferred, not silently dropped:**
+
+- `ConfidenceIndicatorSummary` renders in full error-red whenever any question
+  needs review, so a routine practice result (2 of 4 confident) is framed as an
+  alarm. It is a kit component shared with `PaperResult`, which surface 2 gated and
+  shipped, so retoning it here would restyle a screen this surface cannot see.
+  Belongs with the Phase 5/6 pass that owns the kit's semantic tones.
+- `Chip` (`components/ui/chip.tsx`) is still the build-era component and is written
+  entirely against compat aliases. This surface's call sites moved to `Badge`; the
+  component itself is still consumed by un-migrated screens and dies with them.

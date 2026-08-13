@@ -801,6 +801,29 @@ body {
   animation: lm-in var(--dur-base) var(--ease-out-soft) both;
 }
 
+/* The Read lane's column (DESIGN.md §2, §13). Study content — flashcards,
+   worksheets, plan sessions — is a single centred column, not a well beside a
+   sidebar, and §13 fixes its container at 680px.
+
+   It is a named utility rather than a `max-w-[680px]` per screen because the
+   eight screens of this surface previously carried FOUR different widths (560,
+   640, 720 and 840), so the same lane rendered at four measures depending on
+   which link a student followed. One name means the next Read screen cannot
+   pick a fifth. */
+.lm-read {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 680px;
+}
+
+/* §2 and §4.2 both cap Read-lane prose at 65ch, which is NARROWER than the
+   680px column — the column holds cards, rows and controls at full width while
+   running text stops earlier. Separating the two is the whole point: setting
+   the column to 65ch instead would shrink every card to match the prose. */
+.lm-prose {
+  max-width: 65ch;
+}
+
 .lm-scroll::-webkit-scrollbar {
   width: 10px;
   height: 10px;

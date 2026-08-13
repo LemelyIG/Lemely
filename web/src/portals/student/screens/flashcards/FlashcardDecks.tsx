@@ -1,10 +1,14 @@
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { CaretDown, CaretUp, PencilSimple, Trash } from "@phosphor-icons/react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
-import { Chip } from "@/components/ui/chip"
-import { ErrorState } from "@/components/ui/state-views"
+import { Input } from "@/components/ui/input"
+import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
+import { Modal } from "@/components/ui/modal"
+import { Slider } from "@/components/ui/slider"
+import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { ApiError } from "@/lib/api"
 import {
   useAddCard,
@@ -29,6 +33,8 @@ import {
   nextDueMessage,
 } from "./flashcardData"
 
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+
 /*
  * S-22 · Flashcard decks. Decks grouped by topic (`groupDecksByTopic`), each
  * showing its real `cardCount`/`dueCount`. "Review due cards" goes to S-23
@@ -39,6 +45,22 @@ import {
  * (P4.9 honesty rule 1); there is no control anywhere that could relabel an
  * AI card as the student's own, matching the API's own missing `source`
  * field on the edit request.
+ *
+ * P4.3 (Study Notebook, Read lane). Two things here were not styling:
+ *
+ *   1. **Deleting a deck was unconfirmed AND silent on failure.** One tap on a
+ *      Trash glyph destroyed a deck and every card in it with no confirmation
+ *      step, and `useDeleteDeck`/`useDeleteCard` both expose `isError` that
+ *      nothing rendered — so a failed delete left the deck on screen with no
+ *      way to tell whether it had gone. `addCard.isError` and
+ *      `editCard.isError` were both rendered; the two *destructive* mutations
+ *      were the two that were not. Both now confirm through `ConfirmDelete`
+ *      and both report their own failure.
+ *   2. **The card editor hand-rolled its inputs.** `CARD_INPUT_CLASS` was a
+ *      local border/padding/focus string on six raw `<input>`s, which also
+ *      pinned focus to the accent where DESIGN.md §3.9 makes it deliberately
+ *      blue. They are C-6 `Input`s now, so the eight states, the label rule
+ *      and the focus ring come from the kit.
  */
 
 const NEW_DECK_MODES = [
@@ -47,14 +69,70 @@ const NEW_DECK_MODES = [
   { value: "weakness" as const, label: "Generate from a weakness" },
 ]
 
-function DeckOriginChip({ origin }: { origin: DeckOrigin }) {
-  if (origin === "weakness") return <Chip tone="warn">From a weakness</Chip>
-  if (origin === "topic") return <Chip tone="accent">Topic-generated</Chip>
-  return <Chip tone="neutral">Manual</Chip>
+function DeckOriginBadge({ origin }: { origin: DeckOrigin }) {
+  if (origin === "weakness") return <Badge tone="amber">From a weakness</Badge>
+  if (origin === "topic") return <Badge tone="lilac">Topic-generated</Badge>
+  return <Badge tone="sage">Manual</Badge>
 }
 
-const CARD_INPUT_CLASS =
-  "border border-border bg-surface rounded-lg px-3 py-2 text-sm text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+/*
+ * The confirmation step for the two irreversible actions on this screen.
+ *
+ * `dismissible={false}` is the point of it: C-17 Modal documents that flag for
+ * "destructive confirmations where an accidental Escape must not discard a
+ * decision silently", and a student half-way through a delete should have to
+ * say yes or no rather than have a stray keypress answer for them. The
+ * cancel button is the primary weight and the destructive one is secondary,
+ * so the easy path is the safe path.
+ */
+function ConfirmDelete({
+  open,
+  title,
+  description,
+  confirmLabel,
+  pending,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean
+  title: string
+  description: string
+  confirmLabel: string
+  pending: boolean
+  error: string | null
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <Modal
+      open={open}
+      onClose={onCancel}
+      title={title}
+      description={description}
+      size="sm"
+      dismissible={false}
+      hideCloseButton
+      footer={
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
+            Keep it
+          </Button>
+          <Button variant="accent" size="sm" onClick={onConfirm} disabled={pending}>
+            {pending ? "Deleting…" : confirmLabel}
+          </Button>
+        </div>
+      }
+    >
+      <p className="text-body-md text-ink-muted">
+        This cannot be undone.
+      </p>
+      {error ? (
+        <p className="mt-3 text-body-sm text-err">{error}</p>
+      ) : null}
+    </Modal>
+  )
+}
 
 /*
  * One card row in the deck editor, with S-22's "edit" action: reword in
@@ -64,9 +142,9 @@ const CARD_INPUT_CLASS =
  *
  * Rewording never touches provenance. `EditCardRequest` has no `source`
  * field (the API offers no relabel at all), so an AI card the student
- * rewrites stays chipped "AI-written" — the honesty rule is that the label
+ * rewrites stays badged "AI-written" — the honesty rule is that the label
  * describes who *wrote* the card, and editing text is not authorship. The
- * chip stays rendered while the row is in edit mode for exactly that reason.
+ * badge stays rendered while the row is in edit mode for exactly that reason.
  */
 function CardRow({
   card,
@@ -78,8 +156,12 @@ function CardRow({
   deleteCard: ReturnType<typeof useDeleteCard>
 }) {
   const [editing, setEditing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [draftFront, setDraftFront] = useState(card.front)
   const [draftBack, setDraftBack] = useState(card.back)
+
+  const deletingThis = deleteCard.isPending && deleteCard.variables === card.id
+  const deleteFailedHere = deleteCard.isError && deleteCard.variables === card.id
 
   function startEditing() {
     setDraftFront(card.front)
@@ -88,19 +170,19 @@ function CardRow({
   }
 
   return (
-    <li className="flex items-start justify-between gap-3 rounded-lg border border-border bg-bg p-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+    <li className="flex items-start justify-between gap-3 rounded-lg border border-rule bg-paper p-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex items-center gap-2">
-          <Chip tone={card.source === "ai" ? "accent" : "neutral"}>
+          <Badge tone={card.source === "ai" ? "lilac" : "sage"}>
             {cardSourceLabel(card.source)}
-          </Chip>
-          <span className="text-dense-sm text-t3">
+          </Badge>
+          <span className="text-data-sm text-ink-faint">
             due {new Date(card.dueAt).toLocaleDateString()}
           </span>
         </div>
         {editing ? (
           <form
-            className="flex flex-col gap-2 pt-1"
+            className="flex flex-col gap-3 pt-1"
             onSubmit={(e) => {
               e.preventDefault()
               if (!draftFront.trim() || !draftBack.trim()) return
@@ -113,28 +195,20 @@ function CardRow({
               )
             }}
           >
-            <label className="flex flex-col gap-1 text-dense-sm text-t2">
-              Front
-              <input
-                required
-                autoFocus
-                value={draftFront}
-                onChange={(e) => setDraftFront(e.target.value)}
-                className={CARD_INPUT_CLASS}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-dense-sm text-t2">
-              Back
-              <input
-                required
-                value={draftBack}
-                onChange={(e) => setDraftBack(e.target.value)}
-                className={CARD_INPUT_CLASS}
-              />
-            </label>
-            {editCard.isError ? (
-              <p className="text-dense-sm text-err">We couldn't save that change. Try again.</p>
-            ) : null}
+            <Input
+              required
+              autoFocus
+              label="Front"
+              value={draftFront}
+              onChange={(e) => setDraftFront(e.target.value)}
+            />
+            <Input
+              required
+              label="Back"
+              value={draftBack}
+              onChange={(e) => setDraftBack(e.target.value)}
+              error={editCard.isError ? "We couldn't save that change. Try again." : undefined}
+            />
             <div className="flex gap-2">
               <Button type="submit" variant="secondary" size="sm" disabled={editCard.isPending}>
                 {editCard.isPending ? "Saving…" : "Save"}
@@ -146,8 +220,13 @@ function CardRow({
           </form>
         ) : (
           <>
-            <div className="text-dense-sm font-medium text-t1 truncate">{card.front}</div>
-            <div className="text-dense-sm text-t2 truncate">{card.back}</div>
+            <div className="truncate text-body-md font-medium text-ink">{card.front}</div>
+            <div className="truncate text-body-sm text-ink-muted">{card.back}</div>
+            {deleteFailedHere ? (
+              <p className="text-body-sm text-err">
+                We couldn't delete that card. It's still here, so you can try again.
+              </p>
+            ) : null}
           </>
         )}
       </div>
@@ -167,12 +246,26 @@ function CardRow({
             variant="ghost"
             size="sm"
             aria-label={`Delete card: ${card.front}`}
-            onClick={() => deleteCard.mutate(card.id)}
+            onClick={() => setConfirming(true)}
           >
             <Trash size={16} aria-hidden />
           </Button>
         </div>
       )}
+      <ConfirmDelete
+        open={confirming}
+        title="Delete this card?"
+        description={card.front}
+        confirmLabel="Delete card"
+        pending={deletingThis}
+        error={
+          deleteFailedHere ? "We couldn't delete that card. Try again." : null
+        }
+        onCancel={() => setConfirming(false)}
+        onConfirm={() =>
+          deleteCard.mutate(card.id, { onSuccess: () => setConfirming(false) })
+        }
+      />
     </li>
   )
 }
@@ -186,7 +279,11 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
   const [back, setBack] = useState("")
 
   if (deckQuery.isPending) {
-    return <p className="text-dense-sm text-t3 px-5 pb-4">Loading cards…</p>
+    return (
+      <div className="px-5 pb-5">
+        <ListSkeleton rows={3} />
+      </div>
+    )
   }
   if (deckQuery.isError || !deckQuery.data) {
     return (
@@ -203,9 +300,9 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
   const { cards } = deckQuery.data
 
   return (
-    <div className="flex flex-col gap-3 px-5 pb-5">
+    <div className="flex flex-col gap-4 px-5 pb-5">
       {cards.length === 0 ? (
-        <p className="text-dense-sm text-t3">No cards in this deck yet.</p>
+        <p className="text-body-sm text-ink-faint">No cards in this deck yet.</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {cards.map((card) => (
@@ -215,7 +312,7 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
       )}
 
       <form
-        className="flex flex-col gap-2 border-t border-border pt-3"
+        className="flex flex-col gap-3 border-t border-rule pt-4"
         onSubmit={(e) => {
           e.preventDefault()
           if (!front.trim() || !back.trim()) return
@@ -225,29 +322,21 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
           )
         }}
       >
-        <label className="flex flex-col gap-1 text-dense-sm text-t2">
-          Front
-          <input
-            required
-            value={front}
-            onChange={(e) => setFront(e.target.value)}
-            placeholder="Question or prompt"
-            className={CARD_INPUT_CLASS}
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-dense-sm text-t2">
-          Back
-          <input
-            required
-            value={back}
-            onChange={(e) => setBack(e.target.value)}
-            placeholder="Answer"
-            className={CARD_INPUT_CLASS}
-          />
-        </label>
-        {addCard.isError ? (
-          <p className="text-dense-sm text-err">We couldn't add that card. Try again.</p>
-        ) : null}
+        <Input
+          required
+          label="Front"
+          placeholder="Question or prompt"
+          value={front}
+          onChange={(e) => setFront(e.target.value)}
+        />
+        <Input
+          required
+          label="Back"
+          placeholder="Answer"
+          value={back}
+          onChange={(e) => setBack(e.target.value)}
+          error={addCard.isError ? "We couldn't add that card. Try again." : undefined}
+        />
         <div>
           <Button type="submit" variant="secondary" size="sm" disabled={addCard.isPending}>
             {addCard.isPending ? "Adding…" : "Add card"}
@@ -270,6 +359,9 @@ export function FlashcardDecks() {
   const deleteDeck = useDeleteDeck()
 
   const [expandedDeckId, setExpandedDeckId] = useState<string | null>(null)
+  const [deckPendingDelete, setDeckPendingDelete] = useState<{ id: string; title: string } | null>(
+    null,
+  )
   const [mode, setMode] = useState<(typeof NEW_DECK_MODES)[number]["value"]>("manual")
   const [title, setTitle] = useState("")
   const [topic, setTopic] = useState("")
@@ -279,9 +371,15 @@ export function FlashcardDecks() {
 
   if (decksQuery.isPending) {
     return (
-      <div className="lm-screen text-body-md text-t2">
-        <h1 className="sr-only">Flashcards — {subjectName}</h1>
-        Loading your decks…
+      <div className="lm-screen lm-read flex flex-col gap-6">
+        <h1 className="sr-only">Flashcards for {subjectName}</h1>
+        {/* Shaped like what replaces it (§12): the header, the "what's due"
+            panel, then the deck list. A single "Loading your decks…" line was
+            what stood here, which reserves none of that height and shifts the
+            whole column when the real content lands. */}
+        <PageHeaderSkeleton />
+        <PanelSkeleton />
+        <ListSkeleton rows={3} />
       </div>
     )
   }
@@ -289,7 +387,7 @@ export function FlashcardDecks() {
   if (decksQuery.isError || !decksQuery.data) {
     return (
       <>
-        <h1 className="sr-only">Flashcards — {subjectName}</h1>
+        <h1 className="sr-only">Flashcards for {subjectName}</h1>
         <ErrorState
           heading="Couldn't load your flashcard decks"
           body={decksQuery.error?.message}
@@ -334,27 +432,32 @@ export function FlashcardDecks() {
   }
 
   return (
-    <div className="lm-screen mx-auto flex max-w-[840px] flex-col gap-6">
+    <div className="lm-screen lm-read flex flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="font-serif text-display-md leading-display text-t1 m-0">
-          Flashcards — {subjectName}
-        </h1>
-        <p className="text-body-md text-t2">
+        <h1 className="text-display-lg text-ink">Flashcards for {subjectName}</h1>
+        <p className="lm-prose text-body-lg text-ink-muted">
           Decks grouped by topic. Cards you write yourself and cards Lemely generates both live
-          here — every card always shows which one it is.
+          here, and every card always shows which one it is.
         </p>
       </div>
 
-      <Card className={due?.kind === "none" ? "border-warn" : undefined}>
+      {/* No `border-warn` on the "nothing due" case any more. A warn border said
+          "something needs your attention" about a student who is completely up
+          to date, which is the one state on this screen that needs nothing from
+          them (§3.6: a semantic colour states a fact, it does not decorate). */}
+      <Card>
         <CardBody className="flex flex-col gap-3">
           {dueQuery.isPending ? (
-            <p className="text-dense-sm text-t3">Checking what's due…</p>
+            <p className="text-body-sm text-ink-faint">Checking what's due…</p>
           ) : dueQuery.isError ? (
-            <p className="text-dense-sm text-err">We couldn't check what's due. Try again.</p>
+            <p className="text-body-sm text-err">We couldn't check what's due. Try again.</p>
           ) : due?.kind === "due" ? (
             <>
-              <div className="text-body-lg font-medium text-t1">
-                {due.totalDue} card{due.totalDue === 1 ? "" : "s"} due today
+              <div className="flex items-baseline gap-2">
+                <span className="text-data-lg text-ink">{due.totalDue}</span>
+                <span className="text-body-lg text-ink-muted">
+                  card{due.totalDue === 1 ? "" : "s"} due today
+                </span>
               </div>
               <div>
                 <Button
@@ -368,8 +471,8 @@ export function FlashcardDecks() {
             </>
           ) : due?.kind === "none" ? (
             <>
-              <div className="text-body-lg font-medium text-t1">Nothing due today</div>
-              <p className="text-body-md text-t2">{nextDueMessage(due.nextDueAt)}</p>
+              <div className="text-display-sm text-ink">Nothing due today</div>
+              <p className="text-body-md text-ink-muted">{nextDueMessage(due.nextDueAt)}</p>
             </>
           ) : null}
         </CardBody>
@@ -377,7 +480,7 @@ export function FlashcardDecks() {
 
       <Card>
         <CardBody className="flex flex-col gap-4">
-          <div className="text-dense-sm uppercase tracking-widest text-t3">New deck</div>
+          <h2 className="text-eyebrow text-ink-faint">New deck</h2>
           <div className="flex flex-wrap gap-2">
             {NEW_DECK_MODES.map((m) => (
               <Button
@@ -397,49 +500,48 @@ export function FlashcardDecks() {
             ))}
           </div>
 
-          <div className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
-              Title {mode !== "manual" ? "(optional)" : ""}
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder={`e.g. ${subjectName} revision`}
-                className={CARD_INPUT_CLASS}
-              />
-            </label>
+          <div className="flex flex-col gap-4">
+            <Input
+              label={mode === "manual" ? "Title" : "Title (optional)"}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={`e.g. ${subjectName} revision`}
+            />
 
             {mode !== "weakness" ? (
-              <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
-                Topic {mode === "manual" ? "(optional)" : ""}
-                <input
-                  required={mode === "topic"}
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  placeholder="e.g. 1.2 Motion"
-                  className={CARD_INPUT_CLASS}
-                />
-              </label>
+              <Input
+                required={mode === "topic"}
+                label={mode === "manual" ? "Topic (optional)" : "Topic"}
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="e.g. 1.2 Motion"
+              />
             ) : (
-              <p className="text-dense-sm text-t3">
+              <p className="text-body-sm text-ink-faint">
                 The topic is chosen automatically from your own weakest recorded topic for this
-                subject — there's no topic field to fill in.
+                subject, so there's no topic field to fill in.
               </p>
             )}
 
             {mode !== "manual" ? (
-              <label className="flex flex-col gap-1.5 text-dense-sm text-t2">
-                Number of cards: {count}
-                <input
-                  type="range"
+              <div className="flex flex-col gap-2">
+                <label className="text-label text-ink" htmlFor="new-deck-count">
+                  Number of cards: <span className="text-data-md text-ink">{count}</span>
+                </label>
+                {/* C-15 Slider, not a raw `<input type="range">`. The practice
+                    generator on this same surface already used the kit control;
+                    this screen had its own, so one surface shipped two different
+                    sliders with two different focus and track treatments. */}
+                <Slider
+                  id="new-deck-count"
+                  value={count}
+                  onValueChange={setCount}
                   min={1}
                   max={50}
                   step={1}
-                  value={count}
-                  onChange={(e) => setCount(Number(e.target.value))}
                   aria-label="Number of cards to generate"
-                  className="accent-accent"
                 />
-              </label>
+              </div>
             ) : null}
           </div>
 
@@ -447,9 +549,9 @@ export function FlashcardDecks() {
             (() => {
               const msg = flashcardUnavailableMessage(refusal)
               return (
-                <div className="rounded-lg border border-warn bg-warn-bg p-3">
-                  <div className="text-body-lg font-medium text-t1">{msg.heading}</div>
-                  <p className="text-body-md text-t2">{msg.body}</p>
+                <div className="rounded-lg border border-warn bg-warn-wash p-4">
+                  <div className="text-display-sm text-ink">{msg.heading}</div>
+                  <p className="mt-1 text-body-md text-ink-muted">{msg.body}</p>
                 </div>
               )
             })()
@@ -459,11 +561,11 @@ export function FlashcardDecks() {
             (() => {
               const summary = generateDeckSummary(generated)
               return (
-                <div className="rounded-lg border border-border bg-bg p-3">
-                  <div className="text-body-lg font-medium text-t1">{summary.headline}</div>
+                <div className="rounded-lg border border-rule bg-paper p-4">
+                  <div className="text-display-sm text-ink">{summary.headline}</div>
                   {summary.shortfall ? (
-                    <p className="text-body-md text-t2">
-                      The model returned fewer cards than requested — nothing was padded to make
+                    <p className="mt-1 text-body-md text-ink-muted">
+                      The model returned fewer cards than requested, and nothing was padded to make
                       up the difference.
                     </p>
                   ) : null}
@@ -474,7 +576,7 @@ export function FlashcardDecks() {
 
           {(createDeck.isError && refusal === undefined) ||
           (generateDeck.isError && refusal === undefined) ? (
-            <p className="text-dense-sm text-err">We couldn't create that deck. Try again.</p>
+            <p className="text-body-sm text-err">We couldn't create that deck. Try again.</p>
           ) : null}
 
           <div>
@@ -499,33 +601,44 @@ export function FlashcardDecks() {
         </CardBody>
       </Card>
 
+      {deleteDeck.isError ? (
+        <p className="text-body-sm text-err">
+          We couldn't delete that deck. It's still in your list, so you can try again.
+        </p>
+      ) : null}
+
       {groups.length === 0 ? (
-        <Card>
-          <CardBody>
-            <p className="text-body-md text-t2">
-              No decks yet for {subjectName}. Create one above to get started.
-            </p>
-          </CardBody>
-        </Card>
+        <EmptyState
+          marginalia="Nothing on the shelf yet"
+          heading={`No decks yet for ${subjectName}`}
+          body="Write your own cards, or let Lemely build a deck from a topic or from a weakness it has already recorded for you. Either way, every card says where it came from."
+        />
       ) : (
         groups.map((group) => (
-          <div key={group.topic ?? "untopiced"} className="flex flex-col gap-2">
-            <div className="text-dense-sm font-medium text-t1">{group.topic ?? "Untopiced"}</div>
-            <div className="flex flex-col gap-2">
+          <section key={group.topic ?? "untopiced"} className="flex flex-col gap-2">
+            {/* The margin rule (§8 item 5): one hairline at the content's inline
+                start, the cheapest and most on-brand texture in the system, and
+                here it also does real work — it is what visually binds a topic's
+                decks to the topic heading above them. */}
+            <h2 className="text-display-sm text-ink">{group.topic ?? "Untopiced"}</h2>
+            <div className="margin-rule flex flex-col gap-2">
               {group.decks.map((deck) => {
                 const expanded = expandedDeckId === deck.id
                 return (
                   <Card key={deck.id}>
                     <CardBody className="flex flex-col gap-2">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex flex-col gap-1">
-                          <div className="text-body-lg font-medium text-t1">{deck.title}</div>
+                        <div className="flex flex-col gap-1.5">
+                          <div className="text-body-lg font-medium text-ink">{deck.title}</div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <DeckOriginChip origin={deck.origin} />
-                            <span className="text-dense-sm text-t3">
-                              {deck.cardCount} card{deck.cardCount === 1 ? "" : "s"}
-                            </span>
-                            <span className="text-dense-sm text-t3">
+                            <DeckOriginBadge origin={deck.origin} />
+                            {/* One span with an explicit separator, not two
+                                adjacent ones. As two siblings a gap apart, the
+                                counts rendered as "18 cards 6 due" and scanned
+                                as a single run-on string rather than two
+                                separate facts about the deck. */}
+                            <span className="text-data-sm text-ink-faint">
+                              {deck.cardCount} card{deck.cardCount === 1 ? "" : "s"} ·{" "}
                               {deck.dueCount} due
                             </span>
                           </div>
@@ -553,10 +666,9 @@ export function FlashcardDecks() {
                             variant="ghost"
                             size="sm"
                             aria-label={`Delete deck: ${deck.title}`}
-                            onClick={() => {
-                              if (expandedDeckId === deck.id) setExpandedDeckId(null)
-                              deleteDeck.mutate(deck.id)
-                            }}
+                            onClick={() =>
+                              setDeckPendingDelete({ id: deck.id, title: deck.title })
+                            }
                           >
                             <Trash size={16} aria-hidden />
                           </Button>
@@ -568,9 +680,30 @@ export function FlashcardDecks() {
                 )
               })}
             </div>
-          </div>
+          </section>
         ))
       )}
+
+      <ConfirmDelete
+        open={deckPendingDelete !== null}
+        title="Delete this deck?"
+        description={
+          deckPendingDelete
+            ? `"${deckPendingDelete.title}" and every card in it.`
+            : ""
+        }
+        confirmLabel="Delete deck"
+        pending={deleteDeck.isPending}
+        error={deleteDeck.isError ? "We couldn't delete that deck. Try again." : null}
+        onCancel={() => setDeckPendingDelete(null)}
+        onConfirm={() => {
+          if (!deckPendingDelete) return
+          if (expandedDeckId === deckPendingDelete.id) setExpandedDeckId(null)
+          deleteDeck.mutate(deckPendingDelete.id, {
+            onSuccess: () => setDeckPendingDelete(null),
+          })
+        }}
+      />
     </div>
   )
 }

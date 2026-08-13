@@ -1,6 +1,8 @@
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
+import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
+import { ProgressBar } from "@/components/ui/progress-bar"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import {
   useCompleteStudyPlanSession,
@@ -37,6 +39,8 @@ import {
  *     button.
  */
 
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+
 const REBUILD_LABEL = "Rebuild this week's plan"
 
 /** What the planner actually reads, stated once. This is a true description of
@@ -47,11 +51,11 @@ function PlanBasis() {
   return (
     <Card>
       <CardBody className="flex flex-col gap-1.5">
-        <h2 className="text-body-lg font-medium text-t1 m-0">What this plan is based on</h2>
-        <p className="text-body-md text-t2 m-0">
+        <h2 className="text-display-sm text-ink">What this plan is based on</h2>
+        <p className="lm-prose text-body-md text-ink-muted">
           Three things, weighted: topics you have lost marks on, your placement test result, and
           the confidence ratings you gave during onboarding. Whichever of those you have is what
-          gets used — a missing one is left out rather than guessed at.
+          gets used, and a missing one is left out rather than guessed at.
         </p>
       </CardBody>
     </Card>
@@ -74,10 +78,8 @@ function WeekHeader({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-2">
-          <h1 className="font-serif text-display-md leading-display text-t1 m-0">
-            Your week — {subjectName}
-          </h1>
-          <p className="text-body-md text-t2 m-0">
+          <h1 className="text-display-lg text-ink">Your {subjectName} week</h1>
+          <p className="text-body-md text-ink-muted">
             Week of {formatDayHeading(plan.weekStart)}
           </p>
         </div>
@@ -90,8 +92,9 @@ function WeekHeader({
       <Card>
         <CardBody className="flex flex-col gap-3">
           <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-            <span className="text-body-lg font-medium text-t1">
-              {progress.completedCount} of {progress.sessionCount} session
+            <span className="text-body-lg text-ink">
+              <span className="text-data-md text-ink">{progress.completedCount}</span> of{" "}
+              <span className="text-data-md text-ink">{progress.sessionCount}</span> session
               {progress.sessionCount === 1 ? "" : "s"} done
             </span>
             {/* Planned and stated are two different facts and stay two
@@ -100,26 +103,40 @@ function WeekHeader({
                 routinely below the time the student said they had — showing
                 only the stated figure would report time as planned that
                 nothing was ever scheduled into. */}
-            <span className="font-mono text-dense text-t2">
-              {formatDuration(progress.plannedMinutes)} planned of the{" "}
-              {formatDuration(progress.statedMinutes)} you said you had
+            {/* Prose in the reading face with the two figures in the data
+                face, rather than the whole sentence in mono. §4 gives the data
+                face "scores, grades, marks, XP, timers" — figures, not the
+                sentence around them — and a full line of Geist Mono read as a
+                code string sitting inside a paragraph. */}
+            <span className="text-body-sm text-ink-muted">
+              <span className="text-data-sm text-ink-muted">
+                {formatDuration(progress.plannedMinutes)}
+              </span>{" "}
+              planned of the{" "}
+              <span className="text-data-sm text-ink-muted">
+                {formatDuration(progress.statedMinutes)}
+              </span>{" "}
+              you said you had
             </span>
           </div>
-          <div
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress.percentComplete}
-            aria-label="Study time completed this week"
-            className="h-2 w-full overflow-hidden rounded-full bg-surface-2"
-          >
-            <div
-              className="h-full rounded-full bg-accent transition-[width]"
-              style={{ width: `${progress.percentComplete}%` }}
-            />
-          </div>
+          {/* C-24 ProgressBar. The bar this replaced was hand-rolled and drove
+              its fill with `transition-[width]`, which §9.2 forbids outright
+              (transform and opacity only) — a layout-animating property on the
+              one element that changes every time a session is ticked off.
+
+              It also carried a labelling defect. `percentComplete` is
+              completed MINUTES over planned minutes, while the line directly
+              above it counts SESSIONS, so a student who had finished two short
+              sessions of four saw "2 of 4 sessions done" beside a bar sitting
+              at 25%, with nothing on screen explaining the disagreement. The
+              bar now states its own denominator in its own label, so the two
+              numbers no longer look like one number rendered twice. */}
+          <ProgressBar
+            value={progress.percentComplete}
+            label={`${formatDuration(progress.completedMinutes)} of ${formatDuration(progress.plannedMinutes)} planned study time done`}
+          />
           {progress.fullyComplete ? (
-            <p className="text-body-md text-ok m-0">
+            <p className="text-body-md text-ok">
               Every session this week is done. Nothing left to do here.
             </p>
           ) : null}
@@ -142,22 +159,22 @@ function SessionRow({
 }) {
   const done = session.completedAt !== null
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border px-5 py-3.5 first:border-t-0">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-rule px-5 py-3.5 first:border-t-0">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <Link
           to={`/student/plan/${subjectCode}/session/${session.id}`}
-          className="text-body-md font-medium text-t1 no-underline hover:underline focus-visible:underline"
+          className="text-body-md font-medium text-ink no-underline hover:underline focus-visible:underline"
         >
           {session.topic}
         </Link>
-        <span className="text-dense text-t2">
+        <span className="text-body-sm text-ink-muted">
           {activityLabel(session.activityType)} · {formatDuration(session.durationMinutes)}
         </span>
       </div>
       {done ? (
         // A completed session states the fact and stops. No XP, no points —
         // `completedAt` is P5's seam (see the module docstring).
-        <span className="text-dense text-ok">Completed</span>
+        <span className="text-body-sm text-ok">Completed</span>
       ) : (
         <Button
           variant="secondary"
@@ -181,14 +198,16 @@ export function StudyPlanWeek() {
   const rebuild = useRebuildStudyPlan()
   const complete = useCompleteStudyPlanSession()
 
-  const heading = `Your week — ${subjectName}`
+  const heading = `Your ${subjectName} week`
   const onRebuild = () => rebuild.mutate({ subjectCode })
 
   if (planQuery.isPending) {
     return (
-      <div className="lm-screen text-body-md text-t2">
+      <div className="lm-screen lm-read flex flex-col gap-6">
         <h1 className="sr-only">{heading}</h1>
-        Loading your plan…
+        <PageHeaderSkeleton />
+        <PanelSkeleton />
+        <ListSkeleton rows={4} />
       </div>
     )
   }
@@ -213,10 +232,10 @@ export function StudyPlanWeek() {
   const view = studyPlanView(planQuery.data)
 
   const rebuildError = rebuild.isError ? (
-    <p className="text-body-md text-err m-0">Couldn't rebuild your plan: {rebuild.error.message}</p>
+    <p className="text-body-md text-err">Couldn't rebuild your plan: {rebuild.error.message}</p>
   ) : null
   const completeError = complete.isError ? (
-    <p className="text-body-md text-err m-0">
+    <p className="text-body-md text-err">
       Couldn't mark that session complete: {complete.error.message}
     </p>
   ) : null
@@ -226,7 +245,8 @@ export function StudyPlanWeek() {
       <>
         <h1 className="sr-only">{heading}</h1>
         <EmptyState
-          heading={`No plan for this week yet`}
+          marginalia="A blank week, for now"
+          heading="No plan for this week yet"
           body={`You don't have a ${subjectName} plan for this week. Build one and it will lay out concrete sessions across the days you have left.`}
           action={{
             label: rebuild.isPending ? "Building…" : "Build this week's plan",
@@ -246,9 +266,10 @@ export function StudyPlanWeek() {
   if (view.kind === "refused") {
     const message = planUnavailableMessage(view.reason)
     return (
-      <div className="lm-screen mx-auto flex max-w-[720px] flex-col gap-6">
-        <h1 className="font-serif text-display-md leading-display text-t1 m-0">{heading}</h1>
+      <div className="lm-screen lm-read flex flex-col gap-6">
+        <h1 className="text-display-lg text-ink">{heading}</h1>
         <EmptyState
+          marginalia="Not enough to go on yet"
           heading={message.heading}
           body={message.body}
           action={{
@@ -269,7 +290,7 @@ export function StudyPlanWeek() {
   const days = groupSessionsByDay(plan.sessions)
 
   return (
-    <div className="lm-screen mx-auto flex max-w-[720px] flex-col gap-6">
+    <div className="lm-screen lm-read flex flex-col gap-6">
       <WeekHeader
         plan={plan}
         subjectName={subjectName}
@@ -286,6 +307,7 @@ export function StudyPlanWeek() {
         // yet" here would be false, and saying "not enough to plan from"
         // would be false too.
         <EmptyState
+          marginalia="Nothing pencilled in"
           heading="Nothing scheduled this week"
           body="The planner had something to go on but found nothing worth scheduling for this subject this week. Correct a paper or run some practice and rebuild to give it more to work with."
           action={{ label: "Practice", onClick: () => navigate(`/student/practice/${subjectCode}`) }}
@@ -294,7 +316,7 @@ export function StudyPlanWeek() {
         <div className="flex flex-col gap-5">
           {days.map((day) => (
             <section key={day.date} className="flex flex-col gap-2">
-              <h2 className="text-body-lg font-medium text-t1 m-0">{formatDayHeading(day.date)}</h2>
+              <h2 className="text-display-sm text-ink">{formatDayHeading(day.date)}</h2>
               <Card className="overflow-hidden">
                 {day.sessions.map((session) => (
                   <SessionRow

@@ -49,6 +49,23 @@ const RTL_CLEAN_FILES = [
   // Phase 4, surface 2 — the correct-a-paper flow.
   "src/portals/student/screens/CorrectPaper.tsx",
   "src/portals/student/screens/PaperResult.tsx",
+  // Phase 4, surface 3 — the study surfaces (classified practice, flashcards,
+  // study plans). `PracticePrint.tsx` carried the one real violation this
+  // sweep found: a physical `pl-4` indenting the MCQ options on a worksheet.
+  "src/components/quiz/QuizTaker.tsx",
+  "src/components/ui/input.tsx",
+  "src/components/ui/kbd.tsx",
+  "src/components/ui/modal.tsx",
+  "src/components/ui/progress-bar.tsx",
+  "src/components/ui/slider.tsx",
+  "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
+  "src/portals/student/screens/flashcards/FlashcardReview.tsx",
+  "src/portals/student/screens/practice/PracticeGenerator.tsx",
+  "src/portals/student/screens/practice/PracticePrint.tsx",
+  "src/portals/student/screens/practice/PracticeResult.tsx",
+  "src/portals/student/screens/practice/PracticeSet.tsx",
+  "src/portals/student/screens/studyplan/StudyPlanSession.tsx",
+  "src/portals/student/screens/studyplan/StudyPlanWeek.tsx",
 ]
 
 /**

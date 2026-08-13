@@ -284,6 +284,209 @@ const RESULT_STATES = {
   error: { result: { status: 500, body: { detail: "Result store unavailable." } } },
 }
 
+/* ── P4.3, surface 3: the study surfaces (Read lane) ───────────────────────
+ *
+ * Same rule as everything above: these numbers are invented for the capture.
+ * They are shaped field-for-field like the real DTOs (`flashcardTypes.ts`,
+ * `studyPlanTypes.ts`, `practiceTypes.ts`) so the layout under test is the
+ * layout that ships, and they are never product data and never quoted as a
+ * result anywhere.
+ */
+
+const DECKS_FIXTURE = [
+  {
+    id: "deck-1",
+    subjectCode: "0625",
+    topic: "1.2 Motion",
+    title: "Speed, velocity and acceleration",
+    description: null,
+    origin: "topic",
+    cardCount: 18,
+    dueCount: 6,
+    createdAt: "2026-08-01T09:00:00Z",
+  },
+  {
+    id: "deck-2",
+    subjectCode: "0625",
+    topic: "1.2 Motion",
+    title: "Distance-time graphs",
+    description: null,
+    origin: "manual",
+    cardCount: 9,
+    dueCount: 0,
+    createdAt: "2026-08-04T09:00:00Z",
+  },
+  {
+    id: "deck-3",
+    subjectCode: "0625",
+    topic: "2.1 Thermal physics",
+    title: "Specific heat capacity",
+    description: null,
+    origin: "weakness",
+    cardCount: 24,
+    dueCount: 11,
+    createdAt: "2026-08-06T09:00:00Z",
+  },
+]
+
+function dueCard(n, source) {
+  return {
+    id: `card-${n}`,
+    front:
+      n === 1
+        ? "A car accelerates uniformly from 5 m/s to 25 m/s in 8 s. What is its acceleration?"
+        : `Front of card ${n}`,
+    back: n === 1 ? "2.5 m/s²" : `Back of card ${n}`,
+    position: n,
+    source,
+    sourceQuestionId: null,
+    repetitions: 2,
+    easeFactor: 2.5,
+    intervalDays: 4,
+    lapses: 0,
+    dueAt: "2026-08-13T00:00:00Z",
+    lastReviewedAt: "2026-08-09T00:00:00Z",
+  }
+}
+
+const DUE_FIXTURE = {
+  cards: [dueCard(1, "ai"), dueCard(2, "manual"), dueCard(3, "ai")],
+  totalDue: 17,
+  nextDueAt: null,
+}
+
+const NOTHING_DUE_FIXTURE = { cards: [], totalDue: 0, nextDueAt: "2026-08-15T08:00:00Z" }
+
+const DECKS_STATES = {
+  /** The populated case: three decks over two topics, cards due today. */
+  populated: { decks: DECKS_FIXTURE, due: DUE_FIXTURE },
+  /** Up to date. This is the state that used to draw a warn-coloured border. */
+  nothingDue: { decks: DECKS_FIXTURE, due: NOTHING_DUE_FIXTURE },
+  /** The composed empty state, marginalia and all. */
+  empty: { decks: [], due: NOTHING_DUE_FIXTURE },
+  /** The skeleton. Never fulfilled; the context is torn down first. */
+  loading: { delayMs: 8_000 },
+  error: { decks: null, status: 500, due: NOTHING_DUE_FIXTURE },
+}
+
+const REVIEW_STATES = {
+  /** Card face, answer hidden — the screen's resting state. */
+  question: { due: DUE_FIXTURE },
+  /** Answer shown, with the four grade buttons and their Kbd hints. */
+  revealed: { due: DUE_FIXTURE, reveal: true },
+  nothingDue: { due: NOTHING_DUE_FIXTURE },
+}
+
+const PLAN_SESSIONS = [
+  {
+    id: "s1",
+    date: "2026-08-13",
+    topic: "1.2 Motion",
+    activityType: "practice",
+    durationMinutes: 45,
+    focus: "Practice on 1.2 Motion",
+    completedAt: "2026-08-13T10:00:00Z",
+  },
+  {
+    id: "s2",
+    date: "2026-08-13",
+    topic: "2.1 Thermal physics",
+    activityType: "flashcards",
+    durationMinutes: 20,
+    focus: "Flashcards on 2.1 Thermal physics",
+    completedAt: null,
+  },
+  {
+    id: "s3",
+    date: "2026-08-14",
+    topic: "3.3 Electrical circuits",
+    activityType: "practice",
+    durationMinutes: 60,
+    focus: "Practice on 3.3 Electrical circuits",
+    completedAt: null,
+  },
+]
+
+const PLAN_FIXTURE = {
+  generated: true,
+  plan: {
+    id: "plan-1",
+    subjectCode: "0625",
+    weekStart: "2026-08-10",
+    weeklyHours: 4,
+    available: true,
+    reason: null,
+    generatedAt: "2026-08-10T08:00:00Z",
+    sessions: PLAN_SESSIONS,
+  },
+}
+
+const PLAN_STATES = {
+  /* One of three sessions done, and it is the 45-minute one — so the session
+     count (1 of 3) and the minutes bar (45 of 125) genuinely disagree. This
+     state exists to make that visible: it is the case whose two numbers used
+     to look like one number rendered twice. */
+  populated: { plan: PLAN_FIXTURE },
+  notGenerated: { plan: { generated: false, plan: null } },
+  refused: {
+    plan: {
+      generated: true,
+      plan: { ...PLAN_FIXTURE.plan, available: false, reason: "insufficient_signal", sessions: [] },
+    },
+  },
+}
+
+const PRACTICE_RESULT_STATES = {
+  marked: {
+    result: {
+      body: {
+        assignmentId: "assign-1",
+        quizId: "quiz-1",
+        subjectCode: "0625",
+        marked: true,
+        submissionStatus: "marked",
+        awardedMarks: 14,
+        maximumMarks: 20,
+        questions: [
+          { questionRef: "q1", position: 1, topic: "1.2 Motion", totalMarks: 4, awardedMarks: 4, confidenceBand: "high", confidenceScore: 0.97 },
+          { questionRef: "q2", position: 2, topic: "1.2 Motion", totalMarks: 5, awardedMarks: 3, confidenceBand: "medium", confidenceScore: 0.84 },
+          { questionRef: "q3", position: 3, topic: "2.1 Thermal physics", totalMarks: 5, awardedMarks: 5, confidenceBand: "high", confidenceScore: 0.95 },
+          { questionRef: "q4", position: 4, topic: "3.3 Electrical circuits", totalMarks: 6, awardedMarks: 2, confidenceBand: "low", confidenceScore: 0.61 },
+        ],
+      },
+    },
+  },
+  /** The wait. This is the state that was a bare spinning glyph. */
+  marking: {
+    result: {
+      body: {
+        assignmentId: "assign-1",
+        quizId: "quiz-1",
+        subjectCode: "0625",
+        marked: false,
+        submissionStatus: "submitted",
+        awardedMarks: null,
+        maximumMarks: null,
+        questions: [],
+      },
+    },
+  },
+  notSubmitted: {
+    result: {
+      body: {
+        assignmentId: "assign-1",
+        quizId: "quiz-1",
+        subjectCode: "0625",
+        marked: false,
+        submissionStatus: "in_progress",
+        awardedMarks: null,
+        maximumMarks: null,
+        questions: [],
+      },
+    },
+  },
+}
+
 /**
  * The surface registry. Each entry owns its route, its file prefix, its states
  * and the stubbing those states need; everything else is the shared harness.
@@ -378,6 +581,87 @@ const SURFACES = {
       })
     },
     fullPage: (state) => !state.result?.delayMs,
+  },
+
+  /* ── P4.3, surface 3 ─────────────────────────────────────────────────── */
+
+  "flashcard-decks": {
+    prefix: "decks",
+    route: "/student/flashcards/0625",
+    states: DECKS_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/flashcards/due**", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.due ?? NOTHING_DUE_FIXTURE),
+        }),
+      )
+      await page.route("**/api/student/flashcards/decks**", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.decks ?? []),
+        })
+      })
+    },
+    fullPage: (state) => !state.delayMs,
+  },
+
+  "flashcard-review": {
+    prefix: "review",
+    route: "/student/flashcards/review/0625",
+    states: REVIEW_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/flashcards/due**", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.due),
+        }),
+      )
+    },
+    async act(page, state) {
+      if (!state.reveal) return
+      // The button, not the Space shortcut: clicking is the path every user
+      // has, and the keyboard path sets the same state.
+      await page.getByRole("button", { name: /Reveal answer/ }).click()
+      await page.waitForTimeout(400)
+    },
+  },
+
+  "study-plan-week": {
+    prefix: "plan",
+    route: "/student/plan/0625",
+    states: PLAN_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/study-plan/**", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.plan),
+        }),
+      )
+    },
+  },
+
+  "practice-result": {
+    prefix: "practice-result",
+    route: "/student/practice/result/assign-1",
+    states: PRACTICE_RESULT_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/practice/**/result", (route) =>
+        route.fulfill({
+          status: state.result.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.result.body),
+        }),
+      )
+    },
   },
 }
 

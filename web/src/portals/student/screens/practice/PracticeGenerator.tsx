@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
+import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ErrorState } from "@/components/ui/state-views"
 import { Slider } from "@/components/ui/slider"
 import { ApiError } from "@/lib/api"
@@ -114,9 +115,11 @@ export function PracticeGenerator() {
 
   if (topicsQuery.isPending) {
     return (
-      <div className="lm-screen text-body-md text-t2">
-        <h1 className="sr-only">Practice — {subjectName}</h1>
-        Loading topics…
+      <div className="lm-screen lm-read flex flex-col gap-6">
+        <h1 className="sr-only">Practice for {subjectName}</h1>
+        <PageHeaderSkeleton />
+        <PanelSkeleton />
+        <ListSkeleton rows={4} />
       </div>
     )
   }
@@ -124,7 +127,7 @@ export function PracticeGenerator() {
   if (topicsQuery.isError || !topicsQuery.data) {
     return (
       <>
-        <h1 className="sr-only">Practice — {subjectName}</h1>
+        <h1 className="sr-only">Practice for {subjectName}</h1>
         <ErrorState
           heading="Couldn't load practice topics"
           body={topicsQuery.error?.message}
@@ -137,16 +140,17 @@ export function PracticeGenerator() {
 
   if (created) {
     return (
-      <div className="lm-screen mx-auto flex max-w-[560px] flex-col gap-6">
+      <div className="lm-screen lm-read flex flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <h1 className="font-serif text-display-md leading-display text-t1 m-0">
+          <h1 className="text-display-lg text-ink">
             Your {subjectName} practice set is ready
           </h1>
-          <p className="text-body-md text-t2">
-            {created.questionCount} question{created.questionCount === 1 ? "" : "s"} —
+          <p className="lm-prose text-body-lg text-ink-muted">
+            <span className="text-data-md text-ink">{created.questionCount}</span> question
+            {created.questionCount === 1 ? "" : "s"}
             {created.reason === "insufficient_pool"
-              ? ` fewer than the ${created.requestedCount} you asked for, since that's all that matched.`
-              : " ready to go."}
+              ? `, fewer than the ${created.requestedCount} you asked for, since that's all that matched.`
+              : ", ready to go."}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
@@ -175,20 +179,18 @@ export function PracticeGenerator() {
   const view = effectivePreview ? practiceAvailabilityView(effectivePreview) : null
 
   return (
-    <div className="lm-screen mx-auto flex max-w-[720px] flex-col gap-6">
+    <div className="lm-screen lm-read flex flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="font-serif text-display-md leading-display text-t1 m-0">
-          Practice — {subjectName}
-        </h1>
-        <p className="text-body-md text-t2">
+        <h1 className="text-display-lg text-ink">Practice for {subjectName}</h1>
+        <p className="lm-prose text-body-lg text-ink-muted">
           Build a set of real past-paper questions from the topics and difficulty you choose.
         </p>
       </div>
 
       <Card>
         <CardBody className="flex flex-col gap-3">
-          <label className="text-dense-sm text-t2" htmlFor="practice-count">
-            Number of questions: {count}
+          <label className="text-label text-ink" htmlFor="practice-count">
+            Number of questions: <span className="text-data-md text-ink">{count}</span>
           </label>
           <Slider
             id="practice-count"
@@ -212,7 +214,7 @@ export function PracticeGenerator() {
               setWeakTopicsOnly(e.target.checked)
             }}
           />
-          <p className="text-dense-sm text-t3">
+          <p className="text-body-sm text-ink-faint">
             Draws only from topics recorded as weak for you. Your topic selection below is ignored
             while this is on.
           </p>
@@ -228,15 +230,15 @@ export function PracticeGenerator() {
           explains *why* they are inactive stays readable. */}
       <Card>
         <CardBody className="flex flex-col gap-5">
-          <div className="text-dense-sm uppercase tracking-widest text-t3">Topics</div>
+          <h2 className="text-eyebrow text-ink-faint">Topics</h2>
           {groups.length === 0 ? (
-            <p className="text-dense-sm text-t3">No servable topics for this subject yet.</p>
+            <p className="text-body-sm text-ink-faint">No servable topics for this subject yet.</p>
           ) : (
             <fieldset disabled={weakTopicsOnly} className="flex flex-col gap-5">
               <legend className="sr-only">Choose topics to practise</legend>
               {groups.map((group) => (
                 <div key={group.syllabusGroup} className="flex flex-col gap-2">
-                  <div className="text-dense-sm font-medium text-t1">{group.syllabusGroup}</div>
+                  <h3 className="text-label text-ink">{group.syllabusGroup}</h3>
                   <div className="flex flex-col gap-1.5 ps-1">
                     {group.topics.map((t) => (
                       <Checkbox
@@ -252,15 +254,15 @@ export function PracticeGenerator() {
             </fieldset>
           )}
           {droppedWeakTopics.length > 0 ? (
-            <p className="text-dense-sm text-t3">
+            <p className="text-body-sm text-ink-faint">
               {droppedWeakTopics.length === 1 ? "One of your weak topics" : `${droppedWeakTopics.length} of your weak topics`}{" "}
               ({droppedWeakTopics.join(", ")}) {droppedWeakTopics.length === 1 ? "isn't" : "aren't"} in
               the question bank for this subject yet, so {droppedWeakTopics.length === 1 ? "it wasn't" : "they weren't"} pre-selected.
             </p>
           ) : null}
           {untopicedCount > 0 ? (
-            <p className="text-dense-sm text-t3">
-              {untopicedCount} more question{untopicedCount === 1 ? "" : "s"} in the bank {untopicedCount === 1 ? "isn't" : "aren't"} tagged to a topic — included automatically when no topic filter is set.
+            <p className="text-body-sm text-ink-faint">
+              {untopicedCount} more question{untopicedCount === 1 ? "" : "s"} in the bank {untopicedCount === 1 ? "isn't" : "aren't"} tagged to a topic. {untopicedCount === 1 ? "It's" : "They're"} included automatically when no topic filter is set.
             </p>
           ) : null}
         </CardBody>
@@ -268,7 +270,7 @@ export function PracticeGenerator() {
 
       <Card>
         <CardBody className="flex flex-col gap-3">
-          <div className="text-dense-sm uppercase tracking-widest text-t3">Difficulty</div>
+          <h2 className="text-eyebrow text-ink-faint">Difficulty</h2>
           <div className="flex flex-wrap gap-2">
             {DIFFICULTY_BANDS.map((band) => {
               const active = difficultyBands.has(band)
@@ -286,7 +288,7 @@ export function PracticeGenerator() {
               )
             })}
           </div>
-          <p className="text-dense-sm text-t3">No bands selected means no filter on difficulty.</p>
+          <p className="text-body-sm text-ink-faint">No bands selected means no filter on difficulty.</p>
         </CardBody>
       </Card>
 
@@ -298,30 +300,30 @@ export function PracticeGenerator() {
                 const msg = practiceUnavailableMessage(view.reason)
                 return (
                   <>
-                    <div className="text-body-lg font-medium text-t1">{msg.heading}</div>
-                    <p className="text-body-md text-t2">{msg.body}</p>
+                    <h2 className="text-display-sm text-ink">{msg.heading}</h2>
+                    <p className="text-body-md text-ink-muted">{msg.body}</p>
                   </>
                 )
               })()
             ) : view.kind === "shortfall" ? (
               <>
-                <div className="text-body-lg font-medium text-t1">
+                <h2 className="text-display-sm text-ink">
                   Only {view.availableCount} of {view.requestedCount} requested questions match
-                </div>
-                <p className="text-body-md text-t2">
+                </h2>
+                <p className="text-body-md text-ink-muted">
                   You can still create a shorter set with what's available, or broaden your topic
                   or difficulty selection to reach the full count.
                 </p>
               </>
             ) : (
-              <div className="text-body-lg font-medium text-t1">
-                {view.availableCount} question{view.availableCount === 1 ? "" : "s"} match — ready
+              <h2 className="text-display-sm text-ink">
+                {view.availableCount} question{view.availableCount === 1 ? "" : "s"} match, ready
                 to create
-              </div>
+              </h2>
             )}
 
             {createPractice.isError && !raceUnavailable ? (
-              <p className="text-dense-sm text-err">We couldn't create this set. Try again.</p>
+              <p className="text-body-sm text-err">We couldn't create this set. Try again.</p>
             ) : null}
 
             <div className="flex flex-wrap gap-3">
@@ -341,9 +343,9 @@ export function PracticeGenerator() {
           </CardBody>
         </Card>
       ) : previewQuery.isPending ? (
-        <p className="text-dense-sm text-t3">Checking what matches…</p>
+        <p className="text-body-sm text-ink-faint">Checking what matches…</p>
       ) : previewQuery.isError ? (
-        <p className="text-dense-sm text-err">We couldn't check availability. Try changing a filter.</p>
+        <p className="text-body-sm text-err">We couldn't check availability. Try changing a filter.</p>
       ) : null}
     </div>
   )
