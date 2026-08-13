@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { useMutation, type UseMutationResult } from "@tanstack/react-query"
 import { request } from "@/lib/api"
 import type {
@@ -9,7 +9,14 @@ import type {
   SignupRequest,
   TokenResponse,
 } from "@/lib/authTypes"
-import { getDeviceId, getSession, setSession, clearSession, type Session } from "./storage"
+import {
+  getDeviceId,
+  getSession,
+  setSession,
+  clearSession,
+  subscribeToSession,
+  type Session,
+} from "./storage"
 
 /*
  * Session/auth plumbing shared by every portal. Each network call is a
@@ -62,6 +69,13 @@ function toSession(result: TokenResponse): Session {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSessionState] = useState<Session | null>(() => getSession())
+
+  // `lib/api.ts` also writes the stored session — it swaps in a silently
+  // refreshed access token, and clears the session outright when the server
+  // refuses to refresh it. Neither can reach React state on its own, so without
+  // this the context would still be holding a session the storage layer had
+  // already thrown away, and `RequireAuth` would keep rendering the portal.
+  useEffect(() => subscribeToSession((next) => setSessionState(next)), [])
 
   const applySession = (result: TokenResponse) => {
     const next = toSession(result)

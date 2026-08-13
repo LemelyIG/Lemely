@@ -65,8 +65,24 @@ class OtpVerifyDTO(ApiModel):
     deviceId: str | None = None
 
 
+class RefreshRequestDTO(ApiModel):
+    """Redeem a refresh token for a new access token.
+
+    Deliberately the only field: the endpoint is unauthenticated (the access token
+    it exists to replace is expired by definition) and takes no user id — who the
+    caller is comes from the device row the token names, never from the request.
+    """
+
+    refreshToken: str
+
+
 class TokenResponseDTO(ApiModel):
-    """A minted access token plus the resolved user id and role."""
+    """A minted access token plus the resolved user id and role.
+
+    ``refreshToken`` is present on every real sign-in and is echoed back unchanged
+    by ``/auth/refresh`` (refresh tokens do not rotate). It is ``None`` only for
+    the flows that register no device and so have nothing to bind one to.
+    """
 
     accessToken: str
     userId: str
@@ -96,6 +112,7 @@ __all__ = [
     "OtpRequestDTO",
     "OtpRequestResponseDTO",
     "OtpVerifyDTO",
+    "RefreshRequestDTO",
     "Role",
     "SignupRequestDTO",
     "TokenResponseDTO",

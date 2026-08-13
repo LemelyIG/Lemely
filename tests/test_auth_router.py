@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import random
+import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,11 +13,13 @@ from fastapi.testclient import TestClient
 from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
-from lemely.auth.tokens import decode_token
+from lemely.auth.tokens import decode_token, mint_access_token
+from lemely.db.models.enums import Role
 from lemely.runtime.config import Settings
+from lemely.runtime.errors import AuthError
 from lemely.web.app import create_app
-from lemely.web.deps import get_auth_service, reset_singletons
-from tests.auth_fakes import FakeGoTrueBackend, FakeUserMirror
+from lemely.web.deps import get_auth_service, get_device_registry, reset_singletons
+from tests.auth_fakes import FakeDeviceRegistry, FakeGoTrueBackend, FakeUserMirror
 
 
 @pytest.fixture
@@ -171,3 +174,193 @@ def test_otp_resend_within_cooldown_returns_429(
     assert first.status_code == 200, first.text
     second = client.post("/api/auth/otp/request", json={"phone": phone})
     assert second.status_code == 429, second.text
+
+
+# ── Refresh ───────────────────────────────────────────────────────────────────
+#
+# The regression these exist for: access tokens expire after an hour, and before
+# this endpoint existed nothing renewed them. Every request past that point came
+# back 401 "Invalid access token: Signature has expired", which the SPA rendered
+# verbatim on screen while its route guard — which only checks that *a* session
+# object is in localStorage — kept happily rendering the portal around it.
+
+
+@pytest.fixture
+def refreshable() -> Iterator[tuple[TestClient, AuthService, Settings, FakeDeviceRegistry]]:
+    """A client whose auth service registers devices, so refresh tokens are minted.
+
+    ``access_token_ttl_seconds`` is floored at 60 by config, so tests that need an
+    already-expired access token mint one directly with an explicit past ``now``
+    rather than waiting.
+    """
+    settings = Settings()
+    mirror = FakeUserMirror()
+    registry = FakeDeviceRegistry()
+    otp_store = OtpStore(
+        clock=lambda: datetime.now(UTC),
+        rng=random.Random(7),
+        ttl_seconds=settings.auth.otp_ttl_seconds,
+        max_attempts=settings.auth.otp_max_attempts,
+        code_length=settings.auth.otp_length,
+    )
+    service = AuthService(
+        gotrue=FakeGoTrueBackend(),
+        mirror=mirror,
+        sms=MockSmsProvider(),
+        otp_store=otp_store,
+        settings=settings,
+        device_registry=registry,  # type: ignore[arg-type]
+    )
+    app = create_app()
+    app.dependency_overrides[get_auth_service] = lambda: service
+    app.dependency_overrides[get_device_registry] = lambda: registry
+    client = TestClient(app)
+    try:
+        yield client, service, settings, registry
+    finally:
+        app.dependency_overrides.clear()
+        reset_singletons()
+
+
+def _signup(client: TestClient, email: str = "r@example.com") -> dict[str, str]:
+    resp = client.post(
+        "/api/auth/signup",
+        json={
+            "email": email,
+            "password": "pw-123456",
+            "role": "student",
+            "deviceId": "device-A",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_signin_hands_back_a_refresh_token(
+    refreshable: tuple[TestClient, AuthService, Settings, FakeDeviceRegistry],
+) -> None:
+    client, _, _, _ = refreshable
+    assert _signup(client)["refreshToken"]
+
+
+def test_refresh_returns_a_usable_new_access_token(
+    refreshable: tuple[TestClient, AuthService, Settings, FakeDeviceRegistry],
+) -> None:
+    client, _, settings, _ = refreshable
+    body = _signup(client)
+
+    resp = client.post("/api/auth/refresh", json={"refreshToken": body["refreshToken"]})
+
+    assert resp.status_code == 200, resp.text
+    renewed = resp.json()
+    claims = decode_token(renewed["accessToken"], settings)
+    assert claims.sub == body["userId"]
+    assert claims.app_role == "student"
+    # Not rotated: the client keeps the token it already has (two tabs refreshing
+    # concurrently must not be able to invalidate each other).
+    assert renewed["refreshToken"] == body["refreshToken"]
+
+
+def test_refresh_works_once_the_access_token_has_already_expired(
+    refreshable: tuple[TestClient, AuthService, Settings, FakeDeviceRegistry],
+) -> None:
+    # The actual bug: an expired access token 401s, and the refresh that is
+    # supposed to rescue it must not itself depend on that dead credential.
+    client, _, settings, _ = refreshable
+    body = _signup(client)
+    dead = mint_access_token(
+        user_id=uuid.UUID(body["userId"]),
+        settings=settings,
+        app_role="student",
+        provider="email",
+        now=datetime.now(UTC) - timedelta(hours=3),
+    )
+    with pytest.raises(AuthError, match="expired"):
+        decode_token(dead, settings)
+
+    resp = client.post(
+        "/api/auth/refresh",
+        json={"refreshToken": body["refreshToken"]},
+        headers={"Authorization": f"Bearer {dead}"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert decode_token(resp.json()["accessToken"], settings).sub == body["userId"]
+
+
+def test_a_refresh_token_cannot_be_used_as_a_bearer_token(
+    refreshable: tuple[TestClient, AuthService, Settings, FakeDeviceRegistry],
+) -> None:
+    # It outlives the access token by a month, so if it also authenticated
+    # requests it would quietly become a month-long access token.
+    client, _, _, _ = refreshable
+    body = _signup(client)
+
+    resp = client.get(
+        "/api/me/profile", headers={"Authorization": f"Bearer {body['refreshToken']}"}
+    )
+
+    # 401 specifically, not 404: the route exists and rejected the credential.
+    assert resp.status_code == 401, resp.text
+
+
+def test_refresh_is_refused_after_the_device_is_signed_out(
+    refreshable: tuple[TestClient, AuthService, Settings, FakeDeviceRegistry],
+) -> None:
+    client, _, _, registry = refreshable
+    body = _signup(client)
+    session_id = next(iter(registry.rows))
+    assert registry.revoke(uuid.UUID(body["userId"]), session_id) is True
+
+    resp = client.post("/api/auth/refresh", json={"refreshToken": body["refreshToken"]})
+
+    assert resp.status_code == 401, resp.text
+
+
+def test_refresh_is_refused_once_a_newer_login_supersedes_it(
+    refreshable: tuple[TestClient, AuthService, Settings, FakeDeviceRegistry],
+) -> None:
+    client, _, _, _ = refreshable
+    first = _signup(client)
+    second = client.post(
+        "/api/auth/login",
+        json={"email": "r@example.com", "password": "pw-123456", "deviceId": "device-A"},
+    ).json()
+    assert second["refreshToken"] != first["refreshToken"]
+
+    stale = client.post("/api/auth/refresh", json={"refreshToken": first["refreshToken"]})
+    fresh = client.post("/api/auth/refresh", json={"refreshToken": second["refreshToken"]})
+
+    assert stale.status_code == 401, stale.text
+    assert fresh.status_code == 200, fresh.text
+
+
+def test_refresh_reflects_a_role_changed_since_sign_in(
+    refreshable: tuple[TestClient, AuthService, Settings, FakeDeviceRegistry],
+) -> None:
+    # A refresh token lives for a month. If the role were read out of it rather
+    # than out of `public.users`, a demoted account would keep its old powers for
+    # that entire month.
+    client, service, settings, _ = refreshable
+    body = _signup(client)
+    mirror = service._mirror
+    mirror.rows[uuid.UUID(body["userId"])].role = Role.teacher
+
+    resp = client.post("/api/auth/refresh", json={"refreshToken": body["refreshToken"]})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["role"] == "teacher"
+    assert decode_token(resp.json()["accessToken"], settings).app_role == "teacher"
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["", "not-a-jwt", "a.b.c"],
+    ids=["empty", "garbage", "jwt-shaped-garbage"],
+)
+def test_malformed_refresh_token_is_401_not_500(
+    refreshable: tuple[TestClient, AuthService, Settings, FakeDeviceRegistry], token: str
+) -> None:
+    client, _, _, _ = refreshable
+    resp = client.post("/api/auth/refresh", json={"refreshToken": token})
+    assert resp.status_code == 401, resp.text

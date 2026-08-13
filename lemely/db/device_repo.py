@@ -48,6 +48,19 @@ class UnknownUserError(DeviceError):
     """No user row exists for the id a login tried to register a device against."""
 
 
+class RefreshRejectedError(DeviceError):
+    """A refresh token named a device that will not honour it.
+
+    Raised by :meth:`DeviceRegistry.redeem_refresh_token` when the device row is
+    unknown, has been revoked (explicit sign-out or eviction past the cap), or no
+    longer holds the ``refresh_token_id`` the token carries — the last of which
+    means a newer login on that device has superseded it. Deliberately one error
+    for all three: the client's only correct response to any of them is to sign
+    in again, and distinguishing them would tell an anonymous caller holding a
+    stale token which case it hit.
+    """
+
+
 class DeviceLimitReachedError(DeviceError):
     """A login would have evicted a device but was not permitted to (D5.12).
 
@@ -71,6 +84,13 @@ class DeviceRegistration:
 
     session_id: uuid.UUID
     reused: bool
+    refresh_token_id: str = ""
+    """The id this login's refresh token must carry to be redeemable.
+
+    Minted inside the registration transaction and written to the device row, so
+    a device never exists without one. Re-minted on a *reused* row too: signing
+    in again on a device supersedes any refresh token still outstanding for it.
+    """
     evicted_session_ids: list[uuid.UUID] = field(default_factory=list)
 
 
@@ -155,11 +175,20 @@ class DeviceRegistry:
                     device.user_agent = user_agent
                 if device_label is not None:
                     device.device_label = device_label
+            # Supersede any refresh token outstanding for this row: a fresh
+            # credential was just presented, so the previous one has no further
+            # claim. Minted here rather than by the caller so the column and the
+            # device row can never disagree — they are written in one transaction.
+            refresh_token_id = str(uuid.uuid4())
+            device.refresh_token_id = refresh_token_id
             session.flush()  # assign device.id before we evict / return it
 
             evicted = self._evict_oldest(session, uid, keep_id=device.id, now=stamp)
             return DeviceRegistration(
-                session_id=device.id, reused=reused, evicted_session_ids=evicted
+                session_id=device.id,
+                reused=reused,
+                refresh_token_id=refresh_token_id,
+                evicted_session_ids=evicted,
             )
 
     def is_session_live(self, session_id: uuid.UUID | str) -> bool:
@@ -171,6 +200,52 @@ class DeviceRegistry:
         with self._sessionmaker() as session:
             device = session.get(Device, sid)
             return device is not None and device.revoked_at is None
+
+    def redeem_refresh_token(
+        self,
+        session_id: uuid.UUID | str,
+        token_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> uuid.UUID:
+        """Authorise one refresh and return the id of the user it belongs to.
+
+        The device row is the sole authority: the token is honoured only while
+        that row is live *and* still holds ``token_id``. Every existing way a
+        session ends therefore ends its refresh token too — signing the device
+        out, evicting it past :data:`MAX_DEVICES`, or logging in on it again
+        (which re-mints the id). The caller learns *who* from the return value
+        rather than from the token's own ``sub``, so a forged subject cannot
+        refresh its way into another account.
+
+        The row is locked ``FOR UPDATE`` so two concurrent redemptions serialise.
+        ``last_seen_at`` is advanced on success, keeping an actively-refreshing
+        device from drifting to the front of the eviction queue.
+
+        Args:
+            session_id: The ``devices`` row named by the token's ``session_id``.
+            token_id: The token's ``jti``, matched against ``refresh_token_id``.
+            now: Injectable clock for deterministic tests.
+
+        Raises:
+            RefreshRejectedError: The device is unknown, revoked, or holds a
+                different (newer) refresh token id.
+        """
+        try:
+            sid = _as_uuid(session_id)
+        except ValueError as exc:
+            raise RefreshRejectedError("Refresh token names no known session") from exc
+        stamp = now or datetime.now(UTC)
+        with self._sessionmaker() as session, session.begin():
+            device = session.get(Device, sid, with_for_update=True)
+            if device is None or device.revoked_at is not None:
+                raise RefreshRejectedError("Refresh token names no live session")
+            # Compared inside the lock, against the row rather than the token, so
+            # a token superseded by a concurrent login loses cleanly.
+            if not device.refresh_token_id or device.refresh_token_id != token_id:
+                raise RefreshRejectedError("Refresh token has been superseded")
+            device.last_seen_at = stamp
+            return device.user_id
 
     def active_devices(self, user_id: uuid.UUID | str) -> list[DeviceRow]:
         """Return the user's non-revoked devices, most-recently-seen first."""
@@ -278,5 +353,6 @@ __all__ = [
     "DeviceRegistration",
     "DeviceRegistry",
     "DeviceRow",
+    "RefreshRejectedError",
     "UnknownUserError",
 ]

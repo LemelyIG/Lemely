@@ -90,6 +90,28 @@ def render_example_toml() -> str:
     lines.append('# jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"')
     lines.append('# anon_key = "..."')
     lines.append('# service_role_key = "..."')
+    lines.append("")
+
+    lines.append("[auth]")
+    lines.append("# How long a minted access token is accepted for. Short on purpose: it is a")
+    lines.append("# bearer credential with no revocation of its own, so this bounds the window")
+    lines.append("# in which a leaked one is useful. The SPA renews silently in the background")
+    lines.append("# (POST /api/auth/refresh), so shortening it does not sign anyone out.")
+    lines.append(f"access_token_ttl_seconds = {s.auth.access_token_ttl_seconds}")
+    lines.append("# How long a signed-in device stays signed in without re-entering a")
+    lines.append("# credential. Long by design — the security is not the expiry but the")
+    lines.append("# binding: a refresh token names a row in `devices`, so signing that device")
+    lines.append("# out from the device list, or evicting it past the 3-device cap, kills it")
+    lines.append("# immediately.")
+    lines.append(
+        f"refresh_token_ttl_seconds = {s.auth.refresh_token_ttl_seconds}"
+        f"  # {s.auth.refresh_token_ttl_seconds // 86400} days"
+    )
+    lines.append("# Parent phone-OTP challenge lifecycle.")
+    lines.append(f"otp_ttl_seconds = {s.auth.otp_ttl_seconds}")
+    lines.append(f"otp_max_attempts = {s.auth.otp_max_attempts}")
+    lines.append(f"otp_length = {s.auth.otp_length}")
+    lines.append(f"otp_min_resend_seconds = {s.auth.otp_min_resend_seconds}")
 
     # No trailing blank line: pre-commit's end-of-file-fixer collapses a double
     # trailing newline in lemely.toml.example, which would drift from this

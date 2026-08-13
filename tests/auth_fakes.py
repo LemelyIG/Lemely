@@ -1,7 +1,7 @@
 """Hermetic fakes for AuthService tests (no network, no DB).
 
 Shared by ``test_auth_service.py`` and ``test_auth_router.py`` so both exercise
-the exact same in-memory GoTrue backend and user mirror.
+the exact same in-memory GoTrue backend, user mirror, and device registry.
 """
 
 from __future__ import annotations
@@ -9,8 +9,10 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import cast
 
 from lemely.auth.gotrue import GoTrueToken, GoTrueUser
+from lemely.db.device_repo import DeviceRegistration, RefreshRejectedError
 from lemely.db.models.enums import Role
 from lemely.runtime.errors import AuthError
 
@@ -102,3 +104,86 @@ class FakeUserMirror:
         if not matches:
             return None
         return max(matches, key=lambda u: u.created_at)
+
+
+class FakeDeviceRegistry:
+    """In-memory stand-in for :class:`~lemely.db.device_repo.DeviceRegistry`.
+
+    Implements the slice the auth flows depend on — registering a login, minting
+    and redeeming the device-bound refresh token id, liveness, and revocation —
+    with the same semantics as the Postgres implementation, whose own guarantees
+    (the 3-device cap, ``FOR UPDATE`` serialisation, eviction ordering) are proven
+    against a real database in ``test_device_repo.py``. Deliberately does **not**
+    model the cap: these tests are about the refresh lifecycle, and a fake that
+    silently evicted would make failures ambiguous.
+    """
+
+    def __init__(self) -> None:
+        self.rows: dict[uuid.UUID, dict[str, object]] = {}
+
+    def register_login(
+        self,
+        user_id: uuid.UUID,
+        *,
+        client_device_id: str | None = None,
+        user_agent: str | None = None,
+        device_label: str | None = None,
+        allow_eviction: bool = True,
+        now: datetime | None = None,
+    ) -> DeviceRegistration:
+        del user_agent, device_label, allow_eviction, now
+        existing = next(
+            (
+                sid
+                for sid, row in self.rows.items()
+                if row["user_id"] == user_id
+                and client_device_id is not None
+                and row["client_device_id"] == client_device_id
+                and row["revoked"] is False
+            ),
+            None,
+        )
+        session_id = existing or uuid.uuid4()
+        # Re-minted on reuse, exactly as the real registry does, so a re-login
+        # supersedes any refresh token still outstanding for the device.
+        token_id = str(uuid.uuid4())
+        self.rows[session_id] = {
+            "user_id": user_id,
+            "client_device_id": client_device_id,
+            "refresh_token_id": token_id,
+            "revoked": False,
+        }
+        return DeviceRegistration(
+            session_id=session_id, reused=existing is not None, refresh_token_id=token_id
+        )
+
+    def redeem_refresh_token(
+        self, session_id: uuid.UUID | str, token_id: str, *, now: datetime | None = None
+    ) -> uuid.UUID:
+        del now
+        try:
+            sid = session_id if isinstance(session_id, uuid.UUID) else uuid.UUID(session_id)
+        except ValueError as exc:
+            raise RefreshRejectedError("Refresh token names no known session") from exc
+        row = self.rows.get(sid)
+        if row is None or row["revoked"] is True:
+            raise RefreshRejectedError("Refresh token names no live session")
+        if row["refresh_token_id"] != token_id:
+            raise RefreshRejectedError("Refresh token has been superseded")
+        return cast("uuid.UUID", row["user_id"])
+
+    def is_session_live(self, session_id: uuid.UUID | str) -> bool:
+        try:
+            sid = session_id if isinstance(session_id, uuid.UUID) else uuid.UUID(session_id)
+        except ValueError:
+            return False
+        row = self.rows.get(sid)
+        return row is not None and row["revoked"] is False
+
+    def revoke(self, user_id: uuid.UUID | str, session_id: uuid.UUID | str) -> bool:
+        sid = session_id if isinstance(session_id, uuid.UUID) else uuid.UUID(session_id)
+        row = self.rows.get(sid)
+        if row is None or row["user_id"] != user_id or row["revoked"] is True:
+            return False
+        row["revoked"] = True
+        return True

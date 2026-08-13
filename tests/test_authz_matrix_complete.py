@@ -86,10 +86,17 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (5) ────────────────────
+    # ── PUBLIC (6) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     ("POST", "/api/auth/otp/request"): PUBLIC,
     ("POST", "/api/auth/otp/verify"): PUBLIC,
+    # Unauthenticated by necessity: it exists to replace an access token that
+    # has already expired, so gating it behind one would make it unreachable at
+    # exactly the moment it is needed. The refresh token in the body is the
+    # credential, and it authorises nothing else — a distinct `aud` means it is
+    # rejected as a bearer token on every other route (see test_auth_router.py's
+    # `test_a_refresh_token_cannot_be_used_as_a_bearer_token`).
+    ("POST", "/api/auth/refresh"): PUBLIC,
     ("POST", "/api/auth/signup"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
     # ── AUTH_ANY (12) ────────────────────
@@ -394,7 +401,7 @@ def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> 
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
-    assert len(_NON_PUBLIC) == len(ROUTES) - 5  # 4 auth entrypoints + /api/health
+    assert len(_NON_PUBLIC) == len(ROUTES) - 6  # 5 auth entrypoints + /api/health
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20

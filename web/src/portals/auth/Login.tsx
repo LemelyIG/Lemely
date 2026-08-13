@@ -5,6 +5,7 @@ import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
 import { ApiError } from "@/lib/api"
 import { isDeviceLimitChallenge, type DeviceLimitChallenge } from "@/lib/deviceTypes"
+import { takeSessionExpired } from "@/lib/auth/storage"
 import { DeviceLimitNotice } from "./DeviceLimitNotice"
 
 /*
@@ -23,6 +24,11 @@ export function Login() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [challenge, setChallenge] = useState<DeviceLimitChallenge | null>(null)
+  // Read once, on mount, and cleared by the read: landing here after a session
+  // expired should say so. Being silently returned to a login screen reads as
+  // the app having lost your work, which is the impression the old behaviour
+  // gave once it stopped showing raw 401 text.
+  const [expired] = useState(() => takeSessionExpired())
 
   const signIn = (confirmDeviceEviction: boolean) => {
     login.mutate(
@@ -71,6 +77,11 @@ export function Login() {
         className="flex w-full max-w-90 flex-col gap-4 rounded-md border border-border bg-surface p-8"
       >
         <h1 className="text-display-md">Lemely</h1>
+        {expired ? (
+          <p role="status" className="text-body-md text-t2">
+            Your session expired. Please sign in again.
+          </p>
+        ) : null}
         <label className="flex flex-col gap-1.5 text-sm">
           Email
           <input
