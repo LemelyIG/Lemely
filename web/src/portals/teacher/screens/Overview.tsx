@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { cn, initialsOf, relativeTime } from "@/lib/utils"
+import { GettingStarted } from "@/components/ui/getting-started"
+import { cn, greetingFor, initialsOf, relativeTime } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { Avatar } from "../components/Avatar"
 import { useTeacherOverview, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
@@ -103,16 +104,94 @@ export function Overview() {
   const needsEyes = stats.find((s) => s.key === "Need your eyes")
   const needsEyesCount = needsEyes ? Number(needsEyes.value) : null
 
+  const now = new Date()
+  const greeting = greetingFor(now.getHours())
+  // The reader's own locale and timezone, not a hardcoded English string.
+  const today = now.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  })
+
+  /*
+   * First run (P3.2): a teacher who has just been given an account.
+   *
+   * Both conditions are required, and that is deliberate. No classes alone is
+   * not proof of a first run — a teacher can archive their last class mid-year
+   * and should get their dashboard back, not an onboarding screen. No classes
+   * *and* no submissions anywhere is the state only a genuinely new account
+   * reaches. Rendering the full dashboard for them means a wall of zeroes and
+   * four separate "nothing here yet" panels, which is the grid of empty cards
+   * this phase exists to remove.
+   *
+   * Every step below is `later` except the first, for the same reason as the
+   * student screen: nothing this account can query reports whether a teacher
+   * has, say, uploaded a mark scheme, and a tick we cannot substantiate is a
+   * claim about the reader's own history that we are not entitled to make.
+   */
+  if (classes.length === 0 && recentActivity.length === 0) {
+    return (
+      <div className="lm-screen flex flex-col gap-6 min-w-0">
+        <div>
+          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+            {today}
+          </div>
+          <h1 className="text-display-lg mt-2">{greeting}.</h1>
+        </div>
+        <GettingStarted
+          heading="Start with one class"
+          body="Everything else in Lemely hangs off a class: marking, at-risk flags and the analytics all read from who is in it."
+          steps={[
+            {
+              title: "Create your first class",
+              body: "Give it a name and a subject code. You can add students straight away or send them a join link later.",
+              status: "now",
+              to: "/teacher/classes",
+              actionLabel: "Create a class",
+            },
+            {
+              title: "Mark a set of papers",
+              body: "Upload scanned scripts and Lemely marks them against the official Cambridge scheme, question by question, with a confidence score on every mark.",
+              status: "later",
+            },
+            {
+              title: "Look at what marking flagged",
+              body: "Anything the marker was not confident about goes to your review queue instead of being guessed at. That queue is the one place your judgement is actually needed.",
+              status: "later",
+            },
+            {
+              title: "Watch for students drifting",
+              body: "At-risk flags come from trajectory across several papers, not from one bad afternoon, so they need a few marked papers before they mean anything.",
+              status: "later",
+            },
+          ]}
+          footnote="These panels stay empty until there is real work in them. Nothing on this dashboard is filled in with sample data."
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex items-end gap-5 flex-wrap gap-y-2.5">
         <div>
+          {/*
+            * P3.2. This eyebrow read "Helwan Science Centre · Sunday 27 July",
+            * both halves hardcoded. The school name is the same fabricated
+            * affiliation P3.7 chunk b deleted from the teacher sidebar and
+            * P3.10 chunk c from the student one — no field in any DTO supplies
+            * a school name, so it is shown to every teacher regardless of where
+            * they teach. The date was a literal, so it read "Sunday 27 July"
+            * on every day of the year.
+            *
+            * The date is real now. The school name is simply gone rather than
+            * replaced: there is nothing to replace it with, and inventing an
+            * affiliation is the defect, not the formatting.
+            */}
           <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
-            Helwan Science Centre · Sunday 27 July
+            {today}
           </div>
-          <h1 className="text-display-lg mt-2">
-            Good morning.
-          </h1>
+          <h1 className="text-display-lg mt-2">{greeting}.</h1>
           <div className="text-sm text-t2 mt-2 max-w-[62ch] text-pretty">
             {papersGraded ? `${papersGraded.value} papers graded so far. ` : ""}
             {needsEyes
@@ -313,22 +392,28 @@ export function Overview() {
         )}
       </div>
 
-      {/* 5. Quick actions */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" disabled aria-disabled="true" title="Coming in a later release">
-            Build a quiz
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" disabled aria-disabled="true" title="Coming in a later release">
-            Post an announcement
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
+      {/*
+        * 5. Quick actions.
+        *
+        * P3.2: "Build a quiz" and "Post an announcement" were `disabled` with
+        * a "Coming soon" chip and a `title` of "Coming in a later release".
+        * Both features shipped. `/teacher/quizzes` is wired to
+        * `GET /teacher/quizzes` and the full quiz-builder API, and
+        * `/teacher/announcements` to `useAnnouncements()`; both are screens in
+        * the sidebar this teacher can already open. So the dashboard was
+        * telling them a feature does not exist while linking to it two feet to
+        * the left, which is worse than a dead button: it is a reason not to
+        * click a working one. Enabled and pointed at the real screens.
+        */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" onClick={() => navigate("/teacher/quizzes")}>
+          Build a quiz
+        </Button>
+        <Button variant="secondary" onClick={() => navigate("/teacher/announcements")}>
+          Post an announcement
+        </Button>
         <Button variant="ink" onClick={() => navigate("/teacher/classes")}>
-          + Add a class
+          Add a class
         </Button>
       </div>
     </div>

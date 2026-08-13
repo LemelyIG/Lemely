@@ -101,7 +101,10 @@ try {
   log("default state: goto /teacher")
   await page.setViewport({ width: 1440, height: 900 })
   await page.goto(`${PREVIEW_URL}/teacher`, { waitUntil: "networkidle0" })
-  await waitForText(page, "Good morning")
+  // P3.2: greeting is time-of-day now. This helper is a literal
+  // `String.includes`, not a regex, so it gates on the substring every
+  // greeting shares rather than on one of the three.
+  await waitForText(page, "Good ")
   log("default OK")
 
   if (!process.env.SKIP_LH) {

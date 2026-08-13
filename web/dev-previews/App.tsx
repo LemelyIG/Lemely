@@ -21,6 +21,10 @@ import { Popover } from "@/components/ui/popover"
 import { ToastProvider, useToast } from "@/components/ui/toast"
 import { ErrorState } from "@/components/ui/error-state"
 import { ChartFrame } from "@/components/ui/chart-frame"
+import { Breadcrumbs } from "@/components/ui/breadcrumbs"
+import { NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { SkipLink } from "@/components/ui/skip-link"
+import { GettingStarted } from "@/components/ui/getting-started"
 
 /**
  * The component-kit preview page (REDESIGN-MISSION §5 Phase 2.6).
@@ -669,6 +673,157 @@ function AppBody() {
                   title="We couldn't load your papers"
                   message="The connection dropped partway through. Your work is safe."
                   onRetry={() => undefined}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        {/* Phase 3's additions. Listed here for the same reason as everything
+            above: a component that is never rendered side by side with its own
+            states is a component whose states are assumed rather than seen. */}
+        <Group title="Navigation and first run">
+          <ComponentSection
+            name="Breadcrumbs"
+            summary="P3.1 / D1.5's back affordance for the teacher and parent portals. Collapses below sm to a single back link so it stays one line and one tap on a phone. Resize the window to see it switch."
+          >
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="Full trail. Every crumb but the last links somewhere the router mounts."
+            >
+              <div className="w-full">
+                <Breadcrumbs
+                  collapse={false}
+                  items={[
+                    { label: "Overview", to: "/teacher" },
+                    { label: "Classes", to: "/teacher/classes" },
+                    { label: "This class", to: "/teacher/classes/demo" },
+                    { label: "Analytics" },
+                  ]}
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="live"
+              note="Collapsing form. Narrow the viewport past 640px to see it become a back link."
+            >
+              <div className="w-full">
+                <Breadcrumbs
+                  items={[
+                    { label: "Overview", to: "/teacher" },
+                    { label: "Classes", to: "/teacher/classes" },
+                    { label: "This class" },
+                  ]}
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="disabled"
+              provenance="prop"
+              note="A single crumb renders nothing: no claim about where you are beats a wrong one."
+            >
+              <div className="w-full">
+                <Breadcrumbs items={[{ label: "Overview" }]} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="NavDrawerTrigger"
+            summary="The menu button that opens the mobile nav drawer. Below 820px (student) and 768px (teacher) it is the only entry point to navigation that exists, so its 44x44 target and accessible name are load-bearing, not polish."
+          >
+            <StateCell state="default" provenance="prop">
+              <NavDrawerTrigger onClick={() => undefined} label="Open navigation" />
+            </StateCell>
+            <StateCell
+              state="hover"
+              provenance="live"
+              note="Hover and focus it with the keyboard to see both treatments"
+            >
+              <NavDrawerTrigger onClick={() => undefined} label="Open navigation" />
+            </StateCell>
+            <StateCell state="active" provenance="live" note="Press and hold: scale(0.98)">
+              <NavDrawerTrigger onClick={() => undefined} label="Open navigation" />
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="SkipLink"
+            summary="Visually hidden until focused, then a real visible control. Tab into the cell below. Both portals put 8 to 11 nav destinations before the content in DOM order, and re-render them on every route, so without this a keyboard user re-tabs the whole sidebar on every navigation."
+          >
+            <StateCell
+              state="focus-visible"
+              provenance="live"
+              note="Click here then press Tab. It is genuinely invisible until focused."
+            >
+              <div className="relative h-16 w-full">
+                <SkipLink />
+                <span className="text-body-sm text-ink-faint">Tab into this cell</span>
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="GettingStarted"
+            summary="P3.2's first-run panel, replacing a single centred EmptyState on the student and teacher dashboards. No endpoint reports per-step onboarding progress, so `done` is only ever passed where the caller holds evidence; `later` steps carry no tick and no action deliberately."
+          >
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="The real student first-run content. No step is `done`, because nothing on that screen can observe one."
+            >
+              <div className="w-full">
+                <GettingStarted
+                  heading="Let's get your first paper marked"
+                  body="Lemely works from your own past papers. Mark one and this page fills in on its own."
+                  steps={[
+                    {
+                      title: "Correct your first paper",
+                      body: "Photograph or upload a paper you have already sat.",
+                      status: "now",
+                      to: "/student/correct",
+                      actionLabel: "Correct a paper",
+                    },
+                    {
+                      title: "See where you stand",
+                      body: "Your predicted grade is measured against the real Cambridge grade boundaries.",
+                      status: "later",
+                    },
+                  ]}
+                  footnote="Nothing here is filled in with sample data."
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="success"
+              provenance="prop"
+              note="A completed step. The word 'Done' is rendered beside the tick: colour alone carries nothing."
+            >
+              <div className="w-full">
+                <GettingStarted
+                  heading="Start with one class"
+                  body="Everything else in Lemely hangs off a class."
+                  steps={[
+                    {
+                      title: "Create your first class",
+                      body: "Give it a name and a subject code.",
+                      status: "done",
+                    },
+                    {
+                      title: "Mark a set of papers",
+                      body: "Upload scanned scripts and Lemely marks them against the official scheme.",
+                      status: "now",
+                      to: "/teacher/grading",
+                      actionLabel: "Open grading",
+                    },
+                    {
+                      title: "Look at what marking flagged",
+                      body: "Anything the marker was unsure about goes to your review queue.",
+                      status: "later",
+                    },
+                  ]}
                 />
               </div>
             </StateCell>

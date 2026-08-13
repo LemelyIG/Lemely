@@ -2,7 +2,9 @@ import { useNavigate } from "react-router-dom"
 import { Card } from "@/components/ui/card"
 import { Meter } from "@/components/ui/primitives"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { ErrorState } from "@/components/ui/state-views"
+import { GettingStarted } from "@/components/ui/getting-started"
+import { greetingFor } from "@/lib/utils"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { vizBg } from "../components/colors"
 
@@ -49,22 +51,62 @@ export function Overview() {
   // rather than showing a raw id/UUID.
   const greetingName = studentName || "there"
 
-  // First-run: a student who just onboarded has no results at all yet.
-  // Per LEMELY_UI_SPEC S-06, that state should be almost entirely a single
-  // invitation to correct their first paper, not a grid of empty cards.
+  // This read "Good afternoon" unconditionally, at every hour of the day, so
+  // a student revising at eleven at night was greeted as though it were two in
+  // the afternoon. A small thing, but it is the first line on the first screen
+  // and it was the one sentence on the page that was plainly untrue.
+  const greeting = greetingFor(new Date().getHours())
+
+  /*
+   * First run (P3.2). A student who just onboarded has no results at all yet.
+   *
+   * This used to be a single centred `EmptyState` — "Correct your first paper
+   * to see it here" and one button. That is a correct sentence and a poor
+   * first screen: it says what is missing rather than what happens next, and
+   * it gives no sense of how much setting-up is left. It is replaced by the
+   * composed getting-started view Phase 3.2 asks for.
+   *
+   * What the steps may and may not claim is constrained by what this screen
+   * can actually observe. `GET /student/overview` reports subjects derived
+   * from corrected papers, so `subjects.length === 0` proves exactly one
+   * thing: no paper has been marked yet. It does not tell us whether this
+   * student has taken a placement test, and no endpoint on this screen does.
+   *
+   * So no step here is marked `done`. Marking the placement step complete
+   * would be a guess, and marking it `now` alongside the paper step would give
+   * a first-run reader two competing primary actions. It is `later`: true,
+   * useful, and not a claim about what they have already done.
+   */
   if (subjects.length === 0) {
     return (
       <div className="lm-screen flex flex-col gap-26px">
         <h1 className="text-display-lg text-t1">
-          Good afternoon, {greetingName}.
+          {greeting}, {greetingName}.
         </h1>
-        <Card>
-          <EmptyState
-            heading="Correct your first paper to see it here"
-            body="Once you mark a paper, your subjects, predicted grades and weakest topics will show up on this page."
-            action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
-          />
-        </Card>
+        <GettingStarted
+          heading="Let's get your first paper marked"
+          body="Lemely works from your own past papers. Mark one and this page fills in on its own."
+          steps={[
+            {
+              title: "Correct your first paper",
+              body: "Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.",
+              status: "now",
+              to: "/student/correct",
+              actionLabel: "Correct a paper",
+            },
+            {
+              title: "See where you stand",
+              body: "Your predicted grade is measured against the real Cambridge grade boundaries for that paper, so it is a position rather than a percentage.",
+              status: "later",
+            },
+            {
+              title: "Get a study plan built from your own mistakes",
+              body: "Every dropped mark is traced back to a topic. Those topics become practice questions, flashcards and a plan for the week that rewrites itself as you improve.",
+              status: "later",
+            },
+          ]}
+          footnote="Nothing here is filled in with sample data. This page stays empty until it has your own work to show."
+        />
       </div>
     )
   }
@@ -72,7 +114,7 @@ export function Overview() {
   return (
     <div className="lm-screen flex flex-col gap-26px">
       <h1 className="text-display-lg text-t1">
-        Good afternoon, {greetingName}.
+        {greeting}, {greetingName}.
       </h1>
 
       <Card className="overflow-hidden">

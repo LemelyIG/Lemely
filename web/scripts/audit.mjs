@@ -1075,7 +1075,11 @@ function buildRouteRegistry(seed) {
         {
           state: "default",
           slug: "teacher-overview",
-          ready: (page) => waitForText(page, "Good morning"),
+          // P3.2: the teacher header greets by the reader's real local time
+          // now, so a fixed "Good morning" gate would fail this audit for
+          // sixteen hours a day. `waitForText` compiles its argument as a
+          // case-insensitive RegExp, so the alternation works as-is.
+          ready: (page) => waitForText(page, "Good (morning|afternoon|evening)"),
         },
         // Honest CDP `offline` capture. `web/src/components/ui/state-views.tsx`
         // defines an `OfflineState` primitive but nothing under `portals/`
@@ -1360,7 +1364,11 @@ function buildRouteRegistry(seed) {
           state: "empty",
           slug: "teacher-overview-empty",
           lighthouse: false,
-          ready: (page) => waitForText(page, "Good morning"),
+          // P3.2: the teacher header greets by the reader's real local time
+          // now, so a fixed "Good morning" gate would fail this audit for
+          // sixteen hours a day. `waitForText` compiles its argument as a
+          // case-insensitive RegExp, so the alternation works as-is.
+          ready: (page) => waitForText(page, "Good (morning|afternoon|evening)"),
         },
       ],
     },

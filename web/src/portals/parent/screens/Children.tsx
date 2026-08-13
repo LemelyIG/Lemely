@@ -96,6 +96,16 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * school-side linking outright (no school child-registry surface exists), so
  * naming it here would promise a path a parent cannot take.
  *
+ * P3.2 reviewed this as the parent role's first-run flow and deliberately left
+ * its structure alone. It is already the composed getting-started view this
+ * phase asks for, and it does NOT become the shared `GettingStarted` component
+ * the student and teacher dashboards now use: that component models steps the
+ * reader performs, each with a route to go to, and every step here is an action
+ * somebody else takes on another device. Forcing it into a shape built around
+ * "here is your next button" would mean either three inert steps or three
+ * buttons that go nowhere. Only the copy changed, to clear two em-dashes the
+ * mission bans in UI text (§3.2 item 10).
+ *
  * Step 2 says "the number you signed in with" rather than printing it back.
  * `ProfileDTO` carries no phone, and adding one to `/api/me/profile` to
  * sharpen a line of copy would put a second source beside the OTP flow that
@@ -111,7 +121,7 @@ function NoChildrenLinked() {
             no other one on the screen — so as an `h2` the empty state shipped
             with no level-one heading at all (axe `page-has-heading-one`, found
             by P3.10 chunk e2a's per-state pass). Visually identical. */}
-        <h1 className="text-display-md text-t1">You're signed in — one step to go</h1>
+        <h1 className="text-display-md text-t1">You're signed in. One step to go.</h1>
         <p className="text-body-md text-t2">
           Nobody has shared their results with you yet. Your child adds you from their own
           Lemely account, so they stay in control of who sees their marks.
@@ -122,7 +132,7 @@ function NoChildrenLinked() {
         {[
           "Ask your child to open Lemely and sign in.",
           "In their account, they add a parent using the phone number you just signed in with.",
-          "Their results appear here straight away — no code to enter, nothing to accept.",
+          "Their results appear here straight away. There is no code to enter and nothing to accept.",
         ].map((step, index) => (
           <li key={index} className="flex items-start gap-3">
             <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-accent-subtle text-body-md font-medium text-t1">
@@ -134,7 +144,7 @@ function NoChildrenLinked() {
       </ol>
 
       <p className="text-body-md text-t2">
-        Signing in first is what makes this work — your child can only add a parent who
+        Signing in first is what makes this work. Your child can only add a parent who
         already has an account, so nobody can be added by mistake.
       </p>
     </div>

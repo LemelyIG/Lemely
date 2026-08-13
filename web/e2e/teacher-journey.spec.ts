@@ -35,7 +35,16 @@ test("teacher walks overview -> classes -> roster -> analytics -> student detail
   await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
 
   // ── T-01 Overview ────────────────────────────────────────────────────────
-  await expect(page.getByText("Good morning")).toBeVisible({ timeout: 15_000 })
+  // A regex across all three greetings, not the literal "Good morning" this
+  // asserted until P3.2. The screen used to render "Good morning." at every
+  // hour of the day, so a literal was safe; it now greets by the reader's
+  // actual local time, which means a fixed string turns this suite red for
+  // sixteen hours out of every twenty-four. `greetingFor` owns the boundaries
+  // and is unit-tested at each of them (tests/unit/utils.test.ts); this only
+  // needs to prove the header rendered at all.
+  await expect(page.getByText(/Good (morning|afternoon|evening)/)).toBeVisible({
+    timeout: 15_000,
+  })
   // Scoped to <main>, not the whole page: the sidebar's "Your classes" list
   // (ClassesNavSection) links to the same class with the same accessible
   // name, which would otherwise make this locator ambiguous.

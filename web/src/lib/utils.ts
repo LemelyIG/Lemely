@@ -99,6 +99,26 @@ export function initialsOf(name: string): string {
     .join("")
 }
 
+/**
+ * Time-of-day greeting for a 0-23 hour, in the reader's own local time.
+ *
+ * The student Overview said "Good afternoon" unconditionally, at every hour of
+ * the day, which made the first line of the first screen the one sentence on
+ * the page that was reliably false for most of its readers — students revise
+ * at night.
+ *
+ * A pure function taking the hour rather than reading the clock itself, so it
+ * is testable at every boundary without faking timers. Evening runs from 18:00
+ * round to 04:59 deliberately: greeting someone with "good morning" at two in
+ * the morning is the same error in the other direction, and a student still
+ * working at that hour has not started their morning yet.
+ */
+export function greetingFor(hour: number): string {
+  if (hour >= 5 && hour < 12) return "Good morning"
+  if (hour >= 12 && hour < 18) return "Good afternoon"
+  return "Good evening"
+}
+
 /** RFC 4180 quoting: a cell containing a quote, comma or newline is wrapped
  * in quotes with its own quotes doubled. */
 function escapeCsvCell(value: string): string {

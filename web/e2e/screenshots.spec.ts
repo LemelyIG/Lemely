@@ -185,9 +185,11 @@ for (const bp of BREAKPOINTS) {
       await loginUI(page, email)
 
       await expect(page.getByText("Loading overview…")).toHaveCount(0, { timeout: 15_000 })
-      await expect(
-        page.getByText("Correct your first paper to see it here"),
-      ).toBeVisible()
+      // P3.2 replaced S-06's single centred EmptyState with the composed
+      // `GettingStarted` panel, so this asserts on the new heading. The
+      // screenshot this gates is the first-run capture, which is exactly the
+      // surface that changed, so the assertion has to move with it.
+      await expect(page.getByText("Let's get your first paper marked")).toBeVisible()
       await shoot(page, "S-06", "empty", bp.width)
 
       expect(errors, `console/page errors during capture: ${JSON.stringify(errors, null, 2)}`)
