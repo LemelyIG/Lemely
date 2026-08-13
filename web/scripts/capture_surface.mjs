@@ -786,7 +786,305 @@ const TEACHER_QUIZZES_STATES = {
   error: { quizzes: null, status: 500 },
 }
 
+/* ── Parent (P4.6, surface 6) ──────────────────────────────────────────────
+ *
+ * Field-for-field `lemely/web/schemas_parent.py` (camelCase, as
+ * `lib/parentTypes.ts` mirrors it). Every number and name here is invented for
+ * the capture: these are not product data, they are never shipped, and no
+ * claim in any report is derived from them.
+ *
+ * Two children, not one, on purpose. `screens/Children.tsx` redirects a
+ * single-child parent straight past P-01, and both the header's child switcher
+ * and the breadcrumb's "Your children" rung are conditional on there being a
+ * list to go back to — so a one-child fixture would photograph three of this
+ * surface's changes in their hidden state.
+ */
+const PARENT_SESSION = { userId: "capture-parent", role: "parent" }
+const PARENT_PROFILE = {
+  userId: "capture-parent",
+  email: "n.farouk@example.com",
+  displayName: "Nadia Farouk",
+  role: "parent",
+}
+
+const PARENT_CHILDREN = {
+  children: [
+    {
+      childId: "child-1",
+      displayName: "Amina Farouk",
+      classes: [{ name: "Physics 11B", subjectCode: "0625", schoolName: "Nile International" }],
+      statusLine: "Working steadily. Physics is her strongest subject and her marks are holding.",
+      trend: 4.2,
+      lastActivityAt: "2026-08-12T18:20:00Z",
+    },
+    {
+      childId: "child-2",
+      displayName: "Omar Farouk",
+      classes: [{ name: "Maths 10A", subjectCode: "0580", schoolName: null }],
+      statusLine: "Nothing marked in the last three weeks, and his last two papers were lower.",
+      trend: -6.8,
+      lastActivityAt: null,
+    },
+  ],
+}
+
+const PARENT_WEAK_TOPICS = [
+  { topic: "Thermal physics", lostMarks: 14, maximumMarks: 22, accuracy: 0.36 },
+  { topic: "Moments and equilibrium", lostMarks: 9, maximumMarks: 18, accuracy: 0.5 },
+  { topic: "Electromagnetic induction", lostMarks: 6, maximumMarks: 20, accuracy: 0.7 },
+  { topic: "Waves", lostMarks: 3, maximumMarks: 16, accuracy: 0.81 },
+]
+
+const PARENT_OVERVIEW = {
+  childId: "child-1",
+  displayName: "Amina Farouk",
+  activity: {
+    totalPapers: 11,
+    lastActiveAt: "2026-08-12T18:20:00Z",
+    daysSinceLastActivity: 2,
+  },
+  atRiskFlags: [
+    {
+      reason: "declining_trend",
+      summary: "Declining over the last 3 papers: 62% -> 55% -> 48% (14pp drop)",
+      evidence: { percentages: [62, 55, 48] },
+    },
+  ],
+  subjects: [
+    {
+      subjectCode: "0625",
+      subjectName: "Physics",
+      predictedGrade: "B",
+      target: null,
+      latestPercentage: 68.4,
+      paperCount: 7,
+      trend: [
+        { recordedAt: "2026-05-02T10:00:00Z", percentage: 58 },
+        { recordedAt: "2026-06-14T10:00:00Z", percentage: 64 },
+        { recordedAt: "2026-08-01T10:00:00Z", percentage: 68 },
+      ],
+    },
+    {
+      subjectCode: "0580",
+      subjectName: "Mathematics",
+      predictedGrade: "C",
+      target: null,
+      latestPercentage: 54,
+      paperCount: 4,
+      trend: [
+        { recordedAt: "2026-06-01T10:00:00Z", percentage: 61 },
+        { recordedAt: "2026-07-20T10:00:00Z", percentage: 54 },
+      ],
+    },
+  ],
+  recentPapers: [
+    {
+      paperId: "0625/42",
+      subjectCode: "0625",
+      subjectName: "Physics",
+      marks: "55 / 80",
+      grade: "B",
+      recordedAt: "2026-08-12T18:20:00Z",
+    },
+    {
+      paperId: "0580/22",
+      subjectCode: "0580",
+      subjectName: "Mathematics",
+      marks: "38 / 70",
+      grade: "C",
+      recordedAt: "2026-07-20T09:05:00Z",
+    },
+  ],
+  weakTopics: PARENT_WEAK_TOPICS,
+}
+
+/** The same child before anything has been marked. Not a trimmed copy of the
+ * populated fixture: the whole point is the empty branches, so every list is
+ * genuinely empty and the nullable activity fields are null rather than 0. */
+const PARENT_OVERVIEW_NEW = {
+  childId: "child-1",
+  displayName: "Amina Farouk",
+  activity: { totalPapers: 0, lastActiveAt: null, daysSinceLastActivity: null },
+  atRiskFlags: [],
+  subjects: [],
+  recentPapers: [],
+  weakTopics: [],
+}
+
+const PARENT_SUBJECT = {
+  childId: "child-1",
+  subjectCode: "0625",
+  subjectName: "Physics",
+  predictedGrade: "B",
+  papers: [
+    { paperId: "0625/42", marks: "55 / 80", grade: "B", recordedAt: "2026-08-12T18:20:00Z" },
+    { paperId: "0625/22", marks: "31 / 40", grade: "A", recordedAt: "2026-06-14T11:00:00Z" },
+    { paperId: "0625/41", marks: "44 / 80", grade: "C", recordedAt: "2026-05-02T10:00:00Z" },
+  ],
+  boundaryDistance: {
+    nextGrade: "A",
+    marksNeeded: 6,
+    summary: "On the June 2026 boundaries an A started at 61 of 80 on this paper.",
+  },
+  weakTopics: PARENT_WEAK_TOPICS.slice(0, 3),
+}
+
+/** Already on the top grade, so the backend computes no distance and the panel
+ * is omitted rather than rendered as "0 marks from". */
+const PARENT_SUBJECT_TOP = {
+  ...PARENT_SUBJECT,
+  predictedGrade: "A*",
+  boundaryDistance: null,
+  weakTopics: [],
+}
+
+const PARENT_WEAKNESSES = { childId: "child-1", weakTopics: PARENT_WEAK_TOPICS }
+const PARENT_WEAKNESSES_EMPTY = { childId: "child-1", weakTopics: [] }
+
+const PARENT_CHILDREN_STATES = {
+  populated: { children: PARENT_CHILDREN },
+  unlinked: { children: { children: [] } },
+  loading: { delayMs: 8_000 },
+  error: { status: 500, children: { detail: "Parent service unavailable." } },
+}
+
+const PARENT_OVERVIEW_STATES = {
+  populated: { overview: PARENT_OVERVIEW },
+  "nothing-marked": { overview: PARENT_OVERVIEW_NEW },
+  loading: { delayMs: 8_000 },
+  "not-linked": { status: 403, overview: { detail: "Child 6f2c is not linked to this parent" } },
+}
+
+const PARENT_SUBJECT_STATES = {
+  populated: { subject: PARENT_SUBJECT },
+  "top-grade": { subject: PARENT_SUBJECT_TOP },
+  loading: { delayMs: 8_000 },
+  error: { status: 500, subject: { detail: "Boundary store unavailable." } },
+}
+
+const PARENT_WEAKNESSES_STATES = {
+  populated: { weaknesses: PARENT_WEAKNESSES },
+  empty: { weaknesses: PARENT_WEAKNESSES_EMPTY },
+  loading: { delayMs: 8_000 },
+  error: { status: 500, weaknesses: { detail: "Weakness store unavailable." } },
+}
+
 const SURFACES = {
+  /* ── Parent (P4.6, surface 6) ─────────────────────────────────────────── */
+
+  "parent-children": {
+    prefix: "parent-children",
+    route: "/parent",
+    states: PARENT_CHILDREN_STATES,
+    session: PARENT_SESSION,
+    profile: PARENT_PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/parent/children", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.children ?? {}),
+        })
+      })
+    },
+  },
+
+  "parent-overview": {
+    prefix: "parent-overview",
+    route: "/parent/children/child-1",
+    states: PARENT_OVERVIEW_STATES,
+    session: PARENT_SESSION,
+    profile: PARENT_PROFILE,
+    /*
+     * The child list is stubbed unconditionally and successfully on the three
+     * child screens, because the shell reads it for the switcher and for the
+     * breadcrumb's first rung. Registration order is load-bearing in the same
+     * way the runner's catch-all is: Playwright matches the most recently
+     * registered route first, so the list goes on before the detail route that
+     * has to win.
+     */
+    async stub(page, state) {
+      await page.route("**/api/parent/children", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(PARENT_CHILDREN),
+        }),
+      )
+      await page.route("**/api/parent/children/*", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.overview ?? {}),
+        })
+      })
+    },
+  },
+
+  "parent-subject": {
+    prefix: "parent-subject",
+    route: "/parent/children/child-1/subjects/0625",
+    states: PARENT_SUBJECT_STATES,
+    session: PARENT_SESSION,
+    profile: PARENT_PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/parent/children", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(PARENT_CHILDREN),
+        }),
+      )
+      await page.route("**/api/parent/children/*/subjects/*", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.subject ?? {}),
+        })
+      })
+    },
+  },
+
+  "parent-weaknesses": {
+    prefix: "parent-weaknesses",
+    route: "/parent/children/child-1/weaknesses",
+    states: PARENT_WEAKNESSES_STATES,
+    session: PARENT_SESSION,
+    profile: PARENT_PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/parent/children", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(PARENT_CHILDREN),
+        }),
+      )
+      await page.route("**/api/parent/children/*/weaknesses", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.weaknesses ?? {}),
+        })
+      })
+    },
+  },
+
   /* ── Teacher (P4.5, surface 5) ─────────────────────────────────────────── */
 
   "teacher-overview": {

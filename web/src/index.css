@@ -333,6 +333,29 @@
   --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
   --ease-celebrate: cubic-bezier(0.18, 1.5, 0.5, 1);
 
+  /* P4.6 · the banned curve was the default on every transition in the product.
+     Tailwind ships `--default-transition-timing-function: cubic-bezier(0.4, 0,
+     0.2, 1)` and `--default-transition-duration: 150ms`, and a bare
+     `transition-colors` (27 call sites across the migrated surfaces, plus every
+     kit component) names no easing, so it inherits them. That curve is
+     symmetric ease-in-out by another spelling — the exact easing §3.2 item 14
+     bans outright — and every one of those call sites was running on it.
+
+     Verified in the shipped bundle rather than reasoned about:
+     `dist/assets/index-*.css` carried `--default-transition-timing-function:
+     cubic-bezier(.4, 0, .2, 1)` with six utilities resolving through
+     `var(--tw-ease, var(--default-transition-timing-function))`.
+
+     The same failure shape as D4.1's `--font-serif`: a well-formed utility
+     silently resolving to somebody else's default. It is invisible to the
+     resolves-to-nothing gate, because these classes do emit rules — they emit
+     the wrong ones. Repointing the two defaults fixes every existing call site
+     at once and makes the plain `transition-colors` idiom correct by default,
+     which is better than asking twenty-seven call sites to remember an easing.
+     `tests/unit/motionDefaults.test.ts` pins it in both directions. */
+  --default-transition-timing-function: var(--ease-out-soft);
+  --default-transition-duration: 120ms; /* §9.1 dur-instant */
+
   /* Inline-axis sign for keyframes. `transform` is physical — there is no
      logical translate — so any animation that moves along the reading axis
      multiplies by this instead of hardcoding a negative. Flipped under

@@ -7510,3 +7510,163 @@ original 67 were.
   rather than reasoning, the same call D4.4 recorded for the friend actions.
 - **`Chip` migration.** Still build-era, still consumed by un-migrated screens,
   unchanged from D4.3's and D4.4's notes.
+
+---
+
+## D4.6 — Redesign Phase 4, surface 6 (parent views): the banned easing was the default on every transition, and two back links to one place
+
+**Surface:** the whole parent portal — the shell plus its four screens
+(`portals/parent/`, 5 files, 1,015 lines), plus the two kit components only it
+and one teacher screen still consume (`weakness-chip.tsx`,
+`trend-sparkline.tsx`).
+
+### The headline: DESIGN.md's banned easing was in force product-wide, and no call site named it
+
+§3.2 item 14 says "never `linear` or `ease-in-out` on a designed transition",
+and §9.1 gives four custom easings for the purpose. Every one of the 27
+`transition-colors` / `transition-transform` call sites across the migrated
+surfaces and the whole component kit was running on
+`cubic-bezier(0.4, 0, 0.2, 1)` — symmetric ease-in-out under another spelling —
+because Tailwind's own `--default-transition-timing-function` is that curve and
+a bare `transition-*` inherits it.
+
+**Verified in the shipped bundle before and after, not reasoned about.**
+`dist/assets/index-*.css` carried
+`--default-transition-timing-function: cubic-bezier(.4, 0, .2, 1)` with six
+utilities resolving through `var(--tw-ease, var(--default-transition-timing-function))`;
+after the change it carries `var(--ease-out-soft)` at `.12s`.
+
+This is D4.1's `--font-serif` shape a fourth time — a well-formed utility
+silently resolving to somebody else's default — with one difference that
+matters and is worth stating: `font-serif`, `text-display` and `lm-head`
+resolved to *nothing*, which is what `utilityExistence.test.ts` was built to
+see. These classes emit rules. They emit the **wrong** ones, which is invisible
+from every direction that gate looks. So the deliverable is a gate that checks
+the *value* rather than the name (`tests/unit/motionDefaults.test.ts`), pinned
+in both directions and inversion-tested: with the default put back to
+Tailwind's curve, four of its assertions fail.
+
+The fix is two lines in the `@theme` block rather than an edit to 27 call
+sites, and it is deliberately the defaults rather than a sweep: a plain
+`transition-colors` is the idiom the codebase already writes, and the right
+repair is to make that idiom correct, not to ask every future call site to
+remember an easing.
+
+**Found because I nearly shipped the same defect myself.** The parent shell's
+first draft wrote `duration-instant`, on the assumption that `--dur-instant`
+generates a utility the way `--ease-out-soft` does. It does not: the easings
+live in `@theme` and the durations live in `:root`, so `duration-instant`
+emits nothing. Checking that assumption rather than trusting it is what
+surfaced the defaults. `motionDefaults.test.ts` pins the named-duration case
+too.
+
+### The second finding: every child screen had two back links to the same place
+
+P3.1 added the shell's breadcrumb trail without removing the inline back links
+the three child screens already carried, so each of them shipped a crumb row
+with a second, redundant affordance stacked directly beneath it — "‹ Your
+children" under `Your children › Overview`, "‹ Back" under `… › Overview ›
+This subject`. For the reader PRODUCT.md describes as having "no interest in
+learning an interface", two controls in a column doing one job is not a
+convenience; it is a decision to make. The crumb stays and the three inline
+links are gone.
+
+The crumb also stopped saying "This subject". It now names the subject, read
+from the react-query entry the screen below has already filled
+(`useCachedChildSubject`, `enabled: false` — subscribed to the cache, never
+fetching), falling back to the syllabus code from the URL. `getQueryData` was
+tried first and is wrong here: it reads without subscribing, so the crumb would
+have stayed on its fallback for the life of the screen.
+
+### `parentOutcome.ts` is not `teacherOutcome.ts` with the nouns changed
+
+All four parent screens rendered a raw `error.message`. The obvious fix was to
+reuse the teacher module. Reading the endpoints rather than assuming showed why
+that would have been wrong: **every `detail` the parent API can produce is
+machine text** — `str(exc)` from a stringified Python exception (`parent.py`
+122–130), and raw UUIDs in the 403 and 404 (`Child 6f2c… is not linked to this
+parent`). `teacherOutcome.ts` is detail-first precisely because several teacher
+endpoints write their 4xx `detail` for a human; the parent routes have no such
+case. So this module classifies on status and writes every sentence itself, and
+a test asserts the negative directly: no branch may echo the server's detail,
+and no message may contain a UUID.
+
+It also has **no `mutationFailureMessage`**, because `routers/parent.py` has no
+write route. A write-failure helper here would be a function with no caller
+asserting "nothing was saved" about saves that cannot happen. Its absence is
+recorded so the next surface does not add it back for symmetry.
+
+### Found by looking at the rendered pages (six fixes, one batch)
+
+1. **The same fact, two numbers, stacked.** The "Last worked" stat card printed
+   `relativeTime(lastActiveAt)` above `daysSinceLastActivity`, and the capture
+   photographed them disagreeing: **"1d ago" directly over "2 days ago"**, from
+   one timestamp. Two derivations of the same fact — one in the browser, one on
+   the server — round differently across a day boundary, and a parent has no
+   way to tell which is the answer. This is the D3.3/D3.4/D3.5 divergence
+   again, except visible in a single card rather than across two screens. One
+   figure now.
+2. **"6 more marks for a A".** A hardcoded article, producing the wrong one for
+   exactly the grades a parent most wants to read about. `gradeArticle` spells
+   the rule out by letter name rather than by vowel test, because "F" fails a
+   vowel test and "U" passes one. Pinned by test.
+3. **Good news in the alert register.** The boundary-distance panel — "6 more
+   marks for an A", the most encouraging sentence on the screen — was on
+   `--accent-wash`, which sits a hair from `--err-wash` on this palette. This
+   is surface 5's finding (d) recurring: there, a healthy "Assigned" state was
+   accent-toned and read as alarm. It is `info` now, which is §3.6's register
+   for a neutral notice.
+4. **A tone-coloured percentage with no label**, for the third time in this
+   surface family after surface 4's rank column and surface 5's review-queue
+   confidence. A bare "36%" pinned to the end of a row on a page headed "what
+   to work on" invites being read as a score out of a hundred; it is the share
+   of the marks available on a topic that the child has taken, and it says so.
+5. **The same chip crowded the row at 375**, taking half the width and wrapping
+   both the topic title and its sentence. It drops below the text at mobile.
+6. **An empty state that was a bare sentence in a box.** §12 wants marginalia
+   plus an explanation plus the action that fills it; the composed version has
+   the first two, and deliberately not the third — everything that fills a
+   parent's page is done by the child on their own account, and a button for
+   this reader to press would be a button that does nothing.
+
+### Also fixed, each already fixed once elsewhere
+
+- **The placeholder brand lockup**, audit finding M9's third and last stamp
+  (student sidebar went with surface 1, teacher with surface 5). It was also
+  this file's only `font-serif` call site.
+- **No texture layer**, the same gap surface 5 found in the teacher portal.
+  `paper-grain` on the shell, `margin-rule` on each screen header, one Caveat
+  line on the two empty states.
+- **Text loaders** on all four screens, replaced with `loading-shapes`.
+- **Counts and marks set in the body or display face**, moved to the data face
+  (§4): the papers-marked total, every `marks` string, every paper code.
+
+Three surfaces running have now each found a defect already fixed on another.
+That is the standing lesson, not a coincidence.
+
+### The container width, recorded rather than quietly kept
+
+The portal stays at 960px, which is none of §13's three container values.
+§2 puts parent views in the Operate lane, but Operate's 1200px is measured
+beside a 240–280px sidebar — it is a content well, not a page — and this portal
+has no sidebar by design (UI spec §4.8, "two taps to the answer"). 960px is
+that same well without the sidebar in front of it. Stated in the shell's
+module doc so the next reader finds a reason rather than a drift.
+
+### One gate inconsistency, observed and deliberately not changed
+
+`design-tokens.test.ts` does not strip comments, so it reported the two hex
+values quoted in a code comment explaining finding 3. Its sibling
+`studyNotebookMigration.test.ts` strips comments precisely so a file may name
+the thing it stopped using. The comment was reworded rather than the gate
+loosened: relaxing a colour gate to let my own prose through is the wrong
+direction to resolve that in, and the inconsistency is small. Recorded here
+rather than fixed.
+
+### Gates
+
+typecheck / lint / **980 unit (+53)** / check:copy **14** (down from 18, none
+in the parent portal) / both builds / 31 Python token+constant tests: green.
+e2e: **still blocked, B4**. Visual round: 32 captures across 4 registered
+sub-surfaces, all distinct, console errors only from the deliberately-failing
+states.

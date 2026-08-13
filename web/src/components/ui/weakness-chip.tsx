@@ -14,12 +14,13 @@ import { cn } from "@/lib/utils"
  * (1/2/3, like a signal-strength glyph) plus an aria-label, so the ladder
  * survives greyscale/colorblind rendering (MISSION: no meaning by color
  * alone). Tones reuse the shared warn/err tokens — index.css has no
- * dedicated "severity" scale — and `minor` deliberately stays neutral (t3)
+ * dedicated "severity" scale — and `minor` deliberately stays neutral
+ * (`--ink-faint`)
  * rather than amber/red, so a small weakness doesn't read as an alarm.
  */
 
 const severityConfig = {
-  minor: { bars: 1, textTone: "text-t3", barTone: "bg-t3", label: "Minor" },
+  minor: { bars: 1, textTone: "text-ink-faint", barTone: "bg-ink-faint", label: "Minor" },
   moderate: {
     bars: 2,
     textTone: "text-warn",
@@ -52,7 +53,7 @@ function SeverityBars({ severity }: { severity: WeaknessSeverity }) {
           className={cn(
             "w-1 rounded-full",
             h,
-            i < cfg.bars ? cfg.barTone : "bg-border",
+            i < cfg.bars ? cfg.barTone : "bg-rule",
           )}
         />
       ))}
@@ -61,13 +62,13 @@ function SeverityBars({ severity }: { severity: WeaknessSeverity }) {
 }
 
 const weaknessChipVariants = cva(
-  "inline-flex text-left transition-colors border border-border bg-surface",
+  "inline-flex text-left transition-colors border border-rule bg-paper-raised",
   {
     variants: {
       variant: {
         list: "w-full items-center justify-between gap-3 rounded-md px-3.5 py-3",
         grid: "w-full flex-col items-start gap-2.5 rounded-md px-3.5 py-3.5",
-        inline: "items-center gap-1.5 rounded-full bg-surface-2 border-transparent px-2.5 py-1",
+        inline: "items-center gap-1.5 rounded-full bg-paper-sunk border-transparent px-2.5 py-1",
       },
     },
     defaultVariants: { variant: "list" },
@@ -98,8 +99,8 @@ export function WeaknessChip({
   const interactive = Boolean(onClick)
   const commonClassName = cn(
     weaknessChipVariants({ variant }),
-    interactive && "cursor-pointer hover:bg-surface-2 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-    variant === "inline" && interactive && "hover:bg-surface",
+    interactive && "cursor-pointer hover:bg-paper-sunk active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+    variant === "inline" && interactive && "hover:bg-paper-raised",
     className,
   )
 
@@ -107,28 +108,28 @@ export function WeaknessChip({
     variant === "inline" ? (
       <>
         <SeverityBars severity={severity} />
-        <span className="text-xs font-medium text-t1">{topic}</span>
+        <span className="text-body-sm font-medium text-ink">{topic}</span>
       </>
     ) : variant === "grid" ? (
       <>
         <div className="flex w-full items-center justify-between">
           <SeverityBars severity={severity} />
-          {interactive ? <CaretRight size={12} className="text-t3" /> : null}
+          {interactive ? <CaretRight size={12} className="text-ink-faint" /> : null}
         </div>
-        <div className="text-body-md font-medium text-t1">{topic}</div>
-        {meta ? <div className="text-metadata text-t3">{meta}</div> : null}
+        <div className="text-body-md font-medium text-ink">{topic}</div>
+        {meta ? <div className="text-data-sm text-ink-faint">{meta}</div> : null}
       </>
     ) : (
       <>
         <div className="flex min-w-0 items-center gap-3">
           <SeverityBars severity={severity} />
           <div className="min-w-0">
-            <div className="truncate text-body-md font-medium text-t1">{topic}</div>
-            {meta ? <div className="mt-0.5 text-metadata text-t3">{meta}</div> : null}
+            <div className="truncate text-body-md font-medium text-ink">{topic}</div>
+            {meta ? <div className="mt-0.5 text-data-sm text-ink-faint">{meta}</div> : null}
           </div>
         </div>
         {interactive ? (
-          <CaretRight size={14} className="flex-none text-t3" />
+          <CaretRight size={14} className="flex-none text-ink-faint" />
         ) : null}
       </>
     )

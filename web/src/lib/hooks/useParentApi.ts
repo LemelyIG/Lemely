@@ -46,6 +46,32 @@ export function useChildSubject(
   })
 }
 
+/**
+ * The subject already in cache, or `undefined` — never a request.
+ *
+ * P4.6 · the portal shell's breadcrumb needs one field of the subject detail
+ * (its translated name) on the subject route, and it must not pay a second
+ * request for it. `enabled: false` means react-query never fetches on this
+ * observer's behalf, but the observer is still subscribed to the cache entry,
+ * so when `SubjectDetail`'s own query resolves the crumb re-renders with the
+ * name. `getQueryData` would have read the same value without subscribing, and
+ * the crumb would have stayed on its fallback for the life of the screen.
+ *
+ * Same query key as `useChildSubject` on purpose: two keys for one resource is
+ * how a cache stops being one.
+ */
+export function useCachedChildSubject(
+  childId: string,
+  subjectCode: string,
+): SubjectDetail | undefined {
+  return useQuery({
+    queryKey: ["parent", "children", childId, "subjects", subjectCode],
+    queryFn: () =>
+      request<SubjectDetail>(`/parent/children/${childId}/subjects/${subjectCode}`),
+    enabled: false,
+  }).data
+}
+
 export function useChildWeaknesses(childId: string): UseQueryResult<ChildWeaknesses, Error> {
   return useQuery({
     queryKey: ["parent", "children", childId, "weaknesses"],

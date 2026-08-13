@@ -89,6 +89,15 @@ const SCANNED_FILES = [
   "src/portals/teacher/screens/ClassRoster.tsx",
   "src/portals/teacher/screens/StudentDetail.tsx",
   "src/portals/teacher/screens/Announcements.tsx",
+  // Phase 4, surface 6 — the parent portal.
+  "src/lib/parentOutcome.ts",
+  "src/portals/parent/index.tsx",
+  "src/portals/parent/screens/Children.tsx",
+  "src/portals/parent/screens/ChildOverview.tsx",
+  "src/portals/parent/screens/SubjectDetail.tsx",
+  "src/portals/parent/screens/Weaknesses.tsx",
+  "src/components/ui/weakness-chip.tsx",
+  "src/components/ui/trend-sparkline.tsx",
 ]
 
 const CSS_PATH = "src/index.css"

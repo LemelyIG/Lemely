@@ -1,7 +1,10 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { Link, Navigate } from "react-router-dom"
 import { CaretRight, TrendDown, TrendUp } from "@phosphor-icons/react"
 import { useChildren } from "@/lib/hooks/useParentApi"
 import { ErrorState } from "@/components/ui/state-views"
+import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { relativeTime } from "@/lib/utils"
 import type { ChildSummary } from "@/lib/parentTypes"
 
@@ -40,28 +43,30 @@ function ChildCard({ child }: { child: ChildSummary }) {
   return (
     <Link
       to={`/parent/children/${child.childId}`}
-      className="flex items-start gap-4 rounded-md border border-border bg-surface p-5 hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      className="group flex items-start gap-4 rounded-lg border border-rule bg-paper-raised p-6 transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
     >
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="text-body-lg font-medium text-t1">{child.displayName}</div>
+        <div className="text-display-sm text-ink">{child.displayName}</div>
 
         {child.classes.length > 0 ? (
-          <div className="text-body-md text-t2">
+          <div className="text-body-sm text-ink-faint">
             {child.classes
               .map((c) => (c.schoolName ? `${c.name} · ${c.schoolName}` : c.name))
               .join(" · ")}
           </div>
         ) : null}
 
-        <p className="text-body-md text-t1">{child.statusLine}</p>
+        <p className="text-body-md text-ink">{child.statusLine}</p>
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-md text-t2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-sm text-ink-muted">
           {trend ? (
+            // Direction is never colour alone: the icon differs in shape and
+            // the sentence names it ("Up" / "Down") in words.
             <span className="flex items-center gap-1.5">
               {trend.up ? (
-                <TrendUp size={15} className="text-ok" />
+                <TrendUp size={15} className="text-ok" aria-hidden="true" />
               ) : (
-                <TrendDown size={15} className="text-warn" />
+                <TrendDown size={15} className="text-warn" aria-hidden="true" />
               )}
               {trend.text}
             </span>
@@ -74,7 +79,14 @@ function ChildCard({ child }: { child: ChildSummary }) {
           </span>
         </div>
       </div>
-      <CaretRight size={18} className="mt-1 flex-none text-t3" aria-hidden="true" />
+      {/* 1px inline shift on hover, per §9.2 — transform and colour only, and
+          the arrow is the thing that moves rather than the whole card, so a
+          long status line never reflows under the pointer. */}
+      <CaretRight
+        size={18}
+        className="mt-1 flex-none text-ink-faint transition-transform ease-out-soft group-hover:translate-x-px"
+        aria-hidden="true"
+      />
     </Link>
   )
 }
@@ -97,14 +109,13 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * naming it here would promise a path a parent cannot take.
  *
  * P3.2 reviewed this as the parent role's first-run flow and deliberately left
- * its structure alone. It is already the composed getting-started view this
+ * its structure alone. It is already the composed getting-started view that
  * phase asks for, and it does NOT become the shared `GettingStarted` component
  * the student and teacher dashboards now use: that component models steps the
  * reader performs, each with a route to go to, and every step here is an action
  * somebody else takes on another device. Forcing it into a shape built around
  * "here is your next button" would mean either three inert steps or three
- * buttons that go nowhere. Only the copy changed, to clear two em-dashes the
- * mission bans in UI text (§3.2 item 10).
+ * buttons that go nowhere.
  *
  * Step 2 says "the number you signed in with" rather than printing it back.
  * `ProfileDTO` carries no phone, and adding one to `/api/me/profile` to
@@ -112,38 +123,47 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * already owns that fact — the same call P3.8 chunk d made about school
  * memberships. The parent typed the number moments ago; the generic phrasing
  * costs them nothing.
+ *
+ * P4.6 changed the surface and not the structure: tokens, the margin rule
+ * (§8.5), the step numbers on the data face, and one line of Caveat marginalia
+ * (§12). The marginalia is the only decorative element and it carries nothing:
+ * remove it and the screen still says everything it said.
  */
 function NoChildrenLinked() {
   return (
-    <div className="mx-auto flex max-w-140 flex-col gap-5 rounded-md border border-border bg-surface p-6">
-      <div className="flex flex-col gap-2">
+    <div className="mx-auto flex max-w-140 flex-col gap-6 rounded-lg border border-rule bg-paper-raised p-8">
+      <div className="margin-rule flex flex-col gap-2">
+        <p className="text-hand text-ink-muted">Almost there</p>
         {/* `h1`, not `h2`: in this state it IS the page's heading, and there is
             no other one on the screen — so as an `h2` the empty state shipped
             with no level-one heading at all (axe `page-has-heading-one`, found
-            by P3.10 chunk e2a's per-state pass). Visually identical. */}
-        <h1 className="text-display-md text-t1">You're signed in. One step to go.</h1>
-        <p className="text-body-md text-t2">
+            by P3.10 chunk e2a's per-state pass). */}
+        <h1 className="text-display-lg text-ink">You're signed in. One step to go.</h1>
+        <p className="text-body-md text-ink-muted">
           Nobody has shared their results with you yet. Your child adds you from their own
           Lemely account, so they stay in control of who sees their marks.
         </p>
       </div>
 
-      <ol className="flex flex-col gap-3">
+      <ol className="flex flex-col gap-4">
         {[
           "Ask your child to open Lemely and sign in.",
           "In their account, they add a parent using the phone number you just signed in with.",
           "Their results appear here straight away. There is no code to enter and nothing to accept.",
         ].map((step, index) => (
           <li key={index} className="flex items-start gap-3">
-            <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-accent-subtle text-body-md font-medium text-t1">
+            <span
+              aria-hidden="true"
+              className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-accent-wash text-data-sm text-accent-ink"
+            >
               {index + 1}
             </span>
-            <span className="text-body-md text-t1">{step}</span>
+            <span className="text-body-md text-ink">{step}</span>
           </li>
         ))}
       </ol>
 
-      <p className="text-body-md text-t2">
+      <p className="rounded-md bg-paper-sunk p-4 text-body-sm text-ink-muted">
         Signing in first is what makes this work. Your child can only add a parent who
         already has an account, so nobody can be added by mistake.
       </p>
@@ -155,10 +175,13 @@ export function Children() {
   const { data, isPending, isError, error } = useChildren()
 
   if (isPending) {
+    // Skeletons, not a line of text (§12): the shape below is the heading plus
+    // the card list this screen resolves to, so nothing jumps when it arrives.
     return (
-      <p role="status" aria-live="polite" className="text-body-md text-t2">
-        Loading your children…
-      </p>
+      <div className="flex flex-col gap-6">
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={2} />
+      </div>
     )
   }
 
@@ -166,7 +189,7 @@ export function Children() {
     return (
       <ErrorState
         heading="We couldn't load your children"
-        body={error instanceof Error ? error.message : "Please try again in a moment."}
+        body={parentLoadFailureMessage(error)}
         action={{ label: "Try again", onClick: () => window.location.reload() }}
       />
     )
@@ -186,8 +209,13 @@ export function Children() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <h1 className="text-display-md text-t1">Your children</h1>
+    <div className="flex flex-col gap-6">
+      <div className="margin-rule flex flex-col gap-1">
+        <h1 className="text-display-lg text-ink">Your children</h1>
+        <p className="text-body-md text-ink-muted">
+          Tap a name to see how they're doing.
+        </p>
+      </div>
       <div className="flex flex-col gap-3">
         {children.map((child) => (
           <ChildCard key={child.childId} child={child} />
