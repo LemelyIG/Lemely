@@ -409,7 +409,16 @@ export function Announcements() {
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
         <Eyebrow>Announcements &amp; exams</Eyebrow>
-        <h1 className="text-display">What is coming up</h1>
+        {/* P4.4, cross-surface: `text-display` is not a class. Nothing defines
+            it and the shipped bundle emits no rule for it, so this title has
+            been rendering at the browser's default h1 in the body face. The
+            defect was found on the gamification screens and, per P4.2's second
+            lesson, grepped for across the other portals — this is the fourth
+            and last call site. `display-lg` is §4.2's in-app page title.
+            The rest of this screen is still un-migrated and keeps its compat
+            tokens until its own surface comes up; correcting a class that
+            resolves to nothing is not a migration, it is a bug fix. */}
+        <h1 className="text-display-lg text-ink">What is coming up</h1>
       </header>
 
       <Countdown today={today} />

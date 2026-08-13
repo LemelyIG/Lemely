@@ -7174,3 +7174,159 @@ desktop well, D4.2's integrity-sidebar shape on the screen least able to carry i
 - `Chip` (`components/ui/chip.tsx`) is still the build-era component and is written
   entirely against compat aliases. This surface's call sites moved to `Badge`; the
   component itself is still consumed by un-migrated screens and dies with them.
+
+---
+
+## D4.4 — Redesign Phase 4, surface 4 (gamification): a page-title class that was never a class, and the celebration register built at last
+
+Surface 4 is `screens/Standings.tsx` (leaderboards), `screens/Friends.tsx`,
+`screens/Profile.tsx` (the training log) and `components/ui/xp-streak.tsx`.
+This is the surface DESIGN.md §9.3 was written for: the celebration register
+had no implementation anywhere in the product, only four unused tokens
+(`--ease-celebrate`, `--dur-celebrate`) and a paragraph of prose.
+
+### The headline: `text-display` is not a class, and four `<h1>`s carried it
+
+D4.1's finding was `--font-serif`: a token that never existed, so ~20 call
+sites rendered Georgia instead of Newsreader for the whole build era. **The
+same shape is here in a different family.** `text-display` is defined nowhere
+in `index.css`, there is no `--text-display` or `--color-display` for Tailwind
+to generate it from, and the shipped bundle contains **zero** rules matching
+it — verified by grepping `dist/assets/*.css` for `.text-display{`, not by
+reasoning about it.
+
+Four page titles named it: `Profile`, `Standings`, `Friends` and
+`Announcements`. All four rendered at the browser's default `<h1>` — 2em bold
+in the body sans face — where §4.2 puts `display-lg`, 32px Newsreader. Three
+are on this surface; the fourth is on an un-migrated screen and was fixed
+anyway, per P4.2's second lesson.
+
+**Twice is a pattern, so the deliverable is a gate for the pattern**:
+`tests/unit/utilityExistence.test.ts`. It compares the `text-`/`bg-`/`border-`/
+`font-` names migrated source uses against the names the stylesheet actually
+defines, and fails on any that resolve through none of the legitimate routes
+(a literal `.class`, a theme variable, a Tailwind built-in, an arbitrary value,
+an opacity modifier). Verified by inversion on the real string.
+
+Why nothing else caught either one, stated because it is the interesting part:
+the token gate greps for raw values *bypassing* the token block, and a missing
+class contains no value; the migration gate lists *build-era* names, and a
+name that never existed is not on it; contrast tests measure declared tokens,
+and this one was never declared; screenshots and axe see a heading that still
+looks like a heading. **A well-formed class name that resolves to nothing is
+invisible from every direction except comparing source against stylesheet.**
+
+### The celebration register (§9.3), and the one moment it deliberately omits
+
+`lib/celebration.ts` (rules, DOM-free, 20 tests) + `components/ui/celebration.tsx`
+(`CountUp`, `Flourish`, `Celebrate`, `MilestoneSticker`) + two keyframes in
+`index.css`. Three properties are load-bearing:
+
+1. **A count-up never displays a figure the student has not earned.**
+   `--ease-celebrate` overshoots y=1 by design; on a scale that is the spring,
+   on a *number* it would render ~1,240 XP on the way to 1,180. The easing is
+   shared, the number's progress is clamped, and monotonicity plus the ceiling
+   are pinned by tests.
+2. **Reduced motion is read in JS, not just CSS.** index.css's global rule
+   flattens CSS durations and cannot reach a `requestAnimationFrame` loop.
+   Without the `matchMedia` check, "reduced motion" would have meant
+   "everywhere except the one animation written in JavaScript".
+3. **Only an increase celebrates, and never a first observation.** A mount or a
+   refresh staging a gain that did not happen on this visit is §9.3's banned
+   engagement-celebration arrived at by accident. Day 1 is not a milestone for
+   the same reason.
+
+**§9.3 names "a leaderboard climb" and this surface does not have one.**
+`LeaderboardRow.rank` and `LeaderboardViewer.rank` are the only rank fields on
+the wire and both are *current*; nothing records where the student stood
+before. A climb flourish would have to invent the movement it congratulates, on
+a screen whose own header comment forbids inventing a last place. Not faked.
+It needs a `previousRank` on the DTO.
+
+### Five other findings
+
+- **C-9 `XPStreak` had no call site anywhere in the product.** Built in Phase 2
+  for this surface; this surface then hand-rolled its own cards. Same shape as
+  surface 3's unused texture classes. Resolved by giving it the call site its
+  docstring names: the student header. That pill has history — P3.10 chunk c
+  deleted a "24 day streak" pill because the 24 was a literal, and recorded
+  that wiring it to `StandingsDTO.streakDays` "would have replaced a hardcoded
+  lie with a mislabelled one" since that field counts distinct active days, not
+  consecutive ones. Its closing note was "streaks are Phase 5's to build for
+  real". Phase 5 built them, so the pill is restored from
+  `GET /api/student/xp`'s genuine `streak.current`. It renders nothing while
+  loading and nothing on failure (a `0` would state a broken streak the student
+  may not have), is hidden below 640px where this row has previously
+  overflowed, and is a `<Link>` to the training log.
+- **The header pill is shape-checked, not presence-checked.** It renders above
+  all 24 student routes, so `xp.data.streak.current` on a body without a
+  `streak` would throw *inside the shell* and blank every screen.
+  `request<XpProfile>` is a cast, not a validation. Found while stubbing the
+  captures, whose catch-all answers unmatched calls with `{}` — exactly that
+  body, exactly that crash.
+- **Friends reported every mutation failure in the wrong words, and two of
+  three in the wrong place.** All three rendered `err.message` verbatim, so a
+  dropped connection showed the browser's `TypeError: Failed to fetch`; and
+  accept/remove printed theirs in a block at the very bottom of the page, below
+  every section, so a student who declined a request at the top got a notice
+  quite possibly off-screen. `lib/friendOutcome.ts` owns the wording (keeping
+  the backend's own sentence where it wrote one for a human, which was a
+  considered decision and survives); placement moved into the section that
+  produced it.
+- **The opt-out toggle's `isError` was rendered nowhere.** A failed "Hide me"
+  left the control reading its old value with no explanation, and the student
+  reasonably concludes they are hidden when they are not. Same shape as surface
+  3's two destructive deletes.
+- **`npm run check:copy` never read a `.ts` file.** User-facing copy has been
+  moving out of components since P4.2 (`correctionOutcome.ts`, every screen's
+  `*Data.ts`). Extending the walk found **9 real em-dashes in user-facing
+  strings no run of this gate had ever seen, five of them on surface 3, which
+  had been reported clean.** D6.12's lesson again: a condition every harness
+  shares is a condition no harness tests. Here it was a file extension. The
+  reported total is not comparable across the change — 64 under the old scope,
+  67 under the new one. The count did not grow, the gate's eyesight did.
+
+### Found by the gates, in my own new code, worth recording
+
+- `tsc` caught `Celebrate` accepting a documented `flourish` prop and never
+  reading it — so `flourish={false}` on the training log's XP total was
+  throwing confetti anyway. That is P4.2's first lesson (a docstring stating a
+  rule the component breaks) reproduced by me, and caught by an
+  unused-parameter check rather than by anything looking at the screen.
+- The token gate rejected an arbitrary one-pixel radius on the confetti pieces,
+  then rejected the *comment* explaining the old value. Both correct.
+- A "known reference value" I asserted for the Bézier solver was wrong from
+  memory; the implementation was right. Replaced with a point derived by hand
+  in the test's own docstring, so the test asserts something other than that
+  the code equals itself.
+
+### Visual round
+
+30 captures across 3 registered sub-surfaces (`standings`, `friends`,
+`profile`), 1440 + 375, all distinct, console errors only from the deliberately
+failing states. One inspection round found four, all fixed in one batch, one
+confirm round, stopped (§3.2 item 16):
+(a) the Level and Streak cards labelled their figures in opposite orders while
+sitting side by side; (b) the "Your subjects" rank column had no label, so a
+tone-coloured "3" sat beside "9 papers" inviting the two to be read as a pair;
+(c) the Send request button was aligned to the field *wrapper*, which grows a
+line on error, so pressing it with a bad code dropped the button below the
+field; (d) the friend-code field spanned the full card width, about 1350px at
+1440, for an eight-character value.
+
+### Deliberately not done
+
+- **A confirmation modal on "Remove" / "Decline" / "Cancel".** D5.6 §3 settled
+  this: all three delete the same row, the mistake is cheap and recoverable by
+  asking again, and a modal would cost more than the error it prevents. Surface
+  3's confirmation finding was about *irreversible* destruction; this is not
+  that, and applying the same fix here would be pattern-matching rather than
+  reasoning.
+- **Lifetime stats and achievements on the training log.** Still absent, still
+  correct (D5.13 §3): every available source is wrong by construction under the
+  daily caps and the dedupe. The screen looks thin because that is its honest
+  shape.
+- **`Chip` migration.** Still build-era, still consumed by un-migrated screens,
+  unchanged from D4.3's note.
+- **Placement's three em-dashes**, now visible to the widened copy gate. They
+  belong to an un-migrated surface and clear when it lands.

@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
@@ -5,6 +6,8 @@ import { Chip } from "@/components/ui/chip"
 import { Button } from "@/components/ui/button"
 import { Eyebrow } from "@/components/ui/primitives"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { ListSkeleton } from "@/components/ui/loading-shapes"
+import { CountUp } from "@/components/ui/celebration"
 import { Fire } from "@phosphor-icons/react"
 import {
   useLeaderboard,
@@ -44,6 +47,23 @@ import { vizText } from "../components/colors"
  * first renders as nothing; only the second renders a number. Rendering `null`
  * as "0 days" would state something about a student the database has never
  * recorded (UI spec §1.4).
+ *
+ * ── P4.4, the Study Notebook pass ────────────────────────────────────────
+ *
+ * **§9.3 names "a leaderboard climb" as one of the five celebration moments,
+ * and this screen deliberately does not have one.** `LeaderboardRow.rank` and
+ * `LeaderboardViewer.rank` are the only rank fields on the wire and both are
+ * the *current* rank; nothing records where the student stood before. A climb
+ * flourish would therefore have to invent the movement it congratulates, on a
+ * screen whose header comment already forbids inventing a last place. The
+ * register is applied to the one thing here that is genuinely observed
+ * changing — the viewer's own XP, counted up when a refetch brings a larger
+ * number while they are watching. Recorded as a gap in D4.4; it needs a
+ * `previousRank` on the DTO, not a client-side guess.
+ *
+ * The other boards' rows do **not** count up. A dozen numbers animating at
+ * once on a ranking is a fireworks display, not a reading aid, and §9.3
+ * rations the register to the reader's own wins.
  */
 
 /* ── Week boundary ──────────────────────────────────────────────────────── */
@@ -91,7 +111,7 @@ function Monogram({ name }: { name: string }) {
   return (
     <span
       aria-hidden="true"
-      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-surface-2 text-2xs font-medium text-t2"
+      className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-paper-sunk text-eyebrow text-ink-muted"
     >
       {monogram(name)}
     </span>
@@ -108,7 +128,7 @@ function Monogram({ name }: { name: string }) {
 function StreakBadge({ streak }: { streak: number | null }) {
   if (streak === null) return null
   return (
-    <span className="flex items-center gap-1 text-2xs text-t3">
+    <span className="flex items-center gap-1 text-data-sm text-ink-faint">
       <Fire size={12} weight="fill" className="text-accent" aria-hidden="true" />
       <span>
         {streak}
@@ -147,24 +167,28 @@ function BoardRow({
         // by a stripe. An earlier cut added a left accent border as a third
         // channel; it was redundant with both and is the single most
         // recognisable tell of a generated interface, so the tint stands alone.
-        isViewer && "-mx-3 rounded-md bg-accent-subtle px-3",
+        isViewer && "-mx-3 rounded-md bg-accent-wash px-3",
       )}
     >
-      <span className="w-7 flex-none font-mono text-2xs text-t3">
+      <span className="w-7 flex-none text-data-sm text-ink-faint">
         {/* A null rank is a real state — the viewer has no XP this week, or has
             opted out. An invented "—" position would be a fabricated last
             place (UI spec §1.4). */}
         {row.rank === null ? "—" : row.rank}
       </span>
       <Monogram name={row.displayName} />
-      <span className="min-w-0 flex-1 truncate text-body-md text-t1">
+      <span className="min-w-0 flex-1 truncate text-body-md text-ink">
         {row.displayName}
-        {isViewer ? <span className="ms-2 text-2xs text-t3">You</span> : null}
+        {isViewer ? (
+          <span className="ms-2 text-body-sm text-ink-faint">You</span>
+        ) : null}
       </span>
       <StreakBadge streak={row.streak} />
-      <span className="w-16 flex-none text-end font-mono text-dense-lg text-t1">
-        {row.xp.toLocaleString()}
-        <span className="ms-1 text-3xs text-t3">XP</span>
+      <span className="w-16 flex-none text-end text-data-md text-ink">
+        {/* Only the viewer's own figure counts up — see this file's header on
+            why the rest of the board holds still. */}
+        {isViewer ? <CountUp value={row.xp} /> : row.xp.toLocaleString()}
+        <span className="ms-1 text-body-sm text-ink-faint">XP</span>
       </span>
     </Root>
   )
@@ -186,6 +210,7 @@ function BoardBody({
     // this week", which is a different and untrue claim.
     return (
       <EmptyState
+        marginalia="No school on your account yet"
         heading="You are not part of a school yet"
         body="School boards rank you against everyone at your school. Your class, friends and global boards all still work."
       />
@@ -200,15 +225,16 @@ function BoardBody({
     <div className="flex flex-col">
       {board.rows.length === 0 ? (
         <EmptyState
+          marginalia="A quiet week so far"
           heading={
             scope === "friends"
               ? "Nobody has earned XP yet this week"
               : "No XP earned here yet this week"
           }
-          body="Correct a paper, review flashcards or finish a study session — the board fills as soon as anyone does."
+          body="Correct a paper, review flashcards or finish a study session. The board fills as soon as anyone does."
         />
       ) : (
-        <ol className="divide-y divide-border">
+        <ol className="divide-y divide-rule">
           {board.rows.map((row) => (
             <BoardRow
               key={row.userId}
@@ -225,11 +251,11 @@ function BoardBody({
           they are already visible above, which would otherwise show them
           twice. */}
       {board.viewer !== null && !viewerInRows ? (
-        <div className="mt-2 border-t border-border pt-2">
+        <div className="mt-2 border-t border-rule pt-2">
           <BoardRow row={board.viewer} isViewer />
           {board.viewerOptedOut ? (
-            <p className="pt-1 text-2xs text-t3">
-              Your XP is still counted and still yours to see — you are just
+            <p className="pt-1 text-body-sm text-ink-faint">
+              Your XP is still counted and still yours to see. You are just
               hidden from everyone else's board.
             </p>
           ) : null}
@@ -282,15 +308,15 @@ function OptOutControl() {
       aria-hidden={pending || undefined}
       inert={pending || undefined}
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3",
+        "flex flex-wrap items-center justify-between gap-3 rounded-md border border-rule bg-paper-sunk px-3.5 py-3",
         pending && "invisible",
       )}
     >
       <div className="min-w-0">
-        <p className="text-body-md text-t1">
+        <p className="text-body-md text-ink">
           {optedOut ? "You are hidden from other students" : "You appear on public boards"}
         </p>
-        <p className="text-2xs text-t3">
+        <p className="text-body-sm text-ink-faint">
           {optedOut
             ? "Nobody else sees your name or XP. You still see every board, and you still earn XP."
             : "Other students can see your display name, weekly XP and streak. Never your marks or grades."}
@@ -307,6 +333,18 @@ function OptOutControl() {
       >
         {optedOut ? "Show me again" : "Hide me"}
       </Button>
+      {/* The one mutation on this screen, and it changes who can see the
+          student — so a failure has to be visible. Surface 3's headline was
+          two destructive mutations whose `isError` nothing rendered, and this
+          is the same shape: without it, a failed "Hide me" leaves the toggle
+          reading the old value with no explanation, and the student reasonably
+          concludes they are hidden when they are not. */}
+      {patch.isError ? (
+        <p role="alert" className="w-full text-body-sm text-err">
+          Your visibility could not be changed, so it is still as it was. Check
+          your connection and try again.
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -335,10 +373,14 @@ function TabButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "rounded-md border px-3 py-1.5 text-2xs transition-colors",
+        // The press and hover physics C-1 `Button` already carries (§9.2:
+        // `scale(0.98)` press, colour shift on hover, never `ease-in-out`).
+        // These tabs are real buttons and had none of it — they were the only
+        // controls on the screen that did not respond to being pressed.
+        "rounded-md border px-3 py-1.5 text-label transition-colors duration-[var(--dur-instant)] ease-out-soft active:scale-[0.98]",
         active
-          ? "border-accent bg-accent-subtle text-accent"
-          : "border-border bg-surface text-t2 hover:bg-surface-2",
+          ? "border-accent bg-accent-wash text-accent-ink"
+          : "border-rule bg-paper-raised text-ink-muted hover:bg-paper-sunk",
       )}
     >
       {children}
@@ -378,9 +420,11 @@ export function Standings() {
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
         <Eyebrow>Standings</Eyebrow>
-        <h1 className="text-display">Effort, not marks</h1>
-        <p className="text-body-md text-t2">
-          Boards rank XP — the work you put in. Nobody here can see anyone's
+        {/* `text-display` was the class here and it resolves to nothing — see
+            the note in `Profile.tsx`. */}
+        <h1 className="text-display-lg text-ink">Effort, not marks</h1>
+        <p className="lm-prose text-body-lg text-ink-muted">
+          Boards rank XP: the work you put in. Nobody here can see anyone's
           grades.
         </p>
       </header>
@@ -389,7 +433,7 @@ export function Standings() {
 
       <section className="flex flex-col gap-4" aria-labelledby="s29-board">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 id="s29-board" className="text-body-lg font-medium text-t1">
+          <h2 id="s29-board" className="text-display-sm text-ink">
             This week
           </h2>
           {board.data ? (
@@ -474,6 +518,7 @@ export function Standings() {
           <CardBody className="min-h-96">
             {scope === "class" && classList.length === 0 && !classes.isPending ? (
               <EmptyState
+                marginalia="No class join code yet"
                 heading="You are not in a class yet"
                 body="Class boards rank you against your classmates. Ask your teacher for a join code, or try the friends board."
               />
@@ -484,7 +529,13 @@ export function Standings() {
                 action={{ label: "Try again", onClick: () => void board.refetch() }}
               />
             ) : board.isPending || !board.data ? (
-              <div className="text-body-md text-t3">Loading the board…</div>
+              /* P4.4 — was a line of text where a ranked list arrives. The
+                 `min-h-96` floor above already stopped the page from jumping,
+                 but a floor only reserves the space; it does not tell the
+                 reader what is coming. Six rows with a monogram is the board's
+                 own geometry, and `border-0` because it is already inside the
+                 card's frame. */
+              <ListSkeleton rows={6} avatar className="border-0 bg-transparent" />
             ) : (
               <BoardBody
                 board={board.data}
@@ -508,7 +559,7 @@ export function Standings() {
       {/* Kept from the screen this replaced: real `subjectRanks` data, and a
           different question from the weekly boards. */}
       <section className="flex flex-col gap-3" aria-labelledby="s29-subjects">
-        <h2 id="s29-subjects" className="text-body-lg font-medium text-t1">
+        <h2 id="s29-subjects" className="text-display-sm text-ink">
           Your subjects
         </h2>
         <Card>
@@ -523,26 +574,46 @@ export function Standings() {
                 }}
               />
             ) : standings.isPending || !standings.data ? (
-              <div className="text-body-md text-t3">Loading your subjects…</div>
+              <ListSkeleton rows={3} className="border-0 bg-transparent" />
             ) : standings.data.subjectRanks.length === 0 ? (
               <EmptyState
+                marginalia="Nothing marked yet"
                 heading="No subjects ranked yet"
                 body="Correct a paper and your subjects appear here."
               />
             ) : (
+              /* P4.4 — the rank column had no label. A bare tone-coloured "3"
+                 at the end of a row that already ends in "9 papers" is not
+                 self-describing: the two adjacent figures invited being read
+                 as a pair, and nothing said the second was a position. A
+                 header row costs one line and answers it, and the per-row
+                 `sr-only` gives the same answer to a screen reader, which
+                 cannot see the column at all. */
               <div className="flex flex-col gap-2.5">
+                <div
+                  aria-hidden="true"
+                  className="flex items-center gap-3 border-b border-rule pb-1.5 text-eyebrow text-ink-faint"
+                >
+                  <span className="w-11 flex-none">Code</span>
+                  <span className="min-w-0 flex-1">Subject</span>
+                  <span>Marked</span>
+                  <span className="w-10 flex-none text-end">Rank</span>
+                </div>
                 {standings.data.subjectRanks.map((s) => (
                   <div key={s.code} className="flex items-center gap-3">
-                    <span className="w-11 flex-none font-mono text-2xs text-t3">
+                    <span className="w-11 flex-none text-data-sm text-ink-faint">
                       {s.code}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-body-md text-t1">
+                    <span className="min-w-0 flex-1 truncate text-body-md text-ink">
                       {s.name}
                     </span>
-                    <span className="text-2xs text-t3">{s.papers} papers</span>
+                    <span className="text-body-sm text-ink-faint">
+                      {s.papers} papers
+                    </span>
                     <span
-                      className={`w-10 flex-none text-end font-mono text-dense-lg ${vizText(s.color)}`}
+                      className={`w-10 flex-none text-end text-data-md ${vizText(s.color)}`}
                     >
+                      <span className="sr-only">Rank </span>
                       {s.rank}
                     </span>
                   </div>

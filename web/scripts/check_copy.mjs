@@ -39,13 +39,30 @@ import { join, relative } from "node:path"
 const ROOT = new URL("..", import.meta.url).pathname
 const SRC = join(ROOT, "src")
 
-/** Every .tsx under src/, recursively. */
+/**
+ * Every .tsx AND .ts under src/, recursively.
+ *
+ * P4.4 widened this from `.tsx` only, because a whole class of UI copy had
+ * moved out of components and the gate never followed it. `correctionOutcome.ts`
+ * (P4.2) and `friendOutcome.ts` (P4.4) exist specifically to hold sentences
+ * shown to students, and every screen's `*Data.ts` module carries its empty and
+ * error-state bodies. Extending the walk found **9 real em-dashes in
+ * user-facing strings that no run of this gate had ever seen**, five of them on
+ * surface 3, which had been reported clean.
+ *
+ * The reported total is therefore not comparable across this change: 64 under
+ * the old scope, 67 under the new one. The count did not grow, the gate's
+ * eyesight did.
+ *
+ * Same shape as D6.12's recorded lesson — a condition every harness shares is a
+ * condition no harness tests. Here it was a file extension.
+ */
 function sourceFiles(dir) {
   const out = []
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) out.push(...sourceFiles(full))
-    else if (entry.endsWith(".tsx")) out.push(full)
+    else if (entry.endsWith(".tsx") || entry.endsWith(".ts")) out.push(full)
   }
   return out.sort()
 }

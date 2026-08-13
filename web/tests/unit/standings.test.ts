@@ -121,7 +121,10 @@ describe("requestOutcomeMessage", () => {
     // the backend accepts the friendship outright. Telling that student
     // "request sent" would leave them waiting for something already done.
     expect(requestOutcomeMessage(req({ status: "accepted" }))).toBe(
-      "You and Ada are now friends — they had already asked.",
+      // P4.4: the em-dash became a full stop. §3.2 item 10 bans em-dashes in
+      // UI copy outright, and this string is UI copy that happened to be
+      // asserted here rather than read off a screen.
+      "You and Ada are now friends. They had already asked.",
     )
   })
 

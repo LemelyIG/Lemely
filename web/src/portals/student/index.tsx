@@ -9,7 +9,9 @@ import { buttonVariants } from "@/components/ui/button"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { XPStreak } from "@/components/ui/xp-streak"
 import { useProfile } from "@/lib/hooks/useMeApi"
+import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { navGroups, resolveCrumbTrail } from "./data"
 
 /*
@@ -259,6 +261,60 @@ function Sidebar() {
   )
 }
 
+/**
+ * The streak pill, restored — this time from data that exists.
+ *
+ * P3.10 chunk c deleted a "24 day streak" pill from this header because the 24
+ * was a literal, and recorded the reason it was not simply rewired: the only
+ * streak-shaped field in the API at the time was `StandingsDTO.streakDays`,
+ * which counts *distinct active days* rather than consecutive ones, so wiring
+ * the pill to it "would have replaced a hardcoded lie with a mislabelled one".
+ * Its closing note was "streaks are Phase 5's to build for real". Phase 5 built
+ * them: `GET /api/student/xp` returns a genuine consecutive-day `streak.current`
+ * alongside `totalXp`, and this reads those.
+ *
+ * Three constraints on it, each the reason a line of this is written the way it
+ * is:
+ *
+ * - **Nothing renders until the read lands, and nothing renders if it fails.**
+ *   No placeholder, no skeleton, no zero. A pill is chrome, so an absent pill
+ *   costs the student nothing, while a `0` while loading would state a broken
+ *   streak they may not have.
+ * - **Hidden below 640px.** This row's fixed items already overflowed a 380px
+ *   viewport once (see the note in `Header`), and a pill is exactly the kind of
+ *   thing that would put it back over. The figure is not lost on a phone: it is
+ *   the hero of the training log, one tap away in the nav.
+ * - **It is a `<Link>`, not decoration.** A number a student is invited to care
+ *   about should go somewhere when tapped, and the place it explains itself is
+ *   the training log.
+ */
+function HeaderStreak() {
+  const xp = useXpProfile()
+  /*
+   * Shape-checked, not just presence-checked, and that is not defensive
+   * programming for its own sake. This component renders in the shell above
+   * all twenty-four student routes, so `xp.data.streak.current` on a body that
+   * came back without a `streak` would throw inside the header and take the
+   * whole portal down — every screen, not just this pill. `request<XpProfile>`
+   * is a cast, not a validation, so the type says nothing about what actually
+   * arrived. Found while stubbing this surface's captures, where the harness's
+   * catch-all answers unmatched calls with `{}`: exactly that body, and
+   * exactly that crash.
+   */
+  const streak = xp.data?.streak?.current
+  const total = xp.data?.totalXp
+  if (typeof streak !== "number" || typeof total !== "number") return null
+  return (
+    <Link
+      to="/student/profile"
+      aria-label={`Your training log: ${streak} day streak, ${total} XP`}
+      className="hidden flex-none min-[640px]:inline-flex"
+    >
+      <XPStreak variant="compact" streakDays={streak} xpTotal={total} />
+    </Link>
+  )
+}
+
 function Header({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
   const trail = resolveCrumbTrail(location.pathname)
@@ -303,6 +359,7 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
           mono `data-sm` scale is scoped to paper codes, IDs and timestamps,
           and a crumb label is none of those — it is words a reader reads. */}
       <Breadcrumbs items={trail} className="flex-1" />
+      <HeaderStreak />
       {/*
        * P4.2, two corrections to one control.
        *

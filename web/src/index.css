@@ -797,6 +797,61 @@ body {
   }
 }
 
+/* ── §9.3 The celebration register ─────────────────────────────────────── */
+/* Reserved for the five moments §9.3 names, and nothing else. The rules that
+   decide when these run live in `lib/celebration.ts`; these are only how they
+   look. Both animate `transform` and `opacity` exclusively, so neither can move
+   anything around them, and both are covered by the global reduced-motion rule
+   further down — which is why the JS half reads the media query itself, since a
+   stylesheet cannot reach a requestAnimationFrame loop. */
+
+/* The spring on a figure or badge: 1 → 1.08 → 1 (§9.3). Not a scale on a
+   container — scaling a box scales its hairline border and its text with it,
+   and a 1px rule at 1.08 is a 1.08px rule, which reads as a blur. */
+@keyframes lm-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.lm-pop {
+  animation: lm-pop var(--dur-celebrate) var(--ease-celebrate) both;
+}
+
+/* One confetti piece. `--lm-cx`/`--lm-cy`/`--lm-cr` are set per piece at the
+   call site; `--lm-dir` mirrors the fan's inline axis under `dir="rtl"` for the
+   same reason the drawer's entry does, since `transform` has no logical axis.
+   Ends fully transparent AND out at its travel, so the last frame is not a
+   piece blinking out mid-air. */
+@keyframes lm-confetti {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(
+        calc(-50% + var(--lm-cx) * var(--lm-dir)),
+        calc(-50% + var(--lm-cy))
+      )
+      rotate(var(--lm-cr)) scale(1);
+  }
+}
+.lm-confetti {
+  --lm-cx: 0px;
+  --lm-cy: 0px;
+  --lm-cr: 0deg;
+  animation: lm-confetti var(--dur-celebrate) var(--ease-out-soft) both;
+}
+
 .lm-screen {
   animation: lm-in var(--dur-base) var(--ease-out-soft) both;
 }

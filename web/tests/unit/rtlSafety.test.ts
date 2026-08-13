@@ -66,6 +66,16 @@ const RTL_CLEAN_FILES = [
   "src/portals/student/screens/practice/PracticeSet.tsx",
   "src/portals/student/screens/studyplan/StudyPlanSession.tsx",
   "src/portals/student/screens/studyplan/StudyPlanWeek.tsx",
+  // Phase 4, surface 4 — gamification (XP, streaks, leaderboards). The
+  // confetti in `celebration.tsx` is the interesting case: `transform` has no
+  // logical axis, so its inline travel is multiplied by `--lm-dir` in the
+  // keyframe rather than expressed in a utility — the same device the mobile
+  // drawer's entry uses (P3.4).
+  "src/components/ui/celebration.tsx",
+  "src/components/ui/xp-streak.tsx",
+  "src/portals/student/screens/Friends.tsx",
+  "src/portals/student/screens/Profile.tsx",
+  "src/portals/student/screens/Standings.tsx",
 ]
 
 /**

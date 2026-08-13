@@ -487,6 +487,166 @@ const PRACTICE_RESULT_STATES = {
   },
 }
 
+/* ── P4.4, surface 4: gamification ─────────────────────────────────────── */
+
+/*
+ * `XpProfile`, `Leaderboard`, `FriendsPage` and `StandingsDTO`, field for
+ * field. Every number here is invented for the capture and none of it is
+ * product data — same rule as the overview fixture above.
+ *
+ * `XP_FIXTURE` is also stubbed on the two surfaces that do not display it,
+ * because P4.4 put the streak pill in the student header, so `/api/student/xp`
+ * is now fetched above every student route. Leaving it to the catch-all's `{}`
+ * would render those captures without the pill and hide a component that is
+ * genuinely on screen.
+ */
+const XP_FIXTURE = {
+  totalXp: 4820,
+  level: 7,
+  levelStartXp: 4500,
+  nextLevelXp: 5400,
+  streak: { current: 21, longest: 34, lastActiveOn: "2026-08-12", freezesAvailable: 2 },
+  week: {
+    start: "2026-08-10",
+    end: "2026-08-16",
+    total: 410,
+    bySource: [
+      { source: "paper_corrected", xp: 180 },
+      { source: "quiz_completed", xp: 90 },
+      { source: "flashcard_reviewed", xp: 85 },
+      { source: "study_session_completed", xp: 55 },
+    ],
+  },
+  calendar: [
+    { day: "2026-07-20", xp: 40 }, { day: "2026-07-22", xp: 120 },
+    { day: "2026-07-23", xp: 65 }, { day: "2026-07-26", xp: 150 },
+    { day: "2026-07-29", xp: 30 }, { day: "2026-08-01", xp: 95 },
+    { day: "2026-08-03", xp: 140 }, { day: "2026-08-05", xp: 60 },
+    { day: "2026-08-08", xp: 110 }, { day: "2026-08-10", xp: 75 },
+    { day: "2026-08-11", xp: 180 }, { day: "2026-08-12", xp: 155 },
+  ],
+  calendarStart: "2026-07-16",
+  calendarEnd: "2026-08-12",
+}
+
+/** A streak below the first milestone, so the sticker's absence is captured. */
+const XP_NO_MILESTONE = {
+  ...XP_FIXTURE,
+  totalXp: 90,
+  level: 1,
+  levelStartXp: 0,
+  nextLevelXp: 250,
+  streak: { current: 2, longest: 2, lastActiveOn: "2026-08-12", freezesAvailable: 0 },
+  week: {
+    start: "2026-08-10",
+    end: "2026-08-16",
+    total: 90,
+    bySource: [
+      { source: "paper_corrected", xp: 90 },
+      { source: "quiz_completed", xp: 0 },
+      { source: "flashcard_reviewed", xp: 0 },
+      { source: "study_session_completed", xp: 0 },
+    ],
+  },
+  calendar: [{ day: "2026-08-12", xp: 90 }],
+}
+
+const STUDENT_PROFILE_FIXTURE = {
+  profile: { leaderboardOptOut: false },
+  enrolments: [{ subjectCode: "0625" }, { subjectCode: "0580" }],
+}
+
+const SUBJECT_RANKS_FIXTURE = {
+  streakDays: 21,
+  subjectRanks: [
+    { code: "0625", name: "Physics", papers: 9, rank: 3, color: "lilac" },
+    { code: "0580", name: "Mathematics", papers: 12, rank: 1, color: "sky" },
+  ],
+}
+
+function boardRow(userId, displayName, xp, rank, streak) {
+  return { userId, displayName, xp, rank, streak }
+}
+
+const BOARD_POPULATED = {
+  status: "ok",
+  unavailableReason: null,
+  weekStart: "2026-08-10",
+  weekEnd: "2026-08-16",
+  rows: [
+    boardRow("u1", "Nour El-Sayed", 640, 1, 31),
+    boardRow("u2", "Yusuf Kamal", 585, 2, 12),
+    boardRow("u3", "Habiba Adel", 520, 3, null),
+    boardRow("u4", "Omar Tarek", 470, 4, 0),
+    boardRow("u5", "Salma Ragab", 415, 5, 8),
+  ],
+  // Outside the top five, so the pinned row renders — the "where am I"
+  // affordance this screen is built around.
+  viewer: { userId: "capture-student", displayName: "Amina Farouk", xp: 410, rank: 9, streak: 21 },
+  viewerOptedOut: false,
+}
+
+const BOARD_EMPTY = {
+  ...BOARD_POPULATED,
+  rows: [],
+  viewer: { userId: "capture-student", displayName: "Amina Farouk", xp: 0, rank: null, streak: 21 },
+}
+
+const BOARD_UNAVAILABLE = {
+  status: "unavailable",
+  unavailableReason: "no_school",
+  weekStart: "2026-08-10",
+  weekEnd: "2026-08-16",
+  rows: [],
+  viewer: null,
+  viewerOptedOut: false,
+}
+
+const STANDINGS_STATES = {
+  populated: { board: BOARD_POPULATED },
+  empty: { board: BOARD_EMPTY },
+  "no-school": { board: BOARD_UNAVAILABLE },
+  "opted-out": {
+    board: {
+      ...BOARD_POPULATED,
+      viewerOptedOut: true,
+      viewer: { userId: "capture-student", displayName: "Amina Farouk", xp: 410, rank: null, streak: 21 },
+    },
+    profile: { ...STUDENT_PROFILE_FIXTURE, profile: { leaderboardOptOut: true } },
+  },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, board: { detail: "unavailable" } },
+}
+
+const FRIENDS_PAGE = {
+  friendCode: "K7P4RQ29",
+  friends: [
+    { friendshipId: "f1", displayName: "Nour El-Sayed", xp: 640, streak: 31, optedOut: false, friendsSince: "2026-03-04T10:00:00Z" },
+    { friendshipId: "f2", displayName: "Yusuf Kamal", xp: 585, streak: 12, optedOut: false, friendsSince: "2026-05-19T10:00:00Z" },
+    { friendshipId: "f3", displayName: "Habiba Adel", xp: null, streak: null, optedOut: true, friendsSince: "2026-06-30T10:00:00Z" },
+  ],
+  incoming: [{ friendshipId: "r1", displayName: "Omar Tarek", status: "pending" }],
+  outgoing: [{ friendshipId: "r2", displayName: "Salma Ragab", status: "pending" }],
+}
+
+const FRIENDS_STATES = {
+  populated: { page: FRIENDS_PAGE },
+  empty: { page: { friendCode: "K7P4RQ29", friends: [], incoming: [], outgoing: [] } },
+  "send-refused": {
+    page: { friendCode: "K7P4RQ29", friends: [], incoming: [], outgoing: [] },
+    sendBadCode: true,
+  },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, page: { detail: "unavailable" } },
+}
+
+const PROFILE_STATES = {
+  populated: { xp: XP_FIXTURE },
+  "below-first-milestone": { xp: XP_NO_MILESTONE },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, xp: { detail: "unavailable" } },
+}
+
 /**
  * The surface registry. Each entry owns its route, its file prefix, its states
  * and the stubbing those states need; everything else is the shared harness.
@@ -647,6 +807,122 @@ const SURFACES = {
         }),
       )
     },
+  },
+
+  /* ── P4.4, surface 4: gamification ───────────────────────────────────── */
+
+  standings: {
+    prefix: "standings",
+    route: "/student/board",
+    states: STANDINGS_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/xp", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(XP_FIXTURE),
+        }),
+      )
+      await page.route("**/api/me/student-profile", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.profile ?? STUDENT_PROFILE_FIXTURE),
+        }),
+      )
+      await page.route("**/api/student/classes", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.classes ?? { classes: [] }),
+        }),
+      )
+      await page.route("**/api/student/standings", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.standings ?? SUBJECT_RANKS_FIXTURE),
+        }),
+      )
+      await page.route("**/api/student/leaderboard**", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.board ?? {}),
+        })
+      })
+    },
+    fullPage: (state) => !state.delayMs,
+  },
+
+  friends: {
+    prefix: "friends",
+    route: "/student/friends",
+    states: FRIENDS_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/xp", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(XP_FIXTURE),
+        }),
+      )
+      await page.route("**/api/student/friends/requests", (route) =>
+        route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "No student has that code. Check it and try again." }),
+        }),
+      )
+      await page.route("**/api/student/friends", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.page ?? {}),
+        })
+      })
+    },
+    /**
+     * The send-failure state is reached by typing a code and pressing the
+     * button, because that is the only way a student reaches it too. The
+     * request stub above always refuses, so what is captured is the inline
+     * field error in its real position — the thing this surface moved.
+     */
+    async act(page, state) {
+      if (!state.sendBadCode) return
+      await page.getByLabel("Add someone by their code").fill("K7P4RQ29")
+      await page.getByRole("button", { name: "Send request" }).click()
+      await page.waitForTimeout(600)
+    },
+    fullPage: (state) => !state.delayMs,
+  },
+
+  profile: {
+    prefix: "profile",
+    route: "/student/profile",
+    states: PROFILE_STATES,
+    async stub(page, state) {
+      await page.route("**/api/student/xp", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.xp ?? XP_FIXTURE),
+        })
+      })
+    },
+    fullPage: (state) => !state.delayMs,
   },
 
   "practice-result": {

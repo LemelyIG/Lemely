@@ -83,7 +83,7 @@ export function dueStateView(session: DueSessionDTO): DueStateView {
  * decks yet) gets its own distinct copy, never coerced into a date string. */
 export function nextDueMessage(nextDueAt: string | null): string {
   if (!nextDueAt) {
-    return "You have no cards scheduled yet — create or generate a deck to get started."
+    return "You have no cards scheduled yet. Create or generate a deck to get started."
   }
   const date = new Date(nextDueAt)
   if (Number.isNaN(date.getTime())) {
@@ -138,7 +138,7 @@ export function flashcardUnavailableMessage(reason: string | null): FlashcardUna
     case "no_weaknesses":
       return {
         heading: "No weak topics recorded yet",
-        body: "A weakness-targeted deck needs at least one recorded weakness for this subject — take a placement test or some practice first, then this option will have something to draw from.",
+        body: "A weakness-targeted deck needs at least one recorded weakness for this subject. Take a placement test or some practice first, then this option will have something to draw from.",
       }
     default:
       return {

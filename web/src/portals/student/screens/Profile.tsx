@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import { useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
@@ -5,6 +6,8 @@ import { Chip } from "@/components/ui/chip"
 import { Button } from "@/components/ui/button"
 import { Eyebrow, Meter } from "@/components/ui/primitives"
 import { ErrorState } from "@/components/ui/state-views"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { Celebrate, CountUp, MilestoneSticker } from "@/components/ui/celebration"
 import { Fire, Snowflake } from "@phosphor-icons/react"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
@@ -40,6 +43,34 @@ import { cn } from "@/lib/utils"
  * streak-freeze that's offered kindly beats a guilt-trip". So: no countdown to
  * losing it, no red, no "don't break it now!". The freeze is stated as
  * something the student *has*.
+ *
+ * ── P4.4, the Study Notebook pass ────────────────────────────────────────
+ *
+ * This screen is where DESIGN.md §9.3's celebration register earns its keep,
+ * and three things about how it is applied here are deliberate:
+ *
+ * 1. **The three figures are in the data face now, not the display face.**
+ *    They were `font-mono text-display-sm`, which sets two competing
+ *    `font-family` declarations on one element and resolves by stylesheet
+ *    order rather than by intent. §4.2's `data-lg` rung *is* "the big number",
+ *    it carries `tabular-nums` by construction, and it names its own face so
+ *    the conflict cannot recur. Same class of defect as D4.2's `MarkDisplay`.
+ *
+ * 2. **A celebration fires on a value that grew while the student was
+ *    watching, and at no other time.** Not on mount, not on a refresh, not on
+ *    a value that fell. A count-up staged on arrival would dramatise a total
+ *    the account has held since yesterday, on the one screen whose whole claim
+ *    is that it measures work actually done.
+ *
+ * 3. **The streak milestone is a sticker, and the streak is also a plain
+ *    number beside it.** §8 item 4 allows the ±2° rotation on decorative
+ *    badges only; the badge here is genuinely decorative because removing it
+ *    loses nothing a reader cannot get from the figure next to it.
+ *
+ * **Not celebrated: a leaderboard climb**, which §9.3 also names. `S-29`'s
+ * wire types carry a current `rank` and no previous one, so a "you climbed"
+ * flourish would have to invent the thing it is celebrating. Recorded in D4.4
+ * rather than faked.
  */
 
 /* ── Calendar ───────────────────────────────────────────────────────────── */
@@ -143,20 +174,30 @@ function LevelCard({ profile }: { profile: XpProfile }) {
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div role="group" aria-label="Level">
             <Eyebrow>Level</Eyebrow>
-            <div className="font-mono text-display-sm text-t1">{profile.level}</div>
+            {/* Levelling up is the clearest achievement this screen has, so it
+                takes the flourish; the XP total beside it springs without
+                confetti, because two fans firing at once on one card reads as
+                a slot machine rather than as two facts. */}
+            <Celebrate value={profile.level} className="text-data-lg text-ink">
+              <CountUp value={profile.level} />
+            </Celebrate>
           </div>
           <div role="group" aria-label="Total XP" className="text-end">
             <Eyebrow>Total XP</Eyebrow>
-            <div className="font-mono text-display-sm text-t1">
-              {profile.totalXp.toLocaleString()}
-            </div>
+            <Celebrate
+              value={profile.totalXp}
+              flourish={false}
+              className="text-data-lg text-ink"
+            >
+              <CountUp value={profile.totalXp} />
+            </Celebrate>
           </div>
         </div>
         <Meter
           value={progress}
           label={`Progress to level ${profile.level + 1}: ${Math.round(progress)}%`}
         />
-        <p className="text-2xs text-t3">
+        <p className="text-body-sm text-ink-faint">
           {remaining.toLocaleString()} XP to level {profile.level + 1}
         </p>
       </CardBody>
@@ -169,17 +210,28 @@ function StreakCard({ profile }: { profile: XpProfile }) {
   return (
     <Card>
       <CardBody className="flex flex-col gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Fire
             size={26}
             weight="fill"
             className="flex-none text-accent"
             aria-hidden="true"
           />
+          {/* Label above value, matching `LevelCard`. The two cards sit side
+              by side on desktop and stacked on a phone, and they had opposite
+              orders: LEVEL above 7, but 21 above DAY STREAK. Three figures in
+              one row of the eye's travel, two of them labelled from the top
+              and one from the bottom, is a scanning cost for nothing —
+              Operate mode puts consistency ahead of variety (§2). */}
           <div role="group" aria-label="Day streak">
-            <div className="font-mono text-display-sm text-t1">{current}</div>
             <Eyebrow>Day streak</Eyebrow>
+            <Celebrate value={current} className="text-data-lg text-ink">
+              <CountUp value={current} />
+            </Celebrate>
           </div>
+          {/* Decorative, and only ever alongside the figure above (§8 item 4).
+              Absent below the first milestone rather than shown empty. */}
+          <MilestoneSticker streakDays={current} className="ms-auto" />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -194,7 +246,7 @@ function StreakCard({ profile }: { profile: XpProfile }) {
           ) : null}
         </div>
 
-        <p className="text-2xs text-t3">
+        <p className="text-body-sm text-ink-faint">
           {lastActiveOn === null
             ? "Your streak starts the first day you earn XP."
             : `Last earned XP on ${formatDay(lastActiveOn)}.`}
@@ -230,7 +282,7 @@ function CalendarPanel({ profile }: { profile: XpProfile }) {
               aria-label={`${formatDay(d.day)}: ${d.xp} XP`}
               className={cn(
                 "h-5 w-5 rounded-sm border",
-                intensity === 0 && "border-border bg-surface-2",
+                intensity === 0 && "border-rule bg-paper-sunk",
                 intensity === 1 && "border-accent/30 bg-accent/20",
                 intensity === 2 && "border-accent/50 bg-accent/50",
                 intensity === 3 && "border-accent bg-accent",
@@ -239,7 +291,7 @@ function CalendarPanel({ profile }: { profile: XpProfile }) {
           )
         })}
       </div>
-      <p className="text-2xs text-t3">
+      <p className="lm-prose text-body-sm text-ink-faint">
         {formatDay(profile.calendarStart)} – {formatDay(profile.calendarEnd)}. A
         day with no XP and a day you did not open Lemely look the same here,
         because they are the same thing.
@@ -255,10 +307,17 @@ function WeekPanel({ profile }: { profile: XpProfile }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="font-mono text-body-lg text-t1">
-          {week.total.toLocaleString()} XP
+        {/* The figure is in the data face; the unit beside it is a word and
+            stays in the body face. Surface 3 found the inverse of this — a
+            whole sentence set in the mono face — and §4 gives that face
+            figures, not the prose around them. */}
+        <span className="text-ink">
+          <Celebrate value={week.total} flourish={false} className="text-data-md">
+            <CountUp value={week.total} />
+          </Celebrate>
+          <span className="ms-1 text-body-md text-ink-muted">XP this week</span>
         </span>
-        <span className="text-2xs text-t3">
+        <span className="text-body-sm text-ink-faint">
           {formatDay(week.start)} – {formatDay(week.end)}
         </span>
       </div>
@@ -266,7 +325,7 @@ function WeekPanel({ profile }: { profile: XpProfile }) {
       <div className="flex flex-col gap-2.5">
         {week.bySource.map((s) => (
           <div key={s.source} className="flex items-center gap-3">
-            <span className="w-[140px] flex-none text-dense-lg text-t2">
+            <span className="w-36 flex-none text-body-md text-ink-muted">
               {sourceLabel(s.source)}
             </span>
             <span className="min-w-0 flex-1">
@@ -277,14 +336,35 @@ function WeekPanel({ profile }: { profile: XpProfile }) {
             </span>
             {/* Labelled "XP", never bare: this is XP from a source, not a count
                 of times the student did that thing (D5.13 §3). */}
-            <span className="w-16 flex-none text-end font-mono text-dense-lg text-t1">
+            <span className="w-16 flex-none text-end text-data-md text-ink">
               {s.xp}
-              <span className="ms-1 text-3xs text-t3">XP</span>
+              <span className="ms-1 text-body-sm text-ink-faint">XP</span>
             </span>
           </div>
         ))}
       </div>
     </div>
+  )
+}
+
+/**
+ * The body's loading state, shaped like the body that replaces it.
+ *
+ * Two cards then two panels, in the grid the real content uses, because a
+ * one-line "Loading your training log…" growing into four blocks moved the
+ * whole page several hundred pixels — the same shift P4.2 fixed on the result
+ * screen and P6.7 fixed on the board.
+ */
+function TrainingLogSkeleton() {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
+        <PanelSkeleton />
+        <PanelSkeleton />
+      </div>
+      <PanelSkeleton />
+      <PanelSkeleton />
+    </>
   )
 }
 
@@ -306,8 +386,16 @@ export function Profile() {
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
         <Eyebrow>Your training log</Eyebrow>
-        <h1 className="text-display">{name}</h1>
-        <p className="text-body-md text-t2">
+        {/* `text-display` was the class here, and it does not exist: nothing in
+            index.css defines it and nothing in the shipped bundle emits it, so
+            this title rendered at the browser's default h1 in the body face
+            rather than at §4.2's `display-lg` in Newsreader. Third instance of
+            D4.1's shape — a well-formed class name that resolves to nothing and
+            is therefore invisible to every gate that looks at rendered output.
+            `tests/unit/utilityExistence.test.ts` is the gate that now catches
+            it. */}
+        <h1 className="text-display-lg text-ink">{name}</h1>
+        <p className="lm-prose text-body-lg text-ink-muted">
           Everything here measures work done, never how well you did it.
         </p>
       </header>
@@ -316,10 +404,11 @@ export function Profile() {
         <ErrorState
           heading="Your XP could not be loaded"
           body="This is a connection problem. Your XP and streak are safe, and nothing has been lost."
+          marginalia="Nothing you earned is lost"
           action={{ label: "Try again", onClick: () => void xp.refetch() }}
         />
       ) : xp.isPending || !xp.data ? (
-        <div className="text-body-md text-t3">Loading your training log…</div>
+        <TrainingLogSkeleton />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
@@ -328,7 +417,7 @@ export function Profile() {
           </div>
 
           <section className="flex flex-col gap-3" aria-labelledby="s31-week">
-            <h2 id="s31-week" className="text-body-lg font-medium text-t1">
+            <h2 id="s31-week" className="text-display-sm text-ink">
               This week, by source
             </h2>
             <Card>
@@ -339,7 +428,7 @@ export function Profile() {
           </section>
 
           <section className="flex flex-col gap-3" aria-labelledby="s31-calendar">
-            <h2 id="s31-calendar" className="text-body-lg font-medium text-t1">
+            <h2 id="s31-calendar" className="text-display-sm text-ink">
               The last four weeks
             </h2>
             <Card>
