@@ -33,3 +33,25 @@ replayed as a directive.
 apart from the selftest above.
 
 ---
+
+## 2026-08-13 — DECISION D1 (audit summary + IA changes)
+
+**OUT** `2026-08-13T15:05Z` · title `DECISION D1 - audit summary + IA changes` · priority high
+
+Phase 1 audit summary sent (3 legs, 48 routes, nothing modified). Full dossier:
+`BUILD/DESIGN-AUDIT.md`.
+
+Six IA proposals. **Items 1–5 are cost-free corrections and carry the default
+"proceed as proposed" on a 60-minute timeout.** Item 6 (build real school-admin and
+platform-admin screens, ~7 new screens plus un-bundling the `TEACHER_ROLES` guard that
+`rbac.spec.ts` asserts against) **carries no default** — it is a scope decision about how
+much new surface this redesign builds rather than restyles, and §10 says a question with no
+sane default must not be a timeout question. Options offered: A build them now / B leave
+admins on `/teacher` and defer / C scaffold routes and shells only.
+
+On timeout I proceed with 1–5, continue to Phase 2 (brand and design system, which does not
+depend on item 6), and re-ask before Phase 4 reaches admin views.
+
+**IN** — awaiting.
+
+---
