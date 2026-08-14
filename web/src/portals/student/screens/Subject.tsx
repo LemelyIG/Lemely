@@ -109,7 +109,15 @@ export function Subject() {
   return (
     <div className="lm-screen flex flex-col gap-6">
       <div className="flex flex-wrap items-start gap-6">
-        <div className="min-w-80 flex-1">
+        {/* `basis-80` + `min-w-0`, not `min-w-80` (P6.1). The intent is "keep
+            this column beside the cards until there is no longer room for
+            both", and a flex BASIS says that without also forbidding the column
+            from ever being narrower than 320px. `min-w-80` forbade it: at the
+            320px viewport §6.1 requires, 320px of column plus the screen's own
+            horizontal padding is wider than the screen, so the header ran off
+            the side. It did not show up as a scrollbar either, because html and
+            body clip — the title simply had its end cut off. */}
+        <div className="min-w-0 flex-1 basis-80">
           <div className="text-data-sm text-ink-muted">{subjectHeader.meta}</div>
           <h1 className="mt-1 text-display-lg text-ink">{subjectHeader.title}</h1>
           <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-ink-muted">

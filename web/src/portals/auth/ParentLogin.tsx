@@ -264,10 +264,28 @@ function CodeStep({
         </p>
       </div>
 
+      {/*
+        §6.1's 44x44 floor cannot be met on the inline axis here, and the
+        exemption is stated rather than left for the gate to report forever.
+
+        Six boxes at 44px plus five 8px gaps need 284px. At the 320px viewport
+        the mission names, this card offers about 248px, so the floor is
+        arithmetically unreachable without dropping a digit or scrolling a code
+        entry sideways. The gaps tighten below `sm` to spend as much of that
+        width as possible on the boxes themselves.
+
+        What the reader gets instead: each box is 56px TALL (well over the
+        floor on the axis that is available), the six tile the row with no dead
+        space between them, and a mis-tap lands on an adjacent digit box, which
+        is visible on screen and recoverable with one keystroke. The audit
+        reports these as `exempt` with this reason attached, so the carve-out
+        appears in every run's summary instead of hiding in this file.
+      */}
       <div
         role="group"
         aria-label={`${CODE_LENGTH}-digit verification code`}
-        className="flex items-center justify-between gap-2"
+        data-touch-floor-exempt="six-digit-code-row"
+        className="flex items-center justify-between gap-1 sm:gap-2"
       >
         {digits.map((digit, index) => (
           <input
@@ -457,7 +475,7 @@ export function ParentLogin() {
 
         <Link
           to="/login"
-          className="flex items-center gap-1.5 self-start rounded-sm text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex items-center gap-1.5 self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
           {/* Direction-dependent: this arrow points at the reading start and
               must mirror under `dir="rtl"` (P3.4). */}

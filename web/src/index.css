@@ -510,15 +510,24 @@
   grid-template-columns: auto minmax(0, 1fr) minmax(150px, 2.4fr) 88px auto;
 }
 
-/* Build-era named grid templates, still referenced by un-migrated screens. */
-@utility grid-subjects-row {
-  grid-template-columns: 64px 1fr 132px 86px 54px;
-}
+/* P6.1: every `1fr` below is `minmax(0, 1fr)`, for the reason stated on
+   `grid-subject-ledger` above — a bare `1fr` has an `auto` minimum, so a track
+   holding one long unbroken token (a school name, an email, a stringified
+   error detail) refuses to shrink and pushes the row past its container.
+   `grid-subject-ledger` was written correctly in P4.1 and these three were not;
+   they are the build-era templates and predate the rule.
+
+   That overflow does not show up as a scrollbar, because html and body clip it
+   (see `Base` below), so the failure mode here is content silently cut off the
+   side of the page rather than content you can scroll to. `grid-subjects-row`,
+   the fourth template, is deleted rather than fixed: it had zero call sites
+   product-wide, and the comment claiming un-migrated screens still referenced
+   it stopped being true when Phase 4 migrated the last of them. */
 @utility grid-correct-cols {
-  grid-template-columns: 1.5fr 1fr;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
 }
 @utility grid-result-cols {
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: minmax(0, 1fr) 300px;
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────── */
@@ -551,6 +560,73 @@ body {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* ── §6.1 touch-target floor ───────────────────────────────────────────────
+   Hallmark mobile non-negotiable: touch targets >=44x44.
+
+   P6.1 measured all 35 registered surfaces at 320/375/414/768 and found the
+   floor was implemented NOWHERE. Interactive heights across the product ran
+   20, 24, 27, 28, 32, 33, 34, 38 and 40px; the kit's default button was 34px
+   tall, so the most common control in the product missed the floor by ten
+   pixels on every phone. This is invisible in a screenshot — a 34px button and
+   a 44px one are the same button in a picture — which is why it survived five
+   phases of visual review.
+
+   Keyed on `(pointer: coarse)`, not a width breakpoint, because it is a finger
+   rule. A 375px-wide desktop window is not a finger, and the teacher and admin
+   portals are deliberately DENSITY 7 (§3.3) for a mouse; widening their table
+   controls on a narrow desktop window would be a regression, not a fix. The
+   gate emulates the same thing rather than inferring it from width: Chromium
+   with `hasTouch: true` reports `(pointer: coarse)`, verified in both
+   directions before this rule was written.
+
+   `min-block-size`/`min-inline-size` rather than min-height/min-width, per the
+   §3.4 RTL rule.
+
+   Note what this deliberately does NOT reach: a link inside a sentence. Those
+   are `display: inline`, and min-block-size has no effect on a non-replaced
+   inline box — so prose links keep their line-height and stay exempt, which is
+   the same carve-out WCAG 2.5.5 makes and for the same reason. Standalone
+   links are laid out as flex or inline-flex by the kit and are handled at their
+   own components, where the centring is known. */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="switch"],
+  input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    min-block-size: 44px;
+  }
+
+  /* Checkbox and radio are excluded above, and the exclusion is load-bearing
+     rather than an oversight. `Checkbox` and `Radio` render the real input as
+     `absolute inset-0 h-full w-full` inside an 18px painted box (the
+     `appearance-none` technique that keeps the native control in the
+     accessibility tree). A 44px floor on the input itself would not enlarge the
+     box; it would leave a 44px-tall invisible hit area hanging 26px below an
+     18px control, overlapping whatever sits under it — in a radio group, the
+     next option. That turns a tap on one choice into a tap on another, which is
+     a worse defect than the one being fixed.
+
+     The target is the label row instead, which is what a person actually aims
+     at and what carries the text. */
+  label:has(> span > input[type="checkbox"]),
+  label:has(> span > input[type="radio"]) {
+    min-block-size: 44px;
+  }
+
+  /* Inline-axis floor only where a control can legitimately be tiny: an
+     icon-only button. On anything with a label this is already a no-op. Links
+     are excluded — a 44px inline-size floor on a short text link would push
+     the text away from what it sits beside. */
+  button,
+  [role="button"],
+  [role="tab"] {
+    min-inline-size: 44px;
+  }
 }
 
 /* ── §4.2 Type scale ───────────────────────────────────────────────────── */
@@ -593,6 +669,38 @@ body {
   font-weight: 500;
   line-height: 1.25;
 }
+/* Hallmark mobile non-negotiable: `overflow-wrap: anywhere` on display headers.
+   Stated once for all five rungs rather than repeated in each.
+
+   This is the rule that `overflow-x: clip` was hiding. A display heading is the
+   largest type on the page and the most likely to hold something unbreakable —
+   a school name, an email address, a subject title with no spaces — and at
+   320px a single long token is wider than the viewport. Without this the token
+   overflows; because html and body clip rather than scroll, the reader does not
+   get a scrollbar, they get a heading with the end cut off and nothing saying
+   so. The two non-negotiables interact: implementing one alone makes the
+   absence of the other invisible.
+
+   `anywhere` rather than `break-word` deliberately. Only `anywhere` is taken
+   into account when computing a box's min-content size, which is what lets a
+   heading inside a grid or flex track actually shrink; `break-word` breaks the
+   glyphs but leaves the track sized to the unbroken word, so the overflow it is
+   supposed to prevent survives.
+
+   The data rungs are deliberately NOT included. They carry marks, percentages
+   and XP, where a break would put "12" and "8" on two lines and read as a
+   different number, and no value that short can overflow. If a data rung ever
+   holds something long, the geometric overflow check in
+   `scripts/adapt_audit.mjs` reports it as overflow, which is the honest signal;
+   a wrap rule there would silently make a wrong number look intentional. */
+.text-display-hero,
+.text-display-xl,
+.text-display-lg,
+.text-display-md,
+.text-display-sm {
+  overflow-wrap: anywhere;
+}
+
 .text-body-lg {
   font-family: var(--font-sans);
   font-size: var(--fs-body-lg);

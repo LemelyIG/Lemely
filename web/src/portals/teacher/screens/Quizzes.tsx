@@ -277,7 +277,14 @@ export function Quizzes() {
                       <button
                         type="button"
                         onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                        // `whitespace-nowrap` (P6.1): "Target grade" is two
+                        // words in an uppercase eyebrow inside a table header
+                        // cell, and it broke across two lines at every width
+                        // from 320 to 768 — a two-line clickable target, and on
+                        // a sort control the second line looks like a separate
+                        // header. The column can be wider; the label cannot
+                        // break.
+                        className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                       >
                         {col.label}
                         {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
@@ -301,7 +308,15 @@ export function Quizzes() {
                 sorted.map((q) => (
                   <tr key={q.id} className="border-b border-rule last:border-b-0">
                     <td className="px-6 py-3.5">
-                      <Link to={`/teacher/quizzes/${q.id}`} className="text-ink hover:underline">
+                      {/* Opts out of §6.1's two-line-clickable rule: a quiz
+                          title is the teacher's own words, and truncating it in
+                          the one column that identifies the row would be worse
+                          than letting it wrap. See scripts/adapt_audit.mjs. */}
+                      <Link
+                        to={`/teacher/quizzes/${q.id}`}
+                        data-wraps-content-title
+                        className="text-ink hover:underline"
+                      >
                         {q.title}
                       </Link>
                       {q.status === "draft" ? (

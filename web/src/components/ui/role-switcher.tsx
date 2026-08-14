@@ -92,7 +92,8 @@ export function RoleSwitcher({
                   if (!active) onSwitch(role.id)
                 }}
                 className={cn(
-                  "flex w-full items-center gap-2.5 px-3 py-2 text-left text-body-md transition-colors hover:bg-surface-2",
+                  // §6.1 touch floor — see the note in nav-shells.tsx.
+                  "flex w-full items-center gap-2.5 px-3 py-2 pointer-coarse:min-h-11 text-left text-body-md transition-colors hover:bg-surface-2",
                   active ? "font-medium text-t1" : "text-t2",
                 )}
               >

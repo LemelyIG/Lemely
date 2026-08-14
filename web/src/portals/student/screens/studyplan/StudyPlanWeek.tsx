@@ -161,9 +161,15 @@ function SessionRow({
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-rule px-5 py-3.5 first:border-t-0">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        {/* Opts out of §6.1's two-line-clickable rule: the label is a syllabus
+            topic name ("2.1 Thermal physics"), which is content, not a control
+            label. At 320px it wraps; truncating a topic so a student cannot
+            tell which session they are opening would be the worse trade. See
+            scripts/adapt_audit.mjs. */}
         <Link
           to={`/student/plan/${subjectCode}/session/${session.id}`}
-          className="text-body-md font-medium text-ink no-underline hover:underline focus-visible:underline"
+          data-wraps-content-title
+          className="text-body-md font-medium text-ink no-underline hover:underline focus-visible:underline pointer-coarse:block pointer-coarse:py-[11px]"
         >
           {session.topic}
         </Link>

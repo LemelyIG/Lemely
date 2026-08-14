@@ -308,7 +308,7 @@ function Figure({
         <span className="text-data-lg tabular-nums text-ink">{value}</span>
         <p className="text-body-sm text-ink-muted">{note}</p>
         {to && linkLabel ? (
-          <Link to={to} className="mt-auto text-body-sm text-accent-ink hover:underline">
+          <Link to={to} className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline">
             {linkLabel}
           </Link>
         ) : null}

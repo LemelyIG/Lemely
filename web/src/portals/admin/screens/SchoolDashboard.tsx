@@ -128,7 +128,7 @@ function SchoolPanel({ school }: { school: SchoolOverview }) {
                 rules in §6. Same reason on every card below. */}
             <Link
               to="/school/seats"
-              className="mt-auto text-body-sm text-accent-ink hover:underline"
+              className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline"
             >
               Manage seats
             </Link>
@@ -221,7 +221,7 @@ function StatCard({
         <Eyebrow>{eyebrow}</Eyebrow>
         <span className="text-data-lg tabular-nums text-ink">{value}</span>
         <p className="text-body-sm text-ink-muted">{note}</p>
-        <Link to={to} className="mt-auto text-body-sm text-accent-ink hover:underline">
+        <Link to={to} className="mt-auto pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline">
           {linkLabel}
         </Link>
       </CardBody>

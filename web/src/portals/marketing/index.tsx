@@ -75,7 +75,7 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex w-full max-w-marketing items-center justify-between gap-4 px-page-mobile py-3.5 md:px-page-tablet lg:px-page-desktop">
           <Link
             to="/"
-            className="flex items-center gap-2.5 rounded-md transition-colors hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 transition-colors hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
           >
             {/* `alt=""` + `aria-hidden`: the wordmark beside it already says
                 "Lemely", so describing the mark too announces it twice. Same
@@ -86,7 +86,7 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
           <nav aria-label="Marketing" className="flex items-center gap-1.5">
             <Link
               to="/login"
-              className="text-label rounded-md px-3 py-2 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="text-label rounded-md px-3 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Sign in
             </Link>
@@ -106,7 +106,7 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
             */}
             <Link
               to="/login/parent"
-              className="text-label rounded-md px-3 py-2 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="text-label rounded-md px-3 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Parents
             </Link>
@@ -133,13 +133,13 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-4">
             <Link
               to="/login"
-              className="rounded-sm underline-offset-4 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="rounded-sm underline-offset-4 pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Sign in
             </Link>
             <Link
               to="/login/parent"
-              className="rounded-sm underline-offset-4 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="rounded-sm underline-offset-4 pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Parent sign in
             </Link>

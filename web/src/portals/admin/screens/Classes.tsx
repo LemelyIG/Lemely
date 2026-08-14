@@ -92,8 +92,15 @@ export function Classes() {
                 <TD>
                   {/* A real link, not a row click handler: a class detail page
                       is a destination, and a destination is an anchor. */}
+                  {/* `data-wraps-content-title` opts this out of §6.1's
+                      two-line-clickable-text rule, deliberately and narrowly:
+                      the label is a class name the school typed, so the only
+                      alternatives to wrapping are truncating it or letting it
+                      overflow, and both cost the reader information the product
+                      does not own. See scripts/adapt_audit.mjs. */}
                   <Link
                     to={`/teacher/classes/${schoolClass.id}`}
+                    data-wraps-content-title
                     className="text-body-sm text-accent-ink hover:underline"
                   >
                     {schoolClass.label}

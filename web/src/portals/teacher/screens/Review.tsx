@@ -501,7 +501,7 @@ export function Review() {
                         <div className="min-w-0">
                           <Link
                             to={`/teacher/students/${item.studentId}`}
-                            className="text-ink hover:underline block truncate"
+                            className="text-ink hover:underline block truncate pointer-coarse:py-[11px]"
                           >
                             {item.studentDisplayName}
                           </Link>

@@ -122,6 +122,15 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
                   className={cn(
                     "whitespace-nowrap rounded-sm transition-colors hover:text-ink",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    /* §6.1's 44px floor; a crumb measured 65x20. The `<li>` is
+                       a flex container, so this link is a flex item and its
+                       computed display is `block` rather than `inline` — which
+                       is why `min-block-size` reaches it at all, and why it
+                       also needs its own centring, or the label would sit at
+                       the top of the taller box. Below `sm` the trail collapses
+                       to a single back link, so on a phone this raises exactly
+                       the one control a reader reaches for. */
+                    "pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11",
                   )}
                 >
                   {item.label}

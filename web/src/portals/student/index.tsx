@@ -163,7 +163,8 @@ function NavGroups({ touch = false }: { touch?: boolean }) {
                   cn(
                     // `px-[9px]` not `pl-`/`pr-`: symmetric padding has no
                     // direction, so this row needs no logical rewrite (P3.4).
-                    "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 rounded-md",
+                    // §6.1 touch floor — see the note in nav-shells.tsx.
+                    "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 pointer-coarse:min-h-11 rounded-md",
                     "transition-colors duration-[var(--dur-instant)] ease-out-soft",
                     // `focus-ring`, not `accent`. DESIGN.md §3.9 makes focus
                     // deliberately blue so it stays distinguishable from the
@@ -310,7 +311,7 @@ function HeaderStreak() {
     <Link
       to="/student/profile"
       aria-label={`Your training log: ${streak} day streak, ${total} XP`}
-      className="hidden flex-none min-[640px]:inline-flex"
+      className="hidden flex-none min-[640px]:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
     >
       <XPStreak variant="compact" streakDays={streak} xpTotal={total} />
     </Link>

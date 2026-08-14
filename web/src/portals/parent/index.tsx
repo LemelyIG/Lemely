@@ -205,14 +205,23 @@ function Header() {
 
   return (
     <header className="border-b border-rule bg-paper-raised">
-      <div className="mx-auto flex w-full max-w-240 items-center gap-4 px-4 py-4 md:px-8">
+      <div className="mx-auto flex w-full max-w-240 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4 md:px-8">
         <Link
           to="/parent"
-          className="flex items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
           <BrandLockup />
         </Link>
-        <div className="ms-auto flex items-center gap-3">
+        {/* `flex-wrap` on the row above and `min-w-0` here (P6.1). At the 320px
+            viewport §6.1 requires, the brand lockup plus the child switcher,
+            Settings and Sign out are wider than the 288px this row has between
+            its own padding, and this cluster ran off the side of the screen in
+            every state of the portal. It did not read as a layout bug either,
+            because html and body clip rather than scroll: Sign out was simply
+            not there, with nothing saying it existed. Wrapping costs a parent
+            one row of height on the smallest phones and gives them back the
+            only control that ends a session. */}
+        <div className="ms-auto flex min-w-0 items-center gap-3">
           <ChildSwitcher />
           {/* The parent portal has no sidebar by design (P-01: "no interest in
               learning an interface"), so until P5.9 chunk D this header was the
@@ -225,7 +234,7 @@ function Header() {
           <Link
             to="/settings/devices"
             aria-label="Settings"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             <Gear size={16} aria-hidden="true" />
             <span className="hidden sm:inline">Settings</span>

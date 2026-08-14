@@ -77,7 +77,9 @@ function SidebarNavItem({ item, touch = false }: { item: NavItem; touch?: boolea
         cn(
           // Symmetric padding has no direction, so this row needs no logical
           // rewrite (P3.4).
-          "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 rounded-md",
+          // §6.1's 44px floor; this row measured 32px. See the same line in the
+          // admin and student sidebars — one shape, three portals.
+          "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 pointer-coarse:min-h-11 rounded-md",
           "transition-colors duration-[var(--dur-instant)] ease-out-soft",
           // `focus-ring`, not `accent`: DESIGN.md §3.9 makes focus deliberately
           // blue so it stays distinguishable from the accent's own hover and
@@ -136,7 +138,7 @@ function ClassesNavSection() {
         ) : data.classes.length === 0 ? (
           <Link
             to="/teacher/classes"
-            className="px-2 py-[7px] text-body-sm text-accent-ink hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="px-2 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             Add your first class →
           </Link>
@@ -146,7 +148,9 @@ function ClassesNavSection() {
               <Link
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
-                className="flex items-center gap-2.5 px-2 py-[7px] text-body-sm text-ink-muted rounded-md hover:bg-paper hover:text-ink transition-colors duration-[var(--dur-instant)] ease-out-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                // §6.1's 44px floor; these class rows measured 34px. Already
+                // `flex items-center`, so the label stays centred.
+                className="flex items-center gap-2.5 px-2 py-[7px] pointer-coarse:min-h-11 text-body-sm text-ink-muted rounded-md hover:bg-paper hover:text-ink transition-colors duration-[var(--dur-instant)] ease-out-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
                 <span className="w-1.5 h-1.5 rounded-full flex-none bg-rule-strong" />
                 <span className="truncate">{c.label}</span>
@@ -155,7 +159,7 @@ function ClassesNavSection() {
             {data.classes.length > 5 ? (
               <Link
                 to="/teacher/classes"
-                className="px-2 py-[7px] text-body-sm text-ink-faint transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className="px-2 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-ink-faint transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
                 See all {data.classes.length} →
               </Link>
@@ -249,7 +253,7 @@ function SidebarFooter() {
           settings screens link to each other. P5.9 chunk D. */}
       <Link
         to="/settings/devices"
-        className="text-body-sm text-ink-faint px-0.5 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="text-body-sm text-ink-faint px-0.5 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
         Account, devices &amp; notifications →
       </Link>

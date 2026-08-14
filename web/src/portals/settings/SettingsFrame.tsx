@@ -92,7 +92,7 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
         <div className="mx-auto flex w-full max-w-200 items-center gap-4 px-4 py-4 md:px-8">
           <Link
             to={home}
-            className="flex items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
                 "Lemely", so describing the mark too announces the brand twice
@@ -134,6 +134,10 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
                 className={({ isActive }) =>
                   cn(
                     "rounded-md px-3 py-1.5 text-body-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+                    // §6.1's 44px floor; these two pills measured 32px. They
+                    // are flex items of the `<nav>` above, so they blockify and
+                    // need their own centring with the min.
+                    "pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11",
                     isActive
                       ? "bg-paper-sunk font-medium text-ink"
                       : "text-ink-muted hover:bg-paper-sunk hover:text-ink",

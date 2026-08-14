@@ -532,40 +532,82 @@ async function runLighthouseAudit(url, page, slug, { authed }) {
 /** Fails loudly (throws) if the page has horizontal overflow at its current
  * viewport — MISSION §11's "no horizontal scroll at any breakpoint from
  * 320px up" as a real, non-optional check rather than something only a
- * screenshot review would catch. 1px tolerance for sub-pixel rounding. */
+ * screenshot review would catch. 1px tolerance for sub-pixel rounding.
+ *
+ * ── P6.1: this check could not fail, and had not been able to since Phase 2 ──
+ *
+ * It used to open with a guard clause:
+ *
+ *     const { scrollWidth, clientWidth } = ...documentElement...
+ *     if (scrollWidth <= clientWidth + 1) return null
+ *
+ * Phase 2 added `overflow-x: clip` to html and body in `index.css` — itself one
+ * of the hallmark mobile non-negotiables, and correct. But clipping suppresses
+ * the very scroll this function measured, so from that commit onward
+ * `documentElement.scrollWidth` could never exceed `clientWidth`, the guard
+ * returned `null` on every route at every breakpoint, and the DOM walk below it
+ * — the part that names offenders — became unreachable code. Every "no
+ * horizontal scroll at 320/375/1440" claim made after Phase 2 rests on this.
+ *
+ * Measured, not reasoned about: in a 320px viewport, a 900px-wide div reports
+ * `scrollWidth 900 / clientWidth 320` without the clip rule and
+ * `scrollWidth 320 / clientWidth 320` with it, while its own bounding rect ends
+ * at x=900 in both cases.
+ *
+ * So overflow is now read off element geometry, which the clip rule does not
+ * touch. The cost is walking the DOM on the clean case too; that is the price
+ * of a check that can actually fail. The ancestor exemption is what keeps it
+ * honest in the other direction: an element clipped or scrolled by an ancestor
+ * BETWEEN it and body is contained, not page overflow. html and body are
+ * excluded from that exemption on purpose — their clip is the mask being seen
+ * through.
+ *
+ * Note this changes the failure mode being guarded, not just the measurement.
+ * With the clip in place there is no scrollbar to find; content simply gets cut
+ * off the side of the page with nothing telling the reader it is there. */
 async function checkNoHorizontalScroll(page, slug, bpWidth) {
-  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }))
-  if (scrollWidth <= clientWidth + 1) return null
-
-  // Only walk the DOM once we know there IS a violation — naming the
-  // offending elements is the difference between a fixable report and
-  // "something on this page is 10px too wide", but it is wasted work on the
-  // (overwhelmingly common) clean case.
-  const offenders = await page.evaluate(() => {
+  const { scrollWidth, clientWidth, offenders } = await page.evaluate(() => {
     const clientWidth = document.documentElement.clientWidth
-    const offenders = []
+    const contained = (el) => {
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        if (/hidden|clip|auto|scroll/.test(getComputedStyle(p).overflowX)) return true
+      }
+      return false
+    }
+    const found = []
     for (const el of document.querySelectorAll("body *")) {
       const rect = el.getBoundingClientRect()
       if (rect.width === 0 && rect.height === 0) continue
+      const cs = getComputedStyle(el)
+      if (cs.visibility === "hidden" || cs.display === "none") continue
+      // Screen-reader-only text is a deliberately clipped 1px box, not layout.
+      if (cs.clipPath !== "none" && rect.width <= 2 && rect.height <= 2) continue
+      if (el.closest("[aria-hidden='true']")) continue
       const overhang = Math.round(rect.right - clientWidth)
       if (overhang <= 1) continue
-      const cls = typeof el.className === "string" ? el.className : ""
-      offenders.push({
+      if (contained(el)) continue
+      found.push({
         overhang,
         tag: el.tagName.toLowerCase(),
         id: el.id || null,
-        className: cls.slice(0, 200) || null,
+        className: (typeof el.className === "string" ? el.className : "").slice(0, 200) || null,
         width: Math.round(rect.width),
         left: Math.round(rect.left),
         text: (el.textContent || "").trim().slice(0, 60) || null,
+        el,
       })
     }
-    offenders.sort((a, b) => b.overhang - a.overhang)
-    return offenders.slice(0, 8)
+    // An overflowing container drags every descendant past the edge with it.
+    // Report only the outermost, so the finding names the cause.
+    const outermost = found.filter((f) => !found.some((o) => o !== f && o.el.contains(f.el)))
+    outermost.sort((a, b) => b.overhang - a.overhang)
+    return {
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth,
+      offenders: outermost.slice(0, 8).map(({ el: _el, ...rest }) => rest),
+    }
   })
+  if (offenders.length === 0) return null
   return { slug, bpWidth, scrollWidth, clientWidth, offenders }
 }
 
@@ -2587,7 +2629,13 @@ async function main() {
   log(`Console errors collected: ${consoleErrors.length}`)
   log(`Horizontal-scroll violations: ${responsiveViolations.length}`)
   for (const v of responsiveViolations) {
-    log(`  ${v.slug} @ ${v.bpWidth}px — scrollWidth ${v.scrollWidth} > clientWidth ${v.clientWidth}`)
+    // Deliberately no longer phrased as "scrollWidth > clientWidth": html/body
+    // clip, so those two are always equal and saying otherwise would misdescribe
+    // the violation. What is wrong is that content sits past the viewport edge
+    // where nothing can scroll to it. See checkNoHorizontalScroll.
+    log(
+      `  ${v.slug} @ ${v.bpWidth}px — ${v.offenders.length} element(s) past the ${v.clientWidth}px edge (clipped, not scrollable)`,
+    )
     for (const o of v.offenders ?? []) {
       log(
         `      +${o.overhang}px  <${o.tag}${o.id ? `#${o.id}` : ""} class="${o.className ?? ""}">` +

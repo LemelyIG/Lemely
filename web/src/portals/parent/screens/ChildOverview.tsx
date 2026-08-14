@@ -183,7 +183,11 @@ function WeakTopicList({ topics, childId }: { topics: WeakTopic[]; childId: stri
         <h2 className="text-display-md text-ink">Topics they're finding hard</h2>
         <Link
           to={`/parent/children/${childId}/weaknesses`}
-          className="rounded-sm text-body-sm text-accent-ink transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          // `whitespace-nowrap` and `shrink-0` (P6.1): at 320px the heading
+          // beside this took enough of the row that "See all" broke into "See"
+          // and "all", a two-line clickable target §6 bans. The heading is the
+          // element that should absorb the squeeze here, not the control.
+          className="shrink-0 whitespace-nowrap rounded-sm pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
           See all
         </Link>

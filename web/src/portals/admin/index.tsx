@@ -82,7 +82,13 @@ function SidebarNavItem({ item, touch = false }: { item: AdminNavItem; touch?: b
         cn(
           // Symmetric padding has no direction, so this row needs no logical
           // rewrite (P3.4).
-          "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 rounded-md",
+          // `pointer-coarse:min-h-11` is §6.1's 44px floor. The row measured
+          // 32px, and the same row in the student portal was raised while this
+          // one and the teacher's were not — the standing rule that a defect
+          // fixed on one surface is usually live on another. Safe as a min
+          // here: the row is already `flex items-center`, so the label centres
+          // in the taller box instead of sitting at its top.
+          "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 pointer-coarse:min-h-11 rounded-md",
           "transition-colors duration-[var(--dur-instant)] ease-out-soft",
           // `focus-ring`, not `accent`: §3.9 keeps focus deliberately blue so it
           // stays distinguishable from the accent the active row already uses.
@@ -186,18 +192,30 @@ function SidebarFooter({ lane }: { lane: AdminLane }) {
   return (
     <div className="flex flex-col gap-3">
       {lane === "school" ? (
+        /* P6.1: both of these were one long sentence inside a ~219px sidebar,
+           so the clickable text always broke across two lines — the thing §6
+           bans outright, and measured here at every width from 320 to 768. The
+           label is now one line and the detail is a second line inside the same
+           link, so the whole block stays one target and nothing that reads as
+           part of the link is untappable. Shortening the sentence instead would
+           have cost a school admin the only statement of what is behind a
+           destination they have never visited. */
         <Link
           to="/teacher"
-          className="text-body-sm text-ink-faint px-0.5 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="flex flex-col justify-center gap-0.5 rounded-sm px-0.5 pointer-coarse:min-h-11 text-body-sm text-ink-faint transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
-          Teaching tools: marking, review, announcements &rarr;
+          <span className="whitespace-nowrap">Teaching tools &rarr;</span>
+          <span className="text-body-sm text-ink-faint">
+            Marking, review, announcements
+          </span>
         </Link>
       ) : null}
       <Link
         to="/settings/devices"
-        className="text-body-sm text-ink-faint px-0.5 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="flex flex-col justify-center gap-0.5 rounded-sm px-0.5 pointer-coarse:min-h-11 text-body-sm text-ink-faint transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
-        Account, devices &amp; notifications &rarr;
+        <span className="whitespace-nowrap">Your account &rarr;</span>
+        <span className="text-body-sm text-ink-faint">Devices and notifications</span>
       </Link>
       <UserBlock />
     </div>

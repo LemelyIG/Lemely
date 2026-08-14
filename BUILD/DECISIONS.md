@@ -8564,3 +8564,211 @@ state — on a tab, the only thing confirming a tap was the panel changing
 underneath. All three now carry §9.2's `scale(0.98)`. `FileDrop` takes it only
 when unlocked: a locked target that springs back tells the reader it accepted a
 tap it is going to ignore.
+
+---
+
+## D6.1 — Redesign Phase 6.1 (adapt): the gate that could not fail, and a touch floor that was nowhere
+
+Phase 6's first part. §6.1 asks for every page verified at 320/375/414/768 and
+desktop, with five hallmark mobile non-negotiables enforced. Two of the five
+turned out to be unimplemented product-wide, and one of the two was being hidden
+by another that *was* implemented.
+
+### `checkNoHorizontalScroll` has been vacuous since Phase 2
+
+`scripts/audit.mjs` carries a function whose own docstring calls it "MISSION
+§11's no horizontal scroll at any breakpoint from 320px up as a real,
+non-optional check rather than something only a screenshot review would catch".
+It opened with a guard clause:
+
+    const { scrollWidth, clientWidth } = ...documentElement...
+    if (scrollWidth <= clientWidth + 1) return null
+
+Phase 2 added `overflow-x: clip` to html and body in `index.css`. That is itself
+one of the non-negotiables and it is correct. But clipping suppresses the very
+scroll the guard measured, so from that commit `documentElement.scrollWidth`
+could never exceed `clientWidth`, the function returned `null` for every route
+at every breakpoint, and the DOM walk beneath it — the part that names the
+offending elements — became unreachable code.
+
+Measured rather than reasoned about. A 900px div in a 320px viewport:
+
+| | scrollWidth | clientWidth | guard fires | element's own right edge |
+|---|---|---|---|---|
+| without `overflow-x: clip` | 900 | 320 | yes | x=900 |
+| with `overflow-x: clip` | 320 | 320 | **no** | x=900 |
+
+Every "no horizontal scroll at 320/375/1440" claim in the ledger from Phase 3
+onward rests on this function. Those claims are not necessarily wrong — the
+re-measure below found only two violations — but they were not evidence.
+
+This is D5.2's shape exactly one phase later: a rule that looks like it covers a
+case and does not, because a second correct rule changes what the first one can
+observe. Two non-negotiables, each right on its own, one silently disabling the
+enforcement of the other.
+
+The fix reads element geometry, which clipping does not touch, with an ancestor
+exemption so a table or scroller deliberately clipping its own children is not
+reported as page overflow. html and body are excluded from that exemption on
+purpose: their clip is the mask being seen through. It costs a DOM walk on the
+clean case, which is the price of a check that can fail.
+
+Note the failure mode changed too, not just the measurement. With the clip in
+place there is no scrollbar to find: content is simply cut off the side of the
+page with nothing telling the reader it is there. Silent truncation is worse
+than a scrollbar, because a scrollbar is an affordance.
+
+### The 44x44 touch floor was implemented nowhere
+
+`scripts/adapt_audit.mjs` (new) walks all 35 registered capture surfaces at
+320/375/414/768/1440 — 745 page-states — and measures the non-negotiables
+instead of photographing them. Four of the five are invisible in a picture,
+which is why five phases of visual review never surfaced this.
+
+Interactive heights across the product measured 20, 24, 27, 28, 32, 33, 34, 38
+and 40px. The kit's **default** button was 34px, so the most common control in
+the product missed the floor by ten pixels on every phone, on a product whose
+own brief says students live on phones.
+
+The floor is keyed on `(pointer: coarse)`, not on a width breakpoint, because it
+is a finger rule. A 375px-wide desktop window is not a finger, and the teacher
+and admin portals are deliberately DENSITY 7 (§3.3) for a mouse; widening their
+table controls on a narrow desktop window would be a regression dressed as a
+fix. The gate emulates the same thing rather than inferring it from width —
+verified in both directions before the rule was written: Chromium with
+`hasTouch: true` reports `(pointer: coarse)` true and `(pointer: fine)` false.
+
+Two carve-outs, both deliberate and both stated in the CSS:
+
+- **Links inside a sentence** are `display: inline`, and `min-block-size` has no
+  effect on a non-replaced inline box, so prose links keep their line height and
+  stay exempt. That is the same carve-out WCAG 2.5.5 makes, for the same reason,
+  and here it falls out of the cascade rather than needing a selector.
+- **Checkbox and radio inputs are excluded, and the exclusion is load-bearing.**
+  Both render the real input as `absolute inset-0 h-full w-full` inside an 18px
+  painted box (the `appearance-none` technique that keeps the native control in
+  the accessibility tree). A 44px floor on the input would not enlarge the box;
+  it would leave a 44px invisible hit area hanging 26px below an 18px control,
+  overlapping whatever sits under it — in a radio group, the next option. That
+  turns a tap on one choice into a tap on another, which is worse than the
+  defect being fixed. The floor goes on the label row, which is what a person
+  aims at. Found by reading the components before shipping the rule, not by
+  measuring afterwards.
+
+### `overflow-wrap` was absent product-wide, and the clip rule hid it
+
+No display rung, and nothing else in `src/`, set `overflow-wrap` anywhere. A
+display heading is the largest type on the page and the most likely to hold
+something unbreakable — a school name, an email address — and at 320px one long
+token is wider than the viewport.
+
+The two non-negotiables interact, which is the point worth carrying forward:
+implementing `overflow-x: clip` without `overflow-wrap` does not produce a
+scrollbar you can find, it produces a heading with its end cut off and nothing
+saying so. Implementing one alone makes the absence of the other invisible.
+
+`anywhere` rather than `break-word`, deliberately: only `anywhere` participates
+in min-content sizing, which is what lets a heading inside a grid or flex track
+actually shrink. `break-word` breaks the glyphs but leaves the track sized to
+the unbroken word, so the overflow it is supposed to prevent survives.
+
+The **data** rungs are deliberately excluded and the gate's selector was
+narrowed to match after one run. They carry marks, percentages and XP, where a
+break would split "128" across two lines and read as a different number. No
+value that short can overflow; if one ever does, the geometric check reports it
+as overflow, which is the honest signal. A wrap rule there would make a wrong
+number look intentional.
+
+### Three grid templates, and one that nothing used
+
+`grid-subject-ledger` was written correctly in P4.1 with `minmax(0, 1fr)` and a
+comment explaining why. The three build-era templates beside it used a bare
+`1fr`, whose `auto` minimum is the classic refusal-to-shrink. `grid-subjects-row`
+was deleted rather than fixed: zero call sites product-wide, and the comment
+claiming un-migrated screens still referenced it stopped being true when Phase 4
+migrated the last of them.
+
+### Two real overflows at 320px
+
+- **The parent portal header, in every state.** The brand lockup plus the child
+  switcher, Settings and Sign out are wider than the 288px the row has between
+  its own padding. Because html and body clip, Sign out was not merely awkward
+  there: it was off the side of the screen, unreachable, with nothing on screen
+  to say it existed. The row wraps now.
+- **`Subject`'s `min-w-80`.** 320px of minimum column plus the screen's own
+  horizontal padding is wider than a 320px screen, by construction. The intent
+  was "keep this column beside the cards until there is no longer room for
+  both", which is what a flex *basis* says; a min-width also forbids the column
+  from ever being narrower, which is not what was meant.
+
+### Two-line clickable text, and where the rule has to yield
+
+§6 bans a clickable label breaking across lines — P4.7's "See" / "the roll" is
+the canonical case, where the second line reads as a separate control. Fixed:
+the admin sidebar's two footer links (each one long sentence in a 219px column,
+so they broke at every width from 320 to 768), "See all" on the parent overview,
+and the "Target grade" sort header.
+
+The remaining cases are a different thing and are exempted explicitly rather
+than quietly: a link whose text is a class name, a quiz title or a syllabus
+topic is **content the school typed**, and the only ways to keep it on one line
+are to truncate it or let it overflow. Both cost the reader information the
+product does not own and cannot shorten. Those opt out with a
+`data-wraps-content-title` attribute, so the exemption is visible in the source
+of the screen taking it rather than buried in a list nobody reading the JSX
+would find.
+
+### One list, not two
+
+`adapt_audit.mjs` imports `SURFACES` from `capture_surface.mjs` rather than
+restating it, and `capture_surface.mjs` became importable to allow that. P4.10's
+finding was that a hand-maintained gate list is a list some screen is missing
+from; a second copy of a 35-entry registry is that finding waiting to happen.
+
+### Gate
+
+`tests/unit/adaptRules.test.ts`, 9 tests, **verified by inversion**: reinstating
+the `scrollWidth` guard, reverting a grid track to a bare `1fr`, dropping one
+display rung from the wrap rule, and re-keying the touch floor to a width
+breakpoint each fail exactly the intended test (the last fails two, correctly).
+
+The last test is the one that matters. The vacuous-gate defect cannot be caught
+by asking whether a check exists — it did exist and it ran. It can only be
+caught by pinning the *shape* that made it vacuous, so the gate asserts that
+neither audit script compares `scrollWidth` to `clientWidth`, and that both
+still call `getBoundingClientRect`. The cheap guard looks entirely reasonable,
+which is how it survived four phases.
+
+### Correction, found while verifying this record rather than trusting it
+
+**The pin above did not do what this section says it did, and the inversion that
+"verified" it was the reason.** Its first draft matched
+`/scrollWidth\s*<=?\s*clientWidth/` — the *destructured* spelling the original
+guard happened to use, because the original read
+`const { scrollWidth, clientWidth } = ...`. It was then inverted against that
+same spelling, which is the one shape it could see. Measured, not argued:
+
+| Reinstated guard | Pin fires |
+|---|---|
+| `if (scrollWidth <= clientWidth + 1) return null` | yes |
+| `if (el.scrollWidth > el.clientWidth) return null` | **no** |
+| `if (doc.clientWidth >= doc.scrollWidth) return null` | **no** |
+| `if (document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1) return null` | **no** |
+
+Three of the four are the identical defect, one property access or one flipped
+operator away, and the fourth is the *literal original line* with its receiver
+written out instead of destructured. So the gate caught a verbatim revert and
+nothing else, while its own docstring claimed it caught "ANY check gated on the
+difference between them".
+
+This is D6.1's own finding one level up. The section above is about a rule that
+looks like it covers a case and does not; the check written to stop that
+recurring had the same property, and an inversion pass agreed with it because
+inverting against the one spelling you already have in mind cannot discover the
+spellings you do not. **An inversion proves a gate fires on the case you
+inverted. It is not evidence about the case class.** That is the reusable part,
+and it applies to every "verified by inversion" claim in this file.
+
+The pin now matches either identifier order, any comparison operator, and any
+receiver, within a single statement, and is inverted against all four rows of
+the table above — each fails exactly one test, and the clean tree passes 9/9.

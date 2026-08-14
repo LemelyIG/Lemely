@@ -114,7 +114,11 @@ export function SidebarNav({ items, className, ...props }: SidebarNavProps) {
           key={item.id}
           item={item}
           className={cn(
-            "flex w-full items-center gap-2.5 rounded-md px-9px py-2 text-left text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+            // `pointer-coarse:min-h-11` is §6.1's touch floor: measured at 32px
+            // tall on every mobile width, and this is the control a student on
+            // a phone touches most. Safe as a min because the row already
+            // centres its content.
+            "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-left text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
             item.active
               ? "bg-surface-2 font-medium text-t1"
               : "font-normal text-t2 hover:bg-surface-2",

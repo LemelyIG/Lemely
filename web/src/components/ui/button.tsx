@@ -37,6 +37,19 @@ const button = cva(
   [
     "inline-flex items-center justify-center gap-2 whitespace-nowrap",
     "cursor-pointer rounded-md font-sans",
+    /*
+     * §6.1's 44x44 touch floor, on a finger only.
+     *
+     * The global `(pointer: coarse)` rule in index.css reaches `<button>`, but
+     * this recipe is also used on `<a>` elements through `buttonVariants` (the
+     * 404 screen's way out, the landing CTAs), and an anchor is not a button
+     * selector. P6.1 measured those anchors at 32-34px tall on every mobile
+     * width. Stated here so both renderings of the same control agree.
+     *
+     * Safe as a min: the base is already `inline-flex items-center`, so the
+     * label centres in the taller box rather than sitting at its top.
+     */
+    "pointer-coarse:min-h-11 pointer-coarse:min-w-11",
     // Colour-only transition, plus the transform used by the press. Never
     // `ease-in-out` or `linear` on a designed transition (DESIGN.md §9.1).
     "transition-[color,background-color,border-color,transform]",

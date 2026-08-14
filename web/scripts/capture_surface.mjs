@@ -52,7 +52,20 @@ import { chromium } from "@playwright/test"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, "..", "..")
-const surfaceName = process.argv[2] ?? "student-dashboard"
+
+/*
+ * P6.1 made this file importable as well as runnable. `scripts/adapt_audit.mjs`
+ * needs the same 35-surface registry, the same stubs and the same identities,
+ * and the one thing this build has learned repeatedly is that a second
+ * hand-maintained list is a list that drifts (P4.10: "a screen no surface
+ * claims is a screen no gate reads"). So the adapt gate imports `SURFACES`
+ * from here rather than restating it.
+ *
+ * Everything below the registry is CLI-only and runs behind `isMain`. Without
+ * that guard, importing this module would start a capture round.
+ */
+const isMain = path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)
+const surfaceName = (isMain && process.argv[2]) || "student-dashboard"
 const PORT = 4319
 const BASE = `http://127.0.0.1:${PORT}`
 
@@ -2829,8 +2842,10 @@ const SURFACES = {
   },
 }
 
+export { SURFACES, SESSION, PROFILE }
+
 const surface = SURFACES[surfaceName]
-if (!surface) {
+if (!surface && isMain) {
   console.error(
     `unknown surface "${surfaceName}". Known: ${Object.keys(SURFACES).join(", ")}`,
   )
@@ -2998,7 +3013,9 @@ async function main() {
   )
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exit(1)
-})
+if (isMain) {
+  main().catch((err) => {
+    console.error(err)
+    process.exit(1)
+  })
+}
