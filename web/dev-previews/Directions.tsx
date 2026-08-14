@@ -3,7 +3,7 @@ import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { BoundaryBar } from "@/components/ui/boundary-bar"
-import { directionsIntro, railTicks } from "../data"
+import { directionsIntro, railTicks } from "@/portals/student/data"
 
 /*
  * Directions (isDirections). An internal gallery of the three result-header

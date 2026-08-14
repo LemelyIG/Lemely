@@ -20,7 +20,17 @@ import { fileURLToPath, URL } from "node:url"
  * Run with `npm run preview:kit`. The `@` alias mirrors the app config so the
  * preview imports components by exactly the same specifier a real screen does,
  * which is what makes the preview trustworthy.
+ *
+ * P4.10 (DECISION D4.8, defaulted): two entries now, not one. The
+ * design-directions gallery moved here out of the product route table for
+ * reason 1 above, which applied to it word for word — it was reachable by any
+ * signed-in student at `/student/directions`. `index.html` is the component
+ * kit; `directions.html` is the gallery. Vite only builds `index.html` from a
+ * root by default, so the second entry has to be named explicitly or it would
+ * be served in dev and silently missing from `npm run build:kit`.
  */
+const previewEntry = (name: string) =>
+  fileURLToPath(new URL(`./dev-previews/${name}.html`, import.meta.url))
 export default defineConfig({
   root: fileURLToPath(new URL("./dev-previews", import.meta.url)),
   plugins: [react(), tailwindcss()],
@@ -33,5 +43,8 @@ export default defineConfig({
   build: {
     outDir: fileURLToPath(new URL("./dist-previews", import.meta.url)),
     emptyOutDir: true,
+    rollupOptions: {
+      input: { index: previewEntry("index"), directions: previewEntry("directions") },
+    },
   },
 })

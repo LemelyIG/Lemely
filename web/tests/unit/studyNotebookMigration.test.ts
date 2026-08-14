@@ -38,7 +38,7 @@ const MIGRATED_FILES = [
   "src/portals/marketing/index.tsx",
   "src/portals/marketing/Landing.tsx",
   "src/components/ui/reveal.tsx",
-  "src/portals/student/screens/Directions.tsx",
+  "dev-previews/Directions.tsx",
   "src/routes.tsx",
   // Phase 4, surface 1 — the student dashboard.
   "src/portals/student/screens/Overview.tsx",

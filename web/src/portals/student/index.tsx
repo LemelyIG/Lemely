@@ -81,7 +81,6 @@ const FlashcardReview = lazy(() =>
 // The Landing screen left this portal in P4.9 (see the redirect below). Its
 // lazy import went with it: a chunk nothing in this subtree renders is a
 // chunk the build still emits and the router still resolves.
-const Directions = lazy(() => import("./screens/Directions").then((m) => ({ default: m.Directions })))
 const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
 
 /**
@@ -490,7 +489,6 @@ export const studentRoute: RouteObject = {
      * on a 404. `replace` so the redirect does not sit in the back stack.
      */
     { path: "landing", element: <Navigate to="/landing" replace /> },
-    { path: "directions", element: <Directions /> },
     /*
      * P4.10. Last, so it only matches what nothing above did. Before this, an
      * unmatched path inside this portal fell through to the top-level `*` and

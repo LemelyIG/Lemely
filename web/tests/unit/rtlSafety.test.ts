@@ -30,7 +30,7 @@ const RTL_CLEAN_FILES = [
   "src/portals/marketing/index.tsx",
   "src/portals/marketing/Landing.tsx",
   "src/components/ui/reveal.tsx",
-  "src/portals/student/screens/Directions.tsx",
+  "dev-previews/Directions.tsx",
   "src/routes.tsx",
   // Phase 4, surface 5 — the teacher portal.
   "src/portals/teacher/index.tsx",

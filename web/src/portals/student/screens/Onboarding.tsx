@@ -1,6 +1,8 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Stepper } from "@/components/ui/stepper"
+import { studentSaveFailureMessage } from "@/lib/studentOutcome"
 import {
   useCompleteOnboarding,
   usePatchStudentProfile,
@@ -45,6 +47,23 @@ import { QuestionnaireStep } from "./onboarding/QuestionnaireStep"
  * back-to-subjects nav) — going back would risk silently orphaning a
  * deselected subject's enrolment, since `/api/me` exposes no
  * delete-enrolment route to clean it up.
+ *
+ * ── P4.10, the Study Notebook pass ────────────────────────────────────────
+ *
+ * This flow is the first thing a new student sees, and it reached surface 10
+ * still entirely in the build-era language: no surface in the Phase 4 ledger
+ * ever claimed it, though MISSION §1 names "onboarding/placement test" in
+ * scope outright. It was three screens of Material-3 tokens standing between a
+ * new account and every screen that had been redesigned.
+ *
+ * **Both failure paths printed the server's own words.** The two `catch` arms
+ * rendered `err.message`, and every `detail` these routes produce is machine
+ * text: `f"{field} cannot be null."` (a JSON field name),
+ * `f"Unknown session month: {value!r}"` (a Python repr), and
+ * `str(StudentProfileValidationError(...))`. So a student picking subjects on
+ * their first day could be shown a camelCase key. `lib/studentOutcome.ts` owns
+ * the wording now, and its first sentence answers the question they actually
+ * have: nothing you typed has been lost.
  */
 
 type WizardStep = "subjects" | "questionnaire"
@@ -147,7 +166,7 @@ export function Onboarding() {
       setQuestionnaireIndex(0)
       setWizardStep("questionnaire")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save your subjects.")
+      setError(studentSaveFailureMessage(err))
     }
   }
 
@@ -159,7 +178,22 @@ export function Onboarding() {
     goToStep(questionnaireIndex + 1)
   }
 
-  function skipCurrent() {
+  /**
+   * Unset the current question's answer, without moving.
+   *
+   * P4.10 split this out of `skipCurrent`, which was doing both at once behind
+   * a button labelled "Skip for now" that only appeared once you had answered.
+   * See `QuestionnaireStep`'s header for the full account.
+   *
+   * The confidence step is deliberately absent from this switch: its answer is
+   * a set of per-topic slider ratings rather than one field, and `undefined`
+   * for "no rating" is what `buildConfidenceRatingsPayload` already filters on,
+   * so there is nothing here that could be unset without inventing a
+   * "clear every topic" action nobody asked for. That step therefore never
+   * offers the button, because `answered` is false until a slider moves and
+   * true only for topics that really carry a rating.
+   */
+  function clearCurrent() {
     const step = questionnaireSteps[questionnaireIndex]
     if (step?.kind === "school") setAnswers((prev) => ({ ...prev, schoolName: undefined }))
     else if (step?.kind === "externalLessons")
@@ -167,6 +201,17 @@ export function Onboarding() {
     else if (step?.kind === "weeklyHours")
       setAnswers((prev) => ({ ...prev, weeklyStudyHours: undefined }))
     else if (step?.kind === "gradeLevel") setAnswers((prev) => ({ ...prev, gradeLevel: undefined }))
+  }
+
+  /**
+   * Move past an unanswered question.
+   *
+   * Still clears before advancing rather than only advancing: a value seeded
+   * from an existing profile can be `null`, and only an explicit `undefined`
+   * keeps the field out of the PATCH body (D4.5).
+   */
+  function skipCurrent() {
+    clearCurrent()
     advance()
   }
 
@@ -199,7 +244,7 @@ export function Onboarding() {
       const firstSubject = placementInviteSubject(Object.keys(drafts))
       navigate(firstSubject ? `/student/placement/${firstSubject}` : "/student")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't save your answers.")
+      setError(studentSaveFailureMessage(err))
     }
   }
 
@@ -210,7 +255,7 @@ export function Onboarding() {
     completeOnboarding.isPending
 
   return (
-    <div className="lm-screen max-w-[760px] mx-auto flex flex-col gap-6">
+    <div className="lm-screen mx-auto flex w-full max-w-190 flex-col gap-6">
       <Stepper
         steps={[
           { id: 1, label: "Subjects" },
@@ -242,6 +287,7 @@ export function Onboarding() {
           stepIndex={questionnaireIndex}
           onBack={() => goToStep(questionnaireIndex - 1)}
           onSkip={skipCurrent}
+          onClear={clearCurrent}
           onContinue={advance}
           onFinish={handleFinish}
           answers={answers}

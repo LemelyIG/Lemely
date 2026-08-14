@@ -134,7 +134,6 @@ export const crumbs: Record<string, string> = {
   "/student/parents": "Home / Your parents",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
-  "/student/directions": "Design directions",
 }
 
 /**

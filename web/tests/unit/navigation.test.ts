@@ -71,15 +71,35 @@ describe("student nav — D1.1 and D1.3", () => {
 
   /*
    * D1.1's explicit condition: the *routes* survive, only the nav entries go.
-   * Onboarding is redirected into, and `scripts/audit.mjs` visits
-   * `/student/directions` by path. Removing the routes would break both.
+   * Onboarding is redirected into and `/student/landing` redirects out to the
+   * public marketing page (P4.9), so removing either would break a real path.
    */
-  it.each(["/student/onboard", "/student/landing", "/student/directions"])(
+  it.each(["/student/onboard", "/student/landing"])(
     "keeps %s mounted as a deep-linkable route",
     (path) => {
       expect(studentRoutePaths).toContain(path)
     },
   )
+
+  /*
+   * `/student/directions` is the exception to the rule above, and the change
+   * is deliberate rather than incidental — MISSION §9.7 requires a test that
+   * changes with the IA to say so.
+   *
+   * D1.1 kept the route while removing its nav entry, which left an internal
+   * design gallery of three result-header treatments reachable by any
+   * signed-in student, rendering mock data. DECISION **D4.8** asked whether it
+   * should ship and defaulted to option A on 2026-08-14 after its 30-minute
+   * timeout: move it to `web/dev-previews/`, which is exactly what Phase 2 did
+   * with the component kit for the identical reason.
+   *
+   * Asserted in both directions, like `marketing.test.ts`: it is not in the
+   * nav (above) and it is no longer a route either. A gallery that is only
+   * *invisible* is one forgotten guard away from being found.
+   */
+  it("no longer mounts /student/directions as a product route (D4.8)", () => {
+    expect(studentRoutePaths).not.toContain("/student/directions")
+  })
 
   it("gives students an in-app path to their notifications (D1.3)", () => {
     expect(allItems.map((item) => item.to)).toContain("/student/notifications")

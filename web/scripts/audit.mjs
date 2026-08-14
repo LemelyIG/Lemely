@@ -2077,22 +2077,19 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Thirty papers marked"),
       authed: true,
     },
-    // ── DEV-01 · Result-header design gallery (added P5.11) ───────────────
-    // Deliberately given a DEV- id rather than an S- one: this is an internal
-    // design gallery of three result-header treatments, not a product screen
-    // in docs/LEMELY_UI_SPEC.md, and it should not be mistaken for one in the
-    // screenshot corpus. It is in the registry regardless because it is a
-    // reachable route in the shipped bundle — which is the only test that
-    // matters for an accessibility gate.
-    {
-      screenId: "DEV-01",
-      slug: "student-directions",
-      path: "/student/directions",
-      session: practiceActiveSession,
-      ready: (page) =>
-        waitForText(page, "The result header is the emotional moment of the product"),
-      authed: true,
-    },
+    // ── DEV-01 · Result-header design gallery — REMOVED P4.10 (D4.8) ──────
+    // The entry that used to sit here visited `/student/directions`, and its
+    // own rationale was that "it is in the registry regardless because it is a
+    // reachable route in the shipped bundle, which is the only test that
+    // matters for an accessibility gate". DECISION D4.8 (defaulted to option A
+    // on 2026-08-14) moved the gallery to `web/dev-previews/` behind the kit's
+    // own Vite entry, so it is no longer in the shipped bundle and that
+    // rationale no longer holds. An audit entry for a path the router does not
+    // mount would fail on every run for a reason that says nothing about the
+    // product. Recorded rather than deleted silently, because the gallery
+    // still exists and a future reader should know why it stopped being
+    // audited here: it is not shipped, so this gate is not the one that
+    // applies to it.
     // ── G-10 · Device-limit challenge (added P5.11) ───────────────────────
     // The last screen in the build with no entry. It needed a seed
     // precondition rather than a navigation — an account already holding
