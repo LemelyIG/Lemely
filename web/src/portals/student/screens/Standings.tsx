@@ -158,6 +158,16 @@ function BoardRow({
      wrapper around the whole body: the two call sites genuinely differ. */
   as?: "li" | "div"
 }) {
+  /*
+   * P6.4. `--ink-faint` measures **4.47:1 on `--accent-wash`** where AA needs
+   * 4.5, so the viewer's own row — the one row that carries the tint — put its
+   * de-emphasised text just under the floor (axe `color-contrast`, 2 nodes on
+   * `student-standings`). It is fine on paper (5.12:1), which is why nothing
+   * caught it: the pairing that fails only exists on one variant of this row.
+   * `--ink-muted` is 5.51:1 on the wash and stays de-emphasised.
+   */
+  const faint = isViewer ? "text-ink-muted" : "text-ink-faint"
+
   return (
     <Root
       className={cn(
@@ -170,7 +180,7 @@ function BoardRow({
         isViewer && "-mx-3 rounded-md bg-accent-wash px-3",
       )}
     >
-      <span className="w-7 flex-none text-data-sm text-ink-faint">
+      <span className={cn("w-7 flex-none text-data-sm", faint)}>
         {/* A null rank is a real state — the viewer has no XP this week, or has
             opted out. An invented "—" position would be a fabricated last
             place (UI spec §1.4). */}
@@ -180,7 +190,7 @@ function BoardRow({
       <span className="min-w-0 flex-1 truncate text-body-md text-ink">
         {row.displayName}
         {isViewer ? (
-          <span className="ms-2 text-body-sm text-ink-faint">You</span>
+          <span className={cn("ms-2 text-body-sm", faint)}>You</span>
         ) : null}
       </span>
       <StreakBadge streak={row.streak} />
@@ -188,7 +198,7 @@ function BoardRow({
         {/* Only the viewer's own figure counts up — see this file's header on
             why the rest of the board holds still. */}
         {isViewer ? <CountUp value={row.xp} /> : row.xp.toLocaleString()}
-        <span className="ms-1 text-body-sm text-ink-faint">XP</span>
+        <span className={cn("ms-1 text-body-sm", faint)}>XP</span>
       </span>
     </Root>
   )

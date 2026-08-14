@@ -67,7 +67,7 @@ export function MarkSchemes() {
   if (isError) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-body-lg text-accent">
+        <div className="text-body-lg text-accent-ink">
           Couldn't load mark schemes: {teacherLoadFailureMessage(error)}
         </div>
       </div>
@@ -108,7 +108,7 @@ export function MarkSchemes() {
       </div>
 
       {uploadScheme.isError ? (
-        <div className="text-body-md text-accent">
+        <div className="text-body-md text-accent-ink">
           Couldn't parse that mark scheme: {teacherMutationFailureMessage(uploadScheme.error)}
         </div>
       ) : null}

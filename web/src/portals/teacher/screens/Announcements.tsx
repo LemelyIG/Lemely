@@ -367,7 +367,7 @@ export function Announcements() {
           </h2>
           <div className="bg-paper-sunk border border-rule rounded-lg p-4">
             <div className="flex items-center gap-2">
-              <span className="h-7 w-7 rounded-full bg-accent-wash text-accent flex items-center justify-center text-data-sm">
+              <span className="h-7 w-7 rounded-full bg-accent-wash text-accent-ink flex items-center justify-center text-data-sm">
                 {initialsOf(profileQuery.data?.displayName ?? profileQuery.data?.email ?? "?")}
               </span>
               <span className="text-body-sm text-ink-muted">

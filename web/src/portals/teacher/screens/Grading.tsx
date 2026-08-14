@@ -284,7 +284,7 @@ export function Grading() {
   if (papersQuery.isError) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-body-lg text-accent">
+        <div className="text-body-lg text-accent-ink">
           Couldn't load papers: {teacherLoadFailureMessage(papersQuery.error)}
         </div>
       </div>
@@ -420,7 +420,7 @@ export function Grading() {
             ) : paperDetailQuery.isPending ? (
               <div className="text-body-md text-ink-muted">Loading…</div>
             ) : paperDetailQuery.isError ? (
-              <div className="text-body-md text-accent">
+              <div className="text-body-md text-accent-ink">
                 Couldn't load pipeline: {teacherLoadFailureMessage(paperDetailQuery.error)}
               </div>
             ) : detail ? (
@@ -433,8 +433,8 @@ export function Grading() {
                         p.state === "done"
                           ? "bg-ok border-ok text-accent-on"
                           : p.state === "active"
-                            ? "bg-transparent border-accent text-accent"
-                            : "bg-transparent border-rule text-accent",
+                            ? "bg-transparent border-accent text-accent-ink"
+                            : "bg-transparent border-rule text-accent-ink",
                       )}
                     >
                       {PIPE_MARK[p.state]}
@@ -567,7 +567,7 @@ export function Grading() {
                     <span
                       className={cn(
                         "text-data-sm",
-                        on ? "text-accent" : "text-ink-faint",
+                        on ? "text-accent-ink" : "text-ink-faint",
                       )}
                     >
                       {t.count}

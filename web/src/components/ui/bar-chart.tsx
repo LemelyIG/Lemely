@@ -2,6 +2,7 @@
 import { useMemo } from "react"
 import { ResponsiveBar } from "@nivo/bar"
 import { useChartAnimation, useNivoTheme } from "@/lib/nivoTheme"
+import { ChartDataTable } from "./chart-data-table"
 import { SkeletonBlock } from "./skeleton"
 import { cn } from "@/lib/utils"
 
@@ -33,7 +34,7 @@ export interface BarChartProps {
   horizontal?: boolean
   axisBottomLegend?: string
   axisLeftLegend?: string
-  /** Renders a value for the tooltip, the axis and the accessible label. */
+  /** Renders a value for the tooltip, the axis and the accessible table. */
   formatValue?: (value: number) => string
   /**
    * Per-bar colour, for a chart whose colour is semantic rather than a series
@@ -54,7 +55,7 @@ export interface BarChartProps {
   /** An extra line under the value in the tooltip. `null` omits it. */
   tooltipDetail?: (point: BarPoint) => string | null
   /** Thins the category axis to every Nth label. A 28-day axis is unreadable
-   * at one label per bar on a phone; the tooltip and the accessible label
+   * at one label per bar on a phone; the tooltip and the accessible table
    * still carry every one of them. */
   tickEvery?: number
   ariaLabel: string
@@ -186,7 +187,7 @@ export function BarChart({
         // Printed inside the bar where it fits, and simply omitted where it
         // does not — a label spilling past a short bar onto the one beside it
         // reads as belonging to the wrong category. The tooltip and the
-        // accessible label still carry every value.
+        // accessible table still carry every value.
         labelSkipWidth={horizontal ? 28 : 0}
         labelSkipHeight={horizontal ? 0 : 18}
         labelTextColor={tokens["--paper-raised"]}
@@ -198,13 +199,16 @@ export function BarChart({
         axisLeft={horizontal ? categoryAxis : valueAxis}
         role="img"
         ariaLabel={ariaLabel}
-        isFocusable
-        barAriaLabel={(d) => {
-          const label = String(d.indexValue)
-          const detail = tooltipDetail?.(byLabel.get(label) ?? { label, value: d.value ?? 0 })
-          const head = `${label}: ${formatValue(Number(d.value ?? 0))}`
-          return detail ? `${head}. ${detail}` : head
-        }}
+        /*
+         * P6.4: no `isFocusable`, no `barAriaLabel`. Nivo puts both on a bare
+         * `<rect>`, and `aria-label` on an element with no role is prohibited
+         * ARIA (axe `aria-prohibited-attr`, 28 nodes on this chart alone on
+         * `student-profile`) — so it was never dependably announced. It also
+         * made every bar a tab stop: 28 presses to get past one panel.
+         *
+         * The exact values now live in `ChartDataTable` below, which is a real
+         * table a screen reader can navigate. See `chart-data-table.tsx`.
+         */
         tooltip={({ indexValue, value }) => {
           const label = String(indexValue)
           const detail = tooltipDetail?.(byLabel.get(label) ?? { label, value })
@@ -219,6 +223,21 @@ export function BarChart({
             </div>
           )
         }}
+      />
+      <ChartDataTable
+        caption={ariaLabel}
+        columns={[
+          axisBottomLegend ?? axisLeftLegend ?? "Category",
+          axisLeftLegend ?? axisBottomLegend ?? "Value",
+        ]}
+        rows={data.map((d) => {
+          const detail = tooltipDetail?.(d)
+          const value = formatValue(d.value)
+          // The tooltip's second line is context a sighted reader gets for
+          // free ("3 of 24 students"), so it belongs in the same cell rather
+          // than being dropped — this table is the other reader's tooltip.
+          return [d.label, detail ? `${value}. ${detail}` : value]
+        })}
       />
     </div>
   )

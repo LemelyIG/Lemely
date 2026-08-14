@@ -32,40 +32,52 @@ MISSION:            BUILD/REDESIGN-MISSION.md
 CURRENT PHASE:      **6 IN PROGRESS. 6.1 (`adapt`), 6.2 (`harden`) and 6.3
                     (`optimize`) DONE.** 6.4-6.5 remain.
 CURRENT SURFACE:    Phase 6 is a sweep, not a surface.
-NEXT ACTION:        **Phase 6.4 - accessibility.** The axe harness already
-                    exists (`web/scripts/audit.mjs`,
-                    `e2e/phase4-journey.spec.ts`), and 6.3 root-caused what it
-                    is reporting, so this starts with evidence rather than a
-                    sweep. **47 serious/critical violations across 7 routes,
-                    and they are only two mechanisms:**
+NEXT ACTION:        **Phase 6.4 part 2.** Part 1 is DONE and committed (the
+                    46 of 47 axe violations that were unambiguous, plus two
+                    gates). What remains is one open decision and one
+                    unfinished sweep.
 
-                    - **42 are `aria-prohibited-attr`, all from Nivo**, which
-                      emits `aria-label` + `tabindex` + `focusable` on a bare
-                      `<rect>` carrying no `role` - prohibited ARIA. They land
-                      on `student-profile` (28),
-                      `teacher-class-analytics` (11) and
-                      `teacher-student-detail` (3). It is a library default, so
-                      the fix is in the two wrappers
-                      (`components/ui/{line,bar}-chart.tsx`), not on 7 screens.
-                    - **5 are `color-contrast`, and the gap is a whole class
-                      of pairing nothing has ever measured.**
-                      `text-ink-faint` (#686c6f) is **4.484:1 on the pastel
-                      `#ffe7e1`** where AA needs 4.5 - verified arithmetically,
-                      not read off a report. `tests/test_design_tokens.py` pins
-                      ink-on-**paper** (5.117:1, passes) and has never measured
-                      ink-on-**pastel**. The deliverable is that matrix, not
-                      five edits.
+                    **D6.6 needs the human, and it is the largest finding of
+                    the phase.** `tests/test_design_tokens.py` asserts contrast
+                    ratios the browser does not render:
 
-                    Also 6.4's, from 6.3's confirm round: **five routes die
-                    mid-run on their `loading` state** (T-08, T-09-detail,
-                    T-10, S-21, S-22, "Waiting failed: 15000ms exceeded"),
-                    identically in both 6.3 corpora and so pre-existing. Cause
-                    is **not** diagnosed - the harness drives a `loading` state
-                    by holding a request open, so the timeout may be the
-                    fixture's rather than the product's. 6.4 runs an audit
-                    anyway; that run is also the first to emit the new
-                    `route-failures.json`, which 6.3 could not produce because
-                    the change was written while its own run was in flight.
+                        oklch(0.576 0.146 33) -> our conversion  #c0523c
+                        the same token, Chromium renders         #c25741
+                        white on #c0523c (the test's number)     4.658  PASSES
+                        white on #c25741 (what a user sees)      4.436  FAILS
+
+                    So **`--accent-on`, the token block's "ONE permitted pure
+                    white" at a stated 4.65:1, is 4.436:1 on screen** - below
+                    the 4.5 floor it was picked to clear. The error is 2-5/255
+                    per channel and that is exactly why it bites: every value
+                    in this system was chosen to *just* clear its threshold.
+                    The repair is not a nudge to one token - it is reconciling
+                    the conversion, re-deriving **every** contrast claim
+                    against corrected values, and then whatever token changes
+                    fall out, on the brand accent that is present on every
+                    surface. **Refused unattended** and left red rather than
+                    loosened. See D6.5 §3 for the full arithmetic.
+
+                    Also still open:
+                    - **Run the audit again.** Part 1 changed both chart
+                      wrappers and 12 call sites; nothing has re-measured. That
+                      run is also the first to emit `route-failures.json`
+                      (6.3 could not, because the change was written while its
+                      own run was in flight).
+                    - **Five routes die mid-run on their `loading` state**
+                      (T-08, T-09-detail, T-10, S-21, S-22, "Waiting failed:
+                      15000ms exceeded"), identically in both 6.3 corpora and
+                      so pre-existing. **Not diagnosed** - the harness drives a
+                      `loading` state by holding a request open, so the timeout
+                      may be the fixture's rather than the product's.
+                    - §6.4's remaining items, none yet swept: focus-visible
+                      everywhere, keyboard-completable flows, alt text,
+                      aria-labels on icon-only buttons, semantic landmarks.
+                    - `text-ink-faint` on the **other** pastels is unmeasured.
+                      The wash case was fixed where axe caught it
+                      (`--accent-wash`, 4.47:1); the token test pins
+                      ink-on-**paper** only, so the ink x pastel matrix is
+                      still a hole and belongs with D6.6's re-derivation.
 
                     Then 6.5 strategic omissions.
 

@@ -87,9 +87,16 @@ function Section({
  */
 const SERVES_SECTION_ID = "who-it-serves"
 
-/** Uppercase kicker above a section title. §4.2's `eyebrow` rung. */
+/** Uppercase kicker above a section title. §4.2's `eyebrow` rung.
+ *
+ * P6.4: `text-accent-ink`, not `text-accent`. The token block in `index.css`
+ * has always said `--accent` is "fills, marks, large text only" at 4.34:1 on
+ * paper, and `--accent-ink` (9.75:1) is "any accent-coloured small text" — an
+ * eyebrow is 11px, which is the smallest text in the product. Nothing enforced
+ * that rule, so this rendered below AA on every marketing section
+ * (axe `color-contrast`, `student-landing`). See `contrastRules.test.ts`. */
 function Eyebrow({ children }: { children: React.ReactNode }) {
-  return <div className="text-eyebrow text-accent">{children}</div>
+  return <div className="text-eyebrow text-accent-ink">{children}</div>
 }
 
 export function Landing() {
@@ -344,7 +351,7 @@ export function Landing() {
           {loopSteps.map((s, i) => (
             <Reveal key={s.step} delay={90 * i} className="h-full">
               <div className="flex h-full flex-col gap-3 bg-paper-raised p-7">
-                <div className="text-data-md text-accent">{s.step}</div>
+                <div className="text-data-md text-accent-ink">{s.step}</div>
                 <h3 className="text-display-sm text-ink">{s.title}</h3>
                 <p className="text-body-sm text-pretty text-ink-muted">{s.body}</p>
               </div>
@@ -376,7 +383,7 @@ export function Landing() {
                 lengths and always will be.
               */}
               <Card className="flex h-full flex-col gap-3 p-7">
-                <div className="text-eyebrow text-accent">{p.kicker}</div>
+                <div className="text-eyebrow text-accent-ink">{p.kicker}</div>
                 <h3 className="text-display-sm text-ink">{p.title}</h3>
                 <p className="text-body-sm text-pretty text-ink-muted">{p.body}</p>
                 <ul className="mt-auto flex list-none flex-col gap-2.5 border-t border-rule pt-4">

@@ -169,7 +169,7 @@ export function SubjectDetail() {
           <h2 className="text-display-md text-ink">Topics to work on</h2>
           <Link
             to={`/parent/children/${childId}/weaknesses`}
-            className="rounded-sm pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="rounded-sm pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink transition-colors hover:text-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             All subjects
           </Link>

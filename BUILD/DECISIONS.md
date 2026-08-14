@@ -9432,3 +9432,135 @@ Their cause is not diagnosed and is not claimed to be: all five are `loading`
 states, which the harness drives by holding a request open, so a teardown
 timeout is as likely to be the fixture's as the product's. It is 6.4's to pick
 up with the axe work, on the same run.
+
+---
+
+## D6.5 — Redesign Phase 6.4 (accessibility), part 1: the chart that was 28 tab stops, the rule with no gate, and a contrast number the browser does not agree with
+
+Phase 6.3 root-caused the axe corpus rather than sweeping it, so this phase
+starts from evidence: **47 serious/critical violations across 7 routes, and
+only two mechanisms.** Both are now closed, and a third thing fell out of
+verifying the second that is larger than either.
+
+### 1. 42 of the 47 were one library default, and making them *valid* would have kept the worse half
+
+Nivo emits per-datum accessibility as
+
+    <rect ... focusable="true" tabindex="0" aria-label="18 Jul: 0. No XP earned">
+    <g    ... focusable="true" tabindex="0" aria-label="Aug 8: 82%">
+
+`aria-label` is prohibited on an element exposing no role, so axe reports
+`aria-prohibited-attr`: 28 nodes on `student-profile`, 11 on
+`teacher-class-analytics`, 3 on `teacher-student-detail`.
+
+Our wrappers asked for this deliberately and said why —
+`line-chart.tsx`'s docstring argued that `isFocusable` + `pointAriaLabel` make
+every datum reachable without a mouse, which §11 requires and a hover-only
+tooltip does not deliver. **The intent was right and the mechanism never
+worked.** A label on an unlabellable element is announced or dropped at each
+screen reader's discretion, so the guarantee the docstring claimed was never
+one. (Read off Nivo's compiled source rather than assumed: `aria-label` is
+emitted whenever the prop is passed, *independently* of `isFocusable` — the two
+read as coupled and are not.)
+
+**The half no rule reported is the one that mattered more.** 28 prohibited
+attributes on `student-profile` is 28 sequential tab stops on one XP panel: a
+keyboard reader trying to reach the content below the chart pressed Tab 28
+times. Fixing only the ARIA — adding `role="img"` per rect — would have left
+that exactly as it was, and axe would have gone quiet.
+
+So the per-datum labels are gone from the SVG and the same values render as a
+`sr-only` `<table>` (`components/ui/chart-data-table.tsx`): `<caption>`,
+`<th scope="col">` per series, `<th scope="row">` per datum. A screen reader
+gets table navigation over exact values with the header repeated per cell; a
+keyboard user gets one tab stop for the panel. The plot keeps `role="img"` and
+its summary label, and the caption is *the same string*, so the two cannot
+drift into two descriptions of one panel.
+
+Three decisions inside it are deliberate: rows and columns are keyed by index
+rather than by label (two papers marked the same day share an x label, and a
+duplicate key would silently drop a datum from the only copy a screen reader
+gets); the line chart's x values are a **union across series in first-seen
+order**, because a cohort trend and an at-risk trend are built from different
+papers and taking one series' axis would drop every date only the other has;
+and a gap reads `"No data"` rather than `0` or a dash, because `y: null` is a
+gap the data genuinely has, zero would invent a reading, and bare punctuation
+is announced inconsistently in a table whose whole purpose is to be spoken.
+
+### 2. The remaining 5 were a rule this codebase wrote down in Phase 2 and never enforced
+
+`index.css` has carried this directly above the accent tokens since Phase 2:
+
+    --accent      4.34:1 on paper — fills, marks, large text only
+    --accent-ink  9.75:1 on paper — any accent-coloured small text
+
+Correct, measured, and **read by nothing**. `text-accent` had accumulated on
+**11** small-text elements: both marketing eyebrows (11px, the smallest text in
+the product), a notification-settings link, four teacher panel headings, three
+status counts, and two hover states that *reduced* contrast from the
+`accent-ink` they darkened from.
+
+**axe found 2 of the 11**, because axe sees only what a route it audits happens
+to render. That is the whole argument for a source gate beside the rendered
+one, and it is P6.3's z-index finding again: a rule stated in a comment above
+the tokens, nine phases unenforced. `contrastRules.test.ts` derives the
+sub-24px rungs from the `--fs-*` scale in `index.css` every run (a renamed rung
+fails the gate loudly rather than leaving it checking names the product no
+longer has), parses balanced class-expression groups, and **leaves
+`text-accent` on icons alone** — an icon is a non-text element answering to the
+3:1 graphics floor, which the accent clears. Verified by inversion three ways:
+reinstating an eyebrow's `text-accent` fails, an icon-only `text-accent` does
+not, and renaming `--fs-eyebrow` fails the vocabulary test rather than passing
+vacuously.
+
+Its limit is stated in its own header rather than left to be discovered: it
+reads one class expression at a time, so a `text-body-sm` parent with a
+`text-accent` child is the same defect and invisible to it. That case is axe's,
+which is why both still run.
+
+The sixth site was `--ink-faint` on `--accent-wash` — **4.47:1 where AA needs
+4.5** — on the leaderboard's viewer row, the one row of the board that carries
+a tint. It is 5.12:1 on paper, which is why it survived: the pairing that fails
+exists only on one variant of one row. `--ink-muted` is 5.51:1 there and stays
+de-emphasised. Note what the standing token test measures: it pins
+ink-on-**paper** and has never measured ink-on-**pastel** at all.
+
+### 3. The finding that outgrew the phase: `test_design_tokens.py` asserts a contrast the browser does not render
+
+Chasing the last violation — white on the accent fill, which axe scored 4.21
+and the token block claims is a comfortable 4.65 — produced this:
+
+    token  oklch(0.576 0.146 33)  ->  our oklch_to_srgb: #c0523c
+    same token, rendered by Chromium:                    #c25741
+
+    white on #c0523c (what the test computes): 4.658  -> passes AA
+    white on #c25741 (what a user sees):       4.436  -> fails AA
+
+**`--accent-on` is `#ffffff` and the token block calls it "the ONE permitted
+pure white" at 4.65:1 on the accent fill. On screen it is 4.436:1, which is
+below the 4.5 floor it was chosen to clear.** The gate is green and the
+rendered product fails, because the gate and the browser disagree about what
+`oklch(0.576 0.146 33)` *is*.
+
+The disagreement is tiny — (192,82,60) against (194,87,65) — and that is
+precisely why it matters here: every contrast value in this design system was
+chosen to *just* clear its threshold, so a 2-5/255 error in the conversion is
+enough to move a claim across the line. `test_design_tokens.py` "caught two
+real AA failures" in Phase 2 and has been cited as the contrast authority ever
+since; what it has actually been validating is its own colour space.
+
+**Not fixed here, deliberately, and this is a refusal rather than a deferral.**
+The honest repair is not a one-line nudge to `--accent`: it is (a) reconciling
+the conversion with what browsers do, then (b) re-deriving *every* contrast
+claim in the token block against the corrected values, then (c) whatever token
+changes fall out — and `--accent` is the brand accent, present on every
+surface, chosen in Phase 2 against a brand strategy. Changing it unattended on
+the strength of one arithmetic run, at the end of a long session, is exactly
+the kind of wide-blast-radius decision §10 says to put in front of the human.
+The numbers above are the evidence; the decision is D6.6's.
+
+What ships now is the part that is unambiguous and self-contained: the 42
+prohibited attributes, the 11 accent-size misuses, the pastel pairing, and the
+two gates that keep them from regrowing. The white-on-accent node is **still
+red and left red** — per the standing rule from INBOX item 8, a bar that is not
+met is not loosened.

@@ -255,7 +255,7 @@ export function Notifications() {
               route to G-12 for a student. */}
           <Link
             to="/settings/notifications"
-            className="text-body-sm text-accent hover:underline"
+            className="text-body-sm text-accent-ink hover:underline"
           >
             Notification settings
           </Link>

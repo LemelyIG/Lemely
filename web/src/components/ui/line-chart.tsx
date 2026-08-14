@@ -3,6 +3,7 @@ import { useMemo } from "react"
 import { ResponsiveLine } from "@nivo/line"
 import type { Point } from "@nivo/line"
 import { useChartAnimation, useNivoTheme } from "@/lib/nivoTheme"
+import { ChartDataTable } from "./chart-data-table"
 import { SkeletonBlock } from "./skeleton"
 import { cn } from "@/lib/utils"
 
@@ -28,20 +29,24 @@ import { cn } from "@/lib/utils"
  * build has been caught four separate times by a reference that resolved to
  * nothing while everything downstream carried on looking fine.
  *
- * **Points are focusable and labelled.** `isFocusable` plus `pointAriaLabel`
- * makes every datum reachable by keyboard and spoken with its exact values, so
- * the chart is not a mouse-only object. §11 requires tooltips to give exact
- * values; a tooltip alone gives them only to a reader who can hover.
+ * **Exact values reach a non-mouse reader through a table, not through the
+ * SVG** (P6.4). §11 requires exact values and a tooltip gives them only to a
+ * reader who can hover, so this component used to pass `isFocusable` +
+ * `pointAriaLabel`. Nivo puts both on the point's `<g>`, and `aria-label` on an
+ * element with no role is prohibited ARIA — never dependably announced, and it
+ * made every point a tab stop (28 of them on one panel). The values now render
+ * as a `sr-only` `<table>`; see `chart-data-table.tsx` for the full reasoning.
  *
  * **Meaning is never carried by colour alone** (§11, §3.6). A single series is
  * drawn in `--accent`, where there is nothing to distinguish it *from*. Beyond
- * one series the legend is not optional and is rendered unconditionally, and
- * every point states its series name in its accessible label and its tooltip,
- * so the series a datum belongs to is readable without seeing its colour.
+ * one series the legend is not optional and is rendered unconditionally, the
+ * tooltip names the series in text rather than by swatch, and the table gives
+ * each series its own named column — so the series a datum belongs to is
+ * readable without seeing its colour.
  *
  * **Reduced motion means reduced, not broken** (§9.4). `animate={false}` makes
  * react-spring land every value immediately; the chart still arrives, still has
- * axes, tooltips and focusable points, and simply does not transition.
+ * axes, tooltips and its accessible table, and simply does not transition.
  */
 
 /** One plotted series. `y` may be null for a gap the data genuinely has. */
@@ -63,7 +68,7 @@ export interface LineChartProps {
    * volatility. */
   yMin?: number | "auto"
   yMax?: number | "auto"
-  /** Renders a value for a tooltip, an axis tick and an accessible label.
+  /** Renders a value for a tooltip, an axis tick and the accessible table.
    * Defaults to the bare number. */
   formatValue?: (value: number) => string
   /** An extra line of context under the value in the tooltip, e.g. a sample
@@ -140,6 +145,50 @@ export function LineChart({
     [axisBottomLegend, axisLeftLegend, multi],
   )
 
+  /*
+   * The accessible table behind the plot (P6.4).
+   *
+   * One column per series and one row per x value, because that is how the
+   * chart is read: a reader comparing two series at one date wants them
+   * adjacent, and a per-series block would make that comparison a page apart.
+   *
+   * **The x values are a union across series, in first-seen order, not the
+   * first series' keys.** Series here genuinely disagree about x: a cohort
+   * trend and an at-risk trend are built from different papers, and taking one
+   * series' axis would silently drop every date only the other one has.
+   *
+   * A gap reads "No data", not "0" and not a dash: `y: null` is a gap the data
+   * genuinely has (the type says so), printing zero would invent a reading,
+   * and a bare punctuation mark is announced inconsistently or skipped
+   * entirely — in a table whose whole purpose is to be spoken.
+   */
+  const tableColumns = useMemo(
+    () => [axisBottomLegend ?? "Point", ...series.map((s) => s.id)],
+    [axisBottomLegend, series],
+  )
+
+  const tableRows = useMemo(() => {
+    const xs: string[] = []
+    const seen = new Set<string>()
+    for (const s of series) {
+      for (const point of s.data) {
+        if (seen.has(point.x)) continue
+        seen.add(point.x)
+        xs.push(point.x)
+      }
+    }
+    return xs.map((x) => [
+      x,
+      ...series.map((s) => {
+        const point = s.data.find((p) => p.x === x)
+        if (point == null || point.y == null) return "No data"
+        const value = formatValue(point.y)
+        const detail = tooltipDetail?.({ seriesId: s.id, x, y: point.y })
+        return detail ? `${value}. ${detail}` : value
+      }),
+    ])
+  }, [series, formatValue, tooltipDetail])
+
   if (!ready) {
     // Reserves the exact plot height, so the chart arriving does not shift
     // anything below it (Phase 6.3: skeletons reserve space, CLS < 0.1).
@@ -210,15 +259,13 @@ export function LineChart({
         }
         role="img"
         ariaLabel={ariaLabel}
-        isFocusable
-        pointAriaLabel={(point) => {
-          const ctx = contextOf(point)
-          const detail = tooltipDetail?.(ctx)
-          const head = multi
-            ? `${ctx.seriesId}, ${ctx.x}: ${formatValue(ctx.y)}`
-            : `${ctx.x}: ${formatValue(ctx.y)}`
-          return detail ? `${head}. ${detail}` : head
-        }}
+        /*
+         * P6.4: no `isFocusable`, no `pointAriaLabel`. Nivo puts both on the
+         * point's `<g>`, and `aria-label` on an element with no role is
+         * prohibited ARIA (axe `aria-prohibited-attr`), so the values these
+         * carried were never dependably announced. The exact values now live
+         * in `ChartDataTable` below. See `chart-data-table.tsx`.
+         */
         tooltip={({ point }) => {
           const ctx = contextOf(point)
           const detail = tooltipDetail?.(ctx)
@@ -241,6 +288,7 @@ export function LineChart({
           )
         }}
       />
+      <ChartDataTable caption={ariaLabel} columns={tableColumns} rows={tableRows} />
     </div>
   )
 }

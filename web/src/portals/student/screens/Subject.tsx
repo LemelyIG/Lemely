@@ -193,7 +193,7 @@ export function Subject() {
               <div>
                 <div className="text-eyebrow text-ink-faint">Your position</div>
                 <div
-                  className={cn("mt-0.5 text-data-sm", p.positionOk ? "text-ok" : "text-accent")}
+                  className={cn("mt-0.5 text-data-sm", p.positionOk ? "text-ok" : "text-accent-ink")}
                 >
                   {p.position}
                 </div>

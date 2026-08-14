@@ -192,7 +192,7 @@ function WeakTopicList({ topics, childId }: { topics: WeakTopic[]; childId: stri
           // rather than `justify-center`, because this link sits at the end of
           // its row and centring would shift the text 3px off the edge the
           // heading beside it aligns to.
-          className="shrink-0 whitespace-nowrap rounded-sm pointer-coarse:flex pointer-coarse:items-center pointer-coarse:justify-end pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-body-sm text-accent-ink transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="shrink-0 whitespace-nowrap rounded-sm pointer-coarse:flex pointer-coarse:items-center pointer-coarse:justify-end pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-body-sm text-accent-ink transition-colors hover:text-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
           See all
         </Link>
