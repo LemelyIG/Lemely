@@ -19,6 +19,7 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import type { ClassSummary } from "@/lib/teacherTypes"
+import { SortArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Classes (T-02). Wired to `GET /teacher/classes` (`useTeacherClasses()`);
@@ -291,7 +292,7 @@ export function Classes() {
                         className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0"
                       >
                         {col.label}
-                        {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
+                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
                       </button>
                     </th>
                   )

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative as pathRelative } from "node:path"
 import { describe, expect, it } from "vitest"
+import { stripComments } from "./support/jsxSource"
 
 /**
  * The accessibility gate (P6.4 part 2): the five §6.4 sweep items, as structure.
@@ -73,81 +74,6 @@ function relativeTo(absolute: string): string {
   return pathRelative(ROOT, absolute).split("\\").join("/")
 }
 
-/** Blanks comments, preserving offsets and line numbers, so a `//` comment that
- * quotes prose (`axe's`, `doesn't`) cannot be read as code. Same shape as
- * `contrastRules.test.ts`/`elevationScale.test.ts`; see the header. */
-function stripComments(source: string): string {
-  let out = ""
-  let i = 0
-  type State = "code" | "line" | "block" | "single" | "double" | "template"
-  let state: State = "code"
-
-  while (i < source.length) {
-    const c = source[i]
-    const n = source[i + 1]
-
-    if (state === "code") {
-      if (c === "/" && n === "/") {
-        state = "line"
-        out += "  "
-        i += 2
-        continue
-      }
-      if (c === "/" && n === "*") {
-        state = "block"
-        out += "  "
-        i += 2
-        continue
-      }
-      if (c === "'") state = "single"
-      else if (c === '"') state = "double"
-      else if (c === "`") state = "template"
-      out += c
-      i += 1
-      continue
-    }
-
-    if (state === "line") {
-      if (c === "\n") {
-        state = "code"
-        out += c
-      } else {
-        out += " "
-      }
-      i += 1
-      continue
-    }
-
-    if (state === "block") {
-      if (c === "*" && n === "/") {
-        state = "code"
-        out += "  "
-        i += 2
-        continue
-      }
-      out += c === "\n" ? "\n" : " "
-      i += 1
-      continue
-    }
-
-    if (c === "\\") {
-      out += c + (source[i + 1] ?? "")
-      i += 2
-      continue
-    }
-    if (
-      (state === "single" && c === "'") ||
-      (state === "double" && c === '"') ||
-      (state === "template" && c === "`")
-    ) {
-      state = "code"
-    }
-    out += c
-    i += 1
-  }
-
-  return out
-}
 
 type Element = {
   /** The open tag, `<button ... >`, attributes included. */

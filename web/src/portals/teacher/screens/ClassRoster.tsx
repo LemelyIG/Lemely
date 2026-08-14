@@ -13,6 +13,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
 import type { StudentRow } from "@/lib/teacherTypes"
 import { useClassDetailContext } from "./ClassDetail"
+import { SortArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Class detail — roster (T-03). Reads `classDetail.students` from
@@ -288,7 +289,7 @@ export function ClassRoster() {
                         className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0"
                       >
                         {col.label}
-                        {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
+                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
                       </button>
                     </th>
                   )

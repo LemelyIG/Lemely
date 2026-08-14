@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E5 S5 R5 V3 */
 import { useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"

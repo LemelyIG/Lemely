@@ -8,6 +8,7 @@ import { useClassDetail } from "@/lib/hooks/useTeacherApi"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { ClassDetail as ClassDetailData } from "@/lib/teacherTypes"
+import { BackArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Class detail shell (T-03/T-04's shared header + tabs). Fetches
@@ -108,7 +109,7 @@ export function ClassDetailLayout() {
           to="/teacher/classes"
           className="flex w-fit items-center text-body-sm text-ink-faint transition-colors hover:text-ink pointer-coarse:min-h-11"
         >
-          ← All classes
+          <BackArrow /> All classes
         </Link>
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">

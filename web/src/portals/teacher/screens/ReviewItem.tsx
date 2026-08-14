@@ -20,6 +20,7 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import { confidenceTone, isIntegrityReason, paperIdentityLabel, reasonLabel } from "./Review"
+import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Review item — remark (T-08). `GET /teacher/review/{itemId}`
@@ -413,7 +414,7 @@ export function ReviewItem() {
           onClick={goToQueue}
           className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
-          ← Back to queue
+          <BackArrow /> Back to queue
         </button>
         <div className="flex items-start gap-3.5 flex-wrap gap-y-2 mt-1">
           <Avatar name={detail.studentDisplayName} size="md" />
@@ -454,7 +455,7 @@ export function ReviewItem() {
           </span>
         </div>
         <Button type="button" variant="secondary" size="sm" onClick={goNext}>
-          {nextItemId ? "Next item →" : "Back to queue →"}
+          <>{nextItemId ? "Next item" : "Back to queue"} <ForwardArrow /></>
         </Button>
       </div>
 

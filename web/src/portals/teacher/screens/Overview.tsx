@@ -16,6 +16,7 @@ import { StatCard } from "../components/StatCard"
 import { Avatar } from "@/components/ui/avatar"
 import { useTeacherOverview, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { RecentActivity } from "@/lib/teacherTypes"
+import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Overview (T-01). Wired to `GET /teacher/overview` (`useTeacherOverview()`)
@@ -228,7 +229,7 @@ export function Overview() {
         </div>
         <div className="flex-1" />
         <Button variant="ink" size="lg" onClick={() => navigate("/teacher/review")}>
-          Open review queue →
+          Open review queue <ForwardArrow />
         </Button>
       </div>
 

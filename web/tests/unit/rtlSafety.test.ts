@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { relativeTo, sourceFiles, stripComments } from "./support/jsxSource"
 
 /*
  * P3.4 · RTL safety, as a test rather than a promise.
@@ -251,6 +252,46 @@ describe("RTL safety on Phase 3 surfaces", () => {
     const source = readFileSync(join(process.cwd(), "src/components/ui/breadcrumbs.tsx"), "utf8")
     expect(source).toContain("rtl:-scale-x-100")
     expect(source).toContain("rtl:scale-x-100")
+  })
+})
+
+/*
+ * P7.1 · The direction-dependent thing a style rule cannot see.
+ *
+ * Everything above reads styles, because that is where the rule was written:
+ * logical properties, no hardcoded left/right, mirrored icon classes. Fourteen
+ * buttons and links across the teacher portal ended their label with a literal
+ * `"→"` inside the string — "Open review queue →", "Save & continue →" — and
+ * not one of the rules above could see them, because they are not styles. They
+ * are characters.
+ *
+ * A horizontal arrow is direction-dependent by definition, and it is the one
+ * form of direction-dependence that a later `dir="rtl"` flip **cannot repair**:
+ * `rtl:-scale-x-100` transforms a box, and a character in a text node has no
+ * box of its own. The bidi algorithm does not mirror U+2192 either. So these
+ * would have stayed pointing away from the reading direction, silently, with
+ * the gate that exists to prevent exactly that reporting green.
+ *
+ * `ForwardArrow` in `components/ui/inline-arrow.tsx` is the replacement and it
+ * mirrors. This rule walks the whole tree rather than a list, because the
+ * standing lesson from surface 10 is that a screen no list claims is a screen
+ * no gate reads, and a hand-maintained list is how the fifteenth call site
+ * would arrive unnoticed.
+ */
+describe("no direction-dependent glyph is baked into UI copy", () => {
+  const HORIZONTAL = /[→←⇒⇐➔➜▶◀►◄»«]/u
+
+  it("uses ForwardArrow, never an arrow character, in any .tsx", () => {
+    const offenders: string[] = []
+    for (const file of sourceFiles(join(process.cwd(), "src"))) {
+      const source = stripComments(readFileSync(file, "utf8"))
+      source.split("\n").forEach((line, i) => {
+        if (HORIZONTAL.test(line)) {
+          offenders.push(`${relativeTo(process.cwd(), file)}:${i + 1} — ${line.trim().slice(0, 70)}`)
+        }
+      })
+    }
+    expect(offenders).toEqual([])
   })
 })
 

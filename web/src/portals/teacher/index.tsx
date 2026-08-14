@@ -23,6 +23,7 @@ import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { navItems, resolveTrail, type NavItem } from "./data"
+import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
 // `portals/student/index.tsx`. QuizBuilder and ClassAnalytics in particular
@@ -140,7 +141,7 @@ function ClassesNavSection() {
             to="/teacher/classes"
             className="px-2 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink hover:underline rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
-            Add your first class →
+            Add your first class <ForwardArrow />
           </Link>
         ) : (
           <>
@@ -161,7 +162,7 @@ function ClassesNavSection() {
                 to="/teacher/classes"
                 className="px-2 py-[7px] pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-ink-faint transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
-                See all {data.classes.length} →
+                See all {data.classes.length} <ForwardArrow />
               </Link>
             ) : null}
           </>
@@ -255,7 +256,7 @@ function SidebarFooter() {
         to="/settings/devices"
         className="text-body-sm text-ink-faint px-0.5 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
-        Account, devices &amp; notifications →
+        Account, devices &amp; notifications <ForwardArrow />
       </Link>
       <UserBlock />
     </div>

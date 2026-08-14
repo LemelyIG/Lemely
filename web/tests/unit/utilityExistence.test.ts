@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { stripComments } from "./support/jsxSource"
 
 /**
  * The resolves-to-nothing gate.
@@ -247,45 +248,6 @@ function bareClass(token: string): string {
   return withoutVariants.replace(/^!/, "")
 }
 
-/**
- * The source with comments removed.
- *
- * Not optional, and the first draft of this gate proved it: several of these
- * files explain in a comment which class they stopped using, and one of those
- * comments names `text-display` in backticks. The literal scanner below
- * matched the backticks and reported the file for a class it had just been
- * corrected to stop using — a gate failing on its own fix note. Same trap
- * `studyNotebookMigration.test.ts` documents, so the same treatment: block
- * comment state tracked across lines, line comments to end of line.
- */
-function stripComments(source: string): string {
-  let out = ""
-  let inBlock = false
-  for (const raw of source.split("\n")) {
-    let i = 0
-    while (i < raw.length) {
-      if (inBlock) {
-        if (raw.startsWith("*/", i)) {
-          inBlock = false
-          i += 2
-        } else {
-          i += 1
-        }
-        continue
-      }
-      if (raw.startsWith("/*", i)) {
-        inBlock = true
-        i += 2
-        continue
-      }
-      if (raw.startsWith("//", i)) break
-      out += raw[i]
-      i += 1
-    }
-    out += "\n"
-  }
-  return out
-}
 
 function classTokens(source: string): string[] {
   const tokens: string[] = []

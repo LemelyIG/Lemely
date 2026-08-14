@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { stripComments } from "./support/jsxSource"
 
 /**
  * Phase 6.1 `adapt` — the mobile non-negotiables that can be pinned statically.
@@ -31,11 +32,6 @@ import { describe, expect, it } from "vitest"
 const CSS_PATH = join(process.cwd(), "src/index.css")
 const CSS_RAW = readFileSync(CSS_PATH, "utf8")
 
-/** Source with block and line comments blanked, so prose about a rule is never
- * mistaken for the rule. Same call `motionDefaults.test.ts` had to make. */
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, "")
-}
 
 const CSS = stripComments(CSS_RAW)
 

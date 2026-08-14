@@ -37,6 +37,7 @@ import type {
   UpdateQuizDraftRequest,
 } from "@/lib/teacherTypes"
 import { statusLabel, statusTone } from "./Quizzes"
+import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Quiz builder (T-09) — the stepped flow at `/teacher/quizzes/:quizId`.
@@ -306,7 +307,7 @@ function StepBasics({
       {isDraft ? (
         <div>
           <Button type="submit" variant="ink">
-            Save & continue →
+            Save & continue <ForwardArrow />
           </Button>
         </div>
       ) : null}
@@ -418,11 +419,11 @@ function StepContent({
       ) : null}
       <div className="flex items-center gap-2">
         <Button type="button" variant="secondary" onClick={() => onBack({ includedTopics: topics })}>
-          ← Back
+          <BackArrow /> Back
         </Button>
         {isDraft ? (
           <Button type="button" variant="ink" onClick={() => onNext({ includedTopics: topics })}>
-            Save & continue →
+            Save & continue <ForwardArrow />
           </Button>
         ) : null}
       </div>
@@ -543,11 +544,11 @@ function StepDifficulty({
       </div>
       <div className="flex items-center gap-2">
         <Button type="button" variant="secondary" onClick={() => onBack({ targetGrade: grade })}>
-          ← Back
+          <BackArrow /> Back
         </Button>
         {isDraft ? (
           <Button type="button" variant="ink" onClick={() => onNext({ targetGrade: grade })}>
-            Save & continue →
+            Save & continue <ForwardArrow />
           </Button>
         ) : null}
       </div>
@@ -644,7 +645,7 @@ function StepPool({
           variant="secondary"
           onClick={() => onBack({ poolSource, requestedCount })}
         >
-          ← Back
+          <BackArrow /> Back
         </Button>
         {isDraft ? (
           <Button
@@ -652,7 +653,7 @@ function StepPool({
             variant="ink"
             onClick={() => onNext({ poolSource, requestedCount })}
           >
-            Save & continue →
+            Save & continue <ForwardArrow />
           </Button>
         ) : null}
       </div>
@@ -781,10 +782,10 @@ function StepPreview({
 
       <div className="flex items-center gap-2">
         <Button type="button" variant="secondary" onClick={onBack}>
-          ← Back
+          <BackArrow /> Back
         </Button>
         <Button type="button" variant="ink" onClick={onNext}>
-          {isDraft ? "Save & continue →" : "Continue →"}
+          {isDraft ? "Save & continue" : "Continue"} <ForwardArrow />
         </Button>
       </div>
     </div>
@@ -953,7 +954,7 @@ function StepAssign({
                   to={`/teacher/quizzes/${quizId}/assignments/${a.id}/results`}
                   className="text-body-sm text-ink hover:underline"
                 >
-                  View results →
+                  View results <ForwardArrow />
                 </Link>
                 <Button
                   size="sm"
@@ -995,7 +996,7 @@ function StepAssign({
 
       <div>
         <Button type="button" variant="secondary" onClick={onBack}>
-          ← Back
+          <BackArrow /> Back
         </Button>
       </div>
     </div>
@@ -1075,7 +1076,7 @@ export function QuizBuilder() {
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
         <Link to="/teacher/quizzes" className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit">
-          ← All quizzes
+          <BackArrow /> All quizzes
         </Link>
         <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">

@@ -58,19 +58,40 @@ function capitalize(word: string) {
   return word.length === 0 ? word : word[0].toUpperCase() + word.slice(1)
 }
 
-function StageGlyph({ status }: { status: ProcessingStageStatus }) {
+/* The stage vocabulary, exported because the teacher grading console renders a
+ * second pipeline panel from a different wire type (`PipelineStep`, a stored
+ * per-paper summary rather than a live SSE stream) and drew its own glyphs
+ * until P7.1. `pipelineStages.ts` already states the rule this serves: a
+ * progress panel that reports the pipeline differently depending on where you
+ * are is the "roughly true" UI S-14 forbids — and the same screen showing it
+ * two ways is that rule's worst case.
+ *
+ * Every state carries an accessible name, not only `active`. Until P7.1 the
+ * other three had none, so a reader who could not see the icon got the stage
+ * label and nothing about whether it had run: done, not started and failed
+ * were announced identically, distinguished on screen by shape and colour
+ * alone. `role="img"` because an `aria-label` on a bare `<svg>` is not
+ * reliably announced without it. */
+export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
   if (status === "done") {
-    return <CheckCircle size={20} weight="fill" className="text-ok" />
+    return (
+      <CheckCircle size={20} weight="fill" className="text-ok" role="img" aria-label="Done" />
+    )
   }
   if (status === "active") {
     return (
-      <CircleNotch size={20} className="animate-spin text-accent" aria-label="In progress" />
+      <CircleNotch
+        size={20}
+        className="animate-spin text-accent"
+        role="img"
+        aria-label="In progress"
+      />
     )
   }
   if (status === "error") {
-    return <XCircle size={20} weight="fill" className="text-err" />
+    return <XCircle size={20} weight="fill" className="text-err" role="img" aria-label="Failed" />
   }
-  return <Circle size={20} className="text-rule" />
+  return <Circle size={20} className="text-rule" role="img" aria-label="Not started" />
 }
 
 export function ProcessingState({

@@ -53,16 +53,42 @@ import { DeviceLimitNotice } from "./DeviceLimitNotice"
  * are the same on the password screen, the device-limit refusal and the parent
  * phone flow, and three copies of a frame is how three signed-out screens end
  * up with three different ideas of where the logo goes.
+ *
+ * **It was repeated anyway, until P7.1.** `ParentLogin.tsx` opened with a
+ * comment reading "The frame is `AuthFrame`, shared with the password screen"
+ * above its own copy of this markup — same `<main>`, same classes, same
+ * mark-and-wordmark block — because it needed `data-portal="parent"` and this
+ * component took no props to carry it. That is why `dataPortal` exists: a
+ * frame with one consumer and a second screen describing itself as the second
+ * consumer is the shape the docstring above was written to prevent.
+ *
+ * **The layout is top-biased on purpose.** Audit finding M12 (hallmark leg,
+ * Phase 1) is `min-h-screen items-center justify-center` around a centred
+ * card, "the most recognisable AI auth shape", and it survived the whole
+ * redesign: the P4.7 auth pass fixed the card's colour, the error's position
+ * and the error's copy, and its docstring lists exactly those three, so the
+ * one finding that was about the *shape of the page* was never in the surface
+ * loop's list. Now the mark sits near the top like a letterhead and the column
+ * hangs beneath it, which is both the audit's stated fix ("bias off-centre or
+ * let height match content") and the more Study-Notebook reading of a signed-
+ * out page: a sheet of paper with a heading, not a card floating in a void.
  */
 export function AuthFrame({
   children,
   footer,
+  dataPortal,
 }: {
   children: React.ReactNode
   footer?: React.ReactNode
+  /** Stamped on the `<main>` as `data-portal`; the capture harness and the
+   * parent portal's own styling hooks read it. */
+  dataPortal?: string
 }) {
   return (
-    <main className="paper-grain flex min-h-screen flex-col items-center justify-center gap-6 bg-paper px-4 py-12">
+    <main
+      data-portal={dataPortal}
+      className="paper-grain flex min-h-screen flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
+    >
       {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
           "Lemely", so describing the mark too announces the brand twice. */}
       <div className="flex items-center gap-2.5">

@@ -20,6 +20,7 @@ import {
   useUnacknowledgeAtRisk,
 } from "@/lib/hooks/useTeacherApi"
 import type { AtRiskFlag, AtRiskListEntry } from "@/lib/teacherTypes"
+import { SortArrow } from "@/components/ui/inline-arrow"
 
 /*
  * At-risk list (T-06). `GET /teacher/at-risk?reason=&acknowledged=`
@@ -385,7 +386,7 @@ export function AtRiskList() {
                         className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                       >
                         {col.label}
-                        {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
+                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
                       </button>
                     </th>
                   )

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { describe, expect, it } from "vitest"
+import { stripComments } from "./support/jsxSource"
 
 /** Every `.ts`/`.tsx` file under a directory, recursively. */
 function sourceFiles(dir: string): string[] {
@@ -41,20 +42,6 @@ function sourceFiles(dir: string): string[] {
  * banned one explicitly.
  */
 
-/**
- * Source with `/* … *​/` comments blanked out.
- *
- * Not optional, and the first run of this gate proved why in both directions:
- * the CSS comment introducing the fix quotes Tailwind's `150ms` default, so
- * the duration check read the comment instead of the declaration; and
- * `button.tsx` writes "never `ease-in-out` or `linear`" *inside* a `cva(` call,
- * so the banned-easing check reported the file that documents the rule. A gate
- * that reads prose as code punishes the explanation, which is the same call
- * `studyNotebookMigration.test.ts` had to make.
- */
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, "")
-}
 
 const CSS = stripComments(readFileSync(join(process.cwd(), "src/index.css"), "utf8"))
 

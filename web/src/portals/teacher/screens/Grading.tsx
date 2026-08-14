@@ -3,7 +3,12 @@ import { useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
-import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
+import {
+  ProcessingState,
+  StageGlyph,
+  type ProcessingStage,
+  type ProcessingStageStatus,
+} from "@/components/ui/processing-state"
 import { cn } from "@/lib/utils"
 import { CardGridSkeleton } from "@/components/ui/loading-shapes"
 import {
@@ -19,7 +24,8 @@ import {
   useScanPreview,
   uploadPaper,
 } from "@/lib/hooks/useTeacherApi"
-import type { PaperKind, PaperSummary } from "@/lib/teacherTypes"
+import type { PaperKind, PaperSummary, PipelineStep } from "@/lib/teacherTypes"
+import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Grading. Wired to `GET /papers` (grid + tabs) via `usePapers()` and
@@ -80,7 +86,23 @@ import type { PaperKind, PaperSummary } from "@/lib/teacherTypes"
 
 const CIRC = 2 * Math.PI * 42
 
-const PIPE_MARK = { done: "✓", active: "●", idle: "" } as const
+/* `PipelineStep.state` is the stored per-paper summary's vocabulary; the kit's
+ * `ProcessingStage` is the live stream's. They mean the same three things and
+ * "idle" is "pending" — the wire schemas differ, the stage does not.
+ *
+ * Until P7.1 this screen drew those three states as the literal glyphs
+ * `"✓"`, `"●"` and `""` in a hand-built circle, which §3.2 item 3 (one icon
+ * library, Phosphor) and item 9 (no glyph substitutes for icons) both rule
+ * out, and which announced nothing at all for a stage that had not started.
+ * It also meant this one screen reported a marking pipeline in two visual
+ * languages 100 lines apart — the kit's `ProcessingState` renders the live
+ * upload run below, and the copy under it points the teacher up here
+ * ("Progress is in Pipeline above"). */
+const PIPE_STATUS = {
+  done: "done",
+  active: "active",
+  idle: "pending",
+} as const satisfies Record<PipelineStep["state"], ProcessingStageStatus>
 
 const CHIP_TONE: Record<PaperKind, string> = {
   graded: "bg-ok-wash text-ok",
@@ -323,7 +345,7 @@ export function Grading() {
         </div>
         <div className="flex-1" />
         <Button variant="ink" onClick={() => navigate("/teacher/review")}>
-          Open review queue →
+          Open review queue <ForwardArrow />
         </Button>
       </div>
 
@@ -427,17 +449,8 @@ export function Grading() {
               <>
                 {detail.pipeline.map((p) => (
                   <div key={p.label} className="flex items-center gap-3 py-[9px]">
-                    <span
-                      className={cn(
-                        "w-[19px] h-[19px] flex-none rounded-full border-[1.5px] flex items-center justify-center text-data-sm",
-                        p.state === "done"
-                          ? "bg-ok border-ok text-accent-on"
-                          : p.state === "active"
-                            ? "bg-transparent border-accent text-accent-ink"
-                            : "bg-transparent border-rule text-accent-ink",
-                      )}
-                    >
-                      {PIPE_MARK[p.state]}
+                    <span className="flex-none">
+                      <StageGlyph status={PIPE_STATUS[p.state]} />
                     </span>
                     <span
                       className={cn(

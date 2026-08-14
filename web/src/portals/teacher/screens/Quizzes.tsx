@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V3 */
 import { useState, type FormEvent } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -12,6 +13,7 @@ import {
 } from "@/lib/teacherOutcome"
 import { useCreateQuiz, useTeacherQuizzes } from "@/lib/hooks/useTeacherApi"
 import type { QuizSummary } from "@/lib/teacherTypes"
+import { ForwardArrow, SortArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Quiz list (T-09's entry screen). Wired to `GET /teacher/quizzes`
@@ -287,7 +289,7 @@ export function Quizzes() {
                         className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                       >
                         {col.label}
-                        {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
+                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
                       </button>
                     </th>
                   )
@@ -341,7 +343,7 @@ export function Quizzes() {
                     </td>
                     <td className="px-6 py-3.5 text-end whitespace-nowrap">
                       <Button size="sm" variant="secondary" onClick={() => navigate(`/teacher/quizzes/${q.id}`)}>
-                        {q.status === "draft" ? "Continue →" : "Open →"}
+                        <>{q.status === "draft" ? "Continue" : "Open"} <ForwardArrow /></>
                       </Button>
                     </td>
                   </tr>

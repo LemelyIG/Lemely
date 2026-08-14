@@ -12,6 +12,7 @@ import { useStudentDetail } from "@/lib/hooks/useTeacherApi"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { StudentWeakness } from "@/lib/teacherTypes"
+import { BackArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Student detail, teacher view (T-05). `GET /teacher/students/{studentId}`
@@ -212,7 +213,7 @@ export function StudentDetail() {
           onClick={() => navigate(-1)}
           className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
-          ← Back
+          <BackArrow /> Back
         </button>
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">

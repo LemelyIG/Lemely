@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative as pathRelative } from "node:path"
 import { describe, expect, it } from "vitest"
+import { stripComments } from "./support/jsxSource"
 
 /**
  * The elevation gate (P6.3): the §7 z-index scale, and §3.2 item 6's blur.
@@ -65,103 +66,6 @@ function scaleRungs(): string[] {
 
 const RUNGS = scaleRungs()
 
-/**
- * Blanks every comment, preserving line numbers and every other character.
- *
- * ── Why this is here, and why it is a state machine rather than a regex ────
- *
- * The first draft of this gate scanned raw source and reported six offenders.
- * All six were prose. Five were comments *this phase wrote* explaining the fix
- * ("`z-dropdown`, not the raw `z-10` this carried"), and the sixth was the best
- * comment in the file it lives in — `celebration.tsx` explaining that it
- * deliberately uses DOM order instead of a `z-*` utility, because "a raw `z-1`
- * outside the scale is exactly what that gate exists to catch".
- *
- * So the gate's own first run flagged the one component that had reasoned its
- * way to the right answer, and the cheapest way to make it green would have
- * been to delete the reasoning. That is D6.3's finding — a gate that reports
- * good work teaches people to launder it — arriving one phase later in the
- * gate written to honour it.
- *
- * Restricting the match to quoted spans is not enough on its own: these files
- * quote class names inside comments with backticks, which is indistinguishable
- * from a template literal to anything that does not track comment state. Hence
- * a real (small) lexer.
- */
-function stripComments(source: string): string {
-  let out = ""
-  let i = 0
-  type State = "code" | "line" | "block" | "single" | "double" | "template"
-  let state: State = "code"
-
-  while (i < source.length) {
-    const c = source[i]
-    const n = source[i + 1]
-
-    if (state === "code") {
-      if (c === "/" && n === "/") {
-        state = "line"
-        out += "  "
-        i += 2
-        continue
-      }
-      if (c === "/" && n === "*") {
-        state = "block"
-        out += "  "
-        i += 2
-        continue
-      }
-      if (c === "'") state = "single"
-      else if (c === '"') state = "double"
-      else if (c === "`") state = "template"
-      out += c
-      i += 1
-      continue
-    }
-
-    if (state === "line") {
-      if (c === "\n") {
-        state = "code"
-        out += c
-      } else {
-        out += " "
-      }
-      i += 1
-      continue
-    }
-
-    if (state === "block") {
-      if (c === "*" && n === "/") {
-        state = "code"
-        out += "  "
-        i += 2
-        continue
-      }
-      // Newlines are kept so reported line numbers stay true to the file.
-      out += c === "\n" ? "\n" : " "
-      i += 1
-      continue
-    }
-
-    // Inside a string literal.
-    if (c === "\\") {
-      out += c + (source[i + 1] ?? "")
-      i += 2
-      continue
-    }
-    if (
-      (state === "single" && c === "'") ||
-      (state === "double" && c === '"') ||
-      (state === "template" && c === "`")
-    ) {
-      state = "code"
-    }
-    out += c
-    i += 1
-  }
-
-  return out
-}
 
 /** Blanks CSS comments, preserving line numbers. */
 function stripCssComments(source: string): string {

@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
 import { otpRequestFailureMessage, otpVerifyFailureMessage } from "@/lib/authOutcome"
+import { AuthFrame } from "./Login"
 
 /*
  * G-05 · Parent log in (phone + OTP).
@@ -430,16 +431,15 @@ export function ParentLogin() {
      * the audit reached by grep rather than by rendering. It was also this
      * file's only two `font-serif` call sites (D4.1), so the placeholder was
      * not even drawing in the face it reached for.
+     *
+     * P7.1: that first sentence was not true when it was written. This screen
+     * carried its own copy of the frame's markup — identical `<main>`, identical
+     * mark-and-wordmark block — because `AuthFrame` took no prop for the
+     * `data-portal="parent"` it needs. It takes one now, so the sentence and
+     * the code finally agree, and M12's fix landed in one place rather than
+     * being applied twice and drifting later.
      */
-    <main
-      data-portal="parent"
-      className="paper-grain flex min-h-screen flex-col items-center justify-center gap-6 bg-paper px-4 py-12"
-    >
-      <div className="flex items-center gap-2.5">
-        <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-7 w-7 shrink-0" />
-        <span className="text-display-md text-ink">Lemely</span>
-      </div>
-
+    <AuthFrame dataPortal="parent">
       <div className="flex w-full max-w-100 flex-col gap-6">
         <div className="rounded-lg border border-rule bg-paper-raised p-8">
           {sentTo === null ? (
@@ -483,6 +483,6 @@ export function ParentLogin() {
           Sign in with an email instead
         </Link>
       </div>
-    </main>
+    </AuthFrame>
   )
 }

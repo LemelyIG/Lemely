@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative as pathRelative } from "node:path"
 import { describe, expect, it } from "vitest"
+import { stripComments } from "./support/jsxSource"
 
 /**
  * The contrast gate (P6.4): the accent's size rule, and the pastel pairings.
@@ -98,81 +99,6 @@ function smallTextUtilities(): string[] {
 
 const SMALL_TEXT = smallTextUtilities()
 
-/** Blanks comments, preserving line numbers. A small lexer rather than a regex
- * for the reason `elevationScale.test.ts` documents: these files quote class
- * names inside comments with backticks. */
-function stripComments(source: string): string {
-  let out = ""
-  let i = 0
-  type State = "code" | "line" | "block" | "single" | "double" | "template"
-  let state: State = "code"
-
-  while (i < source.length) {
-    const c = source[i]
-    const n = source[i + 1]
-
-    if (state === "code") {
-      if (c === "/" && n === "/") {
-        state = "line"
-        out += "  "
-        i += 2
-        continue
-      }
-      if (c === "/" && n === "*") {
-        state = "block"
-        out += "  "
-        i += 2
-        continue
-      }
-      if (c === "'") state = "single"
-      else if (c === '"') state = "double"
-      else if (c === "`") state = "template"
-      out += c
-      i += 1
-      continue
-    }
-
-    if (state === "line") {
-      if (c === "\n") {
-        state = "code"
-        out += c
-      } else {
-        out += " "
-      }
-      i += 1
-      continue
-    }
-
-    if (state === "block") {
-      if (c === "*" && n === "/") {
-        state = "code"
-        out += "  "
-        i += 2
-        continue
-      }
-      out += c === "\n" ? "\n" : " "
-      i += 1
-      continue
-    }
-
-    if (c === "\\") {
-      out += c + (source[i + 1] ?? "")
-      i += 2
-      continue
-    }
-    if (
-      (state === "single" && c === "'") ||
-      (state === "double" && c === '"') ||
-      (state === "template" && c === "`")
-    ) {
-      state = "code"
-    }
-    out += c
-    i += 1
-  }
-
-  return out
-}
 
 /** Every balanced class-expression group: `cn(...)`, `cva(...)`, `className="..."`. */
 function classGroups(source: string): { text: string; index: number }[] {

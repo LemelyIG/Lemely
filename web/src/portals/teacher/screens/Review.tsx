@@ -15,6 +15,7 @@ import {
 import { Avatar } from "@/components/ui/avatar"
 import { useBulkApproveReview, useReviewQueue, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { BulkApproveResponse, ReviewQueueItem } from "@/lib/teacherTypes"
+import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Review queue (T-07). `GET /teacher/review?class_id=&reason=&min_age_hours=`
@@ -602,7 +603,7 @@ export function Review() {
                           )
                         }
                       >
-                        Review →
+                        Review <ForwardArrow />
                       </Button>
                     </td>
                   </tr>
