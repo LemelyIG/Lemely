@@ -32,9 +32,60 @@ MISSION:            BUILD/REDESIGN-MISSION.md
 CURRENT PHASE:      **6 IN PROGRESS. 6.1 (`adapt`), 6.2 (`harden`), 6.3
                     (`optimize`) and 6.4 (`accessibility`) DONE.** 6.5 remains.
 CURRENT SURFACE:    Phase 6 is a sweep, not a surface.
-NEXT ACTION:        **Phase 6.5 — strategic omissions.** 6.4 is closed in both
-                    parts; D6.6 is resolved; one new decision (D6.7) is open
-                    but blocks nothing.
+NEXT ACTION:        **BLOCKED — B5, now for the second session running. `/tmp`
+                    is 100% full and no Bash command can run at all.** One
+                    `rm -rf` from the human unblocks it; the exact command, the
+                    measured consumers and the evidence that none of them is
+                    durable state are in `BUILD/BLOCKERS.md` B5. Two separate
+                    sessions have now had the `rm -rf` denied by the permission
+                    layer, correctly, and neither retried it in a different
+                    shape.
+
+                    **What session 2 established, beyond re-confirming it:** a
+                    zero-output command (`true`) fails identically to one that
+                    prints. So this is **not** a lost-stdout problem — no child
+                    process starts at all — and the earlier workaround of
+                    redirecting output to a file and `Read`ing it back is gone
+                    too. Nothing can be measured from inside this session.
+
+                    Session 2 did exactly one thing, and deliberately nothing
+                    else: the three stranded scratch files (`.pytest-out.txt`,
+                    `.tmpinfo.txt`, `.tmpdiag`) are now in `.gitignore`, so the
+                    recovery commit cannot sweep them into history via
+                    `git add -A`. That is the one instruction from B5 that a
+                    shell-less session can execute, and it is the durable half
+                    of it. **Phase 6.5 was NOT started blind**, because a second
+                    ungated change on top of D6.7's would make it impossible for
+                    the recovery session to attribute a gate failure to either.
+
+                    **Read this before redoing anything: the tree is dirty with
+                    work that is verified but ungated.** D6.7 was answered by
+                    the human (`VqpbRSelzmn9`, accepted) and is fully applied —
+                    `index.css`, `DESIGN.md` §3.2 and the test transcription all
+                    moved together, 107 Python token tests pass rc=0, and the
+                    new drift gate was verified by inversion. What did NOT run,
+                    because the shell died first: `npm test`, typecheck, lint,
+                    both builds, `pre-commit`, and the commit itself. **Commit
+                    that work, do not rebuild it** — then run the gates.
+
+                    First action after unblocking, in order:
+                    1. `pre-commit run --all-files`, then commit D6.7.
+                    2. `cd web && npm test && npm run typecheck && npm run lint`
+                       and both builds. `--ink-faint` has **334 call sites**, so
+                       this is the change most likely to move a rendered pixel
+                       in the whole of Phase 6.
+                    3. Then Phase 6.5, scoped below.
+
+                    **D6.7's real finding outlived D6.7**, and it is the one to
+                    carry into 6.5: `TOKENS` in `test_design_tokens.py` was
+                    transcribed by hand and **nothing tied it to `index.css`**,
+                    so the project's contrast authority could measure one palette
+                    while the browser painted another. It bit during this very
+                    edit, in the loud direction, which was luck. Now parsed and
+                    pinned. Phase 6.5 touches `index.html`, `vite.config.ts` and
+                    the PWA manifest — three more files that restate values
+                    owned elsewhere. **Ask what re-states a value, and what
+                    checks that the two still agree.**
 
                     **6.5 is scoped and waiting** - verified, not guessed:
                     `index.html` still carries the build-era `favicon.svg` and
@@ -46,15 +97,19 @@ NEXT ACTION:        **Phase 6.5 — strategic omissions.** 6.4 is closed in both
                     all; and the marketing frame states in a comment that it
                     has no legal links and invented none.
 
-                    **D6.7 is open and is the human's call, not a blocker.**
-                    `--ink-faint` clears paper and misses every tint: it is
-                    below AA on **eight of the eleven** tinted fills (worst
-                    `--err-wash` 4.36) and clears the other three by 0.01-0.06.
-                    Proposed `0.529 -> 0.52`, which clears 4.5 on all fourteen
-                    surfaces and keeps the hierarchy. **Not applied** - 334
-                    call sites, and D6.6 option A's own wording says propose
-                    first. Held as 8 `xfail(strict=True)`, so it can be neither
-                    forgotten nor silently applied.
+                    **D6.7 is ANSWERED and APPLIED.** The human accepted the
+                    proposal (`VqpbRSelzmn9`, ts 1786723759). `--ink-faint` is
+                    `oklch(0.52 0.006 240)`, which clears 4.5 on all fourteen
+                    surfaces it can land on (worst `--err-wash` 4.53, was 4.36)
+                    and keeps the ink hierarchy at 11.77 / 6.09 / 5.13 on paper.
+                    The 8 `xfail(strict=True)` cases are gone by being folded
+                    into the one parametrised matrix, not by deletion, so the
+                    token is checked by the same rule as its three siblings.
+                    The split list had encoded *which* pairing was binding, so
+                    that survives as a named test asserting `--err-wash` is
+                    still the tightest of the fourteen: the value was chosen
+                    because err-wash was worst, and if that stops being true the
+                    number was derived against a constraint that has moved.
 
                     What 6.4 leaves for the rest of Phase 6 (D6.5, D6.6, D6.7):
                     - **"Rendered" is not a synonym for "true".** D6.6 spent a
@@ -244,16 +299,26 @@ NEXT ACTION:        **Phase 6.5 — strategic omissions.** 6.4 is closed in both
                       migrated; 17 kit components still name build-era aliases
                       in their own source, none in MIGRATED_FILES, so no gate
                       reads them. Phase 6 hardening.
-LAST UPDATED:       2026-08-14T20:05+03:00
-LAST STEERING TS:   1786722798   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
-                    NOTE: the human has now replied four times in this mission.
+LAST UPDATED:       2026-08-14 (session 2, blocked on B5 from its first Bash
+                    call; no gate ran and no product file changed)
+LAST STEERING TS:   1786723759   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
+                    NOTE: the human has now replied five times in this mission.
                     2026-08-14 earlier: D1.6 (build the admin screens fully and
                     wire them) and B4 (port freed). 2026-08-14 later:
                     **`D6.6 = A`** (`jEmAdfevMO65`, ts 1786722798) — reconcile
                     the conversion, re-derive every contrast claim, and PROPOSE
                     the resulting token changes before applying any. Answered
                     and closed the same session: **there was nothing to
-                    reconcile.** All logged in STEERING.md and acted on.
+                    reconcile.** 2026-08-14 latest: **`D6.7 = accepted`**
+                    (`VqpbRSelzmn9`, ts 1786723759) — apply `--ink-faint`
+                    `0.529 -> 0.52`. Applied this session. All logged in
+                    STEERING.md and acted on.
+                    **No outbound ntfy was sent this session and none could
+                    be**: publishing is `curl` to a plain-HTTP LAN host, i.e. a
+                    Bash command, so the channel that reports a blocker shares a
+                    single point of failure with the work it reports on. §10's
+                    file fallback is the only channel that survived. Worth
+                    fixing: a reporting path that does not need the same shell.
 ```
 
 

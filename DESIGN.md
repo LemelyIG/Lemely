@@ -93,7 +93,7 @@ paper illusion instantly.
 |---|---|---|---|---|
 | `--ink` | `oklch(0.321 0.009 234)` | `#2F3437` | Primary text, headings, the logo mark. | 11.6:1 |
 | `--ink-muted` | `oklch(0.48 0.006 240)` | `#5B5E61` | Secondary text, descriptions, inactive nav. | 6.09:1 |
-| `--ink-faint` | `oklch(0.529 0.006 240)` | `#696C6F` | Captions, metadata, timestamps. The floor. | 4.94:1 |
+| `--ink-faint` | `oklch(0.52 0.006 240)` | `#66696C` | Captions, metadata, timestamps. The floor. | 5.13:1 |
 | `--ink-inverse` | `oklch(0.97 0.004 85)` | `#F6F5F2` | Text on `--paper-inverse` or on a filled accent. | 13.37:1 on inverse |
 
 Every ratio in that table is **measured**, not estimated, by converting the
@@ -101,13 +101,25 @@ OKLCH value to sRGB and applying the WCAG relative-luminance formula. `--ink` is
 exactly the logo's ink, derived by converting `#2F3437` to OKLCH rather than
 eyeballed, so the mark and the interface are literally the same colour.
 
-`--ink-faint` is the lightest text token that exists. It is set at L 0.529
-rather than anything lighter for a specific reason: it must clear AA against
-`--paper-sunk` (`#F1EFEB`), the *darkest* surface it ever sits on, not just
-against `--paper`. At L 0.529 it measures **4.94:1 on `--paper`, 5.17:1 on
-`--paper-raised`, and 4.60:1 on `--paper-sunk`** — all three clear. An earlier
-draft of this file had it at L 0.575, which measured 4.08:1 and 3.80:1 and
-would have shipped a system-wide AA failure on every caption in the product.
+`--ink-faint` is the lightest text token that exists, and it is the one token in
+this file whose value is decided by something other than paper. An earlier draft
+had it at L 0.575, which measured 4.08:1 and 3.80:1 on the paper rungs and would
+have shipped a system-wide AA failure on every caption in the product. It moved
+to L 0.529, which cleared all three.
+
+**That was still not the constraint.** Captions do not only sit on paper — they
+sit on the eleven tinted fills of §3.5 and §3.6 too, and until P6.4 nothing in
+this system had ever measured that pairing. At L 0.529 the token was below AA on
+**eight of those eleven** (worst `--err-wash` at 4.36:1) and cleared the other
+three by 0.01–0.06. It was not a bad pairing on one screen; it was a token
+floored by the wrong surface.
+
+It is now **L 0.52** (D6.7), which clears 4.5:1 on all fourteen surfaces it can
+land on: **5.13:1 on `--paper`, 5.38:1 on `--paper-raised`, 4.78:1 on
+`--paper-sunk`**, and worst-case **4.53:1 on `--err-wash`**. The binding
+constraint on this token is `--err-wash`, not `--paper-sunk`, and
+`tests/test_design_tokens.py` pins that fact by name so a later change to either
+colour reports which pair moved.
 
 There is deliberately no fifth, lighter step. The build-era system had one and
 spent three separate rounds failing and re-nudging AA on it, each round fixing

@@ -34,7 +34,11 @@
  * measurements are pinned by `tests/test_design_tokens.py`. Two of them were
  * wrong in the first draft and the test is what caught them:
  *   - `--ink-faint` at L 0.575 measured 3.80:1 on `--paper-sunk` (AA needs
- *     4.5). It is L 0.529.
+ *     4.5). It went to L 0.529, and in P6.4 to L 0.52 — see below.
+ *   - L 0.529 cleared all three paper rungs and missed EIGHT of the eleven
+ *     tinted fills the product also paints text on (worst `--err-wash` at
+ *     4.36), because until P6.4 this file only ever measured ink on paper.
+ *     L 0.52 clears 4.5 on all fourteen (worst `--err-wash` 4.53). D6.7.
  *   - `--ok/--warn/--err` all sat near L 0.45, so they were three identical
  *     greys once hue was removed. They now form a real descending ladder.
  * Do not nudge a colour here to make a screen look nicer without re-running
@@ -55,11 +59,12 @@
   /* ── §3.2 Ink ────────────────────────────────────────────────────────── */
   /* `--ink` is the logo's #2F3437 converted to OKLCH, so the mark and the
      interface are the same colour by construction rather than by eye.
-     Measured on --paper: 11.6 / 6.09 / 4.94. `--ink-faint` is the FLOOR —
-     there is deliberately no lighter text step (DESIGN.md §3.2). */
+     Measured on --paper: 11.77 / 6.09 / 5.13. `--ink-faint` is the FLOOR —
+     there is deliberately no lighter text step (DESIGN.md §3.2), and it is
+     now floored by the WORST tint rather than by paper (D6.7). */
   --ink: oklch(0.321 0.009 234);
   --ink-muted: oklch(0.48 0.006 240);
-  --ink-faint: oklch(0.529 0.006 240);
+  --ink-faint: oklch(0.52 0.006 240);
   --ink-inverse: oklch(0.97 0.004 85);
 
   /* ── §3.3 Rules ──────────────────────────────────────────────────────── */

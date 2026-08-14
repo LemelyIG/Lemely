@@ -9696,3 +9696,59 @@ Held as eight `xfail(strict=True)` cases rather than a note. `strict` is the
 point: if the token is changed, they start passing, and a strict xfail that
 passes **fails** — so the proposal can be neither quietly forgotten nor quietly
 applied without this record moving with it.
+
+### RESOLVED — 2026-08-14, the human accepted the proposal
+
+Steering `VqpbRSelzmn9`, ts 1786723759: `D6.7 = "--ink-faint 0.529 -> 0.52
+(Proposal Accepted)"`. Applied as proposed, in three places that must agree:
+`web/src/index.css` (the implementation), `DESIGN.md` §3.2 (the canonical
+record, including the ≈hex, which moves `#696C6F` -> `#66696C`), and
+`tests/test_design_tokens.py` (the transcription).
+
+The eight `xfail(strict=True)` cases are gone, and not by deletion: `ink-faint`
+joins `ink`/`ink-muted`/`accent-ink` in the one parametrised matrix, so the
+token is now checked by the same rule as its three siblings rather than by a
+special case. Measured after the change — 5.13 on `--paper`, 5.38 on
+`--paper-raised`, 4.78 on `--paper-sunk`, and worst-of-fourteen **4.53 on
+`--err-wash`**. The ink hierarchy holds (11.77 / 6.09 / 5.13).
+
+One thing replaced the xfails rather than being dropped with them. The split
+list encoded *which pairing was binding*, and folding it into the matrix would
+have thrown that away — so `test_err_wash_is_the_binding_constraint_on_ink_faint`
+asserts by name that `--err-wash` is still the tightest of the fourteen. L 0.52
+was chosen **because** err-wash was worst; if that stops being true, the value
+was derived against a constraint that has since moved, and one named test says
+so instead of one of eleven parametrised cases going red anonymously.
+
+### The finding this turned up, which is bigger than the token
+
+**`TOKENS` in `test_design_tokens.py` is transcribed by hand from DESIGN.md, and
+nothing checked it against `web/src/index.css`.** So the file that calls itself
+this project's contrast authority could measure one palette while the browser
+painted another, and every ratio it asserts would still be green.
+
+That is not hypothetical — it happened here, during this decision's own
+application. `index.css` was edited first, the suite was re-run, and eight tests
+went red **reporting the old value**, because the transcription had not been
+mirrored yet. That direction is loud, and it is luck that the edit happened in
+that order. The opposite order is silent: nudge a colour in `index.css` alone
+and the authority proves AA about a value nothing renders. This is D6.2's shape
+("a comment describing an intention is not evidence the code has it") relocated
+into the gate itself, and it is the *third* time this redesign has found a check
+whose subject and object had drifted apart.
+
+Closed by `test_transcribed_token_matches_the_css_the_product_ships`, which
+**parses** `:root` rather than transcribing a third time, plus a guard asserting
+the parser matched at least as many tokens as the file measures — so a regex
+that stops matching cannot silently pass everything beneath it. Verified by
+inversion: `index.css` alone set to L 0.515 fails with `--ink-faint is
+oklch(0.515, 0.006, 240.0) in index.css but oklch(0.52, 0.006, 240) here`, which
+is precisely the silent direction. Today the transcription is faithful — 36
+oklch tokens parsed, 33 measured, zero drift, and the three unmeasured are the
+`--rule-*` hairlines, which are borders rather than text/background pairs.
+
+**Not yet gated at the time of writing: the change is unproven in the browser.**
+`npm test`, typecheck, lint, both builds and `pre-commit` have **not** run,
+because `/tmp` filled and no Bash command can execute (**B5**). The colour
+arithmetic is fully verified; the product build around it is not. 107 Python
+token tests pass (rc=0, up from 64 passed + 8 xfailed).

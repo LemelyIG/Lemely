@@ -355,3 +355,42 @@ first. Held as eight `xfail(strict=True)` so it can be neither forgotten nor
 applied without this record moving with it.
 
 `LAST STEERING TS` advances to **1786722798**.
+
+---
+
+## 2026-08-14 — D6.7 answered and applied, and the token was the smaller half
+
+**IN** — `VqpbRSelzmn9` (ts **1786723759**):
+*"D6.7 = \"--ink-faint 0.529 -> 0.52 (Proposal Accepted)\""*.
+
+Applied exactly as proposed, in the three files that have to agree:
+`web/src/index.css`, `DESIGN.md` §3.2 (including the ≈hex, `#696C6F` ->
+`#66696C`), and the transcription in `tests/test_design_tokens.py`. Measured
+after the change: 5.13 on `--paper`, 5.38 on `--paper-raised`, 4.78 on
+`--paper-sunk`, worst-of-fourteen **4.53 on `--err-wash`**. Hierarchy intact at
+11.77 / 6.09 / 5.13. The eight `xfail(strict=True)` cases are gone by being
+folded into the one parametrised matrix rather than deleted, so `ink-faint` is
+now checked by the same rule as its three siblings; the one thing the split list
+carried that the matrix cannot — *which* pairing is binding — survives as a named
+test asserting `--err-wash` is still the tightest.
+
+**The bigger finding came out of applying it, not deciding it.** `TOKENS` in
+`test_design_tokens.py` is transcribed by hand from DESIGN.md, and **nothing
+tied it to `index.css`**. So this project's contrast authority could measure one
+palette while the browser painted another, with every assertion still green. It
+bit immediately: `index.css` was edited first, and eight tests went red
+reporting the *old* value. That direction is loud; the reverse is silent, and
+only the edit order made it the loud one. Closed by a gate that **parses**
+`:root` rather than transcribing a third time, guarded so a regex that stops
+matching cannot pass everything beneath it, and verified by inversion.
+
+**OUT** — nothing, and that is itself worth recording. `/tmp` filled to 100%
+mid-session (2.4G of stale scratch from 2026-08-12 that outlived the sessions
+that made it), and **no Bash command can run**, so publishing to ntfy — which is
+`curl` to a plain-HTTP LAN host — is impossible. **The channel that reports a
+blocker shares a single point of failure with the work it reports on.** This
+file and `BUILD/BLOCKERS.md` B5 are the only channels that survived, which is
+what §10's file fallback exists for, except §10 assumes the file mirrors an ntfy
+message and here it *is* the message. B5 has the one command that unblocks it.
+
+`LAST STEERING TS` advances to **1786723759**.

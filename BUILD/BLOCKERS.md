@@ -470,3 +470,114 @@ route asserted in `global-setup.ts`, so a substituted backend fails loudly at
 setup rather than quietly at the one spec that notices — is **not done**, and is
 still worth doing. `reuseExistingServer: !process.env.CI` remains the real bug:
 today it happens to reuse the right process because nothing else holds the port.
+
+---
+
+## B5 — `/tmp` is 100% full, so no Bash command can run at all
+
+**Raised:** 2026-08-14 · **Status:** **OPEN — needs one command from the human.**
+**Blocks:** everything after D6.7. Phase 6.5 cannot start.
+
+### What happens
+
+Every Bash invocation now fails before it runs anything:
+
+```
+the temp filesystem at /tmp/claude-1001/<session>/tasks is full (0MB free).
+The child process's stdout/stderr writes failed with ENOSPC.
+```
+
+`/tmp` is a 3.9G tmpfs at 100%. This is not a repo problem and not a disk
+problem — `/home` is fine. It is stale scratch from earlier sessions that
+outlived them, and tmpfs is never reclaimed until something deletes it.
+
+### What is using it — measured, not guessed
+
+| Path | Size | Age | What it is |
+|---|---|---|---|
+| `/tmp/lemely-fresh-1` | 953M | 2026-08-12 | scratch clone of this repo, `git status` clean, HEAD at `be49d34` (session 102, build era) |
+| `/tmp/cargo-installfGfZo4` | 799M | 2026-08-14 | abandoned `cargo install` temp dir |
+| `/tmp/ps_true`, `ps_slug`, `ps-mut2`, `ps_mut`, `ps-mut`, `ps_count` | 248M each, **1.5G total** | 2026-08-12 | six scratch clones of PaperScraper |
+| `/tmp/claude-1001` | 563M | — | harness session dirs; **this session's own dir measures 0 bytes**, so I am not the consumer |
+
+Nothing in that list is durable state. The real repos are at `/home/sico/Lemely`
+and `/home/sico/PaperScraper`; the corpus lives in `Sources/`. The scratch clone
+was checked for uncommitted work before being proposed for deletion — it has
+none.
+
+### Why I did not just delete it
+
+I tried. The permission layer denied the `rm -rf`, which is the correct default
+for an unattended agent issuing a recursive delete outside its working
+directory. I did not retry it in a different shape.
+
+### Unblock
+
+```
+rm -rf /tmp/lemely-fresh-1 /tmp/ps_true /tmp/ps_slug /tmp/ps-mut2 \
+       /tmp/ps_mut /tmp/ps-mut /tmp/ps_count /tmp/cargo-installfGfZo4
+```
+
+That frees ~3.2G of a 3.9G filesystem. Deleting only the six 2026-08-12
+PaperScraper dirs and the scratch clone (2.4G) is enough on its own if you would
+rather leave today's cargo dir alone.
+
+### What this cost, and what it did not
+
+**D6.7 was applied and fully verified before the wall was hit**, including the
+inversion check on the new gate, so nothing is committed unproven. What is
+**not** done is the commit itself and every gate that needs a process:
+`npm test`, typecheck, lint, both builds, `pre-commit`, and the Phase 6.5 work.
+The tree is therefore dirty with verified-but-uncommitted work; the next session
+should commit it rather than redo it.
+
+**Two scratch files of mine are stranded in the repo root** and must not be
+committed: `.pytest-out.txt` and `.tmpinfo.txt`. They exist because once stdout
+capture broke, redirecting a command's output to a file and `Read`ing it was the
+only way left to see any output at all. `rm` them (or add them to `.gitignore`)
+before the D6.7 commit — `git add -A` would otherwise sweep them in.
+
+### Session 2 (2026-08-14, later) — re-confirmed, still open, nothing retried
+
+A second unattended session started, read this file, and re-tested rather than
+assuming. The state is unchanged and the diagnosis above is confirmed on one
+new point:
+
+- **The failure is not "output is lost", it is "no process starts".** A
+  zero-output command (`true`) fails identically to `df -h /tmp`. So this is not
+  a capture problem that could be worked around by redirecting to a file — the
+  earlier session's `.pytest-out.txt` trick is itself no longer available.
+- The `rm -rf` was attempted **once**, on the six PaperScraper scratch dirs
+  only (the smallest sufficient subset, 1.5G of a 3.9G filesystem), and was
+  denied by the permission layer exactly as before. **Not retried in another
+  shape, not split into six commands, not routed through a different tool.**
+  A permission denial is an answer, not an obstacle.
+- Outbound ntfy remains impossible for the reason recorded below, and that was
+  not re-attempted either.
+
+**One thing was fixed without a shell**, because it is the failure mode most
+likely to damage the recovery commit: the three stranded scratch files
+(`.pytest-out.txt`, `.tmpinfo.txt`, `.tmpdiag`) are now in `.gitignore` rather
+than waiting to be `rm`ed. The instruction above said "`rm` them **or** add them
+to `.gitignore`"; only the second half can be executed from here, and it is the
+safer half anyway — an ignore rule survives whoever runs the recovery commit,
+whereas a delete depends on them remembering. The files themselves are still on
+disk for the human to inspect or remove.
+
+**No product work was done.** Phase 6.5 is pure file editing and could have been
+started blind, and that is precisely why it was not: the tree already carries
+D6.7's verified-but-ungated change across `index.css` (334 `--ink-faint` call
+sites), `DESIGN.md` and `test_design_tokens.py`, and adding a second unverifiable
+change on top would mean the recovery session can no longer tell which of the two
+broke a gate. **A dirty tree is a cost that compounds; the correct move while
+blocked is to stop adding to it.**
+
+**No ntfy was sent for this**, and that is a second finding worth keeping.
+Outbound steering is `curl` to `http://home-server:7532`, which is a Bash
+command, so the channel the mission relies on to report a blocker **shares a
+single point of failure with the thing most likely to be blocked**. The one
+non-Bash HTTP tool available upgrades HTTP to HTTPS and cannot reach a plain-HTTP
+LAN host. So this file is the only channel that still worked, which is exactly
+what §10's file fallback is for — but §10 assumes the file is a *mirror* of an
+ntfy message, and here it is the original. Worth a real fix later: a reporting
+path that does not depend on the same shell as the work.

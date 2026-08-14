@@ -19,8 +19,12 @@ and 3.0:1 for large text (>=18.66px, or >=14px bold) and for UI components.
 from __future__ import annotations
 
 import math
+import re
+from pathlib import Path
 
 import pytest
+
+INDEX_CSS = Path(__file__).resolve().parents[1] / "web" / "src" / "index.css"
 
 # ── Colour maths ────────────────────────────────────────────────────────────
 
@@ -73,7 +77,7 @@ TOKENS: dict[str, tuple[float, float, float]] = {
     # §3.2 ink
     "ink": (0.321, 0.009, 234),
     "ink-muted": (0.48, 0.006, 240),
-    "ink-faint": (0.529, 0.006, 240),
+    "ink-faint": (0.52, 0.006, 240),  # D6.7: was 0.529, floored by tints not paper
     "ink-inverse": (0.97, 0.004, 85),
     # §3.4 accent
     "accent": (0.576, 0.146, 33),
@@ -230,13 +234,18 @@ def test_state_colours_form_a_monotonic_lightness_ladder() -> None:
 # The hole was not theoretical. P6.4 part 1 found `--ink-faint` on
 # `--accent-wash` at 4.47:1 on the leaderboard's viewer row, and found it via
 # axe on a rendered page, because axe sees what a route happens to render and
-# this file was not looking. Deriving the whole matrix shows that instance was
-# not special: `--ink-faint` is below 4.5 on **eight of the eleven** tinted
-# fills, and clears the other three by 0.01-0.06. It is not a bad pairing on one
-# surface, it is a token that clears paper and misses every tint.
+# this file was not looking. Deriving the whole matrix showed that instance was
+# not special: at L 0.529 `--ink-faint` was below 4.5 on **eight of the eleven**
+# tinted fills and cleared the other three by 0.01-0.06. It was not a bad
+# pairing on one surface, it was a token that cleared paper and missed every
+# tint.
 #
-# The three darker ink tokens are unaffected and are pinned here so the matrix
-# is a real check rather than one xfail.
+# D6.7 (proposed here, accepted by the human 2026-08-14) took it to L 0.52,
+# which clears 4.5 on all fourteen surfaces — worst `--err-wash` at 4.53 — and
+# keeps the three-rung ink hierarchy (11.77 / 6.09 / 5.13 on paper). The token
+# is therefore floored by the worst TINT now, not by the worst paper rung, and
+# `ink-faint` joins the other three in the matrix below rather than sitting in
+# a split of passing and xfailing lists.
 
 TINTED_SURFACES = (
     "accent-wash",
@@ -253,7 +262,7 @@ TINTED_SURFACES = (
 )
 
 
-@pytest.mark.parametrize("token", ["ink", "ink-muted", "accent-ink"])
+@pytest.mark.parametrize("token", ["ink", "ink-muted", "ink-faint", "accent-ink"])
 @pytest.mark.parametrize("surface", TINTED_SURFACES)
 def test_ink_tokens_clear_aa_on_every_tinted_fill(token: str, surface: str) -> None:
     """The same rule as on paper, extended to the fills the product actually paints."""
@@ -262,32 +271,73 @@ def test_ink_tokens_clear_aa_on_every_tinted_fill(token: str, surface: str) -> N
     )
 
 
-# The split is the finding, so it is written down rather than parametrised over
-# one list. `--ink-faint` clears AA on exactly three of the eleven tinted fills,
-# and it clears those three by 0.01-0.06 — amber 4.51, warn-wash 4.51,
-# ok-wash 4.56. There is no tint this token sits comfortably on; three of them
-# happen to land on the right side of the line.
-INK_FAINT_TINTS_PASSING = ("pastel-amber", "ok-wash", "warn-wash")
-INK_FAINT_TINTS_FAILING = tuple(s for s in TINTED_SURFACES if s not in INK_FAINT_TINTS_PASSING)
+# `--ink-faint` is the token D6.7 moved, and the tint it is closest to failing
+# on is the one that decides its value. Pinned by name so that a later nudge to
+# either colour reports WHICH pair went under rather than one of eleven
+# parametrised cases going red with no indication that this specific pair is
+# the binding constraint on the whole token.
+def test_err_wash_is_the_binding_constraint_on_ink_faint() -> None:
+    """The floor under `--ink-faint`. Everything else has more room than this."""
+    tightest = min(ratio("ink-faint", s) for s in TINTED_SURFACES)
+    assert ratio("ink-faint", "err-wash") == tightest, (
+        "the tightest ink-faint pairing is no longer --err-wash. D6.7 chose L 0.52 "
+        "because err-wash was the worst of fourteen surfaces; if that is no longer "
+        "true, the value was derived against a constraint that has moved."
+    )
+    assert tightest >= AA_NORMAL, f"--ink-faint's tightest pairing is {tightest:.2f}:1"
 
 
-@pytest.mark.parametrize("surface", INK_FAINT_TINTS_PASSING)
-def test_ink_faint_clears_aa_on_the_three_tints_it_clears(surface: str) -> None:
-    """Pinned so the margin cannot quietly erode. These pass by 0.01-0.06."""
-    assert ratio("ink-faint", surface) >= AA_NORMAL
+# ── The transcription itself (P6.5, found while applying D6.7) ──────────────
+#
+# `TOKENS` above is transcribed BY HAND from DESIGN.md §3, and until now nothing
+# checked it against `web/src/index.css`, which is what the product actually
+# paints. So this file could measure one palette while the browser rendered
+# another, and every ratio it asserts would still be green.
+#
+# That is not hypothetical: it happened during D6.7's own application. The token
+# was changed in `index.css` first, the suite was re-run, and eight tests went
+# red reporting the OLD value — the file that calls itself this project's
+# contrast authority was still measuring 0.529 because the edit had not been
+# mirrored here. The failure was loud in that direction, which is luck. The
+# opposite edit order is silent: nudge a colour in `index.css` alone, and this
+# file happily proves AA about a value nothing renders.
+#
+# Parsed rather than transcribed a third time, so the check cannot itself drift.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "--ink-faint is below AA on 8 of the 11 tinted fills (worst: --err-wash at "
-        "4.36:1). This is a token change on the caption colour, which has 334 call "
-        "sites, so it is PROPOSED and not applied: see BUILD/DECISIONS.md D6.7. "
-        "strict=True on purpose — when the token is changed these start passing and "
-        "xfail(strict) then FAILS, so the proposal cannot be quietly forgotten, nor "
-        "applied without this file being updated alongside it."
-    ),
-)
-@pytest.mark.parametrize("surface", INK_FAINT_TINTS_FAILING)
-def test_ink_faint_clears_aa_on_every_tinted_fill(surface: str) -> None:
-    assert ratio("ink-faint", surface) >= AA_NORMAL
+def css_root_tokens() -> dict[str, tuple[float, float, float]]:
+    """Every three-component `oklch()` custom property declared in `:root`."""
+    root = INDEX_CSS.read_text(encoding="utf-8").split(":root {", 1)[1]
+    return {
+        name: (float(lightness), float(chroma), float(hue))
+        for name, lightness, chroma, hue in re.findall(
+            r"--([a-z0-9-]+):\s*oklch\(\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\)\s*;", root
+        )
+    }
+
+
+def test_the_css_actually_declares_the_tokens_this_file_measures() -> None:
+    """A guard on the parser, so an empty match set cannot pass everything below."""
+    parsed = css_root_tokens()
+    assert len(parsed) >= len(TOKENS), (
+        f"parsed only {len(parsed)} oklch tokens out of {INDEX_CSS.name} but this file "
+        f"measures {len(TOKENS)}. The regex has stopped matching the way the tokens are "
+        "written — fix the parser, do not narrow the assertions below it."
+    )
+
+
+@pytest.mark.parametrize("token", sorted(TOKENS))
+def test_transcribed_token_matches_the_css_the_product_ships(token: str) -> None:
+    """DESIGN.md's value and the implementation's value are the same value."""
+    parsed = css_root_tokens()
+    assert token in parsed, (
+        f"--{token} is measured here but is not declared as an oklch() triple in "
+        f"{INDEX_CSS.name}. Either the token was renamed or removed and this file was "
+        "not updated, or it is now defined by reference and cannot be checked."
+    )
+    expected, actual = TOKENS[token], parsed[token]
+    assert tuple(round(v, 6) for v in actual) == tuple(round(v, 6) for v in expected), (
+        f"--{token} is oklch{actual} in {INDEX_CSS.name} but oklch{expected} here. "
+        "Every ratio this file asserts about that token is therefore about a colour "
+        "the product does not paint. Change both, or neither."
+    )
