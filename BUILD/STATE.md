@@ -114,7 +114,19 @@ NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
                     a product change, and there is still **no review decision**.
                     The completion ntfy was **not** re-sent.
 
-                    Four sessions have now ended here. The queue is not empty
+                    **Session 10 (2026-08-15) built nothing.** Kept short on
+                    purpose — the checks are the same ones, each re-run rather
+                    than inherited, and the only honest output is the numbers:
+                    working tree clean, `git status -sb` level with
+                    `origin/redesign/study-surfaces` after an explicit `git
+                    fetch`, INBOX both items handled, all five blockers carry a
+                    `RESOLVED` status line, all eight phase-ledger rows DONE,
+                    inbound topic since 1786723759 returns an empty body. **PR #7
+                    OPEN and MERGEABLE at 71 commits** (up one: session 9's own
+                    state note `fc60fad`), still **no review decision**. The
+                    completion ntfy was **not** re-sent.
+
+                    Five sessions have now ended here. The queue is not empty
                     because a session failed to look; it is empty because the
                     five items below are the whole of what is left and none of
                     them is a build task. A session that keeps finding nothing is
