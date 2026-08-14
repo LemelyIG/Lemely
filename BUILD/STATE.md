@@ -87,6 +87,28 @@ NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
                     DECISIONS.md is the only surviving record of it. The
                     completion ntfy was **not** re-sent.
 
+                    **Session 8 (2026-08-15) built nothing and found nothing
+                    wrong.** Same checks, each run rather than inherited: working
+                    tree clean (no wip commit to make), branch level with
+                    `origin/redesign/study-surfaces` — session 7's lesson applied
+                    to this session's own claim, `git status -sb` shows no
+                    ahead/behind marker — INBOX both items handled, B1-B5 all
+                    RESOLVED, every phase-ledger row DONE, PR #7 OPEN and
+                    MERGEABLE at **69 commits** with still **no review decision**.
+                    The inbound topic polled since 1786723759 returns an empty
+                    body, as session 7 recorded it would now that `VqpbRSelzmn9`
+                    has aged out of retention. The completion ntfy was **not**
+                    re-sent.
+
+                    Every §12 clause re-read against the tree and every one is
+                    met, including the last one that session 5 had to fire. So
+                    the deliberate non-action is worth naming: the five open
+                    items below are not blocked on a session, and the PR is a
+                    handoff awaiting a reviewer. Building N3 or retiring the
+                    compat layer now would move the diff under whoever is reading
+                    it, which costs more than either fix is worth before the
+                    review lands.
+
                     Twice now the check a session performed on itself was the
                     one it got wrong — session 5 found §12's unfired clause,
                     session 6 asserted a sync it had not verified. "Nothing to
