@@ -51,6 +51,11 @@ const RTL_CLEAN_FILES = [
   "src/portals/parent/screens/Weaknesses.tsx",
   "src/components/ui/weakness-chip.tsx",
   "src/components/ui/trend-sparkline.tsx",
+  // Phase 4, surface 8 — auth.
+  "src/lib/authOutcome.ts",
+  "src/portals/auth/Login.tsx",
+  "src/portals/auth/DeviceLimitNotice.tsx",
+  "src/portals/auth/ParentLogin.tsx",
   // Kit components created in Phase 3.
   "src/components/ui/breadcrumbs.tsx",
   "src/components/ui/getting-started.tsx",

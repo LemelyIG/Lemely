@@ -7670,3 +7670,124 @@ in the parent portal) / both builds / 31 Python token+constant tests: green.
 e2e: **still blocked, B4**. Visual round: 32 captures across 4 registered
 sub-surfaces, all distinct, console errors only from the deliberately-failing
 states.
+
+---
+
+## D4.7 — Redesign Phase 4, surface 8 (auth): the first screen anyone sees spent the build era as scaffolding, and a parent was shown an enum member
+
+**Surface:** the two signed-out screens and the refusal between them —
+`portals/auth/Login.tsx`, `ParentLogin.tsx`, `DeviceLimitNotice.tsx` (695
+lines). Surface 7 (admin views) is deferred behind D1.6, not skipped; see
+STEERING.md.
+
+### The headline: the OTP failure a parent reads was an enum member
+
+`ParentLogin.tsx` rendered `err.message` verbatim for a failed code, and
+`AuthService.verify_otp` raises
+`AuthError(f"OTP verification failed: {result.value}")`
+(`lemely/auth/service.py:320`), which the router passes through as the 401
+detail. So the sentence on screen was literally
+
+    OTP verification failed: wrong_code
+
+shown to the reader PRODUCT.md describes as the least confident user of the
+product, on the screen the UI spec calls "the lowest-friction entry".
+
+**The file's own docstring asserted the opposite**, in as many words: "the
+parent reads the actual reason rather than a client-side guess at which it
+was." That claim was half right in the way that matters most — the backend's
+*distinction* was real and worth keeping, and its *vocabulary* was never fit to
+show anyone. A docstring stating an intention is not evidence the code meets
+it, and this is the second time this phase that a comment described the fix
+rather than the behaviour (surface 2's `MarkDisplay` docstring stated the type
+rule it was breaking).
+
+`lib/authOutcome.ts` maps the four `OtpResult` members to four sentences, which
+keeps the distinction and fixes the words. An unmapped member falls through to
+a written sentence rather than the raw string, so a member added server-side
+later cannot become copy — asserted directly by test.
+
+### The same module makes the opposite call one endpoint over, on purpose
+
+The OTP *request* 429 keeps the server's own wording. `OtpRateLimitError` says
+"OTP already sent; retry in 12s." (`lemely/auth/otp.py:112`) — a real sentence
+with the one number the reader wants, and nothing written in the client could
+improve on it.
+
+That is the family's actual rule, stated properly now that five modules exist:
+**keep the detail where a human wrote it for a human**, and that has to be
+decided per endpoint by reading the endpoint. `teacherOutcome` is detail-first,
+`parentOutcome` is never detail-first, and `authOutcome` is both, three lines
+apart. Copying any one of them into the next surface would have been wrong.
+
+### And a third rule on the same screen, for a different reason entirely
+
+The password 401 says only "That email and password don't match an account."
+It never reveals which half was wrong, and it never echoes a backend detail
+that might. Distinguishing "no such account" from "wrong password" hands an
+account-enumeration oracle to anyone with a form and a word list, and this
+product's users are children. The cost is accepted and stated: someone who
+mistyped their email gets a less helpful message than they could have.
+`authOutcome.test.ts` asserts the two cases produce the identical string.
+
+### Login.tsx had been scaffolding since the build era, and said so
+
+Its module docstring opened "infrastructure to exercise the auth plumbing, not
+final UI. Screen polish is P2.7/P2.8's job." Those chunks came and went; the
+note stayed accurate. Three defects follow directly:
+
+1. **The card was invisible.** Page and card were both `bg-surface`, so a panel
+   sat on a background of its own colour with a hairline as the only evidence
+   it existed. DESIGN.md §3.1's tonal system exists precisely for this.
+2. **The error sat at the bottom of the form**, below both fields and above the
+   button — the arrangement §12 rules out. The fields are the kit's `Input`
+   now (visible label, eight states, field-level errors under their own field),
+   and the form-level error sits with the button that produced it.
+3. **It rendered `login.error.message` raw**, and `request()` falls back to
+   `` `${res.status} ${res.statusText}` `` when a body carries no string
+   detail, so a failed sign-in could put **"401 Unauthorized"** on screen.
+   Pinned by test.
+
+### M9's fourth stamp
+
+The audit's finding M9 reads "the logo is a lowercase italic *l* in a filled
+circle, **stamped in three places**". Surface 1 replaced the student's, surface
+5 the teacher's, surface 6 the parent portal's — and it was here too, in
+`ParentLogin`, the one signed-out screen the audit reached by grep rather than
+by rendering. Four places. It was also this file's only two `font-serif` call
+sites (D4.1), so the placeholder was not drawing in the face it reached for.
+
+`AuthFrame` now owns the mark, the paper, the grain and the column for both
+signed-out screens, because three copies of a frame is how three screens end up
+with three ideas of where the logo goes.
+
+### Smaller, and each one a rule this system already had
+
+- **The OTP boxes were set in Newsreader** (`text-display-md`). A one-time code
+  is data (§4: "all scores, grades, marks, XP, timers, paper codes, IDs"), and
+  it is on `data-lg` now. Same category error as surface 2's mark and grade.
+- **"Will be signed out" was `--t2` muted text** — the quietest register on the
+  screen, marking the one row about to be destroyed. It is a `warn` chip, on a
+  row with a `warn` border, so the warning has two carriers and neither is
+  colour alone (§3.6). The row is deliberately *not* washed: `Chip tone="warn"`
+  is itself `warn-wash`, and washing the row would hide the chip in its own
+  colour.
+- Radius, type scale and tokens across all three files; `paper-grain` on both
+  screens, which had no texture layer at all.
+
+### The harness caught its own fixture
+
+The `device-limit` capture photographed the login form where the device notice
+should have been: the invented challenge omitted `reason:
+"device_limit_reached"`, which `isDeviceLimitChallenge` narrows on, so the 409
+fell through to the generic sign-in failure. That is the fixture being wrong
+and the product being right — and it is exactly what a batched capture round
+over states-that-must-differ is for. Fixture corrected, re-captured, verified.
+
+### Gates
+
+typecheck / lint / **1,013 unit (+33)** / check:copy **14** (flat; none in
+auth) / both builds / pre-commit / 31 Python token+constant tests: green.
+e2e: **still blocked, B4**. Visual round: 16 captures across 2 registered
+sub-surfaces, all distinct, console errors only from the deliberately-failing
+states.

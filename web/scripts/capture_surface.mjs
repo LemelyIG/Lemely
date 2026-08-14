@@ -969,7 +969,147 @@ const PARENT_WEAKNESSES_STATES = {
   error: { status: 500, weaknesses: { detail: "Weakness store unavailable." } },
 }
 
+/* ── Auth (P4.7, surface 8) ────────────────────────────────────────────────
+ *
+ * The signed-out surfaces are the one place the harness's session fixture must
+ * NOT apply: `/login` with a live session in localStorage is a redirect, not a
+ * screen. `session: null` on these entries clears it.
+ *
+ * Field-for-field `DeviceLimitChallenge` (`lib/deviceTypes.ts`). Invented
+ * device names, real shape.
+ */
+const DEVICE_CHALLENGE = {
+  /* `reason` is not decoration: `isDeviceLimitChallenge` narrows on it, and the
+     first draft of this fixture omitted it, so the 409 fell through to the
+     generic sign-in failure and the capture photographed the login form where
+     the device notice should have been. The harness caught its own fixture,
+     which is what a state that must differ is for. */
+  reason: "device_limit_reached",
+  maxDevices: 3,
+  oldestDeviceId: "dev-oldest",
+  devices: [
+    {
+      deviceId: "dev-oldest",
+      label: null,
+      isCurrent: false,
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/141.0",
+      lastActiveAt: "2026-06-02T08:30:00Z",
+    },
+    {
+      deviceId: "dev-phone",
+      label: null,
+      isCurrent: true,
+      userAgent: "Mozilla/5.0 (Linux; Android 14; SM-A546B) Chrome/141.0",
+      lastActiveAt: "2026-08-13T21:10:00Z",
+    },
+    {
+      deviceId: "dev-tablet",
+      label: null,
+      isCurrent: false,
+      userAgent: "Mozilla/5.0 (iPad; CPU OS 18_2) Safari/605.1.15",
+      lastActiveAt: "2026-08-11T17:45:00Z",
+    },
+  ],
+}
+
+const LOGIN_STATES = {
+  empty: {},
+  /* The two failure branches are reached by submitting, because that is the
+   * only way a person reaches them either. */
+  "bad-credentials": {
+    submit: true,
+    status: 401,
+    body: { detail: "Invalid credentials" },
+  },
+  "device-limit": {
+    submit: true,
+    status: 409,
+    body: { detail: DEVICE_CHALLENGE },
+  },
+  offline: {
+    submit: true,
+    abort: true,
+  },
+}
+
+const PARENT_LOGIN_STATES = {
+  phone: {},
+  code: { sendCode: true, otp: { devCode: null } },
+  "dev-code": { sendCode: true, otp: { devCode: "418209" } },
+  /* The defect this surface fixed: the wire form is an enum member, and what
+   * must appear on screen is a sentence. */
+  "wrong-code": {
+    sendCode: true,
+    otp: { devCode: null },
+    typeCode: "111111",
+    verifyStatus: 401,
+    verifyBody: { detail: "OTP verification failed: wrong_code" },
+  },
+}
+
 const SURFACES = {
+  /* ── Auth (P4.7, surface 8) ───────────────────────────────────────────── */
+
+  login: {
+    prefix: "login",
+    route: "/login",
+    states: LOGIN_STATES,
+    session: null,
+    async stub(page, state) {
+      await page.route("**/api/auth/login", async (route) => {
+        if (state.abort) return route.abort("failed")
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.body ?? {}),
+        })
+      })
+    },
+    async act(page, state) {
+      if (!state.submit) return
+      await page.getByLabel("Email").fill("amina@example.com")
+      await page.getByLabel("Password").fill("not-the-real-one")
+      await page.getByRole("button", { name: "Sign in" }).click()
+      await page.waitForTimeout(700)
+    },
+  },
+
+  "parent-login": {
+    prefix: "parent-login",
+    route: "/login/parent",
+    states: PARENT_LOGIN_STATES,
+    session: null,
+    async stub(page, state) {
+      await page.route("**/api/auth/otp/request", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.otp ?? { devCode: null }),
+        }),
+      )
+      await page.route("**/api/auth/otp/verify", (route) =>
+        route.fulfill({
+          status: state.verifyStatus ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.verifyBody ?? {}),
+        }),
+      )
+    },
+    async act(page, state) {
+      if (!state.sendCode) return
+      await page.getByLabel("Phone number").fill("01012345678")
+      await page.getByRole("button", { name: "Send code" }).click()
+      await page.waitForTimeout(600)
+      if (!state.typeCode) return
+      // Typing into the first box auto-advances, so one fill per digit is the
+      // path a parent takes and the one that exercises the auto-submit.
+      for (const digit of state.typeCode) {
+        await page.keyboard.type(digit)
+      }
+      await page.waitForTimeout(700)
+    },
+  },
+
   /* ── Parent (P4.6, surface 6) ─────────────────────────────────────────── */
 
   "parent-children": {
@@ -1511,10 +1651,19 @@ async function main() {
          * That is exactly the failure the duplicate-hash check below exists to
          * catch, and it is cheaper to not cause it.
          */
-        const session = { ...SESSION, ...(surface.session ?? {}) }
+        /*
+         * `surface.session === null` means the signed-out surfaces (P4.7):
+         * `/login` with a live session in storage is a redirect, not a screen,
+         * so the fixture has to be *cleared* rather than overridden. `?? {}`
+         * alone would have merged null into the student session and captured
+         * eight pictures of the student dashboard — the same failure the
+         * duplicate-hash check below exists to catch, and cheaper not to cause.
+         */
+        const session = surface.session === null ? null : { ...SESSION, ...(surface.session ?? {}) }
         await context.addInitScript(
           ([sess, key]) => {
-            window.localStorage.setItem(key, JSON.stringify(sess))
+            if (sess === null) window.localStorage.removeItem(key)
+            else window.localStorage.setItem(key, JSON.stringify(sess))
             window.localStorage.setItem("lemely.deviceId", "capture-device")
           },
           [session, "lemely.session"],
