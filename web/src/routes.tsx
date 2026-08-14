@@ -5,7 +5,7 @@ import { Navigate } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
-import { marketingRoute, MarketingLanding } from "@/portals/marketing"
+import { marketingRoute, dataHandlingRoute, MarketingLanding } from "@/portals/marketing"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
@@ -180,6 +180,13 @@ export const appRoutes: RouteObject[] = [
    * `/student/landing` redirects here.
    */
   { ...marketingRoute, path: "/landing", errorElement },
+  /*
+   * P6.5 / D6.8. The footer's one legal-shaped link, and public for the same
+   * reason the landing page is: the reader who most wants to know what happens
+   * to a scan is the one deciding whether to upload a first one, and they do
+   * not have an account yet.
+   */
+  { ...dataHandlingRoute, path: "/data", errorElement },
   {
     path: "/login",
     errorElement,

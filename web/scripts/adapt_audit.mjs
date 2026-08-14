@@ -46,12 +46,28 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "@playwright/test"
 
-import { SURFACES, SESSION, PROFILE } from "./capture_surface.mjs"
+import { SURFACES, SESSION, PROFILE, BASE, PORT } from "./capture_surface.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, "..", "..")
-const PORT = 4321
-const BASE = `http://127.0.0.1:${PORT}`
+
+/*
+ * P6.5. `PORT`/`BASE` are IMPORTED, not declared here, and the header above
+ * already said why in a sentence this file did not honour: "this walks the SAME
+ * registry that harness does — imported, never restated".
+ *
+ * The registry was imported. The port was restated, as 4321 against
+ * `capture_surface.mjs`'s 4319, and six of the imported `act` callbacks
+ * navigate by absolute URL. So this gate served `dist/` on one port and sent
+ * those callbacks to another, and died at the `landing` surface, eighth of
+ * thirty-five, with `ERR_CONNECTION_REFUSED`. The twenty-seven surfaces after
+ * it were never measured at any width. See the note at the export site.
+ *
+ * The two ports cannot be run concurrently now, which is deliberate: with
+ * `--strictPort` a collision is an immediate, named failure (see `serveDist`),
+ * where the old arrangement's failure mode was a silent measurement of whatever
+ * else was listening.
+ */
 
 /**
  * §6.1's four mobile widths plus desktop. 320 is the floor the mission names
@@ -398,17 +414,57 @@ function measure({ touch }) {
   return out
 }
 
+/**
+ * The server's own output, kept rather than dropped.
+ *
+ * P6.5: `stdio` was `["ignore", "pipe", "pipe"]` and neither pipe was ever
+ * read, so when the server died the run reported `ERR_CONNECTION_REFUSED` from
+ * the *browser's* side and nothing at all from the server's. The actual reason
+ * (`Error: Port 4319 is already in use`, printed by vite on stderr and thrown
+ * away) took a separate throwaway script to recover. **A gate that discards the
+ * evidence of its own failure makes every failure look like a flake**, and a
+ * failure that looks like a flake gets re-run rather than read.
+ */
+const serverLog = []
+
 function serveDist() {
-  return spawn(
+  const child = spawn(
     "npx",
     ["vite", "preview", "--port", String(PORT), "--strictPort", "--host", "127.0.0.1"],
     { cwd: path.join(repoRoot, "web"), stdio: ["ignore", "pipe", "pipe"] },
   )
+  // Draining both pipes is also what stops a chatty server from blocking on a
+  // full 64KB pipe buffer half way through a 25-minute run.
+  child.stdout.on("data", (d) => serverLog.push(String(d)))
+  child.stderr.on("data", (d) => serverLog.push(String(d)))
+  return child
 }
 
-async function waitForServer(timeoutMs = 30_000) {
+function serverOutput() {
+  const text = serverLog.join("").trim()
+  return text ? `\n--- vite preview said ---\n${text}\n-------------------------` : ""
+}
+
+async function waitForServer(server, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
+    /*
+     * Checked BEFORE the fetch, and this is the guard that matters rather than
+     * a defensive extra. With `--strictPort`, a server already holding the port
+     * makes ours exit immediately — and the fetch below would then be answered
+     * by *that* server, serving whatever `dist/` it was started from, possibly
+     * from another branch and another build. The run would be green about a
+     * build nobody made. That is BLOCKERS.md B4 ("the e2e suite silently runs
+     * against whatever is already on port 8000") arriving in the gate that was
+     * written after it.
+     */
+    if (server.exitCode !== null) {
+      throw new Error(
+        `vite preview exited (code ${server.exitCode}) before answering on ${BASE}. ` +
+          `Something else is probably holding port ${PORT}; this run will NOT ` +
+          `measure a server it did not start.${serverOutput()}`,
+      )
+    }
     try {
       const res = await fetch(BASE, { signal: AbortSignal.timeout(2000) })
       if (res.ok) return
@@ -417,7 +473,7 @@ async function waitForServer(timeoutMs = 30_000) {
     }
     await new Promise((r) => setTimeout(r, 300))
   }
-  throw new Error(`vite preview did not answer on ${BASE} within ${timeoutMs}ms`)
+  throw new Error(`vite preview did not answer on ${BASE} within ${timeoutMs}ms${serverOutput()}`)
 }
 
 async function main() {
@@ -430,7 +486,7 @@ async function main() {
   const findings = []
   let checks = 0
   try {
-    await waitForServer()
+    await waitForServer(server)
     const browser = await chromium.launch()
 
     for (const surfaceName of names) {
@@ -525,5 +581,9 @@ async function main() {
 
 main().catch((err) => {
   console.error(err)
+  // Whatever killed the run, the server's own words are the half of the story
+  // the browser's error message cannot carry. See `serverLog`.
+  const said = serverOutput()
+  if (said) console.error(said)
   process.exit(1)
 })

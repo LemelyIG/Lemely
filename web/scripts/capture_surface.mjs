@@ -66,8 +66,30 @@ const repoRoot = path.resolve(__dirname, "..", "..")
  */
 const isMain = path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)
 const surfaceName = (isMain && process.argv[2]) || "student-dashboard"
-const PORT = 4319
-const BASE = `http://127.0.0.1:${PORT}`
+/*
+ * EXPORTED, and P6.5 is why.
+ *
+ * Six of the `act` callbacks in the registry below navigate by absolute URL
+ * (`page.goto(`${BASE}/landing`)`) rather than by path, because they check
+ * routing itself: that `/` renders the landing page for a signed-out visitor,
+ * and that both 404 surfaces answer on their own path. An absolute URL needs a
+ * host, and the host was written here as a private constant.
+ *
+ * `adapt_audit.mjs` imports this registry ("imported, never restated", its own
+ * header) and then served `dist/` on **4321** while these callbacks kept
+ * navigating to **4319**. The result is not a wrong measurement, it is worse:
+ * the goto fails with `ERR_CONNECTION_REFUSED` and the whole run dies at the
+ * eighth surface of thirty-five, so twenty-seven surfaces were never measured
+ * at any width. The one way it does not die is if *something else* happens to
+ * be listening on 4319, which is when a stranger's server answers a question
+ * about our build (BLOCKERS.md B4, in a second place).
+ *
+ * So the port is now defined once and imported, which is the same rule the
+ * registry itself already followed. D6.7's question, asked of a third file:
+ * what re-states a value, and what checks that the two still agree?
+ */
+export const PORT = 4319
+export const BASE = `http://127.0.0.1:${PORT}`
 
 /** Widths the gate requires per surface milestone: desktop plus 375. */
 const VIEWPORTS = [
@@ -2113,6 +2135,91 @@ const SURFACES = {
         })
         await page.waitForTimeout(900)
       }
+    },
+  },
+
+  /*
+   * The data page (P6.5, D6.8 option A), registered here rather than left to
+   * the landing surface's coat-tails.
+   *
+   * It is a second route with a second layout, and this phase has now twice
+   * recorded what happens to a screen that no list claims (P4.10's two admin
+   * portals, in none of the three gate lists). One entry here puts it in front
+   * of the adapt gate at all five widths and in the screenshot rounds, both of
+   * which import this registry.
+   *
+   * `session: null` because it is public, and no `stub`: like the landing page
+   * it makes no API call, which is the property worth keeping. Running prose is
+   * also the page most likely to break the 44px touch floor on a 320px screen,
+   * since its only controls are the footer's four inline links sitting close
+   * together in a wrapped row, so the width sweep is the point rather than a
+   * formality.
+   */
+  "data-handling": {
+    prefix: "data-handling",
+    route: "/data",
+    states: { full: { checkReducedMotion: true } },
+    session: null,
+    fullPage: () => true,
+    async stub() {},
+    /*
+     * Both halves of this are lifted from the landing surface, and the first
+     * capture round proved they were needed here too rather than assumed.
+     *
+     * The first attempt registered this surface with no `act` at all, and the
+     * 375px capture came back with the top two sections rendered and **the
+     * bottom two thirds of the page blank paper**. `Reveal` starts every
+     * section at `opacity: 0` and clears it on intersection, and `fullPage`
+     * photographs the document without scrolling it, so nothing below the fold
+     * ever intersected. The page was fine; the picture was not evidence about
+     * it — which is precisely what the landing surface's own comment says, one
+     * screen further down this file, written after the identical mistake.
+     */
+    async act(page, state) {
+      if (state.checkReducedMotion) {
+        /*
+         * Asserted, not photographed, for the same reason as the landing page:
+         * once the ordinary capture scrolls, the two settle to byte-identical
+         * images. The failure mode of getting reduced motion wrong here is not
+         * a page that moves too much, it is a **blank page**, and on this
+         * particular page a blank page is a reader being told nothing about
+         * what happens to their work.
+         */
+        await page.emulateMedia({ reducedMotion: "reduce" })
+        await page.goto(`${BASE}/data`, { waitUntil: "domcontentloaded" })
+        await page.waitForTimeout(900)
+        const opacity = await page.evaluate(() => {
+          const headings = Array.from(document.querySelectorAll("h2"))
+          const last = headings[headings.length - 1]
+          if (!last) return null
+          let node = last
+          for (let i = 0; i < 6 && node.parentElement; i += 1) {
+            const o = Number(getComputedStyle(node).opacity)
+            if (o < 1) return o
+            node = node.parentElement
+          }
+          return 1
+        })
+        if (opacity === null || opacity < 1) {
+          throw new Error(
+            `reduced motion left the foot of /data hidden (opacity ${opacity}); a reduced-motion reader would see a blank page`,
+          )
+        }
+        console.log("verified: /data renders the whole page without scrolling")
+        await page.emulateMedia({ reducedMotion: "no-preference" })
+        await page.goto(`${BASE}/data`, { waitUntil: "domcontentloaded" })
+        await page.waitForTimeout(700)
+      }
+
+      await page.evaluate(async () => {
+        const step = window.innerHeight
+        for (let y = 0; y < document.body.scrollHeight; y += step) {
+          window.scrollTo(0, y)
+          await new Promise((r) => setTimeout(r, 120))
+        }
+        window.scrollTo(0, 0)
+      })
+      await page.waitForTimeout(900)
     },
   },
 

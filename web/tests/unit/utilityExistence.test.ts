@@ -77,6 +77,7 @@ const SCANNED_FILES = [
   // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.
   "src/portals/marketing/index.tsx",
   "src/portals/marketing/Landing.tsx",
+  "src/portals/marketing/DataHandling.tsx",
   "src/components/ui/reveal.tsx",
   "dev-previews/Directions.tsx",
   "src/routes.tsx",

@@ -487,3 +487,57 @@ describe("landmarks are named", () => {
     expect(offenders).toEqual([])
   })
 })
+
+/*
+ * P6.5. `sr-only` does not mean what it says on a `<table>`.
+ *
+ * `ChartDataTable` renders every chart's accessible copy, and it carried
+ * `sr-only` on the `<table>` itself. That class is `position:absolute;
+ * width:1px; height:1px; overflow:hidden; clip-path:inset(50%)` — a 1px box on
+ * a block element, and **not** on a table, because CSS auto table layout treats
+ * a specified width as a minimum and expands to the content regardless. The
+ * real boxes measured 357px wide on the student dashboard and 316px on the
+ * profile page, off the right edge at 320px.
+ *
+ * Invisible (clip-path paints none of it) and silent (`overflow-x: clip` on
+ * html and body suppresses the scroll), so the adapt gate's geometry pass was
+ * the only thing in the repository that could see it — and it had never reached
+ * those surfaces (D6.10 §1). The fix is a wrapper that honours `width: 1px`.
+ *
+ * This pins the wrapper, because the tempting edit is to put the class back on
+ * the element it describes.
+ */
+describe("visually-hidden content has no geometry — P6.5", () => {
+  const SOURCE = readFileSync(join(process.cwd(), "src/components/ui/chart-data-table.tsx"), "utf8")
+
+  it("hides the chart data table with a wrapper, not with sr-only on the table", () => {
+    expect(SOURCE).toMatch(/<div className=\{cn\("sr-only"/)
+    expect(SOURCE).not.toMatch(/<table className=\{cn\("sr-only"/)
+    expect(SOURCE).not.toMatch(/<table[^>]*"sr-only/)
+  })
+
+  /*
+   * The general form, so the next component to hide a table does not repeat it.
+   * `sr-only` on a `<table>`, a `<thead>`, a `<tr>` or a `<td>` is the same
+   * defect: none of them shrink to a 1px box.
+   */
+  it("puts sr-only on no table-display element anywhere in the product", () => {
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (entry.name.endsWith(".tsx")) {
+          const source = readFileSync(full, "utf8")
+          for (const m of source.matchAll(/<(table|thead|tbody|tr|th|td)\b[^>]*>/g)) {
+            if (/sr-only/.test(m[0])) {
+              offenders.push(`${pathRelative(process.cwd(), full)}: ${m[0].slice(0, 60)}`)
+            }
+          }
+        }
+      }
+    }
+    walk(join(process.cwd(), "src"))
+    expect(offenders).toEqual([])
+  })
+})

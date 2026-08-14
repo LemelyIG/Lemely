@@ -329,3 +329,67 @@ describe("§6.1 what the touch gate measures", () => {
     }
   })
 })
+
+/*
+ * P6.5. The gate could not reach the pages it was measuring.
+ *
+ * `adapt_audit.mjs` opens by saying it walks "the SAME registry that harness
+ * does — imported, never restated". The registry was imported. The **port** was
+ * restated: the audit served `dist/` on 4321, and six of the `act` callbacks it
+ * imports from `capture_surface.mjs` navigate by absolute URL to 4319, because
+ * they assert on routing itself ("/ renders the landing page for a signed-out
+ * visitor") and an absolute URL needs a host.
+ *
+ * The run therefore died at the `landing` surface, eighth of thirty-five, with
+ * `ERR_CONNECTION_REFUSED`, and the twenty-seven surfaces after it were never
+ * measured at any width. The one way it does not die is if something else
+ * happens to be listening on 4319 — a leftover capture server, say — in which
+ * case a stranger's build silently answers a question about ours. That is
+ * BLOCKERS.md B4 ("the e2e suite silently runs against whatever is already on
+ * port 8000") in the gate written after it.
+ *
+ * D6.7's question, for the fourth file this phase has asked it of: what
+ * re-states a value, and what checks that the two still agree? Here the answer
+ * is that the restatement is gone, and this is what keeps it gone.
+ */
+describe("§6.1 the gate and the registry agree on where the server is", () => {
+  const AUDIT = readFileSync(join(process.cwd(), "scripts/adapt_audit.mjs"), "utf8")
+  const CAPTURE = readFileSync(join(process.cwd(), "scripts/capture_surface.mjs"), "utf8")
+
+  it("declares the port in exactly one place", () => {
+    expect(stripComments(CAPTURE)).toMatch(/export const PORT = \d+/)
+    expect(stripComments(AUDIT)).not.toMatch(/const PORT\s*=/)
+    expect(stripComments(AUDIT)).not.toMatch(/const BASE\s*=/)
+  })
+
+  it("imports both from the registry it already imports the surfaces from", () => {
+    expect(stripComments(AUDIT)).toMatch(
+      /import \{[^}]*\bBASE\b[^}]*\bPORT\b[^}]*\} from "\.\/capture_surface\.mjs"/s,
+    )
+  })
+
+  /*
+   * The other half, and the one that matters when the port is busy rather than
+   * mismatched. With `--strictPort` our server exits instead of picking another
+   * port, and the wait loop's `fetch` would then be answered by whatever is
+   * already there. Checking the child's exit status before believing the fetch
+   * is what makes that case a named failure rather than a green run about
+   * somebody else's `dist/`.
+   */
+  it("refuses to measure a server it did not start", () => {
+    expect(AUDIT).toMatch(/server\.exitCode !== null/)
+    expect(AUDIT).toMatch(/will NOT/)
+  })
+
+  /*
+   * And the reason the mismatch took a throwaway script to diagnose: both of
+   * the server's pipes were opened and never read, so vite's own
+   * "Port 4319 is already in use" went to a buffer nobody emptied. A gate that
+   * discards the evidence of its own failure makes every failure look like a
+   * flake.
+   */
+  it("keeps the server's own output for when it dies", () => {
+    expect(AUDIT).toMatch(/child\.stderr\.on\("data"/)
+    expect(AUDIT).toMatch(/child\.stdout\.on\("data"/)
+  })
+})

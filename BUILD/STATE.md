@@ -29,11 +29,49 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      **6 IN PROGRESS. 6.1 (`adapt`), 6.2 (`harden`), 6.3
-                    (`optimize`), 6.4 (`accessibility`) DONE, and 6.5
-                    (`strategic omissions`) is 4 of 5 items done.**
+CURRENT PHASE:      **6 COMPLETE (pending the adapt re-run's result, see below).
+                    6.1-6.4 done; 6.5 (`strategic omissions`) is 5 of 5.**
 CURRENT SURFACE:    Phase 6 is a sweep, not a surface.
-NEXT ACTION:        **B5 IS CLEARED and D6.7 is committed.** `/tmp` is free,
+NEXT ACTION:        **Phase 7 (final QA and report).**
+
+                    **D6.8 timed out unanswered and its default A is applied**
+                    (sent ts 1786727791, due 1786731391, nine polls, no reply).
+                    `/data` "How your data is handled" ships: one factual page,
+                    no ToS, no privacy policy, no placeholders. Facts about this
+                    product can be derived from this repo; promises cannot. See
+                    D6.10 §2. `LAST STEERING TS` is deliberately unchanged, a
+                    timeout is not an answer. Reversing it is deleting two files
+                    and a route.
+
+                    **The finding Phase 7 must not lose, D6.10 §1: the `adapt`
+                    gate has been unable to reach 27 of its 35 surfaces since
+                    Phase 6.1.** It served `dist/` on port 4321 while six `act`
+                    callbacks it *imports* navigate to 4319, so it died at
+                    surface 8 with `ERR_CONNECTION_REFUSED`. It only survives
+                    when something else holds 4319, which is B4 ("runs against
+                    whatever is already on the port") inside the gate written
+                    after B4. Fixed: the port is declared once and imported, the
+                    gate refuses to measure a server it did not start, and it
+                    keeps its server's output instead of discarding it. Four
+                    pins in `adaptRules.test.ts`.
+
+                    **Read this before trusting any earlier gate number.** D6.1
+                    recorded 6.1's adapt run as "745 page-states across 35
+                    surfaces, 0 findings" and `reports/redesign/p6-adapt/` is
+                    **empty** with nothing committed under it, so that number
+                    cannot be reproduced from this tree. Phase 7 should treat
+                    the honest adapt baseline as the run recorded on this
+                    session's commit, not that one.
+
+                    Phase 7's own list, unchanged: full hallmark audit re-run,
+                    `impeccable polish` on anything flagged, before/after
+                    gallery, `BUILD/DESIGN-REPORT.md`, final PR.
+
+                    ---
+
+                    **Historical, from the sessions before this one:**
+
+                    **B5 was cleared and D6.7 committed.** `/tmp` is free,
                     the shell works, and the first thing this session did was
                     run every gate D6.7 had never been through and commit it
                     (`f313a9a`): 107 Python token tests, 1,388 web unit tests,
@@ -355,10 +393,14 @@ NEXT ACTION:        **B5 IS CLEARED and D6.7 is committed.** `/tmp` is free,
                       migrated; 17 kit components still name build-era aliases
                       in their own source, none in MIGRATED_FILES, so no gate
                       reads them. Phase 6 hardening.
-LAST UPDATED:       2026-08-14 (session 3: B5 cleared, D6.7 committed with
-                    every gate green, Phase 6.5 4/5 done, D6.8 open)
+LAST UPDATED:       2026-08-14 (session 4: D6.8 timed out and default A
+                    applied, Phase 6.5 closed 5/5, and the adapt gate found
+                    unable to reach 27 of its 35 surfaces since Phase 6.1)
 LAST STEERING TS:   1786723759   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
-                    NOTE: the human has now replied five times in this mission.
+                    NOTE: unchanged on purpose. D6.8 timed out with no reply,
+                    and a timeout is not an answer: advancing this would record
+                    a decision the human did not make. The human has replied
+                    five times in this mission.
                     2026-08-14 earlier: D1.6 (build the admin screens fully and
                     wire them) and B4 (port freed). 2026-08-14 later:
                     **`D6.6 = A`** (`jEmAdfevMO65`, ts 1786722798) — reconcile

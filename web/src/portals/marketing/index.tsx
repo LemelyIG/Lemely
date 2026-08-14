@@ -48,6 +48,9 @@ import type { PageMeta } from "@/lib/meta/documentMeta"
  */
 
 const Landing = lazy(() => import("./Landing").then((m) => ({ default: m.Landing })))
+const DataHandling = lazy(() =>
+  import("./DataHandling").then((m) => ({ default: m.DataHandling })),
+)
 
 /**
  * The public page frame: a slim header carrying the mark and the way in, the
@@ -140,12 +143,45 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
             <span>Lemely, marking for CAIE papers.</span>
           </div>
           {/*
-            No legal links yet, and none invented. Terms and a privacy policy
-            are Phase 6.5's strategic-omissions closeout, and a footer link to
-            a page that does not exist is worse than no link: it is the dead
-            navigation the audit went looking for.
+            P6.5 closes this, and the comment that used to sit here is worth
+            keeping in substance: there were no legal links and none were
+            invented, because a footer link to a page that does not exist is the
+            dead navigation the audit went looking for.
+            What ships is ONE link, to a page that describes what the software
+            actually does with a reader's data, and no terms of service. D6.8
+            records why, and the short form is that facts about this product can
+            be derived from this repository and promises cannot. A privacy
+            policy and a ToS are mostly promises about an operator who is not in
+            the code, so writing them here would be inventing content in the one
+            category where invention has legal consequences.
+            The label says "How your data is handled" rather than "Privacy",
+            because "Privacy" is the word readers have learned to expect a
+            policy behind, and this is deliberately not one.
           */}
-          <div className="flex items-center gap-4">
+          {/*
+            A COLUMN below `sm`, and the adapt gate is why rather than taste.
+
+            The row was three links wide once this one joined it, and at 320px
+            the 276px of content box left after the page padding is not enough:
+            "How your data is handled" wrapped onto two lines, and it pushed
+            "Parent sign in" onto two as well. Six findings, and all six were
+            caused by adding the third link — hallmark's mobile
+            non-negotiable is that clickable text never wraps, because the
+            second line is a strip of link that looks like body copy and a
+            thumb aiming at it hits neither.
+
+            Stacking gives each link the full width, so each is one line and
+            each is a full-width target. `items-start` rather than `items-end`:
+            the labels then share the left edge with the brand line above them
+            and the page's own margin, instead of forming a third ragged edge.
+          */}
+          <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-4">
+            <Link
+              to="/data"
+              className="rounded-sm underline-offset-4 pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:justify-center pointer-coarse:min-h-11 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              How your data is handled
+            </Link>
             <Link
               to="/login"
               className="rounded-sm underline-offset-4 pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
@@ -204,4 +240,43 @@ export const marketingRoute: RouteObject = {
   handle: { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION } satisfies PageMeta,
 }
 
-export { Landing }
+/**
+ * The data page, in the same public frame as the landing page (P6.5, D6.8 A).
+ *
+ * In the marketing shell rather than standing alone because it is reached from
+ * that shell's footer, and a reader who follows a footer link into a page with
+ * no header has been dropped somewhere rather than taken somewhere: the way
+ * back has to still be there.
+ */
+export function MarketingDataHandling() {
+  return (
+    <MarketingFrame>
+      <Suspense fallback={<RouteFallback className="px-page-mobile py-section" />}>
+        <DataHandling />
+      </Suspense>
+    </MarketingFrame>
+  )
+}
+
+export const dataHandlingRoute: RouteObject = {
+  path: "data",
+  element: <MarketingDataHandling />,
+  /*
+   * The second of the product's two public content pages, so it carries its own
+   * description rather than the site default: this is a page somebody may well
+   * arrive at from a search for what the product does with a scan, and the
+   * default description describes the marking product instead.
+   *
+   * The description states the page's subject and claims nothing further. In
+   * particular it does not say "your data is safe", which is the sentence a
+   * page like this is normally written to imply and the exact promise nothing
+   * in this repository can support.
+   */
+  handle: {
+    title: "How your data is handled",
+    description:
+      "What Lemely stores about an account, what happens to a paper you upload, where a scan is sent to be read, and who else can see your work.",
+  } satisfies PageMeta,
+}
+
+export { Landing, DataHandling }

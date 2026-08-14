@@ -68,6 +68,14 @@ export interface ChartDataTableProps {
    * second rounding step in here to disagree with the first.
    */
   rows: readonly (readonly string[])[]
+  /**
+   * Applied to the visually-hidden WRAPPER rather than to the `<table>`, since
+   * P6.5 moved `sr-only` onto the wrapper: the wrapper is the layout box now,
+   * and a class landing on the table would style an element with no geometry of
+   * its own. No caller passes one today; the prop stays because the alternative
+   * is a caller that wants one reaching for `sr-only` itself and reintroducing
+   * the 357px table this component just stopped rendering.
+   */
   className?: string
 }
 
@@ -77,47 +85,70 @@ export function ChartDataTable({ caption, columns, rows, className }: ChartDataT
   // (§11) is what speaks for that case.
   if (rows.length === 0) return null
 
+  /*
+   * `sr-only` on a WRAPPER, not on the `<table>`, and P6.5's adapt run is why.
+   *
+   * `sr-only` is `position:absolute; width:1px; height:1px; overflow:hidden;
+   * clip-path:inset(50%)`. On a block element that yields a 1px box. **On a
+   * table it does not**: CSS auto table layout treats a specified `width` as a
+   * minimum, so the table expands to fit its content regardless. The rendered
+   * boxes measured 357px wide on the student dashboard and 316px on the profile
+   * page, hanging off the right edge at 320px and 375px.
+   *
+   * Nothing was visible, because `clip-path` paints none of it, and nothing
+   * scrolled, because `index.css` puts `overflow-x: clip` on html and body. So
+   * the only thing that could ever have noticed is a gate that measures element
+   * geometry through that clip, which is exactly what `adapt_audit.mjs` was
+   * built to do and had never once reached these surfaces (D6.10 §1).
+   *
+   * A `<div>` honours `width: 1px` and its `overflow: hidden` clips the table
+   * inside it, so the hidden copy stops being 357px of off-screen layout. The
+   * accessibility tree is unchanged: a generic wrapper adds no semantics and
+   * the table keeps its caption, headers and scopes.
+   */
   return (
-    <table className={cn("sr-only", className)}>
-      <caption>{caption}</caption>
-      <thead>
-        <tr>
-          {columns.map((column, i) => (
-            /* `scope="col"` on every header including the first: the leading
-               column holds the category (a date, a grade band), so it is a
-               column header like any other, and the row headers are marked
-               separately below.
+    <div className={cn("sr-only", className)}>
+      <table>
+        <caption>{caption}</caption>
+        <thead>
+          <tr>
+            {columns.map((column, i) => (
+              /* `scope="col"` on every header including the first: the leading
+                 column holds the category (a date, a grade band), so it is a
+                 column header like any other, and the row headers are marked
+                 separately below.
 
-               Keyed by index, not by text: two series may legitimately carry
-               the same name, and a duplicate key would drop a column. */
-            <th key={i} scope="col">
-              {column}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, rowIndex) => (
-          /* Keyed by index rather than by the row's own label, for the same
-             reason as the columns: a category axis may repeat a label (two
-             papers marked the same day), and losing one of those rows would
-             silently drop a datum from the only copy a screen reader gets. */
-          <tr key={rowIndex}>
-            {row.map((cell, i) =>
-              /* The first cell of each row names the datum, so it is the row's
-                 header — that is what lets a screen reader say "18 Jul, 40 XP"
-                 when reading the value cell, instead of a bare "40". */
-              i === 0 ? (
-                <th key={i} scope="row">
-                  {cell}
-                </th>
-              ) : (
-                <td key={i}>{cell}</td>
-              ),
-            )}
+                 Keyed by index, not by text: two series may legitimately carry
+                 the same name, and a duplicate key would drop a column. */
+              <th key={i} scope="col">
+                {column}
+              </th>
+            ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            /* Keyed by index rather than by the row's own label, for the same
+               reason as the columns: a category axis may repeat a label (two
+               papers marked the same day), and losing one of those rows would
+               silently drop a datum from the only copy a screen reader gets. */
+            <tr key={rowIndex}>
+              {row.map((cell, i) =>
+                /* The first cell of each row names the datum, so it is the row's
+                   header — that is what lets a screen reader say "18 Jul, 40 XP"
+                   when reading the value cell, instead of a bare "40". */
+                i === 0 ? (
+                  <th key={i} scope="row">
+                    {cell}
+                  </th>
+                ) : (
+                  <td key={i}>{cell}</td>
+                ),
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }

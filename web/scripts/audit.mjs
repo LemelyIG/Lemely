@@ -1177,6 +1177,31 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Check on your child"),
       authed: false,
     },
+    // ── P6.5 · How your data is handled — unauthenticated ─────────────────
+    // The second public content page in the product (D6.8 option A). Its
+    // `screenId` is not a UI-spec id, because this page answers no line of the
+    // spec: it is a §5 Phase 6.5 strategic-omissions item and the spec predates
+    // it. The field is still filled rather than left off, since it names the
+    // screenshot directory and every log line for the entry, and an entry
+    // without one writes its captures to `screens/undefined/`.
+    //
+    // It is in this gate for the reason the entry above it is: a page reachable
+    // without a session is a page anybody can land on, including the readers
+    // this audit exists for, and it is six headings of running prose, which is
+    // exactly the shape where a heading-order or contrast slip goes unnoticed.
+    //
+    // `ready` keys off the `<h1>` rather than a sentence from the body, because
+    // D6.6's finding was that a fixture asserting on prose rots the moment the
+    // prose is edited — and the body of this page is expected to change every
+    // time the product's behaviour does.
+    {
+      screenId: "P65-DATA",
+      slug: "data-handling",
+      path: "/data",
+      session: null,
+      ready: (page) => waitForText(page, "What Lemely does with your work"),
+      authed: false,
+    },
     // ── G-11 · Account & devices — the devices section (P5.7 chunk B) ─────
     // Authed but portal-agnostic: the route is one screen for all five roles,
     // so auditing it under one session covers it for every role. The student

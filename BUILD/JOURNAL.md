@@ -2348,3 +2348,44 @@ them whether or not Phase 6 fixes them.
 - **Next:** PR #6 is Habeeby's to merge. The one open piece of work D6.12 names but does not do:
   a harness that exercises the SPA over a **non-localhost HTTP origin** — the only thing that
   would close this defect class rather than this defect.
+
+## 2026-08-14 — redesign session 4: the gate that could not reach the pages it was measuring
+
+- **Did:** closed Phase 6.5 (5 of 5). D6.8 timed out unanswered after nine polls, so §10's
+  default applied: `/data`, "How your data is handled", one factual page linked once from the
+  marketing footer, no ToS and no privacy policy. Fixed the `adapt` gate, which turned out to
+  be unable to reach 27 of its 35 surfaces, and then fixed the 10 findings its first honest run
+  produced. Recorded **D6.10**.
+- **The bug:** `adapt_audit.mjs` served `dist/` on port **4321** while six of the `act`
+  callbacks it *imports* from `capture_surface.mjs` navigate by absolute URL to **4319**. The
+  run died at the `landing` surface, **eighth of thirty-five**, with `ERR_CONNECTION_REFUSED`,
+  so everything after it was never measured at any width. Live since Phase 6.1's own wip commit.
+- **Learned — the restatement was in the one file that had already named the rule.** That
+  script's header opens with "this walks the SAME registry that harness does — imported, never
+  restated". The registry was imported. The port was restated. D6.7 asked "what re-states a
+  value, and what checks that the two still agree?" and this is the fourth file this phase has
+  had to ask it of.
+- **Learned — the failure mode was not the crash, it was the crash's absence.** The run only
+  survives if *something else* is listening on 4319, and then a stranger's server answers a
+  question about our build. That is BLOCKERS B4 ("runs against whatever is already on port
+  8000") inside the gate written three phases after B4, and it was watched happening live: a
+  leftover `vite preview` from a diagnostic made the failure vanish, because `server.kill()`
+  kills the `npx` wrapper and not the vite process under it. The gate now checks the child's
+  exit code before believing the fetch, and names the port when it refuses.
+- **Learned — a gate that discards the evidence of its own failure makes every failure look
+  like a flake.** Both server pipes were opened and never read, so vite's own "Port 4319 is
+  already in use" went into a buffer nobody emptied and took a throwaway script to recover.
+- **Learned — `sr-only` does not mean what it says on a `<table>`.** Four of the ten findings
+  were `ChartDataTable`'s hidden copy measuring **357px** wide, because auto table layout
+  treats `width: 1px` as a minimum. Invisible, silent, and reachable only by a gate that
+  measures geometry through `overflow-x: clip`. The tempting fix was one line in the gate's own
+  sr-only exemption, which would have turned all four green and been the waiver-that-swallows-
+  the-check pattern; the wrapper is the honest fix.
+- **Learned — the same run caught this phase's own defect.** The other six findings were the
+  new footer link wrapping to two lines at 320px and pushing "Parent sign in" onto two as well.
+  That is the argument for repairing a gate *before* the work rather than after it.
+- **Spend unchanged:** `outputs/gemini_spend.json` reads **$0.19750 / $8.00**. No Gemini calls.
+- **Next:** Phase 7 (final QA and report). It should not trust the "745 page-states, 0 findings"
+  number D6.1 recorded for 6.1: `reports/redesign/p6-adapt/` was empty with nothing committed,
+  and that run cannot be reproduced from this tree. This session's committed `findings.json` is
+  the honest baseline.

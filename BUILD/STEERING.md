@@ -437,3 +437,25 @@ is well beyond a footer link.
 
 **IN** — nothing yet. Four polls, no reply. `LAST STEERING TS` unchanged at
 **1786723759**.
+
+---
+
+## 2026-08-14 — D6.8 TIMED OUT, default A applied
+
+**D6.8 expired unanswered.** Sent at ts `1786727791`, 60-minute timeout, so it
+fell due at `1786731391`. Polled nine times across the window, including once
+inside the last two minutes and once after expiry: no message on the inbound
+topic after `VqpbRSelzmn9` (D6.7's answer). Per §10's timeout discipline the
+default is applied and logged, and the human can reverse it in one message.
+
+**Applied: option A.** One factual page at `/data`, "How your data is handled",
+linked once from the marketing footer. No terms of service, no privacy policy,
+no placeholder routes.
+
+The wait was not spent idle (§10: "keep working on independent tasks while it
+waits"). The `adapt` gate, which STATE recorded as not re-run since 6.4, was
+started at the top of the window, and it is what found the P6.5 gate defect
+described in D6.10.
+
+`LAST STEERING TS` unchanged at **1786723759** — a timeout is not an answer, and
+recording one as if it were would put a decision in the human's mouth.

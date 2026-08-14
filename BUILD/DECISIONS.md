@@ -9755,10 +9755,17 @@ token tests pass (rc=0, up from 64 passed + 8 xfailed).
 
 ---
 
-## D6.8 — OPEN: legal links in the marketing footer (redesign P6.5)
+## D6.8 — legal links in the marketing footer (redesign P6.5)
 
-**Status: SENT, awaiting the human. Default A on a 60-minute timeout.**
-`gAGLBRpzyxmd`, 2026-08-14. Mirrored in `BUILD/STEERING.md`.
+**Status: TIMED OUT UNANSWERED, default A applied 2026-08-14.** Sent
+`gAGLBRpzyxmd` at ts 1786727791 with a 60-minute timeout, due at 1786731391;
+polled nine times across the window including after expiry, no reply. §10 says
+proceed on the default and log it, which is what happened. `LAST STEERING TS` is
+deliberately NOT advanced: a timeout is not an answer, and recording it as one
+would put a decision in the human's mouth. One message reverses this.
+
+What shipped is in D6.10. Reversing it is small in either direction: the page is
+two files plus a route, and option B (ship nothing) is deleting them.
 
 §5 Phase 6.5's closeout list ends with "legal links". The footer currently has
 none and says so in its own comment, correctly: a link to a page that does not
@@ -9961,3 +9968,190 @@ builds, 107 Python token tests, `pre-commit run --all-files`: all green. Titles
 confirmed in a real browser on public and authenticated routes, including a
 client-side navigation (the path `router.subscribe` exists for) and a portal
 catch-all. Both new build-time throws verified by inversion.
+
+---
+
+## D6.10 — Redesign Phase 6.5 closeout: the page that describes instead of promising, and the gate that could not reach the pages it measured
+
+Phase 6.5's last item (§5: "legal links") and the `adapt` re-run STATE asked
+Phase 7 to do. The second one is the finding.
+
+### 1. The adapt gate died at surface 8 of 35, and had been able to for four phases
+
+Started at the top of the D6.8 wait window as independent work, the gate crashed
+with `page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:4319/landing`
+after seven surfaces. It reproduces deterministically with `--surface=landing`.
+
+**`adapt_audit.mjs` served `dist/` on port 4321. Six of the `act` callbacks it
+imports from `capture_surface.mjs` navigate by absolute URL to 4319**, because
+they assert on routing itself ("`/` renders the landing page for a signed-out
+visitor", and both 404 surfaces answering on their own path), and an absolute
+URL needs a host. The audit's own header opens with the sentence "this walks the
+SAME registry that harness does — imported, never restated". The registry was
+imported. The port was restated.
+
+Consequences, in order of how bad they are:
+
+- The run dies at the `landing` surface, **eighth of thirty-five**, so the
+  twenty-seven surfaces after it were never measured at any width. Everything
+  from `login` onwards, which is every auth screen, every marketing state and
+  both 404s.
+- **Unless something else is listening on 4319.** Then the goto succeeds and a
+  stranger's server answers a question about our build. This project has that
+  exact defect written down already: BLOCKERS.md B4, "the e2e suite silently
+  runs against whatever is already on port 8000". This is it again, in the gate
+  written three phases after it, and it was observed live this session: a
+  leftover `vite preview` from a diagnostic run made the failure disappear, and
+  the process holding the port was still there minutes later because
+  `server.kill()` kills the `npx` wrapper and not the vite process under it.
+- The port mismatch dates from `4aa77e5` (Phase 6.1's own wip commit), and the
+  landing `act`s that trip it date from `cee06e9` (Phase 4). So it was live for
+  the whole of Phase 6. **D6.1 recorded 6.1's adapt gate as "745 page-states
+  across 35 surfaces, 0 findings", and there is no findings artifact in the tree
+  to check it against** (`reports/redesign/p6-adapt/` exists and is empty, and
+  nothing under it is committed or ignored). The most likely reading is that
+  that run had a capture server on 4319 to lean on. Recorded as the honest
+  reading rather than a certainty: what is certain is that the mismatch was live
+  and that the number cannot be reproduced from this tree.
+
+D6.1's own lesson was "a gate reporting zero and a gate reporting nonsense are
+both consistent with a green ledger row". The gate that lesson came from was
+this one.
+
+**Fixed by deleting the restatement, not by syncing it.** `PORT`/`BASE` are
+exported from `capture_surface.mjs` and imported by the audit, which is the rule
+the surface registry already followed. Two further changes, both because the
+diagnosis was harder than the bug:
+
+- **The gate now refuses to measure a server it did not start.** With
+  `--strictPort`, a busy port makes our server exit, and the wait loop's `fetch`
+  would then be satisfied by whoever is already there. The child's `exitCode` is
+  checked before the fetch is believed, and the failure names the port.
+- **The gate keeps its server's output.** `stdio` was `["ignore","pipe","pipe"]`
+  with neither pipe ever read, so vite's own `Error: Port 4319 is already in
+  use` went into a buffer nobody emptied, and recovering it took a throwaway
+  script. **A gate that discards the evidence of its own failure makes every
+  failure look like a flake**, and a flake gets re-run rather than read.
+  Draining the pipes also removes the 64KB-buffer stall a 25-minute run invites.
+
+Pinned by four tests in `adaptRules.test.ts`: the port is declared once, the
+audit imports it, the exit-code guard exists, and both pipes are drained.
+
+### 2. Legal links: a description, not a policy (D6.8 default A)
+
+D6.8 timed out unanswered after nine polls, so its default applied. `/data`,
+"How your data is handled", linked once from the marketing footer. No terms of
+service, no privacy policy, no placeholders.
+
+The reasoning is worth keeping because it generalises past this page: **facts
+about this product can be derived from this repository, and promises cannot.** A
+policy is mostly promises, made by an operator who is not in the code, under a
+jurisdiction nobody has chosen. Writing one unattended would be inventing
+content in the one category where invention has legal consequences.
+
+So the page says only what a named module does, and `dataHandling.ts` carries
+the module beside every sentence, which is `data.ts`'s rule applied where the
+cost of breaking it is higher. Six sections: what an account holds (no password
+on the row; Supabase Auth holds the credential), the device registry and the
+three-device limit, what an upload stores, **that the scan file itself is sent
+to Google Gemini rather than text extracted from it locally**, who else can see
+a student's work, and what the site does not do.
+
+Three things are deliberately absent and their absence is the design: no legal
+basis or controller identity, no retention period (there is no retention
+machinery to describe), and **no contact address**, because inventing
+`privacy@lemely` is the dead-link pattern wearing a serious face.
+
+The panel at the foot is the one that matters. **There is no account deletion
+and no way to remove a scan, and nothing expires on a schedule** — verified
+across `lemely/` rather than assumed, and stated on the page in those words
+rather than left out. It is in `warn` with a labelled chip, per §4's rule that a
+caveat does not travel as a colour alone.
+
+### 3. The page is gated against both ways it can stop being true
+
+A page about the backend is a comment describing an intention: true the day it
+is written, and nothing notices when it stops being. `dataHandling.test.ts` (20
+tests) therefore reads the *backend*, not the page:
+
+- **Every `@router.delete` path in `lemely/web/routers/` is parsed**, and the
+  test fails if an account-deletion or scan-deletion route appears. Its message
+  is an instruction, not a diff: the right response to it going red is to
+  celebrate and then edit the page. Verified by inversion (pointed at
+  `/devices/{device_id}`, it fails with that message), and it has its own
+  not-vacuous check, because a regex that stops matching would make every
+  assertion pass by finding nothing.
+- A promise list: no "we will/never", no "your data is safe", no guarantee, no
+  commitment, no retention period in days, no GDPR/controller language, no
+  em-dash. **The fix for a failure there is never to reword.** It is to
+  establish that the code does the thing, and then say what it does.
+- Plus the facts the page exists to carry, asserted positively so it cannot pass
+  by saying nothing.
+
+### 4. Four registries, because a screen no list claims is a screen no gate reads
+
+P4.10's finding, now applied preemptively rather than after the fact: the new
+page is in `capture_surface.mjs`'s surface registry (so the adapt gate measures
+it at all five widths and the screenshot rounds photograph it), in `audit.mjs`'s
+a11y registry (axe and Lighthouse, signed out), and in all three file lists
+(`RTL_CLEAN_FILES`, `MIGRATED_FILES`, `SCANNED_FILES`).
+
+The third of those earned its place immediately: the migration gate failed the
+new file for using `text-display-xs`, a compat-layer token, twice. A file added
+to the lists on the day it is written is a file the lists actually cover.
+
+### 5. What the gate found once it could see: 10 findings, both classes real
+
+The first honest full run: **765 page-states across 36 surfaces, 10 findings,
+66 exemptions** (all from the one OTP row that states its reason). Both classes
+were in surfaces the gate had never reached.
+
+**Four `overflow` findings, and the cause is a rule that does not do what its
+name says.** `ChartDataTable` renders the accessible copy of every chart as
+`<table className="sr-only">`. `sr-only` is `position:absolute; width:1px;
+height:1px; overflow:hidden; clip-path:inset(50%)`, which yields a 1px box on a
+block element. **On a table it does not**: CSS auto table layout treats a
+specified width as a *minimum*, so the table expands to its content anyway. The
+boxes measured **357px** wide on the student dashboard and **316px** on the
+profile page, hanging off the right edge at 320px and 375px.
+
+Nothing was visible (`clip-path` paints none of it) and nothing scrolled
+(`overflow-x: clip` on html and body). So the only instrument in this repository
+that could ever have seen it is a gate that measures element geometry through
+that clip, which is precisely what this gate was built to do and had never once
+reached those surfaces. Fixed by putting `sr-only` on a `<div>` wrapper, which
+honours `width: 1px` and clips the table inside it; the accessibility tree is
+unchanged.
+
+Worth noting what was NOT done: the gate's `visible()` helper already exempts
+screen-reader-only boxes, keyed to `clip-path` **and** a rect under 2px. Widening
+that to "any clip-path, any size" would have turned all four findings green in
+one line. It is the shape of waiver this mission has twice recorded as worse than
+the defect, and the product was genuinely wrong.
+
+**Six `twoLine` findings, all six caused by this phase's own footer link.**
+Adding a third link made the row too wide for the 276px of content box a 320px
+screen leaves, so "How your data is handled" wrapped onto two lines and pushed
+"Parent sign in" onto two as well. Hallmark's non-negotiable is that clickable
+text never wraps: the second line is a strip of link that reads as body copy,
+and a thumb aimed between them hits neither. The footer links now stack into a
+column below `sm`, so each gets the full width, one line, and a full-width
+target.
+
+That is the useful shape of this pair. **The gate caught this phase's own defect
+in the same run that it caught a four-phase-old one**, which is the argument for
+fixing a broken gate before the work rather than after it.
+
+### 6. Small, and worth writing down
+
+**A check that a word is absent cannot tell an implementation from a sentence
+about one.** The first draft of "puts no auth guard on it" grepped `index.tsx`
+for `RequireAuth` and failed, because that file states in a comment that it
+deliberately contains none. It now walks the route element tree, which is what
+`marketing.test.ts` already did.
+
+### Gates
+
+typecheck, lint (0 errors), **1,432 web unit tests (+29)**, `check:copy` 0, both
+builds. Full `adapt` re-run, Python tests and `pre-commit run --all-files`
+recorded with the commit.
