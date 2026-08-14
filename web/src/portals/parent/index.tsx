@@ -300,13 +300,25 @@ export const parentRoute: RouteObject = {
   path: "parent",
   element: <ParentLayout />,
   children: [
-    { index: true, element: <Children /> },
-    { path: "children/:childId", element: <ChildOverview /> },
-    { path: "children/:childId/subjects/:code", element: <SubjectDetail /> },
-    { path: "children/:childId/weaknesses", element: <Weaknesses /> },
+    // P6.5 · `handle.title` on every child. See `lib/meta/documentMeta.ts`.
+    // "Your children" rather than a child's name: the route table has an id and
+    // no name, and a parent with two children reads the same title on both
+    // detail screens, which is the honest limit of what a static title knows.
+    { index: true, element: <Children />, handle: { title: "Your children" } },
+    { path: "children/:childId", element: <ChildOverview />, handle: { title: "Progress" } },
+    {
+      path: "children/:childId/subjects/:code",
+      element: <SubjectDetail />,
+      handle: { title: "Subject progress" },
+    },
+    {
+      path: "children/:childId/weaknesses",
+      element: <Weaknesses />,
+      handle: { title: "Topics to work on" },
+    },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the header and the child switcher. See `portals/misc/NotFound.tsx`.
-    { path: "*", element: <PortalNotFound /> },
+    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
   ],
 }

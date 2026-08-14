@@ -9,6 +9,8 @@ import { marketingRoute, MarketingLanding } from "@/portals/marketing"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
+import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
+import type { PageMeta } from "@/lib/meta/documentMeta"
 /*
  * P3.1 (DECISION D1.4). Deliberately a static import, unlike every screen in
  * this file, which are all `React.lazy`.
@@ -154,8 +156,21 @@ const errorElement = <NotFound />
  * The array is the thing worth asserting on. `App.tsx` now does nothing but
  * hand it to the router.
  */
+/*
+ * P6.5 · page metadata for the top-level routes.
+ *
+ * These four are the only routes in the product a signed-out reader can reach,
+ * so they are the only ones that carry a `description` (the module note in
+ * `lib/meta/documentMeta.ts` explains why the authenticated screens do not).
+ * Everything behind `RequireAuth` gets a title only.
+ *
+ * The descriptions describe the screen and claim nothing about the product that
+ * the product does not do (§3.2 item 10).
+ */
+const rootMeta: PageMeta = { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION }
+
 export const appRoutes: RouteObject[] = [
-  { path: "/", element: <Root />, errorElement },
+  { path: "/", element: <Root />, errorElement, handle: rootMeta },
   /*
    * The public marketing lane. Deliberately NOT wrapped in `RequireAuth` — the
    * whole subtree is public, which is the point of it existing (P4.9).
@@ -168,6 +183,11 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/login",
     errorElement,
+    handle: {
+      title: "Sign in",
+      description:
+        "Sign in to Lemely to mark a past paper, review a class, or follow a child's progress.",
+    } satisfies PageMeta,
     element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" />}><Login /></Suspense></LoginRoute>,
   },
   // G-05. A separate route rather than a tab on /login: the parent flow shares
@@ -176,6 +196,11 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/login/parent",
     errorElement,
+    handle: {
+      title: "Parent sign in",
+      description:
+        "Parents sign in to Lemely with a phone number and a code sent by text. No password to set up.",
+    } satisfies PageMeta,
     element: (
       <LoginRoute>
         <Suspense fallback={<RouteFallback className="p-8" />}>
@@ -190,6 +215,7 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/settings/devices",
     errorElement,
+    handle: { title: "Your devices" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
         <Suspense fallback={<RouteFallback className="p-8" />}>
@@ -206,6 +232,10 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/settings/notifications",
     errorElement,
+    // "Notification settings", not "Notifications": the student portal has a
+    // screen at /student/notifications that IS the reader's inbox, and two tabs
+    // reading the same word is the defect this whole file is closing.
+    handle: { title: "Notification settings" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
         <Suspense fallback={<RouteFallback className="p-8" />}>
@@ -263,5 +293,16 @@ export const appRoutes: RouteObject[] = [
    * student portal loses the sidebar. Rebuilding it as a per-portal child
    * route is Phase 4 work, once each portal layout is its final shape.
    */
-  { path: "*", element: <NotFound />, errorElement },
+  {
+    path: "*",
+    element: <NotFound />,
+    errorElement,
+    // Public, because this is the route a stale external link lands on, and it
+    // is the one page in the product whose description a scraper is likely to
+    // read by accident. It says what the page is, not what the product is.
+    handle: {
+      title: "Page not found",
+      description: "This Lemely page does not exist. The link may be out of date.",
+    } satisfies PageMeta,
+  },
 ]

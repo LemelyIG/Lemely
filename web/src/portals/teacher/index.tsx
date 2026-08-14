@@ -386,34 +386,40 @@ export const teacherRoute: RouteObject = {
   path: "teacher",
   element: <TeacherLayout />,
   children: [
-    { index: true, element: <Overview /> },
-    { path: "grading", element: <Grading /> },
-    { path: "review", element: <Review /> },
-    { path: "review/:itemId", element: <ReviewItem /> },
-    { path: "classes", element: <Classes /> },
+    // P6.5 · `handle.title` on every child. See `lib/meta/documentMeta.ts`.
+    { index: true, element: <Overview />, handle: { title: "Teacher dashboard" } },
+    { path: "grading", element: <Grading />, handle: { title: "Grading console" } },
+    { path: "review", element: <Review />, handle: { title: "Review queue" } },
+    { path: "review/:itemId", element: <ReviewItem />, handle: { title: "Review a mark" } },
+    { path: "classes", element: <Classes />, handle: { title: "Classes" } },
     {
       path: "classes/:classId",
       element: <ClassDetailLayout />,
+      // The layout carries a title so its `index` child (the roster) inherits
+      // one, and `analytics` overrides it. Deepest wins, so this is the
+      // fallback rather than a competing entry.
+      handle: { title: "Class" },
       children: [
-        { index: true, element: <ClassRoster /> },
-        { path: "analytics", element: <ClassAnalytics /> },
+        { index: true, element: <ClassRoster />, handle: { title: "Class roster" } },
+        { path: "analytics", element: <ClassAnalytics />, handle: { title: "Class analytics" } },
       ],
     },
-    { path: "students/:studentId", element: <StudentDetail /> },
-    { path: "at-risk", element: <AtRiskList /> },
-    { path: "schemes", element: <MarkSchemes /> },
-    { path: "quizzes", element: <Quizzes /> },
-    { path: "quizzes/:quizId", element: <QuizBuilder /> },
+    { path: "students/:studentId", element: <StudentDetail />, handle: { title: "Student" } },
+    { path: "at-risk", element: <AtRiskList />, handle: { title: "Students at risk" } },
+    { path: "schemes", element: <MarkSchemes />, handle: { title: "Mark schemes" } },
+    { path: "quizzes", element: <Quizzes />, handle: { title: "Quizzes" } },
+    { path: "quizzes/:quizId", element: <QuizBuilder />, handle: { title: "Quiz builder" } },
     // T-10 is per assignment, never per quiz (§1.6) — the route shape is the
     // first place that has to say so.
     {
       path: "quizzes/:quizId/assignments/:assignmentId/results",
       element: <QuizResults />,
+      handle: { title: "Quiz results" },
     },
-    { path: "announcements", element: <Announcements /> },
+    { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the sidebar. See `portals/misc/NotFound.tsx`.
-    { path: "*", element: <PortalNotFound /> },
+    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
   ],
 }

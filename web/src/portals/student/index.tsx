@@ -457,29 +457,76 @@ export const studentRoute: RouteObject = {
   path: "student",
   element: <StudentLayout />,
   children: [
-    { index: true, element: <Overview /> },
-    { path: "subject/:code", element: <Subject /> },
-    { path: "result/:paperId", element: <PaperResult /> },
-    { path: "correct", element: <CorrectPaper /> },
-    { path: "plan/:subjectCode", element: <StudyPlanWeek /> },
-    { path: "plan/:subjectCode/session/:sessionId", element: <StudyPlanSession /> },
-    { path: "board", element: <Standings /> },
-    { path: "announcements", element: <Announcements /> },
-    { path: "notifications", element: <Notifications /> },
-    { path: "friends", element: <Friends /> },
-    { path: "profile", element: <Profile /> },
+    /*
+     * P6.5 · `handle.title` on every child.
+     *
+     * Titles name the SCREEN, never the record on it. A route table cannot know
+     * which paper `result/:paperId` is showing, and reading the id back into
+     * the tab ("Paper 4f3c9a...") would be worse than a general name. The
+     * subject routes are the interesting case, because the code IS right there
+     * in the path, and it still is not used: a title assembled from a URL
+     * segment is a value restated from somewhere else, and P6.4's whole lesson
+     * is what happens to those.
+     */
+    { index: true, element: <Overview />, handle: { title: "Dashboard" } },
+    { path: "subject/:code", element: <Subject />, handle: { title: "Subject" } },
+    { path: "result/:paperId", element: <PaperResult />, handle: { title: "Paper result" } },
+    { path: "correct", element: <CorrectPaper />, handle: { title: "Mark a paper" } },
+    { path: "plan/:subjectCode", element: <StudyPlanWeek />, handle: { title: "Study plan" } },
+    {
+      path: "plan/:subjectCode/session/:sessionId",
+      element: <StudyPlanSession />,
+      handle: { title: "Study session" },
+    },
+    { path: "board", element: <Standings />, handle: { title: "Leaderboard" } },
+    { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
+    { path: "notifications", element: <Notifications />, handle: { title: "Notifications" } },
+    { path: "friends", element: <Friends />, handle: { title: "Friends" } },
+    { path: "profile", element: <Profile />, handle: { title: "Your profile" } },
     // The only place a parent_child_links row is created (D3.11).
-    { path: "parents", element: <Parents /> },
-    { path: "onboard", element: <Onboarding /> },
-    { path: "placement/:subjectCode", element: <PlacementInvite /> },
-    { path: "placement/test/:assignmentId", element: <PlacementTest /> },
-    { path: "placement/result/:assignmentId", element: <PlacementResult /> },
-    { path: "practice/:subjectCode", element: <PracticeGenerator /> },
-    { path: "practice/set/:assignmentId", element: <PracticeSet /> },
-    { path: "practice/result/:assignmentId", element: <PracticeResult /> },
-    { path: "practice/print/:assignmentId", element: <PracticePrint /> },
-    { path: "flashcards/:subjectCode", element: <FlashcardDecks /> },
-    { path: "flashcards/review/:subjectCode", element: <FlashcardReview /> },
+    { path: "parents", element: <Parents />, handle: { title: "Parent access" } },
+    { path: "onboard", element: <Onboarding />, handle: { title: "Getting set up" } },
+    {
+      path: "placement/:subjectCode",
+      element: <PlacementInvite />,
+      handle: { title: "Placement test" },
+    },
+    {
+      path: "placement/test/:assignmentId",
+      element: <PlacementTest />,
+      handle: { title: "Placement test" },
+    },
+    {
+      path: "placement/result/:assignmentId",
+      element: <PlacementResult />,
+      handle: { title: "Placement result" },
+    },
+    {
+      path: "practice/:subjectCode",
+      element: <PracticeGenerator />,
+      handle: { title: "New practice set" },
+    },
+    { path: "practice/set/:assignmentId", element: <PracticeSet />, handle: { title: "Practice" } },
+    {
+      path: "practice/result/:assignmentId",
+      element: <PracticeResult />,
+      handle: { title: "Practice result" },
+    },
+    {
+      path: "practice/print/:assignmentId",
+      element: <PracticePrint />,
+      handle: { title: "Print practice set" },
+    },
+    {
+      path: "flashcards/:subjectCode",
+      element: <FlashcardDecks />,
+      handle: { title: "Flashcards" },
+    },
+    {
+      path: "flashcards/review/:subjectCode",
+      element: <FlashcardReview />,
+      handle: { title: "Flashcard review" },
+    },
     /*
      * P4.9 moved the marketing page out of this portal and onto a public
      * route. The path stays mounted, as a redirect, for three reasons that
@@ -489,7 +536,10 @@ export const studentRoute: RouteObject = {
      * any link anyone has already saved should land on the page rather than
      * on a 404. `replace` so the redirect does not sit in the back stack.
      */
-    { path: "landing", element: <Navigate to="/landing" replace /> },
+    // The handle is the landing page's own, not a name for the redirect: this
+    // path resolves to `/landing` immediately, and a title is only ever read on
+    // a page a reader is looking at.
+    { path: "landing", element: <Navigate to="/landing" replace />, handle: { title: "Lemely" } },
     /*
      * P4.10. Last, so it only matches what nothing above did. Before this, an
      * unmatched path inside this portal fell through to the top-level `*` and
@@ -497,6 +547,6 @@ export const studentRoute: RouteObject = {
      * `portals/misc/NotFound.tsx` for why it is a separate component and not
      * the standalone screen.
      */
-    { path: "*", element: <PortalNotFound /> },
+    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
   ],
 }

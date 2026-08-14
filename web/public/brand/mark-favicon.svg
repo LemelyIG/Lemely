@@ -1,19 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Lemely mark, favicon cut.
-
-  Same geometry as mark.svg, but the strokes are thickened and the mark is
-  scaled to fill more of the frame. This is a genuine optical cut, not laziness:
-  mark.svg's 2px hairline on a 64-unit viewBox resolves to half a physical pixel
-  at 16x16 and disappears entirely in a browser tab. The hairline/heavy contrast
-  that carries the concept is preserved as a RATIO (here 3.5 against 7) rather
-  than as absolute widths.
-
-  Keep in sync with mark.svg if the geometry ever changes.
--->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
      role="img" aria-label="Lemely">
   <title>Lemely</title>
+  <!--
+    Lemely mark, favicon cut.
+
+    Same geometry as mark.svg, but the strokes are thickened and the mark is
+    scaled to fill more of the frame. This is a genuine optical cut, not
+    laziness: mark.svg's 2px hairline on a 64-unit viewBox resolves to half a
+    physical pixel at 16x16 and disappears entirely in a browser tab. The
+    hairline/heavy contrast that carries the concept is preserved as a RATIO
+    (here 3.5 against 7) rather than as absolute widths.
+
+    Keep in sync with mark.svg if the geometry ever changes.
+
+    P6.5 moved this comment from above the opening tag to inside it. mark.svg's
+    own comment states the reason and this file was authored after it anyway:
+    libvips (and so sharp, and so the screenshot tooling) sniffs only the first
+    bytes to detect SVG, so a long leading comment pushes `<svg` out of that
+    window and the file is rejected as an unknown format. Nothing had noticed
+    because nothing had yet asked sharp to read this particular file.
+  -->
   <!-- Geometry snapped to the 16px pixel grid. At 16x16 one viewBox unit is
        exactly 0.25px, so a stroke of 4 is exactly 1 device pixel. The catch is
        that a stroke is centred on its path: putting the rule at x=16 spans

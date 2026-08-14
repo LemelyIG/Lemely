@@ -4,6 +4,8 @@ import type { RouteObject } from "react-router-dom"
 import { Link } from "react-router-dom"
 import { RouteFallback } from "@/components/ui/state-views"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
+import type { PageMeta } from "@/lib/meta/documentMeta"
 
 /*
  * ────────────────────────────────────────────────────────────────────────────
@@ -193,6 +195,13 @@ export function MarketingLanding() {
 export const marketingRoute: RouteObject = {
   path: "landing",
   element: <MarketingLanding />,
+  /*
+   * P6.5. The one page in the product that a search engine or a chat-app
+   * unfurler can actually reach, so it carries the site's own title and
+   * description rather than a page-specific one — `/` renders this same
+   * component and both should read identically when shared.
+   */
+  handle: { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION } satisfies PageMeta,
 }
 
 export { Landing }

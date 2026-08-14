@@ -2,15 +2,70 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!--
+      P6.5. This was `/favicon.svg`, the build-era mark: a `#863bff` purple
+      glyph, still shipping three phases after Phase 2 replaced the identity.
+      §4 names purple-blue as this redesign's hard anti-reference, so the most
+      frequently seen piece of Lemely's brand was the one piece painted in the
+      banned family. `mark-favicon.svg` is D2's real mark in its small-size
+      optical cut (thicker strokes, snapped to the 16px pixel grid).
+    -->
+    <link rel="icon" type="image/svg+xml" href="/brand/mark-favicon.svg" />
     <link rel="apple-touch-icon" href="/pwa-192x192.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#1e1310" />
+    <!--
+      Injected from the `--paper` token at build time by `vite/themeColor.ts`,
+      never written here as a hex. It held `#1e1310` (near-black) above a warm
+      paper page on every route, so a phone drew a dark address bar over a light
+      app. A hardcoded value here is unreachable by every gate in this repo: no
+      test opens it and no screenshot captures browser chrome.
+    -->
+    <meta name="theme-color" content="%LEMELY_THEME_COLOR%" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Lemely" />
-    <title>Lemely</title>
+
+    <!--
+      The DEFAULT document head. Every route overrides the title and description
+      at runtime through `<DocumentMeta>` (see `src/lib/meta/DocumentMeta.tsx`),
+      driven by the `handle` on each route in the router table.
+
+      These defaults still matter and are not dead weight: they are what a
+      scraper with no JavaScript reads, what shows before React mounts, and what
+      the one genuinely public page (the landing page) is described by.
+
+      Copy rules per §3.2 item 10 apply here as much as on screen: this
+      description states only what the product does, with no invented metric and
+      no adjective it has not earned.
+    -->
+    <title>Lemely, marking for CAIE past papers</title>
+    <meta
+      name="description"
+      content="Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+    />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Lemely" />
+    <meta property="og:title" content="Lemely, marking for CAIE past papers" />
+    <meta
+      property="og:description"
+      content="Lemely marks a photographed or uploaded CAIE past-paper attempt against the official marking scheme, with method marks, and returns per-question marks, a grade, and the topics to work on."
+    />
+    <meta property="og:image" content="/brand/og-card.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <!--
+      `alt` rather than nothing: the card is the mark on ruled paper and carries
+      no text, so a reader on a screen reader gets the name from `og:title` and
+      this describes the picture itself.
+    -->
+    <meta property="og:image:alt" content="The Lemely mark: a ruled page corner with a hand-drawn correction tick across it." />
+    <!--
+      `summary_large_image`, matching the 1200x630 card. The default `summary`
+      would crop it to a square and cut the mark's tick in half.
+    -->
+    <meta name="twitter:card" content="summary_large_image" />
   </head>
   <body>
     <div id="root"></div>

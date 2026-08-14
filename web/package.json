@@ -17,7 +17,8 @@
     "compare-screens": "node scripts/compare_screens.mjs",
     "contact-sheets": "node scripts/contact_sheets.mjs",
     "preview:kit": "vite --config vite.preview.config.ts",
-    "build:kit": "vite build --config vite.preview.config.ts"
+    "build:kit": "vite build --config vite.preview.config.ts",
+    "icons": "node --experimental-strip-types scripts/generate_icons.mjs"
   },
   "dependencies": {
     "@fontsource-variable/caveat": "^5.3.0",

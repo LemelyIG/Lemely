@@ -6,6 +6,8 @@ import { VitePWA } from "vite-plugin-pwa"
 // Explicit `.ts` extension: tsconfig.node.json resolves as `nodenext`, which
 // requires one. `allowImportingTsExtensions` is already set there.
 import { fontPreload } from "./vite/fontPreload.ts"
+import { themeColor } from "./vite/themeColor.ts"
+import { tokenHex } from "./vite/brandTokens.ts"
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -15,6 +17,9 @@ export default defineConfig({
     // P6.3: the only cause Lighthouse ever named for a layout shift in this
     // product is "Web font loaded". See web/vite/fontPreload.ts.
     fontPreload(),
+    // P6.5: `<meta name="theme-color">` from the --paper token. See
+    // web/vite/themeColor.ts.
+    themeColor(),
     VitePWA({
       registerType: "autoUpdate",
       // P6.3. The default (`injectRegister: "auto"`) emits a bare
@@ -52,12 +57,22 @@ export default defineConfig({
           "Lemely marks a student's photographed or uploaded past-paper attempt against the official marking scheme with method-mark awareness, returning per-question marks, grade, and weakness topics.",
         start_url: "/",
         display: "standalone",
-        // Computed from index.css's student/default theme tokens via a real
-        // oklch->sRGB conversion (culori formatHex): --ink oklch(0.2 0.02 35)
-        // -> #1e1310, --bg oklch(0.97 0.007 40) -> #faf4f2. Both are in the
-        // sRGB gamut, so the conversion is exact (no clipping).
-        theme_color: "#1e1310",
-        background_color: "#faf4f2",
+        // P6.5. These were `#1e1310` / `#faf4f2` under a comment claiming they
+        // were computed from index.css via culori. Every clause of that comment
+        // was false by the time it was read: `--ink` is `oklch(0.321 0.009
+        // 234)` not `oklch(0.2 0.02 35)`, there is no `--bg` token, culori is
+        // not a dependency of this project, and both hexes were build-era
+        // Material-3 values that no token has produced since Phase 2 rewrote
+        // the palette. Nothing failed, because an OS reads these and no test
+        // does. Now computed at build time from the token file itself; see
+        // web/vite/brandTokens.ts.
+        //
+        // Both are `--paper`. `theme_color` tints the app's own title bar and
+        // `background_color` paints the splash screen shown before the first
+        // frame renders, so making them the page colour means the launch reads
+        // as the app appearing rather than as a flash of some other colour.
+        theme_color: tokenHex("paper"),
+        background_color: tokenHex("paper"),
         icons: [
           {
             src: "pwa-192x192.png",

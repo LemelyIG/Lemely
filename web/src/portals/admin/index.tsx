@@ -331,14 +331,19 @@ export const schoolAdminRoute: RouteObject = {
   path: "school",
   element: <AdminLayout lane="school" />,
   children: [
-    { index: true, element: <SchoolDashboard /> },
-    { path: "seats", element: <Seats /> },
-    { path: "teachers", element: <Teachers /> },
-    { path: "classes", element: <Classes /> },
+    // P6.5 · `handle.title` on every child. See `lib/meta/documentMeta.ts`.
+    // Both admin lanes prefix their titles ("School ..." / "Platform ..."),
+    // because a school_admin holds BOTH this portal and the teacher one and
+    // would otherwise have two tabs reading "Classes" that are different
+    // screens over different data.
+    { index: true, element: <SchoolDashboard />, handle: { title: "School overview" } },
+    { path: "seats", element: <Seats />, handle: { title: "School seats" } },
+    { path: "teachers", element: <Teachers />, handle: { title: "School teachers" } },
+    { path: "classes", element: <Classes />, handle: { title: "School classes" } },
     // Last, so it only matches what nothing above did. An unmatched path here
     // would otherwise fall to the top-level `*` and cost the reader the sidebar
     // (P4.10, `portals/misc/NotFound.tsx`).
-    { path: "*", element: <PortalNotFound /> },
+    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
   ],
 }
 
@@ -347,9 +352,9 @@ export const platformAdminRoute: RouteObject = {
   path: "platform",
   element: <AdminLayout lane="platform" />,
   children: [
-    { index: true, element: <PlatformConsole /> },
-    { path: "activations", element: <Activations /> },
-    { path: "pipeline", element: <PipelineHealth /> },
-    { path: "*", element: <PortalNotFound /> },
+    { index: true, element: <PlatformConsole />, handle: { title: "Platform console" } },
+    { path: "activations", element: <Activations />, handle: { title: "Platform activations" } },
+    { path: "pipeline", element: <PipelineHealth />, handle: { title: "Pipeline health" } },
+    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
   ],
 }
