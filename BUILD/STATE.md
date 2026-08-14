@@ -100,6 +100,28 @@ NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
                     has aged out of retention. The completion ntfy was **not**
                     re-sent.
 
+                    **Session 9 (2026-08-15) built nothing.** Every check run
+                    rather than inherited, and one number moved: working tree
+                    clean, `git status -sb` level with
+                    `origin/redesign/study-surfaces` after an explicit `git
+                    fetch` (session 7's lesson — a sync claim is verified before
+                    it is written), INBOX both items handled, all five blockers
+                    carry a `RESOLVED` status line (B1-B3 2026-08-07, B4 and B5
+                    2026-08-14), every phase-ledger row DONE, inbound topic since
+                    1786723759 returns an empty body. **PR #7 is OPEN and
+                    MERGEABLE at 70 commits**, up from the 69 session 8 recorded
+                    — the one added is session 8's own state note (`b94f2bd`), not
+                    a product change, and there is still **no review decision**.
+                    The completion ntfy was **not** re-sent.
+
+                    Four sessions have now ended here. The queue is not empty
+                    because a session failed to look; it is empty because the
+                    five items below are the whole of what is left and none of
+                    them is a build task. A session that keeps finding nothing is
+                    reporting the state correctly, not idling badly — but it is
+                    worth naming that the only thing these notes now add to the
+                    PR is evidence that nothing changed.
+
                     Every §12 clause re-read against the tree and every one is
                     met, including the last one that session 5 had to fire. So
                     the deliberate non-action is worth naming: the five open
