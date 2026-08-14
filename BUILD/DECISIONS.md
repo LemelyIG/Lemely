@@ -9752,3 +9752,212 @@ oklch tokens parsed, 33 measured, zero drift, and the three unmeasured are the
 because `/tmp` filled and no Bash command can execute (**B5**). The colour
 arithmetic is fully verified; the product build around it is not. 107 Python
 token tests pass (rc=0, up from 64 passed + 8 xfailed).
+
+---
+
+## D6.8 — OPEN: legal links in the marketing footer (redesign P6.5)
+
+**Status: SENT, awaiting the human. Default A on a 60-minute timeout.**
+`gAGLBRpzyxmd`, 2026-08-14. Mirrored in `BUILD/STEERING.md`.
+
+§5 Phase 6.5's closeout list ends with "legal links". The footer currently has
+none and says so in its own comment, correctly: a link to a page that does not
+exist is the dead navigation the Phase 1 audit went looking for.
+
+**Why it is a question rather than a task.** Facts about this product can be
+derived from this repo: what is stored, that a scan is sent to Google Gemini,
+that Supabase holds the database. **Promises cannot**, and a privacy policy and
+a terms of service are mostly promises. Writing one unattended would be
+inventing content in the one category where invention has legal consequences,
+which is a different act from inventing a testimonial and a worse one.
+
+Options as sent: **A** one factual, promise-free "How Lemely handles your data"
+page and no ToS [default]; **B** ship nothing and record the omission as
+needing a lawyer; **C** A plus placeholders. C was argued against in the same
+message rather than merely listed, because it is the dead-link pattern the
+footer already refused.
+
+**Found while preparing A, and true whichever way this goes: the product has no
+account-deletion path and no retention rule anywhere in `lemely/`.** Nothing
+purges, anonymises or expires a scan, an attempt or an account. A can still
+ship (the page would state that, which is honest and more useful than silence),
+but on a product whose users are minors this is a real gap, and it is exactly
+what a policy would normally have to describe. Not fixed here: building a
+deletion path is far beyond a footer link, and it is a product decision.
+
+---
+
+## D6.9 — Redesign Phase 6.5 (strategic omissions): the tab that said "Lemely" 48 times, and the one surface the redesign never reached
+
+Three of the five §5 Phase 6.5 items shipped here. Two were already done and
+were **verified rather than assumed**: the custom 404 landed in P3.1 and gained
+its in-portal variant in P4.10, and the skip link is imported by all six frames
+(`SkipLink` has call sites in the student, teacher, parent, admin, marketing and
+settings shells plus the standalone 404). The fifth, legal links, is open behind
+D6.8.
+
+### 1. No screen in the product had ever set a `document.title`
+
+All 48 routes were "Lemely", from the single static tag in `index.html`, for the
+whole build and the whole redesign.
+
+Three of the four costs are ordinary: indistinguishable tabs, useless bookmarks,
+a tab-search feature that cannot find anything in this product by name. **The
+fourth makes it an accessibility defect rather than a metadata one.** A screen
+reader announces the document title on navigation, and in a single-page app
+nothing else announces that the page changed at all — so a non-sighted reader
+clicking through the sidebar heard "Lemely" after every single navigation and
+was never once told where they had arrived. That is the reason this was worth
+doing for authenticated screens no crawler will ever read, which is otherwise
+the obvious place to stop.
+
+**The mechanism was chosen for what could gate it, not for what was shortest.**
+The obvious fix is `useDocumentTitle("...")` at the top of 48 screens. It was
+rejected because a per-screen hook has nothing to check itself against, so route
+49 ships untitled and nothing says so. That is not a hypothetical: it is how
+`text-title` sat on a live `<h1>` emitting zero CSS for an entire build, how the
+compat layer outlived every screen that used it, and how two whole admin portals
+ended up in none of the three gate lists (P4.10). Route `handle` puts the title
+**in the route table**, which can be walked, so `documentMeta.test.ts` walks it
+and fails naming the exact route. Verified by inversion.
+
+Titles name the **screen**, never the record on it. `result/:paperId` is "Paper
+result", not the paper. The subject routes are the interesting case, because the
+code is right there in the path and is still not used: a title assembled from a
+URL segment is a value restated from somewhere else, and D6.7's whole lesson is
+what happens to those.
+
+Descriptions and `og:` tags go **only** on the four routes a signed-out reader
+can reach. Everything else is behind `RequireAuth` where no scraper will ever
+look, and writing marketing prose into the head of a teacher's review queue
+would be inventing copy for an audience that does not exist.
+
+### 2. The browser tab was the one surface the redesign never reached
+
+`public/favicon.svg` was the build-era mark: a `#863bff` purple glyph, still
+shipping three phases after Phase 2 replaced the identity. §4 names purple-blue
+as this redesign's **hard anti-reference**, so the most frequently seen piece of
+Lemely's brand was the one piece painted in the banned family. The three PNG
+icons beside it were rasterised from that same purple mark on 2026-08-12, before
+Phase 2 existed.
+
+**Nothing here could have caught it.** Every gate this build runs reads code or
+reads a rendered page. An icon is a binary that no test opens, displayed by an
+operating system in a place no screenshot harness captures. It is D6.4's
+`registerSW.js` finding in a second form: the defect was not in anybody's diff.
+
+Fixed by generating them from the real mark with a checked-in script
+(`scripts/generate_icons.mjs`, `npm run icons`), so the vector is the source and
+the PNGs are the artifact. A PNG in a diff is unreviewable, and "how do I
+regenerate the icons" is otherwise knowledge that lives in one head until it is
+lost. The maskable cut is a **different image, not a resize**: Android crops to
+the central 80% diameter, so a square of side s survives only when
+`s * sqrt(2) <= 0.8w`, i.e. `s <= 0.566w`. The scale is 0.46 and the bound is
+asserted in the script itself as well as in the test, because that is where
+somebody editing the number is actually looking.
+
+### 3. The manifest colours had already drifted, exactly as D6.7 predicted
+
+`vite.config.ts` carried `theme_color: "#1e1310"` and `background_color:
+"#faf4f2"` under a comment stating they were "computed from index.css's
+student/default theme tokens via a real oklch->sRGB conversion (culori
+formatHex): --ink oklch(0.2 0.02 35)".
+
+**Every clause of that comment was false.** `--ink` is `oklch(0.321 0.009 234)`.
+There is no `--bg` token. culori is not a dependency of this project and by the
+look of the lockfile never was. Both hexes are build-era Material-3 values that
+no token in the product has produced since Phase 2 rewrote the palette.
+
+The consequence is small and constant: a phone drew a **near-black address bar
+directly above a warm paper page**, on all 48 routes, for the entire redesign,
+on the one device class the brief says students live on. Nothing failed because
+nothing was checking — a manifest colour is read by an operating system, not by
+a test.
+
+`vite/brandTokens.ts` now computes them from `index.css` at build time and the
+transcription is **deleted rather than corrected**, which is the only fix that
+cannot drift again. `vite/themeColor.ts` injects the `<meta name="theme-color">`
+from the same source and **throws** if anyone puts a literal hex back. Both
+verified by inversion; the throw's message names the reason.
+
+This is D6.7's question — *what re-states a value, and what checks that the two
+still agree?* — asked of the three files P6.5 was always going to touch, and it
+had already been answered badly in all three.
+
+### 4. Two things found by verifying rather than reasoning
+
+**`router.state.matches` is not `useMatches()`.** The former is
+`DataRouteMatch[]`, where the handle lives at `match.route.handle`; the latter
+hoists it to `match.handle`. They look interchangeable. Reading the wrong one
+returns `undefined` for every route, so every page would have fallen back to the
+default title and **the entire feature would have shipped doing nothing**, with
+all 15 new tests still green (they exercise the pure functions and the route
+table, not the wiring). `tsc` caught it. Worth recording plainly: this is the
+one defect in P6.5 that a type checker could see, and the other three are a
+catalogue of things it could not.
+
+**`mark-favicon.svg` carried 12 lines of comment above its opening tag.**
+`mark.svg`'s own comment warns, in as many words, that libvips (and so sharp)
+sniffs only the first bytes and rejects the file when `<svg` is pushed out of
+that window. The favicon cut was authored after that warning and did it anyway.
+Nothing had noticed because nothing had yet asked sharp to read that particular
+file — a latent defect that only becomes real the first time somebody uses the
+asset for the thing it is for.
+
+### 5. The OG card carries no text, deliberately
+
+The obvious card sets "Lemely" in Newsreader beside the mark. It cannot be built
+honestly here: @fontsource ships **woff2 only**, which librsvg cannot load, so an
+SVG asking for `font-family: Newsreader` renders in whatever fontconfig picks,
+almost certainly DejaVu Sans. §3.2 item 2 bans that class of face outright, and
+a wrong face inside a generated binary is invisible to every gate in this repo,
+because nobody diffs a PNG and the file only ever renders inside somebody else's
+chat app.
+
+So the card is the mark on ruled paper, and the product's name is carried by
+`og:title`, which is real text in the scraper's own typography. A smaller card
+than a wordmark lockup, and one that cannot quietly be wrong.
+
+### 6. Found while checking a sentence: no deployment of this code can send an SMS
+
+Not a P6.5 item, not fixed here, and recorded because it is the largest thing
+this phase walked past.
+
+Writing a meta description for `/login/parent` meant restating the screen's own
+copy, which reads *"Enter your phone number and we'll text you a code."* That
+sentence is checkable, so it was checked:
+
+- `lemely/web/deps.py` wires `sms=MockSmsProvider()` **unconditionally**. There
+  is no config switch and no alternative implementation in the repo.
+- `MockSmsProvider.send_code` **logs the code at INFO level** instead of sending
+  it. Its own docstring says so.
+- `SmsProvider` (the protocol) documents a `delivers_out_of_band` flag whose
+  comment reads "Any real provider added later **must** set this True" — which
+  is a statement that, as of now, none has been.
+
+So the parent OTP flow is real (codes are generated, stored with a TTL, rate
+limited, and verified), and the **delivery** of it is not. `ParentLogin` already
+renders a `devCode` panel whose own comment states it exists only when there is
+no real gateway, so the product is internally consistent about this in code and
+inconsistent about it in copy.
+
+This matters more than a copy defect usually would, because §5's own framing
+calls the phone route "the lowest-friction entry in the product" and it is the
+only way a parent gets in. **A parent following that screen's instruction waits
+for a text that no code path sends.**
+
+Two things were deliberately not done. The screen's copy was not changed:
+integrating an SMS gateway is the actual fix, it needs credentials and a
+provider choice, and rewording the sentence to describe the mock would be
+dressing a missing feature as a design decision. And the claim was **not carried
+into the new meta description**, which says "a one-time code" instead of "a code
+sent by text" — one file repeating an unverifiable claim is a defect; two files
+repeating it is how it becomes a fact nobody rechecks.
+
+### Gates
+
+typecheck, lint (0 errors), **1,403 web unit tests (+15)**, `check:copy` 0, both
+builds, 107 Python token tests, `pre-commit run --all-files`: all green. Titles
+confirmed in a real browser on public and authenticated routes, including a
+client-side navigation (the path `router.subscribe` exists for) and a portal
+catch-all. Both new build-time throws verified by inversion.

@@ -198,8 +198,24 @@ export const appRoutes: RouteObject[] = [
     errorElement,
     handle: {
       title: "Parent sign in",
+      /*
+       * "a one-time code", not "a code sent by text", and the difference is
+       * load-bearing. The screen itself says "we'll text you a code" — and
+       * `lemely/web/deps.py` wires `sms=MockSmsProvider()` unconditionally,
+       * with no config switch, and `MockSmsProvider.send_code` *logs* the code
+       * rather than sending it. `SmsProvider` even documents a
+       * `delivers_out_of_band` flag that "any real provider added later must
+       * set True", i.e. none exists.
+       *
+       * So no deployment of this code as written can send an SMS. The screen's
+       * claim is a pre-existing defect recorded in D6.9 for the human, not
+       * something to fix from a route table. What this description will not do
+       * is carry the claim into a second file, and into the one place a
+       * scraper would index it. The OTP itself is real, so that is what it
+       * says.
+       */
       description:
-        "Parents sign in to Lemely with a phone number and a code sent by text. No password to set up.",
+        "Parents sign in to Lemely with a phone number and a one-time code. No password to set up.",
     } satisfies PageMeta,
     element: (
       <LoginRoute>

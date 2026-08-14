@@ -394,3 +394,46 @@ what §10's file fallback exists for, except §10 assumes the file mirrors an nt
 message and here it *is* the message. B5 has the one command that unblocks it.
 
 `LAST STEERING TS` advances to **1786723759**.
+
+---
+
+## 2026-08-14 — B5 cleared; D6.8 sent (legal links)
+
+**Context.** `/tmp` is free and the shell works, so B5 is closed after two
+blocked sessions. D6.7's verified-but-ungated tree was committed first
+(`f313a9a`) with every gate run, then Phase 6.5 started.
+
+**OUT** — `4EmrjkltUtOm`: B5 cleared, D6.7 committed, 6.5 starting. The first
+outbound message this mission has managed in three sessions; the previous two
+could not send one, because publishing is `curl` and `curl` is a Bash command.
+
+**OUT** — **DECISION D6.8** (`gAGLBRpzyxmd`, sent 2026-08-14, 60-minute
+timeout, default **A**): legal links in the marketing footer.
+
+> A) One factual page, "How Lemely handles your data", linked in the footer:
+>    purely descriptive of verifiable code behaviour, no promises, no legal
+>    claims, and no terms-of-service page, because there is no code to derive
+>    one from. **[DEFAULT]**
+> B) Ship nothing; record the omission as needing a lawyer, not an agent.
+> C) A, plus placeholder Terms/Privacy routes to fill in later.
+
+C was offered and argued against in the same message: it is the dead-link
+pattern the footer's own comment already refused, and §5 Phase 6.5's whole
+point is closing strategic omissions rather than signposting them.
+
+The reason this is a question at all is that Terms and a privacy policy are
+**mostly promises**, and promises are the one class of content where inventing
+something has legal consequences. Facts can be derived from the repo; a
+commitment cannot.
+
+**One fact found while preparing A, which the human should see whichever option
+they pick:** the product has **no account-deletion path and no retention rule**
+anywhere in `lemely/`. Nothing purges, anonymises or expires a scan, an
+attempt, or an account. That is not a blocker for A (the page would simply say
+so, which is honest and useful), but it is a real gap in a product whose users
+are minors, and it is the kind of thing a policy would normally have to
+describe. Recorded here rather than fixed: building a deletion path unattended
+is well beyond a footer link.
+
+**IN** — nothing yet. Four polls, no reply. `LAST STEERING TS` unchanged at
+**1786723759**.
