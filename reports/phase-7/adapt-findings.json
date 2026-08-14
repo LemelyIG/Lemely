@@ -1,0 +1,781 @@
+{
+  "checks": 765,
+  "byKind": {
+    "twoLine": 35
+  },
+  "findings": [
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 33.7,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@320",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/dev-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptTarget",
+      "el": "input.h-14.w-full.min-w-0.rounded-md",
+      "w": 42.8,
+      "h": 56,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "parent-login/wrong-code@375",
+      "kind": "exemptPair",
+      "a": "input.h-14.w-full.min-w-0.rounded-md",
+      "b": "input.h-14.w-full.min-w-0.rounded-md",
+      "gap": 4,
+      "reason": "six-digit-code-row"
+    },
+    {
+      "where": "teacher-overview/populated@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-overview/nothingFlagged@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-overview/firstRun@1440",
+      "kind": "twoLine",
+      "el": "a.px-2.py-[7px].pointer-coarse:flex.pointer-coarse:items-center [Add your first class]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-overview/firstRun@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-overview/loading@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-overview/error@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-review/populated@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-review/empty@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-review/long-content@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-review/loading@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-review/error@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-quizzes/populated@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-quizzes/empty@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-quizzes/loading@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-quizzes/error@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-analytics/populated@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-analytics/nothing-marked@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-analytics/one-point@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-analytics/loading@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-analytics/error@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-student/populated@320",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/no-papers@320",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/populated@375",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/no-papers@375",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/populated@414",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/no-papers@414",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/populated@768",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/no-papers@768",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/populated@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-student/populated@1440",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/no-papers@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-student/no-papers@1440",
+      "kind": "twoLine",
+      "el": "button.text-body-sm.text-ink-faint.transition-colors.hover:text-ink [Back]",
+      "lines": 2,
+      "width": 48
+    },
+    {
+      "where": "teacher-student/loading@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "teacher-student/error@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    },
+    {
+      "where": "not-found-teacher/in-portal@1440",
+      "kind": "twoLine",
+      "el": "a.text-body-sm.text-ink-faint.px-0.5.pointer-coarse:flex [Account, devices & notifications]",
+      "lines": 2,
+      "width": 219
+    }
+  ]
+}

@@ -40,14 +40,13 @@
  * Assumes `npm run build` has run; serves `dist/`.
  */
 
-import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "@playwright/test"
 
 import { SURFACES, SESSION, PROFILE, BASE, PORT } from "./capture_surface.mjs"
-import { assertPortFree } from "./serve_guard.mjs"
+import { assertPortFree, startPreview } from "./serve_guard.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, "..", "..")
@@ -185,10 +184,36 @@ function measure({ touch }) {
     const range = document.createRange()
     range.selectNodeContents(el)
     const lines = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0)
-    // Collapse rects that share a baseline (an inline icon beside a label
-    // produces two rects on one line).
-    const rows = new Set(lines.map((r) => Math.round(r.top)))
-    if (rows.size > 1) {
+    /*
+     * Collapse rects that share a line (an inline icon beside a label produces
+     * two rects on one line).
+     *
+     * P7.1: this was `new Set(lines.map((r) => Math.round(r.top)))`, which is
+     * the comment's intention written as an equality on `top` — and an inline
+     * icon beside a label does not share the label's `top`. A 14px icon
+     * vertically centred against a 20px line box sits ~3px lower, so it landed
+     * in its own row and every icon-bearing link read as two lines. It was
+     * latent until this phase replaced fourteen `"→"` characters (which are
+     * text, and do share the run's top) with real icons, at which point the
+     * gate reported 35 findings that were all one line on screen.
+     *
+     * Grouping by vertical overlap is what the comment always meant: two rects
+     * are on the same line when one's midpoint falls inside the other's span.
+     * That is invariant to icon height and to vertical-align, and it still
+     * separates genuinely stacked lines, whose spans do not overlap at all.
+     */
+    const rows = []
+    for (const r of lines.slice().sort((a, b) => a.top - b.top)) {
+      const mid = r.top + r.height / 2
+      const row = rows.find((existing) => mid >= existing.top && mid <= existing.bottom)
+      if (row) {
+        row.top = Math.min(row.top, r.top)
+        row.bottom = Math.max(row.bottom, r.bottom)
+      } else {
+        rows.push({ top: r.top, bottom: r.bottom })
+      }
+    }
+    if (rows.length > 1) {
       /*
        * §6's ban is on a LABEL breaking across lines — P4.7's "See" / "the
        * roll" is the canonical case, where the second line reads as a separate
@@ -201,7 +226,7 @@ function measure({ touch }) {
        * list here that nobody reading the JSX would find.
        */
       if (el.closest("[data-wraps-content-title]")) continue
-      out.twoLine.push({ el: describe(el), lines: rows.size, width: Math.round(rect.width) })
+      out.twoLine.push({ el: describe(el), lines: rows.length, width: Math.round(rect.width) })
     }
   }
 
@@ -426,23 +451,22 @@ function measure({ touch }) {
  * evidence of its own failure makes every failure look like a flake**, and a
  * failure that looks like a flake gets re-run rather than read.
  */
-const serverLog = []
+let previewHandle = null
 
 function serveDist() {
-  const child = spawn(
-    "npx",
-    ["vite", "preview", "--port", String(PORT), "--strictPort", "--host", "127.0.0.1"],
-    { cwd: path.join(repoRoot, "web"), stdio: ["ignore", "pipe", "pipe"] },
-  )
-  // Draining both pipes is also what stops a chatty server from blocking on a
-  // full 64KB pipe buffer half way through a 25-minute run.
-  child.stdout.on("data", (d) => serverLog.push(String(d)))
-  child.stderr.on("data", (d) => serverLog.push(String(d)))
-  return child
+  /* P7.1: via `startPreview`, which spawns vite's own binary rather than `npx`.
+     The old form killed the `npx` wrapper in its `finally` and left vite
+     reparented to init, holding the port for as long as the machine was up —
+     which is exactly the orphan that made this phase's first sweep measure a
+     server it did not start. Draining both pipes is still what stops a chatty
+     server blocking on a full 64KB buffer half way through a 25-minute run;
+     `startPreview` does that too. */
+  previewHandle = startPreview(PORT, path.join(repoRoot, "web"))
+  return previewHandle.child
 }
 
 function serverOutput() {
-  const text = serverLog.join("").trim()
+  const text = (previewHandle?.log() ?? "").trim()
   return text ? `\n--- vite preview said ---\n${text}\n-------------------------` : ""
 }
 
@@ -550,7 +574,7 @@ async function main() {
     }
     await browser.close()
   } finally {
-    server.kill("SIGTERM")
+    previewHandle?.stop()
   }
 
   /*
@@ -586,7 +610,7 @@ async function main() {
 main().catch((err) => {
   console.error(err)
   // Whatever killed the run, the server's own words are the half of the story
-  // the browser's error message cannot carry. See `serverLog`.
+  // the browser's error message cannot carry. See `serverOutput`.
   const said = serverOutput()
   if (said) console.error(said)
   process.exit(1)

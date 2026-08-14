@@ -196,6 +196,44 @@ describe("§6.1 no horizontal scroll", () => {
   })
 })
 
+describe("§6.1 what the two-line rule counts as a line", () => {
+  const AUDIT = stripComments(readFileSync(join(process.cwd(), "scripts/adapt_audit.mjs"), "utf8"))
+
+  /*
+   * P7.1. The rule collapses a range's client rects into lines, because an
+   * inline icon beside a label produces two rects on one line. It did that by
+   * bucketing on `Math.round(r.top)` — which is an equality on the top edge,
+   * and an icon vertically centred against text does not share the text's top.
+   * A 14px icon on a 20px line box sits ~3px lower and landed in its own
+   * bucket, so every icon-bearing link counted as two lines.
+   *
+   * Latent until this phase replaced fourteen `"→"` characters (text, which
+   * does share the run's top) with real icons, at which point the sweep
+   * reported 35 findings that were all a single line on screen — and three
+   * product "fixes" were written against them before the gate was suspected.
+   *
+   * Measured in Chromium rather than reasoned about, with the old and new
+   * grouping side by side on the same fixtures:
+   *
+   *   | fixture                              | old | fixed |
+   *   |--------------------------------------|-----|-------|
+   *   | label + 14px inline icon, one line   |  2  |   1   |
+   *   | label + 28px inline icon, one line   |  2  |   1   |
+   *   | long label wrapping to four lines    |  4  |   4   |
+   *   | wrapping label that also has an icon |  3  |   3   |
+   *
+   * So the fix removes the false positives and keeps every true one, including
+   * the case that has both. This pins the shape, because the naive form is the
+   * one somebody will reach for again: it is shorter and it reads correctly.
+   */
+  it("groups rects into lines by vertical overlap, not by an equal top edge", () => {
+    expect(AUDIT).not.toMatch(/new Set\(\s*lines\.map\(\s*\(?r\)?\s*=>\s*Math\.round\(r\.top\)/)
+    // Midpoint containment: the property that makes it invariant to icon height.
+    expect(AUDIT).toMatch(/const mid = r\.top \+ r\.height \/ 2/)
+    expect(AUDIT).toMatch(/mid >= existing\.top && mid <= existing\.bottom/)
+  })
+})
+
 describe("§6.1 what the touch gate measures", () => {
   const AUDIT = stripComments(readFileSync(join(process.cwd(), "scripts/adapt_audit.mjs"), "utf8"))
 
@@ -428,7 +466,7 @@ describe("§6.1 the gate and the registry agree on where the server is", () => {
     ]) {
       const source = stripComments(readFileSync(join(process.cwd(), script), "utf8"))
       expect(source, `${script} must import the shared guard`).toMatch(
-        /import \{ assertPortFree \} from "\.\/serve_guard\.mjs"/,
+        /import \{[^}]*\bassertPortFree\b[^}]*\} from "\.\/serve_guard\.mjs"/,
       )
       const guardAt = source.indexOf("await assertPortFree(")
       expect(guardAt, `${script} must call assertPortFree`).toBeGreaterThan(-1)
@@ -470,7 +508,28 @@ describe("§6.1 the gate and the registry agree on where the server is", () => {
    * flake.
    */
   it("keeps the server's own output for when it dies", () => {
-    expect(AUDIT).toMatch(/child\.stderr\.on\("data"/)
-    expect(AUDIT).toMatch(/child\.stdout\.on\("data"/)
+    /* P7.1: the draining moved into `startPreview`, which is where the spawn
+       now lives, so the property is asserted at its new home. It still has to
+       hold: a gate that discards the evidence of its own failure makes every
+       failure look like a flake. */
+    const GUARD = stripComments(readFileSync(join(process.cwd(), "scripts/serve_guard.mjs"), "utf8"))
+    expect(GUARD).toMatch(/child\.stderr\.on\("data"/)
+    expect(GUARD).toMatch(/child\.stdout\.on\("data"/)
+    expect(AUDIT).toMatch(/previewHandle\?\.log\(\)/)
+  })
+
+  /* P7.1: and the leak that produced the orphan in the first place. `npx vite`
+     makes vite a grandchild, so `kill()` on the handle killed the wrapper and
+     left the server holding the port until the machine restarted — measured
+     after a clean 25-minute run (PPID 1, elapsed equal to the run). Spawning
+     vite's own binary is what makes `stop()` mean what it says. */
+  it("spawns vite directly, so the process it can kill is the one holding the port", () => {
+    const GUARD = stripComments(readFileSync(join(process.cwd(), "scripts/serve_guard.mjs"), "utf8"))
+    expect(GUARD).toMatch(/node_modules", "\.bin", "vite"/)
+    expect(GUARD).not.toMatch(/spawn\(\s*"npx"/)
+    for (const script of ["scripts/adapt_audit.mjs", "scripts/gallery.mjs"]) {
+      const source = stripComments(readFileSync(join(process.cwd(), script), "utf8"))
+      expect(source, `${script} still shells out through npx`).not.toMatch(/spawn\(\s*\n?\s*"npx"/)
+    }
   })
 })

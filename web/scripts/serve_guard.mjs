@@ -34,6 +34,59 @@
  * divergent copies across six gates.
  */
 
+import { spawn } from "node:child_process"
+import path from "node:path"
+
+/*
+ * ── And where the orphan came from, which is the other half of the fix ─────
+ *
+ * The server that had been sitting on 4319 for an hour and forty minutes was
+ * not left there by hand. **Every one of these harnesses leaks its own preview
+ * server on every run.** They spawn `npx vite preview` and, in their `finally`,
+ * call `server.kill("SIGTERM")` — which kills `npx`. `npx` runs vite as a
+ * *child*, so vite survives, is reparented to init, and keeps the port for as
+ * long as the machine is up. Confirmed by measurement: after a 25-minute adapt
+ * run completed cleanly, `ss -ltnp` showed a `vite preview --port 4319` with
+ * PPID 1 and an elapsed time of exactly that run.
+ *
+ * This matters more now than it did an hour ago. Before `assertPortFree`, a
+ * leaked server made the *next* run silently wrong. With it, a leaked server
+ * makes the next run fail outright — so shipping the guard without this would
+ * have traded a quiet wrong answer for a gate that blocks every second run and
+ * looks like flakiness.
+ *
+ * `startPreview` therefore spawns vite's own binary rather than going through
+ * `npx`, so the process this code holds a handle to is the process holding the
+ * port, and `kill()` means what it says.
+ */
+
+/**
+ * Start `vite preview` on `port`, serving `dist/` from `cwd`.
+ *
+ * Returns the child plus a `stop()` that actually stops it, and a `log()` for
+ * the server's own output — kept rather than discarded, because a gate that
+ * throws away the evidence of its own failure makes every failure look like a
+ * flake (D6.10).
+ */
+export function startPreview(port, cwd) {
+  const bin = path.join(cwd, "node_modules", ".bin", "vite")
+  const child = spawn(bin, ["preview", "--port", String(port), "--strictPort", "--host", "127.0.0.1"], {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  const lines = []
+  child.stdout.on("data", (d) => lines.push(String(d)))
+  child.stderr.on("data", (d) => lines.push(String(d)))
+  return {
+    child,
+    log: () => lines.join(""),
+    stop: () => {
+      // No `npx` in between, so this is the process holding the port.
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM")
+    },
+  }
+}
+
 /**
  * Throw unless nothing is listening on `base`.
  *

@@ -29,13 +29,127 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      **6 COMPLETE.** 6.1-6.4 done; 6.5 (`strategic omissions`)
-                    5 of 5, committed `a20b6c8` with every gate green,
-                    including a full `adapt` re-run at **765 page-states across
-                    36 surfaces, 0 findings** (artifact committed at
-                    `reports/redesign/p6-adapt/findings.json`).
-CURRENT SURFACE:    Phase 6 is a sweep, not a surface.
-NEXT ACTION:        **Phase 7 (final QA and report).**
+CURRENT PHASE:      **7 IN PROGRESS.** 7.1 (full-product audit re-run and
+                    polish) is COMMITTED at `9955114`. 7.2 (before/after
+                    gallery), 7.3 (`BUILD/DESIGN-REPORT.md`) and 7.4 (final PR)
+                    remain. Phase 6 closed at `a20b6c8`.
+CURRENT SURFACE:    Phase 7 is a sweep, not a surface.
+NEXT ACTION:        **7.2, the before/after gallery.** `web/scripts/gallery.mjs`
+                    is written and unrun: it starts its own preview (the D6.10
+                    rule), captures 36 surfaces at 1440 and 375, and pairs each
+                    with the build-era corpus at
+                    `reports/phase-6/screens/<SPEC-ID>/`. That corpus is dated
+                    2026-08-12, the day before redesign Phase 0 opened at
+                    `ba0bf73`, so it IS the pre-redesign branch point §7.2 asks
+                    for, without rebuilding a stale tree and calling the result
+                    the past. **Its mobile width is 380 and ours is 375**; the
+                    gallery says so on its own page rather than labelling both
+                    "mobile". The 9 admin and misc surfaces have no before,
+                    because those screens did not exist (D4.10).
+
+                    **What 7.1 found, and why almost none of it was a screen.**
+                    Six of the seven findings were in gates, two of them in the
+                    gate that was fixed last session and one in that fix itself:
+
+                    - **The adapt gate counted an inline icon as a second
+                      line**, so the sweep after the arrow change reported **35
+                      two-line-clickable findings that were all one line on
+                      screen**. It collapsed a range's client rects by
+                      `Math.round(r.top)` — an equality on the top edge — and a
+                      14px icon centred against a 20px line box sits ~3px lower,
+                      so it bucketed alone. The rule's own comment names the
+                      case it failed to handle. Latent while every arrow was a
+                      `"→"` character, which does share its run's top.
+                      **Three product "fixes" were written against those
+                      findings before the gate was suspected, and all three are
+                      reverted** — real screens changed to satisfy a measurement
+                      error. Fixed by grouping on vertical overlap, verified in
+                      Chromium against both implementations: false positives 2→1
+                      and 2→1, true positives 4→4 and 3→3.
+                    - **The harnesses leak their own server on every run**,
+                      which is where the orphan above came from. They spawned
+                      `npx vite preview` and killed the handle they held, which
+                      is `npx`; vite is its child, survives, and is reparented
+                      to init. Measured after a clean 25-minute run: PPID 1,
+                      elapsed equal to the run. This had to ship with the guard,
+                      or the guard would block every second run and read as
+                      flakiness.
+
+                    - **B4 for the third time, now inside the guard written
+                      against it last session.** D6.10 added a check that reads
+                      the spawned server's exit code before believing a fetch,
+                      so the gate would refuse to measure a server it did not
+                      start. **It cannot fire.** With a squatter on the port and
+                      `--strictPort`, the imposter answers at **+164ms** while
+                      our own vite needs **+577ms** to fail its bind and exit;
+                      the poll checks the exit code first, finds `null`, and
+                      believes the stranger. Measured twice, not argued. Found
+                      by this phase's sweep adopting a `vite preview` **orphaned
+                      on 4319 for 1h40m** by the previous session and measuring
+                      36 surfaces against it silently. The bytes happened to be
+                      right (same `dist/` path, served from disk) — luck, not a
+                      guarantee. **The Phase 6.5 "765 page-states, 0 findings"
+                      ran while that same orphan held the port**, so it cannot
+                      claim to have measured its own server either. Fixed by
+                      checking the precondition *before* the spawn, where there
+                      is no race, in one shared `scripts/serve_guard.mjs` that
+                      all four harnesses call. **And the reason it survived: the
+                      pin asserted the guard's source text.** The old test
+                      checked that `server.exitCode !== null` appeared in the
+                      file. It did. It was unreachable. The replacement starts a
+                      real listener and asserts the refusal.
+
+                    - **The lexer six gates read the product through was
+                      partially blind.** `stripComments` treats `'` as opening a
+                      JS string wherever it appears, and in `.tsx` an apostrophe
+                      is also JSX text — this product's error idiom is
+                      "Couldn't load your classes". It opened a string that ran
+                      to the next stray apostrophe anywhere below, leaving that
+                      window uncommented-out and scanned as code. **25 of 125
+                      files**, measured before fixing. `a11yRules.test.ts`'s own
+                      header warns about this exact failure and had fixed it
+                      only for apostrophes *inside comments*, which blanking
+                      removes; the one in `Couldn't` is not in a comment. Now
+                      one shared `tests/unit/support/jsxSource.ts` (there were
+                      four divergent copies), and all 125 files lex cleanly.
+                      **Correcting it surfaced no hidden product defect** — say
+                      that plainly, the blindness was real and the code under it
+                      was clean.
+                    - **§9 Hard Gate 1 had no reader.** The mission names a
+                      human reviewer as the enforcer of the pre-emit stamp, so
+                      nothing mechanical checked it and two screens shipped
+                      unstamped under ledger rows reading DONE. D3 had already
+                      recorded the gap and handed it to a convention; the
+                      population that convention was meant to drain went **19 to
+                      33**. `hallmarkStamp.test.ts` now freezes the 33 so the
+                      list can only shrink.
+                    - **A `→` in a string cannot be mirrored.** Fourteen teacher
+                      labels ended in a literal arrow. `rtl:-scale-x-100`
+                      transforms a box and a character in a text node has no
+                      box, so a future `dir="rtl"` flip could not have repaired
+                      them — and `rtlSafety.test.ts` could not see them because
+                      it reads styles. The new tree-walking rule found **nine
+                      more `"← Back"` sites on its first run** that the hand
+                      sweep behind it had missed.
+                    - **`Grading.tsx` drew its pipeline in dingbats** while the
+                      kit's `ProcessingState` rendered the live run 100 lines
+                      below. `StageGlyph` is shared now and every state carries
+                      an accessible name; done, not-started and failed had been
+                      announced identically.
+
+                    Also closed: **audit finding M12**, the full-viewport
+                    centred auth hero, the one Phase-1 finding that survived the
+                    whole redesign because the P4.7 surface loop worked from its
+                    own three-item list. Fixing it found `ParentLogin.tsx`
+                    opening with "The frame is `AuthFrame`, shared with the
+                    password screen" above its own copy of that frame.
+
+                    Every other Phase-1 finding (C1-C6, M1-M11, M13, M14, N1,
+                    N2) was verified closed rather than assumed; each remaining
+                    grep hit is a comment recording the fix. **N3 (no offline
+                    state distinct from a generic error, in a PWA) is still
+                    open** and is the one audit finding this redesign did not
+                    close.
 
                     **D6.8 timed out unanswered and its default A is applied**
                     (sent ts 1786727791, due 1786731391, nine polls, no reply).

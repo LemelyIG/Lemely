@@ -36,13 +36,12 @@
  * a reader can check what they are looking at.
  */
 
-import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "playwright"
 import { SURFACES, SESSION, PROFILE, BASE, PORT } from "./capture_surface.mjs"
-import { assertPortFree } from "./serve_guard.mjs"
+import { assertPortFree, startPreview } from "./serve_guard.mjs"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const OUT = path.join(repoRoot, "reports", "phase-7", "gallery")
@@ -112,17 +111,13 @@ function chooseState(states) {
   return substantive ?? names[0]
 }
 
-const serverLog = []
+let previewHandle = null
 
+/* P7.1: `startPreview` spawns vite directly, so `stop()` reaches the process
+   holding the port. The `npx` form leaked a server on every run. */
 function serveDist() {
-  const child = spawn(
-    "npx",
-    ["vite", "preview", "--port", String(PORT), "--strictPort", "--host", "127.0.0.1"],
-    { cwd: path.join(repoRoot, "web"), stdio: ["ignore", "pipe", "pipe"] },
-  )
-  child.stdout.on("data", (d) => serverLog.push(String(d)))
-  child.stderr.on("data", (d) => serverLog.push(String(d)))
-  return child
+  previewHandle = startPreview(PORT, path.join(repoRoot, "web"))
+  return previewHandle.child
 }
 
 async function waitForServer(server, timeoutMs = 30_000) {
@@ -133,7 +128,7 @@ async function waitForServer(server, timeoutMs = 30_000) {
       throw new Error(
         `vite preview exited (code ${server.exitCode}) before answering on ${BASE}. ` +
           `Something else is holding port ${PORT}; this run will NOT capture a build ` +
-          `it did not make.\n${serverLog.join("")}`,
+          `it did not make.\n${previewHandle?.log() ?? ""}`,
       )
     }
     try {
@@ -144,7 +139,7 @@ async function waitForServer(server, timeoutMs = 30_000) {
     }
     await new Promise((r) => setTimeout(r, 300))
   }
-  throw new Error(`vite preview did not answer on ${BASE}\n${serverLog.join("")}`)
+  throw new Error(`vite preview did not answer on ${BASE}\n${previewHandle?.log() ?? ""}`)
 }
 
 async function main() {
@@ -228,7 +223,7 @@ async function main() {
     }
     await browser.close()
   } finally {
-    server.kill("SIGTERM")
+    previewHandle?.stop()
   }
 
   fs.writeFileSync(path.join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8")
