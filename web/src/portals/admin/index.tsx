@@ -188,14 +188,14 @@ function SidebarFooter({ lane }: { lane: AdminLane }) {
       {lane === "school" ? (
         <Link
           to="/teacher"
-          className="text-body-sm text-ink-faint px-0.5 hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="text-body-sm text-ink-faint px-0.5 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
           Teaching tools: marking, review, announcements &rarr;
         </Link>
       ) : null}
       <Link
         to="/settings/devices"
-        className="text-body-sm text-ink-faint px-0.5 hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="text-body-sm text-ink-faint px-0.5 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
         Account, devices &amp; notifications &rarr;
       </Link>

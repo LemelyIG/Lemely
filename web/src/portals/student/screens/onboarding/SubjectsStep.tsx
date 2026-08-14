@@ -123,7 +123,7 @@ export function SubjectsStep({
                 type="button"
                 aria-pressed={selected}
                 onClick={() => onToggleSubject(subject.code)}
-                className="flex min-h-11 w-full cursor-pointer items-center gap-3 p-5 text-start hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className="flex min-h-11 w-full cursor-pointer items-center gap-3 p-5 text-start transition-colors hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
                 <span
                   aria-hidden="true"

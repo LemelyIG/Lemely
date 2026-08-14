@@ -164,3 +164,65 @@ describe("motion defaults (DESIGN.md §9.1, §3.2 item 14)", () => {
     expect([...new Set(offences)]).toEqual([])
   })
 })
+
+/* ── Reduced motion (P5.4, DESIGN.md §9.4) ───────────────────────────────── */
+
+/**
+ * The reduced-motion audit, as a gate.
+ *
+ * `index.css` carries a global `prefers-reduced-motion` block that flattens
+ * every CSS animation and transition in the product, which covers the great
+ * majority of motion here — every `transition-*` utility, every `@keyframes`
+ * (`lm-pop`, `lm-confetti`, `lm-screen`), and CSS smooth scrolling.
+ *
+ * **What it cannot cover is motion driven from JavaScript**, and P5.4 found one
+ * live instance. `scroll-behavior: auto !important` looks like it settles
+ * smooth scrolling for good, but per CSSOM View a `behavior` passed explicitly
+ * to `scrollIntoView`/`scrollTo` takes precedence over the CSS property —
+ * `"auto"` is the value that defers to it. So the landing page's secondary CTA
+ * scrolled a reader who had asked for no motion across the entire page, with an
+ * `!important` rule sitting right there appearing to prevent it. That is a
+ * reassuring-looking rule that does nothing, which is the shape this build
+ * keeps finding.
+ *
+ * The other JS motion in the product reads the query itself and is fine:
+ * `Reveal` (at mount, deliberately), `useCountUp` and `Flourish` (in
+ * `lib/celebration.ts`), and `useChartAnimation` (live, since a chart outlives
+ * a scroll entry). The two other `requestAnimationFrame` call sites, in `Modal`
+ * and `NavDrawer`, defer focus rather than animate anything.
+ */
+describe("reduced motion has a real path, including where CSS cannot reach", () => {
+  it("flattens every CSS animation and transition globally", () => {
+    const block = CSS.match(
+      /@media\s*\(\s*prefers-reduced-motion:\s*reduce\s*\)\s*\{[\s\S]*?\n\}/,
+    )
+    expect(block, "index.css must carry a global prefers-reduced-motion block").not.toBeNull()
+    const text = block![0]
+    expect(text).toMatch(/animation-duration:\s*0\.001ms\s*!important/)
+    expect(text).toMatch(/transition-duration:\s*0\.001ms\s*!important/)
+    expect(text).toMatch(/animation-iteration-count:\s*1\s*!important/)
+  })
+
+  it("guards every explicit smooth scroll, which the CSS block does not reach", () => {
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          walk(full)
+          continue
+        }
+        if (!/\.tsx?$/.test(entry.name)) continue
+        const source = stripComments(readFileSync(full, "utf8"))
+        if (!/behavior:\s*["']smooth["']/.test(source)) continue
+        // A literal "smooth" is only allowed alongside a reduced-motion read in
+        // the same file — the ternary form this product uses.
+        if (!/prefersReducedMotion/.test(source)) {
+          offenders.push(relative(process.cwd(), full).split("\\").join("/"))
+        }
+      }
+    }
+    walk(join(process.cwd(), "src"))
+    expect(offenders).toEqual([])
+  })
+})

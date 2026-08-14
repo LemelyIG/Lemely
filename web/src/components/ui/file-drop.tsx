@@ -197,7 +197,12 @@ export function FileDrop({
             size === "compact" ? "px-4 py-4" : "px-6 py-8",
             "peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2",
             "peer-focus-visible:outline-focus-ring",
-            locked ? "cursor-not-allowed" : "cursor-pointer",
+            // §9.2's press. Only when the control can actually be pressed: a
+            // locked target that springs back would be telling the reader it
+            // accepted a tap it is going to ignore.
+            locked
+              ? "cursor-not-allowed"
+              : "cursor-pointer transition-transform active:scale-[0.98]",
           )}
         >
           {file ? (

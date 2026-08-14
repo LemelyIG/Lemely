@@ -408,7 +408,7 @@ function StepContent({
                 key={s}
                 type="button"
                 onClick={() => addTopic(s)}
-                className="border border-dashed border-rule rounded-md px-3 py-1 text-body-sm text-ink-faint hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className="border border-dashed border-rule rounded-md px-3 py-1 text-body-sm text-ink-faint transition-colors hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
                 + {s}
               </button>
@@ -604,7 +604,7 @@ function StepPool({
                 onClick={() => setPoolSource(opt.value)}
                 className={cn(
                   "flex flex-col items-start gap-0.5 text-start border bg-paper-raised rounded-md px-4 py-3 cursor-pointer disabled:cursor-not-allowed",
-                  on ? "border-accent" : "border-rule hover:bg-paper-sunk",
+                  on ? "border-accent" : "border-rule transition-colors hover:bg-paper-sunk",
                 )}
               >
                 <span className="text-body-md text-ink">{opt.label}</span>
@@ -764,7 +764,7 @@ function StepPreview({
           <button
             type="button"
             onClick={() => setShowRemoved((v) => !v)}
-            className="text-body-sm text-ink-faint hover:text-ink bg-transparent border-0 p-0 cursor-pointer"
+            className="text-body-sm text-ink-faint transition-colors hover:text-ink bg-transparent border-0 p-0 cursor-pointer"
           >
             {showRemoved ? "Hide" : "Show"} {removed.length} removed question
             {removed.length === 1 ? "" : "s"} (kept for audit, not part of the quiz)
@@ -1074,7 +1074,7 @@ export function QuizBuilder() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <Link to="/teacher/quizzes" className="text-body-sm text-ink-faint hover:text-ink w-fit">
+        <Link to="/teacher/quizzes" className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit">
           ← All quizzes
         </Link>
         <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">

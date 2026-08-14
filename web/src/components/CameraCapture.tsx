@@ -216,7 +216,7 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
             type="button"
             onClick={() => removePage(page.id)}
             aria-label={`Remove page ${i + 1}`}
-            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-accent-on flex items-center justify-center cursor-pointer hover:bg-ink-hover"
+            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-accent-on flex items-center justify-center cursor-pointer transition-colors hover:bg-ink-hover"
           >
             <Trash size={11} weight="bold" />
           </button>

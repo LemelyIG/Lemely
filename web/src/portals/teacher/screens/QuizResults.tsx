@@ -421,7 +421,7 @@ export function QuizResults() {
           </Button>
           <Link
             to={`/teacher/quizzes/${quizId}?step=6`}
-            className="text-body-sm text-ink-faint no-underline hover:text-ink"
+            className="text-body-sm text-ink-faint no-underline transition-colors hover:text-ink"
           >
             Back to the quiz
           </Link>

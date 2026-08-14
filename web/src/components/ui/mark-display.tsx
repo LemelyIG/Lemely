@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
+import { CountUp } from "./celebration"
 
 /*
  * C-2 Mark display. "58 / 80" plus percentage, in the two scales the product
@@ -28,6 +29,25 @@ export interface MarkDisplayProps extends Omit<HTMLAttributes<HTMLDivElement>, "
   awarded: number
   available: number
   size?: "hero" | "inline"
+  /**
+   * Count the mark up from zero as it lands — §9.3's "marked-paper result
+   * reveal", the one moment in this product where a number genuinely arrives
+   * while the reader is watching it.
+   *
+   * **Only ever true on the live marking path.** A student who opens the same
+   * paper again from their history is looking at a mark that has been true
+   * since they closed the tab, and animating it there would stage an event
+   * that already happened. `PaperResult` passes this from its `live` flag and
+   * nowhere else.
+   *
+   * **There is deliberately no flourish here, at any mark.** Confetti would
+   * require the product to decide a mark is good, and it has no honest basis
+   * for that: a threshold would mean its absence reads as disappointment, and
+   * §9.3 rules celebration out on a dropped mark outright. The count-up is
+   * legible drama for a number the student has been waiting for, not a verdict
+   * on it. Hero size only — an inline mark in a history row is not an arrival.
+   */
+  reveal?: boolean
   showPercent?: boolean
 }
 
@@ -36,6 +56,7 @@ export function MarkDisplay({
   available,
   size = "inline",
   showPercent = true,
+  reveal = false,
   className,
   ...props
 }: MarkDisplayProps) {
@@ -48,7 +69,9 @@ export function MarkDisplay({
         aria-label={`${awarded} out of ${available} marks, ${pct} percent`}
         {...props}
       >
-        <span className="text-data-lg text-ink">{awarded}</span>
+        <span className="text-data-lg text-ink">
+          {reveal ? <CountUp value={awarded} from={0} /> : awarded}
+        </span>
         <span className="text-data-md text-ink-faint">/ {available}</span>
         {showPercent && (
           // `ms-1`, not `ml-1`: the percentage trails the mark and must stay

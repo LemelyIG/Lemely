@@ -411,7 +411,7 @@ export function ReviewItem() {
         <button
           type="button"
           onClick={goToQueue}
-          className="text-body-sm text-ink-faint hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
           ← Back to queue
         </button>

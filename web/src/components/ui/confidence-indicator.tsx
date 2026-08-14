@@ -135,7 +135,7 @@ export function ConfidenceIndicatorSummary({
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
           aria-label="What does confidence mean?"
-          className="ms-auto flex-none text-t3 hover:text-t2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded-full"
+          className="ms-auto flex-none text-t3 transition-colors hover:text-t2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded-full"
         >
           <Info className="w-4 h-4" aria-hidden />
         </button>

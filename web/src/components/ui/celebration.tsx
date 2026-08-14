@@ -46,14 +46,27 @@ const COUNT_UP_MS = 900 // --dur-celebrate
  * the start, so a second award landing during the first one's animation reads
  * as one continuous climb.
  *
- * A first observation never animates. There is no honest "from" for it — the
- * student's total did not just go from zero to 1,180, that is simply what it
- * has been since before this screen mounted, and animating it would stage a
- * gain that did not happen on this visit.
+ * A first observation never animates *unless the caller supplies `from`*. By
+ * default there is no honest origin for one — the student's total did not just
+ * go from zero to 1,180, that is simply what it has been since before this
+ * screen mounted, and animating it would stage a gain that did not happen on
+ * this visit.
+ *
+ * **`from` is the deliberate exception, and it has exactly one honest use.**
+ * P5.2 needed §9.3's "marked-paper result reveal", where the value genuinely
+ * did arrive while the student watched: they uploaded a script, waited through
+ * the marking, and the mark went from unknown to 63 in front of them. That is
+ * an event, not a total that was already true. It is gated on the *live* result
+ * path for exactly that reason — opening the same paper later from the history
+ * table is the "already true since yesterday" case this rule exists for, and it
+ * does not pass `from`.
+ *
+ * Do not reach for `from` to make a number feel livelier. If the value did not
+ * change while this reader was looking at it, animating it is a small lie.
  */
-export function useCountUp(target: number): number {
-  const [displayed, setDisplayed] = useState(target)
-  const previous = useRef<number | null>(null)
+export function useCountUp(target: number, from?: number): number {
+  const [displayed, setDisplayed] = useState(() => from ?? target)
+  const previous = useRef<number | null>(from ?? null)
   const frame = useRef<number | null>(null)
 
   useEffect(() => {
@@ -89,6 +102,14 @@ export function useCountUp(target: number): number {
 
 export interface CountUpProps extends Omit<HTMLAttributes<HTMLSpanElement>, "children"> {
   value: number
+  /**
+   * An explicit starting value, so the very first render animates.
+   *
+   * Only for a value that genuinely arrived while this reader watched. See
+   * `useCountUp`'s docstring — the default (no animation on first observation)
+   * is the honest behaviour and this is the narrow exception to it.
+   */
+  from?: number
   /** Rendered around the number, e.g. a thousands separator format. */
   format?: (value: number) => string
 }
@@ -100,8 +121,8 @@ export interface CountUpProps extends Omit<HTMLAttributes<HTMLSpanElement>, "chi
  * screen reader should hear the number the student earned, once, not a
  * transcript of the animation.
  */
-export function CountUp({ value, format, className, ...props }: CountUpProps) {
-  const displayed = useCountUp(value)
+export function CountUp({ value, from, format, className, ...props }: CountUpProps) {
+  const displayed = useCountUp(value, from)
   const render = format ?? ((n: number) => n.toLocaleString())
   return (
     <span className={cn("tabular-nums", className)} {...props}>

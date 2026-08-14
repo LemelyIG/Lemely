@@ -166,7 +166,11 @@ export function TabsList({ tabs, label, className }: TabsListProps) {
             disabled={tab.disabled}
             onClick={() => !tab.disabled && setValue(tab.value)}
             className={cn(
-              "relative -mb-px shrink-0 px-3 py-2.5 text-label transition-colors",
+              "relative -mb-px shrink-0 px-3 py-2.5 text-label",
+              // §9.2's press, which this control did not have: a tab is a real
+              // `<button>` and the only thing that told you it had registered
+              // the tap was the panel changing underneath.
+              "transition-[color,transform] active:scale-[0.98]",
               "disabled:pointer-events-none disabled:opacity-50",
               selected
                 ? "border-b-2 border-accent text-ink"

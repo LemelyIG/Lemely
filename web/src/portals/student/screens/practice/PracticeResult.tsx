@@ -1,5 +1,6 @@
-import { useNavigate, useParams } from "react-router-dom"
+import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
+import { CountUp } from "@/components/ui/celebration"
 import { Card, CardBody } from "@/components/ui/card"
 import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
@@ -39,8 +40,25 @@ import { confidenceBandTier, practiceMarkState, practiceResultView } from "./pra
  *      result, one screen along: the number a student opens this page to read
  *      was set in the reading face.
  */
+/**
+ * True when `PracticeSet` navigated here on submit, rather than the student
+ * opening this result again from somewhere else.
+ *
+ * Narrowed rather than cast: `location.state` is `unknown` and arrives from the
+ * history entry, so it survives a reload and can be anything at all.
+ */
+function isJustSubmitted(state: unknown): boolean {
+  return (
+    typeof state === "object" &&
+    state !== null &&
+    (state as { justSubmitted?: unknown }).justSubmitted === true
+  )
+}
+
 export function PracticeResult() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const justSubmitted = isJustSubmitted(location.state)
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
   const { data, isPending, isError, error, refetch } = usePracticeResult(assignmentId)
 
@@ -127,7 +145,14 @@ export function PracticeResult() {
             score"). This is the figure the screen exists to deliver. */}
         <p className="flex items-baseline gap-2">
           <span className="text-data-lg text-ink">
-            {awardedMarks}/{maximumMarks}
+            {/* §9.3's result reveal, on the same rule the paper result uses:
+                the mark counts up only when it arrived while the student was
+                waiting for it. Opening this set again later shows the number
+                at once, because by then it is simply true. No flourish at any
+                mark — see `MarkDisplay`'s `reveal` for why the product has no
+                honest basis for deciding a mark deserves confetti. */}
+            {justSubmitted ? <CountUp value={awardedMarks} from={0} /> : awardedMarks}/
+            {maximumMarks}
           </span>
           <span className="text-body-lg text-ink-muted">
             mark{maximumMarks === 1 ? "" : "s"}

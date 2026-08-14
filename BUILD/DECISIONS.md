@@ -8435,3 +8435,132 @@ capture of a flat line would not test the panel's actual job. Writing the
 fixtures found one more: the invented grade ladder had nine rungs and
 `GRADE_ORDER` has seven. A fixture that does not match the wire is a fixture
 that can be wrong and look like a bug.
+
+---
+
+## D5.2 — Redesign Phase 5.1/5.2/5.4 (motion): the rule stated in units that nothing implemented, and an `!important` that did nothing
+
+Phase 5's three remaining parts. Four findings, three gates, and one scope
+decision stated rather than taken quietly.
+
+### 26 elements changed colour in a single frame
+
+DESIGN.md §9.2 is unusually specific: "Press: `scale(0.98)` over `dur-fast`.
+Hover: a colour or 1px translate shift over `dur-instant`." Twenty-six elements
+across the teacher portal, the admin portal, onboarding and four kit components
+changed colour on hover with **no `transition-*` utility at all**, so they
+snapped. There is no global `a { transition }` rule, and P4.6's
+`--default-transition-duration`/`-timing-function` only reach an element that
+already carries a transition utility — they made the *idiom* correct, not its
+absence.
+
+This is invisible from every automated direction and it is worth naming why:
+every class is real and resolves (`utilityExistence` is happy), every value is a
+token (the token gate is happy), the easing is never the banned one because
+there is no easing at all (`motionDefaults` is happy), and a screenshot of a
+hover state is pixel-identical whether it arrived over 120ms or over 0ms. Only
+the frames *between* two states are wrong, and nothing looked at those.
+
+So the deliverable is `tests/unit/hoverTransition.test.ts`, not 26 edits. The
+check parses **balanced class-expression groups** rather than lines, because the
+naive version reported `Button` as broken: its base holds the transition and its
+variants hold the hovers, twelve lines apart, entirely correctly. It also
+ignores hovers nothing can animate (`hover:underline`, `hover:cursor-pointer`),
+since demanding a transition for those is noise. One exemption, named with its
+reason: `nav-shells.tsx`, a build-era shell with no call site, due for Phase 6's
+compat closeout.
+
+### The result reveal needed the count-up to do the thing it refuses to do
+
+§9.3 lists "the marked-paper result reveal" in the celebration register, and
+`useCountUp` — correctly — refuses to animate a first observation, because there
+is no honest origin for one: a student's XP total did not just climb from zero,
+that is simply what it has been since before the screen mounted.
+
+But a marked paper is the one place where the value genuinely *did* arrive while
+the reader watched. They uploaded a script, waited through the marking, and the
+mark went from unknown to 63 in front of them. So `CountUp` gained an explicit
+`from`, and the honesty lives entirely in **which call sites may pass it**:
+
+- `PaperResult` reveals on its `live` path (the `location.state` `CorrectPaper`
+  sets right after marking) and **not** on the path that fetches a paper by id
+  from the history table, which is exactly the "already true since yesterday"
+  case the default exists for.
+- `PracticeResult` could not tell the two apart at all — it is always fetched by
+  `assignmentId` — so `PracticeSet` now navigates with `justSubmitted: true` and
+  the screen reveals only on that. A screen that cannot distinguish a result the
+  student waited for from one they reopened must not animate either.
+
+**No flourish, at any mark, deliberately.** Confetti would require the product
+to decide a mark is good, and it has no honest basis for that: any threshold
+makes its *absence* read as disappointment, and §9.3 rules celebration out on a
+dropped mark outright. A count-up is legible drama for a number the student has
+been waiting for; it is not a verdict on it.
+
+`celebration.test.ts` gates the whole shape: which path reveals, that the reveal
+is hero-only, that no unlisted file passes `from`, and — the part that makes the
+allowlist honest — that each listed file actually *gates* on evidence rather
+than revealing unconditionally. Verified by inversion on all four.
+
+### "A correct answer" has no honest moment in this product
+
+§9.3's fifth celebration is a correct answer, and it is not implemented, because
+nowhere does this product tell a student "that one is right" at the moment they
+answer. Every assessment path is submit-then-mark: practice sets submit and
+navigate, the placement test is a diagnostic, and flashcard review is
+**self-graded** (again/hard/good/easy), so celebrating there would be
+celebrating the student's own self-report. The celebration attaches to the
+result instead, which is what was built. Recorded rather than faked, same
+judgement as D4.4's leaderboard climb — which remains impossible, because no
+`previousRank` is on the wire and inventing the movement is still refused.
+
+### An `!important` that looked like it covered the case
+
+`index.css` carries a global `prefers-reduced-motion` block that flattens every
+CSS animation and transition, including `scroll-behavior: auto !important`. That
+rule appears to settle smooth scrolling permanently. It does not: per CSSOM
+View, a `behavior` passed **explicitly** to `scrollIntoView` takes precedence
+over the CSS property, and `"auto"` is the value that defers to it. The landing
+page's secondary CTA passed `"smooth"` literally, so a reader who had asked for
+no motion was scrolled across the whole page anyway — with an `!important` rule
+sitting directly above it appearing to prevent exactly that.
+
+`motionDefaults.test.ts` now asserts the global block's three declarations and
+that no source passes a literal `behavior: "smooth"` without reading
+`prefersReducedMotion`. Both verified by inversion.
+
+The rest of the JS motion audit came back clean, and is worth recording so the
+next pass does not redo it: `Reveal` reads the query at mount (deliberately —
+it must never leave an element at `opacity-0` if the observer never fires),
+`useCountUp` and `Flourish` read it per run, `useChartAnimation` reads it *live*
+because a chart outlives a scroll entry, and the only other two
+`requestAnimationFrame` call sites — `Modal` and `NavDrawer` — defer focus
+rather than animate.
+
+### Scroll entries stayed in the Persuade lane, and that is a decision
+
+REDESIGN-MISSION §5.1 says "sweep every surface with the motion spec: scroll
+entries with stagger". Taken literally that means fade-up-on-scroll on every
+dashboard, and it is **not** what shipped. `Reveal` remains scoped to the
+marketing lane.
+
+The reasoning, stated so it can be overruled rather than discovered later:
+DESIGN.md §9 opens with "Baseline is **invisible**. The user should feel the
+interface is responsive, not watch it perform"; §2's lane model separates
+Persuade from Operate; impeccable's Operate mode ranks scanability and task
+speed above expression; and the project's named north star, Notion, has
+essentially no scroll-entry animation inside the product. Content that fades in
+as you scroll delays reading, on a product whose users are revising. Every
+surface was considered against the spec; the Operate and Read lanes were
+excluded on purpose rather than skipped.
+
+If the intent was literal, this is one prop on a handful of screens and is
+cheap to reverse.
+
+### Press feedback, three controls
+
+`Tabs`, `Stepper` and `FileDrop` are real press targets that had no press
+state — on a tab, the only thing confirming a tap was the panel changing
+underneath. All three now carry §9.2's `scale(0.98)`. `FileDrop` takes it only
+when unlocked: a locked target that springs back tells the reader it accepted a
+tap it is going to ignore.

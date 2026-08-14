@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from "node:fs"
+import { join, relative as pathRelative } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   countUpProgress,
@@ -193,5 +195,106 @@ describe("streak milestones", () => {
     expect(lastStreakMilestone(149)).toBe(100)
     expect(lastStreakMilestone(150)).toBe(150)
     expect(lastStreakMilestone(199)).toBe(150)
+  })
+})
+
+/* ── The reveal exception (P5.2) ─────────────────────────────────────────── */
+
+/**
+ * `CountUp`'s `from` prop makes a value animate on its *first* observation,
+ * which the default deliberately refuses. It exists for exactly one thing:
+ * §9.3's marked-paper result reveal, where the mark genuinely arrived while the
+ * student watched their script being marked.
+ *
+ * These are source-level assertions rather than render tests because what
+ * matters is not that a number animates — it is *which* number, on *which
+ * path*. A reveal on the history route would animate a mark that has been true
+ * since the student last closed the tab, and no render test of a single
+ * component can see that distinction; it lives in which call site passes the
+ * prop.
+ */
+describe("the count-up reveal stays on the live marking path", () => {
+  const ROOT = join(import.meta.dirname, "..", "..")
+  const read = (p: string) => readFileSync(join(ROOT, p), "utf8")
+
+  it("reveals the live result and not the one opened from history", () => {
+    const src = read("src/portals/student/screens/PaperResult.tsx")
+    // The live path: `location.state` set by `CorrectPaper` right after marking.
+    expect(src).toMatch(/<ResultHeader\s+res=\{live\}\s+reveal\s*\/>/)
+    // The history path: fetched by paper id, and must not animate.
+    expect(src).toMatch(/<ResultHeader\s+res=\{data\}\s*\/>/)
+    expect(src).not.toMatch(/<ResultHeader\s+res=\{data\}\s+reveal/)
+  })
+
+  it("counts up only the hero mark, never an inline one", () => {
+    const src = read("src/components/ui/mark-display.tsx")
+    // The `reveal` branch sits inside the `size === "hero"` return, so an
+    // inline mark in a history row cannot animate even if a caller asks.
+    const heroStart = src.indexOf('if (size === "hero")')
+    expect(heroStart).toBeGreaterThan(-1)
+    const revealAt = src.indexOf("reveal ? <CountUp")
+    expect(revealAt).toBeGreaterThan(heroStart)
+  })
+
+  /**
+   * Every file allowed to opt a first observation into animating, and why.
+   *
+   * Both are the same moment: a mark that arrived while the student was
+   * waiting for it, on a path that can prove the student was waiting. Both gate
+   * on that proof rather than on the screen they are rendered by, which is the
+   * distinction that makes the animation honest.
+   *
+   * A third entry needs the same proof. "It looks nicer" is not it.
+   */
+  const REVEAL_CALL_SITES = new Map<string, string>([
+    [
+      "src/components/ui/mark-display.tsx",
+      "the paper result's hero mark, gated on PaperResult's `live` state",
+    ],
+    [
+      "src/portals/student/screens/practice/PracticeResult.tsx",
+      "the practice set's mark, gated on PracticeSet's `justSubmitted` state",
+    ],
+  ])
+
+  it("has no unlisted call site opting a first observation into animating", () => {
+    /*
+     * The guard that matters. `from` is a narrow, justified exception, and the
+     * failure mode is that it quietly becomes the house style — every figure in
+     * the product spinning up from zero on arrival, which is the slot-machine
+     * register §9.3 exists to keep out.
+     */
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (/\.tsx$/.test(entry.name)) {
+          const relative = pathRelative(ROOT, full).split("\\").join("/")
+          if (REVEAL_CALL_SITES.has(relative)) continue
+          if (relative === "src/components/ui/celebration.tsx") continue
+          if (/<CountUp[^>]*\bfrom=/.test(readFileSync(full, "utf8"))) {
+            offenders.push(relative)
+          }
+        }
+      }
+    }
+    walk(join(ROOT, "src"))
+    expect(offenders).toEqual([])
+  })
+
+  it("gates each listed call site on evidence the student was waiting", () => {
+    // The allowlist is only honest if each entry actually checks something.
+    // A file that reveals unconditionally would sit on the list and pass the
+    // test above while animating a mark opened from history.
+    const paper = read("src/components/ui/mark-display.tsx")
+    expect(paper).toMatch(/reveal \? <CountUp/)
+
+    const practice = read("src/portals/student/screens/practice/PracticeResult.tsx")
+    expect(practice).toMatch(/justSubmitted \? <CountUp/)
+    // And the state it reads must actually be set by the submit path.
+    expect(read("src/portals/student/screens/practice/PracticeSet.tsx")).toMatch(
+      /justSubmitted: true/,
+    )
   })
 })

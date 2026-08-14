@@ -507,7 +507,7 @@ export function Review() {
                           </Link>
                           <Link
                             to={`/teacher/classes/${item.classId}`}
-                            className="text-body-sm text-ink-faint hover:text-ink hover:underline block truncate"
+                            className="text-body-sm text-ink-faint transition-colors hover:text-ink hover:underline block truncate"
                           >
                             {item.className}
                           </Link>

@@ -99,7 +99,7 @@ export function WeaknessChip({
   const interactive = Boolean(onClick)
   const commonClassName = cn(
     weaknessChipVariants({ variant }),
-    interactive && "cursor-pointer hover:bg-paper-sunk active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+    interactive && "cursor-pointer transition-colors hover:bg-paper-sunk active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
     variant === "inline" && interactive && "hover:bg-paper-raised",
     className,
   )

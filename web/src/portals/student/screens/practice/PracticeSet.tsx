@@ -16,7 +16,18 @@ export function PracticeSet() {
   return (
     <QuizTaker
       assignmentId={assignmentId}
-      onSubmitted={() => navigate(`/student/practice/result/${assignmentId}`)}
+      onSubmitted={() =>
+        /*
+         * `justSubmitted` is what lets S-21 tell a result the student just
+         * waited for apart from the same result opened again later. Without it
+         * the two are indistinguishable on arrival, and a screen that cannot
+         * tell them apart must not animate either (DESIGN.md §9.3, and
+         * `useCountUp`'s `from` docstring).
+         */
+        navigate(`/student/practice/result/${assignmentId}`, {
+          state: { justSubmitted: true },
+        })
+      }
       onExit={() => navigate("/student")}
     />
   )

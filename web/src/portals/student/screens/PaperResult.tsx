@@ -129,7 +129,7 @@ function ResultScreen({
   )
 }
 
-function ResultHeader({ res }: { res: Result }) {
+function ResultHeader({ res, reveal = false }: { res: Result; reveal?: boolean }) {
   return (
     <Card className="overflow-hidden">
       <div className="grid grid-result-cols max-tablet:grid-cols-1">
@@ -155,7 +155,7 @@ function ResultHeader({ res }: { res: Result }) {
           ) : null}
 
           <div className="mt-6 flex flex-wrap items-end gap-6">
-            <MarkDisplay awarded={res.awarded} available={res.max} size="hero" />
+            <MarkDisplay awarded={res.awarded} available={res.max} size="hero" reveal={reveal} />
             <GradeBadge grade={res.grade} size="hero" basis="predicted" />
           </div>
 
@@ -295,7 +295,7 @@ export function PaperResult() {
     const summary = confidenceSummaryOf(live.questions)
     return (
       <ResultScreen>
-        <ResultHeader res={live} />
+        <ResultHeader res={live} reveal />
         {live.questions.length > 0 ? (
           <ConfidenceIndicatorSummary
             confident={summary.confident}

@@ -59,7 +59,7 @@ function JoinCodeChip({ code }: { code: string }) {
     <button
       type="button"
       onClick={copy}
-      className="inline-flex items-center gap-2 border border-rule bg-paper-raised rounded-lg px-3 py-1.5 text-data-md tracking-[0.06em] hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      className="inline-flex items-center gap-2 border border-rule bg-paper-raised rounded-lg px-3 py-1.5 text-data-md tracking-[0.06em] transition-colors hover:bg-paper-sunk cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       title="Copy join code"
     >
       {code}
@@ -100,7 +100,7 @@ export function ClassDetailLayout() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <Link to="/teacher/classes" className="text-body-sm text-ink-faint hover:text-ink w-fit">
+        <Link to="/teacher/classes" className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit">
           ← All classes
         </Link>
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
@@ -158,7 +158,7 @@ export function ClassDetailLayout() {
               "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
               isActive
                 ? "border-accent text-ink font-medium"
-                : "border-transparent text-ink-muted hover:text-ink",
+                : "border-transparent text-ink-muted transition-colors hover:text-ink",
             )
           }
         >
@@ -171,7 +171,7 @@ export function ClassDetailLayout() {
               "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
               isActive
                 ? "border-accent text-ink font-medium"
-                : "border-transparent text-ink-muted hover:text-ink",
+                : "border-transparent text-ink-muted transition-colors hover:text-ink",
             )
           }
         >

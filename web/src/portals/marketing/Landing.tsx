@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Reveal } from "@/components/ui/reveal"
+import { prefersReducedMotion } from "@/lib/celebration"
 import {
   heroExample,
   landingClose,
@@ -161,9 +162,21 @@ export function Landing() {
                 variant="secondary"
                 size="lg"
                 onClick={() => {
-                  document
-                    .getElementById(SERVES_SECTION_ID)
-                    ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                  /*
+                   * The one piece of motion in this product that the global
+                   * reduced-motion block cannot reach (§9.4). `index.css` sets
+                   * `scroll-behavior: auto !important` under
+                   * `prefers-reduced-motion`, but a `behavior` passed
+                   * explicitly to `scrollIntoView` wins over the CSS property
+                   * by spec — `"auto"` is what defers to it. So an explicit
+                   * `"smooth"` here scrolled a reader who asked for no motion
+                   * across the whole page anyway, and the `!important` above
+                   * it looked like it was covering the case.
+                   */
+                  document.getElementById(SERVES_SECTION_ID)?.scrollIntoView({
+                    behavior: prefersReducedMotion() ? "auto" : "smooth",
+                    block: "start",
+                  })
                 }}
               >
                 {landingHero.secondaryCta}

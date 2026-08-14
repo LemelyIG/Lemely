@@ -155,7 +155,7 @@ function ClassesNavSection() {
             {data.classes.length > 5 ? (
               <Link
                 to="/teacher/classes"
-                className="px-2 py-[7px] text-body-sm text-ink-faint hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className="px-2 py-[7px] text-body-sm text-ink-faint transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
                 See all {data.classes.length} →
               </Link>
@@ -249,7 +249,7 @@ function SidebarFooter() {
           settings screens link to each other. P5.9 chunk D. */}
       <Link
         to="/settings/devices"
-        className="text-body-sm text-ink-faint px-0.5 hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="text-body-sm text-ink-faint px-0.5 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
         Account, devices &amp; notifications →
       </Link>
