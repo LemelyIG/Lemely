@@ -156,7 +156,17 @@ NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
                     own state note `2751a67`), still **no review decision**. The
                     completion ntfy was **not** re-sent.
 
-                    Eight sessions have now ended here. The queue is not empty
+                    **Session 14 (2026-08-15) built nothing.** Numbers only,
+                    each re-run rather than inherited: tree clean, level with
+                    `origin/redesign/study-surfaces` after an explicit `git
+                    fetch`, INBOX both items handled, all five blockers carry a
+                    `RESOLVED` status line, all eight phase-ledger rows DONE,
+                    inbound topic since 1786723759 returns an empty body. **PR
+                    #7 OPEN and MERGEABLE at 75 commits** (up one: session 13's
+                    own state note `6586445`), still **no review decision**. The
+                    completion ntfy was **not** re-sent.
+
+                    Nine sessions have now ended here. The queue is not empty
                     because a session failed to look; it is empty because the
                     five items below are the whole of what is left and none of
                     them is a build task. A session that keeps finding nothing is
