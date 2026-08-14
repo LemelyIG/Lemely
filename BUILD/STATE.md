@@ -29,40 +29,44 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      **7 IN PROGRESS.** 7.1 (audit re-run and polish) committed
-                    at `9955114`, `8a3d68a` and `dc7358f`. 7.2 (before/after
-                    gallery) committed at `42e2f99`. 7.3
-                    (`BUILD/DESIGN-REPORT.md`) is drafted and needs only the
-                    axe/Lighthouse numbers. 7.4 (final PR) remains. Phase 6
-                    closed at `a20b6c8`.
-CURRENT SURFACE:    Phase 7 is a sweep, not a surface.
-NEXT ACTION:        **Finish 7.3, then 7.4.**
+CURRENT PHASE:      **7 COMPLETE. THE REDESIGN MISSION IS COMPLETE.**
+                    7.1 at `9955114`/`8a3d68a`/`dc7358f`, 7.2 at `42e2f99`,
+                    7.3 and the audit close-out at `0edc804`. Pushed, and the
+                    final PR is open: **https://github.com/LemelyIG/Lemely/pull/7**
+                    (`redesign/study-surfaces` -> `main`, 67 commits).
+CURRENT SURFACE:    None. All seven phases are closed.
+NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
+                    is met; the PR is the handoff and awaits human review.
 
-                    `BUILD/DESIGN-REPORT.md` is written end to end with one
-                    placeholder left, `<!--AXE-->` in §5.3a, waiting on the
-                    41-route audit (`LEMELY_REPORT_DIR=reports/phase-7 npm run
-                    audit`, output at `/tmp/p7-audit.txt`, corpus at
-                    `reports/phase-7/`). If that run did not finish, say so in
-                    §5.3a and quote Phase 6.4's corpus with its date rather than
-                    leaving a blank or implying a fresh number.
+                    If a further session starts, the open items are not redesign
+                    tasks but the gaps §6 of `BUILD/DESIGN-REPORT.md` records,
+                    and every one of them needs a human decision or a credential
+                    rather than more building:
+                    - **No deployment of this code can send an SMS.**
+                      `deps.py` wires `MockSmsProvider()` unconditionally and it
+                      logs the code, on the only route a parent has in. Needs a
+                      gateway and credentials.
+                    - **No account-deletion path and no retention rule** exists
+                      anywhere in `lemely/`, in a product whose users are
+                      minors. Building one unattended is well beyond a footer
+                      link.
+                    - **D6.8 was defaulted, not answered**: `/data` ships and
+                      there is deliberately no ToS and no privacy policy.
+                      Reversing it is deleting two files and a route.
+                    - The **compat layer** survives in 10 kit components, 55
+                      call sites, none of them in a gate list.
+                    - **N3**, no offline state distinct from a generic error in
+                      a PWA, is the one Phase-1 audit finding the redesign did
+                      not close.
 
-                    Then 7.4: PR `redesign/study-surfaces` -> `main` (the
-                    mission says develop -> main; every redesign phase has
-                    landed on this branch, so the PR is from it), and the
-                    completion ntfy with the report and gallery.
-
-                    **Gate results on this tree, all green:** 765 page-states
-                    across 36 surfaces at 0 findings with the artifact committed
-                    (`reports/phase-7/adapt-findings.json`); 1,456 web unit
-                    tests; typecheck; lint 0 errors; check:copy 0; both builds;
-                    pre-commit all-files.
-
-                    **The gallery is at `reports/phase-7/gallery/index.html`**,
-                    35 surfaces at 1440 and 375, 26 with a before pair from the
-                    build-era corpus. The 9 without are the screens that did not
-                    exist (7 admin, 404, /data). Its mobile pair is **380 before
-                    and 375 after**, which the page states rather than
-                    relabelling both "mobile".
+                    Phase 7's gate results, all on this tree: adapt **765
+                    page-states / 36 surfaces / 0 findings** with the artifact
+                    committed; route audit **exit 0** with 73 axe route-states,
+                    **0 serious or critical**, 0 console errors, 0
+                    horizontal-scroll violations and 0 unreachable routes;
+                    1,456 web unit tests; typecheck; lint 0 errors; check:copy
+                    0; both builds; pre-commit all-files. Gallery at
+                    `reports/phase-7/gallery/index.html`.
 
                     **What 7.1 found, and why almost none of it was a screen.**
                     Six of the seven findings were in gates, two of them in the

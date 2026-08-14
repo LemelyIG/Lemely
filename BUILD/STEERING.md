@@ -459,3 +459,30 @@ described in D6.10.
 
 `LAST STEERING TS` unchanged at **1786723759** — a timeout is not an answer, and
 recording one as if it were would put a decision in the human's mouth.
+
+---
+
+## 2026-08-15 — Phase 7 closed; the redesign is complete
+
+**OUT** · title `REDESIGN COMPLETE` · priority high. Final PR:
+https://github.com/LemelyIG/Lemely/pull/7 (`redesign/study-surfaces` -> `main`,
+67 commits).
+
+No DECISION was raised this phase. Nothing Phase 7 found needed one: six of its
+seven findings were defects in the project's own gates, and the seventh (arrow
+characters that CSS cannot mirror) had an unambiguous fix. The polling continued
+at the phase boundary and between work units; the inbound topic has carried
+nothing since D6.7's answer (`VqpbRSelzmn9`, ts 1786723759), so `LAST STEERING
+TS` is unchanged.
+
+**One thing the human should know about the channel**, recorded because it
+nearly cost the phase its final deliverable: external DNS was down for roughly
+an hour in the middle of this session. `github.com` would not resolve, so the
+push and the PR were impossible, while the LAN ntfy topic kept working
+throughout. That is the inverse of B5's finding (where the shell died and took
+outbound ntfy with it) and it points the same way: **the reporting channel and
+the work channel fail independently, and neither one being up is evidence about
+the other.** The session kept working and retried; the network returned.
+
+**D6.8 remains defaulted rather than answered.** `/data` ships, no ToS, no
+privacy policy. It is reversible in one message.
