@@ -222,6 +222,46 @@ NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
                     note `f05902c`), still **no review decision**. The
                     completion ntfy was **not** re-sent.
 
+                    **Session 20 (2026-08-15) built nothing, and for the first
+                    time in fourteen quiet sessions one of the checks came back
+                    different. The steering channel is down.** Both ntfy polls
+                    failed to connect — `curl` exit 7, HTTP `000`, "Could not
+                    connect to server", not the empty `200` body that sessions
+                    7-19 recorded. Diagnosed rather than assumed: `home-server`
+                    still resolves (`127.0.1.1`), nothing is listening on port
+                    80, and `systemctl is-active ntfy` returns **`inactive`**.
+                    The service is stopped on the host; this is not the topic
+                    ageing out and not a sandbox block.
+
+                    **What that costs, and why it is worth a note in an
+                    otherwise empty session:** §10's inbound topic is how the
+                    human steers this build, and it cannot receive a reply right
+                    now. Worse in the outbound direction — `./nudge` and every
+                    DECISION/notice `curl` in this repo is a `curl -s` whose
+                    failure is silent, so a future session could send a DECISION
+                    request, poll its own timeout out, and apply a default
+                    believing the human declined to answer when the message was
+                    never delivered. D6.8 is precisely that shape and it did
+                    reach a live server; the next one would not. **Any session
+                    that sends an ntfy from here must check the exit code before
+                    trusting a timeout.** That is the same defect class this
+                    phase kept finding — a gate with no reader, a guard that
+                    cannot fire — arriving this time in the notification path.
+
+                    Not fixed: starting a system service is host
+                    administration, outside a build session's remit, and one
+                    `systemctl start ntfy` from the human restores it. Nothing
+                    was re-sent, and the completion ntfy was **not** re-sent
+                    (it would have failed silently if it had been).
+
+                    Everything else came back the same, each re-run rather than
+                    inherited: tree clean, level with
+                    `origin/redesign/study-surfaces` after an explicit `git
+                    fetch`, INBOX zero unhandled items, all five blockers carry a
+                    `RESOLVED` status line, all phase-ledger rows DONE. **PR #7
+                    OPEN and MERGEABLE at 81 commits** (up one: session 19's own
+                    state note `dce6356`), still **no review decision**.
+
                     Fourteen sessions have now ended here. The queue is not empty
                     because a session failed to look; it is empty because the
                     five items below are the whole of what is left and none of
