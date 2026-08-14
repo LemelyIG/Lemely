@@ -9,6 +9,7 @@ import { buttonVariants } from "@/components/ui/button"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { PortalNotFound } from "@/portals/misc/NotFound"
 import { XPStreak } from "@/components/ui/xp-streak"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
@@ -490,5 +491,13 @@ export const studentRoute: RouteObject = {
      */
     { path: "landing", element: <Navigate to="/landing" replace /> },
     { path: "directions", element: <Directions /> },
+    /*
+     * P4.10. Last, so it only matches what nothing above did. Before this, an
+     * unmatched path inside this portal fell through to the top-level `*` and
+     * the reader lost the sidebar, the header and the trail on a typo. See
+     * `portals/misc/NotFound.tsx` for why it is a separate component and not
+     * the standalone screen.
+     */
+    { path: "*", element: <PortalNotFound /> },
   ],
 }

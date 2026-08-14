@@ -8,6 +8,7 @@ import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { PortalNotFound } from "@/portals/misc/NotFound"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
 // `portals/student/index.tsx`. Only four screens here, but the parent portal
@@ -294,5 +295,9 @@ export const parentRoute: RouteObject = {
     { path: "children/:childId", element: <ChildOverview /> },
     { path: "children/:childId/subjects/:code", element: <SubjectDetail /> },
     { path: "children/:childId/weaknesses", element: <Weaknesses /> },
+    // P4.10. Last, so it only matches what nothing above did — an unmatched
+    // path in this portal used to fall to the top-level `*` and cost the
+    // reader the header and the child switcher. See `portals/misc/NotFound.tsx`.
+    { path: "*", element: <PortalNotFound /> },
   ],
 }

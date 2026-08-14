@@ -1,18 +1,29 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
 import { useState } from "react"
-import { Link } from "react-router-dom"
+import { DeviceMobile } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
+import { Chip } from "@/components/ui/chip"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { useAuth } from "@/lib/auth/AuthContext"
-import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { deviceTitle, lastActiveLabel } from "@/lib/devices"
 import { useDevices, useRevokeDevice } from "@/lib/hooks/useDeviceApi"
+import {
+  DEVICE_ALREADY_GONE,
+  settingsLoadFailureMessage,
+  settingsSaveFailureMessage,
+} from "@/lib/settingsOutcome"
+import { SettingsFrame } from "./SettingsFrame"
 
 /*
- * G-11 · Account & devices — the devices section.
+ * G-11 · Account and devices — the devices section, in the Study Notebook
+ * (P4.10).
  *
  * Role-agnostic by design: every account is subject to the same 3-device limit
  * (D1.11), so this route is reachable by all five roles rather than living
- * inside one portal.
+ * inside one portal. `SettingsFrame` carries the consequences of that; see its
+ * header.
  *
  * Scope, stated rather than implied: the UI spec's G-11 also lists profile,
  * password change, linked relationships, subscription summary and delete
@@ -24,130 +35,189 @@ import { useDevices, useRevokeDevice } from "@/lib/hooks/useDeviceApi"
  * (D5.12 §5). Each row shows what we actually hold — the browser's own
  * description of itself, with the raw string in `title`, and a coarse
  * last-active time.
+ *
+ * ── P4.10, and the finding that made this surface worth doing ──────────────
+ *
+ * **A sign-out that did not happen reported nothing at all.**
+ *
+ * `DELETE /me/devices/{id}` never raises. A device id that does not exist, is
+ * already revoked, or belongs to another account all answer `200 {removed:
+ * false}`, deliberately, so the route cannot be used to test whether an id
+ * exists on somebody else's account (`schemas_devices.py`). React-query
+ * therefore runs `onSuccess` for a sign-out that did not occur, the list
+ * invalidates, the row comes back, and before this pass the screen said
+ * nothing whatsoever.
+ *
+ * That is the same shape as surface 3's two deletes that could not fail out
+ * loud, but it lands somewhere worse: this is the one screen in the product a
+ * reader opens *because* they think somebody else is signed in to their
+ * account. "I pressed sign out and the device is still listed" is precisely
+ * the moment they need a sentence, and `removed: false` is the only signal
+ * that distinguishes "already gone" from "still there". It is rendered now.
+ *
+ * **The current device is confirmed; the others are not.** C-24's
+ * `consequence` prop is overridable because not every destructive action is
+ * irreversible, and these two genuinely differ: signing out a phone you left
+ * at school costs that phone one sign-in, while signing out the browser you
+ * are reading this in ends the session mid-sentence. Only the second gets a
+ * modal, and its consequence says what really happens rather than the
+ * default's "cannot be undone", which would be false.
+ *
+ * **Failures sit with the row that produced them.** The revoke error used to
+ * render as one line at the bottom of the section, below every device, so a
+ * failure on the third row appeared under the fifth. §12 puts an error
+ * adjacent to the control that caused it.
  */
+
 export function DeviceSettings() {
-  const { session, logout } = useAuth()
+  const { logout } = useAuth()
   const devices = useDevices()
   const revoke = useRevokeDevice()
   const [pendingId, setPendingId] = useState<string | null>(null)
+  /** The device whose failure or no-op is currently worth a sentence, and what
+   * to say. Keyed by device id so the message renders against its own row. */
+  const [rowNotice, setRowNotice] = useState<{ id: string; message: string } | null>(null)
+  /** Set only for the current device: the others are signed out immediately. */
+  const [confirmingCurrent, setConfirmingCurrent] = useState<string | null>(null)
 
-  const handleSignOut = (deviceId: string) => {
+  const signOut = (deviceId: string) => {
     setPendingId(deviceId)
+    setRowNotice(null)
     revoke.mutate(deviceId, {
-      // Signing out the device you are using invalidates this very token — the
-      // next request would 401. Clearing the session here turns that into an
-      // ordinary sign-out instead of a screen that mysteriously stops working.
       onSuccess: (result) => {
-        if (result.wasCurrent) logout()
+        // Signing out the device you are using invalidates this very token — the
+        // next request would 401. Clearing the session here turns that into an
+        // ordinary sign-out instead of a screen that mysteriously stops working.
+        if (result.wasCurrent) {
+          logout()
+          return
+        }
+        // A 200 that removed nothing. Not an error, and not a success worth
+        // staying silent about — see the module note and `DEVICE_ALREADY_GONE`.
+        if (!result.removed) setRowNotice({ id: deviceId, message: DEVICE_ALREADY_GONE })
       },
-      onSettled: () => setPendingId(null),
+      onError: (error) =>
+        setRowNotice({ id: deviceId, message: settingsSaveFailureMessage(error) }),
+      onSettled: () => {
+        setPendingId(null)
+        setConfirmingCurrent(null)
+      },
     })
   }
 
-  return (
-    <main className="mx-auto flex min-h-screen w-full max-w-160 flex-col gap-6 px-4 py-10">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-display-sm">Account &amp; devices</h1>
-        <p className="text-body-md text-t2">
-          {devices.data
-            ? `You can be signed in on ${devices.data.maxDevices} devices at a time. Signing in on another one signs out whichever you used least recently.`
-            : "You can be signed in on a limited number of devices at a time."}
-        </p>
-        <div className="flex flex-wrap items-center gap-4">
-          {session ? (
-            <Link
-              to={portalPathForRole(session.role)}
-              className="text-body-md text-accent hover:underline"
-            >
-              ← Back
-            </Link>
-          ) : null}
-          {/* The two settings screens link to each other so one nav entry per
-              portal reaches both (P5.9 chunk D). Without this the teacher
-              sidebar and parent header would each need two. */}
-          <Link
-            to="/settings/notifications"
-            className="text-body-md text-accent hover:underline"
-          >
-            Notification settings
-          </Link>
-        </div>
-      </header>
+  const handleSignOut = (deviceId: string, isCurrent: boolean) => {
+    if (isCurrent) {
+      setConfirmingCurrent(deviceId)
+      return
+    }
+    signOut(deviceId)
+  }
 
-      <section
-        aria-labelledby="devices-heading"
-        className="flex flex-col gap-3"
-      >
-        <h2 id="devices-heading" className="text-display-xs">
+  const list = devices.data?.devices ?? []
+
+  return (
+    <SettingsFrame
+      title="Account and devices"
+      intro={
+        devices.data
+          ? `You can be signed in on ${devices.data.maxDevices} devices at a time. Signing in on another one signs out whichever you used least recently.`
+          : "You can be signed in on a limited number of devices at a time."
+      }
+    >
+      <section aria-labelledby="devices-heading" className="flex flex-col gap-4">
+        <h2 id="devices-heading" className="text-display-sm text-ink">
           Signed-in devices
         </h2>
 
-        {devices.isPending ? (
-          <p className="text-body-md text-t2">Loading your devices…</p>
-        ) : null}
+        {devices.isPending ? <ListSkeleton rows={3} /> : null}
 
         {devices.isError ? (
           <ErrorState
             heading="We couldn't load your devices"
-            body={devices.error.message}
-            action={{
-              label: "Try again",
-              onClick: () => void devices.refetch(),
-            }}
+            body={settingsLoadFailureMessage(devices.error)}
+            action={{ label: "Try again", onClick: () => void devices.refetch() }}
           />
         ) : null}
 
-        {devices.data && devices.data.devices.length === 0 ? (
+        {devices.data && list.length === 0 ? (
           <EmptyState
-            heading="No signed-in devices"
-            body="Nothing is currently signed in to this account."
+            icon={<DeviceMobile aria-hidden="true" />}
+            heading="Nothing is signed in"
+            body="No device currently holds a session for this account."
           />
         ) : null}
 
-        <ul className="flex flex-col gap-2">
-          {devices.data?.devices.map((device) => (
-            <li
-              key={device.deviceId}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-4"
-            >
-              <span className="flex flex-col gap-0.5">
-                <span
-                  className="text-body-md"
-                  title={device.userAgent ?? undefined}
+        {list.length > 0 ? (
+          <ul className="flex flex-col gap-2">
+            {list.map((device) => {
+              const notice = rowNotice?.id === device.deviceId ? rowNotice.message : null
+              const busy = pendingId === device.deviceId
+              return (
+                <li
+                  key={device.deviceId}
+                  className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5"
                 >
-                  {deviceTitle(device)}
-                  {device.isCurrent ? (
-                    <span className="ms-2 rounded-full border border-border px-2 py-0.5 text-xs text-t2">
-                      This device
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="flex min-w-0 flex-col gap-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        {/* The raw user-agent stays in `title`: a reader who
+                            wants to know exactly what we hold about a device
+                            can see it, rather than only our summary of it. */}
+                        <span className="text-body-md text-ink" title={device.userAgent ?? undefined}>
+                          {deviceTitle(device)}
+                        </span>
+                        {device.isCurrent ? <Chip>This device</Chip> : null}
+                      </span>
+                      <span className="text-data-sm text-ink-faint">
+                        {lastActiveLabel(device.lastActiveAt)}
+                      </span>
                     </span>
-                  ) : null}
-                </span>
-                <span className="text-xs text-t2">
-                  {lastActiveLabel(device.lastActiveAt)}
-                </span>
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => handleSignOut(device.deviceId)}
-                disabled={pendingId === device.deviceId}
-              >
-                {pendingId === device.deviceId
-                  ? "Signing out…"
-                  : device.isCurrent
-                    ? "Sign out this device"
-                    : "Sign out"}
-              </Button>
-            </li>
-          ))}
-        </ul>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => handleSignOut(device.deviceId, device.isCurrent)}
+                      disabled={busy}
+                    >
+                      {busy
+                        ? "Signing out…"
+                        : device.isCurrent
+                          ? "Sign out this device"
+                          : "Sign out"}
+                    </Button>
+                  </div>
 
-        {revoke.isError ? (
-          <p className="text-xs text-err">
-            {revoke.error.message || "We couldn't sign that device out."}
-          </p>
+                  {/* Adjacent to the row that produced it, and announced:
+                      a reader who pressed a button and got no visible change
+                      is exactly who needs to be told. */}
+                  {notice ? (
+                    <p role="status" className="text-body-sm text-ink-muted">
+                      {notice}
+                    </p>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
         ) : null}
       </section>
-    </main>
+
+      <ConfirmModal
+        open={confirmingCurrent !== null}
+        title="Sign out this device?"
+        description="You are reading this on the device you are about to sign out."
+        // Overridden: the default claims the action cannot be undone, and this
+        // one plainly can — you sign in again. What it costs is the session you
+        // are in right now, which is the part worth saying.
+        consequence="You will be signed out straight away and will need to sign in again on this device."
+        confirmLabel="Sign out"
+        pendingLabel="Signing out…"
+        cancelLabel="Stay signed in"
+        pending={pendingId !== null}
+        onConfirm={() => {
+          if (confirmingCurrent !== null) signOut(confirmingCurrent)
+        }}
+        onCancel={() => setConfirmingCurrent(null)}
+      />
+    </SettingsFrame>
   )
 }

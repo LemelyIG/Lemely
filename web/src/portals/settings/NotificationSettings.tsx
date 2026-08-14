@@ -1,10 +1,10 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { ErrorState } from "@/components/ui/state-views"
-import { useAuth } from "@/lib/auth/AuthContext"
-import { portalPathForRole } from "@/lib/auth/RequireAuth"
+import { ListSkeleton } from "@/components/ui/loading-shapes"
 import {
   NOTIFICATION_TOGGLES,
   quietHoursSummary,
@@ -30,9 +30,14 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
 } from "@/lib/push/pushEnable"
+import {
+  settingsLoadFailureMessage,
+  settingsSaveFailureMessage,
+} from "@/lib/settingsOutcome"
+import { SettingsFrame } from "./SettingsFrame"
 
 /*
- * G-12 · Notification preferences (P5.9 chunk C).
+ * G-12 · Notification preferences, in the Study Notebook (P4.10).
  *
  * Top-level at `/settings/notifications` rather than inside a portal subtree,
  * for the same reason G-11 is: the API is role-agnostic. Every role has these
@@ -54,6 +59,26 @@ import {
  * fix and is worded that way. Neither state touches the toggles above, because
  * the inbox is the source of truth (D5.9 §1): a reader with no push at all still
  * receives every notification at G-13.
+ *
+ * ── P4.10, the Study Notebook pass ─────────────────────────────────────────
+ *
+ * **The toggles are switches now, not checkboxes.** These preferences take
+ * effect on the press: each one PUTs immediately, with no form and no save
+ * button. That is the exact distinction ARIA gives `role="switch"` its own role
+ * for, and the kit's `Switch` header spells it out — a checkbox says "selected,
+ * applies on submit", which is a promise this screen does not keep. Assistive
+ * tech announced five checkboxes in a form with no submit.
+ *
+ * **A failed save now names the preference it failed on.** The error rendered
+ * as one line under the whole list, so a failure on the first toggle appeared
+ * below the fifth, and the reader had to work out which of five changes had not
+ * stuck. It sits with its own switch now (§12), and the switch in flight shows
+ * its own loading state rather than the whole list merely greying out.
+ *
+ * The switch positions themselves were already honest and are unchanged:
+ * `checked` reads from `prefs.data`, which only moves on a 200, so a failed
+ * save leaves the switch where it was rather than showing a state the server
+ * never accepted.
  */
 
 /** Copy for each push state. Kept beside the screen so the three stay comparable. */
@@ -62,7 +87,7 @@ function pushStateCopy(kind: string): { heading: string; body: string } {
     case "unavailable":
       return {
         heading: "Push notifications are off for this deployment",
-        body: "This server has no push keys configured, so nothing can be sent to your device. Your notifications still arrive in your inbox — you are not missing any of them.",
+        body: "This server has no push keys configured, so nothing can be sent to your device. Your notifications still arrive in your inbox, so you are not missing any of them.",
       }
     case "unsupported":
       return {
@@ -88,7 +113,6 @@ function pushStateCopy(kind: string): { heading: string; body: string } {
 }
 
 export function NotificationSettings() {
-  const { session } = useAuth()
   const prefs = useNotificationPreferences()
   const update = useUpdateNotificationPreferences()
   const pushConfig = usePushConfig()
@@ -102,6 +126,14 @@ export function NotificationSettings() {
   const [pushBusy, setPushBusy] = useState(false)
   const [pushError, setPushError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
+  /** Which toggle is mid-flight, so its own switch can show it. */
+  const [savingKey, setSavingKey] = useState<NotificationPrefKey | null>(null)
+  /** A failed toggle, kept against the key that failed so the message renders
+   * beside its own switch rather than under the whole list. */
+  const [toggleError, setToggleError] = useState<{
+    key: NotificationPrefKey
+    message: string
+  } | null>(null)
 
   // Seed the two time inputs from the server exactly once per loaded value.
   // They are uncontrolled-by-the-server after that: a reader half-way through
@@ -126,8 +158,16 @@ export function NotificationSettings() {
   const copy = pushStateCopy(pushState.kind)
 
   const handleToggle = (key: NotificationPrefKey, value: boolean) => {
+    setSavingKey(key)
+    setToggleError(null)
     // One key, never the whole object — see `useUpdateNotificationPreferences`.
-    update.mutate({ [key]: value })
+    update.mutate(
+      { [key]: value },
+      {
+        onError: (error) => setToggleError({ key, message: settingsSaveFailureMessage(error) }),
+        onSettled: () => setSavingKey(null),
+      },
+    )
   }
 
   const handleQuietHoursSave = () => {
@@ -137,7 +177,9 @@ export function NotificationSettings() {
       return
     }
     setQuietError(null)
-    update.mutate(result.update)
+    update.mutate(result.update, {
+      onError: (error) => setQuietError(settingsSaveFailureMessage(error)),
+    })
   }
 
   const handleEnablePush = () => {
@@ -191,54 +233,30 @@ export function NotificationSettings() {
   }
 
   const loaded = prefs.data ?? null
-  const summary = loaded
-    ? quietHoursSummary(loaded.quietHoursStart, loaded.quietHoursEnd)
-    : null
+  const summary = loaded ? quietHoursSummary(loaded.quietHoursStart, loaded.quietHoursEnd) : null
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-160 flex-col gap-6 px-4 py-10">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-display-sm">Notifications</h1>
-        <p className="text-body-md text-t2">
-          Choose what you want to hear about, and when. Everything you switch on
-          arrives in your inbox whether or not this device can show pop-ups.
-        </p>
-        <div className="flex flex-wrap items-center gap-4">
-          {session ? (
-            <Link
-              to={portalPathForRole(session.role)}
-              className="text-body-md text-accent hover:underline"
-            >
-              ← Back
-            </Link>
-          ) : null}
-          {/* Reciprocal of G-11's link — see the note there (P5.9 chunk D). */}
-          <Link
-            to="/settings/devices"
-            className="text-body-md text-accent hover:underline"
-          >
-            Account &amp; devices
-          </Link>
+    <SettingsFrame
+      title="Notifications"
+      intro="Choose what you want to hear about, and when. Everything you switch on arrives in your inbox whether or not this device can show pop-ups."
+    >
+      <section aria-labelledby="types-heading" className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <h2 id="types-heading" className="text-display-sm text-ink">
+            What you get told about
+          </h2>
+          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+            Switching one off stops it reaching you at all. It will not appear in your inbox
+            either.
+          </p>
         </div>
-      </header>
 
-      <section aria-labelledby="types-heading" className="flex flex-col gap-3">
-        <h2 id="types-heading" className="text-display-xs">
-          What you get told about
-        </h2>
-        <p className="text-body-md text-t2">
-          Switching one off stops it reaching you at all — it will not appear in
-          your inbox either.
-        </p>
-
-        {prefs.isPending ? (
-          <p className="text-body-md text-t2">Loading your preferences…</p>
-        ) : null}
+        {prefs.isPending ? <ListSkeleton rows={4} /> : null}
 
         {prefs.isError ? (
           <ErrorState
             heading="We couldn't load your notification settings"
-            body={prefs.error.message}
+            body={settingsLoadFailureMessage(prefs.error)}
             action={{ label: "Try again", onClick: () => void prefs.refetch() }}
           />
         ) : null}
@@ -254,69 +272,84 @@ export function NotificationSettings() {
             ).map((toggle) => (
               <li
                 key={toggle.key}
-                className="flex flex-col gap-1 rounded-md border border-border p-4"
+                className="rounded-lg border border-rule bg-paper-raised p-4 sm:p-5"
               >
-                <Checkbox
+                <Switch
                   label={toggle.label}
+                  description={toggle.description}
                   checked={valueFor(loaded, toggle.key) === true}
-                  disabled={update.isPending}
-                  onChange={(event) => handleToggle(toggle.key, event.target.checked)}
+                  // Only the switch in flight says so. The rest are disabled
+                  // because the mutation replaces the whole preference object
+                  // on success, so two in-flight changes could clobber each
+                  // other — but "disabled" and "saving" are different facts and
+                  // are now shown differently.
+                  state={savingKey === toggle.key ? "loading" : undefined}
+                  error={toggleError?.key === toggle.key ? toggleError.message : undefined}
+                  disabled={update.isPending && savingKey !== toggle.key}
+                  onCheckedChange={(next) => handleToggle(toggle.key, next)}
                 />
-                <span className="text-xs text-t2">{toggle.description}</span>
               </li>
             ))}
           </ul>
         ) : null}
-
-        {update.isError ? (
-          <p className="text-xs text-err">
-            {update.error.message || "We couldn't save that change."}
-          </p>
-        ) : null}
       </section>
 
-      <section aria-labelledby="quiet-heading" className="flex flex-col gap-3">
-        <h2 id="quiet-heading" className="text-display-xs">
-          Quiet hours
-        </h2>
-        <p className="text-body-md text-t2">
-          Nothing pops up on your device between these times. Notifications still
-          arrive in your inbox, so you will see them when you next look.
-        </p>
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1 text-body-md">
-            From
-            <input
+      <section aria-labelledby="quiet-heading" className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <h2 id="quiet-heading" className="text-display-sm text-ink">
+            Quiet hours
+          </h2>
+          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+            Nothing pops up on your device between these times. Notifications still arrive in
+            your inbox, so you will see them when you next look.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-4 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+          <div className="flex flex-wrap items-start gap-3">
+            <Input
+              label="From"
               type="time"
               value={quietStart}
               onChange={(event) => setQuietStart(event.target.value)}
-              className="rounded-md border border-border bg-surface px-3 py-2 text-body-md"
+              wrapperClassName="w-36"
             />
-          </label>
-          <label className="flex flex-col gap-1 text-body-md">
-            To
-            <input
+            <Input
+              label="To"
               type="time"
               value={quietEnd}
               onChange={(event) => setQuietEnd(event.target.value)}
-              className="rounded-md border border-border bg-surface px-3 py-2 text-body-md"
+              // The error rides the second field rather than the first: an
+              // invalid range is a fact about the pair, and the end time is the
+              // one a reader is most likely to have just typed.
+              error={quietError ?? undefined}
+              wrapperClassName="w-36"
             />
-          </label>
-          <Button type="button" onClick={handleQuietHoursSave} disabled={update.isPending}>
-            {update.isPending ? "Saving…" : "Save quiet hours"}
-          </Button>
+            <Button
+              type="button"
+              onClick={handleQuietHoursSave}
+              disabled={update.isPending}
+              // Aligns the button with the fields rather than their labels.
+              className="mt-6"
+            >
+              {update.isPending ? "Saving…" : "Save quiet hours"}
+            </Button>
+          </div>
+          {/* The data face: this line is two clock times and a duration, which
+              is exactly what §4.2's tabular rung is for. */}
+          {summary ? <p className="text-data-sm text-ink-faint">{summary}</p> : null}
         </div>
-        {quietError ? <p className="text-xs text-err">{quietError}</p> : null}
-        {summary ? <p className="text-xs text-t2">{summary}</p> : null}
       </section>
 
-      <section aria-labelledby="device-heading" className="flex flex-col gap-3">
-        <h2 id="device-heading" className="text-display-xs">
+      <section aria-labelledby="device-heading" className="flex flex-col gap-4">
+        <h2 id="device-heading" className="text-display-sm text-ink">
           This device
         </h2>
-        <div className="flex flex-col gap-2 rounded-md border border-border p-4">
-          <p className="text-body-md">{copy.heading}</p>
-          <p className="text-xs text-t2">{copy.body}</p>
+        <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+          <div className="flex flex-col gap-1">
+            <p className="text-body-md text-ink">{copy.heading}</p>
+            <p className="max-w-[65ch] text-body-sm text-ink-muted">{copy.body}</p>
+          </div>
 
           {pushState.kind === "prompt" ? (
             <Button
@@ -330,37 +363,41 @@ export function NotificationSettings() {
           ) : null}
 
           {pushState.kind === "enabled" ? (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleDisablePush}
-                disabled={pushBusy}
-              >
-                {pushBusy ? "Turning off…" : "Turn off for this device"}
-              </Button>
-              <Button type="button" variant="ghost" onClick={handleTestNotification}>
-                Show a test notification
-              </Button>
-            </div>
+            <>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="ghost" onClick={handleDisablePush} disabled={pushBusy}>
+                  {pushBusy ? "Turning off…" : "Turn off for this device"}
+                </Button>
+                <Button type="button" variant="ghost" onClick={handleTestNotification}>
+                  Show a test notification
+                </Button>
+              </div>
+              {/* Deliberately worded as a device check, not a delivery test: no
+                  route in this backend sends a test push, and on a build with no
+                  VAPID keys none could. What it proves is permission, the service
+                  worker and the operating system — the half that actually breaks. */}
+              {/* Prose, so the body rung rather than the data face: this is a
+                  sentence about what the button proves, not a value. */}
+              <p className="text-body-sm text-ink-faint">
+                A test notification is shown by this device itself. It does not check that the
+                server can reach you.
+              </p>
+            </>
           ) : null}
 
-          {/* Deliberately worded as a device check, not a delivery test: no
-              route in this backend sends a test push, and on a build with no
-              VAPID keys none could. What it proves is permission, the service
-              worker and the operating system — the half that actually breaks. */}
-          {pushState.kind === "enabled" ? (
-            <p className="text-xs text-t2">
-              A test notification is shown by this device itself. It does not
-              check that the server can reach you.
+          {testResult ? (
+            <p role="status" className="text-body-sm text-ink-muted">
+              {testResult}
             </p>
           ) : null}
-
-          {testResult ? <p className="text-xs text-t2">{testResult}</p> : null}
-          {pushError ? <p className="text-xs text-err">{pushError}</p> : null}
+          {pushError ? (
+            <p role="status" className="text-body-sm text-err">
+              {pushError}
+            </p>
+          ) : null}
         </div>
       </section>
-    </main>
+    </SettingsFrame>
   )
 }
 

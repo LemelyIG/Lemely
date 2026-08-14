@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { PortalNotFound } from "@/portals/misc/NotFound"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
@@ -406,5 +407,9 @@ export const teacherRoute: RouteObject = {
       element: <QuizResults />,
     },
     { path: "announcements", element: <Announcements /> },
+    // P4.10. Last, so it only matches what nothing above did — an unmatched
+    // path in this portal used to fall to the top-level `*` and cost the
+    // reader the sidebar. See `portals/misc/NotFound.tsx`.
+    { path: "*", element: <PortalNotFound /> },
   ],
 }

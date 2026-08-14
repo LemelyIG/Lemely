@@ -47,6 +47,12 @@ import { describe, expect, it } from "vitest"
  */
 
 const SCANNED_FILES = [
+  // Phase 4, surface 10 — 404 / misc, and the settings lane no surface owned.
+  "src/portals/settings/SettingsFrame.tsx",
+  "src/portals/settings/DeviceSettings.tsx",
+  "src/portals/settings/NotificationSettings.tsx",
+  "src/lib/settingsOutcome.ts",
+  "src/portals/misc/NotFound.tsx",
   // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.
   "src/portals/marketing/index.tsx",
   "src/portals/marketing/Landing.tsx",
