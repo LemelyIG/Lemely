@@ -210,7 +210,19 @@ NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
                     still **no review decision**. The completion ntfy was **not**
                     re-sent.
 
-                    Thirteen sessions have now ended here. The queue is not empty
+                    **Session 19 (2026-08-15) built nothing.** Numbers only,
+                    each re-run rather than inherited: tree clean, level with
+                    `origin/redesign/study-surfaces` after an explicit `git
+                    fetch`, INBOX zero unhandled items, all five blockers carry
+                    a `RESOLVED` status line, all eight phase-ledger rows DONE
+                    (0 PENDING), both ntfy topics (inbound `…-in` and the
+                    control topic `./nudge` publishes to) polled since
+                    1786723759 and both return an empty body. **PR #7 OPEN and
+                    MERGEABLE at 80 commits** (up one: session 18's own state
+                    note `f05902c`), still **no review decision**. The
+                    completion ntfy was **not** re-sent.
+
+                    Fourteen sessions have now ended here. The queue is not empty
                     because a session failed to look; it is empty because the
                     five items below are the whole of what is left and none of
                     them is a build task. A session that keeps finding nothing is
