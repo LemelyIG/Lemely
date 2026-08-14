@@ -352,8 +352,9 @@ rather than this defect.
 
 ## B4 — The e2e suite silently runs against whatever is already on port 8000
 
-**Raised:** 2026-08-13 (redesign Phase 3 gate) · **Status:** OPEN, not fixed
-unattended. Needs one command from the human, see "Unblock" below.
+**Raised:** 2026-08-13 (redesign Phase 3 gate) · **Status:** **RESOLVED
+2026-08-14** by the human, exactly as the "Unblock" section asked. See the
+resolution note at the end of this section.
 **Severity:** the Hard Gate §9.7 (functional safety) cannot be fully evidenced
 until this is cleared. It is **not** a product defect and **not** a Phase 3
 regression.
@@ -438,3 +439,34 @@ and nothing checks that. A cheap guard: have `scripts/e2e_server.py` expose a
 marker route (`GET /__e2e__` returning the fixture id) and have
 `e2e/global-setup.ts` assert it before any spec runs, so a substituted backend
 fails loudly at setup instead of quietly at the one spec that notices.
+
+### RESOLVED — 2026-08-14, by the human freeing the port
+
+The human ran `sudo fuser -k 8000/tcp` and reported `correct-paper` passing,
+which was the whole of the unblock this section asked for. Port 8000 is now
+free, so Playwright starts `scripts/e2e_server.py` itself and the offline
+marking seam is installed as configured.
+
+**Verified independently rather than taken on trust** (MISSION §5): the full
+suite was run, not just the one spec. The first honest run of the entire e2e
+suite in the redesign found **four more failures**, all of them assertion drift
+against deliberate, documented redesign changes rather than functional
+regressions, and every one is now updated in place with the reason recorded
+(§9.7):
+
+| Spec | Why it drifted |
+|---|---|
+| `student-journey` | Surface 1 replaced the dashboard's `<button onClick={navigate}>` with a real `<Link>` (the audit's own M8 finding), so the role changed; the row text is now "88% · 1 paper"; and this surface turned the Parents empty state into the kit's `EmptyState`, splitting one sentence into heading and body. Also scoped to the ledger panel, because as a link "0625" is ambiguous with four sidebar entries. |
+| `engagement` | A page-wide `getByRole("listitem")` started counting P3.1's `Breadcrumbs` trail, which renders `<li>`s. Three board rows plus two crumbs is five. Scoped to the list, which is what the spec's own comment always meant. |
+| `parent-journey` | Surface 8 moved the OTP dev code off `font-mono` onto the `data-lg` rung, so `div.font-mono` matched nothing and the read timed out. |
+| `phase4-practice` | The heading was "Practice — <subject>"; §3.2 item 10's em-dash ban made it "Practice for <subject>". |
+
+**Result: 34 passed, 0 failed.** The Hard Gate §9.7 (functional safety) is
+green for the first time in this redesign — every prior surface reported it as
+"still blocked, B4", which was true and is now closed.
+
+The improvement this section proposed for afterwards — a `GET /__e2e__` marker
+route asserted in `global-setup.ts`, so a substituted backend fails loudly at
+setup rather than quietly at the one spec that notices — is **not done**, and is
+still worth doing. `reuseExistingServer: !process.env.CI` remains the real bug:
+today it happens to reuse the right process because nothing else holds the port.

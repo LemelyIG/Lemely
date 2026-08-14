@@ -227,3 +227,44 @@ re-asked on 2026-08-14T02:45.
 
 **B4 still blocks the e2e gate.** Port 8000 was re-checked this session and is
 still held. Unchanged, still one command from you, still not killed unattended.
+
+---
+
+## 2026-08-14 — Phase 4, surface 10 (404 / misc), and the first inbound messages
+
+**IN — the human replied, for the first time in this mission.** Three messages
+on the inbound topic, polled at the surface boundary:
+
+1. `9gd0VBc0noOC` (ts 1786672245) — *"regarding decision D1.6 (admin screens),
+   fully build the required screens and completely wire them"*.
+   **This resolves D1.6 as option A**, and more strongly than option A was
+   worded: not scaffolds, not shells, but built and wired. Logged, acted on:
+   Phase 4 unblocks and surface 7 (admin views) is the next work unit.
+2. `EHeWP2LpAc1E` / `277taBNJCTEO` (ts 1786673047/52) — *"Blocker resolved,
+   ran: sudo fuser -k 8000/tcp … 1 passed"*. **This resolves B4.**
+
+`LAST STEERING TS` advanced to **1786673052**, after both were logged and acted
+on.
+
+**On B4, one correction to the report, made by verifying rather than
+accepting.** The message reported `correct-paper` passing, and that is true.
+Running the *whole* suite found four further failures, which had been invisible
+for the entire redesign because the suite could never run correctly. All four
+are assertion drift against deliberate redesign changes, not functional
+regressions; all four are fixed in place with the reason recorded per §9.7.
+**The suite is now 34 passed, 0 failed** and Hard Gate §9.7 is green for the
+first time. Full table in `BUILD/BLOCKERS.md` B4's resolution note.
+
+**OUT** — surface 10 milestone notice, plus an acknowledgement of both
+directives.
+
+**Surface 10 is closed**, and it was not the tidy-up the ledger scoped. The
+sweep found ten more product screens still in the build-era language — the
+whole of onboarding, the whole placement flow, Subject, Parents, Notifications,
+Announcements — none of which any surface had claimed, though MISSION §1 names
+"onboarding/placement test" in scope outright. No DECISION was raised for it
+because §1 and §12 already put them in scope; it was reported on ntfy when
+found rather than at the end. `npm run check:copy` reaches **0**.
+
+**No new DECISION is open.** D1.6 and D4.8 are both resolved, B4 is closed, and
+nothing in surface 10 required a judgement the mission does not already answer.

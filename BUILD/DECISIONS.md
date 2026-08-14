@@ -8098,3 +8098,53 @@ is still never installed. Not killed unattended.
 unanswered and deliberately undefaulted; §10 says a question with no sane
 default must not be a timeout question, so this is the point to block rather
 than guess. Phase 5 does not depend on it.
+
+### Addendum — B4 resolved the same day, and what the first honest e2e run found
+
+The human freed port 8000 and reported `correct-paper` passing. Verified rather
+than accepted: the *whole* suite was run, and it found **four more failures**
+that had been invisible for the entire redesign because the suite could never
+run correctly (B4: Playwright adopted a stranger's process on 8000 and never
+installed `e2e_server.py`'s offline marking seam).
+
+All four are assertion drift against deliberate, documented redesign changes,
+not functional regressions. Each is updated in place with its reason recorded,
+per §9.7:
+
+- **`student-journey`** asserted `getByRole("button", {name: /0625/})` on the
+  dashboard. Surface 1 replaced that `<button onClick={navigate}>` with a real
+  `<Link>` — the audit's own M8 finding, raised against the teacher portal and
+  sitting unremarked on the student side. The spec now asserts the better
+  markup, scoped to the ledger panel (as a link, "0625" is ambiguous with four
+  sidebar entries). Its row text and this surface's `EmptyState` split moved
+  too.
+- **`engagement`** counted five listitems where three board rows exist, because
+  a page-wide `getByRole("listitem")` began matching P3.1's `Breadcrumbs`
+  trail. Scoped to the list, which the spec's own comment always meant — it
+  warned that a global selector "asserts nothing a refactor would not silently
+  break", and then was one.
+- **`parent-journey`** read the OTP dev code with `div.font-mono`; surface 8
+  moved it onto the `data-lg` rung.
+- **`phase4-practice`** expected a heading "Practice — …"; §3.2 item 10's
+  em-dash ban made it "Practice for …".
+
+**Result: 34 passed, 0 failed.** Hard Gate §9.7 (functional safety) is green for
+the first time in this redesign; every earlier surface reported it as blocked,
+which was accurate and is now closed. Every surface row in STATE.md has been
+updated, because leaving nine rows claiming a blocker that is resolved is the
+same class of staleness this phase keeps finding.
+
+**Not done, and still the real bug:** `reuseExistingServer: !process.env.CI`
+reuses whatever answers on 8000 without checking it is the process the config
+would have started. B4's own proposed guard — a `GET /__e2e__` marker route
+asserted in `e2e/global-setup.ts` — remains unimplemented. Today it works only
+because nothing else holds the port.
+
+### D1.6, answered
+
+The human answered on the same channel: *"fully build the required screens and
+completely wire them"*. That is stronger than option A as it was worded, and the
+wording matters — "completely wired" rules out the scaffold-and-shell reading
+that option C offered. Phase 4 unblocks; surface 7 is the next work unit, and it
+must check what `routers/school.py` actually exposes before designing a screen
+around it rather than stubbing a panel and calling it wired.

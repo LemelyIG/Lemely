@@ -58,7 +58,18 @@ test("the weekly class board ranks the seeded roster by XP, highest first", asyn
    * because its rank is out of sequence with the list above it. If it were
    * inside, this assertion could pass on a board where the viewer ranks last.
    */
-  const rows = page.getByRole("listitem")
+  /*
+   * P4.10 · scoped to the list, which is what this always meant (§9.7).
+   *
+   * It was a page-wide `getByRole("listitem")`, and P3.1's `Breadcrumbs`
+   * renders its trail as `<li>`s — so from Phase 3 onward this counted three
+   * board rows plus two breadcrumb items and expected three. The failure is
+   * the exact one the comment above feared: a global selector "asserts nothing
+   * a refactor would not silently break". Scoping it to the `<ol>` keeps the
+   * intent (the pinned viewer row is still excluded, because it is rendered
+   * outside the list on purpose) and makes it immune to chrome elsewhere.
+   */
+  const rows = page.getByRole("list").filter({ has: page.getByRole("listitem") }).last().getByRole("listitem")
   await expect(rows).toHaveCount(leaderboard.expectedOrderByStudentKey.length)
 
   const expectedNames = leaderboard.expectedOrderByStudentKey.map(

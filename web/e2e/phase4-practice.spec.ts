@@ -108,7 +108,13 @@ test("S-20 · a student with no recorded weaknesses is honestly refused, not giv
   await asStudent(page, seed.practice.students.bare)
   await page.goto(`/student/practice/${seed.practice.subjectCode}`)
 
-  await expect(page.getByRole("heading", { name: /^Practice —/ })).toBeVisible({ timeout: 15_000 })
+  await expect(/*
+     * P4.10 · the heading was "Practice — <subject>" (§9.7). MISSION §3.2
+     * item 10 bans the em-dash in UI copy outright, and `npm run check:copy`
+     * is now at zero product-wide, so the screen reads "Practice for
+     * <subject>". The screen is unchanged in behaviour; only the connective is.
+     */
+    page.getByRole("heading", { name: /^Practice for/ })).toBeVisible({ timeout: 15_000 })
 
   // Nothing prefilled, because there is nothing to target. Same locator as
   // above, so the pair reads as one measurement taken twice.
