@@ -100,3 +100,10 @@ reports/accuracy-real/*/
 # Component-kit preview build output (REDESIGN-MISSION Phase 2.6). The preview
 # is a dev tool with its own Vite entry; its build artifact is never shipped.
 web/dist-previews/
+
+# Stray dependency/build caches at the repo root. `web/.gitignore` covers
+# `web/node_modules`, but the root had no rule, so a Node command accidentally
+# run from the repo root (rather than from `web/`) creates `node_modules/.vite`
+# here and `git add -A` stages it. Caught in P6.4 when a vitest cache file
+# landed in a commit that way.
+/node_modules/
