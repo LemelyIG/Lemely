@@ -7,12 +7,30 @@ import type { Plugin } from "vite"
  * ── Why this exists (P6.3) ──────────────────────────────────────────────────
  *
  * REDESIGN-MISSION §5 Phase 6.3 asks for "skeletons reserve space (CLS < 0.1)"
- * and "a font-display strategy". Those turned out to be the same item: the
- * Lighthouse corpus names *web fonts* as the sole culprit behind every layout
- * shift the product records, and no skeleton is involved at all.
+ * and "a font-display strategy". Those turned out to be the same item: every
+ * layout shift Lighthouse attributes in this product is caused by a *web font*
+ * landing, and no skeleton is involved at all.
  *
- *     teacher-quiz-detail   CLS 0.2427   cause: "Web font loaded"
- *     teacher-schemes       CLS 0.1807   cause: "Web font loaded" (x2)
+ * **The numbers that first motivated this file were stale, and the record says
+ * so rather than quietly keeping them.** A corpus at `reports/phase-6/` showed
+ * `teacher-quiz-detail` at CLS 0.2427 and `teacher-schemes` at 0.1807, both
+ * naming "Web font loaded" — and both citing
+ * `instrument-serif-latin-400-normal-*.woff2`, a face Phase 2 replaced with
+ * Newsreader. That font has not been in the bundle since, and the crisis was
+ * three phases dead. Measured against HEAD: 41 routes, 0 over CLS 0.1, and
+ * those two routes measure 0.0000.
+ *
+ * What survives the correction, and why this file still ships: the one
+ * remaining shift is `student-overview` at 0.0982, the product's most-visited
+ * screen, and its attributed cause is the same one — Newsreader, Caveat and
+ * JetBrains Mono landing together on the Momentum panel. Build-era D6.9 warns
+ * that this number is not reproducible ("a fast run hides the shifts
+ * entirely"), so a single after-run cannot distinguish *fixed* from *fast*.
+ * The honest defence of a preload is therefore not any after-number: it is
+ * that a preload **removes the race rather than winning it** — the face is
+ * discovered in the HTML instead of three steps into the CSS, so there is no
+ * window in which the fallback is painted and then replaced. That argument
+ * does not depend on which run you look at. See D6.4 §0.
  *
  * The mechanism is `font-display: swap`, which @fontsource sets on every face
  * and which is the right choice — `block` hides text and `optional` can drop

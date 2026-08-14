@@ -60,6 +60,7 @@ AXE_SUMMARY = REPORT_DIR / "axe/_summary.json"
 LH_SUMMARY = REPORT_DIR / "lighthouse/_summary.json"
 CONSOLE_ERRORS = REPORT_DIR / "console-errors.json"
 RESPONSIVE_SUMMARY = REPORT_DIR / "responsive-summary.json"
+ROUTE_FAILURES = REPORT_DIR / "route-failures.json"
 ACCESSIBILITY_FLOOR = 95
 PERFORMANCE_FLOOR = 80
 STUDENT_PATH_PREFIX = "/student"
@@ -141,6 +142,30 @@ def main() -> int:
     else:
         failures.append(f"missing {RESPONSIVE_SUMMARY} — run `npm run audit` in web/ first")
 
+    # route-failures.json (P6.3). A route that dies part-way still writes axe and
+    # Lighthouse rows for the states it reached, so its failure is invisible to
+    # every check above: `reports/phase-6.3-before/` shows 41 routes, no console
+    # errors and no overflow, and reads as a clean sweep, while five routes had
+    # each lost their `loading` state. `audit.mjs` threw and named them on
+    # stdout, and nothing in the corpus recorded it.
+    #
+    # Missing is "not checked", exactly as above — corpora baselined before P6.3
+    # have no such file, and treating their absence as "nothing failed" would be
+    # the silent pass this gate exists to end.
+    if ROUTE_FAILURES.exists():
+        route_failures = json.loads(ROUTE_FAILURES.read_text())
+        for f in route_failures:
+            failures.append(
+                f"route: {f.get('screenId')} {f.get('path')} could not be audited "
+                f"({f.get('error')}) — see {ROUTE_FAILURES}"
+            )
+    else:
+        failures.append(
+            f"missing {ROUTE_FAILURES} — this corpus predates the P6.3 route-failure "
+            "record, so whether any route died mid-run is unknown; re-run "
+            "`npm run audit` in web/ to establish it"
+        )
+
     if failures:
         print(f"{len(failures)} UI gate violation(s):")
         for f in failures:
@@ -153,7 +178,7 @@ def main() -> int:
         f"Lighthouse accessibility >= {ACCESSIBILITY_FLOOR} on all "
         f"({len(lighthouse)} route report(s)), performance >= {PERFORMANCE_FLOOR} on "
         f"{len(student_routes)} student route(s), zero console errors, "
-        f"zero horizontal-scroll violations."
+        f"zero horizontal-scroll violations, zero routes that died mid-run."
     )
     return 0
 

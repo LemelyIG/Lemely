@@ -9348,3 +9348,87 @@ token each fail exactly the intended test.
   there is still no `meta description` (41/41) and no valid `robots.txt`
   (41/41). All three are 6.5's scope, already itemised in STATE.md, and left
   there deliberately rather than pulled forward.
+
+### 9. The confirm round, and why its headline number is not the evidence
+
+The after-run is `reports/phase-6.3-after/` — a full 41-route pass against a
+real build of the finished work. **Its Lighthouse performance mean went *down*
+1.61 points, and that is reported first because it is the number a reader would
+most expect to be hidden.**
+
+    login                   93 -> 89   (-4)     student-overview        74 -> 82   (+8)
+    settings-notifications  91 -> 85   (-6)     student-standings       70 -> 84  (+14)
+    teacher-quizzes         85 -> 75  (-10)     student-study-plan-...  76 -> 84   (+8)
+    teacher-student-detail  73 -> 62  (-11)     teacher-announcements   79 -> 85   (+6)
+
+Swings of ±11 land on routes this phase did not touch in any way, in both
+directions, which is build-era D6.9's warning arriving exactly as written: a
+composite Lighthouse score measured on a loaded local machine is not
+reproducible, and **a single after-run cannot separate *fixed* from *fast*, in
+either direction.** So the composite score is reported and then set aside. It
+is not evidence that this phase helped, and equally not evidence that it hurt.
+
+What the run *can* settle are the structural audits, which are facts about the
+built artifact rather than timings, and each of these was checked as a
+before/after pair rather than asserted:
+
+- **`registerSW.js` is off the render-blocking list on all 41 routes.** Before:
+  every route named two blocking resources, `index-*.css` and `registerSW.js`.
+  After: every route names one, the stylesheet, which has to block. The audit
+  still *fails* 41/41 for that stylesheet, and saying "render-blocking fixed"
+  would have been false — what was fixed is the half that had no business
+  being there.
+- **The student dashboard's CLS is 0.098 -> 0**, and it was the only one of 41
+  routes over the 0.1 ceiling. Per §0 this remains the weakest of the three
+  numbers here, because a fast run hides shifts; the preload's defence is still
+  structural.
+- **The dashboard's unused JavaScript is 103KB over two chunks -> 53KB over
+  one.** The 50KB `nivoTheme-*.js` chunk is gone from first paint entirely,
+  which is precisely what `lazy-chart.tsx` claimed and the one place a
+  code-split can be confirmed rather than believed.
+- **Precache 146 entries / 2621.92 KiB -> 137 / 2435.27 KiB**, verified by
+  building both ways rather than by trusting the earlier note: a 186.65 KiB
+  drop, matching §5's figure.
+
+The gate-failing route count fell 6 -> 3 (`student-correct` 79, `student-profile`
+57, `teacher-student-detail` accessibility 94). Given the noise above, **that
+drop is not claimed as an improvement** — `student-overview`, `student-standings`
+and `student-study-plan-session` cleared the floor on a run whose mean fell, and
+regression to the mean explains that at least as well as this phase's work does.
+The `ui-thresholds` gate is still red, for the reasons §8 root-caused.
+
+### 10. The confirm round found something the corpus had never recorded
+
+**Five routes died mid-run — T-08, T-09-detail, T-10, S-21 and S-22 — every one
+of them on its `loading` state, with "Waiting failed: 15000ms exceeded".** They
+did it in the after-run and, checked state by state against the before corpus,
+in the before-run identically: the same five routes, the same missing state, the
+same surviving states. This is not a Phase 6.3 regression, and it is not new.
+
+The part worth keeping is why nobody had seen it. A route that dies on its
+*last* state has already written its axe and Lighthouse rows, so
+`reports/phase-6.3-before/` shows **41 lighthouse rows, an empty
+`console-errors.json`, an empty `responsive-summary.json`, and reads as a clean
+sweep.** `audit.mjs` did throw and did name them on stdout — but the run's own
+output is not the corpus, and **nothing that survives a run recorded that five
+routes had been unreachable.** Every gate downstream reads the files.
+
+That is D6.1's finding pointed at the harness rather than at a product screen:
+a gate reporting zero and a gate that never looked are both consistent with a
+green ledger row. So `audit.mjs` now writes `route-failures.json` beside the two
+summary files it already writes, always, including as `[]`; and
+`check_ui_gates.py` reads it with the *same* convention it already applies to
+those two — **missing is "not checked", not "clean"** — so a corpus baselined
+before this change says so out loud instead of passing by omission. Verified
+against both 6.3 corpora, which is exactly the case that must report the gap:
+neither has the file, and the gate now names it.
+
+**The file itself lands on the next audit run, not this one**, because the
+change was written while the after-run was already in flight and a harness
+artefact must not be authored by hand. The five failures are recorded here
+instead, and 6.4 runs the audit that produces the file.
+
+Their cause is not diagnosed and is not claimed to be: all five are `loading`
+states, which the harness drives by holding a request open, so a teardown
+timeout is as likely to be the fixture's as the product's. It is 6.4's to pick
+up with the axe work, on the same run.

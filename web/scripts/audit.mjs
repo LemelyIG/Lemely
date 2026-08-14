@@ -183,6 +183,17 @@ const LH_DIR = path.join(REPORTS_DIR, "lighthouse")
 const SCREENS_DIR = path.join(REPORTS_DIR, "screens")
 const CONSOLE_ERRORS_PATH = path.join(REPORTS_DIR, "console-errors.json")
 const RESPONSIVE_SUMMARY_PATH = path.join(REPORTS_DIR, "responsive-summary.json")
+/* P6.3. Route failures used to live only in this process's stdout and its exit
+ * code, and nothing in the written corpus recorded them. That is the failure
+ * mode this harness exists to end, turned on itself: `reports/phase-6.3-before/`
+ * shows 41 lighthouse rows, an empty `console-errors.json` and an empty
+ * `responsive-summary.json`, and reads as a clean sweep — while five routes
+ * (T-08, T-09-detail, T-10, S-21, S-22) had in fact lost a state apiece, every
+ * one of them the `loading` state, in that run and the next one identically.
+ * They still produce axe/Lighthouse rows because they fail on a *later* state,
+ * so nothing downstream can tell. Written to a file so the corpus records what
+ * the run could not do, and so `check_ui_gates.py` can read it. */
+const ROUTE_FAILURES_PATH = path.join(REPORTS_DIR, "route-failures.json")
 const CONTACT_SHEET_PATH = path.join(REPORTS_DIR, "contact-sheet.html")
 
 const BREAKPOINTS = [
@@ -2600,6 +2611,10 @@ async function main() {
   )
   fs.writeFileSync(CONSOLE_ERRORS_PATH, JSON.stringify(consoleErrors, null, 2))
   fs.writeFileSync(RESPONSIVE_SUMMARY_PATH, JSON.stringify(responsiveViolations, null, 2))
+  // Written unconditionally, including as `[]`. An absent file has to keep
+  // meaning "this run predates the check" rather than "nothing failed" — the
+  // distinction `check_ui_gates.py` already draws for the two files above.
+  fs.writeFileSync(ROUTE_FAILURES_PATH, JSON.stringify(routeFailures, null, 2))
 
   generateContactSheet()
 

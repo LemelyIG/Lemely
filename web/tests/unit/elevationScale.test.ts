@@ -194,6 +194,44 @@ function classTokensIn(
   return out
 }
 
+/**
+ * Every balanced class-expression group in a source file: `cn(...)`, `cva(...)`
+ * or a plain `className="..."`.
+ *
+ * Parenthesis-walked rather than regex-matched, so a nested call or a template
+ * literal inside the argument list cannot end a group early. This is
+ * `hoverTransition.test.ts`'s parser, and it is here for the reason that test
+ * documents: a class expression routinely spans many lines, and the class that
+ * governs an element sits on a different line from the one it governs. A
+ * line-based check of a multi-line expression reports correct code, which is
+ * D6.3's finding — and the four navbars this rule covers are one-liners *today*,
+ * so a line-based version would pass now and fail the first time one of them is
+ * wrapped, on a diff that changed no behaviour.
+ */
+function classGroups(source: string): { text: string; index: number }[] {
+  const out: { text: string; index: number }[] = []
+  const opener = /\b(?:cn|cva|buttonVariants)\s*\(/g
+  let match: RegExpExecArray | null
+  while ((match = opener.exec(source)) !== null) {
+    let depth = 1
+    let i = opener.lastIndex
+    while (i < source.length && depth > 0) {
+      if (source[i] === "(") depth++
+      else if (source[i] === ")") depth--
+      i++
+    }
+    out.push({ text: source.slice(match.index, i), index: match.index })
+  }
+  for (const plain of source.matchAll(/className="([^"]*)"/g)) {
+    out.push({ text: plain[1], index: plain.index ?? 0 })
+  }
+  return out
+}
+
+function lineOf(source: string, index: number): number {
+  return source.slice(0, index).split("\n").length
+}
+
 function zTokensIn(source: string): { token: string; line: number }[] {
   return classTokensIn(source, /(?:^|[\s:])(z-[A-Za-z0-9[\]()_.-]+)/g)
 }
@@ -283,17 +321,16 @@ describe("§3.2 item 6 — blur is the navbar exception and nothing else", () =>
   it("every backdrop-blur sits on an element that does not scroll", () => {
     // "Never on scrolling content" is the half of the rule a name check cannot
     // see. Checked structurally: the blur and a `sticky`/`fixed` position must
-    // appear in the same class expression.
+    // appear in the same balanced class expression — not merely on the same
+    // line, which would report a correct navbar the moment prettier wrapped it.
     const offenders: string[] = []
     for (const file of FILES) {
-      stripComments(readFileSync(file, "utf8"))
-        .split("\n")
-        .forEach((text, index) => {
-          if (!text.includes("backdrop-blur-")) return
-          if (!/\b(sticky|fixed)\b/.test(text)) {
-            offenders.push(`${relativeTo(file)}:${index + 1} — ${text.trim()}`)
-          }
-        })
+      const source = stripComments(readFileSync(file, "utf8"))
+      for (const group of classGroups(source)) {
+        if (!group.text.includes("backdrop-blur-")) continue
+        if (/\b(sticky|fixed)\b/.test(group.text)) continue
+        offenders.push(`${relativeTo(file)}:${lineOf(source, group.index)}`)
+      }
     }
     expect(offenders).toEqual([])
   })
