@@ -29,6 +29,19 @@ import { describe, expect, it } from "vitest"
  */
 const MIGRATED_FILES = [
   // Phase 4, surface 10 — 404 / misc, and the settings lane no surface owned.
+  "src/portals/student/index.tsx",
+  "src/portals/student/screens/Subject.tsx",
+  "src/portals/student/screens/Parents.tsx",
+  "src/portals/student/screens/Notifications.tsx",
+  "src/portals/student/screens/Announcements.tsx",
+  "src/portals/student/screens/Onboarding.tsx",
+  "src/portals/student/screens/onboarding/SubjectsStep.tsx",
+  "src/portals/student/screens/onboarding/QuestionnaireStep.tsx",
+  "src/portals/student/screens/placement/PlacementInvite.tsx",
+  "src/portals/student/screens/placement/PlacementResult.tsx",
+  "src/portals/student/screens/placement/PlacementTest.tsx",
+  "src/portals/student/screens/practice/PracticeSet.tsx",
+  "src/lib/studentOutcome.ts",
   "src/portals/settings/SettingsFrame.tsx",
   "src/portals/settings/DeviceSettings.tsx",
   "src/portals/settings/NotificationSettings.tsx",

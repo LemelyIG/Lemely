@@ -647,6 +647,202 @@ const PROFILE_STATES = {
   error: { status: 503, xp: { detail: "unavailable" } },
 }
 
+
+/* ── Surface 10 fixtures (P4.10: 404 / misc, settings, the unclaimed screens) ─ */
+
+const DEVICES_FIXTURE = {
+  maxDevices: 3,
+  devices: [
+    {
+      deviceId: "capture-device",
+      label: null,
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+      lastActiveAt: "2026-08-14T01:40:00Z",
+      isCurrent: true,
+    },
+    {
+      deviceId: "dev-2",
+      label: null,
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      lastActiveAt: "2026-08-13T18:00:00Z",
+      isCurrent: false,
+    },
+    {
+      deviceId: "dev-3",
+      label: null,
+      userAgent: null,
+      lastActiveAt: "2026-08-11T09:12:00Z",
+      isCurrent: false,
+    },
+  ],
+}
+
+const DEVICES_STATES = {
+  populated: { devices: DEVICES_FIXTURE },
+  empty: { devices: { maxDevices: 3, devices: [] } },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, devices: { detail: "unavailable" } },
+  // The surface's headline finding, photographed: a 200 that removed nothing.
+  // Before P4.10 this state was indistinguishable from a successful sign-out,
+  // because the screen rendered neither.
+  "already-gone": { devices: DEVICES_FIXTURE, revoke: { removed: false }, signOutRow: 1 },
+  // The one confirmation on the screen, and only for the current device.
+  "confirm-current": { devices: DEVICES_FIXTURE, signOutRow: 0, stopAtConfirm: true },
+}
+
+const PREFS_FIXTURE = {
+  gradeReady: true,
+  announcement: true,
+  streakWarning: false,
+  studyPlanReminder: false,
+  atRiskAlert: null,
+  quietHoursStart: "21:00",
+  quietHoursEnd: "07:00",
+}
+
+const NOTIFICATION_PREF_STATES = {
+  populated: { prefs: PREFS_FIXTURE },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, prefs: { detail: "unavailable" } },
+  // A failed toggle has to name the preference it failed on. Before P4.10 the
+  // message rendered under the whole list.
+  "save-failed": { prefs: PREFS_FIXTURE, saveStatus: 422, toggleRow: 0 },
+}
+
+/*
+ * The teacher portal's 404 is a SEPARATE surface, not a state here: the
+ * harness switches identity per surface (P4.5), so a `session` on a state
+ * object is silently ignored — which is exactly what happened on the first
+ * run of this round, and the in-harness assertion caught it rather than
+ * quietly photographing a redirect.
+ */
+const NOT_FOUND_TEACHER_STATES = {
+  "in-portal": { route: "/teacher/nonsense-path", expectSidebar: true },
+}
+
+const NOT_FOUND_STATES = {
+  // Outside every portal: the full-screen frame, its own skip link and main.
+  "top-level": { route: "/nonsense-path" },
+  // Inside the student portal: the sidebar, header and trail all survive.
+  // This is the state that did not exist before P4.10 — the path fell through
+  // to the top-level catch-all and the reader lost the app around them.
+  "in-portal": { route: "/student/nonsense-path", expectSidebar: true },
+}
+
+const ONBOARDING_PROFILE_FIXTURE = {
+  profile: {
+    qualificationLevel: null,
+    schoolName: null,
+    hasExternalLessons: null,
+    weeklyStudyHours: null,
+    gradeLevel: null,
+  },
+  enrolments: [],
+}
+
+const ONBOARDING_STATES = {
+  subjects: { profile: ONBOARDING_PROFILE_FIXTURE },
+  "subject-expanded": { profile: ONBOARDING_PROFILE_FIXTURE, pickSubject: true },
+}
+
+const SUBJECT_FIXTURE = {
+  header: {
+    meta: "0625 · Physics · June 2027",
+    title: "Physics",
+    intro: "9 papers corrected.",
+    forecast: "B",
+    weightedMean: "68",
+    weightedMeanDelta: "+7 since first paper",
+  },
+  papersBreakdown: [
+    {
+      title: "Paper 2",
+      sub: "Multiple choice",
+      mean: "74%",
+      positionOk: true,
+      boundary: "62 for a B",
+      position: "8 marks clear",
+      bars: [
+        { label: "s23", value: 62, highlight: false },
+        { label: "w23", value: 71, highlight: false },
+        { label: "s24", value: 78, highlight: true },
+      ],
+    },
+    {
+      title: "Paper 4",
+      sub: "Theory, method marks",
+      mean: "61%",
+      positionOk: false,
+      boundary: "66 for a B",
+      position: "5 marks short",
+      bars: [
+        { label: "s23", value: 55, highlight: false },
+        { label: "w23", value: 58, highlight: false },
+        { label: "s24", value: 61, highlight: true },
+      ],
+    },
+  ],
+  topicMap: [
+    { name: "Forces and motion", acc: "81%", color: "ok", weak: false },
+    { name: "Thermal physics", acc: "44%", color: "accent", weak: true },
+    { name: "Waves", acc: "67%", color: "warn", weak: false },
+    { name: "Electricity", acc: "72%", color: "ok", weak: false },
+  ],
+  paperHistory: [
+    { id: "p1", paper: "0625/42 s24", note: "Theory", marks: "49/80", pct: "61%", grade: "C", gradeColor: "warn" },
+    { id: "p2", paper: "0625/22 s24", note: "Multiple choice", marks: "31/40", pct: "78%", grade: "B", gradeColor: "ok" },
+  ],
+}
+
+const SUBJECT_STATES = {
+  populated: { subject: SUBJECT_FIXTURE },
+  // A 404 is a subject with no corrected papers yet, which is every subject on
+  // a new account. It gets the empty state, not the error state.
+  "nothing-yet": { status: 404, subject: { detail: "no papers" } },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, subject: { detail: "unavailable" } },
+}
+
+/**
+ * Shared by both 404 surfaces: navigate to the state's own path, then assert
+ * the DOM shape no screenshot can distinguish. See the note inside.
+ */
+async function notFoundAct(page, state) {
+    await page.goto(`${BASE}${state.route}`, { waitUntil: "domcontentloaded" })
+    await page.waitForTimeout(900)
+
+    /*
+     * The assertion no image can make, and the surface's whole point.
+     *
+     * A portal 404 has to keep the portal around it, and a top-level one has
+     * to render its own frame. Both look like a reasonable 404 in a
+     * screenshot; only the DOM says which subtree answered. `<main>` count is
+     * the load-bearing half — the split between `NotFound` and
+     * `PortalNotFound` exists precisely so a portal 404 does not end up with
+     * two `<main>` landmarks and two elements carrying MAIN_CONTENT_ID.
+     */
+    const shape = await page.evaluate(() => ({
+      mains: document.querySelectorAll("main").length,
+      navs: document.querySelectorAll("nav").length,
+      h1: document.querySelector("h1")?.textContent ?? null,
+    }))
+    if (shape.mains !== 1) {
+      throw new Error(`expected exactly one <main>, found ${shape.mains} at ${state.route}`)
+    }
+    if (state.expectSidebar && shape.navs === 0) {
+      throw new Error(`a 404 inside a portal lost its navigation at ${state.route}`)
+    }
+    if (!state.expectSidebar && shape.navs > 0) {
+      throw new Error(`a top-level 404 rendered portal navigation at ${state.route}`)
+    }
+    if (!shape.h1 || !shape.h1.includes("find that page")) {
+      throw new Error(`404 heading was ${JSON.stringify(shape.h1)} at ${state.route}`)
+    }
+    console.log(`verified: ${state.route} -> 1 main, ${shape.navs} nav(s), correct heading`)
+}
+
 /**
  * The surface registry. Each entry owns its route, its file prefix, its states
  * and the stubbing those states need; everything else is the shared harness.
@@ -1706,6 +1902,167 @@ const SURFACES = {
       })
     },
     fullPage: (state) => !state.delayMs,
+  },
+
+
+  /* ── Surface 10 (P4.10) ─────────────────────────────────────────────────── */
+
+  "settings-devices": {
+    prefix: "settings-devices",
+    route: "/settings/devices",
+    states: DEVICES_STATES,
+    fullPage: (state) => !state.delayMs,
+    async stub(page, state) {
+      await page.route("**/api/me/devices", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.devices),
+        })
+      })
+      await page.route("**/api/me/devices/*", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.revoke ?? { removed: true, wasCurrent: false }),
+        }),
+      )
+    },
+    async act(page, state) {
+      if (state.signOutRow === undefined) return
+      const buttons = page.getByRole("button", { name: /^Sign out/ })
+      await buttons.nth(state.signOutRow).click()
+      // The current device opens a confirmation; the others do not. Both are
+      // states worth a picture, so this stops at whichever one the row implies.
+      await page.waitForTimeout(state.stopAtConfirm ? 600 : 1200)
+    },
+  },
+
+  "settings-notifications": {
+    prefix: "settings-notifications",
+    route: "/settings/notifications",
+    states: NOTIFICATION_PREF_STATES,
+    fullPage: (state) => !state.delayMs,
+    async stub(page, state) {
+      await page.route("**/api/notifications/push/config", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ available: false, publicKey: null }),
+        }),
+      )
+      await page.route("**/api/me/notification-preferences", async (route) => {
+        if (route.request().method() !== "GET") {
+          await route.fulfill({
+            status: state.saveStatus ?? 200,
+            contentType: "application/json",
+            body: JSON.stringify(
+              state.saveStatus ? { detail: "atRiskAlert is only settable for the teacher and parent roles." } : state.prefs,
+            ),
+          })
+          return
+        }
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.prefs),
+        })
+      })
+    },
+    async act(page, state) {
+      if (state.toggleRow === undefined) return
+      await page.getByRole("switch").nth(state.toggleRow).click()
+      await page.waitForTimeout(1000)
+    },
+  },
+
+  "not-found": {
+    prefix: "not-found",
+    // The route is per state here, unlike every other surface: the whole point
+    // is that the same screen answers differently depending on which subtree
+    // the unmatched path fell in.
+    route: "/nonsense-path",
+    states: NOT_FOUND_STATES,
+    async stub() {
+      /* Nothing to stub: neither branch makes an API call. */
+    },
+    act: notFoundAct,
+  },
+
+  "not-found-teacher": {
+    prefix: "not-found-teacher",
+    route: "/teacher/nonsense-path",
+    states: NOT_FOUND_TEACHER_STATES,
+    session: TEACHER_SESSION,
+    profile: TEACHER_PROFILE,
+    async stub(page) {
+      /*
+       * The 404 body makes no API call, but the teacher LAYOUT does: its
+       * sidebar renders "Your classes" from `GET /teacher/classes`. Left
+       * unstubbed the sidebar still mounts, so the assertion would pass either
+       * way — it is stubbed so the picture shows the real chrome rather than a
+       * permanent "Loading…" in the one region this state exists to prove is
+       * still there.
+       */
+      await page.route("**/api/teacher/classes", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(TEACHER_CLASSES),
+        }),
+      )
+    },
+    act: notFoundAct,
+  },
+
+  onboarding: {
+    prefix: "onboarding",
+    route: "/student/onboard",
+    states: ONBOARDING_STATES,
+    async stub(page, state) {
+      await page.route("**/api/me/student-profile", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.profile),
+        }),
+      )
+    },
+    async act(page, state) {
+      if (!state.pickSubject) return
+      // Expanding a subject is what reveals the three kit form controls that
+      // replaced the hand-rolled ones, so it needs its own picture.
+      await page.getByRole("button", { pressed: false }).nth(1).click()
+      await page.waitForTimeout(600)
+    },
+  },
+
+  subject: {
+    prefix: "subject",
+    route: "/student/subject/0625",
+    states: SUBJECT_STATES,
+    fullPage: (state) => !state.delayMs,
+    async stub(page, state) {
+      await page.route("**/api/student/subject/**", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.subject),
+        })
+      })
+    },
   },
 
   "practice-result": {

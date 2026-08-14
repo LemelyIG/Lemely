@@ -45,16 +45,16 @@ describe("unavailableMessage — a specific message per reason, never generic", 
 describe("formatPlacementEstimate", () => {
   it("pluralises questions and topics correctly", () => {
     expect(formatPlacementEstimate(9, 6, 15.19)).toBe(
-      "9 questions across 6 topics — about 15 minutes",
+      "9 questions across 6 topics, about 15 minutes",
     )
   })
 
   it("singular question/topic/minute (the inverse of the plural case)", () => {
-    expect(formatPlacementEstimate(1, 1, 1)).toBe("1 question across 1 topic — about 1 minute")
+    expect(formatPlacementEstimate(1, 1, 1)).toBe("1 question across 1 topic, about 1 minute")
   })
 
   it("rounds estimatedMinutes to a whole minute rather than inventing decimal precision", () => {
-    expect(formatPlacementEstimate(10, 6, 17.06)).toBe("10 questions across 6 topics — about 17 minutes")
+    expect(formatPlacementEstimate(10, 6, 17.06)).toBe("10 questions across 6 topics, about 17 minutes")
   })
 })
 

@@ -335,9 +335,12 @@ export function NotificationSettings() {
               {update.isPending ? "Saving…" : "Save quiet hours"}
             </Button>
           </div>
-          {/* The data face: this line is two clock times and a duration, which
-              is exactly what §4.2's tabular rung is for. */}
-          {summary ? <p className="text-data-sm text-ink-faint">{summary}</p> : null}
+          {/* Body rung, not the data face. The first pass put this on
+              `data-sm` reasoning that it is "two clock times and a duration";
+              the capture round showed it is a full sentence wearing the mono
+              face, and a sentence set in tabular numerals reads as machine
+              output. The times inside it are already unambiguous. */}
+          {summary ? <p className="text-body-sm text-ink-faint">{summary}</p> : null}
         </div>
       </section>
 

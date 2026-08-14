@@ -1,9 +1,11 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { Eyebrow } from "@/components/ui/primitives"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { Button } from "@/components/ui/button"
 import {
   useAnnouncements,
@@ -138,10 +140,10 @@ function AnnouncementCard({
       <CardBody className="flex flex-col gap-2">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <h3 className="text-body-lg font-medium text-t1">
+            <h3 className="text-body-lg font-medium text-ink">
               {announcement.title}
             </h3>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-2xs text-t3">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-2xs text-ink-faint">
               <Chip tone={announcement.scope === "school" ? "accent" : "neutral"}>
                 {announcement.scope === "school" ? "Whole school" : "Your class"}
               </Chip>
@@ -159,7 +161,7 @@ function AnnouncementCard({
 
         <p
           className={cn(
-            "text-body-md whitespace-pre-line text-t2",
+            "text-body-md whitespace-pre-line text-ink-muted",
             // Collapsed by default so a long notice cannot bury the ones under
             // it; the full text is one tap away and marking-read is that tap.
             !isOpen && "line-clamp-2",
@@ -212,7 +214,7 @@ function AnnouncementsPanel() {
   }
 
   if (isPending) {
-    return <div className="text-body-md text-t3">Loading announcements…</div>
+    return <ListSkeleton rows={3} />
   }
 
   if (isError || !data) {
@@ -257,13 +259,13 @@ function ExamEntryRow({ entry }: { entry: StudentExamEntry }) {
       : null
 
   return (
-    <div className="flex flex-col gap-2 border-b border-border py-3 last:border-b-0">
+    <div className="flex flex-col gap-2 border-b border-rule py-3 last:border-b-0">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-body-md font-medium text-t1">
+        <span className="text-body-md font-medium text-ink">
           {entry.subjectCode} Paper {entry.paperNumber}
         </span>
         {session ? (
-          <span className="text-2xs text-t3">{session}</span>
+          <span className="text-2xs text-ink-faint">{session}</span>
         ) : null}
       </div>
 
@@ -272,30 +274,30 @@ function ExamEntryRow({ entry }: { entry: StudentExamEntry }) {
           {entry.dates.map((date) => (
             <li
               key={`${date.paperVariant}-${date.examDate}`}
-              className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-dense-lg"
+              className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-body-md"
             >
-              <span className="font-mono text-2xs text-t3">
+              <span className="font-mono text-2xs text-ink-faint">
                 Variant {date.paperVariant}
               </span>
-              <time dateTime={date.examDate} className="text-t1">
+              <time dateTime={date.examDate} className="text-ink">
                 {formatExamDate(date.examDate)}
               </time>
               {/* Absent when the timetable prints none — never defaulted to
                   midnight, because a missing time must read as missing. */}
               {date.startsAtLocal ? (
-                <span className="text-t2">{date.startsAtLocal}</span>
+                <span className="text-ink-muted">{date.startsAtLocal}</span>
               ) : null}
               {date.durationMinutes ? (
-                <span className="text-t3">{date.durationMinutes} min</span>
+                <span className="text-ink-faint">{date.durationMinutes} min</span>
               ) : null}
               {/* Named on screen so a student who thinks a date is wrong can
                   cite the document rather than argue with the app. */}
-              <span className="text-3xs text-t3">from {date.source}</span>
+              <span className="text-3xs text-ink-faint">from {date.source}</span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-dense-lg text-t2">
+        <p className="text-body-md text-ink-muted">
           {entry.availability === "no_session"
             ? "You have not said which session you are sitting this paper in, so we cannot match it to a timetable."
             : "We do not hold official dates for this session yet."}
@@ -310,7 +312,7 @@ function ExamCalendarPanel() {
   const { data, isPending, isError, refetch } = useExamCalendar()
 
   if (isPending) {
-    return <div className="text-body-md text-t3">Loading exam dates…</div>
+    return <ListSkeleton rows={3} />
   }
 
   if (isError || !data) {
@@ -343,7 +345,7 @@ function ExamCalendarPanel() {
     return (
       <EmptyState
         heading="No official dates yet"
-        body="We do not hold the Cambridge timetable for your session yet. Nothing is missing from your account — this one is on us, and your papers appear here as soon as we have it."
+        body="We do not hold the Cambridge timetable for your session yet. Nothing is missing from your account: this one is on us, and your papers appear here as soon as we have it."
       />
     )
   }
@@ -356,7 +358,7 @@ function ExamCalendarPanel() {
           entry={entry}
         />
       ))}
-      <p className="pt-3 text-2xs text-t3">
+      <p className="pt-3 text-2xs text-ink-faint">
         Dates come from the official Cambridge timetable. Always check with your
         school before relying on one.
       </p>
@@ -376,17 +378,23 @@ function Countdown({ today }: { today: Date }) {
   if (!next) return null
 
   return (
-    <Card className="border-accent/40 bg-accent-subtle">
+    // The `info` register, not the accent. Accent is this palette's alert
+    // colour (recorded on surfaces 5 and 6, and this is its fourth
+    // occurrence), so an exam ninety days out was painted the same as
+    // something going wrong. Making it conditional on proximity was the other
+    // option and was refused: any threshold for "now it is urgent" would be
+    // invented, and the number in the panel already carries the urgency.
+    <Card className="border-info/40 bg-info-wash">
       <CardBody className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <div>
           <Eyebrow>Your next exam</Eyebrow>
-          <div className="text-display-sm text-t1">
+          <div className="text-display-sm text-ink">
             {formatCountdown(next.days)}
           </div>
         </div>
-        <div className="text-body-md text-t2">
+        <div className="text-body-md text-ink-muted">
           {next.entry.subjectCode} Paper {next.entry.paperNumber}
-          <span className="text-t3">
+          <span className="text-ink-faint">
             {" "}
             · variant {next.date.paperVariant} ·{" "}
             {formatExamDate(next.date.examDate)}
@@ -424,14 +432,14 @@ export function Announcements() {
       <Countdown today={today} />
 
       <section className="flex flex-col gap-3" aria-labelledby="s28-notices">
-        <h2 id="s28-notices" className="text-body-lg font-medium text-t1">
+        <h2 id="s28-notices" className="text-body-lg font-medium text-ink">
           From your teachers
         </h2>
         <AnnouncementsPanel />
       </section>
 
       <section className="flex flex-col gap-3" aria-labelledby="s28-calendar">
-        <h2 id="s28-calendar" className="text-body-lg font-medium text-t1">
+        <h2 id="s28-calendar" className="text-body-lg font-medium text-ink">
           Exam calendar
         </h2>
         <Card>

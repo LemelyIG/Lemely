@@ -29,174 +29,125 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      4 — Surface-by-surface redesign (Phases 0-3 DONE)
-CURRENT SURFACE:    Marketing / landing DONE (8 of 10 built; admin deferred
-                    behind D1.6). Next: **404 / misc** -> admin.
-NEXT ACTION:        Phase 4, surface 10: **404 / misc**
-                    (`portals/misc/NotFound.tsx`, plus whatever the sweep
-                    finds unmigrated: `portals/settings/DeviceSettings.tsx`
-                    and `NotificationSettings.tsx` are top-level routes that
-                    no surface has claimed).
+CURRENT PHASE:      4 - Surface-by-surface redesign (Phases 0-3 DONE)
+CURRENT SURFACE:    404 / misc DONE (9 of 10 built; admin deferred behind
+                    D1.6). Phase 4 now BLOCKS on D1.6.
+NEXT ACTION:        **Phase 4 is blocked, not idle.** Surface 7 (admin views)
+                    is the only thing left in the phase and D1.6 is still
+                    unanswered and deliberately undefaulted. Per MISSION §10,
+                    a question with no sane default must not be a timeout
+                    question, so this is the point the phase blocks rather
+                    than guesses. Re-ask it, say plainly that Phase 4 cannot
+                    close without it, and do not invent an answer.
 
-                    `NotFound` is the router's `errorElement` on every
-                    top-level route AND the `path: "*"` catch-all, so it is
-                    two screens in one file and both need states. It is a
-                    **static** import on purpose (P3.1/D1.4: a lazily-loaded
-                    error screen has to fetch a chunk from the origin that
-                    just failed to serve one) — do not make it lazy while
-                    tidying.
+                    While it waits, the honest independent work is:
+                    (a) **The compat layer cannot die yet, and now the only
+                    thing keeping it alive is the component kit.** Every
+                    *screen* in the product is migrated as of this surface.
+                    17 kit components still name build-era aliases in their
+                    own source (`stepper`, `question-row`, `nav-shells`,
+                    `confidence-indicator`, `getting-started`, `card`,
+                    `chip`, `primitives`, `state-views`, `slider`,
+                    `breadcrumbs`, `grade-badge`, `mark-display`,
+                    `boundary-bar`, `paper-identity`, `role-switcher`,
+                    `CameraCapture`). None is in MIGRATED_FILES, so no gate
+                    reads them. They render correct *values* through the
+                    aliases, so nothing is visually wrong and this is not a
+                    Phase 4 regression - it is Phase 2 rework, best done in
+                    Phase 6 hardening, and it is what `index.css`'s compat
+                    block is waiting on before it can be deleted.
+                    (b) Phase 5 (motion + data-viz) does not depend on D1.6.
 
-                    Known and deliberately left for this surface (App.tsx's
-                    own note): a 404 *inside* a portal subtree loses the
-                    sidebar, because the portal routes enumerate their
-                    children and unmatched paths fall to the top-level
-                    catch-all. The note says rebuilding it as a per-portal
-                    child route is Phase 4 work "once each portal layout is
-                    its final shape" — after surface 9 they all are.
+                    New since surface 10, and binding on everything later:
+                    - **A screen no surface claimed is a screen no gate
+                      reads.** The three file lists only grow by hand, so ten
+                      product screens (all of onboarding, all of placement,
+                      Subject, Announcements, Notifications, Parents,
+                      PracticeSet) sat outside `MIGRATED_FILES`,
+                      `RTL_CLEAN_FILES` and `SCANNED_FILES` for the whole
+                      phase. `text-body` and `text-title` on the notification
+                      inbox's own `<h1>` emitted zero CSS the entire time.
+                      Proved by inversion: `utilityExistence.test.ts` catches
+                      `text-title` the instant the file is listed. The gate
+                      was never too narrow; the file was never in it.
+                    - **`lib/studentOutcome.ts` and `lib/settingsOutcome.ts`
+                      complete the failure-copy family at seven.** Do not
+                      write an eighth by symmetry. Each header states the
+                      endpoint evidence that forced it: `settingsOutcome`
+                      exists because its reader is *all five roles at once*
+                      and so cannot pick a register; `studentOutcome` exists
+                      because `correctionOutcome` is deliberately detail-first
+                      and these routers write no detail worth keeping.
+                    - **`SettingsFrame`** owns the settings lane's chrome.
+                      Two top-level routes reached from four entry points
+                      across three portals had none at all.
+                    - **`PortalNotFound`** is the body without the frame. The
+                      split exists for the landmarks (two `<main>`s, two
+                      `MAIN_CONTENT_ID`s), not the styling, and
+                      `notFoundFallback.test.ts` asserts it in the route table
+                      and in the source.
+                    - **The harness switches identity per SURFACE, not per
+                      state.** A `session` on a state object is silently
+                      ignored; the teacher 404 needed its own registry entry.
+                      Caught by an in-harness assertion, not by an image.
+                    - **A capture fixture can be wrong and look like a bug.**
+                      The notification switches read "off" against
+                      `paperMarked: true` because the real key is
+                      `gradeReady`. Check the fixture against the type before
+                      concluding the screen is broken.
 
-                    After 404/misc, surface 7 (admin views) is the ONLY thing
-                    left in Phase 4, and D1.6 is still unanswered and
-                    undefaulted. **That is the point at which Phase 4 blocks
-                    rather than proceeds.** Do not guess D1.6; re-ask it and
-                    say plainly that the phase cannot close without it.
-
-                    New since surface 9, and binding on every later surface:
+                    Standing from surface 9, still binding:
                     - **A guard around the wrong subtree is invisible to every
-                      gate.** The marketing page spent the whole build behind
-                      `RequireAuth allowedRoles={["student"]}`, so the only
-                      reader who could open it was a student who had already
-                      signed up. Typecheck, lint and the audit all passed.
-                      `tests/unit/marketing.test.ts` now asserts which
+                      gate.** `tests/unit/marketing.test.ts` asserts which
                       top-level routes are public and which are guarded, in
                       both directions; extend it rather than writing a second.
-                    - **`src/routes.tsx` owns the route table now**, and
-                      `App.tsx` is one line. `createBrowserRouter` touches
-                      `document` at import and vitest runs the node
-                      environment on purpose, so importing `@/App` in a unit
-                      test throws. Import `appRoutes` from `@/routes`.
+                    - **`src/routes.tsx` owns the route table**, and importing
+                      `@/App` in a node-env test throws on `document`. Import
+                      `appRoutes` from `@/routes`.
                     - **`components/ui/reveal.tsx` is the scroll-entry
-                      motion**, and it did not exist before surface 9 despite
-                      DESIGN.md §9 and §4 both specifying it. `lm-screen` is
-                      not the same thing (it fires once on mount, so below-fold
-                      content finishes animating before anyone arrives). Do not
-                      build a second one. It reads reduced motion in JS at
-                      mount, deliberately.
+                      motion.** Do not build a second.
                     - **A `fullPage` capture does not scroll**, so anything
-                      inside a `Reveal` photographs blank. `capture_surface`'s
-                      landing surface scrolls before the shutter; any later
-                      surface using `Reveal` needs the same.
+                      inside a `Reveal` photographs blank.
                     - **The audit deleted the numbers and left the sentences.**
-                      C1/C2/C3 were closed in Phase 2 and six fabrications were
-                      still live on the landing page, including the exact
-                      figure C1 removed, in a different slot of the same file.
-                      When a claim is deleted, grep the repo for the claim, not
-                      the line.
+                      When a claim is deleted, grep the repo for the claim.
 
-                    Standing from surface 8, still binding:
-                    - **`lib/authOutcome.ts` completes the failure-copy family
-                      at five.** The rule, now that all five exist: *keep the
-                      backend's `detail` where a human wrote it for a human*,
-                      decided per endpoint by reading the endpoint. This one
-                      module does both, three lines apart. Do not copy any
-                      single module's policy into a sixth.
+                    Standing from surfaces 5-8, still binding:
+                    - `lib/authOutcome.ts` / `parentOutcome.ts` /
+                      `teacherOutcome.ts` / `friendOutcome.ts` /
+                      `correctionOutcome.ts`: keep the backend's `detail` only
+                      where a human wrote it for a human, decided per endpoint
+                      by reading the endpoint.
                     - **A docstring asserting an intention is not evidence the
-                      code meets it.** Second time this phase (surface 2's
-                      `MarkDisplay`, now `ParentLogin`). Read what the code
-                      renders, not what its comment claims.
-                    - **`AuthFrame`** (exported from `portals/auth/Login.tsx`)
-                      owns the signed-out frame: mark, paper, grain, column.
-                    - **M9's placeholder logo was in FOUR places**, not the
-                      three the audit counted. All four are now the real mark.
-                    - **`capture_surface.mjs` accepts `session: null`** for
-                      signed-out routes; without it the fixture session makes
-                      `/login` a redirect.
-
-                    New since surface 6, and binding on every later surface:
-                    - **The motion defaults are fixed product-wide.** A bare
-                      `transition-colors` now runs on `ease-out-soft` at 120ms
-                      because `--default-transition-timing-function` and
-                      `--default-transition-duration` were repointed in
-                      `@theme`. Before that, all 27 call sites ran on
-                      Tailwind's `cubic-bezier(0.4,0,0.2,1)` — the ease-in-out
-                      §3.2 item 14 bans. **Do not write a named duration
-                      utility**: the `--dur-*` tokens live in `:root`, not
-                      `@theme`, so `duration-instant` emits nothing. Use the
-                      corrected default, or `duration-[var(--dur-fast)]`.
-                      Gated by `tests/unit/motionDefaults.test.ts`.
-                    - **`lib/parentOutcome.ts`** completes the failure-copy
-                      family. Read its header before writing a fifth: the four
-                      modules differ by *audience*, and the parent one is
-                      status-first rather than detail-first because every
-                      `detail` the parent API emits is machine text.
-                    - **A number in a coloured chip needs a label.** Third
-                      occurrence in three surfaces. If the reader can plausibly
-                      read it as a score, say what it counts.
-                    - **Accent is the alert register on this palette.**
-                      Second occurrence. Good news on `--accent-wash` reads as
-                      an error; `info` is the neutral notice.
-                    - `design-tokens.test.ts` does **not** strip comments, so a
-                      hex value quoted in prose fails it. Reword the comment;
-                      do not loosen the gate.
-
-                    Standing from surface 5, still binding:
-                    - **`utilityExistence.test.ts` now scans a FIFTH family,
-                      `lm-`.** The resolves-to-nothing shape recurred a third
-                      and fourth time (`lm-head`, `lm-body`, `lm-cols`), in the
-                      one family the project owns outright and the gate did not
-                      check. Append migrated files to `SCANNED_FILES` as usual.
-                    - **`lib/teacherOutcome.ts`** joins `correctionOutcome.ts`
-                      and `friendOutcome.ts`. Two entry points: a failed read
-                      asks "can I retry", a failed write asks "did it save".
-                      The parent surface has its own raw `error.message` sites;
-                      it needs the same treatment, not a fourth ad-hoc copy.
-                    - **`components/ui/confirm-modal.tsx` (C-24) is the
-                      confirmation pattern.** Do not call `window.confirm` and
-                      do not hand-roll a second one. Its `consequence` prop is
-                      overridable *because not every destructive action is
-                      irreversible* — say what is really lost.
-                    - **`GradeBadge` has a third basis, `target`.** A grade
-                      someone is aiming for is neither achieved nor predicted.
-                    - **`Chip` is migrated and has an `info` tone.** `accent`
-                      no longer means "live": on this palette it is the alert
-                      register, so a healthy live state rendered as alarm.
-                    - **`text-label-sm` is a real rung now**, not build-era: it
-                      is `eyebrow` without the uppercase transform, for tags
-                      that carry a sentence rather than a kicker. Note that
-                      `normal-case` cannot override `.text-eyebrow` — equal
-                      specificity, emitted earlier. Verified by byte offset in
-                      the bundle.
-                    - **The confidence-floor gate now matches aliases.** It
-                      was defeated by a parameter named `score`. Any new
-                      bucketing goes through `lib/markingConfidence.ts`.
+                      code meets it.** Fourth time this phase (`MarkDisplay`,
+                      `ParentLogin`, now `Parents.tsx`'s `linkErrorMessage`).
+                    - **The motion defaults are fixed product-wide.** Use the
+                      corrected default or `duration-[var(--dur-fast)]`;
+                      `duration-instant` emits nothing.
+                    - **Accent is the alert register on this palette.** Fourth
+                      and fifth occurrence this surface (the exam countdown,
+                      the latest-paper bar).
+                    - **A number in a coloured chip needs a label.**
+                    - `design-tokens.test.ts` does not strip comments.
+                    - **`components/ui/confirm-modal.tsx` is the confirmation
+                      pattern**; its `consequence` is overridable because not
+                      every destructive action is irreversible.
                     - **`capture_surface.mjs` takes a per-surface `session`
-                      and `profile`.** Both were hardcoded to `role: "student"`,
-                      which silently redirects any non-student route.
-                    - `check_copy`'s placeholder classifier was widened twice
-                      (two dashes on one line; a dash alone on its line). Both
-                      widenings are pinned in the strict direction too.
+                      and `profile`.**
 
-                    Standing rules Phase 4 inherits, all of them enforced:
-                    - `npm run check:copy` must not grow. **14** prose
-                      em-dashes remain, all on un-migrated surfaces (student
-                      placement, announcements, parents, onboarding). §9.8 binds the gate to
-                      new/edited copy, so each surface clears its own.
-                    - Add each migrated file to RTL_CLEAN_FILES, MIGRATED_FILES
-                      and SCANNED_FILES. The lists only grow.
+                    Standing rules Phase 4 inherits:
+                    - `npm run check:copy` is at **0**. It must stay there.
+                    - Add each migrated file to RTL_CLEAN_FILES,
+                      MIGRATED_FILES and SCANNED_FILES. The lists only grow,
+                      and surface 10 is what a missing entry costs.
                     - Stamp every emitted surface with the hallmark pre-emit
                       critique (§9.1).
-                    - Replace text loaders with `loading-shapes.tsx` as each
-                      surface's geometry settles.
                     - **A defect fixed on one surface is often live on
-                      another.** Confirmed again on surface 5, four times over.
+                      another.** Confirmed again on surface 10.
 
-                    **D1.6 re-asked 2026-08-14T02:45+03:00**, logged in
-                    STEERING.md. Still open, still undefaulted. Do not guess
-                    it; do not idle on it either.
-
-                    **B4 blocks the e2e gate** (BUILD/BLOCKERS.md). One
+                    **B4 still blocks the e2e gate** (BUILD/BLOCKERS.md). One
                     command from the human clears it; do not kill the
                     port-8000 process unattended, it belongs to another user.
-LAST UPDATED:       2026-08-14T04:05+03:00
+LAST UPDATED:       2026-08-14T05:40+03:00
 LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
                     NOTE: still no inbound message from the human, ever. The only
                     entry on the topic remains my own Phase-0 selftest.
@@ -211,7 +162,7 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 | 1. Audit | DONE | 2026-08-13 | Three legs, all read-only, `web/` verified untouched after each. Merged into `BUILD/DESIGN-AUDIT.md`; leg reports in `BUILD/audit/`. 6 critical, 14 major, 3 minor. Root cause is one thing: every token is still the build-era Material-3 palette, so zero pages are Study Notebook yet. Worse than that and independently confirmed by me: 3 fabrications on the landing page, no error boundary anywhere, no skeleton component anywhere. **Coverage is partial and stated so — nothing was verified against a rendered viewport, and 34 of 48 routes were reached by grep only.** |
 | 2. Brand & Design System | DONE | 2026-08-13 | All 6 steps done. Brand strategy at `BUILD/BRAND.md`; logo hand-authored as SVG after the Gemini refine pass failed on all five named defects (D2 defaulted to ship it). DESIGN.md rewritten from scratch as the Study Notebook; index.css is its implementation with a documented temporary compatibility layer so un-migrated screens pick up the new palette instead of staying Material-3. `tests/test_design_tokens.py` pins every contrast claim and caught two real AA failures plus one greyscale failure in my own draft. Landing-page fabrications C1/C2 fixed, plus a third the audit missed (a stated 0.70 review threshold that is really 0.90). Component kit: 19 components, all 8 states, preview page at `web/dev-previews/` with its own Vite entry so the product can never ship it. Closed the audit's "no skeleton component" and "no error boundary" gaps. Three defects found by verifying rather than trusting the agent reports: RadioGroup did not actually have 8 states; the preview page was silently missing every utility used only inside a component (Tailwind source detection is rooted at the entry CSS, fixed with `@source`, CSS went 28KB→69KB); and a hover-pinning device I built emitted zero CSS and was removed rather than left to quietly pass review. |
 | 3. IA & UX Flows | DONE | 2026-08-13 | All four parts done, D1.1-5 implemented. The headline is what the audit could not see from source: **neither the student nor teacher portal had ANY navigation below 820px/768px** — sidebars simply `hidden`, nothing replacing them, on a product whose own brief says students live on phones. Fixed with a shared `NavDrawer` rendering the same list as the desktop aside. Also removed two cross-portal links `RequireAuth` bounces for every role that exists (dead for everyone), and 4 dead keys in the student `crumbs` map. First-run views for student + teacher (`GettingStarted`); the parent's was already right and was deliberately left alone. Four honesty defects fixed in passing: a fabricated school name and hardcoded date on the teacher dashboard, hardcoded greetings on both, and two 'Coming soon' buttons for features that shipped. Three rules got gates rather than sweeps (`check:copy`, `rtlSafety`, `navigation`), and each found a real defect while being written. 646 unit tests (+59), typecheck/lint/both builds/pre-commit clean, no horizontal scroll at 320/375/1440. **e2e blocked by B4** — environmental, verified pre-existing at `0451e5e`, not a Phase 3 regression. See D3.22. |
-| 4. Surface redesign | IN PROGRESS | — | 8 of 10 built (admin deferred behind D1.6). **Surface 9's headline is that the marketing page had no reader at all**: `/student/landing` sat inside `studentRoute`, which `App.tsx` wraps in `RequireAuth allowedRoles={["student"]}`, so a signed-out visitor went to `/login`, a signed-in *teacher* went to `/teacher` (the page's own eyebrow reads "For CAIE teachers and their students"), `/` sent every signed-out visitor to `/login` so the product had no public page of any kind, and the one reader who could reach it was the person who least needed selling, seeing it wrapped in the student sidebar, breadcrumbs and streak pill above a hero saying "Mark a paper". It was **known and half-fixed** — D1.1 called it "orphaned inside the authenticated app" and removed the nav entry, which fixed what a student saw and left the page with no audience. Nothing could have caught it: a guard around the wrong subtree passes typecheck, lint and the design hook, which is why the fix ships with `marketing.test.ts` asserting public-vs-guarded in both directions, and why the route table moved to `src/routes.tsx` (importing `@/App` in a node-env test throws on `document`). **The second finding is that the audit deleted the numbers and left the sentences**: C1/C2/C3 closed in Phase 2, and six fabrications were still live — "marked in 41s" (the exact figure C1 removed, four sections up the same file), a partnered-teacher free tier and "No card to start" one screen above the placeholder saying pricing is undecided, QR/face/2FA attendance and replayed-minute retention (both recorded in `schemas_teacher.py` as having no backend source), WhatsApp results (absent from the repo entirely) and course payments (out of scope per PRODUCT.md). Every bullet now cites the router that implements it. Also: `Reveal` (the scroll-entry motion DESIGN.md §9 specifies and nothing implemented), the page had two left edges 40px apart, `ruled-bg` was painted over by opaque cards and drew nothing, and the Parents link was hidden below 640px on the login route whose selling point is a phone number. The capture harness failed its own round twice and was right both times. See D4.8. **Surface 8's headline is that the OTP failure a parent read was an enum member**: `verify_otp` raises `AuthError(f"OTP verification failed: {result.value}")` and `ParentLogin` rendered `err.message` verbatim, so the screen said `OTP verification failed: wrong_code` — while that file's own docstring asserted the parent "reads the actual reason rather than a client-side guess". The distinction was real; the vocabulary was never fit to show anyone. Second time this phase a docstring described the fix rather than the behaviour. `authOutcome.ts` maps the four `OtpResult` members and, three lines away, deliberately *keeps* the 429's own wording, because there a human wrote a sentence for a human — which is the failure-copy family's real rule now that five modules exist. Also: `Login.tsx` had been scaffolding since the build era and said so in its docstring, shipping a card invisible against its own page colour, a form-level error in the one position §12 rules out, and a raw `error.message` that could print "401 Unauthorized"; the password 401 is now deliberately vague to close an account-enumeration oracle; the OTP boxes were set in the display face; and audit finding M9's placeholder logo turned out to be in **four** places, not the three it counted. See D4.7. Earlier: 6 of 10 surfaces done (student dashboard, past-paper correction flow, study surfaces, gamification, teacher portal, parent views). **Surface 6's headline is DESIGN.md's banned easing being in force on every transition in the product, with no call site naming it**: §3.2 item 14 forbids `ease-in-out`, and Tailwind's `--default-transition-timing-function` *is* that curve, so all 27 bare `transition-*` call sites inherited it. Verified in the shipped bundle before and after. It is D4.1's `--font-serif` shape a fourth time with one difference that matters — those classes resolved to nothing, which `utilityExistence.test.ts` can see, while these emit the *wrong* rules, which it cannot — so the deliverable is a gate that checks the value rather than the name. Found only because the first draft of the parent shell wrote `duration-instant` and I checked the assumption instead of trusting it: the durations live in `:root`, not `@theme`, so that class emits nothing either. **The second finding is every child screen carrying two back links to the same place** — P3.1 added the breadcrumb trail without removing the inline back links beneath it. Also: all four screens rendered a raw `error.message`, and the obvious fix (reuse `teacherOutcome.ts`) was wrong because every `detail` the parent API produces is machine text, UUIDs and stringified Python exceptions included; the "Last worked" card printed "1d ago" directly above "2 days ago" from one timestamp; "6 more marks for a A"; the boundary panel put the screen's most encouraging sentence in the alert register (surface 5's finding (d) again); and an unlabelled tone-coloured percentage appeared for the third surface running. See D4.6. **Surface 5's headline is the resolves-to-nothing shape recurring a third and fourth time, inside the gate written to stop it**: `utilityExistence.test.ts` checked the four families where Tailwind owns the vocabulary, and `lm-` is the one family the project owns outright, so `lm-head` and `lm-body` sat on the student shell's own `<header>` and `<main>` in a file the gate already listed by name. Widening it found `lm-cols` on nine more elements. All six emit zero rules in the shipped bundle. **The second headline is a review queue that painted doubt green**: the queue exists because a mark fell below the 0.90 review floor, and it bucketed with its own `confidenceTone` at 0.8, so a mark at 0.85 was shown to the teacher in the same green the product uses for marks it is sure about. The gate written to prevent exactly this missed because the parameter is called `score`, not `confidence` — D6.12's lesson, where the shared condition was an assumption about naming. Also: all fifteen screens rendered a raw `error.message` at 44 sites; four destructive actions were confirmed by `window.confirm`, including a class delete that removes it for every enrolled student; a duplicate circular `Avatar` violated §6 at six call sites while the kit's squircle had one; and the portal had no texture layer at all. See D4.5. **Surface 4's headline is D4.1's defect recurring in a second family: `text-display` is not a class.** Nothing defines it, the shipped bundle emits zero rules for it, and four `<h1>`s across Profile/Standings/Friends/Announcements carried it — so the product's page titles rendered at the browser's default heading in the body face, not §4.2's `display-lg` in Newsreader. Twice is a pattern, so the deliverable is a gate for the pattern (`utilityExistence.test.ts`) rather than four edits. Also: the **celebration register §9.3 describes had no implementation anywhere** and now does, with the honest omission recorded — a "leaderboard climb" cannot be celebrated because no `previousRank` exists on the wire, and inventing the movement was refused. C-9 `XPStreak` had **zero call sites product-wide**, the kit component built in Phase 2 for exactly this surface; it now fills the header pill P3.10 deleted for being a hardcoded lie, from data Phase 5 later built for real. Friends rendered `err.message` verbatim for all three mutations and put two of the three at the very bottom of the page, below every section. The leaderboard opt-out toggle's `isError` was rendered nowhere, so a failed "Hide me" left a student believing they were hidden. And **`check:copy` had never read a `.ts` file**, which hid 9 user-facing em-dashes, five of them on surface 3 after it was reported clean. See D4.4. **Surface 3's headline is two irreversible actions with no confirmation and no failure report**: deleting a flashcard deck destroyed it and every card in it on one tap, and both `useDeleteDeck`/`useDeleteCard` exposed an `isError` that nothing rendered, so a failed delete was indistinguishable on screen from one the student imagined pressing. The telling part is which mutations were covered: `addCard` and `editCard` both reported their failures carefully, and the two with no error path were the two *destructive* ones. `Modal`'s `dismissible={false}`, whose docstring names this exact case, had no call site in the product. Also: the study-plan week bar measured completed MINUTES while the count beside it counted SESSIONS, so "2 of 4 sessions done" sat next to a bar at 25% with nothing explaining the gap; that same bar animated `width`, which §9.2 forbids outright; the Read lane rendered at four different container widths; and the §8 texture classes `ruled-bg`/`dotted-bg`, written in Phase 2 *for the Read lane*, had zero call sites product-wide. See D4.3. **Surface 2's headline is a run that could fail in silence**: `streamActivity` never checked `res.ok`, so a 500 or 503 yielded zero frames, the loop fell out of the bottom, and the panel went back to reading "Ready when you are" — a student pressed the button, nothing happened, and the screen told them it was ready. Also: the student's confidence threshold was 0.85 against the backend's and the teacher's 0.90, so one mark was described two ways to the two people reading the same paper; and the mark and the grade, the two figures a student reads first, were both set in the heading face where DESIGN.md §4 puts the data face — `MarkDisplay`'s own docstring stated that rule while breaking it. See D4.2. Surface 1: Headline finding is one nothing in this build could have caught: **`--font-serif` was never a token, so ~20 call sites across five screens were rendering Georgia, not Newsreader** — the display face DESIGN.md mandates was on screen nowhere it was reached by that name. Verified in the shipped bundle before and after, not reasoned about. A missing definition fails silently where a wrong one would not: the token gate greps for raw values *bypassing* the block, and `font-serif` is a well-formed utility resolving to somebody else's default. Also: both dashboard charts drew a blank box where §11 mandates an empty state (the momentum panel's empty case is *every* student who just marked their first paper), the trend column told a one-paper student they were improving by "+0" in teal, and "Forecast" rendered a space-joined concatenation of per-subject grades under a label promising one value. See D4.1. |
+| 4. Surface redesign | **BLOCKED — D1.6** | — | 9 of 10 built; admin views are the only surface left and D1.6 is unanswered and deliberately undefaulted, so the phase blocks rather than guesses (§10). **Surface 10's headline is that "404 / misc" was not a tidy-up: the sweep found ten more product screens still in the build-era language, 181 compat call sites, including the whole of onboarding and the whole placement flow** — the first three screens a new account ever sees, none of which any row of this ledger had ever claimed, though MISSION §1 names "onboarding/placement test" in scope outright. The mechanism is worth more than the count: **the three gate lists only grow by hand, so a screen no surface claims is a screen no gate reads.** `text-body` and `text-title` sat on the notification inbox's own `<h1>` emitting zero CSS for the entire build; proved by inversion that `utilityExistence.test.ts` catches `text-title` the instant the file is listed, so the gate was never too narrow, the file was never in it. Individual findings: `DELETE /me/devices/{id}` never raises and answers `200 {removed:false}` for a device it did not remove, so the screen a reader opens *because* they think someone else is signed in ran `onSuccess`, refetched, showed the row again and said nothing; "Skip for now" in onboarding appeared only once you had answered and deleted the answer it offered to defer; the Subject topic map printed "73% / of 24 marks" from a hardcoded denominator that exists nowhere on the wire, under a heading promising marks-earned-over-marks-available; the weighted-mean delta was `text-ok` whatever its sign, so a student sliding backwards saw their decline in the success colour; `Parents.tsx`'s own comment claimed it kept the backend's detail, which is `f"Identifier must be a UUID, got {value!r}"`. Two outcome modules (`settingsOutcome`, `studentOutcome`) close the family at seven, each with its endpoint evidence. D4.8 defaulted: the design-directions gallery left the product bundle, verified by grep and a 129→127 precache drop. See D4.9. Earlier: 8 of 10 built (admin deferred behind D1.6). **Surface 9's headline is that the marketing page had no reader at all**: `/student/landing` sat inside `studentRoute`, which `App.tsx` wraps in `RequireAuth allowedRoles={["student"]}`, so a signed-out visitor went to `/login`, a signed-in *teacher* went to `/teacher` (the page's own eyebrow reads "For CAIE teachers and their students"), `/` sent every signed-out visitor to `/login` so the product had no public page of any kind, and the one reader who could reach it was the person who least needed selling, seeing it wrapped in the student sidebar, breadcrumbs and streak pill above a hero saying "Mark a paper". It was **known and half-fixed** — D1.1 called it "orphaned inside the authenticated app" and removed the nav entry, which fixed what a student saw and left the page with no audience. Nothing could have caught it: a guard around the wrong subtree passes typecheck, lint and the design hook, which is why the fix ships with `marketing.test.ts` asserting public-vs-guarded in both directions, and why the route table moved to `src/routes.tsx` (importing `@/App` in a node-env test throws on `document`). **The second finding is that the audit deleted the numbers and left the sentences**: C1/C2/C3 closed in Phase 2, and six fabrications were still live — "marked in 41s" (the exact figure C1 removed, four sections up the same file), a partnered-teacher free tier and "No card to start" one screen above the placeholder saying pricing is undecided, QR/face/2FA attendance and replayed-minute retention (both recorded in `schemas_teacher.py` as having no backend source), WhatsApp results (absent from the repo entirely) and course payments (out of scope per PRODUCT.md). Every bullet now cites the router that implements it. Also: `Reveal` (the scroll-entry motion DESIGN.md §9 specifies and nothing implemented), the page had two left edges 40px apart, `ruled-bg` was painted over by opaque cards and drew nothing, and the Parents link was hidden below 640px on the login route whose selling point is a phone number. The capture harness failed its own round twice and was right both times. See D4.8. **Surface 8's headline is that the OTP failure a parent read was an enum member**: `verify_otp` raises `AuthError(f"OTP verification failed: {result.value}")` and `ParentLogin` rendered `err.message` verbatim, so the screen said `OTP verification failed: wrong_code` — while that file's own docstring asserted the parent "reads the actual reason rather than a client-side guess". The distinction was real; the vocabulary was never fit to show anyone. Second time this phase a docstring described the fix rather than the behaviour. `authOutcome.ts` maps the four `OtpResult` members and, three lines away, deliberately *keeps* the 429's own wording, because there a human wrote a sentence for a human — which is the failure-copy family's real rule now that five modules exist. Also: `Login.tsx` had been scaffolding since the build era and said so in its docstring, shipping a card invisible against its own page colour, a form-level error in the one position §12 rules out, and a raw `error.message` that could print "401 Unauthorized"; the password 401 is now deliberately vague to close an account-enumeration oracle; the OTP boxes were set in the display face; and audit finding M9's placeholder logo turned out to be in **four** places, not the three it counted. See D4.7. Earlier: 6 of 10 surfaces done (student dashboard, past-paper correction flow, study surfaces, gamification, teacher portal, parent views). **Surface 6's headline is DESIGN.md's banned easing being in force on every transition in the product, with no call site naming it**: §3.2 item 14 forbids `ease-in-out`, and Tailwind's `--default-transition-timing-function` *is* that curve, so all 27 bare `transition-*` call sites inherited it. Verified in the shipped bundle before and after. It is D4.1's `--font-serif` shape a fourth time with one difference that matters — those classes resolved to nothing, which `utilityExistence.test.ts` can see, while these emit the *wrong* rules, which it cannot — so the deliverable is a gate that checks the value rather than the name. Found only because the first draft of the parent shell wrote `duration-instant` and I checked the assumption instead of trusting it: the durations live in `:root`, not `@theme`, so that class emits nothing either. **The second finding is every child screen carrying two back links to the same place** — P3.1 added the breadcrumb trail without removing the inline back links beneath it. Also: all four screens rendered a raw `error.message`, and the obvious fix (reuse `teacherOutcome.ts`) was wrong because every `detail` the parent API produces is machine text, UUIDs and stringified Python exceptions included; the "Last worked" card printed "1d ago" directly above "2 days ago" from one timestamp; "6 more marks for a A"; the boundary panel put the screen's most encouraging sentence in the alert register (surface 5's finding (d) again); and an unlabelled tone-coloured percentage appeared for the third surface running. See D4.6. **Surface 5's headline is the resolves-to-nothing shape recurring a third and fourth time, inside the gate written to stop it**: `utilityExistence.test.ts` checked the four families where Tailwind owns the vocabulary, and `lm-` is the one family the project owns outright, so `lm-head` and `lm-body` sat on the student shell's own `<header>` and `<main>` in a file the gate already listed by name. Widening it found `lm-cols` on nine more elements. All six emit zero rules in the shipped bundle. **The second headline is a review queue that painted doubt green**: the queue exists because a mark fell below the 0.90 review floor, and it bucketed with its own `confidenceTone` at 0.8, so a mark at 0.85 was shown to the teacher in the same green the product uses for marks it is sure about. The gate written to prevent exactly this missed because the parameter is called `score`, not `confidence` — D6.12's lesson, where the shared condition was an assumption about naming. Also: all fifteen screens rendered a raw `error.message` at 44 sites; four destructive actions were confirmed by `window.confirm`, including a class delete that removes it for every enrolled student; a duplicate circular `Avatar` violated §6 at six call sites while the kit's squircle had one; and the portal had no texture layer at all. See D4.5. **Surface 4's headline is D4.1's defect recurring in a second family: `text-display` is not a class.** Nothing defines it, the shipped bundle emits zero rules for it, and four `<h1>`s across Profile/Standings/Friends/Announcements carried it — so the product's page titles rendered at the browser's default heading in the body face, not §4.2's `display-lg` in Newsreader. Twice is a pattern, so the deliverable is a gate for the pattern (`utilityExistence.test.ts`) rather than four edits. Also: the **celebration register §9.3 describes had no implementation anywhere** and now does, with the honest omission recorded — a "leaderboard climb" cannot be celebrated because no `previousRank` exists on the wire, and inventing the movement was refused. C-9 `XPStreak` had **zero call sites product-wide**, the kit component built in Phase 2 for exactly this surface; it now fills the header pill P3.10 deleted for being a hardcoded lie, from data Phase 5 later built for real. Friends rendered `err.message` verbatim for all three mutations and put two of the three at the very bottom of the page, below every section. The leaderboard opt-out toggle's `isError` was rendered nowhere, so a failed "Hide me" left a student believing they were hidden. And **`check:copy` had never read a `.ts` file**, which hid 9 user-facing em-dashes, five of them on surface 3 after it was reported clean. See D4.4. **Surface 3's headline is two irreversible actions with no confirmation and no failure report**: deleting a flashcard deck destroyed it and every card in it on one tap, and both `useDeleteDeck`/`useDeleteCard` exposed an `isError` that nothing rendered, so a failed delete was indistinguishable on screen from one the student imagined pressing. The telling part is which mutations were covered: `addCard` and `editCard` both reported their failures carefully, and the two with no error path were the two *destructive* ones. `Modal`'s `dismissible={false}`, whose docstring names this exact case, had no call site in the product. Also: the study-plan week bar measured completed MINUTES while the count beside it counted SESSIONS, so "2 of 4 sessions done" sat next to a bar at 25% with nothing explaining the gap; that same bar animated `width`, which §9.2 forbids outright; the Read lane rendered at four different container widths; and the §8 texture classes `ruled-bg`/`dotted-bg`, written in Phase 2 *for the Read lane*, had zero call sites product-wide. See D4.3. **Surface 2's headline is a run that could fail in silence**: `streamActivity` never checked `res.ok`, so a 500 or 503 yielded zero frames, the loop fell out of the bottom, and the panel went back to reading "Ready when you are" — a student pressed the button, nothing happened, and the screen told them it was ready. Also: the student's confidence threshold was 0.85 against the backend's and the teacher's 0.90, so one mark was described two ways to the two people reading the same paper; and the mark and the grade, the two figures a student reads first, were both set in the heading face where DESIGN.md §4 puts the data face — `MarkDisplay`'s own docstring stated that rule while breaking it. See D4.2. Surface 1: Headline finding is one nothing in this build could have caught: **`--font-serif` was never a token, so ~20 call sites across five screens were rendering Georgia, not Newsreader** — the display face DESIGN.md mandates was on screen nowhere it was reached by that name. Verified in the shipped bundle before and after, not reasoned about. A missing definition fails silently where a wrong one would not: the token gate greps for raw values *bypassing* the block, and `font-serif` is a well-formed utility resolving to somebody else's default. Also: both dashboard charts drew a blank box where §11 mandates an empty state (the momentum panel's empty case is *every* student who just marked their first paper), the trend column told a one-paper student they were improving by "+0" in teal, and "Forecast" rendered a space-joined concatenation of per-subject grades under a label promising one value. See D4.1. |
 | 5. Motion & data-viz | PENDING | — | |
 | 6. Hardening & adaptation | PENDING | — | |
 | 7. Final QA & report | PENDING | — | |
@@ -229,66 +180,73 @@ LAST STEERING TS:   1786629365   (poll http://home-server:7532/lemely-ErBPK7TIRG
 | Admin views | **DEFERRED — D1.6** | — | — | — |
 | Auth | **DONE** | `redesign/study-surfaces` | typecheck / lint / 1,013 unit (+33) / check:copy 14 (flat; none in auth) / both builds / pre-commit / 31 Python token+constant tests: **green**. e2e: **still blocked, B4**. Visual round: 16 captures across 2 registered sub-surfaces, all distinct, console errors only from the deliberately-failing states. | pending |
 | Marketing / landing | **DONE** | `redesign/study-surfaces` | typecheck / lint / 1,061 unit (+48) / check:copy 14 (flat; none in the marketing lane) / both builds / pre-commit / 31 Python token+constant tests: **green**. No horizontal scroll at 320/375/414/768/1024/1440. e2e: **still blocked, B4**. Visual round: 4 captures + 4 in-harness assertions, all distinct, 0 console errors. | pending |
-| 404 / misc | QUEUED | — | — | — |
+| 404 / misc | **DONE** | `redesign/study-surfaces` | typecheck / lint / 1,166 unit (+105) / check:copy **0** (down from 14; the product now has none) / both builds / pre-commit / 31 Python token+constant tests: **green**. No horizontal scroll at 320/375/414/768/1024/1440. e2e: **still blocked, B4**. Visual round: 38 captures across 6 registered sub-surfaces, all distinct, plus 6 in-harness assertions; console errors only from the deliberately-failing states. | pending |
 
 ### Gate status (current surface only)
 
 ```
-SURFACE:            Marketing / landing — a new public lane
-                    (`portals/marketing/`: frame, screen, data), the route
-                    table split out of `App.tsx`, the `Reveal` kit component,
-                    and the design-directions gallery migrated in place.
+SURFACE:            404 / misc - the settings lane (`portals/settings/`:
+                    frame + two screens + `lib/settingsOutcome.ts`), the
+                    portal-subtree 404 (`PortalNotFound` + a catch-all child
+                    in all three portals), and the ten screens the sweep found
+                    that no surface had ever claimed (onboarding x3,
+                    placement x3, Subject, Parents, Notifications,
+                    Announcements) plus `lib/studentOutcome.ts`.
 BUILD COMPLETE:     yes
 INSPECTION ROUND:   1 (batched, desktop 1440 + 375 together)
-FINDINGS TO FIX:    6, all fixed in one batch —
-                    (a) the page had two left edges: `Section` took a `wide`
-                        prop, so hero and proof sat at 1280 and loop, pillars
-                        and close at 1200, jogging 40px on alternate sections;
-                    (b) three proof stats in a two-column grid left the third
-                        beside an empty cell, in the one band on the page that
-                        has to look considered;
-                    (c) `ruled-bg` drew nothing — the loop cards are opaque
-                        `--paper-raised` and cover every pixel of their
-                        parent, so the texture was a claim in the markup and
-                        nowhere on screen;
-                    (d) the Parents link was `hidden sm:inline-flex`, hiding
-                        it below 640px on the phone, for the login route whose
-                        entire selling point is that a phone number is the
-                        whole of it;
-                    (e) both hero CTAs pointed at `/login`, so "For centres
-                        and teachers" was not a choice; it now scrolls to the
-                        teacher case, the only destination that honestly
-                        exists;
-                    (f) the `full` capture photographed four blank sections,
-                        because `fullPage` does not scroll and `Reveal`'s
-                        observer never fired.
-CONFIRM ROUND:      1 — all six confirmed fixed, no regression introduced.
+FINDINGS TO FIX:    5, all fixed in one batch -
+                    (a) the settings lane nav sat between the intro and the
+                        first section, so the active pill read as a filter for
+                        the section below it and repeated the `<h1>` verbatim
+                        100px away; it is above the title now, in the
+                        breadcrumb -> section nav -> title order every reader
+                        already knows;
+                    (b) the device rows' only action was a `ghost` button,
+                        indistinguishable from a label at rest on a raised
+                        card;
+                    (c) the quiet-hours summary is a full sentence and was set
+                        in the mono data face, which reads as machine output -
+                        my own first-pass misjudgement, caught by looking;
+                    (d) the Subject bar strip painted the latest paper in the
+                        accent while the row directly beneath it used the
+                        accent to mean "you are short of the boundary", so one
+                        colour carried both in the same card;
+                    (e) the capture fixture used `paperMarked`/`quizAssigned`
+                        where the real keys are `gradeReady`/
+                        `studyPlanReminder`, which made correct switches
+                        photograph as off. The fixture was wrong, not the
+                        screen - checked before concluding.
+CONFIRM ROUND:      1 - all five confirmed fixed, no regression introduced.
                     Stopped there per §3.2 item 16.
-HALLMARK STAMP:     present on all 4 emitted files (marketing frame, Landing,
-                    Reveal, Directions).
+HALLMARK STAMP:     present on all 13 emitted files.
 HOOK FINDINGS:      0 (impeccable design hook, every touched file)
-TESTS:              1,061 unit (+48), all green; 31 Python token+constant
-                    tests. No horizontal scroll at 320/375/414/768/1024/1440.
-NEW GATES:          `tests/unit/marketing.test.ts` — which top-level routes
-                    are public and which are guarded, asserted in BOTH
-                    directions (the marketing route carries no `RequireAuth`;
-                    all three portals still do), ten banned copy claims pinned
-                    literally, the empty pricing list, and the hero card's
-                    three statements of one fact (grid, score, note) asserted
-                    to agree. The three file lists grew by 5.
-NEW CAPABILITY:     `portals/marketing/` (public Persuade lane, frame +
-                    screen + honest data), `components/ui/reveal.tsx`
-                    (scroll-entry motion, reduced-motion read in JS),
-                    `src/routes.tsx` (route table, testable in node env),
-                    `capture_surface` landing surface (scroll-before-shutter,
-                    plus two in-harness assertions the images cannot make).
+TESTS:              1,166 unit (+105), all green; 31 Python token+constant
+                    tests. check:copy **0**, down from 14. No horizontal
+                    scroll at 320/375/414/768/1024/1440.
+NEW GATES:          `tests/unit/notFoundFallback.test.ts` - every portal has a
+                    `*` child, it is last, it renders `PortalNotFound` and not
+                    `NotFound`, the top-level catch-all survives and stays
+                    ungated, `PortalNotFound` renders no frame of its own
+                    (asserted in source, because the landmark only exists once
+                    rendered), both settings routes stay on ALL_ROLES, and
+                    neither settings screen renders a raw `error.message`.
+                    The three file lists grew by 17.
+NEW CAPABILITY:     `portals/settings/SettingsFrame.tsx` (the lane's chrome),
+                    `lib/settingsOutcome.ts` + `lib/studentOutcome.ts` (the
+                    family's sixth and seventh members, each with its endpoint
+                    evidence), `PortalNotFound`, six new capture surfaces
+                    (`settings-devices`, `settings-notifications`,
+                    `not-found`, `not-found-teacher`, `onboarding`,
+                    `subject`) and `notFoundAct`, whose in-harness assertion
+                    on `<main>`/`<nav>` counts is the only thing that can tell
+                    a portal 404 from a top-level one - both look correct in a
+                    picture.
 ```
 
 ### Open DECISIONs
 
 | ID | Question | Options | Default | Sent | Timeout | Status |
 |---|---|---|---|---|---|---|
-| D4.8 | Should the internal design-directions gallery (`/student/directions`) ship in the product? Reachable by any signed-in student, mock data, no nav entry; same shape as the kit preview Phase 2 moved behind its own Vite entry. Migrated in place either way. | A move to `web/dev-previews/` / B leave mounted / C delete | **A** | 2026-08-14T04:00+03:00 | 30 min | OPEN |
 | D1.6 | **Re-asked 2026-08-14T02:45.** Build real school-admin + platform-admin screens? None exist; both roles are routed into `/teacher` today. ~7 screens, new route subtree, un-bundles the `TEACHER_ROLES` guard `rbac.spec.ts` asserts against. | A build now / B defer, stay on `/teacher` / C scaffold routes+shells only | **none — deliberately not defaulted** | 2026-08-13T15:05Z | none | OPEN |
 
 D1.6 carries no default on purpose: §10 says a question with no sane default must not be a
@@ -300,6 +258,7 @@ if still unanswered then, that is the point to block rather than guess.
 | ID | Outcome | When |
 |---|---|---|
 | D1.1–5 | **DEFAULTED — proceed as proposed.** 60-minute timeout elapsed with no reply. The five cost-free IA corrections are approved by default and are implemented in Phase 3.1. | 2026-08-13T18:10+03:00 |
+| D4.8 | **DEFAULTED — option A.** 30-minute timeout elapsed with no reply. The design-directions gallery moved to `web/dev-previews/` behind the kit's own Vite entry, out of the product route table. Verified rather than assumed: its marker string no longer appears anywhere in `dist/`, and the product precache dropped 129 → 127 entries. `navigation.test.ts` flips from "keeps it mounted" to "no longer mounts it" (documented per §9.7) and `audit.mjs`'s DEV-01 entry is retired with its reason recorded in place. | 2026-08-14T04:30+03:00 |
 | D2 | **DEFAULTED — option A, ship the hand-authored SVG mark.** 30-minute timeout elapsed with no reply. Assets are at `web/public/brand/` (mark, mono, favicon cuts). Not yet wired into `index.html`; that is Phase 6.5's strategic-omissions closeout. | 2026-08-13T18:10+03:00 |
 
 ### Steering log pointer
@@ -338,6 +297,12 @@ it so it can never be replayed as a directive.
 
 | Artefact | Path | Note |
 |---|---|---|
+| Settings lane chrome | `web/src/portals/settings/SettingsFrame.tsx` | Mark, breadcrumb, skip link and the two-item section nav for the only top-level authenticated routes. Nav sits **above** the title; below it, the active pill reads as a filter. |
+| All-roles failure copy | `web/src/lib/settingsOutcome.ts` | Sixth of seven. Status-first, because every `routers/me.py` `detail` is written for a client author. Its reader is all five roles at once, which is why it cannot borrow another module's register. Also owns `DEVICE_ALREADY_GONE`, which is not an error path. |
+| Student failure copy | `web/src/lib/studentOutcome.ts` | Seventh and last. Covers onboarding, placement, Subject, Announcements and Parents. Deliberately NOT `correctionOutcome.ts` widened: that one is detail-first because the marking router writes its details for a human, and these routers do not. Leaves the placement 409 alone, because its `detail` is a structured DTO. |
+| Portal-scoped 404 | `PortalNotFound` in `web/src/portals/misc/NotFound.tsx` | The body without the frame, mounted as a `*` child in all three portals. The split is about landmarks (two `<main>`s, two `MAIN_CONTENT_ID`s), not styling. `errorElement` stays top-level only: re-rendering chrome that may itself have thrown is how a crash becomes a crash loop. |
+| Fallback + settings gate | `web/tests/unit/notFoundFallback.test.ts` | The portal-fallback defect cannot fail loudly, and `navigation.test.ts` only knows paths a nav entry names. Asserts the catch-all exists, is last, renders the right component, stays ungated at top level, and that the settings routes keep ALL_ROLES. |
+| Captures | `reports/redesign/p4-{settings-devices,settings-notifications,not-found,not-found-teacher,onboarding,subject}/` | 38 states x 1440/375. `notFoundAct`'s `<main>`/`<nav>` count assertion is the only thing that distinguishes a portal 404 from a top-level one; both look right in a picture. Note the harness switches identity per **surface**, not per state. |
 | Visual round | `web/scripts/capture_surface.mjs` | Batched capture while B4 blocks the real corpus. **Stubs the API** — layout evidence, never behaviour. Fails when two states that must differ are identical. **P4.2**: takes a surface name; register a new surface in `SURFACES` rather than copying the file. |
 | Upload control | `components/ui/file-drop.tsx` | C-21. Real focusable `<input>` under a drop target, 8 states, `default`/`compact`. Never hand-roll a file input again. |
 | Confidence bucketing | `lib/markingConfidence.ts` | The 0.90 review floor, mirrored from `lemely.core.schemas` and pinned by `tests/test_web_shared_constants.py`. The only place in `web/src` allowed to compare a confidence to a number. |

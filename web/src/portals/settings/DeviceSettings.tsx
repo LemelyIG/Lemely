@@ -174,7 +174,10 @@ export function DeviceSettings() {
                     </span>
                     <Button
                       type="button"
-                      variant="ghost"
+                      // `secondary`, not `ghost`: at rest a ghost button on a
+                      // raised card is indistinguishable from a label, and this
+                      // is the only action on the row.
+                      variant="secondary"
                       onClick={() => handleSignOut(device.deviceId, device.isCurrent)}
                       disabled={busy}
                     >

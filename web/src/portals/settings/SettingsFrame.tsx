@@ -111,14 +111,21 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
         <div className="flex flex-col gap-4">
           <Breadcrumbs items={[{ label: homeLabel, to: home }, { label: title }]} />
 
-          <div className="flex flex-col gap-2">
-            <h1 className="text-display-md text-ink">{title}</h1>
-            <p className="max-w-[65ch] text-body-md text-ink-muted">{intro}</p>
-          </div>
-
-          {/* `aria-label` rather than a visible heading: the nav's two items
-              name the section between them, and a "Settings sections" heading
-              above two links is chrome nobody reads. */}
+          {/*
+           * Above the title, not below it, and the capture round is what
+           * settled the order. Sitting between the intro and the first
+           * section, the active pill read as a filter for the section
+           * underneath it, and it repeated the `<h1>` verbatim a hundred
+           * pixels away, which reads as a mistake rather than as navigation.
+           * Breadcrumb, then section nav, then page title is the order every
+           * reader already knows, and in it the repetition stops registering
+           * as one: the nav says where you are among the two, the title names
+           * the page you landed on.
+           *
+           * `aria-label` rather than a visible heading: the nav's two items
+           * name the section between them, and a "Settings sections" heading
+           * above two links is chrome nobody reads.
+           */}
           <nav aria-label="Settings" className="flex flex-wrap gap-1">
             {SETTINGS_NAV.map((item) => (
               <NavLink
@@ -141,6 +148,11 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
               </NavLink>
             ))}
           </nav>
+
+          <div className="flex flex-col gap-2">
+            <h1 className="text-display-md text-ink">{title}</h1>
+            <p className="max-w-[65ch] text-body-md text-ink-muted">{intro}</p>
+          </div>
         </div>
 
         {children}

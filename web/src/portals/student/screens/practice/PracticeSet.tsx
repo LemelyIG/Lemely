@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 */
 import { useNavigate, useParams } from "react-router-dom"
 import { QuizTaker } from "@/components/quiz/QuizTaker"
 

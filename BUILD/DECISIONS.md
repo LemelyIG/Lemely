@@ -7950,3 +7950,151 @@ green. No horizontal scroll at 320 / 375 / 414 / 768 / 1024 / 1440.
 e2e: **still blocked, B4** (port 8000 re-verified occupied this session).
 Visual round: 4 captures plus 4 in-harness assertions, all distinct, zero
 console errors.
+
+---
+
+## D4.9 — Redesign Phase 4, surface 10 (404 / misc): the surface that was not a tidy-up
+
+**2026-08-14.** Branch `redesign/study-surfaces`. Commits `9619dd6`, `7a70e5a`, and this one.
+
+### What the surface was supposed to be, and what it was
+
+STATE.md scoped surface 10 as `NotFound.tsx` "plus whatever the sweep finds
+unmigrated", naming two settings screens. The sweep found **twelve** files
+carrying **181 live compat-layer call sites**, and ten of them were product
+screens no row of the Phase 4 ledger had ever claimed: the whole of onboarding
+(3 files), the whole placement flow (3), `Subject`, `Parents`, `Notifications`,
+`Announcements` and `PracticeSet`.
+
+MISSION §1 names "onboarding/placement test" in scope outright and §12 requires
+zero pages in the old language, so this was not a judgement call and no DECISION
+was raised for it — only more work than the ledger recorded. It was reported to
+the human on ntfy at the point it was found, not at the end.
+
+**The consequence is worth more than the count.** The first three screens a new
+account ever sees stood between it and every screen that had been redesigned.
+
+### The mechanism, which is the real finding
+
+The three gate lists (`MIGRATED_FILES`, `RTL_CLEAN_FILES`, `SCANNED_FILES`) grow
+by hand, one entry per surface as it lands. **A screen no surface claims is
+therefore a screen no gate reads.**
+
+`text-body` and `text-title` sat on the notification inbox's own `<h1>` and body
+copy, emitting **zero CSS rules** in the shipped bundle for the entire build —
+the resolves-to-nothing shape for the fifth and sixth time. Proved by inversion
+rather than assumed: putting `text-title` back with `Notifications.tsx` now in
+`SCANNED_FILES` makes `utilityExistence.test.ts` fail immediately. So the gate
+was never too narrow. The file was never in it.
+
+That is the opposite conclusion from surface 5's, where the gate genuinely
+needed widening, and it needs the opposite fix: not a better gate, but a
+guarantee that no screen escapes the list. Recorded in STATE.md as binding.
+
+### Findings, each verified against the source of truth rather than reasoned about
+
+1. **A sign-out that did not happen reported nothing.** `DELETE /me/devices/{id}`
+   never raises: a device id that does not exist, is already revoked, or belongs
+   to another account all answer `200 {removed: false}`, deliberately, so the
+   route cannot probe another account (`schemas_devices.py`). React-query ran
+   `onSuccess`, the list invalidated, the row came back, and the screen said
+   nothing at all. This is surface 3's "deletes that could not fail out loud"
+   on the one screen a reader opens *because* they think somebody else is
+   signed in to their account.
+
+2. **"Skip for now" deleted the answer it offered to defer.** Rendered only when
+   `answered` was true, so a student who left a question blank never saw it and
+   a student who filled one in was offered a button whose label promises
+   deferral and whose handler set the field to `undefined` before advancing.
+   Split into "Clear my answer" (unsets, stays put) and "Skip" (the primary
+   action when unanswered, still clearing first because a seeded value can be
+   `null` and only an explicit unset keeps it out of the PATCH body, D4.5).
+
+3. **The Subject topic map printed an impossible fraction.** Each tile showed
+   `acc` — which `routers/student.py:364` builds as
+   `f"{round(area.accuracy * 100.0)}%"` — above a hardcoded "of 24 marks", under
+   a heading promising "marks earned / marks available". So "73% / of 24 marks",
+   a numerator above its own denominator. `TopicTileDTO` carries no denominator
+   at all, so the 24 was not stale, it was invented, and it was the same 24 on
+   every tile of every subject. The heading now says what the number is and no
+   denominator is rendered.
+
+4. **The weighted-mean delta was green whatever it said.** Built as
+   `f"{'+' if delta >= 0 else ''}{delta} since first paper"`, rendered in
+   `text-ok` unconditionally, so a student sliding backwards saw their decline
+   in the product's success colour. D4.1's "+0 in teal" on a different screen.
+
+5. **A fourth docstring asserting an intention the code did not meet.**
+   `Parents.tsx`'s `linkErrorMessage` said non-404s "keep the backend's own
+   `detail`", implying one worth keeping. The only `ValueError` the parent-link
+   repo raises is `f"Identifier must be a UUID, got {value!r}"`.
+
+6. **Two 404s that were the same screen and should not have been.** An unmatched
+   path inside a portal fell to the top-level catch-all, ejecting the reader
+   from the app they were inside. Both `routes.tsx` and `NotFound.tsx` carried
+   it as a written note from P3.1. A note is not a gate.
+
+7. **A compat rung on the 404 screen itself**, `font-mono text-metadata`, which
+   declares `font-family` twice because `text-metadata`'s replacement already
+   names the data face (D4.2's shape). Invisible until the file joined
+   `MIGRATED_FILES` — it was written in P3.1, before that list existed.
+
+### Two new outcome modules, and why not one
+
+The family reaches **seven** and stops. `settingsOutcome.ts` exists because the
+settings lane's reader is *all five roles at once*, which is the first time that
+has been true and means it cannot tune its register the way the other six do.
+`studentOutcome.ts` exists because `correctionOutcome.ts` is deliberately
+detail-first (the marking router writes its 4xx `detail` for a human) and these
+routers answer `str(exc)` with raw UUIDs and Python reprs, so widening it would
+have been wrong for half the student's screens. Both headers carry the
+endpoint-by-endpoint evidence. Neither was written by symmetry.
+
+### Alternatives considered and rejected
+
+- **Reusing one outcome module for both.** Rejected on evidence: see above.
+- **Making the exam countdown's urgency conditional on proximity.** Rejected —
+  any threshold for "now it is urgent" would be invented. It moved to the
+  neutral `info` register and lets the number carry the urgency.
+- **Migrating the 17 remaining component-kit files too.** Rejected as scope: they
+  are Phase 2's deliverable, they render correct *values* through the aliases so
+  nothing is visually wrong, and folding them in would have expanded this
+  surface a third time. Recorded in STATE.md as what `index.css`'s compat block
+  is waiting on, and as Phase 6 work.
+- **Adding a confirmation to every list removal.** Rejected. Only the current
+  device gets one, because signing out the browser you are reading on ends the
+  session mid-sentence while signing out a phone costs it one sign-in. C-24's
+  `consequence` is overridden to say what really happens rather than the
+  default's "cannot be undone", which would be false.
+
+### D4.8, defaulted
+
+30-minute timeout elapsed with no reply, so option A: the design-directions
+gallery left the product route table for `web/dev-previews/`, behind the kit's
+own Vite entry — the call this project had already made once, for the component
+kit. **Verified rather than assumed:** its marker string appears nowhere in
+`dist/`, and the product precache dropped 129 → 127 entries.
+`navigation.test.ts` flips from "keeps it mounted" to "no longer mounts it",
+documented in place per §9.7, and `audit.mjs`'s DEV-01 entry is retired with its
+reason recorded rather than deleted silently — its own rationale was "it is a
+reachable route in the shipped bundle", which stopped being true.
+
+### Gate results
+
+typecheck / lint / **1,166** unit (+105) / **check:copy 0** (down from 14; the
+product now has no prose em-dash in any UI copy) / both builds / pre-commit / 31
+Python token+constant tests: green. No horizontal scroll at
+320/375/414/768/1024/1440. Visual round: 38 captures across 6 registered
+sub-surfaces, all distinct, plus 6 in-harness assertions; console errors only
+from the deliberately-failing states.
+
+**e2e remains blocked by B4** and is unchanged: port 8000 is still held by
+another local user's process, so `scripts/e2e_server.py`'s offline marking seam
+is still never installed. Not killed unattended.
+
+### What this leaves
+
+**Phase 4 blocks.** Admin views are the only surface left and D1.6 is still
+unanswered and deliberately undefaulted; §10 says a question with no sane
+default must not be a timeout question, so this is the point to block rather
+than guess. Phase 5 does not depend on it.

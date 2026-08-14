@@ -1,9 +1,12 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { ErrorState } from "@/components/ui/state-views"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ApiError } from "@/lib/api"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useCreatePlacement, usePlacementAvailability } from "@/lib/hooks/usePlacementApi"
 import type { PlacementAvailability } from "@/lib/placementTypes"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
@@ -21,6 +24,20 @@ import { placementInviteView } from "./placementData"
  * §5, and this must say so plainly, never hide the subject or fake
  * availability); `available: true` yields `kind: "available"`, pinned as
  * the inverse so the invite panel is never silently skipped.
+ *
+ * ── P4.10, the Study Notebook pass ────────────────────────────────────────
+ *
+ * **The load failure printed the server's own words.** `body={error?.message}`
+ * on a route whose every `detail` is `str(exc)`, and whose exceptions read
+ * `f"Unknown assignment: {uuid}"` — so a student whose availability check
+ * failed could be shown a bare UUID. `studentLoadFailureMessage` owns it now.
+ *
+ * **The 409 stays hand-read, deliberately.** It is the one response in this
+ * whole flow whose `detail` is structured rather than a string: a full
+ * `PlacementAvailabilityDTO`, which is why `ApiError` keeps `detail` at all.
+ * Flattening it into `studentLoadFailureMessage` would throw away the only
+ * machine-readable failure information the placement API produces, and with it
+ * the honest per-reason panel below. See `lib/studentOutcome.ts`'s header.
  */
 export function PlacementInvite() {
   const navigate = useNavigate()
@@ -60,9 +77,12 @@ export function PlacementInvite() {
    * recorded in that phase's report §8). */
   if (isPending) {
     return (
-      <div className="lm-screen text-body-md text-t2">
+      <div className="lm-screen mx-auto flex w-full max-w-140 flex-col gap-6">
         <h1 className="sr-only">Placement test</h1>
-        Checking availability…
+        {/* A skeleton in the shape of the panel that follows, not a sentence:
+            the standing Phase-4 rule, applied as this screen's geometry
+            settled. */}
+        <PanelSkeleton />
       </div>
     )
   }
@@ -72,8 +92,8 @@ export function PlacementInvite() {
       <>
         <h1 className="sr-only">Placement test</h1>
         <ErrorState
-          heading="Couldn't check placement-test availability"
-          body={error?.message}
+          heading="We couldn't check whether a placement test is ready"
+          body={studentLoadFailureMessage(error)}
           action={{ label: "Try again", onClick: () => void refetch() }}
           className="lm-screen"
         />
@@ -86,12 +106,12 @@ export function PlacementInvite() {
 
   if (view.kind === "unavailable") {
     return (
-      <div className="lm-screen mx-auto flex max-w-[560px] flex-col gap-6">
-        <h1 className="font-serif text-display-md leading-display text-t1 m-0">{subjectName}</h1>
+      <div className="lm-screen mx-auto flex w-full max-w-140 flex-col gap-6">
+        <h1 className="text-display-md text-ink">{subjectName}</h1>
         <Card>
           <CardBody className="flex flex-col gap-3">
-            <div className="text-body-lg font-medium text-t1">{view.message.heading}</div>
-            <p className="text-body-md text-t2">{view.message.body}</p>
+            <div className="text-body-lg font-medium text-ink">{view.message.heading}</div>
+            <p className="text-body-md text-ink-muted">{view.message.body}</p>
           </CardBody>
         </Card>
         <Button variant="secondary" onClick={handleLater} className="self-start">
@@ -102,30 +122,31 @@ export function PlacementInvite() {
   }
 
   return (
-    <div className="lm-screen mx-auto flex max-w-[560px] flex-col gap-6">
+    <div className="lm-screen mx-auto flex w-full max-w-140 flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="font-serif text-display-md leading-display text-t1 m-0">
-          Get a real starting picture in {subjectName}
-        </h1>
-        <p className="text-body-md text-t2">
-          A short placement test built from real past-paper questions across the syllabus gives
-          us a much better starting picture than a guess — strongest and weakest topics, not a
-          grade.
+        <h1 className="text-display-md text-ink">Get a real starting picture in {subjectName}</h1>
+        <p className="text-body-md text-ink-muted">
+          A short placement test built from real past-paper questions across the syllabus gives us
+          a much better starting picture than a guess. It finds your strongest and weakest topics,
+          not a grade.
         </p>
       </div>
 
       <Card>
         <CardBody className="flex flex-col gap-2">
-          <div className="text-dense-sm text-t3">This test</div>
-          <div className="text-body-lg font-medium text-t1">{view.estimate}</div>
-          <p className="text-dense-sm text-t2">
-            You can take it any time from this subject's screen — there's no rush.
+          <div className="text-eyebrow text-ink-faint">This test</div>
+          <div className="text-body-lg font-medium text-ink">{view.estimate}</div>
+          <p className="text-body-sm text-ink-muted">
+            You can take it any time from this subject's screen. There's no rush.
           </p>
         </CardBody>
       </Card>
 
+      {/* Directly above the button that produced it (§12). */}
       {createPlacement.isError && !raceUnavailable ? (
-        <p className="text-dense-sm text-err">We couldn't start the test. Try again.</p>
+        <p role="alert" className="text-body-sm text-err">
+          We couldn't start the test. Nothing has been used up, so trying again is safe.
+        </p>
       ) : null}
 
       <div className="flex flex-wrap gap-3">
