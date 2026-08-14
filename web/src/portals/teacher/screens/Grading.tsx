@@ -11,6 +11,7 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import { failActiveStage } from "@/lib/pipelineStages"
+import { useInViewOnce } from "@/lib/hooks/useInViewOnce"
 import {
   usePapers,
   usePaperDetail,
@@ -117,7 +118,14 @@ function PaperCard({
   paper: PaperSummary
   onOpen: () => void
 }) {
-  const previewUrl = useScanPreview(paper.id)
+  /* P6.3. The thumbnail's bytes come from a server-side render of the stored
+     scan, so the deferral has to gate the *fetch*; `loading="lazy"` on the
+     `<img>` below would defer nothing, because by then the blob is already
+     local. A callback ref rather than `useRef`, because mutating `.current`
+     does not re-run `useInViewOnce`'s effect. */
+  const [cardNode, setCardNode] = useState<HTMLDivElement | null>(null)
+  const nearViewport = useInViewOnce(cardNode)
+  const previewUrl = useScanPreview(paper.id, nearViewport)
   const showSpinner = paper.kind === "processing"
   const confTone =
     paper.kind === "review" ? "text-err" : paper.kind === "graded" ? "text-ink-muted" : "text-ink-faint"
@@ -129,6 +137,7 @@ function PaperCard({
 
   return (
     <div
+      ref={setCardNode}
       onClick={onOpen}
       role="button"
       tabIndex={0}

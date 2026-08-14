@@ -65,12 +65,25 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
   return (
     <div className="paper-grain flex min-h-screen flex-col bg-paper">
       <SkipLink />
-      <header className="sticky top-0 z-sticky border-b border-rule bg-paper/85 backdrop-blur-sm">
+      <header className="sticky top-0 z-nav border-b border-rule bg-paper/85 backdrop-blur-nav">
         {/*
-          The one permitted `backdrop-blur` in the whole product (§3.2 item 6):
-          a fixed navbar, never scrolling content. `bg-paper/85` under it means
-          the blur has something to lift, and text crossing beneath the header
-          never reads through at full strength.
+          The one permitted *kind* of `backdrop-blur` (§3.2 item 6): a page top
+          bar, never scrolling content. `bg-paper/85` under it means the blur
+          has something to lift, and text crossing beneath the header never
+          reads through at full strength.
+
+          P6.3 corrected two things this comment used to get wrong. It said
+          "the one permitted backdrop-blur in the whole product", and there are
+          four — this header and the student, teacher and admin shells — which
+          is fine under the rule but is not what the sentence claimed. And the
+          four declared themselves two different ways: this one at
+          `backdrop-blur-sm` (8px) and the other three at an arbitrary
+          `backdrop-blur-[10px]`. All four are now `backdrop-blur-nav`, the
+          only radius the exception is allowed to use.
+
+          `z-nav`, not the `z-sticky` this carried. Four top bars doing one job
+          declared two bands, and this was the odd one out, sitting in the band
+          `table.tsx` reserves for sticky table headers.
         */}
         <div className="mx-auto flex w-full max-w-marketing items-center justify-between gap-4 px-page-mobile py-3.5 md:px-page-tablet lg:px-page-desktop">
           <Link

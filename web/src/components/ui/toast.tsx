@@ -107,7 +107,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {createPortal(
         <div
           className={cn(
-            "pointer-events-none fixed end-4 bottom-4 z-[var(--z-index-toast)]",
+            "pointer-events-none fixed end-4 bottom-4 z-toast",
             "flex w-full max-w-sm flex-col gap-2",
           )}
         >

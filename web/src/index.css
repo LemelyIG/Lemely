@@ -324,6 +324,21 @@
   --z-index-modal: 50;
   --z-index-toast: 60;
 
+  /* ── §3.2 item 6 Blur ────────────────────────────────────────────────── */
+  /* Glassmorphism is banned. The one exception §3.2 item 6 carves out is a
+     subtle `backdrop-blur` on the page's top bar, and this is the only radius
+     that exception is allowed to use, so `backdrop-blur-nav` is greppable and
+     anything else is not.
+
+     P6.3: the four top bars in the product used to declare this two different
+     ways — the three app shells at `backdrop-blur-[10px]` and the marketing
+     header at `backdrop-blur-sm` (8px in Tailwind v4). Same element, same job,
+     same rule permitting it, two radii, and both of them arbitrary values
+     sitting outside the token block. Never on scrolling content: a blur that
+     re-samples what is behind it costs a composite on every scrolled frame,
+     which is why the rule is scoped to the one element that does not move. */
+  --blur-nav: 10px;
+
   /* ── §9.1 Motion easings ─────────────────────────────────────────────── */
   /* Declared here (not in :root) so Tailwind emits them AND generates the
      `ease-out-soft` / `ease-spring` / … utilities. Never `linear` or

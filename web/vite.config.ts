@@ -3,14 +3,31 @@ import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import { VitePWA } from "vite-plugin-pwa"
+// Explicit `.ts` extension: tsconfig.node.json resolves as `nodenext`, which
+// requires one. `allowImportingTsExtensions` is already set there.
+import { fontPreload } from "./vite/fontPreload.ts"
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    // P6.3: the only cause Lighthouse ever named for a layout shift in this
+    // product is "Web font loaded". See web/vite/fontPreload.ts.
+    fontPreload(),
     VitePWA({
       registerType: "autoUpdate",
+      // P6.3. The default (`injectRegister: "auto"`) emits a bare
+      // `<script src="/registerSW.js">` as the last thing in `<head>` — no
+      // `defer`, no `async`, not a module — so it is parser-blocking, and the
+      // parser has not reached `<body>` yet when it stops. Lighthouse measured
+      // it at **301ms of render blocking on every one of the 41 audited
+      // routes**, for 403 bytes whose entire job is to register a service
+      // worker that has nothing to do until after first paint. Deferring it
+      // changes nothing about when the worker becomes useful and takes the
+      // whole product off the second entry in its own render-blocking list
+      // (the first is the stylesheet, which has to block).
+      injectRegister: "script-defer",
       // `injectManifest`, not the default `generateSW` (D5.15 §1). A generated
       // worker has no `push` listener at all, so D5.10's payload-less push had
       // nowhere to land — the backend could send a notification and nothing on
@@ -67,6 +84,21 @@ export default defineConfig({
       // live marks and grades and must never be served from a cache.
       injectManifest: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2}"],
+        // P6.3. Every `@font-face` @fontsource emits carries a `unicode-range`,
+        // so a browser rendering English never requests the Cyrillic, Greek or
+        // Vietnamese subsets at all — they cost nothing precisely because they
+        // are never fetched. Precaching them by name defeats that: the service
+        // worker asks for each one explicitly at install, and the glob above
+        // was naming all nine. **187KB of glyphs no English page can display,
+        // downloaded on every student's first visit**, most of them on a phone
+        // on mobile data.
+        //
+        // The trade is stated rather than hidden: online, nothing changes —
+        // the browser still fetches one of these on demand the moment a glyph
+        // needs it, e.g. a student whose name is not in latin. Offline, such a
+        // name renders in the fallback face. Precache is the app *shell*, and a
+        // subset reachable only through particular user data is not shell.
+        globIgnores: ["**/*-{cyrillic,cyrillic-ext,greek,greek-ext,vietnamese}-*.woff2"],
       },
     }),
   ],

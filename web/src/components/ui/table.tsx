@@ -64,7 +64,7 @@ export function THead({
     <thead
       className={cn(
         "bg-paper-sunk",
-        sticky && "sticky top-0 z-[var(--z-index-sticky)]",
+        sticky && "sticky top-0 z-sticky",
         className,
       )}
       {...props}

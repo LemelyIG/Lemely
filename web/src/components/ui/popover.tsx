@@ -128,7 +128,7 @@ export function Popover({
           aria-modal="false"
           onKeyDown={handleKeyDown}
           className={cn(
-            "absolute top-full z-[var(--z-index-dropdown)] mt-2 min-w-48 rounded-lg border border-rule bg-paper-raised p-2 shadow-[var(--shadow-float)]",
+            "absolute top-full z-dropdown mt-2 min-w-48 rounded-lg border border-rule bg-paper-raised p-2 shadow-[var(--shadow-float)]",
             "motion-safe:animate-[lm-in_var(--dur-fast)_var(--ease-spring)_both]",
             align === "start" ? "start-0" : "end-0",
             contentClassName,

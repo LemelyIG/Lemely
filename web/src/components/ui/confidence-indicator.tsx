@@ -83,7 +83,14 @@ export function ConfidenceIndicator({ tier, className }: ConfidenceIndicatorProp
       {open && (
         <div
           role="tooltip"
-          className="absolute z-10 top-full mt-1.5 start-0 w-56 rounded-md border border-border bg-surface p-2.5 text-body-md text-t2 shadow-sm"
+          // P6.3: `z-dropdown`, not the raw `z-10` this carried. 10 is
+          // `--z-index-sticky`'s value, i.e. this floating tooltip declared the
+          // band that belongs to sticky table headers and portal top bars —
+          // the two things most likely to sit over it. Every other floating
+          // layer in the kit (`popover.tsx`) is already in the dropdown band;
+          // this is the only one that was not, and it is live on `PaperResult`
+          // and `PracticeResult` via `QuestionRow`.
+          className="absolute z-dropdown top-full mt-1.5 start-0 w-56 rounded-md border border-border bg-surface p-2.5 text-body-md text-t2 shadow-sm"
         >
           {meta.explanation}
         </div>

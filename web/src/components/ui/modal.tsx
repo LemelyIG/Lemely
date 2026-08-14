@@ -153,13 +153,13 @@ export function Modal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[var(--z-index-modal)] flex items-center justify-center p-4"
+      className="fixed inset-0 z-modal flex items-center justify-center p-4"
       onKeyDown={handleKeyDown}
     >
       {/* Scrim: DESIGN.md §7's exact token, one step below the panel on the
           fixed z-scale (§7's z-scrim), click-to-dismiss. */}
       <div
-        className="fixed inset-0 z-[var(--z-index-scrim)] bg-[var(--scrim)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className="fixed inset-0 z-scrim bg-[var(--scrim)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
         aria-hidden="true"
         onClick={dismissible ? onClose : undefined}
       />
@@ -171,7 +171,7 @@ export function Modal({
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={cn(
-          "relative z-[var(--z-index-modal)] flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-rule bg-paper-raised p-6 shadow-[var(--shadow-float)]",
+          "relative z-modal flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-rule bg-paper-raised p-6 shadow-[var(--shadow-float)]",
           "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
           sizeClasses[size],
           className,

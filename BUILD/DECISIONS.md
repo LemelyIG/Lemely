@@ -9098,3 +9098,253 @@ lists, it has failed something. That is an argument for the lists being the
 wrong shape, and `failureCopy.test.ts` and `chartTheme.test.ts` both walk the
 tree instead. Converting the other two is not a Phase 6.2 job, but it is the
 right Phase 7 note.
+
+---
+
+## D6.4 — Redesign Phase 6.3 (optimize): the report was stale, the render-blocker was 403 bytes, and the lazy image could not be made lazy
+
+Phase 6.3 is `optimize`, and REDESIGN-MISSION §5 lists six things:
+transform/opacity-only animation, no blur on scrolling content, the z-index
+scale respected, lazy images (WebP/AVIF), skeletons that reserve space
+(CLS < 0.1), and a font-display strategy. Two of the six were already true, one
+was true for a reason nobody had written down, and the three that were not led
+somewhere other than where they pointed.
+
+### 0. The correction that has to come first: I built on a stale report
+
+There was a Lighthouse corpus at `reports/phase-6/`, and it said this:
+
+    teacher-quiz-detail   CLS 0.2427   cause: "Web font loaded"
+    teacher-schemes       CLS 0.1807   cause: "Web font loaded" (x2)
+
+That is two routes at 2.4x and 1.8x §6.3's stated CLS ceiling, with a single
+named cause. I noted its date (2026-08-12, before Phase 5's charts and all of
+Phase 6), said out loud that it was a hypothesis and not evidence, and then
+**wrote the font-preload plugin before measuring.**
+
+Running the audit against HEAD says something different:
+
+    41 routes, 0 over CLS 0.1.
+    Worst: student-overview 0.0982. Second: student-announcements 0.0242.
+    teacher-quiz-detail: 0.0000. teacher-schemes: 0.0000.
+
+The stale corpus names `instrument-serif-latin-400-normal-*.woff2`. Phase 2
+replaced that face with Newsreader and **the font that caused the 0.2427 has not
+been in the bundle since**. The crisis was three phases dead.
+
+Two things follow, and the second matters more than the first.
+
+**The work still stands, for a smaller and better-stated reason.** The one
+remaining CLS failure is on the student dashboard, the product's most-visited
+screen, and every shift Lighthouse attributes on that page has the same cause —
+"Web font loaded", naming Newsreader, Caveat and JetBrains Mono landing together
+on the Momentum panel. 0.098 on surface 1 is worth removing. It is not what I
+started out believing I was removing, and the record says so.
+
+**Build-era D6.9 warns that this number is not reproducible**, and it applies to
+my own measurement, not just to the stale one: "the shifts only count when the
+skeleton paints before the data arrives, so a fast run hides them entirely."
+A single run cannot distinguish *fixed* from *fast*. So the honest defence of
+the preload is not the after-number — it is that a preload **removes the race
+rather than winning it**. The face is discovered in the HTML instead of three
+steps into the CSS, so there is no window in which the fallback is painted and
+then replaced. That argument does not depend on which run you look at.
+
+### 1. The largest render-blocker in the product was 403 bytes and nobody's code
+
+`render-blocking-insight` failed on **41 of 41 routes**. It names two resources.
+The first is the stylesheet, which has to block. The second:
+
+    http://127.0.0.1:4173/registerSW.js    403 bytes    301ms
+
+`vite-plugin-pwa`'s default `injectRegister: "auto"` emits
+`<script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script>` as the
+last thing in `<head>` — no `defer`, no `async`, not a module. So it is
+parser-blocking, and the parser has not reached `<body>` when it stops. 403
+bytes whose entire job is to register a service worker that has nothing to do
+until well after first paint, delaying first paint on every route in the
+product, for the whole redesign.
+
+`injectRegister: "script-defer"`. One line, all 41 routes, and nothing about
+when the worker becomes useful changes.
+
+This one is worth naming as a shape rather than a bug: **it was in nobody's
+diff.** Every gate this build runs reads code the project wrote. This was
+generated at build time by a dependency's default, and the only thing that could
+ever have seen it was a measurement of the built artifact.
+
+### 2. "Lazy images" could not be done by making the image lazy
+
+§6.3 asks for lazy images. The product has one content image worth the name —
+the teacher grading console's per-paper scan thumbnail — and `loading="lazy"` on
+it would have done **nothing**, because the bytes are not fetched by the image
+element. `useScanPreview` calls `fetchBlobUrl("/papers/{id}/preview")` and hands
+the resulting `blob:` object URL to `<img src>`. By the time the element exists
+the download has happened; a `blob:` URL is local and there is no request left
+to defer.
+
+That matters more than an ordinary lazy-loading miss, because the endpoint is
+not a static file. `GET /papers/{id}/preview` opens the stored scan with PyMuPDF
+and **renders page 1 to a PNG on demand**, and `GET /papers` is unpaginated
+(`"""Return every tracked paper as grid cards"""`), and every card mounts its
+own hook. Opening the console re-rendered every scan the school has ever
+uploaded, server-side, at once, to fill a 64px strip most readers never scroll
+to.
+
+The cost was known and answered in the wrong place. The endpoint's own comment
+reads: "every step up costs a bigger payload on every card in the grid at once
+(96 dpi produced a 320KB PNG per paper)" — so the fix applied was to shrink the
+image rather than to stop asking for it.
+
+`useInViewOnce` + `useScanPreview(paper.id, nearViewport)`. The deferral is on
+the fetch, which is where the request actually is. It fires a screen-height
+early, because a lazy fetch whose point is that the image is *there* when the
+reader arrives must not trade an over-eager grid for a visibly empty one — an
+empty thumbnail on this card is also what a scan that failed to render looks
+like. It fails **open** (no `IntersectionObserver` → fetch immediately),
+restoring exactly the old behaviour rather than a grid of permanent blanks.
+
+`Reveal` was deliberately not folded into the new hook. It runs the same
+mechanism with a different policy — it fires when an element is genuinely on
+screen and slightly past it, and it is short-circuited by
+`prefers-reduced-motion`, which is load-bearing there and meaningless here (a
+reader who wants less motion still wants their thumbnails). Merging them would
+mean one call site silently inheriting the other's timing.
+
+### 3. The z-index scale was a gate that had never existed
+
+`index.css` has carried this comment directly above the scale since Phase 2:
+
+    /* A raw z-index outside this scale is a gate failure. */
+
+No gate read it. Four raw values had accumulated, and the scale was being spelled
+two ways at once (`z-nav` in three files, `z-[var(--z-index-sticky)]` in ten).
+
+Three of the four were in kit components no screen renders. **One was live**:
+`ConfidenceIndicator`'s per-question tooltip declared `z-10`, which is
+`--z-index-sticky`'s value — a floating layer sitting in the band this product
+reserves for sticky table headers and portal top bars, i.e. the two things most
+likely to be over it. Every other floating layer in the kit (`popover.tsx`) was
+already in the dropdown band. It is live on `PaperResult` and `PracticeResult`
+via `QuestionRow`, which is the screen a student reads their marks on.
+
+Nothing could have caught it. `z-10` is a real Tailwind utility emitting a real
+rule, so `utilityExistence.test.ts` sees a class that resolves and the token gate
+sees no raw colour. It resolves to the **wrong** thing rather than to nothing,
+which is D4.6's shape and not D4.1's.
+
+All ten `z-[var(--z-index-*)]` were converted to the named utilities as well, so
+the rule the gate enforces is one vocabulary rather than two spellings, and
+`z-dropdown`/`z-nav`/`z-sticky`/`z-modal` were each verified to emit real rules
+in the shipped bundle (`.z-dropdown{z-index:30}`) rather than assumed to.
+
+### 4. The blur exception had one permitted value and the product used two
+
+§3.2 item 6 bans glassmorphism with one carve-out: a subtle `backdrop-blur` on
+the navbar, never on scrolling content. Four top bars use it. Three app shells
+declared `backdrop-blur-[10px]`; the marketing header declared
+`backdrop-blur-sm`, which is 8px in Tailwind v4. Both are arbitrary values
+outside the token block, for a rule that permits exactly one thing.
+
+Also: the marketing header sat at `z-sticky` while the three app shells sat at
+`z-nav` — four bars doing one job in two bands, with the odd one out in the band
+`table.tsx` reserves for sticky table *headers*.
+
+`--blur-nav: 10px`, so `backdrop-blur-nav` is greppable and anything else is not;
+marketing moved to `z-nav`. The comment above it claimed to be "the one permitted
+`backdrop-blur` in the whole product" when there are four. Corrected in place.
+
+### 5. `unicode-range` made nine font subsets free, and the service worker paid for them anyway
+
+Every `@font-face` @fontsource emits carries a `unicode-range`, so a browser
+rendering English never requests the Cyrillic, Greek or Vietnamese subsets. They
+cost nothing **precisely because they are never fetched**.
+
+The precache glob named all nine by filename. A service worker install does not
+consult `unicode-range`; it fetches what the manifest lists. So every student's
+first visit downloaded **187KB of glyphs no English page in this product can
+display**, most of them on a phone on mobile data.
+
+`globIgnores` on the non-latin subsets: precache 146 → 137 entries,
+2621 → 2435 KiB, a 186 KiB drop that matches the measured figure.
+
+The trade is stated rather than hidden. Online nothing changes — the browser
+still fetches one of these the moment a glyph needs it, e.g. a student whose name
+is not in latin. Offline, such a name renders in the fallback face. Precache is
+the app *shell*, and a subset reachable only through particular user data is not
+shell.
+
+One thing I got wrong on the way and corrected by looking: the three PWA icons
+appear **twice** in the precache manifest, which I first read as 267KB of
+duplicated download. They carry identical revisions, so Workbox collapses them.
+137 entries, 134 unique. Not a defect, and the 534KB I had written down was my
+double-count and not the browser's.
+
+### 6. The two items that were already true, and why one of them was luck
+
+**Transform/opacity-only (§9.2) is clean.** Every `@keyframes` in `index.css`
+animates `opacity` and `transform` and nothing else, verified by extracting the
+animated property names rather than by reading the rules. The one
+`transition-[width]` in the tree is a comment recording its own removal.
+`progress-bar.tsx` reaches the same answer twice over, scaling a full-width layer
+rather than resizing it and translating a segment rather than sweeping a
+background.
+
+**No blur on scrolling content** was true, but only because all four call sites
+happened to be on `sticky` elements. Nothing checked it. The gate now does,
+structurally: a `backdrop-blur-` and a `sticky`/`fixed` must appear in the same
+class expression.
+
+### 7. The new gate's first run flagged the best comment in the file
+
+`elevationScale.test.ts` walks `src/` rather than reading a file list — P4.10's
+finding, and three of the four z-index offenders were in kit components no
+surface-derived list would ever have contained.
+
+Its first draft reported six offenders. **All six were prose.** Five were the
+comments this phase had just written explaining the fix ("`z-dropdown`, not the
+raw `z-10` this carried"). The sixth was `celebration.tsx` explaining that it
+deliberately uses DOM order instead of a `z-*` utility, "because a raw `z-1`
+outside the scale is exactly what that gate exists to catch."
+
+So the gate's first act was to flag the one component that had reasoned its way
+to the right answer, and the cheapest way to make it green would have been to
+delete the reasoning. That is D6.3's finding — a gate that reports good work
+teaches people to launder it — arriving one phase later inside the gate written
+to honour it. Restricting matches to quoted spans is not enough on its own,
+because these files quote class names inside comments with backticks, which is
+indistinguishable from a template literal to anything not tracking comment
+state. Hence a small real lexer.
+
+The allowlist is **derived from `index.css` every run** rather than written into
+the test, so a renamed token cannot leave the gate checking names the product no
+longer has. Verified by inversion, four ways: reinstating `z-10`, reverting to
+`backdrop-blur-sm`, moving a blur onto a non-sticky element, and renaming a scale
+token each fail exactly the intended test.
+
+### 8. What this phase found and did not fix
+
+- **The standing `ui-thresholds` gate is red on HEAD, and has been unrun since
+  Phase 5.** 13 violations: 7 serious axe + 6 Lighthouse. Five are student-route
+  performance below the §11 floor of 80 (`student-profile` 57,
+  `student-standings` 70, `student-overview` 74,
+  `student-study-plan-session` 76, `student-correct` 77) and one is
+  `teacher-student-detail` accessibility 94 < 95. Note `student-standings`:
+  build-era D6.9 fixed exactly that route to 93, so it has either regressed or
+  the run was slow, and one run cannot say which.
+- **The 7 axe serious violations are root-caused for 6.4, not fixed here.**
+  42 of them are one mechanism: Nivo emits `aria-label` + `tabindex` +
+  `focusable` on a bare `<rect>` with no `role`, which is prohibited ARIA, on
+  `student-profile` (28), `teacher-class-analytics` (11) and
+  `teacher-student-detail` (3). The rest are `color-contrast`:
+  `text-ink-faint` (#686c6f) measures **4.48:1 on the pastel `#ffe7e1`** where AA
+  needs 4.5. `tests/test_design_tokens.py` pins ink-on-paper contrast and has
+  never measured ink-on-**pastel**, which is the actual gap.
+- **`@fontsource/instrument-serif` is still a declared dependency with zero
+  imports**, orphaned when Phase 2 switched the display face. Left in place
+  during the audit run rather than removed mid-flight; removing it is a
+  package-lock change and belongs in its own commit.
+- **`index.html` still carries the build-era favicon and `theme-color`**, and
+  there is still no `meta description` (41/41) and no valid `robots.txt`
+  (41/41). All three are 6.5's scope, already itemised in STATE.md, and left
+  there deliberately rather than pulled forward.

@@ -346,7 +346,7 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
     // DESIGN.md §7 permits, and this is that bar. `z-nav` replaces the raw
     // `z-20`: same number, but the z-index scale is a gate and a literal
     // bypasses it.
-    <header className="flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop py-4 border-b border-rule bg-paper/80 backdrop-blur-[10px] sticky top-0 z-nav">
+    <header className="flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop py-4 border-b border-rule bg-paper/80 backdrop-blur-nav sticky top-0 z-nav">
       {/* P3.1: the only navigation entry point below 820px, which is where the
           sidebar stops existing. `-ms-2` pulls the 44px target back level with
           the crumb's text edge without shrinking the target itself. */}

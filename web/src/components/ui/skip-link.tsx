@@ -32,7 +32,7 @@ export function SkipLink({ className }: { className?: string }) {
         // Hidden: clipped to nothing, but still in the tab order and still
         // announced. `absolute` (not `fixed`) so it scrolls with the document
         // and cannot cover fixed chrome once revealed.
-        "absolute z-[var(--z-index-toast)] h-px w-px overflow-hidden",
+        "absolute z-toast h-px w-px overflow-hidden",
         "[clip-path:inset(50%)] whitespace-nowrap",
         // Revealed on focus, pinned to the reading-start corner. Logical
         // properties (`start-*`, not `left-*`) per P3.4.

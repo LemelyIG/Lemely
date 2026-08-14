@@ -134,6 +134,7 @@ const SCANNED_FILES = [
   "src/portals/parent/screens/Weaknesses.tsx",
   "src/components/ui/weakness-chip.tsx",
   "src/components/ui/trend-sparkline.tsx",
+  "src/components/ui/lazy-chart.tsx",
   "src/components/ui/line-chart.tsx",
   "src/components/ui/bar-chart.tsx",
   // Phase 4, surface 8 — auth.

@@ -771,11 +771,22 @@ export function usePaperDetail(paperId: string | undefined): UseQueryResult<Pape
  * cost of owning it here is a refetch when a card remounts, which the response's
  * own `Cache-Control: private, max-age=3600` already absorbs — the scan behind a
  * paper id never changes.
+ *
+ * P6.3: `enabled` is how this hook is made lazy, and it has to live here rather
+ * than on the `<img>`. `loading="lazy"` defers a request the *element* makes;
+ * this request is made by `fetchBlobUrl` before any element exists, so the
+ * attribute would have been a no-op that looked like a fix. The endpoint is a
+ * live PyMuPDF render of page 1 of the stored scan, `GET /papers` is
+ * unpaginated, and every card mounts one of these — so with `enabled` defaulting
+ * to true the console re-rendered every scan the school has ever uploaded on
+ * every visit, to fill a 64px strip most readers never scroll to. See
+ * `useInViewOnce`, which is what the one call site passes in.
  */
-export function useScanPreview(paperId: string): string | null {
+export function useScanPreview(paperId: string, enabled = true): string | null {
   const [url, setUrl] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!enabled) return
     let cancelled = false
     let objectUrl: string | null = null
 
@@ -801,7 +812,7 @@ export function useScanPreview(paperId: string): string | null {
       cancelled = true
       if (objectUrl !== null) URL.revokeObjectURL(objectUrl)
     }
-  }, [paperId])
+  }, [paperId, enabled])
 
   return url
 }

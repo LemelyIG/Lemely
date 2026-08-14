@@ -139,9 +139,9 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[var(--z-index-modal)]" onKeyDown={handleKeyDown}>
+    <div className="fixed inset-0 z-modal" onKeyDown={handleKeyDown}>
       <div
-        className="fixed inset-0 z-[var(--z-index-scrim)] bg-[var(--scrim)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
+        className="fixed inset-0 z-scrim bg-[var(--scrim)] motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-out-soft)_both]"
         aria-hidden="true"
         onClick={onClose}
       />
@@ -157,7 +157,7 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          "fixed inset-y-0 start-0 z-[var(--z-index-modal)] flex w-[min(20rem,85vw)] flex-col gap-5",
+          "fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
           "border-e border-rule bg-paper-raised px-4 py-5 shadow-[var(--shadow-float)]",
           "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
         )}
