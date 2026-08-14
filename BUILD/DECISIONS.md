@@ -8291,3 +8291,147 @@ data-viz) is next and depends on none of this.
 Still open, carried forward: B4's own proposed fix (`GET /__e2e__` asserted in
 `global-setup.ts`) remains unimplemented, and the compat layer still cannot die
 because 17 kit components name build-era aliases in their own source.
+
+---
+
+## D5.1 — Redesign Phase 5.3 (charts): the geometry was in the wrong language, and `var()` is not a colour
+
+**Phase 5.3, "build/theme every chart on the shared Nivo theme".** Nivo installed
+(`@nivo/core`/`line`/`bar`/`theming`, 0.99, React 19 supported), one shared theme
+at `web/src/lib/nivoTheme.ts`, two wrappers (`LineChart`, `BarChart`), four charts
+moved onto them, and a new gate. Six findings, four of them defects that were
+live in the product.
+
+### The headline: a token discipline that would have drawn nothing
+
+Every component in this product references colour through a Tailwind class that
+resolves to `var(--token)`, and that is correct everywhere except inside a chart.
+Nivo hands a series colour to react-spring (`useSpring({ color })` in
+`@nivo/line`'s line and area renderers) so it can interpolate across a
+transition, and **react-spring parses the string as a colour before it ever
+reaches the DOM**. `var(--accent)` is not a parseable colour. One level lower the
+same hazard exists without react-spring: CSS custom properties are not
+substituted inside SVG presentation attributes, so `stroke="var(--accent)"`
+resolves to nothing either.
+
+So the natural, disciplined-looking thing to write would have produced a chart
+drawn in nothing — passing typecheck, lint, the token gate (no raw value to
+find), and `utilityExistence` (no class name to check). That is `--font-serif`
+(D4.1), `text-display` (D4.4), `lm-head` (D4.5) and the banned easing (D4.6)
+arriving a **fifth** time, by a route none of those four gates watch. This was
+found by reading Nivo's compiled source before building on it, not after.
+
+The theme therefore resolves tokens off `:root` at runtime, so DESIGN.md stays
+the single source of values and `nivoTheme.ts` stays a list of names. It **fails
+closed**: `ready` is false until real values resolve, and a chart renders a
+space-reserving skeleton rather than drawing in a browser default. A chart in
+the wrong colours is far harder to notice than a missing one, which is the
+asymmetry all five of these findings share.
+
+`tests/unit/chartTheme.test.ts` gates it: every named token exists in
+`index.css`, no `var()` or colour literal survives in any chart source, the
+series order matches §11, the accent stays out of the categorical set, and no
+file under `src/` imports `@nivo/*` outside the two wrappers. **It walks the
+tree rather than reading a file list** — P4.10's finding was that the gate lists
+only grow by hand, and a gate written this phase should not add a fourth list to
+forget. Verified by inversion: renaming a token, reinstating a `var()` string,
+and importing Nivo directly in a screen each fail exactly the intended test.
+
+### `MomentumDTO` shipped SVG path data, and the transform clipped
+
+The student dashboard's momentum chart had its geometry computed **in Python**:
+`path`, `area`, `lastX`, `lastY` against a hardcoded 300x88 viewbox and a
+55-100% band. Two defects came with that, and both are gone rather than fixed,
+because the geometry has left the backend.
+
+1. **The band clipped from below.** `y = 88 - ((pct - 55) / 45) * 78` puts
+   anything under 55% past the bottom of the viewbox — 40% lands at y=114, 30%
+   at y=131 — and the `<svg>` was `overflow-visible`, so the line escaped the
+   panel and drew over the labels beneath it. **The students whose momentum
+   matters most were the ones whose line left the chart.** Proved arithmetically
+   before changing anything, and pinned by
+   `test_overview_momentum_percentages_are_never_rescaled`.
+2. **`labels` was `recorded_at[:7]`**, a year-month, so five papers in one month
+   rendered five identical ticks. This also blocked the migration outright: a
+   Nivo point scale keys on its label, and five points sharing one key collapse
+   into one. The x-axis is now the paper's ordinal, which is unique by
+   construction and matches the panel's own subtitle ("per corrected paper");
+   the date moved to the tooltip and the accessible label, which is where a date
+   is useful and an axis of five identical months never was.
+
+The wire now carries `points: [{recordedAt, percentage}]`. A **third** copy of
+the same transform was found and deleted in `web/scripts/capture_surface.mjs`,
+which had to render an SVG path because the DTO shipped one.
+
+### The grade panel's empty state could never fire
+
+`grade_distribution` returns *every* rung of `GRADE_ORDER` with zero counts
+included — deliberately, so a frontend never infers "nobody on a B" from a
+missing key. Which makes `length === 0` unreachable, so a class with nothing
+marked drew a full ladder of empty tracks with a 0 beside each: a blank chart
+wearing a chart's clothes, against §11's mandatory empty state. The test is now
+"every count is zero". Same shape P4.1 got right on the momentum panel by keying
+off `path === ""`.
+
+### Two defects only a rendered capture could find
+
+Both survived typecheck, lint, 1,304 unit tests and the design hook.
+
+- **A count axis asked for four ticks produced "0 0 0 1 1 1".** Nivo divides the
+  domain evenly and hands the fractions to `format`, so a class whose largest
+  grade bucket held one student got ticks at 0, 0.25, 0.5, 0.75, 1, which
+  `Math.round` turned into six labels reading as three duplicated integers. The
+  numbers were right, the formatter was right, and the axis was gibberish.
+  `BarChart` now uses whole-number ticks whenever every value is whole.
+- **The last x-tick clipped, and clipped into a different valid date.** The tick
+  is centred on the final point, which sits on the plot's right edge, so half
+  the label hung outside a 12px right margin. A cohort trend whose last point
+  fell on **11 August rendered an axis reading "Aug 1"** — not a smudge, not an
+  ellipsis, a plausible date ten days out, with the table three lines below
+  saying "Aug 11, 2026". Margin is now 28px.
+
+### The XP calendar: colour was the only channel the quantity arrived on
+
+The four-week heatmap was carefully built (four *named* bands rather than a
+continuous ramp, a distinct empty cell, exact numbers in `title` and
+`aria-label`), and the quantity still arrived in exactly one visual channel.
+Every reader who degrades that channel had a hover tooltip as their only route
+to a number. It is now a bar chart: height is not a colour channel, and the
+tooltips and labels carried over unchanged. The window's honest property
+survives and is restated in code — a day with no XP and a day the student never
+opened Lemely are the same zero-height bar, because they are the same fact.
+
+### §11 exceptions, logged rather than assumed
+
+§11's vocabulary (grid, axis, series, legend, tooltip) describes a plot in a
+coordinate space. Four things in this product are not that, and each stayed:
+
+- **The topic-weakness heatmap** (`ClassAnalytics`). Its no-data-vs-0%
+  distinction is the single thing on that screen that must not be got wrong, and
+  Nivo's heatmap has no notion of it. Trading that guarantee for a nicer
+  transition is not a trade worth making.
+- **"Weakest threads"** and **"This week, by source"**: labelled meters where
+  every row already prints its topic and its value as text. A meter is a visual
+  aid to a number that is stated; it is not a plot.
+- **`BoundaryBar`**: a positional scale, bespoke by design.
+- **`TrendSparkline`** in table rows (`ClassRoster`, parent `ChildOverview`): one
+  Nivo canvas per table row is a real performance cost, and a table cell is not
+  a chart. It keeps the SVG polyline.
+
+The grade distribution *did* convert, and the difference is the point: it has a
+category axis, a count axis and a per-bar tooltip that now states each grade's
+share of the cohort. `BarChart` grew a `colorFor` hook so the four `--grade-*`
+band colours survive the move — that colour is not a series key, it is the one
+colour relationship in this product a teacher actually learns.
+
+### Two screens no capture surface had ever claimed
+
+`ClassAnalytics` and `StudentDetail` carry the cohort trend and the at-risk
+trend, and **neither had a capture surface of any kind** — P4.10's finding one
+phase later. Both are now registered (`teacher-analytics`, `teacher-student`),
+with states that exercise the cases the charts exist for: a class that has
+marked nothing, a single-point trend, and a *descending* student trend, since a
+capture of a flat line would not test the panel's actual job. Writing the
+fixtures found one more: the invented grade ladder had nine rungs and
+`GRADE_ORDER` has seven. A fixture that does not match the wire is a fixture
+that can be wrong and look like a bug.

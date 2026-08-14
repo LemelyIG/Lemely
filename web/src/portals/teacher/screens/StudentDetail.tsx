@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { ErrorState } from "@/components/ui/state-views"
-import { TrendSparkline } from "@/components/ui/trend-sparkline"
+import { ChartFrame } from "@/components/ui/chart-frame"
+import { LineChart } from "@/components/ui/line-chart"
 import { WeaknessChip, type WeaknessSeverity } from "@/components/ui/weakness-chip"
 import { relativeTime } from "@/lib/utils"
 import { useStudentDetail } from "@/lib/hooks/useTeacherApi"
@@ -27,8 +28,10 @@ import type { StudentWeakness } from "@/lib/teacherTypes"
  *    `WeaknessChip` with its lost/maximum marks and accuracy as the `meta`
  *    line — the evidence, not a verdict (spec §1.4).
  *  - Trend chart                   -> `trend` (this student's own percentage
- *    series, chronological) via `TrendSparkline` + an accessible table
- *    underneath, same pattern `ClassAnalytics` uses for the cohort trend.
+ *    series, chronological) via `LineChart` + an accessible table underneath,
+ *    same pattern `ClassAnalytics` uses for the cohort trend. P5.3 moved both
+ *    off `TrendSparkline` onto Nivo and the shared chart theme (DESIGN.md
+ *    §11); see `StudentTrendPanel` below.
  *  - At-risk status and reason     -> `isAtRisk`/`atRiskFlags`, each flag's
  *    real `summary` sentence rendered directly, acknowledged flags tagged
  *    and never hidden (D3.5). Display only here, same as T-03's roster — the
@@ -76,6 +79,97 @@ function WeaknessRow({ weakness }: { weakness: StudentWeakness }) {
         weakness.accuracy * 100,
       )}% accuracy${weakness.questionIds.length > 0 ? ` · ${weakness.questionIds.length} question${weakness.questionIds.length === 1 ? "" : "s"}` : ""}`}
     />
+  )
+}
+
+/**
+ * This student's own percentage series (`trend`), on the shared chart theme.
+ *
+ * The teacher-facing sibling of `ClassAnalytics`'s `CohortTrendPanel`, and it
+ * is the "at-risk trends" chart §5.3 names: the panel a teacher opens *because*
+ * a student was flagged, to see whether the flag describes a slide or a single
+ * bad morning. A 140px sparkline could not answer that question — it had no
+ * scale, no dates, and no way to tell a drop from 90 to 80 apart from a drop
+ * from 40 to 30.
+ *
+ * The axis is pinned 0–100 for the same reason the cohort line is: on an auto
+ * domain, three papers within four points of each other fill the panel and
+ * read as a collapse.
+ *
+ * The table underneath stays, unchanged, as the exact-value channel.
+ */
+function StudentTrendPanel({
+  trend,
+}: {
+  trend: readonly { recordedAt: string; percentage: number }[]
+}) {
+  const series = [
+    {
+      id: "Percentage",
+      data: trend.map((p) => ({
+        x: new Date(p.recordedAt).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        }),
+        y: p.percentage,
+      })),
+    },
+  ]
+
+  return (
+    <ChartFrame
+      title="Performance over time"
+      subtitle="Percentage per marked paper"
+      isEmpty={trend.length === 0}
+      emptyMarginalia="No graded papers yet"
+      emptyBody="This line starts once this student has a marked paper. Until then there is nothing to read a trend from, and a flat line would imply there was."
+    >
+      <LineChart
+        series={series}
+        height={200}
+        enableArea
+        yMin={0}
+        yMax={100}
+        formatValue={(v) => `${Math.round(v)}%`}
+        ariaLabel="This student's percentage per marked paper, over time"
+      />
+      <div
+        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-rule pt-2"
+        tabIndex={0}
+        role="region"
+        aria-label="Percentage over time, scrollable"
+      >
+        <table className="w-full border-collapse text-body-sm">
+          <caption className="sr-only">This student's percentage over time</caption>
+          <thead>
+            <tr className="text-ink-faint">
+              <th scope="col" className="px-1 py-1 text-start text-eyebrow">
+                Date
+              </th>
+              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
+                Percentage
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {trend.map((p) => (
+              <tr key={p.recordedAt} className="border-t border-rule">
+                <td className="px-1 py-1 text-ink-muted">
+                  {new Date(p.recordedAt).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </td>
+                <td className="px-1 py-1 text-end text-data-sm text-ink">
+                  {Math.round(p.percentage)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </ChartFrame>
   )
 }
 
@@ -194,55 +288,7 @@ export function StudentDetail() {
       </section>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
-        {/* Trend chart */}
-        <section className="flex flex-col gap-3 min-w-0">
-          <div className="text-display-sm">Performance over time</div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
-            {student.trend.length === 0 ? (
-              <div className="text-body-md text-ink-muted">No graded papers yet.</div>
-            ) : (
-              <>
-                <TrendSparkline values={student.trend.map((p) => p.percentage)} width={140} />
-                <div
-                  className="max-h-[180px] overflow-y-auto border-t border-rule pt-2 -mx-1"
-                  tabIndex={0}
-                  role="region"
-                  aria-label="Percentage over time, scrollable"
-                >
-                  <table className="w-full text-body-sm border-collapse">
-                    <caption className="sr-only">This student's percentage over time</caption>
-                    <thead>
-                      <tr className="text-ink-faint">
-                        <th scope="col" className="text-start text-data-sm uppercase tracking-[0.08em] px-1 py-1">
-                          Date
-                        </th>
-                        <th scope="col" className="text-end text-data-sm uppercase tracking-[0.08em] px-1 py-1">
-                          Percentage
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {student.trend.map((p) => (
-                        <tr key={p.recordedAt} className="border-t border-rule">
-                          <td className="px-1 py-1 text-ink-muted">
-                            {new Date(p.recordedAt).toLocaleDateString(undefined, {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </td>
-                          <td className="px-1 py-1 text-end text-data-sm text-ink">
-                            {Math.round(p.percentage)}%
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
-        </section>
+        <StudentTrendPanel trend={student.trend} />
 
         {/* Activity / engagement */}
         <section className="flex flex-col gap-3 min-w-0">

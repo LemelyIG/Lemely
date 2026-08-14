@@ -179,19 +179,44 @@ def test_overview_subjects_are_aggregated_from_history(client: TestClient) -> No
 
 
 def test_overview_weak_threads_and_momentum(client: TestClient) -> None:
-    """Weak threads fold across papers; momentum has a real 3-point polyline."""
+    """Weak threads fold across papers; momentum has a real 3-point series."""
     body = client.get("/api/student/overview").json()
 
     weak_topics = {t["topic"] for t in body["weakGlobal"]}
     assert "Thermal physics" in weak_topics
     assert "Moles" in weak_topics
 
-    momentum = body["momentum"]
-    # Three records → a polyline with M then two L commands.
-    assert momentum["path"].startswith("M")
-    assert momentum["path"].count("L") == 2
-    assert momentum["area"].endswith("Z")
-    assert len(momentum["labels"]) == 3
+    points = body["momentum"]["points"]
+    assert len(points) == 3
+    # Every point carries its own timestamp and its percentage as recorded.
+    assert all(p["recordedAt"] and isinstance(p["percentage"], (int, float)) for p in points)
+    # Oldest first: the frontend plots by position and never re-sorts.
+    assert [p["recordedAt"] for p in points] == sorted(p["recordedAt"] for p in points)
+
+
+def test_overview_momentum_percentages_are_never_rescaled(tmp_path: Path) -> None:
+    """A percentage under 55 survives to the wire untouched.
+
+    Regression test for the defect P5.3 removed: ``_momentum`` used to map
+    55-100% onto an 88px viewbox, so 40% was emitted as y=114 — past the bottom
+    of the box, in an element the frontend rendered ``overflow-visible``. The
+    student whose line left the chart was, by construction, the one doing worst.
+    The wire now carries percentages, so there is no band to fall out of.
+    """
+    store = HistoryStore(tmp_path / "low")
+    for pct, grade, when in (
+        (38.0, "U", "2020-06-01T10:00:00+00:00"),
+        (44.0, "E", "2020-07-01T10:00:00+00:00"),
+    ):
+        store.append(STUDENT_ID, _record(percentage=pct, grade=grade, recorded_at=when))
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
+    body = TestClient(app).get("/api/student/overview").json()
+
+    assert [p["percentage"] for p in body["momentum"]["points"]] == [38.0, 44.0]
 
 
 def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
@@ -206,8 +231,7 @@ def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
 
     assert body["subjects"] == []
     assert body["weakGlobal"] == []
-    assert body["momentum"]["path"] == ""
-    assert body["momentum"]["labels"] == []
+    assert body["momentum"]["points"] == []
 
 
 # ── Subject ───────────────────────────────────────────────────────────────────

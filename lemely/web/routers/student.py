@@ -92,6 +92,7 @@ from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
     MomentumDTO,
+    MomentumPointDTO,
     OverviewDTO,
     PaperBarDTO,
     PaperBreakdownDTO,
@@ -180,37 +181,29 @@ def _subject_records(history: StudentHistory, code: str) -> list[tuple[int, Pape
 
 
 def _momentum(records: list[PaperRecord]) -> MomentumDTO:
-    """Build the momentum sparkline from recorded-paper percentages (data-backed).
+    """Build the momentum series from recorded-paper percentages (data-backed).
 
-    Uses the same coordinate transform as ``web/src/portals/student/data.ts``
-    (300x88 viewbox, 55-100 % band). Returns empty ``path``/``area`` when fewer
-    than two papers exist (a polyline needs at least two points).
+    One point per grade-bearing paper, oldest first, each carrying its own
+    ``recorded_at`` and its percentage exactly as recorded. Returns no points
+    at all when fewer than two papers exist (a line needs at least two), which
+    is the condition the frontend's empty state keys off directly.
 
     Filters to grade-bearing records itself rather than trusting each caller to
     do it (``docs/quiz-model.md`` §5) — this is a percentage-over-time claim,
     and one quiz scoring 40% on a hard topic would draw a dive in a line the
     student reads as "my papers are getting worse".
+
+    **No coordinate transform lives here any more.** See :class:`MomentumDTO`
+    for what this used to emit and the two defects that came with it; the short
+    version is that a backend which renders SVG paths is a backend that has to
+    guess the viewbox, the axis range and the clipping behaviour of a component
+    it cannot see.
     """
     papers = grade_bearing(records)
-    series = [r.percentage for r in papers]
-    if len(series) < 2:
-        return MomentumDTO(path="", area="", lastX="0.0", lastY="88.0", labels=[])
-
-    def mx(i: int) -> float:
-        return (i / (len(series) - 1)) * 300.0
-
-    def my(v: float) -> float:
-        return 88.0 - ((v - 55.0) / 45.0) * 78.0
-
-    path = " ".join(f"{'L' if i else 'M'}{mx(i):.1f} {my(v):.1f}" for i, v in enumerate(series))
-    last_i = len(series) - 1
-    labels = [r.recorded_at[:7] for r in papers]
+    if len(papers) < 2:
+        return MomentumDTO(points=[])
     return MomentumDTO(
-        path=path,
-        area=f"{path} L300 88 L0 88 Z",
-        lastX=f"{mx(last_i):.1f}",
-        lastY=f"{my(series[last_i]):.1f}",
-        labels=labels,
+        points=[MomentumPointDTO(recordedAt=r.recorded_at, percentage=r.percentage) for r in papers]
     )
 
 

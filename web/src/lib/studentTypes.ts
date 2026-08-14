@@ -42,16 +42,24 @@ export interface WeakThread {
   color: VizColor
 }
 
+/** One corrected paper on the momentum line (mirrors `MomentumPointDTO`). */
+export interface MomentumPoint {
+  /** Canonical UTC ISO-8601. Formatting is this side's job, not the wire's. */
+  recordedAt: string
+  /** As recorded. Never pre-scaled to a viewbox — read `MomentumDTO`'s
+   * docstring for what that used to mean and why it stopped. */
+  percentage: number
+}
+
 /**
- * SVG sparkline path data for the momentum widget (mirrors `MomentumDTO`).
- * `path`/`area` are empty strings when fewer than two papers exist.
+ * The momentum series: percentage per corrected paper, oldest first
+ * (mirrors `MomentumDTO`).
+ *
+ * `points` is empty when fewer than two grade-bearing papers exist, which is
+ * the condition the panel's empty state keys off directly.
  */
 export interface Momentum {
-  path: string
-  area: string
-  lastX: string
-  lastY: string
-  labels: string[]
+  points: MomentumPoint[]
 }
 
 /** Payload for `GET /student/overview` (mirrors `OverviewDTO`). */

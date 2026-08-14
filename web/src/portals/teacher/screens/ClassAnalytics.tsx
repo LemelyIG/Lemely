@@ -4,9 +4,12 @@ import { Link } from "react-router-dom"
 import { DownloadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { ErrorState, EmptyState } from "@/components/ui/state-views"
-import { TrendSparkline } from "@/components/ui/trend-sparkline"
+import { ChartFrame } from "@/components/ui/chart-frame"
+import { LineChart } from "@/components/ui/line-chart"
+import { BarChart } from "@/components/ui/bar-chart"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { gradeBand } from "@/components/ui/grade-badge"
+import { useNivoTheme } from "@/lib/nivoTheme"
 import { cn, downloadCsv } from "@/lib/utils"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
@@ -23,8 +26,17 @@ import { useClassDetailContext } from "./ClassDetail"
  *
  * Five panels, one DTO field each: `topicWeaknesses` (ranking) + `heatmap`
  * (cells) together drive the centrepiece topic x student matrix;
- * `gradeDistribution` the grade bars; `trend` the cohort sparkline;
+ * `gradeDistribution` the grade bars; `trend` the cohort line;
  * `paperComparison` the per-paper table; `engagement` the activity stats.
+ *
+ * P5.3 put both of the plots on Nivo and the shared chart theme (DESIGN.md
+ * §11) — see `GradeDistributionPanel` and `CohortTrendPanel` below, each of
+ * which documents what changed and why. The heatmap deliberately did NOT
+ * move: it is a labelled matrix of cells, every one of which prints its own
+ * value, and its no-data-vs-0% distinction (see above) is the single thing on
+ * this screen that must not be got wrong. Nivo's heatmap has no notion of that
+ * distinction, so putting it there would trade the one guarantee this panel
+ * exists to make for a nicer transition. Logged as a §11 exception.
  *
  * **Heatmap no-data vs. 0% (the one rule this screen cannot get wrong):**
  * `HeatmapCellDTO.accuracy` is `null` when a student has no persisted
@@ -51,11 +63,216 @@ import { useClassDetailContext } from "./ClassDetail"
  * click and isn't attempted here).
  */
 
-const GRADE_BAND_BG: Record<string, string> = {
-  top: "bg-grade-top",
-  mid: "bg-grade-mid",
-  borderline: "bg-grade-borderline",
-  fail: "bg-grade-fail",
+/**
+ * The resolved token each grade band's bar is drawn in.
+ *
+ * The names, not the values — `useNivoTheme()` resolves them, for the reason
+ * `lib/nivoTheme.ts` sets out at length (Nivo hands a bar colour to
+ * react-spring, which parses it, so a `var()` string arrives as nothing).
+ *
+ * These are `--grade-*`, not `SERIES_TOKENS`. A grade distribution's colour is
+ * not a series key: it is the same four-band scale the `GradeBadge` on every
+ * other teacher screen uses, and it is the one colour relationship in this
+ * product a teacher genuinely learns. Recolouring it from the categorical
+ * palette would make the bars prettier and the page less legible.
+ */
+const GRADE_BAND_TOKEN: Record<string, string> = {
+  top: "--grade-top",
+  mid: "--grade-mid",
+  borderline: "--grade-borderline",
+  fail: "--grade-fail",
+}
+
+/**
+ * Grade distribution (`gradeDistribution`), as a horizontal bar per grade.
+ *
+ * **The empty test is "every count is zero", not "no rows".** `grade_distribution`
+ * returns *every* rung of `GRADE_ORDER` with zero counts included, precisely so
+ * a frontend never has to infer "nobody on a B" from a missing key — which
+ * means `length === 0` is unreachable and a class with nothing marked yet drew
+ * a full ladder of empty tracks with a 0 beside each. That is a blank chart
+ * wearing a chart's clothes, and §11 makes the empty state mandatory. The
+ * momentum panel on the student dashboard hit the same shape in P4.1 and keys
+ * off its own emptiness the same way.
+ *
+ * Horizontal, because the categories are grades and the value is a headcount:
+ * a reader scans the grade ladder vertically, in the order it is taught.
+ */
+function GradeDistributionPanel({
+  buckets,
+}: {
+  buckets: readonly { grade: string; count: number }[]
+}) {
+  const { tokens } = useNivoTheme()
+  const total = buckets.reduce((sum, b) => sum + b.count, 0)
+
+  return (
+    <ChartFrame
+      title="Grade distribution"
+      subtitle="Students by their latest paper grade"
+      isEmpty={total === 0}
+      emptyMarginalia="No grades yet"
+      emptyBody="Every student on this class ladder appears here once they have a marked paper. Nobody in this class has one so far."
+    >
+      <BarChart
+        /*
+         * Reversed, because Nivo lays a horizontal bar chart out from the
+         * bottom up and `GRADE_ORDER` runs highest-first. Unreversed, the
+         * ladder rendered with A* at the floor and U at the ceiling — upside
+         * down against every other place a teacher meets these grades, and
+         * against the way the ladder is spoken.
+         */
+        data={[...buckets].reverse().map((b) => ({ label: b.grade, value: b.count }))}
+        horizontal
+        showValues
+        height={Math.max(180, buckets.length * 26)}
+        axisBottomLegend="Students"
+        colorFor={(point) => tokens[GRADE_BAND_TOKEN[gradeBand(point.label)]] ?? ""}
+        formatValue={(v) => String(Math.round(v))}
+        tooltipDetail={(point) =>
+          total === 0
+            ? null
+            : `${Math.round((point.value / total) * 100)}% of the ${total} graded student${
+                total === 1 ? "" : "s"
+              }`
+        }
+        ariaLabel="Grade distribution: number of students on each grade"
+      />
+    </ChartFrame>
+  )
+}
+
+/**
+ * Cohort mean percentage over time (`trend`), the panel §5.3 singles out for
+ * the full treatment: animated entry, hover tooltips with exact values, a real
+ * axis, and an empty state.
+ *
+ * What it replaces is a 120px `TrendSparkline` — six pixels per point, no
+ * scale, no dates, and `sampleSize` shown for the final point only. That last
+ * one is the substantive gain: an early point in a class's life can rest on two
+ * students, and a cohort line that does not say so invites a teacher to read a
+ * two-student mean as a class-wide dip. Every point now carries its sample size
+ * in the tooltip and in its accessible label.
+ *
+ * The table below the chart stays. It is not redundancy: it is the exact-value,
+ * copy-pasteable, screen-reader-native channel, and a chart is a summary of it
+ * rather than a replacement for it.
+ */
+function CohortTrendPanel({
+  trend,
+}: {
+  trend: readonly { timestamp: string; meanPercentage: number; sampleSize: number }[]
+}) {
+  const latest = trend.at(-1) ?? null
+
+  /*
+   * `TrendPointDTO` also carries a `label`, and it is deliberately NOT used
+   * here: the backend sets it to the raw `recorded_at` UTC ISO string verbatim
+   * (its own docstring says so, and says the frontend may reformat), so
+   * rendering the field named "label" would put `2026-03-04T11:52:07Z` on a
+   * teacher's x-axis. The timestamp is the truth; the reading of it belongs on
+   * this side.
+   */
+  const series = useMemo(
+    () => [
+      {
+        id: "Cohort mean",
+        data: trend.map((p) => ({
+          x: new Date(p.timestamp).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+          }),
+          y: p.meanPercentage,
+        })),
+      },
+    ],
+    [trend],
+  )
+
+  const sampleByLabel = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const [i, p] of trend.entries()) map.set(series[0].data[i].x, p.sampleSize)
+    return map
+  }, [trend, series])
+
+  return (
+    <ChartFrame
+      title="Performance over time"
+      subtitle="Cohort mean percentage, one point per submission"
+      isEmpty={trend.length === 0}
+      emptyMarginalia="Nothing marked yet"
+      emptyBody="The cohort line starts drawing itself the first time a paper in this class is marked."
+    >
+      <LineChart
+        series={series}
+        height={200}
+        enableArea
+        /*
+         * Pinned 0–100 rather than auto. A cohort sitting between 71% and 74%
+         * on an auto domain fills the panel top to bottom and reads as
+         * volatility; on a percentage axis it reads as what it is, which is a
+         * steady class.
+         */
+        yMin={0}
+        yMax={100}
+        formatValue={(v) => `${Math.round(v)}%`}
+        tooltipDetail={(point) => {
+          const n = sampleByLabel.get(point.x)
+          if (n === undefined) return null
+          return `over ${n} student${n === 1 ? "" : "s"}`
+        }}
+        ariaLabel="Cohort mean percentage over time"
+      />
+      {latest ? (
+        <div className="text-body-sm text-ink-muted">
+          Latest: {Math.round(latest.meanPercentage)}% mean, over {latest.sampleSize} student
+          {latest.sampleSize === 1 ? "" : "s"}
+        </div>
+      ) : null}
+      <div
+        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-rule pt-2"
+        tabIndex={0}
+        role="region"
+        aria-label="Cohort mean percentage over time, scrollable"
+      >
+        <table className="w-full border-collapse">
+          <caption className="sr-only">Cohort mean percentage over time</caption>
+          <thead>
+            <tr className="text-ink-faint">
+              <th scope="col" className="px-1 py-1 text-start text-eyebrow">
+                Date
+              </th>
+              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
+                Mean
+              </th>
+              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
+                Students
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {trend.map((p) => (
+              <tr key={p.timestamp} className="border-t border-rule">
+                <td className="px-1 py-1 text-body-sm text-ink-muted">
+                  {new Date(p.timestamp).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </td>
+                <td className="px-1 py-1 text-end text-data-sm text-ink">
+                  {Math.round(p.meanPercentage)}%
+                </td>
+                <td className="px-1 py-1 text-end text-data-sm text-ink-faint">
+                  {p.sampleSize}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </ChartFrame>
+  )
 }
 
 function downloadHeatmapCsv(
@@ -150,8 +367,6 @@ export function ClassAnalytics() {
     data.heatmap.map((c) => [`${c.topic}\u0000${c.studentId}`, c.accuracy]),
   )
   const selected = data.topicWeaknesses.find((t) => t.topic === selectedTopic) ?? null
-  const maxGradeCount = Math.max(1, ...data.gradeDistribution.map((b) => b.count))
-  const latestTrendPoint = data.trend.at(-1) ?? null
 
   return (
     <div className="flex flex-col gap-8 min-w-0">
@@ -284,92 +499,10 @@ export function ClassAnalytics() {
         ) : null}
       </section>
 
-      {/* Grade distribution */}
-      <section className="flex flex-col gap-3">
-        <div className="text-display-md text-ink">Grade distribution</div>
-        <div className="bg-paper-raised border border-rule rounded-lg p-6 flex flex-col gap-2.5">
-          {data.gradeDistribution.map((b) => (
-            <div key={b.grade} className="flex items-center gap-3">
-              <div className="w-6 text-data-sm text-ink-muted flex-none">{b.grade}</div>
-              <div className="flex-1 h-4 bg-paper-sunk rounded-full overflow-hidden min-w-0">
-                <div
-                  className={cn("h-full rounded-full", GRADE_BAND_BG[gradeBand(b.grade)])}
-                  style={{ width: `${(b.count / maxGradeCount) * 100}%` }}
-                />
-              </div>
-              <div className="w-8 text-end text-data-sm text-ink-muted flex-none">
-                {b.count}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <GradeDistributionPanel buckets={data.gradeDistribution} />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
-        {/* Cohort trend */}
-        <section className="flex flex-col gap-3 min-w-0">
-          <div className="text-display-md text-ink">Performance over time</div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-6 flex flex-col gap-3 min-w-0">
-            {data.trend.length === 0 ? (
-              <div className="text-body-md text-ink-muted">No graded submissions yet.</div>
-            ) : (
-              <>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <TrendSparkline values={data.trend.map((p) => p.meanPercentage)} width={120} />
-                  {latestTrendPoint ? (
-                    <div className="text-body-sm text-ink-muted">
-                      Latest: {Math.round(latestTrendPoint.meanPercentage)}% mean, over{" "}
-                      {latestTrendPoint.sampleSize} student
-                      {latestTrendPoint.sampleSize === 1 ? "" : "s"}
-                    </div>
-                  ) : null}
-                </div>
-                <div
-                  className="max-h-[180px] overflow-y-auto border-t border-rule pt-2 -mx-1"
-                  tabIndex={0}
-                  role="region"
-                  aria-label="Cohort mean percentage over time, scrollable"
-                >
-                  <table className="w-full border-collapse">
-                    <caption className="sr-only">Cohort mean percentage over time</caption>
-                    <thead>
-                      <tr className="text-ink-faint">
-                        <th scope="col" className="text-start text-eyebrow px-1 py-1">
-                          Date
-                        </th>
-                        <th scope="col" className="text-end text-eyebrow px-1 py-1">
-                          Mean
-                        </th>
-                        <th scope="col" className="text-end text-eyebrow px-1 py-1">
-                          Students
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.trend.map((p) => (
-                        <tr key={p.timestamp} className="border-t border-rule">
-                          <td className="px-1 py-1 text-body-sm text-ink-muted">
-                            {new Date(p.timestamp).toLocaleDateString(undefined, {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </td>
-                          <td className="px-1 py-1 text-end text-data-sm text-ink">
-                            {Math.round(p.meanPercentage)}%
-                          </td>
-                          <td className="px-1 py-1 text-end text-data-sm text-ink-faint">
-                            {p.sampleSize}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
-        </section>
+        <CohortTrendPanel trend={data.trend} />
 
         {/* Engagement */}
         <section className="flex flex-col gap-3 min-w-0">

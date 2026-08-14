@@ -55,18 +55,46 @@ class WeakThreadDTO(ApiModel):
     color: VizColor
 
 
-class MomentumDTO(ApiModel):
-    """SVG sparkline path data for the momentum widget (mirrors ``momentum``).
+class MomentumPointDTO(ApiModel):
+    """One corrected paper on the momentum line.
 
-    ``path``/``area`` are empty strings when fewer than two papers exist (a line
-    needs at least two points); ``labels`` are the ordered session tick labels.
+    ``recorded_at`` is the canonical UTC ISO-8601 timestamp; the reading of it
+    belongs to the frontend, which knows the reader's locale. ``percentage`` is
+    the paper's percentage as recorded, never rescaled or clipped.
     """
 
-    path: str
-    area: str
-    lastX: str
-    lastY: str
-    labels: list[str]
+    recordedAt: str
+    percentage: float
+
+
+class MomentumDTO(ApiModel):
+    """The momentum series: percentage per corrected paper, oldest first.
+
+    ``points`` is empty when fewer than two grade-bearing papers exist — a line
+    needs at least two points, and the frontend renders its empty state off
+    exactly that condition rather than recounting papers for itself.
+
+    **This carried pre-rendered SVG path data until P5.3** (``path``, ``area``,
+    ``lastX``, ``lastY``, ``labels``), computed against a hardcoded 300x88
+    viewbox and a 55-100% band. Two defects came with it, and both are gone
+    rather than fixed, because the geometry itself has left the backend:
+
+    - The band **clipped from below**. ``y = 88 - ((pct - 55) / 45) * 78``
+      puts anything under 55% past the bottom of the viewbox (40% lands at
+      y=114, 30% at y=131), and the element it drew into was
+      ``overflow-visible``, so a struggling student's line escaped the panel
+      and drew over the labels beneath it. The students whose momentum matters
+      most were the ones whose line left the chart.
+    - ``labels`` was ``recorded_at[:7]``, a year-month. Five papers sat in one
+      month rendered five identical ticks.
+
+    Shipping a series instead of a path also puts the axis where it can be
+    read: the frontend plots against a real 0-100 scale, so nothing clips and
+    nothing has to agree with a coordinate transform written in another
+    language (``web/src/portals/student/data.ts`` used to hold a copy of it).
+    """
+
+    points: list[MomentumPointDTO]
 
 
 class OverviewDTO(ApiModel):

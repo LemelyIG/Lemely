@@ -1,10 +1,12 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import { useMemo } from "react"
 import { Link } from "react-router-dom"
 import { ArrowDownRight, ArrowUpRight, Minus } from "@phosphor-icons/react"
 import { Card } from "@/components/ui/card"
 import { Meter } from "@/components/ui/primitives"
 import { buttonVariants } from "@/components/ui/button"
 import { ChartFrame } from "@/components/ui/chart-frame"
+import { LineChart } from "@/components/ui/line-chart"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { ErrorState } from "@/components/ui/state-views"
 import { GettingStarted } from "@/components/ui/getting-started"
@@ -17,23 +19,24 @@ import {
 } from "@/components/ui/loading-shapes"
 import { cn, greetingFor } from "@/lib/utils"
 import { useOverview } from "@/lib/hooks/useStudentApi"
-import type { SubjectRow } from "@/lib/studentTypes"
+import type { MomentumPoint, SubjectRow } from "@/lib/studentTypes"
 import { vizBg } from "../components/colors"
 
 /*
  * Overview (isOverview) — the student dashboard. Wired to
  * `GET /student/overview` via `useOverview()`. Greeting, subjects ledger,
- * momentum sparkline + weakest threads.
+ * momentum line + weakest threads.
  *
  * P4.1 (redesign Phase 4, surface 1 of 10) migrated this screen to the Study
  * Notebook system. Four things changed that are not styling:
  *
  *   1. **Both panels had no empty-data state**, which DESIGN.md §11 makes
- *      mandatory on every chart. `MomentumDTO` returns `path=""`, `area=""`,
- *      `lastX="0.0"`, `lastY="88.0"` when fewer than two grade-bearing papers
- *      exist (a polyline needs two points) — and this screen rendered that
- *      unconditionally, producing an empty plot box with one stray dot pinned
- *      to the bottom corner and an empty label row. That state is not exotic:
+ *      mandatory on every chart. `MomentumDTO` returns no points when fewer
+ *      than two grade-bearing papers exist (a line needs two) — and this
+ *      screen rendered that unconditionally, producing an empty plot box with
+ *      one stray dot pinned to the bottom corner and an empty label row.
+ *      (At the time the DTO expressed that emptiness as `path=""`; P5.3
+ *      replaced the pre-rendered SVG path with a real series.) Not exotic:
  *      it is *every* student who has just marked their first paper, i.e. the
  *      exact reader the getting-started view below hands over to. Both panels
  *      now go through `ChartFrame`, which has no children-only render path
@@ -60,6 +63,15 @@ import { vizBg } from "../components/colors"
  * and the hardcoded "Papers marked"/"Hours saved" stats had no backing DTO
  * field and were removed rather than left as stale fabricated content (see
  * D1.6 finding M2).
+ *
+ * P5.3 (redesign Phase 5) put the momentum panel on Nivo and the shared chart
+ * theme, which took the chart's geometry out of the backend. See
+ * `MomentumPanel` below and `MomentumDTO`'s docstring: the transform that
+ * lived in Python clipped every percentage under 55% out of its own viewbox.
+ * "Weakest threads" stays as labelled meters and is logged as a §11 exception
+ * — each row prints its topic and its accuracy as text, which is a stronger
+ * artefact than a bar chart of six categories, and nothing about it is a plot
+ * in a coordinate space.
  */
 
 /** Where the subject ledger's trend column gets its three arms. */
@@ -201,6 +213,102 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
   )
 }
 
+/**
+ * Momentum: percentage per corrected paper, on the shared chart theme.
+ *
+ * **The x-axis is the paper's position, not its date, and that is deliberate.**
+ * The panel's own subtitle has always said "per corrected paper", and the chart
+ * this replaces spaced points evenly by index too, so the domain here is the
+ * sequence of papers rather than the calendar. It also has to be: a point scale
+ * keys on its label, and the labels the wire used to carry were
+ * `recorded_at[:7]` — a year-month — so a student with five papers in March
+ * had five points sharing one key, which collapses into one. An ordinal is
+ * unique by construction. The date is not lost; it is in every point's tooltip
+ * and accessible label, which is where a date is useful and an axis of five
+ * identical months never was.
+ */
+function MomentumPanel({ points }: { points: readonly MomentumPoint[] }) {
+  const series = useMemo(
+    () => [
+      {
+        id: "Percentage",
+        data: points.map((p, i) => ({ x: String(i + 1), y: p.percentage })),
+      },
+    ],
+    [points],
+  )
+
+  const datesByOrdinal = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const [i, p] of points.entries()) {
+      map.set(
+        String(i + 1),
+        new Date(p.recordedAt).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        }),
+      )
+    }
+    return map
+  }, [points])
+
+  return (
+    <ChartFrame
+      title="Momentum"
+      subtitle="Percentage per corrected paper, all subjects"
+      /*
+       * `points` is empty until a second grade-bearing paper exists, because a
+       * line needs two. Keying the empty state off the series itself — rather
+       * than off a paper count this screen would have to recompute — means the
+       * panel is empty exactly when there is nothing to draw, by construction.
+       */
+      isEmpty={points.length === 0}
+      emptyMarginalia="One paper down"
+      emptyBody="A line needs two points. Mark a second paper and your percentage over time starts drawing itself here."
+      emptyAction={
+        // `buttonVariants` on a `<Link>`, not a `<Button onClick>`: this
+        // is a destination, and it is the convention `GettingStarted`
+        // already uses for the same job. `Button` has no `asChild`.
+        <Link
+          to="/student/correct"
+          className={buttonVariants({ variant: "secondary", size: "sm" })}
+        >
+          Correct another paper
+        </Link>
+      }
+    >
+      {/* `flex-1` + `justify-center`: this panel sits in a two-up row and is
+          stretched to its taller sibling, so a chart pinned to the top left a
+          third of the card visibly empty. Centring in the space the row gives
+          it costs nothing and stops the panel reading as unfinished. */}
+      <div className="flex flex-1 flex-col justify-center">
+        <LineChart
+          series={series}
+          height={160}
+          enableArea
+          /*
+           * Pinned 0-100, which is the substantive change P5.3 made here. The
+           * hand-rolled SVG this replaces mapped 55-100% onto an 88px box, so
+           * anything below 55% was drawn *past the bottom of the viewbox* (40%
+           * landed at y=114) inside an element that was `overflow-visible` —
+           * a struggling student's line left the chart and drew over the
+           * labels beneath it. On a real axis nothing clips, and the axis
+           * states the band it is showing rather than leaving it to be
+           * assumed.
+           */
+          yMin={0}
+          yMax={100}
+          axisBottomLegend="Paper, oldest first"
+          formatValue={(v) => `${Math.round(v)}%`}
+          tooltipDetail={(point) => datesByOrdinal.get(point.x) ?? null}
+          ariaLabel="Your percentage per corrected paper, oldest first"
+        />
+      </div>
+    </ChartFrame>
+  )
+}
+
 export function Overview() {
   const { data, isPending, isError, error, refetch } = useOverview()
 
@@ -337,65 +445,7 @@ export function Overview() {
       </Card>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <ChartFrame
-          title="Momentum"
-          subtitle="Percentage per corrected paper, all subjects"
-          /*
-           * `path` is the empty string until a second grade-bearing paper
-           * exists, because a polyline needs two points. Keying the empty
-           * state off the path itself — rather than off a paper count this
-           * screen would have to recompute — means the panel is empty exactly
-           * when there is nothing to draw, by construction.
-           */
-          isEmpty={momentum.path === ""}
-          emptyMarginalia="One paper down"
-          emptyBody="A line needs two points. Mark a second paper and your percentage over time starts drawing itself here."
-          emptyAction={
-            // `buttonVariants` on a `<Link>`, not a `<Button onClick>`: this
-            // is a destination, and it is the convention `GettingStarted`
-            // already uses for the same job. `Button` has no `asChild`.
-            <Link
-              to="/student/correct"
-              className={buttonVariants({ variant: "secondary", size: "sm" })}
-            >
-              Correct another paper
-            </Link>
-          }
-        >
-          {/* `flex-1` + `justify-center`: this panel sits in a two-up row and
-              is stretched to its taller sibling, so an 88px chart pinned to
-              the top left a third of the card visibly empty. Centring in the
-              space the row gives it costs nothing and stops the panel reading
-              as unfinished. */}
-          <div className="flex flex-1 flex-col justify-center gap-2">
-            <svg
-              viewBox="0 0 300 88"
-              className="w-full h-28 overflow-visible"
-              aria-hidden="true"
-            >
-              <path d={momentum.area} fill="var(--accent-wash)" />
-              <path
-                d={momentum.path}
-                fill="none"
-                stroke="var(--accent)"
-                strokeWidth={2}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              <circle
-                cx={momentum.lastX}
-                cy={momentum.lastY}
-                r={3.6}
-                fill="var(--accent)"
-              />
-            </svg>
-            <div className="flex justify-between text-data-sm text-ink-faint">
-              {momentum.labels.map((label) => (
-                <span key={label}>{label}</span>
-              ))}
-            </div>
-          </div>
-        </ChartFrame>
+        <MomentumPanel points={momentum.points} />
 
         <ChartFrame
           title="Weakest threads"

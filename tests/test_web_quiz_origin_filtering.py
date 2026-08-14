@@ -438,8 +438,7 @@ def test_overview_momentum_line_is_drawn_from_papers_only(client: TestClient) ->
     """
     body = client.get("/api/student/overview").json()
 
-    assert body["momentum"]["path"] == ""
-    assert body["momentum"]["labels"] == []
+    assert body["momentum"]["points"] == []
 
 
 def test_overview_weak_threads_still_see_the_quiz_topic(client: TestClient) -> None:

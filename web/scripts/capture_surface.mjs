@@ -92,27 +92,36 @@ const PROFILE = {
   role: "student",
 }
 
-/** Field-for-field `OverviewDTO`. Numbers are invented for the capture. */
+/**
+ * Field-for-field `OverviewDTO`. Numbers are invented for the capture.
+ *
+ * This function used to carry its own copy of the momentum coordinate
+ * transform — the third copy, after `lemely/web/routers/student.py` and
+ * `portals/student/data.ts` — because the DTO shipped pre-rendered SVG path
+ * data and a stub had to render one to produce a chart. P5.3 moved the
+ * geometry into the chart component, so a stub now supplies what the wire
+ * actually carries: percentages and timestamps.
+ *
+ * The `< 2` rule is the backend's and is reproduced deliberately, because it
+ * is what the panel's empty state keys off: fewer than two grade-bearing
+ * papers means no points at all, not one lonely point.
+ */
 function overview({ subjects, momentumPoints, weak }) {
-  const series = momentumPoints
-  const mx = (i) => (series.length < 2 ? 0 : (i / (series.length - 1)) * 300)
-  const my = (v) => 88 - ((v - 55) / 45) * 78
-  const path2 =
-    series.length < 2
-      ? ""
-      : series.map((v, i) => `${i ? "L" : "M"}${mx(i).toFixed(1)} ${my(v).toFixed(1)}`).join(" ")
-  const last = series.length - 1
   return {
     studentName: "Amina",
     forecast: subjects.map((s) => s.grade).join(" "),
     subjects,
     weakGlobal: weak,
     momentum: {
-      path: path2,
-      area: path2 === "" ? "" : `${path2} L300 88 L0 88 Z`,
-      lastX: series.length < 2 ? "0.0" : mx(last).toFixed(1),
-      lastY: series.length < 2 ? "88.0" : my(series[last]).toFixed(1),
-      labels: series.length < 2 ? [] : series.map((_, i) => `2026-0${i + 1}`),
+      points:
+        momentumPoints.length < 2
+          ? []
+          : momentumPoints.map((percentage, i) => ({
+              // One a month, ascending, so the tooltip dates read plausibly
+              // and no two points share a timestamp.
+              recordedAt: `2026-0${i + 1}-14T10:00:00+00:00`,
+              percentage,
+            })),
     },
   }
 }
@@ -972,6 +981,177 @@ const TEACHER_QUIZZES = {
     { id: "q2", title: "Electricity end-of-unit", subjectCode: "0625", status: "assigned", questionCount: 12, targetGrade: "B", builderStep: 6 },
     { id: "q3", title: "Forces recap", subjectCode: "0625", status: "closed", questionCount: 8, targetGrade: null, builderStep: 6 },
   ],
+}
+
+/* ── Class analytics + student detail (P5.3's two chart screens) ──────────── */
+
+const CLASS_STUDENT_IDS = ["s-amina", "s-omar", "s-hana", "s-yusuf"]
+
+/** `ClassDetailDTO`. Only the roster is read by the analytics tab, via context. */
+const CLASS_DETAIL = {
+  id: "c-y11-physics",
+  label: "Y11 Physics",
+  subjectCode: "0625",
+  schoolId: "sch-1",
+  joinCode: "PHY-2K4",
+  atRiskCount: 1,
+  lastActivityAt: "2026-08-11T09:20:00+00:00",
+  topWeakness: "Moments and equilibrium",
+  stats: [],
+  mastery: [],
+  distribution: [],
+  students: [
+    { name: "Amina Farouk", grade: "B", mark: "72%", delta: 4, weakTopic: "Moments and equilibrium", gradeAtRisk: false, studentId: "s-amina", paperCount: 4, lastActiveAt: "2026-08-11T09:20:00+00:00", flags: [] },
+    { name: "Omar Said", grade: "C", mark: "64%", delta: -3, weakTopic: "Thermal energy transfer", gradeAtRisk: false, studentId: "s-omar", paperCount: 3, lastActiveAt: "2026-08-09T14:02:00+00:00", flags: [] },
+    { name: "Hana Nabil", grade: "A", mark: "88%", delta: 2, weakTopic: null, gradeAtRisk: false, studentId: "s-hana", paperCount: 5, lastActiveAt: "2026-08-12T11:40:00+00:00", flags: [] },
+    { name: "Yusuf Adel", grade: "E", mark: "44%", delta: -9, weakTopic: "Kinematics graphs", gradeAtRisk: true, studentId: "s-yusuf", paperCount: 2, lastActiveAt: "2026-07-28T08:10:00+00:00", flags: [] },
+  ],
+}
+
+/**
+ * Every rung of the grade ladder, zero counts included — which is what the real
+ * `grade_distribution` returns, and the reason the panel's empty test is "every
+ * count is zero" rather than "no rows". A fixture that shipped only the
+ * non-zero grades would quietly make that bug untestable.
+ */
+// Mirrors `lemely.core.history.GRADE_ORDER` exactly, highest first. Seven
+// rungs, not the nine an IGCSE grade sheet might suggest: this product's ladder
+// has no F or G. A fixture that invents rungs the wire never sends is a fixture
+// that can be wrong and look like a bug.
+const GRADE_LADDER = ["A*", "A", "B", "C", "D", "E", "U"]
+const gradeBuckets = (counts) =>
+  GRADE_LADDER.map((grade) => ({ grade, count: counts[grade] ?? 0 }))
+
+/** `ClassAnalyticsDTO`. Numbers are invented for the capture. */
+const CLASS_ANALYTICS = {
+  topicWeaknesses: [
+    { topic: "Moments and equilibrium", lostMarks: 46, maximumMarks: 78, accuracy: 0.41, studentIds: CLASS_STUDENT_IDS },
+    { topic: "Kinematics graphs", lostMarks: 31, maximumMarks: 72, accuracy: 0.57, studentIds: ["s-omar", "s-yusuf"] },
+    { topic: "Thermal energy transfer", lostMarks: 22, maximumMarks: 64, accuracy: 0.66, studentIds: ["s-omar"] },
+  ],
+  heatmap: [
+    { topic: "Moments and equilibrium", studentId: "s-amina", accuracy: 0.52 },
+    { topic: "Moments and equilibrium", studentId: "s-omar", accuracy: 0.38 },
+    { topic: "Moments and equilibrium", studentId: "s-hana", accuracy: 0.81 },
+    { topic: "Moments and equilibrium", studentId: "s-yusuf", accuracy: 0.0 },
+    { topic: "Kinematics graphs", studentId: "s-amina", accuracy: 0.74 },
+    { topic: "Kinematics graphs", studentId: "s-omar", accuracy: 0.49 },
+    // Deliberately absent for `s-hana`, so the no-data cell (an en-dash, not a
+    // 0%) appears in at least one capture. The two must never look alike.
+    { topic: "Kinematics graphs", studentId: "s-yusuf", accuracy: null },
+    { topic: "Thermal energy transfer", studentId: "s-amina", accuracy: 0.69 },
+    { topic: "Thermal energy transfer", studentId: "s-omar", accuracy: 0.55 },
+    { topic: "Thermal energy transfer", studentId: "s-hana", accuracy: 0.9 },
+    { topic: "Thermal energy transfer", studentId: "s-yusuf", accuracy: 0.42 },
+  ],
+  gradeDistribution: gradeBuckets({ A: 1, B: 1, C: 1, E: 1 }),
+  trend: [
+    { timestamp: "2026-05-14T10:00:00+00:00", label: "2026-05-14T10:00:00+00:00", meanPercentage: 58.5, sampleSize: 2 },
+    { timestamp: "2026-06-02T10:00:00+00:00", label: "2026-06-02T10:00:00+00:00", meanPercentage: 63.25, sampleSize: 3 },
+    { timestamp: "2026-06-24T10:00:00+00:00", label: "2026-06-24T10:00:00+00:00", meanPercentage: 61.0, sampleSize: 4 },
+    { timestamp: "2026-07-19T10:00:00+00:00", label: "2026-07-19T10:00:00+00:00", meanPercentage: 66.75, sampleSize: 4 },
+    { timestamp: "2026-08-11T10:00:00+00:00", label: "2026-08-11T10:00:00+00:00", meanPercentage: 67.0, sampleSize: 4 },
+  ],
+  paperComparison: [
+    { paperId: "0625-2-2", subjectCode: "0625", paperNumber: 2, paperVariant: 2, meanPercentage: 64.5, attemptCount: 6, studentCount: 4 },
+    { paperId: "0625-4-1", subjectCode: "0625", paperNumber: 4, paperVariant: 1, meanPercentage: 58.0, attemptCount: 4, studentCount: 3 },
+  ],
+  engagement: {
+    submissionsLast7Days: 5,
+    submissionsLast30Days: 14,
+    activeStudentsLast7Days: 3,
+    activeStudentsLast30Days: 4,
+    neverActiveCount: 0,
+    medianDaysSinceLastSubmission: 3,
+  },
+}
+
+const TEACHER_ANALYTICS_STATES = {
+  /** Both charts with real series behind them. */
+  populated: { analytics: CLASS_ANALYTICS },
+  /**
+   * A class that exists and has marked nothing. **This is the state P5.3 added
+   * the grade panel's empty case for**: the ladder is still nine rows of zero,
+   * so the old `length === 0` test never fired and the panel drew nine empty
+   * tracks. The trend is genuinely `[]`, so the two empty states differ in
+   * kind, and both have to read as "nothing yet" rather than as "broken".
+   */
+  "nothing-marked": {
+    analytics: {
+      ...CLASS_ANALYTICS,
+      topicWeaknesses: [],
+      heatmap: [],
+      gradeDistribution: gradeBuckets({}),
+      trend: [],
+      paperComparison: [],
+    },
+  },
+  /** One point, which a line cannot be drawn through but a chart must survive. */
+  "one-point": {
+    analytics: { ...CLASS_ANALYTICS, trend: CLASS_ANALYTICS.trend.slice(0, 1) },
+  },
+  loading: { delayMs: 8_000 },
+  error: { analytics: null, status: 500 },
+}
+
+/** `StudentDetailDTO`. Numbers are invented for the capture. */
+const STUDENT_DETAIL = {
+  studentId: "s-yusuf",
+  displayName: "Yusuf Adel",
+  subjects: [
+    { subjectCode: "0625", predictedGrade: "E", latestPercentage: 44.0, paperCount: 2 },
+  ],
+  attempts: [
+    { paperId: "0625-4-1", subjectCode: "0625", paperNumber: 4, paperVariant: 1, awardedMarks: 35, maximumMarks: 80, percentage: 43.75, grade: "E", recordedAt: "2026-07-28T08:10:00+00:00" },
+    { paperId: "0625-2-2", subjectCode: "0625", paperNumber: 2, paperVariant: 2, awardedMarks: 21, maximumMarks: 40, percentage: 52.5, grade: "D", recordedAt: "2026-06-15T09:00:00+00:00" },
+  ],
+  weaknesses: [
+    { topic: "Kinematics graphs", lostMarks: 18, maximumMarks: 30, accuracy: 0.4, questionIds: ["q3", "q7"] },
+    { topic: "Moments and equilibrium", lostMarks: 12, maximumMarks: 24, accuracy: 0.5, questionIds: ["q11"] },
+  ],
+  /*
+   * Descending, and deliberately so: this is the at-risk trend, and the whole
+   * question a teacher opens it to answer is whether the flag describes a slide
+   * or one bad morning. A capture of a flat line would not exercise the panel's
+   * actual job.
+   */
+  trend: [
+    { recordedAt: "2026-06-15T09:00:00+00:00", percentage: 52.5 },
+    { recordedAt: "2026-07-28T08:10:00+00:00", percentage: 43.75 },
+  ],
+  isAtRisk: true,
+  atRiskFlags: [
+    {
+      reason: "declining_trend",
+      summary: "Dropped from 53% to 44% across their last two papers.",
+      evidence: { percentages: [52.5, 43.75], paperCount: 2 },
+      acknowledged: null,
+    },
+  ],
+  engagement: {
+    totalPapers: 2,
+    lastActiveAt: "2026-07-28T08:10:00+00:00",
+    daysSinceLastSubmission: 17,
+  },
+}
+
+const TEACHER_STUDENT_STATES = {
+  populated: { student: STUDENT_DETAIL },
+  /** A student on the roster who has never submitted: the empty trend. */
+  "no-papers": {
+    student: {
+      ...STUDENT_DETAIL,
+      subjects: [],
+      attempts: [],
+      weaknesses: [],
+      trend: [],
+      isAtRisk: false,
+      atRiskFlags: [],
+      engagement: { totalPapers: 0, lastActiveAt: null, daysSinceLastSubmission: null },
+    },
+  },
+  loading: { delayMs: 8_000 },
+  error: { student: null, status: 500 },
 }
 
 const TEACHER_QUIZZES_STATES = {
@@ -2131,6 +2311,69 @@ const SURFACES = {
           status: state.status ?? 200,
           contentType: "application/json",
           body: JSON.stringify(state.quizzes ?? {}),
+        })
+      })
+    },
+  },
+
+  /*
+   * P5.3 registered these two. Both screens carry a chart this phase rebuilt on
+   * Nivo, and **neither had a capture surface of any kind** — which is P4.10's
+   * finding arriving again: the gate lists only grow by hand, so a screen no
+   * surface claims is a screen no gate reads. The cohort trend and the at-risk
+   * trend were, until now, the two charts in the product that no image had ever
+   * been taken of.
+   */
+  "teacher-analytics": {
+    prefix: "teacher-analytics",
+    route: `/teacher/classes/${CLASS_DETAIL.id}/analytics`,
+    states: TEACHER_ANALYTICS_STATES,
+    session: TEACHER_SESSION,
+    profile: TEACHER_PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/teacher/classes", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TEACHER_CLASSES) }),
+      )
+      // The class header is a separate fetch made by the parent route
+      // (`ClassDetail`), and the analytics tab reads the roster out of its
+      // context — so it has to succeed even in this screen's error state, or
+      // the error under test is the wrong one.
+      await page.route(`**/api/classes/${CLASS_DETAIL.id}`, (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(CLASS_DETAIL) }),
+      )
+      await page.route(`**/api/classes/${CLASS_DETAIL.id}/analytics`, async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.analytics ?? {}),
+        })
+      })
+    },
+  },
+
+  "teacher-student": {
+    prefix: "teacher-student",
+    route: `/teacher/students/${STUDENT_DETAIL.studentId}`,
+    states: TEACHER_STUDENT_STATES,
+    session: TEACHER_SESSION,
+    profile: TEACHER_PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/teacher/classes", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(TEACHER_CLASSES) }),
+      )
+      await page.route("**/api/teacher/students/**", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.student ?? {}),
         })
       })
     },

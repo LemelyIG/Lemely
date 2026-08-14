@@ -5,6 +5,7 @@ import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { Button } from "@/components/ui/button"
 import { Eyebrow, Meter } from "@/components/ui/primitives"
+import { BarChart } from "@/components/ui/bar-chart"
 import { ErrorState } from "@/components/ui/state-views"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { Celebrate, CountUp, MilestoneSticker } from "@/components/ui/celebration"
@@ -12,7 +13,6 @@ import { Fire, Snowflake } from "@phosphor-icons/react"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import type { XpDay, XpProfile, XpSource } from "@/lib/xpTypes"
-import { cn } from "@/lib/utils"
 
 /*
  * S-31 · Profile / XP / streak (P5.8 chunk D), on chunk A's
@@ -79,7 +79,7 @@ import { cn } from "@/lib/utils"
  * Every date from `start` to `end` inclusive, as `YYYY-MM-DD`.
  *
  * Built from the window the server reports rather than assuming 28 cells, so a
- * change to the window size on the backend cannot leave this grid silently
+ * change to the window size on the backend cannot leave this chart silently
  * mis-sized.
  */
 export function calendarDays(start: string, end: string): string[] {
@@ -259,42 +259,58 @@ function StreakCard({ profile }: { profile: XpProfile }) {
   )
 }
 
+/**
+ * XP per day across the four-week window — the "XP history" chart §5.3 names.
+ *
+ * **This replaced a four-band intensity grid, and the reason is §3.6, not
+ * fashion.** The grid was carefully built: four named bands rather than a
+ * continuous ramp, a distinct empty cell, and the exact number in every cell's
+ * `title` and `aria-label`. But the quantity itself still arrived in exactly
+ * one visual channel — colour intensity — and every reader who degrades that
+ * channel (colour vision deficiency, a phone in sunlight, greyscale printing,
+ * a low-contrast display) was left with a hover tooltip as their only route to
+ * a number. A bar encodes the same quantity as height, which none of those
+ * degrade, and the tooltips and accessible labels carry over unchanged.
+ *
+ * The window's honest property survives the move and is worth restating,
+ * because a bar chart could easily have lost it: a day with no XP and a day
+ * the student never opened Lemely are the same zero-height bar, because they
+ * are the same fact. `XpProfile.calendar` omits days that earned nothing
+ * (D5.13 §4) and `fillCalendar` fills them as zero rather than as a gap —
+ * treating them differently would invent a distinction the backend
+ * deliberately does not make.
+ */
 function CalendarPanel({ profile }: { profile: XpProfile }) {
   const days = useMemo(() => fillCalendar(profile), [profile])
-  const peak = Math.max(1, ...days.map((d) => d.xp))
+  const total = days.reduce((sum, d) => sum + d.xp, 0)
+
+  const data = useMemo(
+    () => days.map((d) => ({ label: formatDay(d.day), value: d.xp })),
+    [days],
+  )
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-1.5">
-        {days.map((d) => {
-          // Four bands rather than a continuous opacity ramp: a scale a reader
-          // cannot name is not a scale. `xp === 0` is its own band and looks
-          // like the empty cell it is.
-          const intensity =
-            d.xp === 0 ? 0 : d.xp >= peak * 0.66 ? 3 : d.xp >= peak * 0.33 ? 2 : 1
-          return (
-            <span
-              key={d.day}
-              // The title and the accessible label carry the number, so the
-              // colour is never the only channel the value arrives on.
-              title={`${formatDay(d.day)}: ${d.xp} XP`}
-              role="img"
-              aria-label={`${formatDay(d.day)}: ${d.xp} XP`}
-              className={cn(
-                "h-5 w-5 rounded-sm border",
-                intensity === 0 && "border-rule bg-paper-sunk",
-                intensity === 1 && "border-accent/30 bg-accent/20",
-                intensity === 2 && "border-accent/50 bg-accent/50",
-                intensity === 3 && "border-accent bg-accent",
-              )}
-            />
-          )
-        })}
-      </div>
+      <BarChart
+        data={data}
+        height={180}
+        /*
+         * A label per day is 28 ticks, which overlap into a smear on a phone
+         * and are not worth reading anyway: the shape of the four weeks is the
+         * point, and any specific day is one tap away in the tooltip. Every
+         * seventh tick puts one label per week on the axis.
+         */
+        tickEvery={7}
+        axisLeftLegend="XP"
+        formatValue={(v) => String(Math.round(v))}
+        tooltipDetail={(point) => (point.value === 0 ? "No XP earned" : null)}
+        ariaLabel="XP earned per day over the last four weeks"
+      />
       <p className="lm-prose text-body-sm text-ink-faint">
-        {formatDay(profile.calendarStart)} – {formatDay(profile.calendarEnd)}. A
-        day with no XP and a day you did not open Lemely look the same here,
-        because they are the same thing.
+        {formatDay(profile.calendarStart)} – {formatDay(profile.calendarEnd)}.
+        {total === 0
+          ? " Nothing here yet. The first day you earn XP is the first bar on this chart."
+          : " A day with no XP and a day you did not open Lemely look the same here, because they are the same thing."}
       </p>
     </div>
   )

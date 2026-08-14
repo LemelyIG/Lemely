@@ -98,6 +98,8 @@ const RTL_CLEAN_FILES = [
   "src/components/ui/badge.tsx",
   "src/components/ui/card.tsx",
   "src/components/ui/chart-frame.tsx",
+  "src/components/ui/line-chart.tsx",
+  "src/components/ui/bar-chart.tsx",
   "src/components/ui/boundary-bar.tsx",
   "src/components/ui/file-drop.tsx",
   "src/components/ui/grade-badge.tsx",
