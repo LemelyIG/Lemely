@@ -38,6 +38,31 @@ CURRENT SURFACE:    None. All seven phases are closed.
 NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
                     is met; the PR is the handoff and awaits human review.
 
+                    **Session 5 (2026-08-15) built nothing, on purpose, and
+                    closed the one §12 item that was still open.** It read
+                    INBOX (no unhandled items), BLOCKERS (B1-B5 all RESOLVED),
+                    the phase ledger (every row DONE), polled the inbound topic
+                    since 1786723759 (only `VqpbRSelzmn9` returns, the D6.7
+                    answer already recorded — no new steering), and found the
+                    tree clean, so there was no wip commit to make and no first
+                    non-done task to continue from.
+
+                    §12's last clause is "**completion ntfy sent**", and
+                    nothing in STATE, STEERING or DECISIONS recorded one. It is
+                    now sent: id `jYwZyUZdJ7Kn`, ts 1786749612, high priority,
+                    to the outbound topic — the PR link, the final tree's gate
+                    numbers, and the five items §6 of `DESIGN-REPORT.md` says
+                    need a human decision or a credential rather than more
+                    building. **Do not re-send it.** With that, §12 is met in
+                    full and not merely in substance.
+
+                    A completed checklist item can be the one nobody checked:
+                    every *visible* deliverable of §12 existed (report,
+                    gallery, PR), so the phase read as closed while the clause
+                    that reports it to the human had no record of ever firing.
+                    The same shape as this phase's own findings — the gate with
+                    no reader, the stamp with no enforcer.
+
                     If a further session starts, the open items are not redesign
                     tasks but the gaps §6 of `BUILD/DESIGN-REPORT.md` records,
                     and every one of them needs a human decision or a credential
