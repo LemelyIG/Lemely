@@ -49,6 +49,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "@playwright/test"
+import { assertPortFree } from "./serve_guard.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, "..", "..")
@@ -3061,6 +3062,9 @@ async function waitForServer(timeoutMs = 30_000) {
 
 async function main() {
   fs.mkdirSync(outDir, { recursive: true })
+  // P7.1: see scripts/serve_guard.mjs. A capture of a server this process did
+  // not start is a picture of an unknown build.
+  await assertPortFree(BASE, PORT, "the capture harness")
   const server = serveDist()
   const consoleErrors = []
   try {

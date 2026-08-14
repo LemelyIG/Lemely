@@ -156,6 +156,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import puppeteer from "puppeteer"
 import lighthouse from "lighthouse"
+import { assertPortFree } from "./serve_guard.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
@@ -2416,6 +2417,12 @@ function memAvailableMb() {
 }
 
 async function main() {
+  // P7.1: before anything is spawned. A preview server already on this port
+  // would be silently adopted and audited, and its `dist/` may be from another
+  // branch entirely. See scripts/serve_guard.mjs for the race that makes a
+  // post-spawn check unreachable.
+  await assertPortFree(PREVIEW_URL, PREVIEW_PORT, "the route audit")
+
   fs.mkdirSync(AXE_DIR, { recursive: true })
   fs.mkdirSync(LH_DIR, { recursive: true })
   fs.mkdirSync(SCREENS_DIR, { recursive: true })

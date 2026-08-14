@@ -2,6 +2,9 @@ import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { stripComments } from "./support/jsxSource"
+import { createServer } from "node:http"
+import type { AddressInfo } from "node:net"
+import { assertPortFree } from "../../scripts/serve_guard.mjs"
 
 /**
  * Phase 6.1 `adapt` — the mobile non-negotiables that can be pinned statically.
@@ -375,6 +378,88 @@ describe("§6.1 the gate and the registry agree on where the server is", () => {
   it("refuses to measure a server it did not start", () => {
     expect(AUDIT).toMatch(/server\.exitCode !== null/)
     expect(AUDIT).toMatch(/will NOT/)
+  })
+
+  /*
+   * P7.1 — and the reason the test above is not enough, which is the finding.
+   *
+   * That test asserts the guard's *source text*. The guard was present, spelled
+   * correctly, well commented, and **could never fire**: with a foreign server
+   * holding the port and `--strictPort`, the imposter answers a `fetch` at
+   * +164ms while our own vite needs +577ms to fail its bind and exit. The wait
+   * loop checks the exit code first, finds `null`, fetches, is answered by the
+   * squatter, and returns success. Measured twice on this machine rather than
+   * argued.
+   *
+   * So a gate that adopted a stranger's server passed its own pin, because the
+   * pin was looking for a string. These four assert the behaviour instead: the
+   * precondition is checked *before* anything is spawned, where there is no
+   * race, and every harness that starts a preview server checks it.
+   */
+  it("proves the port is free before it spawns anything", async () => {
+    const server = createServer((_req, res) => res.end("squatter"))
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const { port } = server.address() as AddressInfo
+    try {
+      await expect(
+        assertPortFree(`http://127.0.0.1:${port}`, port, "the test"),
+      ).rejects.toThrow(/already answering/)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it("resolves when nothing is listening", async () => {
+    // Bind and release, so the port is known to have been free a moment ago
+    // rather than guessed at.
+    const probe = createServer()
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve))
+    const { port } = probe.address() as AddressInfo
+    await new Promise<void>((resolve) => probe.close(() => resolve()))
+    await expect(assertPortFree(`http://127.0.0.1:${port}`, port, "the test")).resolves.toBeUndefined()
+  })
+
+  it("is checked before the spawn in every harness that starts a server", () => {
+    for (const script of [
+      "scripts/adapt_audit.mjs",
+      "scripts/audit.mjs",
+      "scripts/capture_surface.mjs",
+      "scripts/gallery.mjs",
+    ]) {
+      const source = stripComments(readFileSync(join(process.cwd(), script), "utf8"))
+      expect(source, `${script} must import the shared guard`).toMatch(
+        /import \{ assertPortFree \} from "\.\/serve_guard\.mjs"/,
+      )
+      const guardAt = source.indexOf("await assertPortFree(")
+      expect(guardAt, `${script} must call assertPortFree`).toBeGreaterThan(-1)
+      /*
+       * The point where the server is *started*, not where `serveDist` happens
+       * to be defined. The first draft compared against the `spawn(` literal
+       * and failed on `adapt_audit.mjs`, whose helper is declared two thousand
+       * characters above the `main()` that calls it — the test's own caveat
+       * about source order arriving one line after it was written.
+       */
+      // The lookbehind excludes `function serveDist()`, which is the
+      // declaration and not a call — the second way this assertion found its
+      // own bug rather than the code's.
+      const spawnAt = source.search(/(?<!function )serveDist\(\)|preview = spawn\(/)
+      expect(spawnAt, `${script} no longer starts a preview server`).toBeGreaterThan(-1)
+      expect(
+        guardAt,
+        `${script} calls assertPortFree after it spawns the server, which is the race`,
+      ).toBeLessThan(spawnAt)
+    }
+  })
+
+  it("keeps the guard in one place, not four", () => {
+    // The `stripComments` lesson from this same phase: four copies of a rule is
+    // how one of them keeps the old version.
+    for (const script of ["scripts/adapt_audit.mjs", "scripts/audit.mjs", "scripts/gallery.mjs"]) {
+      const source = stripComments(readFileSync(join(process.cwd(), script), "utf8"))
+      expect(source, `${script} re-implements the guard instead of importing it`).not.toMatch(
+        /function assertPortFree/,
+      )
+    }
   })
 
   /*

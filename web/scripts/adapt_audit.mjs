@@ -47,6 +47,7 @@ import { fileURLToPath } from "node:url"
 import { chromium } from "@playwright/test"
 
 import { SURFACES, SESSION, PROFILE, BASE, PORT } from "./capture_surface.mjs"
+import { assertPortFree } from "./serve_guard.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, "..", "..")
@@ -481,6 +482,9 @@ async function main() {
   for (const n of names) {
     if (!SURFACES[n]) throw new Error(`unknown surface "${n}"`)
   }
+
+  // Before the spawn, where there is no race to lose. See `assertPortFree`.
+  await assertPortFree(BASE, PORT, "the adapt gate")
 
   const server = serveDist()
   const findings = []
