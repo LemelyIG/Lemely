@@ -307,3 +307,51 @@ should not be a timeout question. Work continues on everything independent of
 it; the failing node stays red rather than being loosened.
 
 Full arithmetic and reasoning: `BUILD/DECISIONS.md` D6.5 §3.
+
+---
+
+## 2026-08-14 — Phase 6.4 part 2: D6.6 answered, and the answer disproved the question
+
+**IN** — `jEmAdfevMO65` (ts **1786722798**): *"D6.6 = A"*.
+
+Option A was: reconcile `oklch_to_srgb` with what browsers actually do, re-derive
+every contrast claim against corrected values, and **propose** the resulting
+token changes for review before applying any of them.
+
+**Step 1 found nothing to reconcile. `oklch_to_srgb` was already correct.**
+Chromium paints `oklch(0.576 0.146 33)` as `(192,82,60)`; the Python computes
+`(192,82,60)`. Measured four independent ways — `getComputedStyle`, a canvas 2d
+readback, and screenshots under the default, `srgb` and `display-p3` colour
+profiles — all identical, and a literal `#c0523c` painted beside it is the same
+pixel. axe, run against an isolated copy of the same button, reports
+`fg=#ffffff bg=#c0523c ratio=4.65` and **passes**.
+
+The 4.21 was axe sampling a CSS transition in flight. The state is reached by
+*clicking* a toggle, which flips that button from `variant="secondary"` to
+`variant="accent"` under `transition-colors`. Solving each channel for its
+interpolation fraction gives `t = 0.9672 / 0.9706 / 0.9737` (background) and
+`0.9712 / 0.9704 / 0.9750` (foreground) — **one fraction, 0.971 ± 0.004, across
+two colour pairs with different endpoints**, reconstructing axe's 4.21 to the
+digit.
+
+So **no token change is proposed and `--accent` is untouched.** `--accent-on` is
+4.653:1 and clears AA. D6.5 §3's reading — that the Python was wrong about the
+colour space — is withdrawn; what it compared was axe's mid-transition sample
+against the correct conversion, as though the former were a rendering.
+
+The real defect was in the harness, and it is fixed: `runAxe` now settles
+animations first. Worth stating because it is the direction that did not bite
+here — a transient sample can read *higher* than the steady state just as easily,
+turning a real failure green, and it is not reproducible run to run.
+
+**OUT** — the resolution above, plus **D6.7, which is a new question for the
+human.** Step 2 (re-derive every claim) found the hole `test_design_tokens.py`
+never covered: it has only ever measured ink on *paper*. Against the eleven
+tinted fills, `--ink-faint` is below 4.5 on **eight** of them (worst `--err-wash`
+4.36) and clears the other three by 0.01–0.06. `--ink-faint: 0.529 -> 0.52`
+clears 4.5 on all fourteen surfaces and stays lighter than `--ink-muted`.
+**Proposed, not applied** — 334 call sites, and A's own wording says propose
+first. Held as eight `xfail(strict=True)` so it can be neither forgotten nor
+applied without this record moving with it.
+
+`LAST STEERING TS` advances to **1786722798**.

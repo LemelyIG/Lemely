@@ -330,6 +330,40 @@ async function waitForText(page, pattern, timeout = 15_000) {
   )
 }
 
+/**
+ * Waits for a screen's loading state by its *contract*, not by its copy.
+ *
+ * ── Why this exists (P6.4 part 2) ─────────────────────────────────────────
+ *
+ * Three routes — T-08, T-09-detail, T-10 — died mid-run in every corpus from
+ * P6.3 onward with `Waiting failed: 15000ms exceeded`, and the cause was here,
+ * not in the product. Their `ready` predicates waited for the sentences
+ * "Loading review item", "Loading quiz" and "Loading results". None of those
+ * three strings exists anywhere under `src/`: DESIGN.md §12 is "skeletons, not
+ * spinners", and Phase 4 converted those screens to `PageHeaderSkeleton` /
+ * `PanelSkeleton` as it settled each layout. The product is right and the
+ * fixture went stale the moment it was.
+ *
+ * The cost was larger than the three states it names. A route that dies takes
+ * its *remaining* states with it, so T-08, T-09-detail and T-10 each also lost
+ * the `error` state queued behind the loading one — and this file's own comment
+ * says an error state is exactly where an axe violation hides. Six states, not
+ * three, and the corpus showed no gap because a dead route's earlier states
+ * have already written their rows.
+ *
+ * ── Why a role and not a new string ───────────────────────────────────────
+ *
+ * Swapping in the current sentence would rot again on the next copy change, and
+ * a redesign changes copy by definition. `role="status"` + `aria-label="Loading"`
+ * is what `loading-shapes.tsx` commits to for every skeleton in the product, and
+ * it is what a screen reader actually depends on — so keyed this way the
+ * predicate fails if the *announcement* regresses, which is a §6.4 assertion
+ * rather than a proofreading one.
+ */
+async function waitForLoadingRegion(page, timeout = 15_000) {
+  await page.waitForSelector('[role="status"][aria-label="Loading"]', { timeout })
+}
+
 async function clickButtonByText(page, pattern, timeout = 15_000) {
   const handle = await page.waitForFunction(
     (source) => {
@@ -449,7 +483,71 @@ async function shoot(page, screenId, state, bpWidth) {
   await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}.png`), fullPage: true })
 }
 
+/**
+ * Blocks until no CSS transition or animation is still running.
+ *
+ * ── Why axe cannot be trusted to run before this (P6.4 part 2, D6.6) ───────
+ *
+ * `student-flashcards-no-weaknesses` reported a serious `color-contrast`
+ * violation — white on the accent fill at **4.21**, under a 4.5 floor — and it
+ * was the finding that outgrew Phase 6.4 part 1, because the token block claims
+ * 4.65 for that exact pair and `test_design_tokens.py` has been this project's
+ * contrast authority since Phase 2. D6.5 recorded the disagreement as the
+ * Python conversion being wrong about the colour space.
+ *
+ * It was not. Chromium paints `oklch(0.576 0.146 33)` as **(192,82,60)**, and
+ * `oklch_to_srgb` computes **(192,82,60)** — verified four independent ways
+ * (computed style, a canvas 2d readback, and screenshots under the default,
+ * `srgb` and `display-p3` colour profiles, all identical). Run against an
+ * isolated reproduction of that same button, axe itself reports
+ * `fg=#ffffff bg=#c0523c ratio=4.65` and **passes**.
+ *
+ * What made the number move is this function's absence. axe reported
+ * `fg=#f9f9fa bg=#c25741`, and neither value is a design token or any steady
+ * state — they are one CSS transition sampled in flight. `Button` carries
+ * `transition-colors`, this state is reached by *clicking* a toggle
+ * (`pressToggleOnce`) which flips that button from `variant="secondary"` to
+ * `variant="accent"`, and axe ran while the colours were still interpolating.
+ * The arithmetic is what settles it rather than the story: solving each channel
+ * for its interpolation fraction gives
+ *
+ *     bg  253->192 obs 194  t=0.9672     fg   47->255 obs 249  t=0.9712
+ *         252-> 82 obs  87  t=0.9706          52->255 obs 249  t=0.9704
+ *         250-> 60 obs  65  t=0.9737          55->255 obs 250  t=0.9750
+ *
+ * — one fraction, t=0.971 +/- 0.004, explaining all six channels across two
+ * colour pairs with different endpoints, and reconstructing axe's 4.21 to the
+ * digit. A coincidence at that precision is not available.
+ *
+ * The direction that matters is the one this did NOT do here. A transient
+ * sample can just as easily read *higher* than the steady state and turn a real
+ * failure green, and it is not reproducible run to run, which is D6.2's rule
+ * about a gate whose answer changes between identical runs. So this settles
+ * every animation before axe looks, rather than special-casing the toggle.
+ */
+async function settleAnimations(page, timeout = 3_000) {
+  try {
+    await page.waitForFunction(
+      () =>
+        document.getAnimations().every((a) => {
+          // `finished`/`idle` are done; an infinite decorative loop (the
+          // skeleton shimmer, the indeterminate progress bar) never finishes
+          // and must not hold the run open.
+          if (a.playState !== "running") return true
+          const end = a.effect?.getComputedTiming?.().activeDuration
+          return end === Infinity || a.effect?.getComputedTiming?.().iterations === Infinity
+        }),
+      { timeout, polling: 50 },
+    )
+  } catch {
+    // Best effort: a page whose animations never settle is still worth
+    // auditing, and failing the whole route here would be a worse trade than
+    // the transient this exists to avoid.
+  }
+}
+
 async function runAxe(page, slug) {
+  await settleAnimations(page)
   await page.addScriptTag({ path: AXE_SCRIPT })
   const results = await page.evaluate(() => window.axe.run())
   fs.writeFileSync(path.join(AXE_DIR, `${slug}.json`), JSON.stringify(results, null, 2))
@@ -1263,7 +1361,7 @@ function buildRouteRegistry(seed) {
           slug: "teacher-review-detail-loading",
           lighthouse: false,
           waitUntil: "domcontentloaded",
-          ready: (page) => waitForText(page, "Loading review item"),
+          ready: (page) => waitForLoadingRegion(page),
           ...loadingStateHooks(`/api${reviewItemUrl}`),
         },
         {
@@ -1309,7 +1407,7 @@ function buildRouteRegistry(seed) {
           slug: "teacher-quiz-detail-loading",
           lighthouse: false,
           waitUntil: "domcontentloaded",
-          ready: (page) => waitForText(page, "Loading quiz"),
+          ready: (page) => waitForLoadingRegion(page),
           ...loadingStateHooks(`/api${quizDetailUrl}`),
         },
         {
@@ -1348,7 +1446,7 @@ function buildRouteRegistry(seed) {
           slug: "teacher-quiz-results-loading",
           lighthouse: false,
           waitUntil: "domcontentloaded",
-          ready: (page) => waitForText(page, "Loading results"),
+          ready: (page) => waitForLoadingRegion(page),
           ...loadingStateHooks(`/api${quizResultsUrl}`),
         },
         {
@@ -1754,15 +1852,30 @@ function buildRouteRegistry(seed) {
       // submitted, and marked through the unmodified quiz-taking/marking
       // repos. The richest of S-21's five captures, so this is the one
       // Lighthouse-scored (no `states` wrapper -> `lighthouse` defaults
-      // true). The ready string is `"{awarded} of {maximum} marks."`,
-      // deliberately not a heading shared with any other screen's summary
-      // copy (PlacementResult's own "X of Y marks." paragraph is a
-      // different code fragment entirely — grepped to confirm).
+      // true).
+      //
+      // P6.4: this waited on `"{awarded} of {maximum} marks."` and died on
+      // every run from P6.3 onward, because that sentence no longer exists.
+      // `PracticeResult.tsx`'s own docstring records why — "**The mark total
+      // was prose.**" — §4 gives the data face "all scores, grades, marks", so
+      // the figure is now `{awarded}/{maximum}` in `data-lg` with the noun
+      // beside it. Both the word "of" and the full stop were deleted by that
+      // change.
+      //
+      // The `\s+` is the other half, and it is the same fact S-22 hit one
+      // entry below: the data-face idiom is
+      // `<p class="flex items-baseline gap-2"><span>N</span><span>noun</span></p>`,
+      // and flex items are blockified, so `innerText` puts a **newline**
+      // between the number and its noun. Measured, not assumed — Chromium
+      // renders this markup as `"12/20\nmarks"`, while the same two spans
+      // outside a flex container read `"12/20 marks"`. Any ready string that
+      // spells a number and its noun as one phrase breaks against every
+      // number this redesign moved into the data face.
       screenId: "S-21",
       slug: "student-practice-result-marked",
       path: practiceMarkedResultUrl,
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "\\d+ of \\d+ marks?\\."),
+      ready: (page) => waitForText(page, "\\d+/\\d+\\s+marks?"),
       authed: true,
     },
     {
@@ -1790,7 +1903,13 @@ function buildRouteRegistry(seed) {
       slug: "student-flashcards-due",
       path: `/student/flashcards/${practiceSubject}`,
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "\\d+ cards? due today"),
+      // P6.4: `\s+`, not a space — see S-21 above. `FlashcardDecks.tsx` renders
+      // the count and its noun as two spans in a `flex items-baseline` row, so
+      // `innerText` reads `"7\ncards due today"`. Not a data problem: the
+      // `settled` and `empty` states of this same screen pass on their own
+      // sessions, and S-23 rides the same `active` session and needs cards to
+      // be due at all.
+      ready: (page) => waitForText(page, "\\d+\\s+cards? due today"),
       authed: true,
     },
     {

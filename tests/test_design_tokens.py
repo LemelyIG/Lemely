@@ -216,3 +216,78 @@ def test_state_colours_form_a_monotonic_lightness_ladder() -> None:
     assert min(ok_l - warn_l, warn_l - err_l) >= 0.02, (
         "the state ladder is monotonic but the steps are too small to perceive in greyscale"
     )
+
+
+# ── The ink x tinted-fill matrix (P6.4 part 2, D6.6 option A) ───────────────
+#
+# Everything above this line measures text against `TEXT_SURFACES`, i.e. the
+# three paper rungs. That is what "this project's contrast authority" has
+# actually been asserting since Phase 2: ink on *paper*. The product also paints
+# text on eleven tinted fills — the pastels, the four semantic washes, and
+# `--accent-wash` — and until now not one of those pairings had ever been
+# measured here.
+#
+# The hole was not theoretical. P6.4 part 1 found `--ink-faint` on
+# `--accent-wash` at 4.47:1 on the leaderboard's viewer row, and found it via
+# axe on a rendered page, because axe sees what a route happens to render and
+# this file was not looking. Deriving the whole matrix shows that instance was
+# not special: `--ink-faint` is below 4.5 on **eight of the eleven** tinted
+# fills, and clears the other three by 0.01-0.06. It is not a bad pairing on one
+# surface, it is a token that clears paper and misses every tint.
+#
+# The three darker ink tokens are unaffected and are pinned here so the matrix
+# is a real check rather than one xfail.
+
+TINTED_SURFACES = (
+    "accent-wash",
+    "pastel-rose",
+    "pastel-amber",
+    "pastel-sage",
+    "pastel-sky",
+    "pastel-lilac",
+    "pastel-clay",
+    "ok-wash",
+    "warn-wash",
+    "err-wash",
+    "info-wash",
+)
+
+
+@pytest.mark.parametrize("token", ["ink", "ink-muted", "accent-ink"])
+@pytest.mark.parametrize("surface", TINTED_SURFACES)
+def test_ink_tokens_clear_aa_on_every_tinted_fill(token: str, surface: str) -> None:
+    """The same rule as on paper, extended to the fills the product actually paints."""
+    assert ratio(token, surface) >= AA_NORMAL, (
+        f"--{token} on --{surface} is {ratio(token, surface):.2f}:1, below {AA_NORMAL}:1."
+    )
+
+
+# The split is the finding, so it is written down rather than parametrised over
+# one list. `--ink-faint` clears AA on exactly three of the eleven tinted fills,
+# and it clears those three by 0.01-0.06 — amber 4.51, warn-wash 4.51,
+# ok-wash 4.56. There is no tint this token sits comfortably on; three of them
+# happen to land on the right side of the line.
+INK_FAINT_TINTS_PASSING = ("pastel-amber", "ok-wash", "warn-wash")
+INK_FAINT_TINTS_FAILING = tuple(s for s in TINTED_SURFACES if s not in INK_FAINT_TINTS_PASSING)
+
+
+@pytest.mark.parametrize("surface", INK_FAINT_TINTS_PASSING)
+def test_ink_faint_clears_aa_on_the_three_tints_it_clears(surface: str) -> None:
+    """Pinned so the margin cannot quietly erode. These pass by 0.01-0.06."""
+    assert ratio("ink-faint", surface) >= AA_NORMAL
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "--ink-faint is below AA on 8 of the 11 tinted fills (worst: --err-wash at "
+        "4.36:1). This is a token change on the caption colour, which has 334 call "
+        "sites, so it is PROPOSED and not applied: see BUILD/DECISIONS.md D6.7. "
+        "strict=True on purpose — when the token is changed these start passing and "
+        "xfail(strict) then FAILS, so the proposal cannot be quietly forgotten, nor "
+        "applied without this file being updated alongside it."
+    ),
+)
+@pytest.mark.parametrize("surface", INK_FAINT_TINTS_FAILING)
+def test_ink_faint_clears_aa_on_every_tinted_fill(surface: str) -> None:
+    assert ratio("ink-faint", surface) >= AA_NORMAL

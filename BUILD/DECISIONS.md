@@ -9564,3 +9564,135 @@ prohibited attributes, the 11 accent-size misuses, the pastel pairing, and the
 two gates that keep them from regrowing. The white-on-accent node is **still
 red and left red** — per the standing rule from INBOX item 8, a bar that is not
 met is not loosened.
+
+---
+
+## D6.6 — RESOLVED: the contrast authority was right, and the browser never disagreed (redesign P6.4 part 2)
+
+**Answered by the human 2026-08-14 (`D6.6 = A`, ntfy `jEmAdfevMO65`, ts 1786722798).**
+Option A: reconcile `oklch_to_srgb` with what browsers do, re-derive every
+contrast claim, and **propose** the resulting token changes before applying any.
+
+### Step 1: there was nothing to reconcile
+
+| route | `oklch(0.576 0.146 33)` renders as |
+|---|---|
+| `oklch_to_srgb` (the Python) | **(192, 82, 60)** |
+| `getComputedStyle` | preserved as `oklch(...)`, unconverted |
+| canvas 2d `fillStyle` readback | **(192, 82, 60)** |
+| screenshot, default colour profile | **(192, 82, 60)** |
+| screenshot, `--force-color-profile=srgb` | **(192, 82, 60)** |
+| screenshot, `--force-color-profile=display-p3` | **(192, 82, 60)** |
+| a literal `#c0523c` painted beside it | **(192, 82, 60)** — the same pixel |
+
+axe-core 4.12.1, run against an isolated reproduction of the same button,
+reports `fg=#ffffff bg=#c0523c ratio=4.65` and **passes**.
+
+So the conversion, Chromium and axe all agree, and `--accent-on` is **4.653:1**,
+above the 4.5 floor it was chosen to clear.
+
+### Where 4.21 came from, proved rather than narrated
+
+axe reported `fg=#f9f9fa bg=#c25741`. Neither value is a design token, and the
+foreground is not the `#ffffff` the token declares. Both are one CSS transition
+sampled mid-flight: the state is reached by *clicking* a toggle
+(`pressToggleOnce`), which flips that button from `variant="secondary"`
+(`paper-raised` fill, `ink` text) to `variant="accent"` (accent fill, white text)
+under `transition-colors`, and axe ran before it settled.
+
+Solving each channel for its interpolation fraction:
+
+    background  253 -> 192, observed 194   t = 0.9672
+                252 ->  82, observed  87   t = 0.9706
+                250 ->  60, observed  65   t = 0.9737
+    foreground   47 -> 255, observed 249   t = 0.9712
+                 52 -> 255, observed 249   t = 0.9704
+                 55 -> 255, observed 250   t = 0.9750
+
+**One fraction, t = 0.971 ± 0.004, explaining all six channels across two colour
+pairs with different endpoints**, and reconstructing 4.216 against axe's reported
+4.21. A coincidence at that precision is not available.
+
+### What this retracts, and what it costs
+
+D6.5 §3 read the disagreement as the Python being wrong about its colour space,
+and said so at length. That reading is **withdrawn**. What it actually compared
+was axe's mid-transition sample against a correct conversion, as though the
+former were "what a user sees". The lesson is not that the arithmetic was hard —
+it is that **a measurement was trusted because it came from a rendered page**,
+and "rendered" was doing work the number could not support. The token block's
+claims stand exactly as written; no token changed.
+
+### The real defect, which is fixed
+
+`runAxe` measured before animations settled. `settleAnimations()` now runs first
+(infinite decorative loops — the skeleton shimmer, the indeterminate progress bar
+— are excluded so they cannot hold a route open, and it fails open on timeout).
+
+The direction that matters is the one that did **not** bite here: a transient
+sample can read *higher* than the steady state just as easily, turning a real
+failure green, and it is not reproducible between identical runs — D6.2's rule
+about a gate whose answer changes between identical runs, arriving in the
+measurement layer this time rather than in a gate's own logic.
+
+---
+
+## D6.7 — OPEN: `--ink-faint` clears paper and misses every tint (redesign P6.4 part 2)
+
+**Status: PROPOSED, not applied.** Raised by D6.6 option A's step 2 (*re-derive
+every contrast claim*), which is the step that found it.
+
+### The hole
+
+`test_design_tokens.py` has been this project's contrast authority since Phase 2,
+and everything it asserts about text is measured against `TEXT_SURFACES` — the
+three paper rungs. The product also paints text on **eleven tinted fills** (six
+pastels, four semantic washes, `--accent-wash`), and not one of those pairings
+had ever been measured.
+
+P6.4 part 1 found `--ink-faint` on `--accent-wash` at 4.47:1 and found it *via
+axe on a rendered page*, because axe sees what a route happens to render and this
+file was not looking. Deriving the full matrix shows that instance was not
+special:
+
+| | ink | ink-muted | **ink-faint** | accent-ink |
+|---|---|---|---|---|
+| accent-wash | 10.65 | 5.51 | **4.47** | 8.84 |
+| pastel-rose | 10.43 | 5.40 | **4.38** | 8.67 |
+| pastel-amber | 10.73 | 5.56 | 4.51 | 8.91 |
+| pastel-sage | 10.70 | 5.54 | **4.49** | 8.89 |
+| pastel-sky | 10.63 | 5.51 | **4.46** | 8.83 |
+| pastel-lilac | 10.50 | 5.44 | **4.41** | 8.72 |
+| pastel-clay | 10.53 | 5.45 | **4.42** | 8.75 |
+| ok-wash | 10.86 | 5.62 | 4.56 | 9.02 |
+| warn-wash | 10.73 | 5.56 | 4.51 | 8.91 |
+| err-wash | 10.39 | 5.38 | **4.36** | 8.63 |
+| info-wash | 10.63 | 5.51 | **4.46** | 8.83 |
+
+**Eight of eleven below AA**, and the three that clear do so by 0.01–0.06. This
+is not a bad pairing on one surface; it is a token that clears paper and misses
+every tint. The other three ink tokens are unaffected and are now pinned.
+
+### The proposal
+
+`--ink-faint: oklch(0.529 0.006 240)` -> `oklch(0.52 0.006 240)`.
+
+- clears 4.5 on **all fourteen** surfaces (worst pairing 4.530, was 4.360)
+- 5.13:1 on paper, so it stays comfortably the muted rung
+- still lighter than `--ink-muted` (6.09:1 on paper), so the hierarchy holds
+- the largest L that clears everything is 0.5216; 0.52 takes the round number
+  just inside it
+
+### Why it is not applied
+
+`text-ink-faint` has **334 call sites** — it is the caption colour of the entire
+product — and A's own wording is *propose the resulting token changes for review
+before applying any of them*. Live exposure today is small (one same-expression
+pairing, `bg-warn-wash`, which passes) but the nested case is invisible to a
+source gate by construction, and the one live instance found so far was found by
+axe, not by grep.
+
+Held as eight `xfail(strict=True)` cases rather than a note. `strict` is the
+point: if the token is changed, they start passing, and a strict xfail that
+passes **fails** — so the proposal can be neither quietly forgotten nor quietly
+applied without this record moving with it.
