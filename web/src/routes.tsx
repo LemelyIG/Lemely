@@ -6,6 +6,7 @@ import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
 import { marketingRoute, MarketingLanding } from "@/portals/marketing"
+import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 /*
@@ -55,15 +56,41 @@ const NotificationSettings = lazy(() =>
 
 const STUDENT_ROLES = ["student"] as const
 const PARENT_ROLES = ["parent"] as const
-/* `parent` was in this list until P3.9 — every /api/teacher/* route is gated
+/*
+ * `parent` was in this list until P3.9 — every /api/teacher/* route is gated
  * teacher+school_admin, so a parent who signed in landed in a console where
- * every panel 403'd. school_admin/platform_admin genuinely hold those roles and
- * stay; their own surfaces (K-01, X-01) are later phases. */
-const TEACHER_ROLES = ["teacher", "school_admin", "platform_admin"] as const
+ * every panel 403'd.
+ *
+ * P4.7 removed `platform_admin` for a related but distinct reason, and the
+ * distinction is this surface's headline. The two admin roles were bundled
+ * here as though they were alike. They are not:
+ *
+ * * `school_admin` genuinely holds this API's data. `require_role` admits them
+ *   on every /api/teacher/* route, and the services then scope them to the
+ *   schools they hold a membership for — so marking review, class analytics
+ *   and school-wide announcements really do work for them. They stay, and
+ *   `/school` is their home rather than their boundary.
+ * * `platform_admin` holds none of it, by design. Every one of those same
+ *   services returns **empty** for them: "no super-role bypass" (D1.6/D1.10),
+ *   stated outright in `class_repo.py`, `review.py`, `teacher.py` and
+ *   `at_risk_repo.py`. So this portal could only ever have shown them a
+ *   console where every panel was correctly, permanently blank — which is
+ *   indistinguishable on screen from a broken one.
+ */
+const TEACHER_ROLES = ["teacher", "school_admin"] as const
+/* K-01…K-04. A school admin may reach both this and the teacher portal. */
+const SCHOOL_ADMIN_ROLES = ["school_admin"] as const
+/* X-01…X-03. The only subtree a platform admin can reach besides /settings. */
+const PLATFORM_ADMIN_ROLES = ["platform_admin"] as const
 /* G-11 is "All" in the UI spec, and the device limit is enforced per account
  * regardless of role, so its guard admits every role and only excludes callers
  * with no session at all. */
-const ALL_ROLES = [...STUDENT_ROLES, ...PARENT_ROLES, ...TEACHER_ROLES] as const
+const ALL_ROLES = [
+  ...STUDENT_ROLES,
+  ...PARENT_ROLES,
+  ...TEACHER_ROLES,
+  ...PLATFORM_ADMIN_ROLES,
+] as const
 
 /*
  * P4.9 (surface 9). `/` used to send a signed-out visitor to `/login`, which
@@ -191,6 +218,24 @@ export const appRoutes: RouteObject[] = [
     ...teacherRoute,
     errorElement,
     element: <RequireAuth allowedRoles={TEACHER_ROLES}>{teacherRoute.element}</RequireAuth>,
+  },
+  // P4.7 (D1.6). Two subtrees rather than one `/admin`, because they are two
+  // different jobs held by two different roles with no overlapping screen
+  // between them, and one guard per subtree is a guard a test can assert in
+  // both directions (see `tests/unit/adminRoutes.test.ts`).
+  {
+    ...schoolAdminRoute,
+    errorElement,
+    element: (
+      <RequireAuth allowedRoles={SCHOOL_ADMIN_ROLES}>{schoolAdminRoute.element}</RequireAuth>
+    ),
+  },
+  {
+    ...platformAdminRoute,
+    errorElement,
+    element: (
+      <RequireAuth allowedRoles={PLATFORM_ADMIN_ROLES}>{platformAdminRoute.element}</RequireAuth>
+    ),
   },
   {
     ...studentRoute,

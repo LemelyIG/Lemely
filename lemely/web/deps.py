@@ -24,6 +24,7 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
+from lemely.db.admin_repo import PlatformAdminService
 from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
@@ -46,6 +47,7 @@ from lemely.db.quiz_repo import QuizService
 from lemely.db.quiz_results_repo import QuizResultsService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
+from lemely.db.school_admin_repo import SchoolAdminService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
@@ -54,6 +56,7 @@ from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
+from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.storage import HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
@@ -195,6 +198,67 @@ def get_seat_service() -> SeatService:
     return SeatService(
         get_sessionmaker(get_settings()),
         AuthServiceStudentCreator(get_auth_service()),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_platform_admin_service() -> PlatformAdminService:
+    """Return the process-wide :class:`PlatformAdminService` singleton (P4.7).
+
+    Session factory only — the platform console reads counted facts and decides
+    activations, and needs no account-creation seam: it never creates identities
+    (a ``platform_admin`` is provisioned out of band, not through a screen).
+    """
+    return PlatformAdminService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_boundary_store() -> GradeBoundaryStore:
+    """Return the process-wide :class:`GradeBoundaryStore` singleton.
+
+    Cached because construction parses the bundled JSON, and X-03 reads only its
+    two key counts. Other routers construct their own inline (``student.py``,
+    ``parent.py``) because they resolve boundaries per request against
+    per-request metadata; those call sites are deliberately left alone.
+    """
+    return GradeBoundaryStore()
+
+
+class AuthServiceTeacherCreator:
+    """Real :class:`~lemely.db.school_admin_repo.TeacherAccountCreator` over :class:`AuthService`.
+
+    Sibling of :class:`AuthServiceStudentCreator`, pinned to :attr:`Role.teacher`.
+    Two classes rather than one parameterised creator on purpose: the role each
+    provisioning path may mint is the security property here, and a ``role``
+    argument is a thing a future caller could pass ``platform_admin`` to.
+    """
+
+    def __init__(self, auth_service: AuthService) -> None:
+        """Wrap an :class:`AuthService` used to create teacher identities."""
+        self._auth = auth_service
+
+    def create_teacher(
+        self,
+        email: str,
+        password: str,
+        display_name: str | None = None,
+    ) -> uuid.UUID:
+        """Create a teacher account and return its ``public.users`` id."""
+        return self._auth.signup(email, password, Role.teacher, display_name=display_name).user_id
+
+
+@lru_cache(maxsize=1)
+def get_school_admin_service() -> SchoolAdminService:
+    """Return the process-wide :class:`SchoolAdminService` singleton (P4.7).
+
+    Wired with the DB session factory and an :class:`AuthServiceTeacherCreator`.
+    Separate from :func:`get_seat_service` because the two services answer
+    different questions about a school (seats vs staff and counts) and only one
+    of them needs to create students.
+    """
+    return SchoolAdminService(
+        get_sessionmaker(get_settings()),
+        AuthServiceTeacherCreator(get_auth_service()),
     )
 
 

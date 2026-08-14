@@ -6,6 +6,7 @@ import { appRoutes } from "@/routes"
 import { studentRoute } from "@/portals/student"
 import { teacherRoute } from "@/portals/teacher"
 import { parentRoute } from "@/portals/parent"
+import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 
 /*
  * P4.10 · where an unmatched path lands, pinned.
@@ -35,11 +36,22 @@ import { parentRoute } from "@/portals/parent"
  * `ALL_ROLES` guard could be dropped without any portal noticing.
  */
 
-/** The three portal subtrees, by the name their route uses. */
+/**
+ * The portal subtrees, by the name their route uses.
+ *
+ * P4.7 added the two admin lanes to this list, and the reason is the lesson
+ * surface 10 recorded rather than anything about 404s: **a list that only grows
+ * by hand is a list new work falls out of.** These two subtrees were built, ran
+ * green through typecheck, lint and every gate in the suite, and were in none
+ * of them, because every gate's coverage is a literal array like this one. The
+ * fix is one line per portal, and noticing is the whole difficulty.
+ */
 const PORTALS = [
   { name: "student", route: studentRoute },
   { name: "teacher", route: teacherRoute },
   { name: "parent", route: parentRoute },
+  { name: "school admin", route: schoolAdminRoute },
+  { name: "platform admin", route: platformAdminRoute },
 ] as const
 
 /**

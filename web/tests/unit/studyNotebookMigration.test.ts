@@ -45,6 +45,15 @@ const MIGRATED_FILES = [
   "src/portals/settings/SettingsFrame.tsx",
   "src/portals/settings/DeviceSettings.tsx",
   "src/portals/settings/NotificationSettings.tsx",
+  // P4.7 · the two admin lanes (K-01…K-04, X-01…X-03).
+  "src/portals/admin/index.tsx",
+  "src/portals/admin/screens/SchoolDashboard.tsx",
+  "src/portals/admin/screens/Seats.tsx",
+  "src/portals/admin/screens/Teachers.tsx",
+  "src/portals/admin/screens/Classes.tsx",
+  "src/portals/admin/screens/PlatformConsole.tsx",
+  "src/portals/admin/screens/Activations.tsx",
+  "src/portals/admin/screens/PipelineHealth.tsx",
   "src/lib/settingsOutcome.ts",
   "src/portals/misc/NotFound.tsx",
   // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.

@@ -1270,7 +1270,512 @@ const LANDING_STATES = {
   header: { viewportOnly: true },
 }
 
+/* ── Admin (P4.7, surface 7) ─────────────────────────────────────────────── */
+
+const SCHOOL_ADMIN_SESSION = {
+  accessToken: fakeJwt(),
+  refreshToken: fakeJwt(72),
+  userId: "capture-school-admin",
+  role: "school_admin",
+}
+
+const SCHOOL_ADMIN_PROFILE = {
+  userId: "capture-school-admin",
+  email: "registrar@nasrschool.example",
+  displayName: "Dalia Mansour",
+  role: "school_admin",
+}
+
+const PLATFORM_ADMIN_SESSION = {
+  accessToken: fakeJwt(),
+  refreshToken: fakeJwt(72),
+  userId: "capture-platform-admin",
+  role: "platform_admin",
+}
+
+const PLATFORM_ADMIN_PROFILE = {
+  userId: "capture-platform-admin",
+  email: "ops@lemely.example",
+  displayName: "Ops",
+  role: "platform_admin",
+}
+
+/** Field-for-field `SchoolOverviewDTO`. Invented numbers, real shape. */
+const SCHOOL_OVERVIEW = {
+  schools: [
+    {
+      schoolId: "sch-1",
+      schoolName: "Nasr International School",
+      quota: 120,
+      seatsUsed: 87,
+      seatsAvailable: 33,
+      teacherCount: 9,
+      classCount: 14,
+      enrolledStudentCount: 84,
+      studentsWithAPaper: 61,
+      averageLatestPercentage: 63.4,
+    },
+  ],
+}
+
+/** Field-for-field `SeatUsageListDTO`. */
+const SEAT_USAGE = {
+  schools: [
+    {
+      schoolId: "sch-1",
+      schoolName: "Nasr International School",
+      quota: 120,
+      used: 3,
+      available: 117,
+      seats: [
+        {
+          seatId: "seat-1",
+          status: "assigned",
+          assignedUserId: "stu-1",
+          assignedEmail: "amina@nasrschool.example",
+          assignedDisplayName: "Amina Farouk",
+          assignedAt: "2026-02-11T09:00:00Z",
+          classes: [{ classId: "c1", name: "10A Physics", teacherName: "Hana Sabry" }],
+          lastAttemptAt: "2026-08-11T18:20:00Z",
+        },
+        {
+          seatId: "seat-2",
+          status: "assigned",
+          assignedUserId: "stu-2",
+          assignedEmail: "yusuf@nasrschool.example",
+          assignedDisplayName: "Yusuf Kamal",
+          assignedAt: "2026-02-11T09:00:00Z",
+          classes: [
+            { classId: "c1", name: "10A Physics", teacherName: "Hana Sabry" },
+            { classId: "c2", name: "10B Maths", teacherName: "Omar Reda" },
+          ],
+          lastAttemptAt: null,
+        },
+        {
+          seatId: "seat-3",
+          status: "assigned",
+          assignedUserId: "stu-3",
+          assignedEmail: "nour@nasrschool.example",
+          assignedDisplayName: null,
+          assignedAt: "2026-06-02T09:00:00Z",
+          classes: [],
+          lastAttemptAt: "2026-08-01T07:05:00Z",
+        },
+      ],
+    },
+  ],
+}
+
+const SEAT_USAGE_AT_QUOTA = {
+  schools: [
+    { ...SEAT_USAGE.schools[0], quota: 3, used: 3, available: 0 },
+  ],
+}
+
+const SCHOOL_TEACHERS = {
+  schools: [
+    {
+      schoolId: "sch-1",
+      schoolName: "Nasr International School",
+      teachers: [
+        {
+          userId: "t-1",
+          email: "h.sabry@nasrschool.example",
+          displayName: "Hana Sabry",
+          classCount: 3,
+          studentCount: 71,
+        },
+        {
+          userId: "t-2",
+          email: "o.reda@nasrschool.example",
+          displayName: "Omar Reda",
+          classCount: 2,
+          studentCount: 48,
+        },
+        {
+          userId: "t-3",
+          email: "newstarter@nasrschool.example",
+          displayName: null,
+          classCount: 0,
+          studentCount: 0,
+        },
+      ],
+    },
+  ],
+}
+
+const SCHOOL_CLASSES = {
+  classes: [
+    {
+      id: "c1",
+      label: "10A Physics",
+      studentCount: 28,
+      average: 64.2,
+      subjectCode: "0625",
+      schoolId: "sch-1",
+      joinCode: null,
+      atRiskCount: 3,
+      lastActivityAt: "2026-08-12T10:00:00Z",
+      topWeakness: null,
+    },
+    {
+      id: "c2",
+      label: "10B Maths",
+      studentCount: 26,
+      average: null,
+      subjectCode: "0580",
+      schoolId: "sch-1",
+      joinCode: null,
+      atRiskCount: null,
+      lastActivityAt: null,
+      topWeakness: null,
+    },
+  ],
+}
+
+const PLATFORM_OVERVIEW = {
+  counts: {
+    students: 1842,
+    parents: 611,
+    teachers: 96,
+    schoolAdmins: 14,
+    platformAdmins: 2,
+    schools: 12,
+    classes: 143,
+    papersMarkedTotal: 9127,
+    papersMarkedLast24Hours: 41,
+    papersMarkedLast7Days: 318,
+    openReviewItems: 23,
+    uploadsByStatus: { pending: 2, processing: 1, complete: 9104, failed: 6 },
+  },
+  spend: {
+    cumulativeUsd: 1.2874,
+    ceilingUsd: 8,
+    remainingUsd: 6.7126,
+    thresholdsUsd: [4, 6],
+  },
+  health: { databaseReachable: true, geminiKeyConfigured: true, version: "0.9.3" },
+  recentSignups: [
+    {
+      userId: "u-1",
+      email: "farida@example.com",
+      displayName: "Farida Ehab",
+      role: "student",
+      createdAt: "2026-08-14T05:12:00Z",
+    },
+    {
+      userId: "u-2",
+      email: "head@newschool.example",
+      displayName: null,
+      role: "school_admin",
+      createdAt: "2026-08-13T15:40:00Z",
+    },
+  ],
+}
+
+const ACTIVATION_QUEUE = {
+  pending: [
+    {
+      subscriptionId: "sub-1",
+      userId: "u-9",
+      email: "parent@example.com",
+      displayName: "Mona Adel",
+      role: "parent",
+      planCode: "family_monthly",
+      planName: "Family monthly",
+      priceMinor: 24900,
+      currency: "EGP",
+      requestedAt: "2026-08-09T11:00:00Z",
+    },
+    {
+      subscriptionId: "sub-2",
+      userId: "u-10",
+      email: "head@newschool.example",
+      displayName: null,
+      role: "school_admin",
+      planCode: "school_term",
+      planName: "School term",
+      priceMinor: 1200000,
+      currency: "EGP",
+      requestedAt: "2026-08-13T15:41:00Z",
+    },
+  ],
+}
+
+const PIPELINE_HEALTH = {
+  subjects: [
+    { subjectCode: "0625", papers: 46, papersWithScheme: 39, papersWithoutScheme: 7 },
+    { subjectCode: "0580", papers: 51, papersWithScheme: 51, papersWithoutScheme: 0 },
+  ],
+  boundarySourceCounts: { exact: 5120, subject_default: 2110, global_default: 640 },
+  exactBoundaryKeys: 74,
+  subjectDefaultBoundaryKeys: 4,
+  uploadsByStatus: { pending: 2, processing: 1, complete: 9104, failed: 6 },
+  recentFailedUploadIds: [
+    "a3f1c2d4-0000-4000-8000-000000000001",
+    "a3f1c2d4-0000-4000-8000-000000000002",
+  ],
+  markingAccuracyNote:
+    "Marking accuracy is measured by the accuracy harness against the golden fixture set, not by this service. Run the harness and read reports/ for the current figures.",
+}
+
+const SCHOOL_DASHBOARD_STATES = {
+  populated: { overview: SCHOOL_OVERVIEW },
+  // The state the denominator exists for: a mean over nobody is not 0%.
+  "no-papers": {
+    overview: {
+      schools: [
+        {
+          ...SCHOOL_OVERVIEW.schools[0],
+          studentsWithAPaper: 0,
+          averageLatestPercentage: null,
+        },
+      ],
+    },
+  },
+  // The accent is this palette's alert register, so it appears here and on no
+  // other seat state. Worth a picture precisely because getting it wrong looks
+  // fine in code.
+  "at-quota": {
+    overview: {
+      schools: [{ ...SCHOOL_OVERVIEW.schools[0], quota: 87, seatsUsed: 87, seatsAvailable: 0 }],
+    },
+  },
+  "no-school": { overview: { schools: [] } },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, overview: { detail: "unavailable" } },
+}
+
+const SEATS_STATES = {
+  populated: { seats: SEAT_USAGE },
+  "at-quota": { seats: SEAT_USAGE_AT_QUOTA },
+  empty: {
+    seats: { schools: [{ ...SEAT_USAGE.schools[0], used: 0, available: 120, seats: [] }] },
+  },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, seats: { detail: "unavailable" } },
+  "revoke-confirm": { seats: SEAT_USAGE, revokeRow: 0 },
+}
+
+const TEACHERS_STATES = {
+  populated: { teachers: SCHOOL_TEACHERS },
+  empty: {
+    teachers: { schools: [{ schoolId: "sch-1", schoolName: "Nasr International School", teachers: [] }] },
+  },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, teachers: { detail: "unavailable" } },
+  // K-03's whole requirement, photographed: the successor field, and a submit
+  // button that stays disabled until one is chosen.
+  "remove-needs-successor": { teachers: SCHOOL_TEACHERS, removeRow: 0 },
+  // The teacher who owns nothing: no select at all, because there is nothing
+  // to reassign.
+  "remove-no-classes": { teachers: SCHOOL_TEACHERS, removeRow: 2 },
+}
+
+const ADMIN_CLASSES_STATES = {
+  populated: { classes: SCHOOL_CLASSES },
+  empty: { classes: { classes: [] } },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, classes: { detail: "unavailable" } },
+}
+
+const PLATFORM_CONSOLE_STATES = {
+  populated: { overview: PLATFORM_OVERVIEW },
+  // Past the first configured threshold, which is the only condition that
+  // turns the spend panel's meter to the alert register.
+  "spend-warning": {
+    overview: {
+      ...PLATFORM_OVERVIEW,
+      spend: { cumulativeUsd: 5.42, ceilingUsd: 8, remainingUsd: 2.58, thresholdsUsd: [4, 6] },
+    },
+  },
+  // A real configuration state, and distinct from a ceiling of zero.
+  "no-ceiling": {
+    overview: {
+      ...PLATFORM_OVERVIEW,
+      spend: { cumulativeUsd: 1.2874, ceilingUsd: null, remainingUsd: null, thresholdsUsd: [] },
+    },
+  },
+  quiet: {
+    overview: {
+      ...PLATFORM_OVERVIEW,
+      counts: {
+        ...PLATFORM_OVERVIEW.counts,
+        openReviewItems: 0,
+        uploadsByStatus: { pending: 0, processing: 0, complete: 9104, failed: 0 },
+      },
+      recentSignups: [],
+    },
+  },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, overview: { detail: "unavailable" } },
+}
+
+const ACTIVATIONS_STATES = {
+  populated: { queue: ACTIVATION_QUEUE },
+  empty: { queue: { pending: [] } },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, queue: { detail: "unavailable" } },
+  // The note requirement, photographed: the confirm button is disabled until
+  // something is written, which is the whole reason migration 0019 exists.
+  "activate-needs-note": { queue: ACTIVATION_QUEUE, decideRow: 0, activate: true },
+  "reject-needs-note": { queue: ACTIVATION_QUEUE, decideRow: 0, activate: false },
+}
+
+const PIPELINE_STATES = {
+  populated: { pipeline: PIPELINE_HEALTH },
+  // The state the panel exists to make visible: most predictions running on a
+  // substituted boundary rather than a published one.
+  "mostly-estimated": {
+    pipeline: {
+      ...PIPELINE_HEALTH,
+      boundarySourceCounts: { exact: 400, subject_default: 2110, global_default: 3200 },
+    },
+  },
+  "nothing-marked": {
+    pipeline: {
+      ...PIPELINE_HEALTH,
+      boundarySourceCounts: {},
+      uploadsByStatus: { pending: 0, processing: 0, complete: 0, failed: 0 },
+      recentFailedUploadIds: [],
+    },
+  },
+  loading: { delayMs: 30_000 },
+  error: { status: 503, pipeline: { detail: "unavailable" } },
+}
+
+/**
+ * Stub one JSON route, honouring a state's `delayMs`/`status`.
+ *
+ * The six admin surfaces each read one endpoint, so their `stub` functions were
+ * six copies of the same eight lines. One helper instead: a delay that never
+ * fulfils is how the loading state is captured, and it is exactly the detail a
+ * copy would get subtly wrong on the sixth surface.
+ */
+function jsonRoute(page, pattern, state, body) {
+  return page.route(pattern, async (route) => {
+    if (state.delayMs) {
+      await new Promise((r) => setTimeout(r, state.delayMs))
+      return
+    }
+    await route.fulfill({
+      status: state.status ?? 200,
+      contentType: "application/json",
+      body: JSON.stringify(body ?? {}),
+    })
+  })
+}
+
 const SURFACES = {
+  /* ── Admin (P4.7, surface 7) ──────────────────────────────────────────── */
+
+  /*
+   * Both admin lanes carry `session` and `profile`, because the harness
+   * switches identity per **surface** and not per state (the lesson surface 10
+   * recorded the hard way). A `school_admin` session on a `/platform` route
+   * would be bounced by `RequireAuth` and photograph as the login screen, which
+   * looks like a broken capture rather than a working guard.
+   */
+  "school-dashboard": {
+    prefix: "school-dashboard",
+    route: "/school",
+    states: SCHOOL_DASHBOARD_STATES,
+    session: SCHOOL_ADMIN_SESSION,
+    profile: SCHOOL_ADMIN_PROFILE,
+    fullPage: (state) => !state.delayMs,
+    async stub(page, state) {
+      await jsonRoute(page, "**/api/school/overview", state, state.overview)
+    },
+  },
+
+  "school-seats": {
+    prefix: "school-seats",
+    route: "/school/seats",
+    states: SEATS_STATES,
+    session: SCHOOL_ADMIN_SESSION,
+    profile: SCHOOL_ADMIN_PROFILE,
+    fullPage: (state) => !state.delayMs && state.revokeRow === undefined,
+    async stub(page, state) {
+      await jsonRoute(page, "**/api/school/seats", state, state.seats)
+    },
+    async act(page, state) {
+      if (state.revokeRow === undefined) return
+      await page.getByRole("button", { name: "Revoke seat" }).nth(state.revokeRow).click()
+      await page.waitForTimeout(600)
+    },
+  },
+
+  "school-teachers": {
+    prefix: "school-teachers",
+    route: "/school/teachers",
+    states: TEACHERS_STATES,
+    session: SCHOOL_ADMIN_SESSION,
+    profile: SCHOOL_ADMIN_PROFILE,
+    fullPage: (state) => !state.delayMs && state.removeRow === undefined,
+    async stub(page, state) {
+      await jsonRoute(page, "**/api/school/teachers", state, state.teachers)
+    },
+    async act(page, state) {
+      if (state.removeRow === undefined) return
+      await page.getByRole("button", { name: "Remove", exact: true }).nth(state.removeRow).click()
+      await page.waitForTimeout(600)
+    },
+  },
+
+  "school-classes": {
+    prefix: "school-classes",
+    route: "/school/classes",
+    states: ADMIN_CLASSES_STATES,
+    session: SCHOOL_ADMIN_SESSION,
+    profile: SCHOOL_ADMIN_PROFILE,
+    fullPage: (state) => !state.delayMs,
+    async stub(page, state) {
+      await jsonRoute(page, "**/api/teacher/classes", state, state.classes)
+    },
+  },
+
+  "platform-console": {
+    prefix: "platform-console",
+    route: "/platform",
+    states: PLATFORM_CONSOLE_STATES,
+    session: PLATFORM_ADMIN_SESSION,
+    profile: PLATFORM_ADMIN_PROFILE,
+    fullPage: (state) => !state.delayMs,
+    async stub(page, state) {
+      await jsonRoute(page, "**/api/admin/overview", state, state.overview)
+    },
+  },
+
+  "platform-activations": {
+    prefix: "platform-activations",
+    route: "/platform/activations",
+    states: ACTIVATIONS_STATES,
+    session: PLATFORM_ADMIN_SESSION,
+    profile: PLATFORM_ADMIN_PROFILE,
+    fullPage: (state) => !state.delayMs && state.decideRow === undefined,
+    async stub(page, state) {
+      await jsonRoute(page, "**/api/admin/activations", state, state.queue)
+    },
+    async act(page, state) {
+      if (state.decideRow === undefined) return
+      const label = state.activate ? "Activate" : "Turn down"
+      await page.getByRole("button", { name: label, exact: true }).nth(state.decideRow).click()
+      await page.waitForTimeout(600)
+    },
+  },
+
+  "platform-pipeline": {
+    prefix: "platform-pipeline",
+    route: "/platform/pipeline",
+    states: PIPELINE_STATES,
+    session: PLATFORM_ADMIN_SESSION,
+    profile: PLATFORM_ADMIN_PROFILE,
+    fullPage: (state) => !state.delayMs,
+    async stub(page, state) {
+      await jsonRoute(page, "**/api/admin/pipeline", state, state.pipeline)
+    },
+  },
+
   /* ── Marketing (P4.9, surface 9) ──────────────────────────────────────── */
 
   /*

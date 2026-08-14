@@ -4,6 +4,8 @@ import { navGroups, crumbs, resolveCrumb, resolveCrumbTrail } from "@/portals/st
 import { navItems, resolveTrail } from "@/portals/teacher/data"
 import { studentRoute } from "@/portals/student"
 import { teacherRoute } from "@/portals/teacher"
+import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
+import { platformNavItems, resolveAdminTrail, schoolNavItems } from "@/portals/admin/data"
 
 /*
  * P3.1 · the IA restructure (DECISION D1.1-5), pinned.
@@ -248,6 +250,68 @@ describe("teacher nav — D1.2", () => {
         `${item.to} is not a mounted teacher route`,
       ).toBe(true)
     }
+  })
+})
+
+/*
+ * P4.7. The same two properties this file already asserts for the teacher and
+ * student portals, applied to the two admin lanes: every nav entry points at a
+ * mounted route, and every trail tail agrees with the sidebar label it came
+ * from.
+ *
+ * Extended here rather than given a file of its own, deliberately. The standing
+ * rule from surface 9 is to widen the existing gate: a second navigation test
+ * would pass while this one stayed blind to two whole portals, which is how the
+ * gap it is closing opened in the first place.
+ */
+describe("admin nav — P4.7", () => {
+  const LANES = [
+    { lane: "school" as const, items: schoolNavItems, route: schoolAdminRoute, root: "/school" },
+    {
+      lane: "platform" as const,
+      items: platformNavItems,
+      route: platformAdminRoute,
+      root: "/platform",
+    },
+  ]
+
+  it.each(LANES)("$lane points every nav entry at a mounted route", ({ items, route, root }) => {
+    const mounted = (route.children ?? []).map((child) =>
+      child.index ? root : `${root}/${child.path}`,
+    )
+    for (const item of items) {
+      expect(matchesSomeRoute(item.to, mounted), `${item.to} is not mounted`).toBe(true)
+    }
+  })
+
+  it.each(LANES)("$lane's first entry is its own root, so the lane has a home", ({ items, root }) => {
+    expect(items[0].to).toBe(root)
+    expect(items[0].end).toBe(true)
+  })
+
+  it.each(LANES)("$lane renders no trail on its root", ({ lane, root }) => {
+    expect(resolveAdminTrail(root, lane)).toHaveLength(1)
+  })
+
+  it.each(LANES)("$lane takes trail labels from its nav list", ({ lane, items }) => {
+    for (const item of items.slice(1)) {
+      const trail = resolveAdminTrail(item.to, lane)
+      expect(trail[trail.length - 1].label, `trail tail for ${item.to}`).toBe(item.label)
+    }
+  })
+
+  /*
+   * The two lanes must not offer each other's screens. Their APIs are gated to
+   * different roles, so a cross-lane nav entry is a link that 403s for the only
+   * person who can see it — the shape D1.1 found on the student/teacher
+   * cross-links and P3.1 removed.
+   */
+  it("keeps the two lanes' destinations disjoint", () => {
+    const school = schoolNavItems.map((item) => item.to)
+    const platform = platformNavItems.map((item) => item.to)
+    expect(school.some((to) => platform.includes(to))).toBe(false)
+    expect(school.every((to) => to.startsWith("/school"))).toBe(true)
+    expect(platform.every((to) => to.startsWith("/platform"))).toBe(true)
   })
 })
 

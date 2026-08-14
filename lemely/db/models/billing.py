@@ -81,6 +81,11 @@ class Subscription(TimestampMixin, Base):
         sa.Boolean, nullable=False, server_default=sa.false()
     )
     activated_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    activation_note: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """Why a platform admin activated or rejected this subscription (X-02).
+
+    Nullable because a note is a human sentence with no honest default; see
+    migration ``0019`` for why it is not ``NOT NULL DEFAULT ''``."""
     current_period_end: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )

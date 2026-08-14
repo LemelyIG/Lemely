@@ -62,6 +62,7 @@ STUDENT = frozenset({"student"})
 PARENT = frozenset({"parent"})
 TEACHER = frozenset({"teacher"})
 SCHOOL_ADMIN = frozenset({"school_admin"})
+PLATFORM_ADMIN = frozenset({"platform_admin"})
 TEACHER_OR_SCHOOL_ADMIN = frozenset({"teacher", "school_admin"})
 STAFF = frozenset({"teacher", "school_admin", "platform_admin"})
 
@@ -73,10 +74,29 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
-    # ── SCHOOL_ADMIN (3) ────────────────────
+    # ── SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/{seat_id}/revoke"): SCHOOL_ADMIN,
+    # P4.7 (UI spec K-01/K-03). Same router, so the same guard by construction —
+    # but declared individually here on purpose: property 2 is a freeze, and a
+    # route inheriting a guard it should not have is exactly what a
+    # router-level `dependencies=[...]` makes easy to miss.
+    ("GET", "/api/school/overview"): SCHOOL_ADMIN,
+    ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
+    ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
+    ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
+    # ── PLATFORM_ADMIN (5) ────────────────────
+    # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
+    # to this role. Note what the 403 sweep below therefore proves here: a
+    # `school_admin` is denied every one of them. There is no super-role, and
+    # the platform console is a different door rather than a wider one
+    # (D1.6/D1.10).
+    ("GET", "/api/admin/overview"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/activations"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/activations/{subscription_id}/activate"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/activations/{subscription_id}/reject"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/pipeline"): PLATFORM_ADMIN,
     # ── TEACHER_OR_SCHOOL_ADMIN (3) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,

@@ -8148,3 +8148,146 @@ wording matters — "completely wired" rules out the scaffold-and-shell reading
 that option C offered. Phase 4 unblocks; surface 7 is the next work unit, and it
 must check what `routers/school.py` actually exposes before designing a screen
 around it rather than stubbing a panel and calling it wired.
+
+---
+
+## D4.10 — Redesign Phase 4, surface 7 (admin views): the two roles in one guard were never alike, and the platform console had no backend at all
+
+**Date:** 2026-08-14 · **Phase:** 4, surface 7 (the last one) · **Branch:**
+`redesign/study-surfaces`
+
+D1.6 was answered by the human on 2026-08-14: *"fully build the required screens
+and completely wire them"*. This records what "completely wired" turned out to
+cost, and the two findings that only appeared once the wiring was attempted.
+
+### Headline 1 — `TEACHER_ROLES` bundled two roles that are opposites
+
+`routes.tsx` gated the teacher portal to `["teacher", "school_admin",
+"platform_admin"]` for the whole build. The bundle looked harmless because it
+was *correct about permissions*: `require_role` really does admit all three on
+every `/api/teacher/*` route. It was wrong about data, and in opposite
+directions for the two admin roles:
+
+* **`school_admin` genuinely holds that data.** `ClassService.list_classes`
+  branches on role and returns every class in the schools they administer;
+  `_visible_students`, `review.py` and `announcements.py` scope them the same
+  way. The teacher portal works for them, and removing their access would have
+  deleted working capability — marking review, class analytics and school-wide
+  announcements are not rebuilt on the new surface. They keep `/teacher` and
+  gain `/school` as their **home**, with a cross-link in the sidebar.
+* **`platform_admin` holds none of it, deliberately.** Every one of those same
+  services returns **empty** for the role, stated outright in `class_repo.py`,
+  `review.py`, `teacher.py` and `at_risk_repo.py` ("no super-role bypass",
+  D1.6/D1.10). So the console a platform admin landed in could only ever have
+  been blank — and a permanently blank console is indistinguishable on screen
+  from a broken one. They are removed from `TEACHER_ROLES` and live at
+  `/platform`.
+
+Nothing could have caught this. A guard that admits a role the API also admits
+passes typecheck, lint, the design hook and every existing test; the defect is
+that the *data* behind it is empty by design. `tests/unit/adminRoutes.test.ts`
+now asserts the removal by name and in both directions, and was **verified by
+inversion**: re-adding `platform_admin` to the list fails exactly one test.
+
+### Headline 2 — X-01/X-02/X-03 had no backend whatsoever
+
+`school.py` shipped three endpoints (list seats, invite, revoke). There was no
+`/api/admin/*` router at all, and no service that could answer a global
+question, because every service in `lemely/db` is tenant-scoped by construction.
+"Completely wired" therefore meant building the backend first:
+
+| New | What it is |
+|---|---|
+| `lemely/db/school_admin_repo.py` | K-01 counts, K-03 staff roster, invite-teacher, remove-teacher-with-reassignment |
+| `lemely/db/admin_repo.py` | The first service in the product with **no tenant scope**, reached by its own router rather than by widening an existing one |
+| `lemely/web/routers/admin.py` | 5 routes gated to `platform_admin` alone |
+| `lemely/web/schemas_admin.py` | X-01/X-02/X-03 DTOs |
+| migration `0019_activation_review` | `subscriptions.activation_note` + a `rejected` status value |
+| `SeatRow` enrichment | `assigned_display_name`, `classes`, `last_attempt_at` |
+
+**Migration 0019 is the decision worth defending.** X-02 asks for "activate /
+reject with a note", and neither existed. The note is a plain nullable column.
+The status is the interesting half: `cancelled` was the only existing exit from
+`inactive`, and it already means *the subscriber ended this*. Reusing it would
+have made "we declined your request" and "they quit" indistinguishable in the
+one table an audit would read, so `rejected` was added instead —
+transaction-safe on PG12+ because the migration only declares the value and the
+first row to carry it is written at runtime.
+
+### What was refused rather than faked
+
+Every one of these is on screen as a sentence, not silently dropped:
+
+- **K-01's subscription status.** `subscriptions` is a **per-user** table. No
+  school-level subscription, plan or billing state exists anywhere in the
+  schema. The panel is absent and the screen's header records why.
+- **K-02's "last active".** No table records a session or a login: `users` has
+  no `last_seen` and `devices` records registration, not use. The column is
+  headed **"Last marked"** and the field is named `lastAttemptAt`.
+- **K-02's "invited / active / inactive" status.** The schema has
+  `available`/`assigned`/`revoked`, the route filters revoked out, and there is
+  no "invited" state at all because an invite creates the account immediately.
+  The column became "On a seat since", which is the real fact underneath — and
+  it put `assignedAt` on screen, which nothing had rendered.
+- **K-04's create / reassign / archive.** `POST /api/classes` is teacher-only
+  (the authz matrix says so), no `archived` column exists at any level, and the
+  only delete is destructive and also teacher-only. The screen is read-only and
+  a panel at the foot says exactly which of the three exist and where.
+- **X-03's marking accuracy.** Produced by the accuracy harness into
+  `reports/`, on demand, by nothing a request can reach. The API returns prose
+  naming the harness rather than a figure the screen could not date.
+
+### The one departure from a standing instruction
+
+`BUILD/STATE.md` says the failure-copy family is closed at seven: "do not write
+an eighth by symmetry." `lib/adminOutcome.ts` is an eighth, and the header
+states the evidence. Both detail-first modules (`teacherOutcome`,
+`correctionOutcome`) are wrong here because every admin `detail` is machine text
+carrying a UUID or a JSON field name; and the status-first modules are wrong
+too, because two of these failures carry meaning no status sentence holds — a
+409 on removing a teacher and a 409 on deciding an activation both mean *"the
+thing you were looking at changed under you"*, and the only useful next action
+is to reload. Hence one helper per action rather than one `mutationFailed`.
+This is a judgement call and is flagged as one.
+
+### Inspection round
+
+One batched round (1440 + 375 together), 7 findings, all fixed in one batch, one
+confirm round, stopped there per §3.2 item 16:
+
+(a) **the accent was carrying the alarm on four panels** — the seat meter at
+quota, the spend meter past its threshold, and the boundary-fallback bars — in
+the same terracotta the links beside them use, so one colour meant both "this is
+wrong" and "this is a link". All four moved to the `warn` register and gained a
+labelled chip; (b) the stat-card links wrapped mid-link ("See" / "the roll"),
+which is a two-line clickable target and banned outright; (c) two class names in
+the seats table ran together into one string; (d) the "Status" column was a
+constant on every row; (e) `toLocaleDateString()` rendered `8/11/2026`, which is
+11 August or 8 November depending on the reader and says nothing about which;
+(f) the invite form pushed the roll below the fold on the screen whose job is
+showing the roll; (g) a docstring claimed the school heading was suppressed for
+the single-school case, which it never was — **the fifth time this phase a
+comment described an intention rather than the code**.
+
+### Gate results
+
+typecheck / lint / **1,255** unit (+89) / check:copy **0** (still) / both builds
+/ pre-commit / full Python suite (3,573, rc=0) including **33 new backend tests**
+across `test_web_school_admin.py` and `test_web_platform_admin.py`: green.
+**e2e: 34 passed, 0 failed** — the admin split changed no e2e assertion, because
+`rbac.spec.ts` tests the API's guards and those did not move. Visual round: 78
+captures across 7 registered sub-surfaces, all distinct, console errors only from
+the deliberately-failing states.
+
+`tests/test_authz_matrix_complete.py` gained 9 rows and did its job on the way:
+it failed at collection the moment the admin router mounted, which is the drift
+gate working exactly as its docstring promises.
+
+### What this leaves
+
+**Phase 4 is complete.** All ten surfaces are built. Phase 5 (motion and
+data-viz) is next and depends on none of this.
+
+Still open, carried forward: B4's own proposed fix (`GET /__e2e__` asserted in
+`global-setup.ts`) remains unimplemented, and the compat layer still cannot die
+because 17 kit components name build-era aliases in their own source.

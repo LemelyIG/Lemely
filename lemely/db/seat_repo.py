@@ -25,8 +25,17 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
-from lemely.db.models import School, SchoolMembership, Seat, User
+from lemely.db.models import (
+    Attempt,
+    ClassEnrollment,
+    School,
+    SchoolClass,
+    SchoolMembership,
+    Seat,
+    User,
+)
 from lemely.db.models.enums import MembershipRole, SeatStatus
 
 if TYPE_CHECKING:
@@ -68,14 +77,40 @@ class StudentAccountCreator(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class SeatClass:
+    """One class, inside this school, that a seated student is enrolled in."""
+
+    class_id: uuid.UUID
+    name: str
+    teacher_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class SeatRow:
-    """A single seat with the identity it is (or was) assigned to."""
+    """A single seat with the identity it is (or was) assigned to.
+
+    ``classes`` is a **list**, not a single class, because nothing in the schema
+    makes a student's enrolment within one school exclusive
+    (``uq_class_enrollments_class_id_student_id`` is per class, not per school).
+    UI spec K-02 asks for one "class" column; collapsing a real many to a
+    displayed one would pick a winner arbitrarily, so the list is returned as it
+    is and the screen renders what is actually there.
+
+    ``last_attempt_at`` is the most recent :class:`~lemely.db.models.attempts.Attempt`
+    this student recorded, and is deliberately **not** named ``last_active_at``
+    (K-02's own wording). No table records a session or a login — ``users`` has
+    no ``last_seen``, and ``devices`` records registration, not use — so the only
+    honest reading is "last marked something". The screen labels it that way.
+    """
 
     seat_id: uuid.UUID
     status: SeatStatus
     assigned_user_id: uuid.UUID | None
     assigned_email: str | None
+    assigned_display_name: str | None
     assigned_at: datetime | None
+    classes: list[SeatClass]
+    last_attempt_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,20 +286,29 @@ class SeatService:
         if school is None:  # pragma: no cover - callers pass ids from memberships
             raise SeatNotFoundError(f"Unknown school: {school_uuid}")
         stmt = (
-            select(Seat, User.email)
+            select(Seat, User.email, User.display_name)
             .outerjoin(User, User.id == Seat.assigned_user_id)
             .where(Seat.school_id == school_uuid, Seat.status != SeatStatus.revoked)
             .order_by(Seat.assigned_at)
         )
+        seats = list(session.execute(stmt).all())
+        # Two grouped lookups rather than one per seat: a school at its quota is
+        # hundreds of rows, and K-02 renders all of them at once.
+        occupant_ids = [seat.assigned_user_id for seat, _, _ in seats if seat.assigned_user_id]
+        classes_by_student = self._classes_by_student(session, school_uuid, occupant_ids)
+        last_attempt_by_student = self._last_attempt_by_student(session, occupant_ids)
         rows = [
             SeatRow(
                 seat_id=seat.id,
                 status=seat.status,
                 assigned_user_id=seat.assigned_user_id,
                 assigned_email=email,
+                assigned_display_name=display_name,
                 assigned_at=seat.assigned_at,
+                classes=classes_by_student.get(seat.assigned_user_id, []),
+                last_attempt_at=last_attempt_by_student.get(seat.assigned_user_id),
             )
-            for seat, email in session.execute(stmt).all()
+            for seat, email, display_name in seats
         ]
         return SeatUsage(
             school_id=school.id,
@@ -273,6 +317,60 @@ class SeatService:
             used=len(rows),
             seats=rows,
         )
+
+    def _classes_by_student(
+        self,
+        session: Session,
+        school_uuid: uuid.UUID,
+        student_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, list[SeatClass]]:
+        """Map each student to the classes **of this school** they are enrolled in.
+
+        Scoped to ``school_uuid`` on purpose: a seated student may also be
+        enrolled in an independent teacher's class (``SchoolClass.school_id`` is
+        nullable, D3.1), and that class is none of this admin's business.
+        """
+        if not student_ids:
+            return {}
+        teacher = aliased(User)
+        stmt = (
+            select(
+                ClassEnrollment.student_id,
+                SchoolClass.id,
+                SchoolClass.name,
+                teacher.display_name,
+            )
+            .join(SchoolClass, SchoolClass.id == ClassEnrollment.class_id)
+            .outerjoin(teacher, teacher.id == SchoolClass.teacher_id)
+            .where(
+                SchoolClass.school_id == school_uuid,
+                ClassEnrollment.student_id.in_(student_ids),
+            )
+            .order_by(SchoolClass.name)
+        )
+        grouped: dict[uuid.UUID, list[SeatClass]] = {}
+        for student_id, class_id, name, teacher_name in session.execute(stmt).all():
+            grouped.setdefault(student_id, []).append(
+                SeatClass(class_id=class_id, name=name, teacher_name=teacher_name)
+            )
+        return grouped
+
+    def _last_attempt_by_student(
+        self, session: Session, student_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        """Map each student to the timestamp of their most recent attempt.
+
+        Every attempt origin counts (a quiz is activity too); this is a recency
+        signal, not a performance one.
+        """
+        if not student_ids:
+            return {}
+        stmt = (
+            select(Attempt.user_id, func.max(Attempt.recorded_at))
+            .where(Attempt.user_id.in_(student_ids))
+            .group_by(Attempt.user_id)
+        )
+        return {user_id: recorded_at for user_id, recorded_at in session.execute(stmt).all()}
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
@@ -287,6 +385,7 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 __all__ = [
     "InviteResult",
+    "SeatClass",
     "SeatError",
     "SeatNotFoundError",
     "SeatOwnershipError",
