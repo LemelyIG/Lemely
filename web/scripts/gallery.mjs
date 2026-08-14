@@ -99,6 +99,30 @@ const WIDTHS = [
   { name: "375", width: 375, height: 812, touch: true },
 ]
 
+/**
+ * The build-era capture for one spec ID at one width.
+ *
+ * Not simply `default--<width>.png`: the build harness named its single state
+ * per screen, and most called it `default` while a few named the thing on the
+ * screen. `S-14` is `marking-in-progress--1440.png`, which the first run of
+ * this script reported as a missing "before" rather than silently omitting —
+ * that report is why this function exists. Error and empty states are excluded
+ * for the same reason the "after" side picks the fullest state: a pair that
+ * compares an error screen against a populated one compares nothing.
+ */
+function beforeFile(specId, width) {
+  const dir = path.join(BEFORE_CORPUS, specId)
+  if (!fs.existsSync(dir)) return null
+  const preferred = path.join(dir, `default--${width}.png`)
+  if (fs.existsSync(preferred)) return preferred
+  const candidate = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(`--${width}.png`))
+    .filter((f) => !/error|empty|loading|skeleton/i.test(f))
+    .sort()[0]
+  return candidate ? path.join(dir, candidate) : null
+}
+
 function chooseState(states) {
   const names = Object.keys(states)
   for (const preferred of PICK) {
@@ -203,12 +227,9 @@ async function main() {
 
       // "Before" is copied rather than re-rendered; see the header.
       if (pair.before) {
-        for (const [key, source] of [
-          ["1440", "default--1440.png"],
-          ["380", "default--380.png"],
-        ]) {
-          const from = path.join(BEFORE_CORPUS, pair.before, source)
-          if (fs.existsSync(from)) {
+        for (const key of ["1440", "380"]) {
+          const from = beforeFile(pair.before, key)
+          if (from) {
             const to = `${pair.surface}--${key}.png`
             fs.copyFileSync(from, path.join(OUT, "before", to))
             entry.beforeFiles[key] = `before/${to}`
@@ -244,7 +265,7 @@ function esc(text) {
   return String(text).replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`)
 }
 
-function renderGallery(manifest) {
+export function renderGallery(manifest) {
   const rows = manifest
     .map((m) => {
       const before1440 = m.beforeFiles["1440"]
@@ -308,7 +329,12 @@ ${rows}
 `
 }
 
-main().catch((error) => {
-  console.error(error)
-  process.exitCode = 1
-})
+/* Only when run directly. Importable so the HTML can be regenerated from an
+   existing manifest without re-capturing 70 screenshots to produce identical
+   files — which is how the S-14 pairing gap was closed. */
+if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
+}

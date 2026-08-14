@@ -1,0 +1,465 @@
+[
+  {
+    "surface": "student-dashboard",
+    "before": "S-06",
+    "title": "Student dashboard",
+    "state": "populated",
+    "after": {
+      "375": "after/student-dashboard--375.png",
+      "1440": "after/student-dashboard--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/student-dashboard--380.png",
+      "1440": "before/student-dashboard--1440.png"
+    }
+  },
+  {
+    "surface": "subject",
+    "before": "S-08",
+    "title": "Subject overview",
+    "state": "populated",
+    "after": {
+      "375": "after/subject--375.png",
+      "1440": "after/subject--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/subject--380.png",
+      "1440": "before/subject--1440.png"
+    }
+  },
+  {
+    "surface": "correct-paper",
+    "before": "S-14",
+    "title": "Marking in progress",
+    "state": "ready",
+    "after": {
+      "375": "after/correct-paper--375.png",
+      "1440": "after/correct-paper--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/correct-paper--380.png",
+      "1440": "before/correct-paper--1440.png"
+    }
+  },
+  {
+    "surface": "paper-result",
+    "before": "S-15",
+    "title": "Results",
+    "state": "history",
+    "after": {
+      "375": "after/paper-result--375.png",
+      "1440": "after/paper-result--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/paper-result--380.png",
+      "1440": "before/paper-result--1440.png"
+    }
+  },
+  {
+    "surface": "practice-result",
+    "before": "S-21",
+    "title": "Practice set",
+    "state": "marked",
+    "after": {
+      "375": "after/practice-result--375.png",
+      "1440": "after/practice-result--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/practice-result--380.png",
+      "1440": "before/practice-result--1440.png"
+    }
+  },
+  {
+    "surface": "flashcard-decks",
+    "before": "S-22",
+    "title": "Flashcard decks",
+    "state": "populated",
+    "after": {
+      "375": "after/flashcard-decks--375.png",
+      "1440": "after/flashcard-decks--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/flashcard-decks--380.png",
+      "1440": "before/flashcard-decks--1440.png"
+    }
+  },
+  {
+    "surface": "flashcard-review",
+    "before": "S-23",
+    "title": "Flashcard review",
+    "state": "question",
+    "after": {
+      "375": "after/flashcard-review--375.png",
+      "1440": "after/flashcard-review--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/flashcard-review--380.png",
+      "1440": "before/flashcard-review--1440.png"
+    }
+  },
+  {
+    "surface": "study-plan-week",
+    "before": "S-24",
+    "title": "Study plan, week view",
+    "state": "populated",
+    "after": {
+      "375": "after/study-plan-week--375.png",
+      "1440": "after/study-plan-week--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/study-plan-week--380.png",
+      "1440": "before/study-plan-week--1440.png"
+    }
+  },
+  {
+    "surface": "standings",
+    "before": "S-29",
+    "title": "Leaderboards",
+    "state": "populated",
+    "after": {
+      "375": "after/standings--375.png",
+      "1440": "after/standings--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/standings--380.png",
+      "1440": "before/standings--1440.png"
+    }
+  },
+  {
+    "surface": "friends",
+    "before": "S-30",
+    "title": "Friends",
+    "state": "populated",
+    "after": {
+      "375": "after/friends--375.png",
+      "1440": "after/friends--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/friends--380.png",
+      "1440": "before/friends--1440.png"
+    }
+  },
+  {
+    "surface": "profile",
+    "before": "S-31",
+    "title": "Profile, XP and streak",
+    "state": "populated",
+    "after": {
+      "375": "after/profile--375.png",
+      "1440": "after/profile--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/profile--380.png",
+      "1440": "before/profile--1440.png"
+    }
+  },
+  {
+    "surface": "onboarding",
+    "before": "S-01",
+    "title": "Onboarding, subjects",
+    "state": "subjects",
+    "after": {
+      "375": "after/onboarding--375.png",
+      "1440": "after/onboarding--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/onboarding--380.png",
+      "1440": "before/onboarding--1440.png"
+    }
+  },
+  {
+    "surface": "teacher-overview",
+    "before": "T-01",
+    "title": "Teacher dashboard",
+    "state": "populated",
+    "after": {
+      "375": "after/teacher-overview--375.png",
+      "1440": "after/teacher-overview--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/teacher-overview--380.png",
+      "1440": "before/teacher-overview--1440.png"
+    }
+  },
+  {
+    "surface": "teacher-analytics",
+    "before": "T-04",
+    "title": "Class analytics",
+    "state": "populated",
+    "after": {
+      "375": "after/teacher-analytics--375.png",
+      "1440": "after/teacher-analytics--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/teacher-analytics--380.png",
+      "1440": "before/teacher-analytics--1440.png"
+    }
+  },
+  {
+    "surface": "teacher-student",
+    "before": "T-05",
+    "title": "Student detail",
+    "state": "populated",
+    "after": {
+      "375": "after/teacher-student--375.png",
+      "1440": "after/teacher-student--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/teacher-student--380.png",
+      "1440": "before/teacher-student--1440.png"
+    }
+  },
+  {
+    "surface": "teacher-review",
+    "before": "T-07",
+    "title": "Review queue",
+    "state": "populated",
+    "after": {
+      "375": "after/teacher-review--375.png",
+      "1440": "after/teacher-review--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/teacher-review--380.png",
+      "1440": "before/teacher-review--1440.png"
+    }
+  },
+  {
+    "surface": "teacher-quizzes",
+    "before": "T-09",
+    "title": "Quizzes",
+    "state": "populated",
+    "after": {
+      "375": "after/teacher-quizzes--375.png",
+      "1440": "after/teacher-quizzes--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/teacher-quizzes--380.png",
+      "1440": "before/teacher-quizzes--1440.png"
+    }
+  },
+  {
+    "surface": "parent-children",
+    "before": "P-01",
+    "title": "Parent home",
+    "state": "populated",
+    "after": {
+      "375": "after/parent-children--375.png",
+      "1440": "after/parent-children--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/parent-children--380.png",
+      "1440": "before/parent-children--1440.png"
+    }
+  },
+  {
+    "surface": "parent-overview",
+    "before": "P-02",
+    "title": "Child overview",
+    "state": "populated",
+    "after": {
+      "375": "after/parent-overview--375.png",
+      "1440": "after/parent-overview--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/parent-overview--380.png",
+      "1440": "before/parent-overview--1440.png"
+    }
+  },
+  {
+    "surface": "parent-subject",
+    "before": "P-03",
+    "title": "Child subject detail",
+    "state": "populated",
+    "after": {
+      "375": "after/parent-subject--375.png",
+      "1440": "after/parent-subject--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/parent-subject--380.png",
+      "1440": "before/parent-subject--1440.png"
+    }
+  },
+  {
+    "surface": "parent-weaknesses",
+    "before": "P-04",
+    "title": "Child weaknesses",
+    "state": "populated",
+    "after": {
+      "375": "after/parent-weaknesses--375.png",
+      "1440": "after/parent-weaknesses--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/parent-weaknesses--380.png",
+      "1440": "before/parent-weaknesses--1440.png"
+    }
+  },
+  {
+    "surface": "login",
+    "before": "G-04",
+    "title": "Sign in",
+    "state": "bad-credentials",
+    "after": {
+      "375": "after/login--375.png",
+      "1440": "after/login--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/login--380.png",
+      "1440": "before/login--1440.png"
+    }
+  },
+  {
+    "surface": "parent-login",
+    "before": "G-05",
+    "title": "Parent sign in",
+    "state": "phone",
+    "after": {
+      "375": "after/parent-login--375.png",
+      "1440": "after/parent-login--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/parent-login--380.png",
+      "1440": "before/parent-login--1440.png"
+    }
+  },
+  {
+    "surface": "settings-devices",
+    "before": "G-11",
+    "title": "Account and devices",
+    "state": "populated",
+    "after": {
+      "375": "after/settings-devices--375.png",
+      "1440": "after/settings-devices--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/settings-devices--380.png",
+      "1440": "before/settings-devices--1440.png"
+    }
+  },
+  {
+    "surface": "settings-notifications",
+    "before": "G-12",
+    "title": "Notification settings",
+    "state": "populated",
+    "after": {
+      "375": "after/settings-notifications--375.png",
+      "1440": "after/settings-notifications--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/settings-notifications--380.png",
+      "1440": "before/settings-notifications--1440.png"
+    }
+  },
+  {
+    "surface": "landing",
+    "before": "G-01",
+    "title": "Marketing landing",
+    "state": "full",
+    "after": {
+      "375": "after/landing--375.png",
+      "1440": "after/landing--1440.png"
+    },
+    "beforeFiles": {
+      "380": "before/landing--380.png",
+      "1440": "before/landing--1440.png"
+    }
+  },
+  {
+    "surface": "not-found",
+    "before": null,
+    "title": "404",
+    "state": "top-level",
+    "after": {
+      "375": "after/not-found--375.png",
+      "1440": "after/not-found--1440.png"
+    },
+    "beforeFiles": {}
+  },
+  {
+    "surface": "data-handling",
+    "before": null,
+    "title": "How your data is handled",
+    "state": "full",
+    "after": {
+      "375": "after/data-handling--375.png",
+      "1440": "after/data-handling--1440.png"
+    },
+    "beforeFiles": {}
+  },
+  {
+    "surface": "school-dashboard",
+    "before": null,
+    "title": "School dashboard",
+    "state": "populated",
+    "after": {
+      "375": "after/school-dashboard--375.png",
+      "1440": "after/school-dashboard--1440.png"
+    },
+    "beforeFiles": {}
+  },
+  {
+    "surface": "school-seats",
+    "before": null,
+    "title": "Seats and student accounts",
+    "state": "populated",
+    "after": {
+      "375": "after/school-seats--375.png",
+      "1440": "after/school-seats--1440.png"
+    },
+    "beforeFiles": {}
+  },
+  {
+    "surface": "school-teachers",
+    "before": null,
+    "title": "Teachers",
+    "state": "populated",
+    "after": {
+      "375": "after/school-teachers--375.png",
+      "1440": "after/school-teachers--1440.png"
+    },
+    "beforeFiles": {}
+  },
+  {
+    "surface": "school-classes",
+    "before": null,
+    "title": "Classes, school-wide",
+    "state": "populated",
+    "after": {
+      "375": "after/school-classes--375.png",
+      "1440": "after/school-classes--1440.png"
+    },
+    "beforeFiles": {}
+  },
+  {
+    "surface": "platform-console",
+    "before": null,
+    "title": "Platform admin console",
+    "state": "populated",
+    "after": {
+      "375": "after/platform-console--375.png",
+      "1440": "after/platform-console--1440.png"
+    },
+    "beforeFiles": {}
+  },
+  {
+    "surface": "platform-activations",
+    "before": null,
+    "title": "Activation queue",
+    "state": "populated",
+    "after": {
+      "375": "after/platform-activations--375.png",
+      "1440": "after/platform-activations--1440.png"
+    },
+    "beforeFiles": {}
+  },
+  {
+    "surface": "platform-pipeline",
+    "before": null,
+    "title": "Pipeline and corpus health",
+    "state": "populated",
+    "after": {
+      "375": "after/platform-pipeline--375.png",
+      "1440": "after/platform-pipeline--1440.png"
+    },
+    "beforeFiles": {}
+  }
+]

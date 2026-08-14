@@ -293,11 +293,54 @@ See §5.4.
 
 ### 5.2 The adapt sweep
 
-<!--ADAPT-->
+`node scripts/adapt_audit.mjs --json=reports/phase-7/adapt-findings.json`, run on
+this tree against a build made from it:
+
+```
+765 page-states measured across 36 surfaces.
+0 findings: {}
+66 exempt (stated at the call site): {"six-digit-code-row": 66}
+```
+
+Every registered surface at 320 / 375 / 414 / 768 / 1440, checked for horizontal
+overflow, two-line clickable text, touch-target size and spacing, `minmax(0,1fr)`
+grid tracks and display-header wrapping. The artifact is committed at
+`reports/phase-7/adapt-findings.json`, so the number can be re-derived rather
+than taken on trust.
+
+The 66 exemptions are all one row — the six-digit OTP input on the parent
+sign-in screen, which states its reason at the call site: six 44px boxes plus
+five gaps need 284px in a card about 248px wide, and that same arithmetic is why
+they sit 4px apart. They are reported rather than dropped, because a gate that
+hides its own carve-outs is a vacuous gate wearing a different hat.
+
+**This is the first adapt result in this project that can claim to have measured
+a server it started**, for the reasons in §5.4 item 0. Two earlier results
+cannot: Phase 6.1's has no artifact at all, and Phase 6.5's ran while an
+orphaned preview server held the port.
 
 ### 5.3 Test and build gates, this tree
 
-<!--GATES-->
+| Gate | Result |
+|---|---|
+| `npm test` (web unit) | **1,456 passed**, 47 files |
+| `npm run typecheck` | clean |
+| `npm run lint` | **0 errors** (react-refresh warnings only, pre-existing) |
+| `npm run check:copy` | **0** em-dashes in UI copy |
+| `npm run build` | clean; 138 precache entries, 2,194.83 KiB |
+| `npm run build:kit` (8-state preview) | clean |
+| `pre-commit run --all-files` | all hooks pass, including mypy and import-linter |
+| `node scripts/adapt_audit.mjs` | 765 page-states, 36 surfaces, **0 findings** (§5.2) |
+
+The unit suite grew by 22 this phase: three new gates
+(`jsxSourceLexer.test.ts`, `hallmarkStamp.test.ts`, and the RTL arrow rule) plus
+five behavioural pins replacing one source-text pin on the preview-server guard.
+Every new rule was **verified by inversion** — made to fail on the exact defect
+it exists to catch, then restored.
+
+### 5.3a The axe and Lighthouse corpus
+
+<!--AXE-->
 
 ### 5.4 What Phase 7 itself found
 

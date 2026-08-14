@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lemely redesign — before and after</title>
+<style>
+  body { margin: 0; padding: 40px; background: #F7F6F3; color: #2F3437;
+         font-family: ui-sans-serif, system-ui, sans-serif; line-height: 1.6; }
+  header { max-width: 70ch; margin: 0 auto 56px; }
+  h1 { font-family: ui-serif, Georgia, serif; font-weight: 600; font-size: 40px;
+       line-height: 1.1; margin: 0 0 16px; }
+  .note { color: #787774; font-size: 15px; }
+  section { max-width: 1400px; margin: 0 auto 64px; padding-top: 32px;
+            border-top: 1px solid #EAEAEA; }
+  h2 { font-family: ui-serif, Georgia, serif; font-weight: 600; font-size: 26px; margin: 0; }
+  .meta { color: #787774; font-size: 14px; margin: 4px 0 20px; }
+  code { font-family: ui-monospace, monospace; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  figure { margin: 0; }
+  img { width: 100%; height: auto; display: block; border: 1px solid #EAEAEA; border-radius: 8px; background: #fff; }
+  figcaption { color: #787774; font-size: 13px; margin-top: 8px; }
+  .none { color: #787774; font-size: 14px; border: 1px dashed #EAEAEA; border-radius: 8px;
+          padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lemely, before and after</h1>
+  <p class="note">Left column is the build-era product, captured 2026-08-12 from
+  <code>reports/phase-6/screens/</code>, the day before the redesign opened. Right column is
+  this branch. The desktop pair is 1440 on both sides; the mobile pair is <strong>380 before
+  and 375 after</strong>, because that is the width the build-era harness used, and relabelling
+  it would be tidier than it is true. Every "after" is the fullest state of that surface, named
+  under each heading, so a populated screen is never compared against an empty one.</p>
+</header>
+<section>
+  <h2>Student dashboard</h2>
+  <p class="meta">student-dashboard &middot; state <code>populated</code> &middot; was <code>S-06</code></p>
+  <div class="grid">
+    <figure><img src="before/student-dashboard--1440.png" alt="Student dashboard before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/student-dashboard--1440.png" alt="Student dashboard after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/student-dashboard--380.png" alt="Student dashboard before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/student-dashboard--375.png" alt="Student dashboard after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Subject overview</h2>
+  <p class="meta">subject &middot; state <code>populated</code> &middot; was <code>S-08</code></p>
+  <div class="grid">
+    <figure><img src="before/subject--1440.png" alt="Subject overview before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/subject--1440.png" alt="Subject overview after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/subject--380.png" alt="Subject overview before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/subject--375.png" alt="Subject overview after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Marking in progress</h2>
+  <p class="meta">correct-paper &middot; state <code>ready</code> &middot; was <code>S-14</code></p>
+  <div class="grid">
+    <figure><img src="before/correct-paper--1440.png" alt="Marking in progress before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/correct-paper--1440.png" alt="Marking in progress after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/correct-paper--380.png" alt="Marking in progress before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/correct-paper--375.png" alt="Marking in progress after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Results</h2>
+  <p class="meta">paper-result &middot; state <code>history</code> &middot; was <code>S-15</code></p>
+  <div class="grid">
+    <figure><img src="before/paper-result--1440.png" alt="Results before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/paper-result--1440.png" alt="Results after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/paper-result--380.png" alt="Results before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/paper-result--375.png" alt="Results after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Practice set</h2>
+  <p class="meta">practice-result &middot; state <code>marked</code> &middot; was <code>S-21</code></p>
+  <div class="grid">
+    <figure><img src="before/practice-result--1440.png" alt="Practice set before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/practice-result--1440.png" alt="Practice set after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/practice-result--380.png" alt="Practice set before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/practice-result--375.png" alt="Practice set after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Flashcard decks</h2>
+  <p class="meta">flashcard-decks &middot; state <code>populated</code> &middot; was <code>S-22</code></p>
+  <div class="grid">
+    <figure><img src="before/flashcard-decks--1440.png" alt="Flashcard decks before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/flashcard-decks--1440.png" alt="Flashcard decks after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/flashcard-decks--380.png" alt="Flashcard decks before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/flashcard-decks--375.png" alt="Flashcard decks after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Flashcard review</h2>
+  <p class="meta">flashcard-review &middot; state <code>question</code> &middot; was <code>S-23</code></p>
+  <div class="grid">
+    <figure><img src="before/flashcard-review--1440.png" alt="Flashcard review before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/flashcard-review--1440.png" alt="Flashcard review after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/flashcard-review--380.png" alt="Flashcard review before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/flashcard-review--375.png" alt="Flashcard review after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Study plan, week view</h2>
+  <p class="meta">study-plan-week &middot; state <code>populated</code> &middot; was <code>S-24</code></p>
+  <div class="grid">
+    <figure><img src="before/study-plan-week--1440.png" alt="Study plan, week view before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/study-plan-week--1440.png" alt="Study plan, week view after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/study-plan-week--380.png" alt="Study plan, week view before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/study-plan-week--375.png" alt="Study plan, week view after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Leaderboards</h2>
+  <p class="meta">standings &middot; state <code>populated</code> &middot; was <code>S-29</code></p>
+  <div class="grid">
+    <figure><img src="before/standings--1440.png" alt="Leaderboards before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/standings--1440.png" alt="Leaderboards after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/standings--380.png" alt="Leaderboards before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/standings--375.png" alt="Leaderboards after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Friends</h2>
+  <p class="meta">friends &middot; state <code>populated</code> &middot; was <code>S-30</code></p>
+  <div class="grid">
+    <figure><img src="before/friends--1440.png" alt="Friends before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/friends--1440.png" alt="Friends after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/friends--380.png" alt="Friends before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/friends--375.png" alt="Friends after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Profile, XP and streak</h2>
+  <p class="meta">profile &middot; state <code>populated</code> &middot; was <code>S-31</code></p>
+  <div class="grid">
+    <figure><img src="before/profile--1440.png" alt="Profile, XP and streak before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/profile--1440.png" alt="Profile, XP and streak after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/profile--380.png" alt="Profile, XP and streak before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/profile--375.png" alt="Profile, XP and streak after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Onboarding, subjects</h2>
+  <p class="meta">onboarding &middot; state <code>subjects</code> &middot; was <code>S-01</code></p>
+  <div class="grid">
+    <figure><img src="before/onboarding--1440.png" alt="Onboarding, subjects before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/onboarding--1440.png" alt="Onboarding, subjects after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/onboarding--380.png" alt="Onboarding, subjects before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/onboarding--375.png" alt="Onboarding, subjects after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Teacher dashboard</h2>
+  <p class="meta">teacher-overview &middot; state <code>populated</code> &middot; was <code>T-01</code></p>
+  <div class="grid">
+    <figure><img src="before/teacher-overview--1440.png" alt="Teacher dashboard before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/teacher-overview--1440.png" alt="Teacher dashboard after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/teacher-overview--380.png" alt="Teacher dashboard before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/teacher-overview--375.png" alt="Teacher dashboard after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Class analytics</h2>
+  <p class="meta">teacher-analytics &middot; state <code>populated</code> &middot; was <code>T-04</code></p>
+  <div class="grid">
+    <figure><img src="before/teacher-analytics--1440.png" alt="Class analytics before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/teacher-analytics--1440.png" alt="Class analytics after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/teacher-analytics--380.png" alt="Class analytics before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/teacher-analytics--375.png" alt="Class analytics after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Student detail</h2>
+  <p class="meta">teacher-student &middot; state <code>populated</code> &middot; was <code>T-05</code></p>
+  <div class="grid">
+    <figure><img src="before/teacher-student--1440.png" alt="Student detail before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/teacher-student--1440.png" alt="Student detail after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/teacher-student--380.png" alt="Student detail before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/teacher-student--375.png" alt="Student detail after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Review queue</h2>
+  <p class="meta">teacher-review &middot; state <code>populated</code> &middot; was <code>T-07</code></p>
+  <div class="grid">
+    <figure><img src="before/teacher-review--1440.png" alt="Review queue before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/teacher-review--1440.png" alt="Review queue after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/teacher-review--380.png" alt="Review queue before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/teacher-review--375.png" alt="Review queue after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Quizzes</h2>
+  <p class="meta">teacher-quizzes &middot; state <code>populated</code> &middot; was <code>T-09</code></p>
+  <div class="grid">
+    <figure><img src="before/teacher-quizzes--1440.png" alt="Quizzes before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/teacher-quizzes--1440.png" alt="Quizzes after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/teacher-quizzes--380.png" alt="Quizzes before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/teacher-quizzes--375.png" alt="Quizzes after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Parent home</h2>
+  <p class="meta">parent-children &middot; state <code>populated</code> &middot; was <code>P-01</code></p>
+  <div class="grid">
+    <figure><img src="before/parent-children--1440.png" alt="Parent home before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/parent-children--1440.png" alt="Parent home after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/parent-children--380.png" alt="Parent home before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/parent-children--375.png" alt="Parent home after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Child overview</h2>
+  <p class="meta">parent-overview &middot; state <code>populated</code> &middot; was <code>P-02</code></p>
+  <div class="grid">
+    <figure><img src="before/parent-overview--1440.png" alt="Child overview before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/parent-overview--1440.png" alt="Child overview after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/parent-overview--380.png" alt="Child overview before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/parent-overview--375.png" alt="Child overview after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Child subject detail</h2>
+  <p class="meta">parent-subject &middot; state <code>populated</code> &middot; was <code>P-03</code></p>
+  <div class="grid">
+    <figure><img src="before/parent-subject--1440.png" alt="Child subject detail before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/parent-subject--1440.png" alt="Child subject detail after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/parent-subject--380.png" alt="Child subject detail before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/parent-subject--375.png" alt="Child subject detail after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Child weaknesses</h2>
+  <p class="meta">parent-weaknesses &middot; state <code>populated</code> &middot; was <code>P-04</code></p>
+  <div class="grid">
+    <figure><img src="before/parent-weaknesses--1440.png" alt="Child weaknesses before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/parent-weaknesses--1440.png" alt="Child weaknesses after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/parent-weaknesses--380.png" alt="Child weaknesses before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/parent-weaknesses--375.png" alt="Child weaknesses after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Sign in</h2>
+  <p class="meta">login &middot; state <code>bad-credentials</code> &middot; was <code>G-04</code></p>
+  <div class="grid">
+    <figure><img src="before/login--1440.png" alt="Sign in before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/login--1440.png" alt="Sign in after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/login--380.png" alt="Sign in before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/login--375.png" alt="Sign in after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Parent sign in</h2>
+  <p class="meta">parent-login &middot; state <code>phone</code> &middot; was <code>G-05</code></p>
+  <div class="grid">
+    <figure><img src="before/parent-login--1440.png" alt="Parent sign in before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/parent-login--1440.png" alt="Parent sign in after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/parent-login--380.png" alt="Parent sign in before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/parent-login--375.png" alt="Parent sign in after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Account and devices</h2>
+  <p class="meta">settings-devices &middot; state <code>populated</code> &middot; was <code>G-11</code></p>
+  <div class="grid">
+    <figure><img src="before/settings-devices--1440.png" alt="Account and devices before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/settings-devices--1440.png" alt="Account and devices after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/settings-devices--380.png" alt="Account and devices before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/settings-devices--375.png" alt="Account and devices after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Notification settings</h2>
+  <p class="meta">settings-notifications &middot; state <code>populated</code> &middot; was <code>G-12</code></p>
+  <div class="grid">
+    <figure><img src="before/settings-notifications--1440.png" alt="Notification settings before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/settings-notifications--1440.png" alt="Notification settings after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/settings-notifications--380.png" alt="Notification settings before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/settings-notifications--375.png" alt="Notification settings after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Marketing landing</h2>
+  <p class="meta">landing &middot; state <code>full</code> &middot; was <code>G-01</code></p>
+  <div class="grid">
+    <figure><img src="before/landing--1440.png" alt="Marketing landing before the redesign, desktop"><figcaption>before &middot; 1440</figcaption></figure>
+    <figure><img src="after/landing--1440.png" alt="Marketing landing after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <figure><img src="before/landing--380.png" alt="Marketing landing before the redesign, mobile"><figcaption>before &middot; 380</figcaption></figure>
+    <figure><img src="after/landing--375.png" alt="Marketing landing after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>404</h2>
+  <p class="meta">not-found &middot; state <code>top-level</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/not-found--1440.png" alt="404 after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/not-found--375.png" alt="404 after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>How your data is handled</h2>
+  <p class="meta">data-handling &middot; state <code>full</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/data-handling--1440.png" alt="How your data is handled after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/data-handling--375.png" alt="How your data is handled after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>School dashboard</h2>
+  <p class="meta">school-dashboard &middot; state <code>populated</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/school-dashboard--1440.png" alt="School dashboard after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/school-dashboard--375.png" alt="School dashboard after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Seats and student accounts</h2>
+  <p class="meta">school-seats &middot; state <code>populated</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/school-seats--1440.png" alt="Seats and student accounts after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/school-seats--375.png" alt="Seats and student accounts after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Teachers</h2>
+  <p class="meta">school-teachers &middot; state <code>populated</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/school-teachers--1440.png" alt="Teachers after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/school-teachers--375.png" alt="Teachers after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Classes, school-wide</h2>
+  <p class="meta">school-classes &middot; state <code>populated</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/school-classes--1440.png" alt="Classes, school-wide after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/school-classes--375.png" alt="Classes, school-wide after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Platform admin console</h2>
+  <p class="meta">platform-console &middot; state <code>populated</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/platform-console--1440.png" alt="Platform admin console after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/platform-console--375.png" alt="Platform admin console after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Activation queue</h2>
+  <p class="meta">platform-activations &middot; state <code>populated</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/platform-activations--1440.png" alt="Activation queue after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/platform-activations--375.png" alt="Activation queue after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+<section>
+  <h2>Pipeline and corpus health</h2>
+  <p class="meta">platform-pipeline &middot; state <code>populated</code> &middot; new in the redesign</p>
+  <div class="grid">
+    <div class="none">no before &middot; this screen did not exist</div>
+    <figure><img src="after/platform-pipeline--1440.png" alt="Pipeline and corpus health after the redesign, desktop"><figcaption>after &middot; 1440</figcaption></figure>
+    <div class="none">no before</div>
+    <figure><img src="after/platform-pipeline--375.png" alt="Pipeline and corpus health after the redesign, mobile"><figcaption>after &middot; 375</figcaption></figure>
+  </div>
+</section>
+</body>
+</html>
