@@ -7791,3 +7791,162 @@ auth) / both builds / pre-commit / 31 Python token+constant tests: green.
 e2e: **still blocked, B4**. Visual round: 16 captures across 2 registered
 sub-surfaces, all distinct, console errors only from the deliberately-failing
 states.
+
+---
+
+## D4.8 — Phase 4, surface 9: Marketing / landing
+
+### The headline: the marketing page had no reader
+
+`/student/landing` sat inside `studentRoute`, which `App.tsx` wrapped in
+`RequireAuth allowedRoles={["student"]}`. Following that through:
+
+- a signed-out visitor, the *entire audience* of a marketing page, was
+  redirected to `/login`;
+- a signed-in **teacher** was redirected to `/teacher`, so the page whose own
+  eyebrow reads "For CAIE teachers and their students" was unreachable by one
+  of the two audiences it names;
+- `/` sent every signed-out visitor to `/login` too, so the product had **no
+  public page of any kind**;
+- and the one reader who could reach it, a signed-in student, is the person
+  who least needs selling. They saw it wrapped in the app shell: sidebar,
+  breadcrumb trail, streak pill, and a "Correct a paper" header CTA sitting
+  directly above a hero that says "Mark a paper".
+
+The part worth recording is that this was **known and half-fixed**. D1.1's note
+in `portals/student/data.ts` calls it "the marketing page, orphaned inside the
+authenticated app" and removes its *nav entry* — which fixed the symptom a
+student saw and left the page with no reader at all. A route removed from the
+nav is invisible; a route removed from the nav *and* behind an auth guard for
+the wrong role is dead.
+
+Nothing could have caught it. Typecheck passed, lint passed, the route rendered
+correctly for the one person who did not need it, and the audit reached it by
+grep. A guard placed around the wrong subtree is invisible to every gate this
+build runs, which is why the fix ships with `tests/unit/marketing.test.ts`
+asserting which top-level routes are public and which are guarded, in both
+directions.
+
+**IA change (REDESIGN-MISSION §1 permits, §7 requires documenting):** a new
+`portals/marketing/` lane with its own public frame; `/landing` mounted at the
+top level with no guard; `/` renders it for a signed-out visitor and still
+redirects a signed-in one to their portal; `/student/landing` stays mounted as
+a redirect so saved links, D1.1's explicit condition and `navigation.test.ts`
+all keep working.
+
+### The second finding: the audit deleted the numbers and left the sentences
+
+DESIGN-AUDIT C1/C2/C3 were closed in Phase 2. **Six fabrications were still
+live on this page**, each verified against the backend one at a time rather
+than assumed:
+
+1. `cardMeta` read "marked in 41s" — the *exact figure* C1 deleted from the
+   proof band for having no source, still standing four sections up the same
+   file.
+2. The hero footnote read "Free for every student of a partnered teacher - No
+   card to start". PRODUCT.md:105 lists partner schools among the things that
+   must not be fabricated, and this promised both a partner programme and a
+   billing arrangement one screen above the placeholder saying pricing is
+   undecided. That is C2's fabrication, in prose.
+3. "QR attendance with face or 2FA check" — there is no QR code, no facial
+   check and no 2FA anywhere in the repository, and
+   `lemely/web/schemas_teacher.py:7` records attendance itself as a screen
+   field with **no backend source**.
+4. "Lesson retention down to the replayed minute" — same file, same line:
+   `retention` is structurally empty by construction.
+5. "Results by WhatsApp the moment marking ends" — WhatsApp appeared nowhere
+   in the product except this sentence.
+6. "Course payments in the same place" — PRODUCT.md:74 puts payment processing
+   out of scope outright.
+
+Every bullet now traces to a shipped route and carries that module in a comment
+beside it. `tests/unit/marketing.test.ts` pins the ten banned claims literally,
+because the failure mode is not a wrong number, it is a plausible sentence
+about a feature nobody built.
+
+Two smaller honesty corrections in the same pass: the hero body said Lemely
+"pulls the official mark scheme", which B1 established it cannot do (there is
+no download path; `resolve_mark_scheme` reads an uploaded sibling PDF or a
+parsed cache), and the hero's result card showing 38/40 now carries an
+**Example** tag inside the card, because the product has no customers whose
+result it could be.
+
+### What the capture round found that reading could not
+
+- **The page had two left edges.** `Section` took a `wide` prop, so the hero
+  and proof band sat at 1280 and the loop, pillars and close at 1200, jogging
+  40px on alternate sections. §13 gives the Persuade lane one container.
+- **Three proof stats in a two-column grid** left the third beside an empty
+  cell, a hole in the middle of the one band that has to look considered.
+- **`ruled-bg` drew nothing.** The three loop cards are opaque
+  `--paper-raised` and cover every pixel of their parent, so the texture
+  existed in the class list and nowhere on screen. One step along from the
+  shape `utilityExistence.test.ts` catches: the rule *is* emitted, it is simply
+  painted over. Removed rather than kept as a claim in the markup.
+- **The Parents link was hidden below 640px** — on the phone, for the login
+  route whose entire selling point is that a phone number is the whole of it.
+- Both hero CTAs pointed at `/login`. The secondary now scrolls to the teacher
+  case on the page, which is what its label promises and the only destination
+  that honestly exists.
+
+### The capture harness needed two corrections, and made both of them itself
+
+The duplicate detector failed the first round: six "scroll position" states
+were six copies of one image, because `fullPage` captures the document without
+scrolling. The second round then failed with `full == reduced-motion` — which
+was **correct behaviour** the detector cannot express, since a reduced-motion
+reader sees the same settled page.
+
+Both are now assertions rather than pictures, which is stronger in each case:
+
+- `/` is verified to render the landing page for a signed-out visitor. An
+  image proves nothing about which URL produced it.
+- Reduced motion is verified to render the **foot of the page opaque without
+  scrolling at all**. `Reveal` starts every section at `opacity: 0`, so the
+  failure mode of getting this wrong is not too much movement, it is a blank
+  page for the reader least able to tolerate one.
+
+The ordinary capture now scrolls the page before the shutter, because the
+first `full` image photographed four blank sections and would have read as
+evidence.
+
+### New capability
+
+- **`components/ui/reveal.tsx`** — the scroll-entry motion DESIGN.md §9 and
+  REDESIGN-MISSION §4 both specify and **nothing in the product implemented**.
+  `lm-screen` is a different thing: it fades a whole route in once on mount, so
+  for content below the fold the animation finishes before anyone arrives.
+  IntersectionObserver only, transform/opacity only, reduced-motion read in JS
+  at mount (a media query that skips the transition while leaving the element
+  at `opacity: 0` is exactly how a page ends up permanently invisible), and a
+  fallback to visible when the observer is missing — the failure to avoid is
+  the blank page, not the unanimated one.
+- **`src/routes.tsx`** — the route table, split out of `App.tsx`.
+  `createBrowserRouter` touches `document` at import, and `vitest.config.ts`
+  runs the node environment on purpose, so routing facts could previously only
+  be checked by reading the file as text. That is how the guard defect above
+  survived. `App.tsx` is now one line.
+
+### D4.8 (the decision) — does the design gallery ship?
+
+`/student/directions` is an internal A/B/C gallery, reachable by any signed-in
+student, showing mock data, with no nav entry. Same shape as the kit preview,
+which Phase 2 moved behind its own Vite entry precisely so the product could
+never ship it. Sent to the steering channel with a 30-minute timeout and
+default **A, move it to `web/dev-previews/`**. Not blocking.
+
+It was migrated in place either way, and while migrating it two things
+surfaced: every heading was `font-serif` (D4.1's non-token, so the screen whose
+job is to demonstrate typography was demonstrating Georgia), and **direction C
+is now ruled out by the design system it is illustrating** — DESIGN.md §3.1
+bans a dark panel inside an app screen. Each treatment now renders what became
+of it, which is the one thing a gallery has to say and this one never did.
+
+### Gates
+
+typecheck / lint / **1,061 unit (+48)** / check:copy **14** (flat; none in the
+marketing lane) / both builds / pre-commit / 31 Python token+constant tests:
+green. No horizontal scroll at 320 / 375 / 414 / 768 / 1024 / 1440.
+e2e: **still blocked, B4** (port 8000 re-verified occupied this session).
+Visual round: 4 captures plus 4 in-harness assertions, all distinct, zero
+console errors.

@@ -179,3 +179,51 @@ done, that is the point at which Phase 4 genuinely blocks.
 
 Inbound topic polled immediately before sending: still no message from the
 human, ever.
+
+---
+
+## 2026-08-14 — Phase 4, surface 9 (marketing / landing)
+
+**IN** — nothing. Polled at the surface boundary
+(`?poll=1&since=1786629365`); the response was empty. The inbound topic has
+still never carried a message from the human.
+
+**OUT** — DECISION **D4.8** (30-minute timeout, default A), plus the surface
+milestone notice.
+
+**D4.8.** Should the internal design-directions gallery ship in the product?
+`/student/directions` is an A/B/C gallery of result-header treatments, showing
+mock data, reachable by any signed-in student, with no nav entry. It is the
+same shape as the kit preview, which Phase 2 moved to `web/dev-previews/`
+behind its own Vite entry so the product could never ship it.
+
+- **A** — move it to `web/dev-previews/`, out of the product route table.
+- **B** — leave it mounted at `/student/directions`.
+- **C** — delete it.
+
+**Default A, 30 minutes.** It carries a default because there is a sane one:
+the project has already made this exact call once, for the kit preview, and A
+is what it decided. Migrated to the Study Notebook in place either way, so
+neither answer leaves a half-done surface.
+
+**No other DECISION was raised.** Everything else this surface found was the
+code disagreeing with something already written down, not a judgement call:
+
+- The landing page being unreachable is an IA defect, and §1 permits IA changes
+  outright. `portals/student/data.ts` had already named it ("orphaned inside
+  the authenticated app") without fixing it.
+- The six fabrications are PRODUCT.md's must-not-fabricate list being broken.
+  Removing them needs nobody's permission; **inventing replacements would
+  have**, which is why every replacement bullet cites the router that
+  implements it.
+- The dark proof band using `bg-ink` rather than `--paper-inverse`, the missing
+  scroll-entry motion, and `font-serif` are all DESIGN.md sections the code
+  disagreed with.
+
+**D1.6 remains open and undefaulted.** One surface from the end of Phase 4.
+After 404/misc, admin views are the only thing left, and that is the point at
+which Phase 4 genuinely blocks rather than proceeds — as flagged when it was
+re-asked on 2026-08-14T02:45.
+
+**B4 still blocks the e2e gate.** Port 8000 was re-checked this session and is
+still held. Unchanged, still one command from you, still not killed unattended.

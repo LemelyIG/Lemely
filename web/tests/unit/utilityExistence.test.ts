@@ -47,6 +47,12 @@ import { describe, expect, it } from "vitest"
  */
 
 const SCANNED_FILES = [
+  // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.
+  "src/portals/marketing/index.tsx",
+  "src/portals/marketing/Landing.tsx",
+  "src/components/ui/reveal.tsx",
+  "src/portals/student/screens/Directions.tsx",
+  "src/routes.tsx",
   // Phase 4, surface 1 — the student dashboard.
   "src/portals/student/screens/Overview.tsx",
   // Phase 4, surface 2 — the correct-a-paper flow.

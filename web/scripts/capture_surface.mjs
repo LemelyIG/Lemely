@@ -1047,7 +1047,139 @@ const PARENT_LOGIN_STATES = {
   },
 }
 
+/*
+ * A marketing page has no loading, empty or error branch to photograph, so
+ * this surface's states are not request outcomes like every other one here.
+ *
+ * The first attempt made them scroll positions, and the duplicate detector
+ * failed the round — correctly. Captures are `fullPage`, so scrolling changes
+ * nothing about the image, and six "sections" were six copies of one picture.
+ * That is precisely the "looks like evidence" failure the detector exists for,
+ * and it caught it on the first run.
+ *
+ * What genuinely renders differently is: the whole page, the same page with
+ * motion off, and the viewport-cropped top where the sticky header sits over
+ * paper.
+ *
+ * `/` is deliberately NOT a state. It renders the same component as
+ * `/landing`, so its capture would be byte-identical — which is the fix
+ * working, and something the duplicate detector cannot distinguish from the
+ * fix being broken. It is verified in `act` as an assertion instead, which is
+ * the stronger check anyway: an image of the right page proves nothing about
+ * which URL produced it.
+ */
+const LANDING_STATES = {
+  full: { checkRoot: true, checkReducedMotion: true },
+  /* Viewport-only, for the one `backdrop-blur` in the product. */
+  header: { viewportOnly: true },
+}
+
 const SURFACES = {
+  /* ── Marketing (P4.9, surface 9) ──────────────────────────────────────── */
+
+  /*
+   * `session: null`, and that is the entire point of the surface. Captured
+   * signed-out because signed-out is who the page is now for: until P4.9 it
+   * was mounted behind a student-only guard, where a session was the only way
+   * to see it at all.
+   */
+  landing: {
+    prefix: "landing",
+    route: "/landing",
+    states: LANDING_STATES,
+    session: null,
+    fullPage: (state) => !state.viewportOnly,
+    async stub() {
+      // Nothing to stub. The page makes no API call, which is itself worth
+      // knowing: a marketing page that needed the backend to render would be
+      // a marketing page that goes down with it.
+    },
+    async act(page, state) {
+      if (state.checkReducedMotion) {
+        /*
+         * The reduced-motion path, asserted rather than photographed.
+         *
+         * It WAS a capture state, and the duplicate detector removed it: once
+         * the ordinary capture scrolls the page (see below), the two settle to
+         * byte-identical images — which is the correct behaviour and something
+         * no picture can distinguish from the feature being absent.
+         *
+         * The assertion is stronger anyway. `Reveal` starts every section at
+         * `opacity: 0` and clears it on intersection, so the failure mode of
+         * getting reduced motion wrong is not a page that moves too much, it
+         * is a **blank page** for the reader least able to tolerate one. This
+         * loads with the preference set, scrolls nothing at all, and requires
+         * the last section on the page to already be opaque.
+         */
+        await page.emulateMedia({ reducedMotion: "reduce" })
+        await page.goto(`${BASE}/landing`, { waitUntil: "domcontentloaded" })
+        await page.waitForTimeout(900)
+        const opacity = await page.evaluate(() => {
+          const headings = Array.from(document.querySelectorAll("h2"))
+          const last = headings[headings.length - 1]
+          if (!last) return null
+          // The Reveal wrapper is the ancestor carrying the opacity.
+          let node = last
+          for (let i = 0; i < 6 && node.parentElement; i += 1) {
+            const o = Number(getComputedStyle(node).opacity)
+            if (o < 1) return o
+            node = node.parentElement
+          }
+          return 1
+        })
+        if (opacity === null || opacity < 1) {
+          throw new Error(
+            `reduced motion left the foot of the page hidden (opacity ${opacity}); a reduced-motion reader would see a blank page`,
+          )
+        }
+        console.log("verified: reduced motion renders the whole page without scrolling")
+        await page.emulateMedia({ reducedMotion: "no-preference" })
+      }
+
+      if (state.checkRoot) {
+        /*
+         * The surface's headline fix, asserted rather than photographed. Until
+         * P4.9, `/` sent every signed-out visitor to `/login` and the landing
+         * page sat behind a student-only auth guard, so the product had no
+         * public page at all. If that regresses, this throws and the round
+         * fails — which is more than any image of this page could tell you,
+         * because the image would look identical either way.
+         */
+        await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded" })
+        await page.waitForTimeout(900)
+        const heading = await page.locator("h1").first().innerText()
+        if (!heading.includes("Thirty papers")) {
+          throw new Error(
+            `/ did not render the landing page for a signed-out visitor (h1 was ${JSON.stringify(heading)})`,
+          )
+        }
+        console.log("verified: / renders the landing page for a signed-out visitor")
+        await page.goto(`${BASE}/landing`, { waitUntil: "domcontentloaded" })
+        await page.waitForTimeout(1400)
+        /*
+         * Scroll the whole page before the shutter, and the first round proved
+         * why. `fullPage` captures the document without scrolling it, so
+         * `Reveal`'s IntersectionObserver never fires for anything below the
+         * fold and every section after the proof band photographed as blank
+         * paper. The image was not evidence of a broken page — a reader who
+         * scrolls sees all of it — but it was not evidence of a working one
+         * either, and a capture round that photographs an empty page is the
+         * failure mode the duplicate detector exists to prevent, arriving by a
+         * different door.
+         */
+        await page.evaluate(async () => {
+          const step = window.innerHeight
+          for (let y = 0; y < document.body.scrollHeight; y += step) {
+            window.scrollTo(0, y)
+            await new Promise((r) => setTimeout(r, 120))
+          }
+          window.scrollTo(0, 0)
+        })
+        await page.waitForTimeout(900)
+      }
+    },
+  },
+
   /* ── Auth (P4.7, surface 8) ───────────────────────────────────────────── */
 
   login: {

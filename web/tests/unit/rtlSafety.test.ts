@@ -21,6 +21,12 @@ import { describe, expect, it } from "vitest"
  */
 
 const RTL_CLEAN_FILES = [
+  // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.
+  "src/portals/marketing/index.tsx",
+  "src/portals/marketing/Landing.tsx",
+  "src/components/ui/reveal.tsx",
+  "src/portals/student/screens/Directions.tsx",
+  "src/routes.tsx",
   // Phase 4, surface 5 — the teacher portal.
   "src/portals/teacher/index.tsx",
   "src/portals/teacher/components/StatCard.tsx",

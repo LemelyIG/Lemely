@@ -28,37 +28,6 @@ import type { Crumb } from "@/components/ui/breadcrumbs"
 /** Semantic colour keys used by data-viz rows/bars, resolved to tokens per use. */
 export type VizColor = "accent" | "ok" | "warn" | "t1" | "t2" | "t3"
 
-/* ── MCQ answer grid (Paper 1) ─────────────────────────────────────────── */
-
-const studentAnswers = [
-  "A", "A", "A", "D", "C", "D", "A", "A", "B", "C",
-  "B", "B", "D", "A", "A", "C", "A", "C", "B", "A",
-  "D", "A", "A", "A", "C", "D", "C", "A", "A", "D",
-  "D", "D", "A", "C", "B", "C", "B", "B", "A", "B",
-] as const
-
-// The scheme differs from the student on Q2 and Q34 (two dropped marks).
-const expectedAnswers = studentAnswers.map((a, i) =>
-  i === 1 ? "B" : i === 33 ? "D" : a,
-)
-
-export interface McqCell {
-  id: number
-  ans: string
-  correct: boolean
-  title: string
-}
-
-export const mcq: McqCell[] = studentAnswers.map((ans, i) => {
-  const correct = ans === expectedAnswers[i]
-  return {
-    id: i + 1,
-    ans,
-    correct,
-    title: `Q${i + 1} - you: ${ans} - scheme: ${expectedAnswers[i]}`,
-  }
-})
-
 /* ── Sidebar nav groups ─────────────────────────────────────────────────── */
 
 export interface NavItem {
@@ -296,105 +265,17 @@ export const reassure: { t: string }[] = [
 
 /* ── Landing ────────────────────────────────────────────────────────────── */
 
-export const landingHero = {
-  eyebrow: "For CAIE teachers and their students",
-  titleTop: "Thirty papers marked",
-  titleBottom: "before Sunday lunch.",
-  body: "Lemely reads a scanned paper, identifies the session and variant, pulls the official mark scheme, and marks it question by question - showing its working, and its confidence, for every mark it gives.",
-  primaryCta: "Mark a paper free",
-  secondaryCta: "For centres & teachers",
-  footnote: "Free for every student of a partnered teacher - No card to start",
-  cardMeta: "0625/12 - May/June 2020 - marked in 41s",
-  cardScore: "38",
-  cardMax: "/40",
-  cardGrade: "A",
-  cardNote: "Two marks dropped, both on interpreting a distance-time gradient. A worksheet of twelve similar questions is already waiting.",
-}
-
-export interface Pillar {
-  kicker: string
-  title: string
-  body: string
-  bullets: string[]
-}
-
-export const pillars: Pillar[] = [
-  { kicker: "Student", title: "Feedback that names the next move", body: "Every dropped mark is traced to a mark point and a topic, then turned into a worksheet of questions that look exactly like it.", bullets: ["Predicted grade against real boundaries", "Classified worksheets and flashcards", "A study plan that rewrites itself"] },
-  { kicker: "Teacher", title: "A group you can see through", body: "At-risk students surface by trajectory. Class-wide weak topics surface before the exam, not after it.", bullets: ["Marking that takes minutes, not Sundays", "Lesson retention down to the replayed minute", "QR attendance with face or 2FA check"] },
-  { kicker: "Parent", title: "One honest answer", body: "A phone number is the whole login. Grades, attendance and payments, without a parent-teacher meeting.", bullets: ["Results by WhatsApp the moment marking ends", "Missed-attendance alert one hour after class", "Course payments in the same place"] },
-]
-
-export const landingProofIntro = {
-  title: "Accuracy you can argue with",
-  body: "Multiple choice is marked deterministically - no model involved. Theory answers are marked against the official mark points, and every mark carries a confidence score. Anything below threshold goes to the teacher rather than being guessed.",
-}
-
-export interface ProofStat {
-  n: string
-  l: string
-}
-
 /*
- * Every number here must be traceable to a constant in this repo. Nothing on
- * this band is a measurement, an average, or a projection — those need a
- * published method before they can be shown to a prospective user.
+ * The landing block moved to `portals/marketing/data.ts` in P4.9, along with
+ * the MCQ answer-grid fixture that only the hero card ever consumed.
  *
- * Removed 2026-08-13 (DESIGN-AUDIT C1) because they had no source at all:
- *   "41s"   median time to mark a 40-question paper
- *   "19.5h" saved per teacher, per month
- * The accuracy harness (`reports/accuracy-real/REPORT.md`) is n=1 per paper
- * across two papers, which is a test result, not a marketing statistic, so it
- * is deliberately not substituted in here either.
- *
- * Also corrected: the confidence floor read "0.70", which was simply the wrong
- * number — the human-review threshold is 0.90 and is not operator-tunable.
+ * It was never student data. It lived here because the marketing page was
+ * mounted inside this portal, behind the student auth guard, where nobody it
+ * was written for could read it — the finding written up in
+ * `portals/marketing/index.tsx`. Nothing in the student portal imported any of
+ * it, which is the tell: a data module for a page that belongs to a different
+ * lane. Do not add marketing copy back to this file.
  */
-export const proof: ProofStat[] = [
-  // `lemely/core/correction.py::correct_mcq_answers` compares against the
-  // official answer key deterministically; `lemely/io/integrity.py` skips both
-  // integrity checks for MCQ, so no Gemini call is made on this path at all.
-  { n: "0", l: "model calls on multiple choice" },
-  // `lemely/core/schemas.py::REVIEW_CONFIDENCE_THRESHOLD`.
-  { n: "0.90", l: "confidence floor before a teacher is asked to look" },
-  // `GeminiSettings.escalation_confidence_threshold`, lemely/runtime/config.py.
-  { n: "0.80", l: "confidence below which a stronger model re-marks first" },
-]
-
-export const pillarsIntro = {
-  title: "One engine, three people served",
-  body: "The same corrected paper becomes a study plan for the student, a teaching signal for the teacher, and a plain answer for the parent who asks \"how is she doing?\"",
-}
-
-export interface PricingPlan {
-  name: string
-  price: string
-  who: string
-  dark: boolean
-  feats: string[]
-  cta: string
-  ctaAccent: boolean
-}
-
-/*
- * Emptied 2026-08-13 (DESIGN-AUDIT C2). The three tiers shipped here carried
- * four separate fabrications on two lines: a price ("EGP 180"), a trial that
- * has never existed ("Start 14-day trial"), a partner-teacher free tier, and a
- * marketplace revenue-share arrangement. PRODUCT.md records pricing as
- * explicitly undecided, payments as out of scope, and partner schools among
- * the things that must not be fabricated.
- *
- * Kept as an empty list rather than deleted outright so the section keeps its
- * slot on the page: Landing renders `pricingPlaceholder` while this is empty,
- * and the moment real pricing is decided it goes back in here with no layout
- * work. The `PricingPlan` shape above is retained for that reason.
- */
-export const pricing: PricingPlan[] = []
-
-export const pricingPlaceholder = {
-  label: "Not announced",
-  title: "We have not set a price yet",
-  body: "Lemely is still being built, and what it costs is genuinely undecided. When there is a plan to show you it will appear here. There is no trial to sign up for in the meantime.",
-}
 
 /* ── Directions (A/B/C) ─────────────────────────────────────────────────── */
 

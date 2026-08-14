@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
+import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
@@ -77,7 +77,9 @@ const FlashcardDecks = lazy(() =>
 const FlashcardReview = lazy(() =>
   import("./screens/flashcards/FlashcardReview").then((m) => ({ default: m.FlashcardReview })),
 )
-const Landing = lazy(() => import("./screens/Landing").then((m) => ({ default: m.Landing })))
+// The Landing screen left this portal in P4.9 (see the redirect below). Its
+// lazy import went with it: a chunk nothing in this subtree renders is a
+// chunk the build still emits and the router still resolves.
 const Directions = lazy(() => import("./screens/Directions").then((m) => ({ default: m.Directions })))
 const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
 
@@ -477,7 +479,16 @@ export const studentRoute: RouteObject = {
     { path: "practice/print/:assignmentId", element: <PracticePrint /> },
     { path: "flashcards/:subjectCode", element: <FlashcardDecks /> },
     { path: "flashcards/review/:subjectCode", element: <FlashcardReview /> },
-    { path: "landing", element: <Landing /> },
+    /*
+     * P4.9 moved the marketing page out of this portal and onto a public
+     * route. The path stays mounted, as a redirect, for three reasons that
+     * each matter on their own: D1.1's explicit condition was that these
+     * routes survive their nav entries; `tests/unit/navigation.test.ts`
+     * asserts `/student/landing` is still a mounted, deep-linkable path; and
+     * any link anyone has already saved should land on the page rather than
+     * on a 404. `replace` so the redirect does not sit in the back stack.
+     */
+    { path: "landing", element: <Navigate to="/landing" replace /> },
     { path: "directions", element: <Directions /> },
   ],
 }
