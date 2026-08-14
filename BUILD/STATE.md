@@ -30,9 +30,65 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
 CURRENT PHASE:      **6 IN PROGRESS. 6.1 (`adapt`), 6.2 (`harden`), 6.3
-                    (`optimize`) and 6.4 (`accessibility`) DONE.** 6.5 remains.
+                    (`optimize`), 6.4 (`accessibility`) DONE, and 6.5
+                    (`strategic omissions`) is 4 of 5 items done.**
 CURRENT SURFACE:    Phase 6 is a sweep, not a surface.
-NEXT ACTION:        **BLOCKED — B5, now for the second session running. `/tmp`
+NEXT ACTION:        **B5 IS CLEARED and D6.7 is committed.** `/tmp` is free,
+                    the shell works, and the first thing this session did was
+                    run every gate D6.7 had never been through and commit it
+                    (`f313a9a`): 107 Python token tests, 1,388 web unit tests,
+                    typecheck, lint 0 errors, both builds, check:copy 0,
+                    pre-commit all-files. Nothing was rebuilt; the tree was
+                    committed as B5 asked.
+
+                    **6.5 is 4 of 5 done** (`fd6877f`, `7aac879`). Titles and
+                    meta, the favicon and icons, and the manifest colours all
+                    shipped; the 404 and the skip link were already done in
+                    P3.1/P4.10 and were VERIFIED rather than assumed
+                    (`SkipLink` has call sites in all six frames). See D6.9.
+
+                    **The one item left is legal links, open behind D6.8**
+                    (sent 2026-08-14, 60-minute timeout, default **A**: one
+                    factual promise-free "How Lemely handles your data" page,
+                    no ToS). If the timeout has passed with no reply, apply A
+                    and log it. The reasoning is in D6.8 and is worth reading
+                    before writing a word of that page: facts about this
+                    product can be derived from this repo, **promises cannot**,
+                    and a policy is mostly promises.
+
+                    **Two findings from 6.5 bind on Phase 7.**
+
+                    - **A defect can live where no gate in this repo can
+                      reach.** The favicon was the build-era `#863bff` purple
+                      mark three phases after Phase 2 replaced the identity, in
+                      the exact colour family §4 bans, and the PWA manifest
+                      painted a near-black address bar over a paper page on all
+                      48 routes. Both are read by an operating system, not by a
+                      browser running our code: no test opens a PNG and no
+                      screenshot captures browser chrome. D6.4's
+                      `registerSW.js` was the same shape. Ask what renders our
+                      product that is not our code.
+                    - **The sentence that turned out not to be true.** Writing
+                      a meta description meant restating the parent sign-in
+                      screen's "we'll text you a code", so it was checked:
+                      `deps.py` wires `sms=MockSmsProvider()` unconditionally
+                      and that provider LOGS the code. **No deployment of this
+                      code can send an SMS**, on the only route a parent has.
+                      Not fixed (it needs a gateway and credentials from the
+                      human) and deliberately not carried into the new
+                      description. D6.9 §6, and an ntfy at high priority.
+
+                    After 6.5: Phase 7 (final QA and report). Note the adapt
+                    gate has NOT been re-run since 6.4 — nothing in 6.5 moved a
+                    layout (metadata, binaries and build config only), so it
+                    was not spent, but Phase 7 should run it once.
+
+                    ---
+
+                    **Historical, from the two blocked sessions (B5 is now
+                    RESOLVED; kept because the lesson outlived it):**
+
+                    **BLOCKED — B5, now for the second session running. `/tmp`
                     is 100% full and no Bash command can run at all.** One
                     `rm -rf` from the human unblocks it; the exact command, the
                     measured consumers and the evidence that none of them is
@@ -299,8 +355,8 @@ NEXT ACTION:        **BLOCKED — B5, now for the second session running. `/tmp`
                       migrated; 17 kit components still name build-era aliases
                       in their own source, none in MIGRATED_FILES, so no gate
                       reads them. Phase 6 hardening.
-LAST UPDATED:       2026-08-14 (session 2, blocked on B5 from its first Bash
-                    call; no gate ran and no product file changed)
+LAST UPDATED:       2026-08-14 (session 3: B5 cleared, D6.7 committed with
+                    every gate green, Phase 6.5 4/5 done, D6.8 open)
 LAST STEERING TS:   1786723759   (poll http://home-server:7532/lemely-ErBPK7TIRGD1sQP5-in/json?poll=1&since=<this>)
                     NOTE: the human has now replied five times in this mission.
                     2026-08-14 earlier: D1.6 (build the admin screens fully and

@@ -475,8 +475,8 @@ today it happens to reuse the right process because nothing else holds the port.
 
 ## B5 — `/tmp` is 100% full, so no Bash command can run at all
 
-**Raised:** 2026-08-14 · **Status:** **OPEN — needs one command from the human.**
-**Blocks:** everything after D6.7. Phase 6.5 cannot start.
+**Raised:** 2026-08-14 · **Status:** **RESOLVED 2026-08-14 (session 3).**
+**Blocked:** everything after D6.7, for two whole sessions.
 
 ### What happens
 
@@ -581,3 +581,35 @@ LAN host. So this file is the only channel that still worked, which is exactly
 what §10's file fallback is for — but §10 assumes the file is a *mirror* of an
 ntfy message, and here it is the original. Worth a real fix later: a reporting
 path that does not depend on the same shell as the work.
+
+
+### RESOLVED — 2026-08-14, session 3
+
+`/tmp` is free and Bash works. The first command of the session was a
+deliberate re-test rather than an assumption (`true; echo ok; df -h /tmp`), and
+it returned normally.
+
+The recovery ran in the order this section asked for, and nothing was rebuilt:
+
+1. `pre-commit run --all-files`, then the D6.7 commit (`f313a9a`). The tree was
+   exactly as session 1 left it: `--ink-faint`, `DESIGN.md` §3.2 and the parsed
+   token gate, all verified and none of them committed.
+2. The gates that had never run on it: 107 Python token tests, **1,388 web unit
+   tests**, typecheck, lint (0 errors), both builds, `check:copy` 0. All green.
+   `--ink-faint` has 334 call sites and was the change most likely to move a
+   rendered pixel in the whole of Phase 6; nothing moved.
+3. Phase 6.5.
+
+The three stranded scratch files were **both** removed and left ignored. Session
+2 could only do the ignore half and said so; the `rm` half is now done too, and
+the `.gitignore` rule stays, because an ignore rule survives whoever runs the
+next recovery and a delete does not.
+
+**The finding that outlives the blocker** is the one session 2 recorded: the
+outbound steering channel is `curl` to a plain-HTTP LAN host, i.e. a Bash
+command, so **the channel that reports a blocker shares a single point of
+failure with the work it reports on**. Two sessions could not send a single
+ntfy. `BUILD/STEERING.md` and this file were the only channels that survived,
+which is what §10's file fallback is for, except §10 assumes the file mirrors
+an ntfy message and there it *was* the message. Still worth a real fix: a
+reporting path that does not need the same shell.
