@@ -29,8 +29,11 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      **6 COMPLETE (pending the adapt re-run's result, see below).
-                    6.1-6.4 done; 6.5 (`strategic omissions`) is 5 of 5.**
+CURRENT PHASE:      **6 COMPLETE.** 6.1-6.4 done; 6.5 (`strategic omissions`)
+                    5 of 5, committed `a20b6c8` with every gate green,
+                    including a full `adapt` re-run at **765 page-states across
+                    36 surfaces, 0 findings** (artifact committed at
+                    `reports/redesign/p6-adapt/findings.json`).
 CURRENT SURFACE:    Phase 6 is a sweep, not a surface.
 NEXT ACTION:        **Phase 7 (final QA and report).**
 
