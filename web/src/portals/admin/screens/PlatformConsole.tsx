@@ -138,7 +138,23 @@ function SpendPanel({ spend }: { spend: Spend }) {
 /** Throughput and the two queues, which is what "is anything stuck?" means. */
 function WorkPanel({ counts }: { counts: PlatformCounts }) {
   const failed = counts.uploadsByStatus.failed ?? 0
-  const inFlight = (counts.uploadsByStatus.pending ?? 0) + (counts.uploadsByStatus.processing ?? 0)
+  /*
+   * `processing` alone. This used to add `pending`, and until P6.2 nothing in
+   * the product ever wrote `processing` — so the figure under "Uploads in
+   * flight" was entirely `pending`, which is the status of every scan a student
+   * ever uploaded and then abandoned. Nothing clears it, so the number could
+   * only grow, and the one question this panel exists to answer ("is anything
+   * stuck?") was answered by a counter that went up and never came down.
+   *
+   * `processing` is now written for the duration of a run and cleared by every
+   * exit from it, so this is a live queue depth: it returns to zero when the
+   * marking stops, which is exactly what makes a non-zero reading mean
+   * something. `pending` gets its own figure below rather than being folded in,
+   * because "stored but never marked" is a real thing to know and a different
+   * thing to know.
+   */
+  const inFlight = counts.uploadsByStatus.processing ?? 0
+  const neverMarked = counts.uploadsByStatus.pending ?? 0
 
   return (
     <section className="flex flex-col gap-3" aria-label="Marking and queues">
@@ -160,12 +176,16 @@ function WorkPanel({ counts }: { counts: PlatformCounts }) {
           note="Marks the system was not confident enough to apply alone."
         />
         <Figure
-          eyebrow="Uploads in flight"
+          eyebrow="Being marked now"
           value={inFlight}
+          // Two facts, and the failed one leads because it is the one that
+          // needs somebody. `neverMarked` is stated rather than folded into the
+          // figure: a stored scan nobody marked is not work in progress, and
+          // reading it as though it were is what this panel used to do.
           note={
             failed > 0
-              ? `${failed} failed and are waiting for someone to look.`
-              : "Nothing has failed."
+              ? `${failed} failed and are waiting for someone to look. ${neverMarked} more were uploaded and never marked.`
+              : `Nothing has failed. ${neverMarked} uploads were stored and never marked.`
           }
           // A labelled chip carries the alarm; the note stays readable and the
           // link stays the accent. The first draft coloured the whole sentence

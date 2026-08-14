@@ -269,6 +269,22 @@ const CORRECT_STATES = {
   },
   /** The stream ends without a result. Used to be silent; now it is a failure. */
   stalled: { pickScan: true, mark: true, correct: { sse: STALLED_STREAM } },
+  /*
+   * P6.2, the two states a reader reaches without doing anything: a run that was
+   * already going when the page loaded. Neither is reachable by acting on this
+   * screen, which is the point — they are what a reload, a backgrounded tab, or
+   * a dropped signal leaves behind, and before P6.2 the screen had no idea any
+   * of it had happened.
+   *
+   * Note what `recovered` must NOT show: the three-stage panel. The SSE frames
+   * go to a process-global bus with no replay, so this reader knows the run is
+   * going and nothing else, and ticking stages off from a status word would be
+   * the invented progress S-14 rules out by name. The capture is the evidence
+   * for that, since it is a claim about what is on screen.
+   */
+  recovered: { activeRun: { status: "processing", stale: false } },
+  /** The same run, old enough that nobody is going to finish it. */
+  "recovered-stale": { activeRun: { status: "processing", stale: true } },
 }
 
 /* ── Surface 2b: the result screen the flow lands on ─────────────────────── */
@@ -979,11 +995,37 @@ const REVIEW_ITEMS = [
   { itemId: "r3", attemptId: "a3", questionResultId: null, studentId: "s3", studentDisplayName: "Mariam Adel", classId: "c2", className: "Y11 Physics B", subjectCode: null, paperNumber: null, paperVariant: null, sessionMonth: null, sessionYear: null, questionId: "2", reason: "ai_detection_flag", status: "open", createdAt: "2026-08-13T07:15:00Z", waitingHours: 5, aiAwardedMarks: null, maximumMarks: null, confidenceScore: null },
 ]
 
+/*
+ * P6.2's long-content pass, and it is aimed at a specific change rather than at
+ * "long strings generally".
+ *
+ * §6.2 asks for a long-content pass, and the adapt gate does not give one: its
+ * `badWrap` rule checks that display headers *carry* `overflow-wrap`, which is
+ * a statement about CSS, not about what a long string does to a layout. Nothing
+ * in the capture corpus had ever rendered one.
+ *
+ * This row is the one most likely to break, because P6.1 moved its `truncate`.
+ * The student link went from `block truncate` to a flex row with `min-h-11`,
+ * and on a flex container the text is an anonymous flex item that
+ * `text-overflow` has nothing to apply to — so the ellipsis was re-homed onto
+ * an inner span. A name long enough to need it is the only thing that can show
+ * whether that landed, and a name is user-supplied data: "Amina Farouk" proves
+ * nothing.
+ */
+const LONG_NAME_ITEM = {
+  ...REVIEW_ITEMS[0],
+  itemId: "r-long",
+  studentDisplayName: "Abdurrahman Muhammad Al-Sayyid Abdel-Rahman Ibrahim El-Masry",
+  className: "Y11 Physics Set A (upper), Thursday double period, Mr Okonkwo",
+}
+
 const TEACHER_REVIEW_STATES = {
   /** The queue with all three reason kinds, oldest first. */
   populated: { queue: { items: REVIEW_ITEMS } },
   /** Empty, which on this screen is good news and must read as such. */
   empty: { queue: { items: [] } },
+  /** A name and a class name far past the column they sit in. */
+  "long-content": { queue: { items: [LONG_NAME_ITEM, ...REVIEW_ITEMS.slice(1)] } },
   loading: { delayMs: 8_000 },
   error: { queue: null, status: 500 },
 }
@@ -2423,6 +2465,37 @@ const SURFACES = {
           status: 200,
           contentType: "application/json",
           body: JSON.stringify({ paperId: "capture-paper-1" }),
+        }),
+      )
+      /*
+       * P6.2's recovery read. Registered AFTER the POST route above because
+       * Playwright matches the most recently registered handler first, and
+       * `**\/api/student/uploads` would otherwise swallow these two paths.
+       *
+       * `null` is the ordinary answer and is what every other state gets: most
+       * of the time no run is going, and a screen that thought one was would
+       * lock its own form.
+       */
+      const activeRun = state.activeRun
+        ? {
+            paperId: "capture-paper-1",
+            filename: "0625_w24_qp_41.pdf",
+            startedAt: "2026-08-14T09:12:00Z",
+            ...state.activeRun,
+          }
+        : null
+      await page.route("**/api/student/uploads/active", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(activeRun),
+        }),
+      )
+      await page.route("**/api/student/uploads/capture-paper-1", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(activeRun ?? { detail: "Unknown paper" }),
         }),
       )
       await page.route("**/api/student/correct", async (route) => {

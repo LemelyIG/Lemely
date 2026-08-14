@@ -9,6 +9,7 @@ import { ErrorState } from "@/components/ui/state-views"
 import { useSaveQuizAnswer, useStudentQuizTake, useSubmitQuiz } from "@/lib/hooks/usePlacementApi"
 import type { StudentQuizQuestion, SubmitQuizResponse } from "@/lib/placementTypes"
 import { ApiError } from "@/lib/api"
+import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
 import {
   answerCacheKey,
   answerInputKind,
@@ -385,7 +386,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
       clearCache(assignmentId)
       onSubmitted(result)
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "We couldn't submit that. Try again.")
+      setSubmitError(studentSaveFailureMessage(err))
       setConfirmingSubmit(false)
     }
   }
@@ -420,7 +421,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
         ? "This test isn't yours to take."
         : error instanceof ApiError && error.status === 404
           ? "This test couldn't be found."
-          : error?.message ?? "Couldn't load this test."
+          : studentLoadFailureMessage(error)
     return (
       <>
         <h1 className="sr-only">Test in progress</h1>

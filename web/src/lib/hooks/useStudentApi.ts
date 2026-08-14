@@ -15,6 +15,7 @@ import type {
   StudentCorrectFrame,
   StudentUploadResponse,
   Subject,
+  UploadRun,
 } from "@/lib/studentTypes"
 
 /*
@@ -145,4 +146,67 @@ export function runCorrection(paperId: string): AsyncGenerator<StudentCorrectFra
     method: "POST",
     body: JSON.stringify({ paperId } satisfies CorrectRequest),
   }) as AsyncGenerator<StudentCorrectFrame>
+}
+
+/*
+ * ── Recovering a run that outlived the tab (P6.2, audit M4) ─────────────────
+ *
+ * `POST /student/correct` marks on a background thread that does not stop when
+ * the client disconnects, so a reload, a backgrounded tab, or a dropped signal
+ * loses the *reporting* on a run, never the run. These two hooks are how the
+ * screen finds it again.
+ *
+ * They are deliberately not one hook. `/uploads/active` stops naming a paper
+ * the instant it reaches a terminal status, so a client polling only that would
+ * watch its run vanish and never learn whether it was marked or failed.
+ * Discovery and polling are different questions and end differently.
+ */
+
+/**
+ * How often a recovered run is re-checked.
+ *
+ * Four seconds, not the sub-second cadence the SSE stream had. This is a
+ * fallback readout for a reader who has already lost the live one, a full mark
+ * takes minutes, and every poll is a request from a phone that may be on a bad
+ * connection — the thing this path exists to survive. Faster polling would buy
+ * a few seconds of latency on the result at the cost of the case it is for.
+ */
+const RUN_POLL_MS = 4000
+
+/** Statuses that mean the run is over, whichever way it went. */
+const TERMINAL: ReadonlySet<string> = new Set(["complete", "failed"])
+
+/**
+ * `GET /student/uploads/active` — this student's run in flight, or `null`.
+ *
+ * `null` is the ordinary answer and not an error state: most of the time
+ * nothing is being marked. Runs once on mount rather than polling, because its
+ * only job is discovery; once it has named a paper, `useUploadRun` follows it.
+ */
+export function useActiveUpload(): UseQueryResult<UploadRun | null, Error> {
+  return useQuery({
+    queryKey: ["student", "upload", "active"],
+    queryFn: () => request<UploadRun | null>("/student/uploads/active"),
+    // A run recovered from the server is stale the moment it is read, but
+    // refetching it on every window focus would fight the poll below for the
+    // same answer. The poll is the live one.
+    staleTime: RUN_POLL_MS,
+  })
+}
+
+/**
+ * `GET /student/uploads/{paperId}`, polling until the run reaches a terminal
+ * status and then stopping.
+ *
+ * `enabled` is what keeps this from running on the ordinary path: the screen
+ * passes an id only when it has recovered a run it was not itself streaming.
+ */
+export function useUploadRun(paperId: string | undefined): UseQueryResult<UploadRun, Error> {
+  return useQuery({
+    queryKey: ["student", "upload", paperId],
+    queryFn: () => request<UploadRun>(`/student/uploads/${paperId}`),
+    enabled: !!paperId,
+    refetchInterval: (query) =>
+      query.state.data && TERMINAL.has(query.state.data.status) ? false : RUN_POLL_MS,
+  })
 }

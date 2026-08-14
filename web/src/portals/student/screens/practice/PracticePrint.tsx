@@ -5,6 +5,7 @@ import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { formatQuestionTopic } from "@/components/quiz/quizTakerData"
 import { usePracticeExport } from "@/lib/hooks/usePracticeApi"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 
 /* Hallmark · pre-emit critique: P4 H4 E5 S4 R4 V4 */
 
@@ -57,7 +58,7 @@ export function PracticePrint() {
         <h1 className="sr-only">Print your practice set</h1>
         <ErrorState
           heading="Couldn't load this practice set"
-          body={error?.message}
+          body={studentLoadFailureMessage(error)}
           action={{ label: "Try again", onClick: () => void refetch() }}
           className="lm-screen"
         />

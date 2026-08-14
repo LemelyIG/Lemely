@@ -130,7 +130,7 @@ export function NotificationSettings() {
   const [savingKey, setSavingKey] = useState<NotificationPrefKey | null>(null)
   /** A failed toggle, kept against the key that failed so the message renders
    * beside its own switch rather than under the whole list. */
-  const [toggleError, setToggleError] = useState<{
+  const [toggleFailure, setToggleFailure] = useState<{
     key: NotificationPrefKey
     message: string
   } | null>(null)
@@ -159,12 +159,12 @@ export function NotificationSettings() {
 
   const handleToggle = (key: NotificationPrefKey, value: boolean) => {
     setSavingKey(key)
-    setToggleError(null)
+    setToggleFailure(null)
     // One key, never the whole object — see `useUpdateNotificationPreferences`.
     update.mutate(
       { [key]: value },
       {
-        onError: (error) => setToggleError({ key, message: settingsSaveFailureMessage(error) }),
+        onError: (error) => setToggleFailure({ key, message: settingsSaveFailureMessage(error) }),
         onSettled: () => setSavingKey(null),
       },
     )
@@ -284,7 +284,7 @@ export function NotificationSettings() {
                   // other — but "disabled" and "saving" are different facts and
                   // are now shown differently.
                   state={savingKey === toggle.key ? "loading" : undefined}
-                  error={toggleError?.key === toggle.key ? toggleError.message : undefined}
+                  error={toggleFailure?.key === toggle.key ? toggleFailure.message : undefined}
                   disabled={update.isPending && savingKey !== toggle.key}
                   onCheckedChange={(next) => handleToggle(toggle.key, next)}
                 />

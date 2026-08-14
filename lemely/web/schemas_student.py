@@ -19,6 +19,7 @@ here hard-codes the mock's demo numbers.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import ConfigDict
@@ -255,6 +256,34 @@ class StudentUploadResponse(ApiModel):
     """
 
     paperId: str
+
+
+class UploadRunDTO(ApiModel):
+    """Run state of one uploaded paper, for a reader who is not the SSE stream.
+
+    Exists because the marking run outlives the browser tab that started it.
+    ``POST /api/student/correct`` does its work on a background thread and
+    persists the attempt when it finishes, so a student who reloads mid-run has
+    not lost the marking — they have lost the only thing that was *reporting* on
+    it. This is what a reloaded screen reads instead.
+
+    It deliberately carries no per-question progress. The SSE frames are
+    published to a process-global bus with no replay, so once they are gone they
+    are gone, and a recovered screen that redrew the three-stage panel would be
+    showing ticks it invented. ``status`` is the whole of what is still known.
+
+    ``startedAt`` is meaningful only while ``status`` is ``processing``; it is
+    the moment that status was written. ``stale`` is the server's own judgement
+    on that timestamp (see ``MARKING_RUN_STALE_AFTER``), computed here rather
+    than in the client because the server owns the clock the timestamp came
+    from.
+    """
+
+    paperId: str
+    status: str
+    filename: str | None
+    startedAt: datetime | None
+    stale: bool
 
 
 class CorrectRequest(ApiModel):

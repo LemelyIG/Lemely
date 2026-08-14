@@ -23,6 +23,7 @@ import {
 } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, DeckOrigin, GenerateDeckResponseDTO } from "@/lib/flashcardTypes"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   cardSourceLabel,
   dueStateView,
@@ -232,7 +233,7 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
       <div className="px-5 pb-4">
         <ErrorState
           heading="Couldn't load this deck's cards"
-          body={deckQuery.error?.message}
+          body={studentLoadFailureMessage(deckQuery.error)}
           action={{ label: "Try again", onClick: () => void deckQuery.refetch() }}
         />
       </div>
@@ -332,7 +333,7 @@ export function FlashcardDecks() {
         <h1 className="sr-only">Flashcards for {subjectName}</h1>
         <ErrorState
           heading="Couldn't load your flashcard decks"
-          body={decksQuery.error?.message}
+          body={studentLoadFailureMessage(decksQuery.error)}
           action={{ label: "Try again", onClick: () => void decksQuery.refetch() }}
           className="lm-screen"
         />

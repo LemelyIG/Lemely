@@ -8894,3 +8894,207 @@ one intended test.
 The reusable part is narrower than "run your gates". It is that a gate reporting
 zero and a gate reporting nonsense are both consistent with a green ledger row,
 and the only thing separating them is looking at what it named.
+
+---
+
+## D6.3 — Redesign Phase 6.2 (harden): the run was never lost, only the thing reporting it
+
+Phase 6.2 is `harden`, and REDESIGN-MISSION §6.2 names one flow outright: the
+paper upload and marking wait, "that flow has real latency; design the waiting
+experience, progress feedback, and failure recovery properly". Two findings came
+out of it. Neither was a styling job, and neither was where the audit said to
+look.
+
+### Audit M4: `UploadStatus.processing` had never been written by anything
+
+`CorrectPaper.tsx`'s own docstring has carried M4 since P4.2 — "the marking run
+lives in component state, so a refresh mid-run loses it" — deferred to this
+phase with a note that the honest fix was architectural, as it had been for the
+teacher console (D6.13, build era: marking became a server-side job the console
+polls).
+
+**The premise was wrong, and that is the finding.** A refresh never lost the
+marking. `POST /student/correct` does its work on a background thread that does
+not stop when the client disconnects, and it persists the attempt, marks the
+upload complete, awards the XP and sends the notification regardless of whether
+anyone is still reading the stream. A student who reloaded had a paper that
+*would be marked*, and no way to find out.
+
+What was missing was much smaller and much worse: **nothing recorded that a run
+was in flight.** `UploadStatus.processing` shipped in the very first migration
+and **no code path in the product had ever written it.** An upload went
+`pending` at creation and jumped straight to `complete`/`failed` at the end of
+the run, so for the entire duration of the marking — the minutes this whole
+feature is about — the database said `pending`, which is also exactly what it
+says about a scan somebody uploaded and abandoned.
+
+Two things followed from that, and only one of them was known:
+
+- **The reload could not recover** (M4), because there was no state to recover
+  *from*. This is why the fix looked architectural: with the status unwritten,
+  the only remaining evidence of a run really was in the browser tab.
+- **The platform console's "Uploads in flight" was `pending + processing`**,
+  i.e. entirely `pending`, i.e. every scan any student had ever uploaded and
+  not marked. Nothing clears it. The figure could only grow, and the one
+  question that panel exists to answer is "is anything stuck?". It is
+  `processing` alone now, which returns to zero when marking stops — which is
+  what makes a non-zero reading mean anything — and `pending` is reported
+  beside it as what it is, "uploaded and never marked".
+
+Recovery is then a read, not an architecture: `GET /student/uploads/active` and
+`GET /student/uploads/{paperId}`. Two endpoints rather than one, because they
+end differently — `active` stops naming a paper the instant it reaches a
+terminal status, so a client polling only that would watch its run vanish and
+never learn whether it was marked or failed. Discovery finds it; polling
+follows it.
+
+Three things the recovered screen deliberately does not do:
+
+1. **It does not redraw the stage panel.** The SSE frames go to a
+   process-global bus with no replay, so a recovered reader knows the run is
+   going and nothing else. Ticking the three stages off from a status word
+   would be the invented progress S-14 rules out by name. It renders prose.
+2. **It does not re-POST `/correct`.** That would start a *second* marking run
+   over the same scan: double spend against a hard-capped Gemini budget, a
+   second attempt row, and — because the bus is global and single-stream —
+   cross-talk between the two readers. It polls, and the start control is
+   disabled for the duration.
+3. **It does not animate the result.** A recovered run that finishes navigates
+   without the `live` state, so `PaperResult` does not play §9.3's reveal. The
+   reveal is for a figure that arrived while this reader watched it; a paper
+   marked before the reload is not that.
+
+`stale` is the fourth piece and is computed server-side, because the server owns
+the clock the timestamp came from. A row can only stay `processing` if the
+process holding it died, and nothing will ever come back to finish it, so past
+`MARKING_RUN_STALE_AFTER` (20 minutes, far beyond a real run) the screen stops
+saying "still marking" and starts offering to start again. `startedAt` is the
+row's `updated_at`, which needs no migration and is exactly "when the status
+last changed" — meaningful while processing and offered for nothing else.
+
+One capability fell out of it that could not have worked before: **after a
+reload there is no `File` object, and the scan is still on the server**, so
+`canRetryInPlace` is the real test of whether marking can start. Requiring the
+local file is what made a stopped run a dead end.
+
+### The failure-copy family was never closed, and this is the sixth time
+
+The same sweep found **fifteen live sites rendering an `Error`'s own `message`
+to a reader** — after five previous phases each reported the family closed
+(P4.2 the marking stream, P4.4 friends, P4.5 the teacher portal's 44 sites,
+P4.6 the parent portal, P4.7 auth).
+
+The mechanism is worth more than the count. **The outcome modules were written
+surface by surface, and a screen redesigned before its module existed was never
+revisited.** `studentOutcome.ts` arrived on surface 10. `Overview` and
+`PaperResult` are surfaces **1 and 2** — the student's two most-read screens —
+and both still answered a dropped connection with the browser's "Failed to
+fetch". Nothing connected those two facts because nothing was looking.
+
+Also found: every student `ErrorState` on the flashcard, practice and study-plan
+screens (8 sites), both quiz-taker paths, the teacher grading console's stage
+failure, and two in `CameraCapture` where the leaked text was **pdf-lib's** —
+so a student who photographed a paper page by page and pressed done could be
+told "Input image is not a JPEG", about a file they never chose, at the end of
+the longest piece of work the product asks of them.
+
+`studentActionFailureMessage` is new and is a third helper rather than a call
+site of the second, for a stated reason: `STUDENT_SAVE_REJECTED` leads with
+"Nothing you typed has been lost", which is the right reassurance for a form and
+a confusing one after a button press where nothing was typed. It also keeps the
+action in the sentence, because two different actions can fail on one screen and
+a reader told only that something went wrong has to guess which.
+
+### Gates
+
+`tests/unit/failureCopy.test.ts` is the deliverable, not the fifteen edits. It
+**walks `src/` rather than reading a file list** — P4.10's finding was that a
+hand-maintained list is a list some screen is missing from, and that is precisely
+the mechanism that let this survive five fixes. A new screen is covered the day
+it is written.
+
+Its own first draft was wrong in the instructive direction: it matched any
+`.message` reaching a render and reported `setQuietError(result.message)` in the
+notification settings, where `result` is this codebase's own quiet-hours
+validator and its message is a sentence written for that exact reader. **A gate
+that reports good copy teaches people to route good copy through an outcome
+module to make a test go quiet**, which is worse than the defect. It now
+requires an error-shaped receiver, and it found a sixteenth site the manual grep
+had missed on the way. One rename fell out of it — `toggleError` held
+already-converted copy, so it is `toggleFailure` now, which is both what it is
+and unambiguous to the check.
+
+`tests/unit/uploadRun.test.ts` pins the recovery decision as *logic*, not as
+source text: `runPhase`/`canStartRun` live in `lib/uploadRun.ts` precisely so
+the web runner (`environment: "node"`, no jsdom) can test them, because a
+source-reading gate cannot tell a rule that works from a rule that still has the
+right words in it. The two rules that are not expressible as a function — never
+re-run a recovered paper, never redraw progress it cannot know — are read off
+the source and **stated as the weaker evidence they are**; the behavioural proof
+is in the Python suite, against a real database and a real run.
+
+Six new backend tests, and both halves verified by inversion: removing the
+`processing` write fails exactly the two tests about it, and widening
+`get_active_run` to include `pending` fails exactly the one about that. Three
+inversions on the web side each fail exactly one intended test.
+
+### What this did not change
+
+The event bus is still process-global and single-stream, and `sse.py` still says
+so in a warning. Recovery is designed around that constraint rather than
+fixing it — polling instead of re-attaching is what makes a second reader safe
+today. Fixing the bus is a backend change with no design content, and it is not
+what §6.2 asked for.
+
+### The long-content pass, and the row that lost its own button
+
+§6.2 also asks for a long-content pass, and the adapt gate does not give one:
+its `badWrap` rule checks that display headers *carry* `overflow-wrap`, which is
+a statement about CSS, not about what a long string does to a layout. Nothing in
+the capture corpus had ever rendered one — every fixture name is "Amina Farouk".
+
+The state added here is aimed rather than general: the teacher review queue's
+student cell, because P6.1 had just moved its `truncate` onto an inner span (on
+a flex container the text is an anonymous flex item and `text-overflow` has
+nothing to apply to). A long name is the only thing that can show whether that
+landed.
+
+What it showed was worse than a missing ellipsis. The table is `w-full` with the
+default `table-layout: auto`, so a long name **grows its own column**: at 1440,
+one student's name widened the student cell by roughly 170px and pushed the
+per-row **"Review →" button off the right edge of the card**. The action every
+row exists for became unreachable without horizontal scrolling, on a desktop
+screen with room to spare, because of one name.
+
+Neither existing gate can see it. The adapt gate's overflow rule exempts an
+element whose ancestor establishes its own clipping or scrolling context — which
+is correct, and is exactly what the `overflow-x-auto` table wrapper is — so a
+row scrolling inside a deliberately scrollable region is not page overflow and
+should not be reported. The defect is not that something overflowed; it is that
+*the primary action left the screen*, which is a layout judgement no geometric
+check makes.
+
+Fixed with a character measure on the cell (`max-w-[20ch]`, a count of glyphs
+rather than a spacing value, same exemption as `CorrectPaper`'s `max-w-[60ch]`).
+The first attempt used 30ch and **did not bind** — the name truncated and the
+table still grew past the card, which is worth recording because the capture is
+the only reason that was visible. 20ch is about the column's own natural width,
+so ordinary names never reach it.
+
+### A file in neither gate list, again
+
+`src/components/CameraCapture.tsx` was in neither `rtlSafety.test.ts` nor
+`utilityExistence.test.ts`. This is surface 10's mechanism for the third time —
+"a screen no surface claims is a screen no gate reads" — and here it is not a
+screen but the camera half of the flow the whole product exists for.
+
+Adding it found a defect on the first run: `left-1` on the page-number badge,
+against §3.4's RTL rule, so in a right-to-left layout the page number would sit
+at the far corner from where the eye starts. One line, and it had been sitting
+in an unread file since the build era.
+
+The pattern is now three-for-three: every time a file has been added to these
+lists, it has failed something. That is an argument for the lists being the
+wrong shape, and `failureCopy.test.ts` and `chartTheme.test.ts` both walk the
+tree instead. Converting the other two is not a Phase 6.2 job, but it is the
+right Phase 7 note.

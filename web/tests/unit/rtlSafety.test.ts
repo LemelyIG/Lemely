@@ -65,6 +65,7 @@ const RTL_CLEAN_FILES = [
   "src/portals/teacher/screens/QuizBuilder.tsx",
   "src/portals/teacher/screens/QuizResults.tsx",
   "src/components/ui/confirm-modal.tsx",
+  "src/components/CameraCapture.tsx",
   "src/portals/teacher/screens/Grading.tsx",
   "src/portals/teacher/screens/Review.tsx",
   "src/portals/teacher/screens/ReviewItem.tsx",

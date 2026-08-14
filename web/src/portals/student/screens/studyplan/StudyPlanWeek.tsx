@@ -10,6 +10,7 @@ import {
   useRebuildStudyPlan,
 } from "@/lib/hooks/useStudyPlanApi"
 import type { StudyPlanSessionDTO, StudyPlanWeekDTO } from "@/lib/studyPlanTypes"
+import { studentActionFailureMessage, studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
 import {
   activityLabel,
@@ -232,7 +233,7 @@ export function StudyPlanWeek() {
         <h1 className="sr-only">{heading}</h1>
         <ErrorState
           heading="Couldn't load your study plan"
-          body={planQuery.error?.message}
+          body={studentLoadFailureMessage(planQuery.error)}
           action={{ label: "Try again", onClick: () => void planQuery.refetch() }}
           className="lm-screen"
         />
@@ -242,12 +243,19 @@ export function StudyPlanWeek() {
 
   const view = studyPlanView(planQuery.data)
 
+  /* P6.2. Both of these appended a raw `error.message`, so the two things this
+     screen can fail at reported themselves as "Failed to fetch" or a status
+     line. The action is kept in the sentence because both can fail on this one
+     screen, and a reader told only that something went wrong has to guess
+     which. */
   const rebuildError = rebuild.isError ? (
-    <p className="text-body-md text-err">Couldn't rebuild your plan: {rebuild.error.message}</p>
+    <p className="text-body-md text-err">
+      {studentActionFailureMessage(rebuild.error, "rebuild your plan")}
+    </p>
   ) : null
   const completeError = complete.isError ? (
     <p className="text-body-md text-err">
-      Couldn't mark that session complete: {complete.error.message}
+      {studentActionFailureMessage(complete.error, "mark that session as done")}
     </p>
   ) : null
 

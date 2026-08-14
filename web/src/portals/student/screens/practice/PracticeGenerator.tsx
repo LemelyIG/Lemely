@@ -10,6 +10,7 @@ import { ApiError } from "@/lib/api"
 import { useCreatePractice, usePracticePreview, usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import type { CreatePracticeResponse, PracticeFilterSet, PracticePreview } from "@/lib/practiceTypes"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   groupTopicsBySyllabusGroup,
   practiceAvailabilityView,
@@ -130,7 +131,7 @@ export function PracticeGenerator() {
         <h1 className="sr-only">Practice for {subjectName}</h1>
         <ErrorState
           heading="Couldn't load practice topics"
-          body={topicsQuery.error?.message}
+          body={studentLoadFailureMessage(topicsQuery.error)}
           action={{ label: "Try again", onClick: () => void topicsQuery.refetch() }}
           className="lm-screen"
         />

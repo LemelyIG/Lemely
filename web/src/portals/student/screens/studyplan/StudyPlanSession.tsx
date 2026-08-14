@@ -9,6 +9,7 @@ import {
   useCurrentStudyPlan,
 } from "@/lib/hooks/useStudyPlanApi"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { studentActionFailureMessage, studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   activityLabel,
   formatDayHeading,
@@ -96,7 +97,7 @@ export function StudyPlanSession() {
         <h1 className="sr-only">{heading}</h1>
         <ErrorState
           heading="Couldn't load this session"
-          body={planQuery.error?.message}
+          body={studentLoadFailureMessage(planQuery.error)}
           action={{ label: "Try again", onClick: () => void planQuery.refetch() }}
           className="lm-screen"
         />
@@ -179,9 +180,15 @@ export function StudyPlanSession() {
         </CardBody>
       </Card>
 
+      {/* P6.2. This appended `complete.error.message` to the sentence, so a
+          failed tap read "Couldn't mark this session complete: 500 Internal
+          Server Error" — or, on the phone this is used on, "Failed to fetch".
+          The save helper, not the load one: the student's question after a
+          failed write is whether it stuck, and none of its sentences claims it
+          did. */}
       {complete.isError ? (
         <p className="text-body-md text-err">
-          Couldn't mark this session complete: {complete.error.message}
+          {studentActionFailureMessage(complete.error, "mark this session as done")}
         </p>
       ) : null}
 

@@ -14,6 +14,7 @@ import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ApiError } from "@/lib/api"
 import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
 
@@ -344,7 +345,19 @@ export function PaperResult() {
       <ResultScreen srHeading="Paper result">
         <ErrorState
           heading="We couldn't load this result"
-          body={error.message}
+          /* P6.2. This rendered `error.message`, which on a dropped connection
+             is the browser's "Failed to fetch" and on a 500 is the status line.
+             The 404 above is handled properly and was doing the work of hiding
+             that: it is the failure anyone testing this screen reaches for, and
+             it never touches this branch.
+
+             Status-first, not detail-first. `routers/student.py`'s read paths
+             raise `f"No paper {paper_id}"` — a bare UUID — so there is no
+             sentence here worth keeping, which is the exact evidence
+             `studentOutcome.ts` was written on. `correctionOutcome.ts` is the
+             detail-first one and belongs to the marking stream, not to this
+             GET. */
+          body={studentLoadFailureMessage(error)}
           action={{ label: "Try again", onClick: () => refetch() }}
           secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
         />

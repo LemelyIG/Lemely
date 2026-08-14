@@ -204,6 +204,30 @@ export interface StudentUploadResponse {
   paperId: string
 }
 
+/** The four states an upload can be in, mirroring `UploadStatus` in Python. */
+export type UploadRunStatus = "pending" | "processing" | "complete" | "failed"
+
+/**
+ * Run state of one uploaded paper, for a reader that is not the SSE stream.
+ *
+ * Mirrors `UploadRunDTO`. Read the Python docstring before using it — the
+ * important part is what it deliberately does not carry: there is no
+ * per-question progress, because the SSE frames go to a process-global bus with
+ * no replay. Once the tab that was consuming them is gone, they are gone. A
+ * recovered screen that redrew the stage panel would be inventing ticks.
+ *
+ * `startedAt` is non-null only while `status` is `processing`. `stale` is the
+ * server's judgement on it, computed server-side because the server owns the
+ * clock that timestamp came from.
+ */
+export interface UploadRun {
+  paperId: string
+  status: UploadRunStatus
+  filename: string | null
+  startedAt: string | null
+  stale: boolean
+}
+
 /** Request body for `POST /student/correct`. */
 export interface CorrectRequest {
   paperId: string

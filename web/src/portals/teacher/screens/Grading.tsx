@@ -244,9 +244,14 @@ export function Grading() {
       setSchemeFile(null)
       queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] })
     } catch (err) {
-      setStages((prev) =>
-        failActiveStage(prev, err instanceof Error ? err.message : String(err)),
-      )
+      /* P6.2. This put `err.message` on the failed stage, so a dropped
+         connection during a class upload wrote the browser's "Failed to fetch"
+         into the pipeline panel, and a 500 wrote its status line. C-10 requires
+         a specific, actionable message per stage and this was neither.
+         `teacherMutationFailureMessage` is the mutation half of this portal's
+         own module: status-first, because every `detail` the staff upload path
+         raises is written for a client author. */
+      setStages((prev) => failActiveStage(prev, teacherMutationFailureMessage(err)))
     } finally {
       setUploading(false)
     }

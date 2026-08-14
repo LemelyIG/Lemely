@@ -10,6 +10,7 @@ import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { useDueSession, useReviewCard } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, ReviewGrade, ReviewResultDTO } from "@/lib/flashcardTypes"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   cardSourceLabel,
   dueStateView,
@@ -142,7 +143,7 @@ export function FlashcardReview() {
         <h1 className="sr-only">Flashcard review for {subjectName}</h1>
         <ErrorState
           heading="Couldn't load your due cards"
-          body={dueQuery.error?.message}
+          body={studentLoadFailureMessage(dueQuery.error)}
           action={{ label: "Try again", onClick: () => void dueQuery.refetch() }}
           className="lm-screen"
         />

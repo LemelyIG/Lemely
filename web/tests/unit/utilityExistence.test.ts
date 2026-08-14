@@ -87,6 +87,9 @@ const SCANNED_FILES = [
   "src/portals/student/screens/PaperResult.tsx",
   // Phase 4, surface 3 — the study surfaces.
   "src/components/quiz/QuizTaker.tsx",
+  // P6.2: in neither gate list until now, which is the recurring mechanism —
+  // a file no gate reads. It is the camera half of the product's flagship flow.
+  "src/components/CameraCapture.tsx",
   "src/portals/student/screens/flashcards/FlashcardDecks.tsx",
   "src/portals/student/screens/flashcards/FlashcardReview.tsx",
   "src/portals/student/screens/practice/PracticeGenerator.tsx",

@@ -122,3 +122,35 @@ export function studentSaveFailureMessage(err: unknown): string {
   if (err.status === 422) return STUDENT_SAVE_REJECTED
   return STUDENT_SERVICE_FAILURE
 }
+
+/**
+ * Turn a failed *action* into a sentence that still says which action (P6.2).
+ *
+ * A third helper rather than a call site of the second, because the second
+ * answers the wrong question for this case. `STUDENT_SAVE_REJECTED` leads with
+ * "Nothing you typed has been lost", which is the right reassurance for a form
+ * and a confusing one after a button press where nothing was typed at all.
+ *
+ * `action` completes "We couldn't ___", so it is a bare verb phrase in the
+ * infinitive: `"mark that session as done"`, not `"Marking failed"`. Keeping it
+ * is the point of the helper: two different actions can fail on one screen, and
+ * a reader who is told only that something went wrong has to guess which.
+ *
+ * The status arms are deliberately the same judgements as the other two
+ * helpers, minus the typing reassurance. A 422 here is not a validation
+ * message a student could act on — these routes take an id from the screen's
+ * own data, so a rejection means the plan changed underneath them.
+ */
+export function studentActionFailureMessage(err: unknown, action: string): string {
+  const lead = `We couldn't ${action}.`
+  if (!(err instanceof ApiError)) return `${lead} Something went wrong on our side.`
+  if (err.status === 0) {
+    return `${lead} Check your connection and try again.`
+  }
+  if (err.status === 401) return STUDENT_SIGNED_OUT
+  if (err.status === 403) return STUDENT_NOT_YOURS
+  if (err.status === 404 || err.status === 409 || err.status === 422) {
+    return `${lead} Your plan may have changed since this page loaded. Reload and try again.`
+  }
+  return `${lead} Something went wrong on our side, so trying again is safe.`
+}

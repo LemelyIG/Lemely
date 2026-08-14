@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowClockwise, Camera, UploadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -18,7 +18,13 @@ import {
   correctionFailureMessage,
   STREAM_ENDED_WITHOUT_RESULT,
 } from "@/lib/correctionOutcome"
-import { runCorrection, uploadScan } from "@/lib/hooks/useStudentApi"
+import {
+  runCorrection,
+  uploadScan,
+  useActiveUpload,
+  useUploadRun,
+} from "@/lib/hooks/useStudentApi"
+import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
 import type { QuestionResult, Result, StudentCorrectFrame } from "@/lib/studentTypes"
 import { reassure } from "../data"
@@ -81,6 +87,40 @@ type ScanSource = "file" | "camera"
  * student side still drives its run from the browser stream. Pulling that
  * forward would be a backend change smuggled into a design pass. What is done
  * here is the half of it that is honest to do now: the failure has a way out.
+ *
+ * ── P6.2 (redesign Phase 6, harden) ───────────────────────────────────────
+ *
+ * M4 is now closed, and the finding underneath it was not in this file.
+ *
+ * The run was never actually lost on a reload. `POST /student/correct` does its
+ * work on a background thread that does not stop when the client disconnects,
+ * and it persists the attempt when it finishes — so a student who reloaded had
+ * a paper that would be marked, with nothing on screen that knew it. What was
+ * missing was the record that a run was *in flight*: `UploadStatus.processing`
+ * existed from the first migration and **no code path had ever written it**, so
+ * a paper being marked right now was indistinguishable in the database from a
+ * scan somebody uploaded and abandoned.
+ *
+ * With that written, recovery is a read. On mount this screen asks
+ * `/student/uploads/active` whether the student has a run going and, if so,
+ * follows it to a terminal status.
+ *
+ * Two things it deliberately does NOT do:
+ *
+ *   1. **It does not redraw the stage panel.** The SSE frames go to a
+ *      process-global bus with no replay, so a recovered screen knows the run
+ *      is going and nothing else. Ticking the three stages off again would be
+ *      inventing progress, which is the one thing S-14 rules out by name.
+ *   2. **It does not re-POST `/correct`.** That would start a *second* marking
+ *      run over the same scan: double Gemini spend against a hard-capped
+ *      budget, a second attempt row, and — because the event bus is global and
+ *      single-stream — cross-talk between the two. Recovery polls; it never
+ *      re-runs.
+ *
+ * A recovered run also unlocks the retry that could not work before: after a
+ * reload there is no `File` object any more, but the server still has the scan,
+ * so `canRetryInPlace` is the real test of whether marking can start, and the
+ * local file is not required for it.
  */
 
 /** The three stages the backend's SSE frames give us real signal for. Spec
@@ -208,6 +248,45 @@ export function CorrectPaper() {
    */
   const [paperId, setPaperId] = useState<string | null>(null)
 
+  /*
+   * A run that was already going when this screen loaded — the reload case
+   * (M4). A run THIS tab is streaming is not one of these: `running` is true
+   * for the whole of that, and the id is already in `paperId`.
+   */
+  const active = useActiveUpload()
+  const strandedId =
+    !running && active.data && active.data.paperId !== paperId ? active.data.paperId : undefined
+  const stranded = useUploadRun(strandedId)
+  /*
+   * Gated on `strandedId`, not on `stranded.data`. A disabled react-query keeps
+   * its last value, so reading `stranded.data` directly would leave a finished
+   * run on screen after this tab started its own — the recovered panel would
+   * outlive the thing it recovered.
+   */
+  const strandedRun = strandedId ? (stranded.data ?? active.data) : null
+  /*
+   * The four statuses collapse to what the screen actually asks. `stale` is the
+   * server's judgement that a `processing` row is one nobody will finish; it
+   * owns that call because it owns the clock the timestamp came from.
+   */
+  const phase = runPhase(strandedRun)
+  const waitingOnServer = phase === "waiting"
+  const strandedStopped = phase === "stopped"
+
+  /*
+   * A recovered run that finished while the student watched goes to the result,
+   * exactly as the streamed one does — but WITHOUT the `live` state, so the
+   * result screen does not play its reveal. `PaperResult` reveals a figure that
+   * arrived while this reader was watching it; a paper marked in another tab,
+   * or before the reload, is not that, and animating it would be a flourish
+   * over an observation the student never made.
+   */
+  useEffect(() => {
+    if (phase === "done" && strandedRun) {
+      navigate(`/student/result/${strandedRun.paperId}`)
+    }
+  }, [phase, strandedRun, navigate])
+
   /**
    * Every path that changes the scan goes through here, so `paperId` can never
    * outlive the file it identifies. A retry against a stale id would re-mark
@@ -298,19 +377,41 @@ export function CorrectPaper() {
     setError(STREAM_ENDED_WITHOUT_RESULT)
   }
 
+  /*
+   * The paper marking could start from right now, which is not the same as "the
+   * paper in the form". After a reload the `File` is gone but the scan is still
+   * on the server, so a run that stopped is restartable with nothing picked.
+   */
+  const resumableId = paperId ?? (strandedStopped ? (strandedRun?.paperId ?? null) : null)
+
+  /**
+   * The id to mark, uploading first only when the server has nothing yet.
+   *
+   * M5's retry lives here: `uploadScan` and `runCorrection` are two calls, and
+   * when only the second failed, re-sending the multipart body would upload a
+   * scan the server already has. Returns `null` when there is neither a file to
+   * send nor a paper to re-mark, which is the one case the caller must not
+   * start a run for.
+   */
+  const resolvePaperId = async (): Promise<string | null> => {
+    if (canRetryInPlace(resumableId)) return resumableId
+    if (!scanFile) return null
+    const uploaded = await uploadScan(scanFile, schemeFile ?? undefined)
+    return uploaded.paperId
+  }
+
   const runPipeline = async () => {
-    if (!scanFile || running) return
+    // A local file OR a scan the server already holds. Requiring the file was
+    // what made a reloaded failure a dead end: after a reload the `File` is
+    // gone, and the scan is not.
+    if (running || (!scanFile && !canRetryInPlace(resumableId))) return
     setRunning(true)
     setError(null)
     setStages(initialStages)
     try {
-      // M5's retry: only upload when there is nothing on the server yet.
-      let id = paperId
-      if (!canRetryInPlace(id)) {
-        const uploaded = await uploadScan(scanFile, schemeFile ?? undefined)
-        id = uploaded.paperId
-        setPaperId(id)
-      }
+      const id = await resolvePaperId()
+      if (id === null) return
+      setPaperId(id)
       await streamCorrection(id)
     } catch (err) {
       const message = correctionFailureMessage(err)
@@ -321,15 +422,30 @@ export function CorrectPaper() {
     }
   }
 
-  const retryable = canRetryInPlace(paperId)
-  const primaryLabel = running ? "Marking…" : "Mark this paper"
+  const retryable = canRetryInPlace(resumableId)
+  const primaryLabel = running || waitingOnServer ? "Marking…" : "Mark this paper"
   const retryLabel = retryable ? "Start marking again" : "Try again"
+  /*
+   * Nothing may start a second run while one is in flight. Two runs over one
+   * scan would spend the hard-capped Gemini budget twice, write a second
+   * attempt row, and cross-talk on an event bus that is global and
+   * single-stream. The form goes read-only rather than disappearing, so the
+   * student can still see what is being marked.
+   */
+  const canStart = canStartRun({
+    phase,
+    hasScan: Boolean(scanFile),
+    hasUploadedPaper: retryable,
+  })
+  const busy = running || waitingOnServer
 
   const panel = running
     ? { tone: "bg-accent", title: "Marking now" }
-    : error
-      ? { tone: "bg-err", title: "Marking stopped" }
-      : { tone: "bg-ok", title: "Ready when you are" }
+    : waitingOnServer
+      ? { tone: "bg-accent", title: "Still marking" }
+      : error || strandedStopped
+        ? { tone: "bg-err", title: "Marking stopped" }
+        : { tone: "bg-ok", title: "Ready when you are" }
 
   return (
     <div className="lm-screen flex flex-col gap-8">
@@ -355,8 +471,14 @@ export function CorrectPaper() {
          * obvious primary action the Operate lane asks for (DESIGN.md §2).
          * One action, next to its reason.
          */}
-        {error && !running ? null : (
-          <Button variant="primary" size="lg" onClick={runPipeline} loading={running} disabled={!scanFile}>
+        {(error || strandedStopped) && !running ? null : (
+          <Button
+            variant="primary"
+            size="lg"
+            onClick={runPipeline}
+            loading={busy}
+            disabled={!canStart}
+          >
             {primaryLabel}
           </Button>
         )}
@@ -368,7 +490,7 @@ export function CorrectPaper() {
             <SourceToggle
               source={scanSource}
               onChoose={chooseScanSource}
-              disabled={running}
+              disabled={busy}
             />
 
             {scanSource === "file" ? (
@@ -379,11 +501,11 @@ export function CorrectPaper() {
                 accept="application/pdf,image/*"
                 file={scanFile}
                 onFileChange={chooseScan}
-                busy={running}
+                busy={busy}
                 clearLabel="Choose a different scan"
                 hint="One paper per upload. Every page of it, in order."
               />
-            ) : running ? (
+            ) : busy ? (
               <div className="rounded-lg border border-rule bg-paper-sunk px-4 py-3 text-body-sm text-ink-muted">
                 {scanFile
                   ? `Scanned paper ready · ${scanFile.name}`
@@ -427,7 +549,7 @@ export function CorrectPaper() {
             accept="application/pdf,image/*"
             file={schemeFile}
             onFileChange={setSchemeFile}
-            busy={running}
+            busy={busy}
             size="compact"
             prompt="Drop your own scheme here, or choose one"
             clearLabel="Choose a different scheme"
@@ -450,49 +572,84 @@ export function CorrectPaper() {
         <div
           className={cn(
             "flex flex-col gap-6",
-            (running || error) && "max-tablet:order-first",
+            (running || error || strandedRun) && "max-tablet:order-first",
           )}
         >
           <Card className="flex flex-col gap-4 p-6">
             <div role="status" className="flex items-center gap-2.5">
               <span
                 aria-hidden="true"
-                className={cn("h-2 w-2 rounded-full", panel.tone, running && "animate-lm-pulse")}
+                className={cn("h-2 w-2 rounded-full", panel.tone, busy && "animate-lm-pulse")}
               />
               <h2 className="text-display-sm text-ink">{panel.title}</h2>
             </div>
 
-            <ProcessingState
-              stages={stages}
-              footer={
-                error ? (
-                  <div className="flex flex-col gap-3">
-                    {/* The specific sentence lives on the failed stage, where
-                        the failure is. This says what to do about it, which
-                        is the part the audit found missing (M5) — not a
-                        second copy of the error text. */}
-                    <p className="text-body-sm text-ink-muted">
-                      {retryable
-                        ? "Your scan is already uploaded. Starting again re-marks the same file."
-                        : "Nothing was uploaded, so starting again sends the file fresh."}
-                    </p>
-                    {/* Primary, not secondary: with the header action hidden
-                        while a failure is showing, this is the screen's one
-                        obvious next step. */}
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      icon={<ArrowClockwise size={16} />}
-                      onClick={runPipeline}
-                      disabled={!scanFile}
-                      className="self-start"
-                    >
-                      {retryLabel}
-                    </Button>
-                  </div>
-                ) : null
-              }
-            />
+            {strandedRun ? (
+              /*
+               * A run this tab is not streaming. It renders as prose and NOT as
+               * the stage list, because the stage list is a claim about which
+               * step the pipeline reached and this reader has no such
+               * information: the SSE frames went to a bus with no replay, and
+               * the tab that was reading them is gone. Ticking stages off from
+               * a status word would be the invented progress S-14 rules out.
+               */
+              <div className="flex flex-col gap-3">
+                <p className="text-pretty text-body-sm text-ink-muted">
+                  {waitingOnServer
+                    ? "This paper was already being marked when you opened this page, and it is still going. Marking carries on even if you close the tab, so you can leave this open or come back later."
+                    : "This paper was being marked and the run stopped before it finished. Nothing was marked, and your scan is still here."}
+                </p>
+                {strandedRun.filename ? (
+                  <p className="text-body-sm text-ink">
+                    <span className="text-ink-muted">Paper</span>{" "}
+                    <span className="break-words">{strandedRun.filename}</span>
+                  </p>
+                ) : null}
+                {strandedStopped ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={<ArrowClockwise size={16} />}
+                    onClick={runPipeline}
+                    className="self-start"
+                  >
+                    Start marking again
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <ProcessingState
+                stages={stages}
+                footer={
+                  error ? (
+                    <div className="flex flex-col gap-3">
+                      {/* The specific sentence lives on the failed stage, where
+                          the failure is. This says what to do about it, which
+                          is the part the audit found missing (M5) — not a
+                          second copy of the error text. */}
+                      <p className="text-body-sm text-ink-muted">
+                        {retryable
+                          ? "Your scan is already uploaded. Starting again re-marks the same file."
+                          : "Nothing was uploaded, so starting again sends the file fresh."}
+                      </p>
+                      {/* Primary, not secondary: with the header action hidden
+                          while a failure is showing, this is the screen's one
+                          obvious next step. */}
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon={<ArrowClockwise size={16} />}
+                        onClick={runPipeline}
+                        disabled={!canStart}
+                        className="self-start"
+                      >
+                        {retryLabel}
+                      </Button>
+                    </div>
+                  ) : null
+                }
+              />
+            )}
           </Card>
 
           <Card className="flex flex-col gap-4 p-6">

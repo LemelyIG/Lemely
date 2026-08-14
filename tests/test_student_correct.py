@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
@@ -377,6 +378,221 @@ def test_correct_marks_upload_complete(
         row = session.get(Upload, owned.id)
         assert row is not None
         assert row.status == UploadStatus.complete
+
+
+# ---------------------------------------------------------------------------
+# Recovering a run that outlived the browser tab (P6.2, audit M4).
+#
+# The marking work happens on a background thread that does not stop when the
+# client disconnects, so a student who reloads has not lost the marking — only
+# the thing reporting on it. These pin the state that makes it findable again.
+# ---------------------------------------------------------------------------
+
+
+def test_correct_writes_processing_before_it_finishes(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run announces itself as `processing`, not just as a terminal status.
+
+    `UploadStatus.processing` shipped in the first migration and no code path
+    ever wrote it, so a paper being marked right now was indistinguishable in
+    the database from a scan someone uploaded and abandoned. Asserting the
+    terminal status alone (as `test_correct_marks_upload_complete` does) cannot
+    see that, because the end state is the same either way.
+
+    Observed from inside the run rather than after it: by the time the response
+    is read, the status is `complete`, which is the whole reason the gap went
+    unnoticed.
+    """
+    api, student_id, upload_repo = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+
+    seen: list[UploadStatus] = []
+    real_extract = student.extract_answers
+
+    def spy(*args: object, **kwargs: object) -> ExtractedAnswers:
+        run = upload_repo.get_run(user_id=student_id, upload_id=paper_id)
+        assert run is not None
+        seen.append(run.status)
+        return cast("ExtractedAnswers", real_extract(*args, **kwargs))
+
+    monkeypatch.setattr(student, "extract_answers", spy)
+    api.post("/api/student/correct", json={"paperId": paper_id})
+
+    assert seen == [UploadStatus.processing], (
+        f"the run must record that it is in flight while it is in flight; saw {seen}"
+    )
+
+
+def test_active_upload_is_null_when_nothing_is_running(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    """Nothing running is the ordinary answer, and it is `null`, not a 404."""
+    api, _, _ = client
+    api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp = api.get("/api/student/uploads/active")
+    assert resp.status_code == 200
+    assert resp.json() is None, (
+        "an upload that was stored and never marked is not a run in flight. "
+        "Counting `pending` here is what made the platform console's "
+        "'uploads in flight' figure grow forever."
+    )
+
+
+def test_active_upload_finds_a_run_in_flight(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reload during marking can find the paper it lost."""
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("mine.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+
+    found: list[dict[str, object]] = []
+    real_extract = student.extract_answers
+
+    def spy(*args: object, **kwargs: object) -> ExtractedAnswers:
+        # Mid-run: exactly the moment a student's reload would land.
+        found.append(api.get("/api/student/uploads/active").json())
+        return cast("ExtractedAnswers", real_extract(*args, **kwargs))
+
+    monkeypatch.setattr(student, "extract_answers", spy)
+    api.post("/api/student/correct", json={"paperId": paper_id})
+
+    assert len(found) == 1
+    active = found[0]
+    assert active is not None
+    assert active["paperId"] == paper_id
+    assert active["status"] == "processing"
+    assert active["filename"] == "mine.pdf"
+    assert active["stale"] is False
+    assert active["startedAt"] is not None
+
+    # And it stops naming the paper the moment the run ends, which is why the
+    # client polls the paper rather than this endpoint.
+    assert api.get("/api/student/uploads/active").json() is None
+
+
+def test_upload_run_reports_the_terminal_status_a_poller_needs(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    """Polling the paper ends on a status that says which way it went."""
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+
+    before = api.get(f"/api/student/uploads/{paper_id}")
+    assert before.status_code == 200
+    assert before.json()["status"] == "pending"
+    # `startedAt` is the row's updated_at, which means "marking began" only
+    # while processing. It must not be offered for any other status.
+    assert before.json()["startedAt"] is None
+
+    api.post("/api/student/correct", json={"paperId": paper_id})
+
+    after = api.get(f"/api/student/uploads/{paper_id}")
+    assert after.json()["status"] == "complete"
+    assert after.json()["stale"] is False
+
+
+def test_a_run_older_than_the_bound_reports_stale(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A `processing` row nobody will ever finish stops claiming to be marking.
+
+    The only way a row stays `processing` is a process that died holding it, and
+    no code will come back to correct it. Past the bound the screen must stop
+    promising a result; `stale` is what tells it to.
+    """
+    from lemely.db.models.attempts import Upload
+
+    api, student_id, upload_repo = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+
+    stale_moment = datetime.now(UTC) - student.MARKING_RUN_STALE_AFTER - timedelta(minutes=1)
+    with pg_sessionmaker.begin() as session:
+        row = session.get(Upload, uuid.UUID(paper_id))
+        assert row is not None
+        row.status = UploadStatus.processing
+        row.updated_at = stale_moment
+
+    body = api.get(f"/api/student/uploads/{paper_id}").json()
+    assert body["status"] == "processing"
+    assert body["stale"] is True
+
+    # Still the active run: stale means "stop promising", not "hide it". A
+    # student whose paper died deserves to be told, not to find an empty screen.
+    assert api.get("/api/student/uploads/active").json()["paperId"] == paper_id
+
+    # And a failure is never stale — it is finished, with a reported reason.
+    upload_repo.set_status(uuid.UUID(paper_id), UploadStatus.failed)
+    failed = api.get(f"/api/student/uploads/{paper_id}").json()
+    assert failed["status"] == "failed"
+    assert failed["stale"] is False
+
+
+def test_foreign_and_unknown_runs_are_404(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    """Same uniform 404 as `/correct`: no ownership oracle on the read path."""
+    api, _, upload_repo = client
+    other_id = _seed_user(pg_sessionmaker, Role.student)
+    foreign = upload_repo.create_upload(
+        user_id=other_id,
+        storage_path=str(tmp_path / "other.pdf"),
+        original_filename="other.pdf",
+        content_type="application/pdf",
+        byte_size=10,
+    )
+    assert api.get(f"/api/student/uploads/{foreign}").status_code == 404
+    assert api.get(f"/api/student/uploads/{uuid.uuid4()}").status_code == 404
+    assert api.get("/api/student/uploads/not-a-uuid").status_code == 404
+
+
+def test_another_students_run_is_not_my_active_run(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    """`/uploads/active` is scoped to the caller, not to the platform."""
+    from lemely.db.models.attempts import Upload
+
+    api, _, upload_repo = client
+    other_id = _seed_user(pg_sessionmaker, Role.student)
+    foreign = upload_repo.create_upload(
+        user_id=other_id,
+        storage_path=str(tmp_path / "other.pdf"),
+        original_filename="other.pdf",
+        content_type="application/pdf",
+        byte_size=10,
+    )
+    with pg_sessionmaker.begin() as session:
+        row = session.get(Upload, foreign)
+        assert row is not None
+        row.status = UploadStatus.processing
+
+    assert api.get("/api/student/uploads/active").json() is None
 
 
 def test_unknown_paper_id_is_404(

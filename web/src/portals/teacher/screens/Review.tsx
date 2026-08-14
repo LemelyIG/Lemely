@@ -498,7 +498,36 @@ export function Review() {
                     <td className="px-[16px] py-[13px]">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <Avatar name={item.studentDisplayName} size="sm" />
-                        <div className="min-w-0">
+                        {/* P6.2's long-content pass. `min-w-0` alone could not
+                            make the `truncate` below fire, and this is the
+                            first capture that ever rendered a name long enough
+                            to show it: the table is `w-full` with the default
+                            `table-layout: auto`, so a long name grows its own
+                            cell, drags the table past the card, and the text is
+                            CLIPPED by the `overflow-x-auto` wrapper rather than
+                            ellipsised. The rule was correct and unreachable —
+                            present, resolving, and unable to fire, which no
+                            gate in this build can see.
+
+                            What the capture showed is worse than a missing
+                            ellipsis, and it is why this is bounded rather than
+                            left to scroll: at 1440, one long name widened the
+                            student column by ~170px and pushed the per-row
+                            "Review →" button off the right edge of the card.
+                            The action every row exists for became unreachable
+                            without horizontal scrolling, on a desktop screen
+                            with room to spare, because of one student's name.
+
+                            A character measure rather than a pixel width, for
+                            the same reason `CorrectPaper`'s `max-w-[60ch]` is
+                            one: it is a count of glyphs, not a spacing value,
+                            so it is out of scope for the 4px scale. 20ch is
+                            about the column's own natural width, so it is a
+                            `max` that ordinary names never reach and long ones
+                            cannot exceed. 30ch was tried first and did not
+                            bind — it truncated the name and the table still
+                            grew. */}
+                        <div className="min-w-0 max-w-[20ch]">
                           {/* Two stacked links to two different destinations,
                               so both need §6.1's floor, not just the primary
                               one. `min-h-11` with flex centring rather than the

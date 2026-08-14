@@ -18,6 +18,7 @@ import {
   PanelSkeleton,
 } from "@/components/ui/loading-shapes"
 import { cn, greetingFor } from "@/lib/utils"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import type { MomentumPoint, SubjectRow } from "@/lib/studentTypes"
 import { vizBg } from "../components/colors"
@@ -343,7 +344,13 @@ export function Overview() {
         <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load your overview"
-          body={error.message}
+          /* P6.2, same defect as `PaperResult`: this printed `error.message`,
+             so the first screen a student sees after signing in greeted a
+             dropped connection with "Failed to fetch". The two screens
+             redesigned first (surfaces 1 and 2) are the two the failure-copy
+             family never reached, because the module that answers this
+             (`studentOutcome.ts`) was not written until surface 10. */
+          body={studentLoadFailureMessage(error)}
           action={{ label: "Try again", onClick: () => refetch() }}
         />
       </div>

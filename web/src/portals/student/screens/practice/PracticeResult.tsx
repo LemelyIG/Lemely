@@ -11,6 +11,7 @@ import { formatQuestionTopic } from "@/components/quiz/quizTakerData"
 import { usePracticeResult } from "@/lib/hooks/usePracticeApi"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
 import { confidenceBandTier, practiceMarkState, practiceResultView } from "./practiceData"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 
@@ -78,7 +79,7 @@ export function PracticeResult() {
         <h1 className="sr-only">Practice set result</h1>
         <ErrorState
           heading="Couldn't load this practice set"
-          body={error?.message}
+          body={studentLoadFailureMessage(error)}
           action={{ label: "Try again", onClick: () => void refetch() }}
           className="lm-screen"
         />
