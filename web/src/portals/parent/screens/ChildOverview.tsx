@@ -187,7 +187,12 @@ function WeakTopicList({ topics, childId }: { topics: WeakTopic[]; childId: stri
           // beside this took enough of the row that "See all" broke into "See"
           // and "all", a two-line clickable target §6 bans. The heading is the
           // element that should absorb the squeeze here, not the control.
-          className="shrink-0 whitespace-nowrap rounded-sm pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          // `min-w-11` too (P6.1 second pass): "See all" is 38px wide, so it
+          // cleared the block axis and missed the inline one. `justify-end`
+          // rather than `justify-center`, because this link sits at the end of
+          // its row and centring would shift the text 3px off the edge the
+          // heading beside it aligns to.
+          className="shrink-0 whitespace-nowrap rounded-sm pointer-coarse:flex pointer-coarse:items-center pointer-coarse:justify-end pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-body-sm text-accent-ink transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
           See all
         </Link>

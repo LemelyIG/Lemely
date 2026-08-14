@@ -86,6 +86,7 @@ function measure({ touch }) {
     twoLine: [],
     smallTarget: [],
     exemptTarget: [],
+    exemptPair: [],
     tightPair: [],
     badWrap: [],
   }
@@ -217,12 +218,31 @@ function measure({ touch }) {
       const painted = cs.appearance === "none" || cs.webkitAppearance === "none"
       const clipped = cs.clipPath !== "none" || cs.position === "absolute"
       if (!painted && !clipped) return null
-      const label =
-        el.closest("label") ??
-        (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
-      if (!label) return null
-      const labelRect = label.getBoundingClientRect()
-      return labelRect.width > 0 && labelRect.height > 0 ? { el: label, rect: labelRect } : null
+      /*
+       * A control may have MORE than one label bound to it, and then "the
+       * label" is the wrong question. `FileDrop` binds two: a 13px caption
+       * ("Scanned paper") and the drop zone itself, which is the thing a finger
+       * lands on. `querySelector` returns whichever comes first in document
+       * order — the caption — so the gate spent a full run reporting the
+       * product's largest tap target as its smallest, 40 times.
+       *
+       * The floor asks whether there is something 44x44 to aim at, so where
+       * several labels are bound, aim at the biggest. Picking by area rather
+       * than by document order is what makes that answer independent of markup
+       * order.
+       */
+      const labels = el.id
+        ? Array.from(document.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`))
+        : []
+      const own = el.closest("label")
+      if (own && !labels.includes(own)) labels.push(own)
+      const rects = labels
+        .map((l) => ({ el: l, rect: l.getBoundingClientRect() }))
+        .filter((c) => c.rect.width > 0 && c.rect.height > 0)
+      if (rects.length === 0) return null
+      return rects.reduce((a, b) =>
+        b.rect.width * b.rect.height > a.rect.width * a.rect.height ? b : a,
+      )
     }
 
     const targets = []
@@ -239,8 +259,29 @@ function measure({ touch }) {
       if (seen.has(target.el)) continue
       seen.add(target.el)
       // Nested controls (a button inside a labelled row) would double-count.
+      // `exempt` is carried on the target so the spacing rule below can honour
+      // the same call-site waiver the size rule does; see the pair loop.
+      target.exempt = el.closest("[data-touch-floor-exempt]") ?? null
       targets.push(target)
-      if (target.rect.width < 44 || target.rect.height < 44) {
+      /*
+       * 0.5px of tolerance, and it is not a softening of the rule.
+       *
+       * An element whose CSS floor is exactly `min-block-size: 44px` measures
+       * 43.95-44.0 depending on the fractional y-offset it happens to land on,
+       * because Chromium lays out in 1/64px LayoutUnits. Without tolerance the
+       * gate reported one or two such elements per run, in a DIFFERENT state
+       * each time — three consecutive runs of `teacher-analytics` gave one
+       * finding, then two, then a different element. A gate whose result
+       * changes between identical runs teaches people to re-run it until it
+       * passes, which costs more than the vacuous gate this file replaced: that
+       * one was at least consistently wrong.
+       *
+       * Half a pixel is well under any real miss. The genuine sub-pixel defect
+       * this same run found — a link padded to 43.7px by hand — is still caught
+       * with 0.3px to spare, and every other real finding was 20px or shorter.
+       */
+      const FLOOR = 44 - 0.5
+      if (target.rect.width < FLOOR || target.rect.height < FLOOR) {
         /*
          * A control whose geometry the floor genuinely cannot have, marked at
          * the call site with the reason. It is reported as `exemptTarget`, not
@@ -255,19 +296,29 @@ function measure({ touch }) {
          * visible and recoverable. Shrinking to five boxes or scrolling a code
          * entry sideways would both be worse.
          */
+        /*
+         * Reported to 0.1px, not rounded to whole pixels. The comparison above
+         * is on the raw float, so a 43.6px-tall box fails the floor and then
+         * printed as "44" — a finding that reads as though the gate were wrong
+         * about its own rule. Sub-pixel misses are a real and distinct class
+         * here (a line-height that lands just under the floor, rather than a
+         * control nobody sized), and telling them apart from a 20px back link
+         * is the difference between one fix and thirty.
+         */
+        const px = (n) => Math.round(n * 10) / 10
         if (el.closest("[data-touch-floor-exempt]")) {
           out.exemptTarget.push({
             el: describe(target.el),
-            w: Math.round(target.rect.width),
-            h: Math.round(target.rect.height),
+            w: px(target.rect.width),
+            h: px(target.rect.height),
             reason: el.closest("[data-touch-floor-exempt]").dataset.touchFloorExempt || "unstated",
           })
           continue
         }
         out.smallTarget.push({
           el: describe(target.el),
-          w: Math.round(target.rect.width),
-          h: Math.round(target.rect.height),
+          w: px(target.rect.width),
+          h: px(target.rect.height),
         })
       }
     }
@@ -288,9 +339,37 @@ function measure({ touch }) {
         // there to stop a SMALL control being crowded, so it fires only when at
         // least one of the pair already fails the 44x44 floor. Without this the
         // gate reports every stacked row in the product and means nothing.
-        const tiny = (r) => r.width < 44 || r.height < 44
+        // Same 0.5px tolerance as the floor above, and for the same reason: a
+        // control that passes the floor must not then count as "tiny" here, or
+        // the spacing rule would fire on pairs the size rule just cleared.
+        const tiny = (r) => r.width < 44 - 0.5 || r.height < 44 - 0.5
         if (!tiny(a.rect) && !tiny(b.rect)) continue
         if (gap < 8) {
+          /*
+           * A waiver stated at the call site has to cover BOTH rules, or it is
+           * not a waiver. The six-box OTP row is exempt from the size floor
+           * because six 44px boxes plus five gaps need 284px and the card
+           * offers ~248px at 320px — and the same arithmetic is exactly why
+           * they sit 4px apart. Honouring the exemption on size and then
+           * failing the same control on spacing reported 30 findings that no
+           * edit could clear without undoing the reason for the exemption.
+           *
+           * Only when BOTH are exempt. One exempt control crowding a normal one
+           * is still a real mis-tap risk, and the waiver was written about the
+           * digit boxes among themselves — a mis-tap there lands on an adjacent
+           * digit, which is visible and recoverable. It stays REPORTED, on the
+           * same principle as `exemptTarget`: a gate that hides its carve-outs
+           * stops meaning anything.
+           */
+          if (a.exempt && b.exempt && a.exempt === b.exempt) {
+            out.exemptPair.push({
+              a: describe(a.el),
+              b: describe(b.el),
+              gap: Math.round(gap * 10) / 10,
+              reason: a.exempt.dataset.touchFloorExempt || "unstated",
+            })
+            continue
+          }
           out.tightPair.push({ a: describe(a.el), b: describe(b.el), gap: Math.round(gap) })
         }
       }
@@ -421,8 +500,9 @@ async function main() {
    * than by reading the source. A gate that hides its own carve-outs is the
    * vacuous-gate defect wearing a different hat.
    */
-  const exempt = findings.filter((f) => f.kind === "exemptTarget")
-  const failures = findings.filter((f) => f.kind !== "exemptTarget")
+  const EXEMPT_KINDS = new Set(["exemptTarget", "exemptPair"])
+  const exempt = findings.filter((f) => EXEMPT_KINDS.has(f.kind))
+  const failures = findings.filter((f) => !EXEMPT_KINDS.has(f.kind))
 
   const byKind = {}
   for (const f of failures) byKind[f.kind] = (byKind[f.kind] ?? 0) + 1

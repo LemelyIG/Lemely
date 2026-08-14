@@ -169,7 +169,12 @@ function SessionRow({
         <Link
           to={`/student/plan/${subjectCode}/session/${session.id}`}
           data-wraps-content-title
-          className="text-body-md font-medium text-ink no-underline hover:underline focus-visible:underline pointer-coarse:block pointer-coarse:py-[11px]"
+          // `min-h-11` rather than `py-[11px]` (P6.1 second pass): 21.7px of
+          // line plus 22px of padding is 43.7px, a third of a pixel under the
+          // floor, and the gate rounded it to "44" in its own report until it
+          // started printing tenths. A min states the rule; padding restates an
+          // arithmetic result that depends on the rung's line-height.
+          className="text-body-md font-medium text-ink no-underline hover:underline focus-visible:underline pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11"
         >
           {session.topic}
         </Link>

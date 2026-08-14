@@ -130,7 +130,14 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
                        the top of the taller box. Below `sm` the trail collapses
                        to a single back link, so on a phone this raises exactly
                        the one control a reader reaches for. */
-                    "pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11",
+                    /* `min-w-11` and centring on the inline axis too: a short
+                       crumb ("XP", "Me") measured 34px wide against its own
+                       44px height, so the floor was met on one axis and missed
+                       on the other. Centring matters because the extra width is
+                       split either side rather than trailing off the end, which
+                       keeps the label under the finger that aimed at it. */
+                    "pointer-coarse:flex pointer-coarse:items-center pointer-coarse:justify-center",
+                    "pointer-coarse:min-h-11 pointer-coarse:min-w-11",
                   )}
                 >
                   {item.label}

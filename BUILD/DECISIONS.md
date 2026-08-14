@@ -8772,3 +8772,125 @@ and it applies to every "verified by inversion" claim in this file.
 The pin now matches either identifier order, any comparison operator, and any
 receiver, within a single statement, and is inverted against all four rows of
 the table above — each fails exactly one test, and the clean tree passes 9/9.
+
+---
+
+## D6.2 — Redesign Phase 6.1, second pass: the gate was aiming at the wrong element
+
+D6.1 recorded the `adapt` work as though it were finished. It was not: the
+record was written, the gate was never run to green, and `STATE.md` still had
+Phase 6 as PENDING. Running it produced **198 findings** (156 `smallTarget`,
+42 `tightPair`).
+
+Three of the four defects below are in the gate itself, not the product. That is
+worth stating plainly, because D6.1's whole subject is a check that could not
+fail, and the check written to replace it shipped with three ways of being
+wrong about its own subject.
+
+### It reported the product's largest tap target as its smallest, 40 times
+
+`FileDrop` binds **two** labels to one input: a 13px caption ("Scanned paper")
+and the drop zone, which is the thing a finger lands on. `aimedAt` resolved the
+label with `querySelector`, which returns document order, so it picked the
+caption every time.
+
+Forty of the 156 findings were the paper-upload control on the flow the whole
+product exists for, reported at 83x13 while the real target beside it was
+several hundred pixels wide. Choosing by area rather than by document order is
+what makes the answer independent of markup order:
+
+| | picked | measured |
+|---|---|---|
+| `querySelector` (before) | caption | 83x13 — fails |
+| largest bound label (after) | drop zone | passes |
+
+`correct-paper` went from 40 findings to 0 with no product change at all, which
+is the tell: nothing was wrong on that screen.
+
+### It reported a box as "44" and failed it for being under 44
+
+The comparison ran on the raw float and the finding printed `Math.round`. A link
+hand-padded to 43.7px was reported as `44`, i.e. as a finding that appears to
+contradict its own rule. Findings now print tenths. That single change is what
+made the next defect visible.
+
+### It gave a different answer on identical runs
+
+Three consecutive runs of `teacher-analytics` returned one finding, then two,
+then a different element — always in a transient `loading` state, always at
+43.95-44.0 on an element whose CSS floor is exactly `min-block-size: 44px`.
+Chromium lays out in 1/64px LayoutUnits, so a 44px box measures fractionally
+under depending on the offset it lands on.
+
+A gate whose result changes between identical runs is worse than the vacuous one
+it replaced: that one was at least consistently wrong, whereas this teaches
+people to re-run until it passes. Fixed with 0.5px of tolerance, pinned so it
+cannot be widened, and applied to the spacing rule as well — a control that
+clears the size rule must not still count as `tiny` for spacing.
+
+The genuine 43.7px miss is still caught, with 0.3px to spare. Every other real
+finding was 20px or shorter.
+
+### A waiver that covered one rule and not the other
+
+The last 30 findings were all one control: the six-box OTP row, which carries
+`data-touch-floor-exempt` with a stated reason. The gate honoured that waiver
+for the size rule and then failed the same six inputs on **spacing**, 30 times.
+
+The two are the same arithmetic. Six 44px boxes plus five gaps need 284px and
+the card offers ~248px at 320px; that is why the boxes are under-width, and it
+is equally why they sit 4px apart. No edit could have cleared those 30 findings
+without undoing the reason the exemption exists.
+
+Now honoured on both rules, but only when **both** sides share the same waiver:
+one exempt control crowding an ordinary one is still a real mis-tap risk, and
+the reason written on the OTP row is about the digit boxes among themselves,
+where a mis-tap lands on an adjacent digit and is visible and recoverable. It is
+reported as `exemptPair`, never dropped, on the same principle as
+`exemptTarget`.
+
+### The product defects underneath
+
+Once the gate was measuring the right things, what was left was real:
+
+- **`py-[11px]` is not a 44px floor.** 21.7px of line plus 22px of padding is
+  43.7px. Two call sites (the review queue's student link, the study-plan topic
+  link) had been tuned by hand to a number that depends on the rung's
+  line-height, so it was right for neither. Both now state `min-h-11` and centre
+  their content. `truncate` moved to an inner span at the same time: on a flex
+  container the text is an anonymous flex item and `text-overflow` has nothing
+  to apply to, so the ellipsis would have silently stopped working.
+- **The bulk-approve checkboxes were 18px wide.** `Checkbox` in a table cell
+  carries an `aria-label` and no visible text, so the label row the floor sits
+  on collapses to the width of the painted box — a target twice as tall as it is
+  wide, in the one place a teacher taps repeatedly. The inline axis is now
+  floored on the label row too, which is a no-op on every labelled checkbox in
+  the product.
+- **The only way out of a class on a phone was 19.5px tall** (`← All classes`).
+- Inline-axis misses on three standalone controls that had been given the block
+  axis and not the inline one: breadcrumb crumbs (34px), the landing sign-in
+  links (41px), the parent overview's "See all" (38px). Centred where they sit
+  mid-row, end-aligned where the row ends, so the extra width does not shift the
+  label off the edge its heading aligns to.
+
+### What this pass did not change
+
+The three impeccable design-hook findings on `index.css` are left as they are,
+and deliberately: `--ease-spring` / `--ease-celebrate` overshoot **on purpose**
+(§4's celebration register, and `celebration.ts` says so at the token), and
+`ruled-bg` / `dotted-bg` are §4's notebook texture, which §1 names as the one
+protected quality of this entire redesign. §3 says this mission's text wins over
+a skill's when they conflict, and here they conflict. Not suppressed either: a
+waiver needs the human, and this ran unattended.
+
+### Gate
+
+`adaptRules.test.ts` is 14 tests, up from 9. The three new pins are verified by
+inversion **against the spelling that would actually be reached for**, per
+D6.1's own correction: reverting to `querySelector`, widening the tolerance to
+2px, and relaxing the pair waiver to "either side is exempt" each fail exactly
+one intended test.
+
+The reusable part is narrower than "run your gates". It is that a gate reporting
+zero and a gate reporting nonsense are both consistent with a green ledger row,
+and the only thing separating them is looking at what it named.

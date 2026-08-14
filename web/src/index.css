@@ -616,6 +616,15 @@ body {
   label:has(> span > input[type="checkbox"]),
   label:has(> span > input[type="radio"]) {
     min-block-size: 44px;
+    /* The inline axis matters here too, and only here. A checkbox with visible
+       label text is already far wider than 44px, so this is a no-op on almost
+       every one in the product. The case it exists for is the BARE checkbox —
+       the select-all and per-row boxes in the teacher review queue, which carry
+       an `aria-label` instead of visible text (the column header does the
+       naming). Those measured 18px wide against a 44px-tall row: a target
+       taller than it is wide by a factor of two, in the one place a teacher
+       taps repeatedly to bulk-approve. */
+    min-inline-size: 44px;
   }
 
   /* Inline-axis floor only where a control can legitimately be tiny: an

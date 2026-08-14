@@ -100,7 +100,14 @@ export function ClassDetailLayout() {
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
       <div className="flex flex-col gap-1">
-        <Link to="/teacher/classes" className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit">
+        {/* §6.1's floor. This measured 77x19.5: it is the only way back out of
+            a class on a phone, and it was half the height a finger needs.
+            `w-fit` keeps the target the width of its own text rather than the
+            full row, so the floor is the whole of what makes it reachable. */}
+        <Link
+          to="/teacher/classes"
+          className="flex w-fit items-center text-body-sm text-ink-faint transition-colors hover:text-ink pointer-coarse:min-h-11"
+        >
           ← All classes
         </Link>
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">

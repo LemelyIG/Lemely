@@ -212,13 +212,53 @@ describe("§6.1 what the touch gate measures", () => {
    * them. The distinction matters: re-pointing still enforces the floor, on the
    * element that carries it, and an input with NO label keeps being measured as
    * itself, because an unlabelled hidden control is a real defect.
+   *
+   * P6.1 second pass: re-pointing must choose by SIZE, not by document order.
+   * `FileDrop` binds two labels to the same input — a 13px caption ("Scanned
+   * paper") and the drop zone a finger actually lands on — and the first draft
+   * used `querySelector`, which returns whichever comes first in the markup.
+   * That was the caption, so a full run reported the product's largest tap
+   * target as its smallest, 40 times, on the one flow the whole product exists
+   * for. The floor asks whether there is something 44x44 to aim at, so where
+   * several labels are bound, the biggest one is the honest answer.
    */
   it("re-points a hidden control at its label instead of dropping it", () => {
     expect(AUDIT).toMatch(/aimedAt/)
     // The fallback is the control itself, never a silent skip.
     expect(AUDIT).toMatch(/aimedAt\(el, cs\)\s*\?\?\s*\{\s*el,\s*rect\s*\}/)
     // No label found means no substitution.
-    expect(AUDIT).toMatch(/if \(!label\) return null/)
+    expect(AUDIT).toMatch(/if \(rects\.length === 0\) return null/)
+    // ALL bound labels are considered, not just the first in document order.
+    expect(AUDIT).toMatch(/querySelectorAll\(`label\[for=/)
+    expect(AUDIT).not.toMatch(/querySelector\(`label\[for=/)
+    // And the winner is chosen by area.
+    expect(AUDIT).toMatch(/rect\.width \* .*\.rect\.height/)
+  })
+
+  /**
+   * The floor carries 0.5px of tolerance, and the pin is here so that nobody
+   * "tidies" it back to a bare `< 44`.
+   *
+   * An element whose CSS floor is exactly `min-block-size: 44px` measures
+   * 43.95-44.0 depending on the fractional offset it lands on, because Chromium
+   * lays out in 1/64px units. Without the tolerance this gate returned a
+   * different answer on identical runs — one finding, then two, then a
+   * different element — which trains people to re-run until it passes. That is
+   * worse than the vacuous check this file replaced, because that one was at
+   * least consistently wrong.
+   *
+   * Both the size rule and the spacing rule must use the same floor: a control
+   * that clears the size rule must not still count as "tiny" for spacing.
+   */
+  it("tolerates sub-pixel layout quantization, on both rules", () => {
+    expect(AUDIT).toMatch(/const FLOOR = 44 - 0\.5/)
+    expect(AUDIT).toMatch(/width < FLOOR \|\| target\.rect\.height < FLOOR/)
+    expect(AUDIT).toMatch(/r\.width < 44 - 0\.5 \|\| r\.height < 44 - 0\.5/)
+    // The tolerance must stay sub-pixel. A whole pixel of slack starts letting
+    // real misses through, and the genuine one found this phase was 43.7px.
+    for (const [, slack] of AUDIT.matchAll(/44 - (\d+(?:\.\d+)?)/g)) {
+      expect(Number(slack)).toBeLessThanOrEqual(0.5)
+    }
   })
 
   /**
@@ -231,10 +271,33 @@ describe("§6.1 what the touch gate measures", () => {
     expect(AUDIT).toMatch(/data-touch-floor-exempt/)
     expect(AUDIT).toMatch(/exemptTarget/)
     // Exempt findings must not fail the run, and must still be printed.
-    expect(AUDIT).toMatch(/f\.kind !== "exemptTarget"/)
+    expect(AUDIT).toMatch(/EXEMPT_KINDS\.has\(f\.kind\)/)
     expect(AUDIT).toMatch(/exempt \(stated at the call site\)/)
     // The run's pass/fail reads the non-exempt set, never the raw findings.
     expect(AUDIT).toMatch(/if \(failures\.length\) process\.exitCode = 1/)
+  })
+
+  /**
+   * A waiver stated at the call site has to cover BOTH rules, or it is not a
+   * waiver.
+   *
+   * The OTP row was exempted from the size floor and then failed the SPACING
+   * rule 30 times on the same six inputs, because the arithmetic that makes the
+   * floor unreachable at 320px (six 44px boxes plus five gaps need 284px in a
+   * ~248px card) is the same arithmetic that puts them 4px apart. No edit could
+   * clear those findings without undoing the reason for the exemption.
+   *
+   * Only when BOTH sides share the same waiver, though: one exempt control
+   * crowding an ordinary one is still a real mis-tap risk, and the reason
+   * written on the OTP row is about the digit boxes among themselves.
+   */
+  it("honours a call-site waiver on the spacing rule too, but only within it", () => {
+    expect(AUDIT).toMatch(/exemptPair/)
+    // Both sides, and the SAME waiver element — not merely "either is exempt".
+    expect(AUDIT).toMatch(/a\.exempt && b\.exempt && a\.exempt === b\.exempt/)
+    // Still reported, never dropped.
+    expect(AUDIT).toMatch(/out\.exemptPair\.push/)
+    expect(AUDIT).toMatch(/EXEMPT_KINDS = new Set\(\["exemptTarget", "exemptPair"\]\)/)
   })
 
   /**

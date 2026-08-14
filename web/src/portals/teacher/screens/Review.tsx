@@ -499,17 +499,31 @@ export function Review() {
                       <div className="flex items-center gap-2.5 min-w-0">
                         <Avatar name={item.studentDisplayName} size="sm" />
                         <div className="min-w-0">
+                          {/* Two stacked links to two different destinations,
+                              so both need §6.1's floor, not just the primary
+                              one. `min-h-11` with flex centring rather than the
+                              `py-[11px]` this used to carry: 21.7px of line
+                              plus 22px of padding is 43.7px, which fails the
+                              floor by a third of a pixel and reported as "44"
+                              until the gate started printing tenths. Hand-tuned
+                              padding cannot be right for both rungs anyway,
+                              because they have different line-heights.
+
+                              `truncate` moves to an inner span: on a flex
+                              container the text is an anonymous flex item and
+                              text-overflow has nothing to apply to, so the
+                              ellipsis would silently stop working. */}
                           <Link
                             to={`/teacher/students/${item.studentId}`}
-                            className="text-ink hover:underline block truncate pointer-coarse:py-[11px]"
+                            className="flex items-center text-ink hover:underline pointer-coarse:min-h-11"
                           >
-                            {item.studentDisplayName}
+                            <span className="truncate">{item.studentDisplayName}</span>
                           </Link>
                           <Link
                             to={`/teacher/classes/${item.classId}`}
-                            className="text-body-sm text-ink-faint transition-colors hover:text-ink hover:underline block truncate"
+                            className="flex items-center text-body-sm text-ink-faint transition-colors hover:text-ink hover:underline pointer-coarse:min-h-11"
                           >
-                            {item.className}
+                            <span className="truncate">{item.className}</span>
                           </Link>
                         </div>
                       </div>
