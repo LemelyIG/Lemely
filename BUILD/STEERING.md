@@ -268,3 +268,42 @@ found rather than at the end. `npm run check:copy` reaches **0**.
 
 **No new DECISION is open.** D1.6 and D4.8 are both resolved, B4 is closed, and
 nothing in surface 10 required a judgement the mission does not already answer.
+
+---
+
+## D6.6 — `test_design_tokens.py` asserts contrast the browser does not render
+**Sent:** 2026-08-14 (redesign Phase 6.4 part 1) · **Status:** OPEN, no default, no timeout
+
+**The evidence:**
+
+    oklch(0.576 0.146 33) -> our oklch_to_srgb   #c0523c
+    the same token, rendered by Chromium         #c25741
+    white on #c0523c (what the test computes)    4.658  passes AA
+    white on #c25741 (what a user sees)          4.436  fails AA
+
+`--accent-on` is `#ffffff`, described in the token block as "the ONE permitted
+pure white" at 4.65:1 on the accent fill. On screen it is 4.436:1, below the 4.5
+floor it was chosen to clear. axe independently scored that node 4.21 on
+`student-flashcards-no-weaknesses`, which is what led here.
+
+The conversion error is 2-5/255 per channel. It matters because every contrast
+value in this design system was chosen to *just* clear its threshold, so an
+error that small is enough to move a claim across the line.
+`tests/test_design_tokens.py` has been cited as this project's contrast
+authority since Phase 2.
+
+**Options:**
+- **(A)** Reconcile `oklch_to_srgb` with what browsers actually do, re-derive
+  every contrast claim in the token block against corrected values, and propose
+  the resulting token changes for review before applying any of them.
+- **(B)** Change only `--accent` far enough that white-on-accent clears 4.5, and
+  leave the rest of the block as it stands.
+- **(C)** Leave the tokens alone and record it as a known, documented AA gap.
+
+**Why there is no default and no timeout:** every option changes, or knowingly
+declines to change, the brand accent — present on every surface and chosen in
+Phase 2 against a brand strategy. §10 says a question with no sane default
+should not be a timeout question. Work continues on everything independent of
+it; the failing node stays red rather than being loosened.
+
+Full arithmetic and reasoning: `BUILD/DECISIONS.md` D6.5 §3.
