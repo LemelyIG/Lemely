@@ -65,6 +65,34 @@ NEXT ACTION:        **Nothing is queued.** The mission's §12 definition of done
                     re-sent. Nothing here is a task; the mission is waiting on a
                     human, not on a session.
 
+                    **Session 7 (2026-08-15) built nothing either, but it did
+                    not find nothing.** Session 6 wrote "tree clean and in sync
+                    with the remote" and its own commit `80c95e7` was never
+                    pushed — the branch was `ahead 1`, so the state note saying
+                    the mission is complete and waiting on a human was the one
+                    commit **not** in the PR that is the handoff. Every prior
+                    session's state commit is on `origin`; that one is the
+                    exception, so this is an omitted step, not a policy. Pushed
+                    (with this note), and PR #7 now contains the record that
+                    describes it.
+
+                    The rest of the checks came back the same and are recorded
+                    for the next session: INBOX both items handled, B1-B5 all
+                    RESOLVED, every phase-ledger row DONE, PR #7 OPEN and
+                    MERGEABLE with **no review decision**, working tree clean.
+                    The inbound topic polled since 1786723759 now returns
+                    **HTTP 200 with an empty body** — `VqpbRSelzmn9` has aged
+                    out of ntfy's retention. No new steering; but note that the
+                    inbound channel no longer holds the D6.7 answer, so
+                    DECISIONS.md is the only surviving record of it. The
+                    completion ntfy was **not** re-sent.
+
+                    Twice now the check a session performed on itself was the
+                    one it got wrong — session 5 found §12's unfired clause,
+                    session 6 asserted a sync it had not verified. "Nothing to
+                    do" is a claim with a state behind it, and the state is
+                    worth reading before the claim is written.
+
                     A completed checklist item can be the one nobody checked:
                     every *visible* deliverable of §12 existed (report,
                     gallery, PR), so the phase read as closed while the clause
