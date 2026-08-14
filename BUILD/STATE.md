@@ -29,23 +29,40 @@ if trivial, otherwise log under REDESIGN → Deferred Issues.
 
 ```
 MISSION:            BUILD/REDESIGN-MISSION.md
-CURRENT PHASE:      **7 IN PROGRESS.** 7.1 (full-product audit re-run and
-                    polish) is COMMITTED at `9955114`. 7.2 (before/after
-                    gallery), 7.3 (`BUILD/DESIGN-REPORT.md`) and 7.4 (final PR)
-                    remain. Phase 6 closed at `a20b6c8`.
+CURRENT PHASE:      **7 IN PROGRESS.** 7.1 (audit re-run and polish) committed
+                    at `9955114`, `8a3d68a` and `dc7358f`. 7.2 (before/after
+                    gallery) committed at `42e2f99`. 7.3
+                    (`BUILD/DESIGN-REPORT.md`) is drafted and needs only the
+                    axe/Lighthouse numbers. 7.4 (final PR) remains. Phase 6
+                    closed at `a20b6c8`.
 CURRENT SURFACE:    Phase 7 is a sweep, not a surface.
-NEXT ACTION:        **7.2, the before/after gallery.** `web/scripts/gallery.mjs`
-                    is written and unrun: it starts its own preview (the D6.10
-                    rule), captures 36 surfaces at 1440 and 375, and pairs each
-                    with the build-era corpus at
-                    `reports/phase-6/screens/<SPEC-ID>/`. That corpus is dated
-                    2026-08-12, the day before redesign Phase 0 opened at
-                    `ba0bf73`, so it IS the pre-redesign branch point §7.2 asks
-                    for, without rebuilding a stale tree and calling the result
-                    the past. **Its mobile width is 380 and ours is 375**; the
-                    gallery says so on its own page rather than labelling both
-                    "mobile". The 9 admin and misc surfaces have no before,
-                    because those screens did not exist (D4.10).
+NEXT ACTION:        **Finish 7.3, then 7.4.**
+
+                    `BUILD/DESIGN-REPORT.md` is written end to end with one
+                    placeholder left, `<!--AXE-->` in §5.3a, waiting on the
+                    41-route audit (`LEMELY_REPORT_DIR=reports/phase-7 npm run
+                    audit`, output at `/tmp/p7-audit.txt`, corpus at
+                    `reports/phase-7/`). If that run did not finish, say so in
+                    §5.3a and quote Phase 6.4's corpus with its date rather than
+                    leaving a blank or implying a fresh number.
+
+                    Then 7.4: PR `redesign/study-surfaces` -> `main` (the
+                    mission says develop -> main; every redesign phase has
+                    landed on this branch, so the PR is from it), and the
+                    completion ntfy with the report and gallery.
+
+                    **Gate results on this tree, all green:** 765 page-states
+                    across 36 surfaces at 0 findings with the artifact committed
+                    (`reports/phase-7/adapt-findings.json`); 1,456 web unit
+                    tests; typecheck; lint 0 errors; check:copy 0; both builds;
+                    pre-commit all-files.
+
+                    **The gallery is at `reports/phase-7/gallery/index.html`**,
+                    35 surfaces at 1440 and 375, 26 with a before pair from the
+                    build-era corpus. The 9 without are the screens that did not
+                    exist (7 admin, 404, /data). Its mobile pair is **380 before
+                    and 375 after**, which the page states rather than
+                    relabelling both "mobile".
 
                     **What 7.1 found, and why almost none of it was a screen.**
                     Six of the seven findings were in gates, two of them in the

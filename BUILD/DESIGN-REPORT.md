@@ -340,7 +340,63 @@ it exists to catch, then restored.
 
 ### 5.3a The axe and Lighthouse corpus
 
-<!--AXE-->
+`LEMELY_REPORT_DIR=reports/phase-7 npm run audit` — 41 routes against the real
+backend and seeded data, axe plus Lighthouse plus responsive screenshots per
+route state. Corpus at `reports/phase-7/`.
+
+| Measure | Result |
+|---|---|
+| Route-state axe files | 73 |
+| Serious or critical violations | **0** |
+| Moderate violations | 1, fixed (below) |
+| Console errors collected | **0** |
+| Horizontal-scroll violations | **0** |
+| Routes in the registry that could not be audited | **0** |
+
+For comparison, Phase 6.4's corpus went from 47 serious/critical to 1, and that
+last one turned out to be axe sampling a CSS transition in flight rather than a
+product defect (D6.6). This run has none.
+
+**The one moderate finding was real and is fixed.** `heading-order` on the
+teacher's student-detail screen: the performance-over-time panel is a top-level
+section under the page's `h1`, and `ChartFrame` renders its title as `h3`, so
+the document skipped a level. `ChartFrame` now takes a `headingLevel` and that
+one call site passes 2; `ClassAnalytics` and the student `Overview` both have
+their own `h2` above the chart and keep the default. The visual rung is
+unchanged either way — `display-sm` is the panel-title size regardless of tag,
+because a heading level is a claim about document structure and not a type
+choice. Verified with `node scripts/axe_surface.mjs teacher-student`: all four
+states clean.
+
+**Two routes failed the first run, and it was this phase's own doing.** T-08 and
+T-09-detail timed out waiting for their ready predicates, which were
+`waitForText(page, "← Back to queue")` and `"← All quizzes"` — the exact arrow
+strings this phase replaced with mirrorable icons. The characters left the DOM
+text and both routes went dead.
+
+That is D6.5's lesson recurring with a twist worth recording. D6.5 found five
+routes dead for the same reason and fixed them by keying predicates to
+contracts (`role="status"`) rather than sentences. These two were fixed
+*differently* — keyed to a back-link label, which looks stable, because a back
+link reads as navigation rather than copy. It was not stable. They now wait on
+`h1:not(.sr-only)`, which is a contract: both screens render an `sr-only` `h1`
+in their loading and error states and a real display heading only once loaded,
+so it waits for *loaded* specifically, where waiting on any `h1` would pass on a
+skeleton.
+
+`scripts/axe_surface.mjs` is new and exists because of the gap this exposed: the
+corpus is a forty-minute instrument, which is right for a phase gate and wrong
+for checking one panel's heading level. It runs axe against a single registered
+surface using that registry's own stubs, in seconds, with no backend. It is a
+check and not a gate, and says so — it sees only what one surface's stub data
+renders.
+
+**The Lighthouse scores are recorded in the corpus and are deliberately not used
+to support any claim here.** Build-era D6.9 established that one run cannot
+separate *fixed* from *fast*, and Phase 6.3 measured ±11-point swings on routes
+it had not touched, in both directions. The structural results above — 0
+serious/critical, 0 console errors, 0 horizontal scroll, 0 unreachable — are
+what this section rests on.
 
 ### 5.4 What Phase 7 itself found
 
@@ -561,10 +617,25 @@ needs a gateway and credentials from the human — and deliberately not implied
 anywhere in the new copy or metadata (D6.9).
 
 ### 6.7 The compatibility layer cannot die yet
-Every *screen* is migrated. **17 kit components still name build-era aliases in
-their own source**, none of them in the migration file lists, so no gate reads
-them. This is the same "a file no list claims is a file no gate reads" mechanism
-as surface 10's finding, one layer down.
+`index.css` still carries the build-era token aliases (`--surface`, `--t1`,
+`--border`, and the rest), mapped onto Study Notebook values, under a header
+saying the block is temporary and that each surface migration deletes its own
+call sites.
+
+**Every *screen* is migrated; ten kit components are not.** Counted for this
+report rather than carried forward — the figure in `STATE.md` was 17 components,
+and re-measuring with comments stripped gives **10 files and 55 call sites**:
+`CameraCapture`, `boundary-bar`, `confidence-indicator`, `getting-started`,
+`nav-shells`, `paper-identity`, `question-row`, `role-switcher`, `slider` and
+`stepper`. The difference is that several files only *mention* an old name in a
+comment explaining what it used to be, and a plain grep counts those. Two of the
+apparent offenders were screens (`Login.tsx`, `portals/student/index.tsx`),
+which would have contradicted "every screen is migrated" — both are comments.
+
+None of the ten is in a migration file list, so no gate reads them, which is
+surface 10's "a file no list claims is a file no gate reads" one layer down. The
+block cannot be deleted until they are converted; nothing breaks meanwhile,
+because the aliases resolve to the new values.
 
 ### 6.8 N3, the one audit finding the redesign did not close
 The Phase-1 audit's minor finding N3 — no offline state distinct from a generic

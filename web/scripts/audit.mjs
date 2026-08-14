@@ -332,6 +332,30 @@ async function waitForText(page, pattern, timeout = 15_000) {
 }
 
 /**
+ * Ready when the screen's real heading exists (P7.1).
+ *
+ * D6.5's rule, applied to the two routes that never took it: **key a predicate
+ * to a contract, not a sentence.** That phase found five routes dead because
+ * their `ready` predicates waited on prose the redesign had deleted, and fixed
+ * them by waiting on `role="status"`. T-08 and T-09-detail were fixed
+ * differently — they waited on their back-link labels, `"← Back to queue"` and
+ * `"← All quizzes"` — which looked stable, because a back link is navigation
+ * rather than copy, and was not: P7.1 replaced every arrow character in the
+ * product with a mirrorable icon (a `"→"` in a string cannot be flipped under
+ * `dir="rtl"`), the character left the DOM text, and both routes went dead
+ * again on the very next run.
+ *
+ * `h1:not(.sr-only)` is a contract in the way those were not. Both screens
+ * render an `sr-only` `<h1>` in their loading and error states and a real
+ * display heading only once loaded, so this waits for *loaded* specifically —
+ * where waiting for any `h1` would pass on a skeleton, which is the failure
+ * D6.5 warns is worse than a dead route because it produces rows.
+ */
+async function waitForLoadedHeading(page, timeout = 15_000) {
+  await page.waitForSelector("h1:not(.sr-only)", { timeout })
+}
+
+/**
  * Waits for a screen's loading state by its *contract*, not by its copy.
  *
  * ── Why this exists (P6.4 part 2) ─────────────────────────────────────────
@@ -903,7 +927,7 @@ async function driveToQuestionnaire(page) {
  * backend state and cannot be undone through this UI, which is why the
  * registry entry below orders `teacher-corrected` after `low-confidence`. */
 async function resolveReviewItemViaAdjustForm(page, url) {
-  await gotoReady(page, url, (p) => waitForText(p, "← Back to queue"))
+  await gotoReady(page, url, (p) => waitForLoadedHeading(p))
   await clickButtonByText(page, "Adjust marks instead")
   const marksInput = await page.waitForSelector('input[type="number"]', { timeout: 15_000 })
 
@@ -1164,7 +1188,7 @@ function buildRouteRegistry(seed) {
   const childId = seed.students.declining.userId
   const subjectCode = "0625" // scripts/seed_e2e.py's SUBJECT_CODE — every declining-student attempt is this subject.
   const reviewItemUrl = `/teacher/review/${seed.reviewItem.itemId}`
-  const reviewItemReady = (page) => waitForText(page, "← Back to queue")
+  const reviewItemReady = (page) => waitForLoadedHeading(page)
   const quizDetailUrl = `/teacher/quizzes/${seed.quiz.quizId}`
   const quizResultsUrl = `/teacher/quizzes/${seed.quiz.quizId}/assignments/${seed.quiz.assignmentId}/results`
 
@@ -1394,9 +1418,14 @@ function buildRouteRegistry(seed) {
           state: "error",
           slug: "teacher-review-detail-error",
           lighthouse: false,
-          // Distinguish from the *loaded* state's own "← Back to queue" —
-          // the error state's secondary action reads "Back to queue", no
-          // arrow (see ReviewItem.tsx).
+          // The error state's own sentence, which is the thing that
+          // distinguishes it: it renders an `sr-only` h1 like the loading
+          // state, so `waitForLoadedHeading` would never resolve here and
+          // must not be reached for. (This comment used to say the
+          // distinction was the arrow in the loaded state's back link;
+          // P7.1 removed every arrow character from the product, so that
+          // distinction no longer exists — the heading contract is what
+          // separates them now.)
           ready: (page) => waitForText(page, "Couldn't load this review item"),
           ...errorStateHooks(`/api${reviewItemUrl}`),
         },
@@ -1426,7 +1455,7 @@ function buildRouteRegistry(seed) {
         {
           state: "default",
           slug: "teacher-quiz-detail",
-          ready: (page) => waitForText(page, "← All quizzes"),
+          ready: (page) => waitForLoadedHeading(page),
         },
         {
           state: "loading",

@@ -48,6 +48,19 @@ export interface ChartFrameProps extends Omit<HTMLAttributes<HTMLDivElement>, "t
   /** The chart itself (a future Nivo component, or a placeholder while
    * building). Ignored while `isEmpty` is true. */
   children?: ReactNode
+  /**
+   * Heading level for the title. Defaults to 3, which is right wherever the
+   * chart sits inside a section that already has its own `h2` — which is the
+   * case on `ClassAnalytics` and the student `Overview`.
+   *
+   * P7.1: it is NOT the case on the teacher's student-detail screen, where the
+   * trend panel is a top-level section under the page `h1`, so an `h3` skipped
+   * a level and axe reported `heading-order`. The visual rung is unchanged
+   * either way — `display-sm` is the panel-title size regardless of the tag,
+   * because the heading level is a document-structure claim and not a type
+   * choice.
+   */
+  headingLevel?: 2 | 3
 }
 
 export function ChartFrame({
@@ -60,8 +73,10 @@ export function ChartFrame({
   emptyAction,
   children,
   className,
+  headingLevel = 3,
   ...props
 }: ChartFrameProps) {
+  const Heading = headingLevel === 2 ? "h2" : "h3"
   return (
     <div
       className={cn(
@@ -72,7 +87,7 @@ export function ChartFrame({
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-0.5">
-          <h3 className="text-display-sm text-ink">{title}</h3>
+          <Heading className="text-display-sm text-ink">{title}</Heading>
           {subtitle ? <p className="text-body-sm text-ink-muted">{subtitle}</p> : null}
         </div>
         {legend && !isEmpty ? (

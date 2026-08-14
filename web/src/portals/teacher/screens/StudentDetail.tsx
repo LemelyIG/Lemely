@@ -119,6 +119,12 @@ function StudentTrendPanel({
 
   return (
     <ChartFrame
+      // `h2`, not the default `h3`: this panel is a top-level section under the
+      // page's `h1`, with no section heading between them, so the default
+      // skipped a level (axe `heading-order`, P7.1). `ClassAnalytics` and the
+      // student `Overview` both have their own `h2` above the chart and keep
+      // the default.
+      headingLevel={2}
       title="Performance over time"
       subtitle="Percentage per marked paper"
       isEmpty={trend.length === 0}
