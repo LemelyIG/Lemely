@@ -27,13 +27,23 @@ import { extendTailwindMerge } from "tailwind-merge"
  * list without removing the class from `index.css` too.
  */
 const CUSTOM_FONT_SIZE_CLASSES = [
+  // ── Study Notebook type scale (DESIGN.md §4.2) ──
   "display-hero",
+  "display-xl",
   "display-lg",
   "display-md",
   "display-sm",
-  "display-xs",
   "body-lg",
   "body-md",
+  "body-sm",
+  "label",
+  "eyebrow",
+  "data-lg",
+  "data-md",
+  "data-sm",
+  "hand",
+  // ── Build-era names, still live until Phase 4 migrates the last call site ──
+  "display-xs",
   "label-sm",
   "metadata",
   "dense-lg",
@@ -87,6 +97,26 @@ export function initialsOf(name: string): string {
     .split(" ")
     .map((w) => w[0])
     .join("")
+}
+
+/**
+ * Time-of-day greeting for a 0-23 hour, in the reader's own local time.
+ *
+ * The student Overview said "Good afternoon" unconditionally, at every hour of
+ * the day, which made the first line of the first screen the one sentence on
+ * the page that was reliably false for most of its readers — students revise
+ * at night.
+ *
+ * A pure function taking the hour rather than reading the clock itself, so it
+ * is testable at every boundary without faking timers. Evening runs from 18:00
+ * round to 04:59 deliberately: greeting someone with "good morning" at two in
+ * the morning is the same error in the other direction, and a student still
+ * working at that hour has not started their morning yet.
+ */
+export function greetingFor(hour: number): string {
+  if (hour >= 5 && hour < 12) return "Good morning"
+  if (hour >= 12 && hour < 18) return "Good afternoon"
+  return "Good evening"
 }
 
 /** RFC 4180 quoting: a cell containing a quote, comma or newline is wrapped

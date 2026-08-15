@@ -3,14 +3,36 @@ import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import { VitePWA } from "vite-plugin-pwa"
+// Explicit `.ts` extension: tsconfig.node.json resolves as `nodenext`, which
+// requires one. `allowImportingTsExtensions` is already set there.
+import { fontPreload } from "./vite/fontPreload.ts"
+import { themeColor } from "./vite/themeColor.ts"
+import { tokenHex } from "./vite/brandTokens.ts"
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    // P6.3: the only cause Lighthouse ever named for a layout shift in this
+    // product is "Web font loaded". See web/vite/fontPreload.ts.
+    fontPreload(),
+    // P6.5: `<meta name="theme-color">` from the --paper token. See
+    // web/vite/themeColor.ts.
+    themeColor(),
     VitePWA({
       registerType: "autoUpdate",
+      // P6.3. The default (`injectRegister: "auto"`) emits a bare
+      // `<script src="/registerSW.js">` as the last thing in `<head>` — no
+      // `defer`, no `async`, not a module — so it is parser-blocking, and the
+      // parser has not reached `<body>` yet when it stops. Lighthouse measured
+      // it at **301ms of render blocking on every one of the 41 audited
+      // routes**, for 403 bytes whose entire job is to register a service
+      // worker that has nothing to do until after first paint. Deferring it
+      // changes nothing about when the worker becomes useful and takes the
+      // whole product off the second entry in its own render-blocking list
+      // (the first is the stylesheet, which has to block).
+      injectRegister: "script-defer",
       // `injectManifest`, not the default `generateSW` (D5.15 §1). A generated
       // worker has no `push` listener at all, so D5.10's payload-less push had
       // nowhere to land — the backend could send a notification and nothing on
@@ -35,12 +57,22 @@ export default defineConfig({
           "Lemely marks a student's photographed or uploaded past-paper attempt against the official marking scheme with method-mark awareness, returning per-question marks, grade, and weakness topics.",
         start_url: "/",
         display: "standalone",
-        // Computed from index.css's student/default theme tokens via a real
-        // oklch->sRGB conversion (culori formatHex): --ink oklch(0.2 0.02 35)
-        // -> #1e1310, --bg oklch(0.97 0.007 40) -> #faf4f2. Both are in the
-        // sRGB gamut, so the conversion is exact (no clipping).
-        theme_color: "#1e1310",
-        background_color: "#faf4f2",
+        // P6.5. These were `#1e1310` / `#faf4f2` under a comment claiming they
+        // were computed from index.css via culori. Every clause of that comment
+        // was false by the time it was read: `--ink` is `oklch(0.321 0.009
+        // 234)` not `oklch(0.2 0.02 35)`, there is no `--bg` token, culori is
+        // not a dependency of this project, and both hexes were build-era
+        // Material-3 values that no token has produced since Phase 2 rewrote
+        // the palette. Nothing failed, because an OS reads these and no test
+        // does. Now computed at build time from the token file itself; see
+        // web/vite/brandTokens.ts.
+        //
+        // Both are `--paper`. `theme_color` tints the app's own title bar and
+        // `background_color` paints the splash screen shown before the first
+        // frame renders, so making them the page colour means the launch reads
+        // as the app appearing rather than as a flash of some other colour.
+        theme_color: tokenHex("paper"),
+        background_color: tokenHex("paper"),
         icons: [
           {
             src: "pwa-192x192.png",
@@ -67,6 +99,21 @@ export default defineConfig({
       // live marks and grades and must never be served from a cache.
       injectManifest: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2}"],
+        // P6.3. Every `@font-face` @fontsource emits carries a `unicode-range`,
+        // so a browser rendering English never requests the Cyrillic, Greek or
+        // Vietnamese subsets at all — they cost nothing precisely because they
+        // are never fetched. Precaching them by name defeats that: the service
+        // worker asks for each one explicitly at install, and the glob above
+        // was naming all nine. **187KB of glyphs no English page can display,
+        // downloaded on every student's first visit**, most of them on a phone
+        // on mobile data.
+        //
+        // The trade is stated rather than hidden: online, nothing changes —
+        // the browser still fetches one of these on demand the moment a glyph
+        // needs it, e.g. a student whose name is not in latin. Offline, such a
+        // name renders in the fallback face. Precache is the app *shell*, and a
+        // subset reachable only through particular user data is not shell.
+        globIgnores: ["**/*-{cyrillic,cyrillic-ext,greek,greek-ext,vietnamese}-*.woff2"],
       },
     }),
   ],

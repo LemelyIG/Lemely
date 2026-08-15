@@ -81,7 +81,7 @@ export function Stepper({ steps, current, onSelect, completed, disabled }: Stepp
                   type="button"
                   aria-current={active ? "step" : undefined}
                   onClick={() => onSelect(step.id)}
-                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 transition-[color,background-color,transform] hover:bg-surface-2 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   {glyph}
                   {label}

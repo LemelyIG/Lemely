@@ -42,16 +42,24 @@ export interface WeakThread {
   color: VizColor
 }
 
+/** One corrected paper on the momentum line (mirrors `MomentumPointDTO`). */
+export interface MomentumPoint {
+  /** Canonical UTC ISO-8601. Formatting is this side's job, not the wire's. */
+  recordedAt: string
+  /** As recorded. Never pre-scaled to a viewbox — read `MomentumDTO`'s
+   * docstring for what that used to mean and why it stopped. */
+  percentage: number
+}
+
 /**
- * SVG sparkline path data for the momentum widget (mirrors `MomentumDTO`).
- * `path`/`area` are empty strings when fewer than two papers exist.
+ * The momentum series: percentage per corrected paper, oldest first
+ * (mirrors `MomentumDTO`).
+ *
+ * `points` is empty when fewer than two grade-bearing papers exist, which is
+ * the condition the panel's empty state keys off directly.
  */
 export interface Momentum {
-  path: string
-  area: string
-  lastX: string
-  lastY: string
-  labels: string[]
+  points: MomentumPoint[]
 }
 
 /** Payload for `GET /student/overview` (mirrors `OverviewDTO`). */
@@ -196,6 +204,30 @@ export interface StudentUploadResponse {
   paperId: string
 }
 
+/** The four states an upload can be in, mirroring `UploadStatus` in Python. */
+export type UploadRunStatus = "pending" | "processing" | "complete" | "failed"
+
+/**
+ * Run state of one uploaded paper, for a reader that is not the SSE stream.
+ *
+ * Mirrors `UploadRunDTO`. Read the Python docstring before using it — the
+ * important part is what it deliberately does not carry: there is no
+ * per-question progress, because the SSE frames go to a process-global bus with
+ * no replay. Once the tab that was consuming them is gone, they are gone. A
+ * recovered screen that redrew the stage panel would be inventing ticks.
+ *
+ * `startedAt` is non-null only while `status` is `processing`. `stale` is the
+ * server's judgement on it, computed server-side because the server owns the
+ * clock that timestamp came from.
+ */
+export interface UploadRun {
+  paperId: string
+  status: UploadRunStatus
+  filename: string | null
+  startedAt: string | null
+  stale: boolean
+}
+
 /** Request body for `POST /student/correct`. */
 export interface CorrectRequest {
   paperId: string
@@ -309,6 +341,17 @@ export interface StudentCorrectFrame {
   // marking_progress, per-question (correction_ai.py)
   question_id?: string
   marker_source?: MarkerSource
+  // marking_progress, per-question (correction_ai.py) *and* extraction_progress
+  // (answer_extraction.py): `index` is this question's 1-based position in the
+  // stage's work list, `total` is that list's length — the real "Question 7 of
+  // 21" counter S-14 asks for. Both publishers derive `index` from `enumerate`
+  // over the source list rather than counting frames already emitted, so a
+  // question that fails and reports an `error` instead does not shift the
+  // indices after it. Absent on the terminal `marking_progress`/
+  // `phase: "complete"` frame (student.py), which summarises the whole paper
+  // rather than reporting one question.
+  index?: number
+  total?: number
   // extraction_progress (answer_extraction.py)
   has_working?: boolean
   // gemini_call_start / gemini_call_end / gemini_cache_hit / gemini_retry / gemini_escalate

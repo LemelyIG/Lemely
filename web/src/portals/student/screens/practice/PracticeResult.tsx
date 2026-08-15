@@ -1,14 +1,19 @@
-import { CircleNotch } from "@phosphor-icons/react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
+import { CountUp } from "@/components/ui/celebration"
 import { Card, CardBody } from "@/components/ui/card"
 import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator"
+import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { ProgressBar } from "@/components/ui/progress-bar"
 import { QuestionRow } from "@/components/ui/question-row"
-import { ErrorState } from "@/components/ui/state-views"
+import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { formatQuestionTopic } from "@/components/quiz/quizTakerData"
 import { usePracticeResult } from "@/lib/hooks/usePracticeApi"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
 import { confidenceBandTier, practiceMarkState, practiceResultView } from "./practiceData"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
+
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 
 /*
  * S-21 · Practice set finish summary. The whole render decision — not
@@ -19,17 +24,51 @@ import { confidenceBandTier, practiceMarkState, practiceResultView } from "./pra
  * (mirrors `PlacementResult`'s identical discipline). Every awarded mark on
  * the "marked" branch carries its own confidence via `QuestionRow`'s C-4
  * chip — no new confidence display is built here.
+ *
+ * P4.3 (Study Notebook). Two things beyond styling:
+ *
+ *   1. **The marking wait was a bare spinning glyph.** DESIGN.md §12 allows a
+ *      spinner only for "an indeterminate action under ~1s inside a button",
+ *      and this is a page-level wait on a server-side marking job. It is now
+ *      C-24 `ProgressBar` in its `indeterminate` mode, whose own docstring
+ *      names this exact case. The correction flow (surface 2) already handles
+ *      its marking wait properly; this is the same wait on the same product
+ *      rendered two different ways, which is P4.2's lesson 2 — a defect fixed
+ *      on one flow is still live on another.
+ *   2. **The mark total was prose.** "{awarded} of {max} marks" was
+ *      `text-body-md`, i.e. Geist, where §4 gives the data face "all scores,
+ *      grades, marks". This is the same finding as D4.2 item 3 on the paper
+ *      result, one screen along: the number a student opens this page to read
+ *      was set in the reading face.
  */
+/**
+ * True when `PracticeSet` navigated here on submit, rather than the student
+ * opening this result again from somewhere else.
+ *
+ * Narrowed rather than cast: `location.state` is `unknown` and arrives from the
+ * history entry, so it survives a reload and can be anything at all.
+ */
+function isJustSubmitted(state: unknown): boolean {
+  return (
+    typeof state === "object" &&
+    state !== null &&
+    (state as { justSubmitted?: unknown }).justSubmitted === true
+  )
+}
+
 export function PracticeResult() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const justSubmitted = isJustSubmitted(location.state)
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
   const { data, isPending, isError, error, refetch } = usePracticeResult(assignmentId)
 
   if (isPending) {
     return (
-      <div className="lm-screen text-body-md text-t2">
+      <div className="lm-screen lm-read flex flex-col gap-6">
         <h1 className="sr-only">Practice set result</h1>
-        Loading your practice set…
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={5} />
       </div>
     )
   }
@@ -40,7 +79,7 @@ export function PracticeResult() {
         <h1 className="sr-only">Practice set result</h1>
         <ErrorState
           heading="Couldn't load this practice set"
-          body={error?.message}
+          body={studentLoadFailureMessage(error)}
           action={{ label: "Try again", onClick: () => void refetch() }}
           className="lm-screen"
         />
@@ -53,29 +92,36 @@ export function PracticeResult() {
 
   if (view.kind === "not_submitted") {
     return (
-      <div className="lm-screen mx-auto flex max-w-[560px] flex-col items-center gap-4 py-16 text-center">
-        <h1 className="text-body-lg font-medium text-t1 m-0">This practice set hasn't been submitted yet</h1>
-        <p className="text-body-md text-t2">
-          Finish and submit your {subjectName} practice set to see how you did.
-        </p>
-        <Button variant="accent" onClick={() => navigate(`/student/practice/set/${data.assignmentId}`)}>
-          Continue the set
-        </Button>
-      </div>
+      <>
+        <h1 className="sr-only">Practice set result</h1>
+        <EmptyState
+          marginalia="Still open on the desk"
+          heading="This practice set hasn't been submitted yet"
+          body={`Finish and submit your ${subjectName} practice set to see how you did.`}
+          action={{
+            label: "Continue the set",
+            onClick: () => navigate(`/student/practice/set/${data.assignmentId}`),
+          }}
+          className="lm-screen"
+        />
+      </>
     )
   }
 
   if (view.kind === "marking") {
     return (
-      <div className="lm-screen mx-auto flex max-w-[560px] flex-col items-center gap-4 py-16 text-center">
-        <CircleNotch size={28} className="animate-spin text-accent" aria-hidden />
-        <h1 className="text-body-lg font-medium text-t1 m-0">Marking your {subjectName} practice set</h1>
-        <p className="text-body-md text-t2">
-          This usually only takes a moment. This page will update on its own — no need to refresh.
+      <div className="lm-screen lm-read flex flex-col gap-5 py-12">
+        <h1 className="text-display-lg text-ink">Marking your {subjectName} practice set</h1>
+        <p className="lm-prose text-body-lg text-ink-muted">
+          This usually only takes a moment. The page updates on its own, so there's no need to
+          refresh.
         </p>
-        <Button variant="ghost" onClick={() => navigate("/student")}>
-          Come back to this later
-        </Button>
+        <ProgressBar indeterminate ariaLabel="Marking your practice set" />
+        <div>
+          <Button variant="ghost" onClick={() => navigate("/student")}>
+            Come back to this later
+          </Button>
+        </div>
       </div>
     )
   }
@@ -93,13 +139,25 @@ export function PracticeResult() {
   )
 
   return (
-    <div className="lm-screen mx-auto flex max-w-[720px] flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="font-serif text-display-md leading-display text-t1 m-0">
-          Your {subjectName} practice set
-        </h1>
-        <p className="text-body-md text-t2">
-          {awardedMarks} of {maximumMarks} mark{maximumMarks === 1 ? "" : "s"}.
+    <div className="lm-screen lm-read flex flex-col gap-6">
+      <div className="flex flex-col gap-3">
+        <h1 className="text-display-lg text-ink">Your {subjectName} practice set</h1>
+        {/* The data face, per §4 and §4.2's `data-lg` rung ("the big number: a
+            score"). This is the figure the screen exists to deliver. */}
+        <p className="flex items-baseline gap-2">
+          <span className="text-data-lg text-ink">
+            {/* §9.3's result reveal, on the same rule the paper result uses:
+                the mark counts up only when it arrived while the student was
+                waiting for it. Opening this set again later shows the number
+                at once, because by then it is simply true. No flourish at any
+                mark — see `MarkDisplay`'s `reveal` for why the product has no
+                honest basis for deciding a mark deserves confetti. */}
+            {justSubmitted ? <CountUp value={awardedMarks} from={0} /> : awardedMarks}/
+            {maximumMarks}
+          </span>
+          <span className="text-body-lg text-ink-muted">
+            mark{maximumMarks === 1 ? "" : "s"}
+          </span>
         </p>
       </div>
 
@@ -112,7 +170,7 @@ export function PracticeResult() {
       <Card>
         <CardBody className="flex flex-col p-0">
           {questions.length === 0 ? (
-            <p className="p-5 text-dense-sm text-t3">No questions in this set.</p>
+            <p className="p-5 text-body-sm text-ink-faint">No questions in this set.</p>
           ) : (
             <div className="px-5">
               {questions.map((q) => (

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
 import unittest
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 from lemely.core.loose_schemas import MarkScheme
@@ -18,6 +21,7 @@ from lemely.io.correction_ai import correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ConfigError
+from lemely.runtime.events import EventType, bus
 
 
 def _hybrid_paper_mark_scheme() -> MarkScheme:
@@ -597,3 +601,222 @@ class ThinkingRetryTests(unittest.TestCase):
         # Second call must carry a ThinkingConfig (i.e. the thinking budget was applied).
         second_call_repr = str(calls[1])
         self.assertIn("ThinkingConfig", second_call_repr)
+
+
+@contextlib.contextmanager
+def _capturing(*event_types: EventType) -> Iterator[dict[EventType, list[dict[str, Any]]]]:
+    """Record every payload published on ``event_types`` for the duration of the block.
+
+    Unsubscribes in ``finally``: ``bus`` is a process-wide singleton, so a spy
+    left attached keeps firing — and accumulating another test's events — for
+    the rest of the session.
+    """
+    captured: dict[EventType, list[dict[str, Any]]] = {t: [] for t in event_types}
+
+    def _spy_for(event_type: EventType):
+        def _spy(**payload: Any) -> None:
+            captured[event_type].append(payload)
+
+        return _spy
+
+    spies = [(t, _spy_for(t)) for t in event_types]
+    for event_type, spy in spies:
+        bus.subscribe(event_type, spy)
+    try:
+        yield captured
+    finally:
+        for event_type, spy in spies:
+            bus.unsubscribe(event_type, spy)
+
+
+def _five_leaf_mark_scheme() -> MarkScheme:
+    """One MCQ, a two-part container, and two standalone theory questions.
+
+    Six nodes but only *five* leaves: the zero-mark container "2" is structure,
+    not work, so ``correct_paper`` never marks it and it must not appear in the
+    counter's denominator. The parts also give the run a question whose position
+    in the work list ("2(b)", third) differs from its position among top-level
+    questions, which is exactly the kind of drift the index is meant to survive.
+    """
+    return MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 4,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_extended",
+                "maximum_mark": 9,
+                "scheme_format": "mixed",
+            },
+            "questions": [
+                {"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"},
+                {
+                    "id": "2",
+                    "marks": 0,
+                    "type": "explanation",
+                    "parts": [
+                        {
+                            "id": "2(a)",
+                            "marks": 2,
+                            "type": "explanation",
+                            "parent_id": "2",
+                            "answer_points": [
+                                {"id": "p1", "point": "states the rule", "marks": 1},
+                                {"id": "p2", "point": "applies the rule", "marks": 1},
+                            ],
+                        },
+                        {
+                            "id": "2(b)",
+                            "marks": 2,
+                            "type": "explanation",
+                            "parent_id": "2",
+                            "answer_points": [
+                                {"id": "p1", "point": "uses the result of (a)", "marks": 2},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "id": "3",
+                    "marks": 2,
+                    "type": "explanation",
+                    "question_command": "explain why",
+                    "answer_points": [
+                        {"id": "p1", "point": "gravity acts on it", "marks": 1},
+                        {"id": "p2", "point": "no air resistance", "marks": 1},
+                    ],
+                },
+                {
+                    "id": "4",
+                    "marks": 2,
+                    "type": "explanation",
+                    "question_command": "explain why",
+                    "answer_points": [
+                        {"id": "p1", "point": "energy is conserved", "marks": 2},
+                    ],
+                },
+            ],
+        }
+    )
+
+
+class MarkingProgressCounterTests(unittest.TestCase):
+    """MARKING_PROGRESS carries a per-question counter the UI can render honestly.
+
+    ``index`` is the 1-based position of the question inside the work list
+    (``leaves``) and ``total`` is that list's length, so "Question 4 of 5" names
+    the question actually being marked. The contrast that matters is with a
+    counter of *frames emitted* — see the failure test below for why the two
+    are not the same number.
+    """
+
+    # Marking order: leaves, depth-first, as ``all_questions_flat`` yields them.
+    LEAF_IDS = ("1", "2(a)", "2(b)", "3", "4")
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.ms = _five_leaf_mark_scheme()
+
+    def _extracted(self) -> ExtractedAnswers:
+        return ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.99),
+                ExtractedAnswer(question_id="2(a)", answer="states and applies it", confidence=0.9),
+                ExtractedAnswer(question_id="2(b)", answer="uses the 20 from (a)", confidence=0.9),
+                ExtractedAnswer(question_id="3", answer="because gravity", confidence=0.9),
+                ExtractedAnswer(question_id="4", answer="energy is conserved", confidence=0.9),
+            ],
+        )
+
+    def test_indices_run_1_to_n_against_a_constant_total(self) -> None:
+        # Four responses: the MCQ leaf is marked deterministically and never
+        # reaches Gemini, so only the four non-MCQ leaves consume one each.
+        client = _client_with_seq(self.tmp, [_mock_marker_response(2, ["p1"]) for _ in range(4)])
+
+        with _capturing(EventType.MARKING_PROGRESS) as captured:
+            correct_paper(self.ms, self._extracted(), gemini_client=client)
+
+        frames = captured[EventType.MARKING_PROGRESS]
+        self.assertEqual([f["question_id"] for f in frames], list(self.LEAF_IDS))
+        self.assertEqual([f["index"] for f in frames], [1, 2, 3, 4, 5])
+        # One denominator for the whole run, and it counts leaves: the zero-mark
+        # container "2" is never marked, so a total of 6 would promise the UI a
+        # question that is never coming.
+        self.assertEqual({f["total"] for f in frames}, {5})
+
+    def test_a_failed_question_does_not_shift_the_indices_after_it(self) -> None:
+        """The regression this counter exists to prevent.
+
+        Question "3" is the *fourth* leaf and its AI call raises, so it publishes
+        ERROR and no MARKING_PROGRESS at all. Question "4" — the fifth leaf, and
+        the next frame the UI receives — must still report index 5. A counter
+        incremented once per emitted frame would report 4 here: the UI would
+        label question 4's result with question 3's number, and a paper where
+        every question was handled would finish reading "4 of 5".
+        """
+        # Non-MCQ call order is 2(a), 2(b), 3, 4 — so the third response is
+        # question "3". The message deliberately avoids the substrings
+        # ``GeminiClient._call_once`` classifies as transient ("503", "rate
+        # limit", "connection", ...); a transient-looking error would be retried
+        # and would eat the response queued for question "4".
+        client = _client_with_seq(
+            self.tmp,
+            [
+                _mock_marker_response(2, ["p1"]),
+                _mock_marker_response(2, ["p1"]),
+                RuntimeError("marker stub refuses this question"),
+                _mock_marker_response(2, ["p1"]),
+            ],
+        )
+
+        with _capturing(EventType.MARKING_PROGRESS, EventType.ERROR) as captured:
+            result = correct_paper(self.ms, self._extracted(), gemini_client=client)
+
+        frames = captured[EventType.MARKING_PROGRESS]
+        self.assertEqual([f["question_id"] for f in frames], ["1", "2(a)", "2(b)", "4"])
+        # Position 4 is simply absent — the gap is the honest signal that a
+        # question was skipped. It is not closed up by renumbering "4" to 4.
+        self.assertEqual([f["index"] for f in frames], [1, 2, 3, 5])
+        # The denominator does not shrink either: five questions were attempted,
+        # and hiding the failed one would overstate how much of the paper the
+        # marker actually got through.
+        self.assertEqual({f["total"] for f in frames}, {5})
+
+        # The failure is reported, and reported as an error rather than dressed
+        # up as progress. ERROR deliberately carries no index/total (see the
+        # comment on the except branch in correction_ai.correct_paper).
+        errors = captured[EventType.ERROR]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("q=3", str(errors[0]["message"]))
+        self.assertNotIn("index", errors[0])
+        self.assertNotIn("total", errors[0])
+
+        # The result still covers every leaf; the failed one is marked missing
+        # rather than silently dropped (which is what makes total=5 truthful).
+        self.assertEqual(len(result.questions), 5)
+        q3 = next(q for q in result.questions if q.question_id == "3")
+        self.assertEqual(q3.marker_source, "missing")
+        self.assertIn("AI marking failed", q3.review_reason or "")
+
+    def test_the_no_ai_path_numbers_every_leaf_too(self) -> None:
+        """``mcq_only`` marks the theory questions "missing" but still counts them.
+
+        Both AI-free publish sites (deterministic MCQ, missing non-MCQ) take the
+        same enumerate position, so an --mcq-only run drives the counter to its
+        total instead of stalling at "1 of 5" with four questions unaccounted for.
+        """
+        with _capturing(EventType.MARKING_PROGRESS) as captured:
+            correct_paper(self.ms, self._extracted(), gemini_client=None, mcq_only=True)
+
+        frames = captured[EventType.MARKING_PROGRESS]
+        self.assertEqual([f["index"] for f in frames], [1, 2, 3, 4, 5])
+        self.assertEqual({f["total"] for f in frames}, {5})
+        self.assertEqual(
+            [f["marker_source"] for f in frames],
+            ["deterministic", "missing", "missing", "missing", "missing"],
+        )

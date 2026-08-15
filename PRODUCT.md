@@ -6,9 +6,18 @@
 
 web
 
-## Register
+## Modes
 
-product
+Impeccable v4 replaced the single product register with a per-surface visitor mode. Lemely's
+surfaces map to three of the four (Experience is unused — nothing here is an ambient or
+exploratory piece):
+
+- **Persuade** — marketing and landing pages. The only lane that argues a case.
+- **Operate** — every dashboard and tool: student dashboard, past-paper correction, quiz
+  builder, teacher class views, parent views, both admin surfaces, auth and onboarding.
+  Scanability, consistency, and task speed outrank expression here.
+- **Read** — study content: flashcards, study plans, classifieds, marked-paper reports and
+  their annotations. Long-form legibility governs.
 
 ## Users
 
@@ -76,6 +85,14 @@ Three things a neighboring product could not truthfully copy:
 - Academic/institutional aesthetics: Times New Roman, university portal grays, government-form layouts.
 - Generic SaaS dashboards: navy blue hero, metric cards with gradient shadows, the HubSpot/Salesforce template.
 - Consumer edtech gamification: Duolingo-style emojis-as-UI, confetti, bright primary colours, cheerleader copy. (Governs expression only — see the engagement note above.)
+- The "AI product" look: purple-blue gradients, dark glassmorphic panels, neon accents on near-black. Named as a firing offense in the redesign mission.
+- Cookie-cutter card grids and dense bootstrap-coloured dashboards — equal-height rows of identical boxes, colour used as decoration rather than meaning.
+
+**Protected quality (the one thing the redesign may not replace):** the warmth and
+notebook-like, sketchbook feel of the site. Everything else is disposable. The identity is
+"The Study Notebook" — warm paper, ink, hairlines, marginalia, sticker-like pastel tags,
+quiet motion. Notion is the north star reference. The full direction lives in
+`BUILD/REDESIGN-MISSION.md` §4 and its tokens in `DESIGN.md`.
 
 ## Evidence on Hand
 
@@ -101,4 +118,8 @@ Three things a neighboring product could not truthfully copy:
 - Students under exam stress: avoid red-heavy error states; prefer amber/neutral for "needs attention."
 - Light mode as default — varied ambient environments (classrooms, home desks, libraries).
 - Mobile-first for students and parents; desktop density for teachers and school admins.
-- English-only for v1; Arabic UI is explicitly deferred, so layouts need not solve RTL yet.
+- English-only for v1; Arabic UI is explicitly deferred. The layouts must still survive a
+  future `dir="rtl"` flip: new and edited styles use logical properties
+  (`margin-inline-start`, `padding-inline`, `inset-inline-end`, `text-align: start`), never
+  hardcoded left/right, and direction-dependent icons carry a comment. Deferring the
+  translation is not the same as hardcoding the direction.

@@ -89,6 +89,22 @@ class GradeBoundaryStore:
             },
         )
 
+    @property
+    def exact_key_count(self) -> int:
+        """How many paper variants carry a real, published boundary set.
+
+        X-03 reports this beside the observed ``boundary_source`` distribution:
+        the count says how much of the corpus could ever resolve exactly, the
+        distribution says how much actually did. Exposed as a property so the
+        admin surface does not reach into ``_exact`` (P4.7).
+        """
+        return len(self._exact)
+
+    @property
+    def subject_default_count(self) -> int:
+        """How many subjects carry a fallback boundary set of their own."""
+        return len(self._defaults)
+
     def resolve(self, metadata: ExamMetadata) -> tuple[dict[str, float], BoundarySource]:
         """Return (boundary_map, source_tag) using the fallback chain.
 

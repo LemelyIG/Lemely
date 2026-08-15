@@ -32,6 +32,7 @@ from lemely.db.device_repo import (
     MAX_DEVICES,
     DeviceLimitReachedError,
     DeviceRegistry,
+    RefreshRejectedError,
     UnknownUserError,
 )
 from lemely.db.models import Device, User
@@ -327,3 +328,124 @@ def test_below_the_cap_allow_eviction_false_registers_normally(
     second = registry.register_login(uid, allow_eviction=False)
 
     assert _live_ids(pg_sessionmaker, uid) == {first.session_id, second.session_id}
+
+
+# ── Refresh-token binding ──────────────────────────────────────────────────────
+#
+# A refresh token's whole authority is "this device row is live and still holds
+# the id I am carrying" (see `lemely.auth.tokens.mint_refresh_token`). These
+# prove that both halves of that check bite, and that every existing way a
+# session dies — explicit sign-out, eviction past the cap, re-login — takes the
+# outstanding refresh token with it.
+
+
+def _stored_refresh_id(sm: sessionmaker[Session], session_id: uuid.UUID) -> str | None:
+    with sm() as session:
+        device = session.get(Device, session_id)
+        assert device is not None
+        return device.refresh_token_id
+
+
+def test_registering_a_login_mints_a_refresh_token_id(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+
+    registration = registry.register_login(uid)
+
+    assert registration.refresh_token_id
+    assert _stored_refresh_id(pg_sessionmaker, registration.session_id) == (
+        registration.refresh_token_id
+    )
+
+
+def test_redeeming_with_the_current_id_returns_the_owner(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+    base = datetime(2026, 7, 31, tzinfo=UTC)
+    registration = registry.register_login(uid, now=base)
+
+    owner = registry.redeem_refresh_token(
+        registration.session_id,
+        registration.refresh_token_id,
+        now=base + timedelta(hours=2),
+    )
+
+    assert owner == uid
+
+
+def test_redeeming_keeps_the_device_from_looking_idle(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # Eviction orders by last_seen_at. A device whose user is actively refreshing
+    # is not the "oldest" by any honest reading, so a redemption must touch the
+    # row — otherwise a tab left open for a week is the first thing a login on a
+    # 4th device throws out.
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+    base = datetime(2026, 7, 31, tzinfo=UTC)
+    registration = registry.register_login(uid, now=base)
+
+    later = base + timedelta(days=3)
+    registry.redeem_refresh_token(registration.session_id, registration.refresh_token_id, now=later)
+
+    with pg_sessionmaker() as session:
+        device = session.get(Device, registration.session_id)
+        assert device is not None
+        assert device.last_seen_at == later
+
+
+def test_redeeming_a_superseded_id_is_rejected(pg_sessionmaker: sessionmaker[Session]) -> None:
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+    base = datetime(2026, 7, 31, tzinfo=UTC)
+    first = registry.register_login(uid, client_device_id="phone-A", now=base)
+    # Signing in again on the same device reuses the row and re-mints its id.
+    second = registry.register_login(uid, client_device_id="phone-A", now=base + timedelta(hours=1))
+    assert second.session_id == first.session_id
+    assert second.refresh_token_id != first.refresh_token_id
+
+    with pytest.raises(RefreshRejectedError):
+        registry.redeem_refresh_token(first.session_id, first.refresh_token_id)
+
+    # ...while the one the re-login handed out still works.
+    assert registry.redeem_refresh_token(second.session_id, second.refresh_token_id) == uid
+
+
+def test_redeeming_against_a_signed_out_device_is_rejected(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+    registration = registry.register_login(uid)
+
+    assert registry.revoke(uid, registration.session_id) is True
+
+    with pytest.raises(RefreshRejectedError):
+        registry.redeem_refresh_token(registration.session_id, registration.refresh_token_id)
+
+
+def test_redeeming_against_an_evicted_device_is_rejected(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    # The 3-device cap has to be real: a device evicted by a 4th login must not
+    # be able to refresh its way back in, or the cap is decorative.
+    uid = _seed_user(pg_sessionmaker)
+    registry = DeviceRegistry(pg_sessionmaker)
+    base = datetime(2026, 7, 31, tzinfo=UTC)
+    oldest = registry.register_login(uid, client_device_id="a", now=base)
+    for i, fingerprint in enumerate(("b", "c", "d"), start=1):
+        registry.register_login(uid, client_device_id=fingerprint, now=base + timedelta(minutes=i))
+
+    assert not registry.is_session_live(oldest.session_id)
+    with pytest.raises(RefreshRejectedError):
+        registry.redeem_refresh_token(oldest.session_id, oldest.refresh_token_id)
+
+
+def test_redeeming_an_unknown_session_is_rejected(pg_sessionmaker: sessionmaker[Session]) -> None:
+    registry = DeviceRegistry(pg_sessionmaker)
+    with pytest.raises(RefreshRejectedError):
+        registry.redeem_refresh_token(uuid.uuid4(), str(uuid.uuid4()))

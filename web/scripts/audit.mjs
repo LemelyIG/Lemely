@@ -156,6 +156,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import puppeteer from "puppeteer"
 import lighthouse from "lighthouse"
+import { assertPortFree } from "./serve_guard.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
@@ -183,6 +184,17 @@ const LH_DIR = path.join(REPORTS_DIR, "lighthouse")
 const SCREENS_DIR = path.join(REPORTS_DIR, "screens")
 const CONSOLE_ERRORS_PATH = path.join(REPORTS_DIR, "console-errors.json")
 const RESPONSIVE_SUMMARY_PATH = path.join(REPORTS_DIR, "responsive-summary.json")
+/* P6.3. Route failures used to live only in this process's stdout and its exit
+ * code, and nothing in the written corpus recorded them. That is the failure
+ * mode this harness exists to end, turned on itself: `reports/phase-6.3-before/`
+ * shows 41 lighthouse rows, an empty `console-errors.json` and an empty
+ * `responsive-summary.json`, and reads as a clean sweep — while five routes
+ * (T-08, T-09-detail, T-10, S-21, S-22) had in fact lost a state apiece, every
+ * one of them the `loading` state, in that run and the next one identically.
+ * They still produce axe/Lighthouse rows because they fail on a *later* state,
+ * so nothing downstream can tell. Written to a file so the corpus records what
+ * the run could not do, and so `check_ui_gates.py` can read it. */
+const ROUTE_FAILURES_PATH = path.join(REPORTS_DIR, "route-failures.json")
 const CONTACT_SHEET_PATH = path.join(REPORTS_DIR, "contact-sheet.html")
 
 const BREAKPOINTS = [
@@ -319,6 +331,64 @@ async function waitForText(page, pattern, timeout = 15_000) {
   )
 }
 
+/**
+ * Ready when the screen's real heading exists (P7.1).
+ *
+ * D6.5's rule, applied to the two routes that never took it: **key a predicate
+ * to a contract, not a sentence.** That phase found five routes dead because
+ * their `ready` predicates waited on prose the redesign had deleted, and fixed
+ * them by waiting on `role="status"`. T-08 and T-09-detail were fixed
+ * differently — they waited on their back-link labels, `"← Back to queue"` and
+ * `"← All quizzes"` — which looked stable, because a back link is navigation
+ * rather than copy, and was not: P7.1 replaced every arrow character in the
+ * product with a mirrorable icon (a `"→"` in a string cannot be flipped under
+ * `dir="rtl"`), the character left the DOM text, and both routes went dead
+ * again on the very next run.
+ *
+ * `h1:not(.sr-only)` is a contract in the way those were not. Both screens
+ * render an `sr-only` `<h1>` in their loading and error states and a real
+ * display heading only once loaded, so this waits for *loaded* specifically —
+ * where waiting for any `h1` would pass on a skeleton, which is the failure
+ * D6.5 warns is worse than a dead route because it produces rows.
+ */
+async function waitForLoadedHeading(page, timeout = 15_000) {
+  await page.waitForSelector("h1:not(.sr-only)", { timeout })
+}
+
+/**
+ * Waits for a screen's loading state by its *contract*, not by its copy.
+ *
+ * ── Why this exists (P6.4 part 2) ─────────────────────────────────────────
+ *
+ * Three routes — T-08, T-09-detail, T-10 — died mid-run in every corpus from
+ * P6.3 onward with `Waiting failed: 15000ms exceeded`, and the cause was here,
+ * not in the product. Their `ready` predicates waited for the sentences
+ * "Loading review item", "Loading quiz" and "Loading results". None of those
+ * three strings exists anywhere under `src/`: DESIGN.md §12 is "skeletons, not
+ * spinners", and Phase 4 converted those screens to `PageHeaderSkeleton` /
+ * `PanelSkeleton` as it settled each layout. The product is right and the
+ * fixture went stale the moment it was.
+ *
+ * The cost was larger than the three states it names. A route that dies takes
+ * its *remaining* states with it, so T-08, T-09-detail and T-10 each also lost
+ * the `error` state queued behind the loading one — and this file's own comment
+ * says an error state is exactly where an axe violation hides. Six states, not
+ * three, and the corpus showed no gap because a dead route's earlier states
+ * have already written their rows.
+ *
+ * ── Why a role and not a new string ───────────────────────────────────────
+ *
+ * Swapping in the current sentence would rot again on the next copy change, and
+ * a redesign changes copy by definition. `role="status"` + `aria-label="Loading"`
+ * is what `loading-shapes.tsx` commits to for every skeleton in the product, and
+ * it is what a screen reader actually depends on — so keyed this way the
+ * predicate fails if the *announcement* regresses, which is a §6.4 assertion
+ * rather than a proofreading one.
+ */
+async function waitForLoadingRegion(page, timeout = 15_000) {
+  await page.waitForSelector('[role="status"][aria-label="Loading"]', { timeout })
+}
+
 async function clickButtonByText(page, pattern, timeout = 15_000) {
   const handle = await page.waitForFunction(
     (source) => {
@@ -438,7 +508,71 @@ async function shoot(page, screenId, state, bpWidth) {
   await page.screenshot({ path: path.join(dir, `${state}--${bpWidth}.png`), fullPage: true })
 }
 
+/**
+ * Blocks until no CSS transition or animation is still running.
+ *
+ * ── Why axe cannot be trusted to run before this (P6.4 part 2, D6.6) ───────
+ *
+ * `student-flashcards-no-weaknesses` reported a serious `color-contrast`
+ * violation — white on the accent fill at **4.21**, under a 4.5 floor — and it
+ * was the finding that outgrew Phase 6.4 part 1, because the token block claims
+ * 4.65 for that exact pair and `test_design_tokens.py` has been this project's
+ * contrast authority since Phase 2. D6.5 recorded the disagreement as the
+ * Python conversion being wrong about the colour space.
+ *
+ * It was not. Chromium paints `oklch(0.576 0.146 33)` as **(192,82,60)**, and
+ * `oklch_to_srgb` computes **(192,82,60)** — verified four independent ways
+ * (computed style, a canvas 2d readback, and screenshots under the default,
+ * `srgb` and `display-p3` colour profiles, all identical). Run against an
+ * isolated reproduction of that same button, axe itself reports
+ * `fg=#ffffff bg=#c0523c ratio=4.65` and **passes**.
+ *
+ * What made the number move is this function's absence. axe reported
+ * `fg=#f9f9fa bg=#c25741`, and neither value is a design token or any steady
+ * state — they are one CSS transition sampled in flight. `Button` carries
+ * `transition-colors`, this state is reached by *clicking* a toggle
+ * (`pressToggleOnce`) which flips that button from `variant="secondary"` to
+ * `variant="accent"`, and axe ran while the colours were still interpolating.
+ * The arithmetic is what settles it rather than the story: solving each channel
+ * for its interpolation fraction gives
+ *
+ *     bg  253->192 obs 194  t=0.9672     fg   47->255 obs 249  t=0.9712
+ *         252-> 82 obs  87  t=0.9706          52->255 obs 249  t=0.9704
+ *         250-> 60 obs  65  t=0.9737          55->255 obs 250  t=0.9750
+ *
+ * — one fraction, t=0.971 +/- 0.004, explaining all six channels across two
+ * colour pairs with different endpoints, and reconstructing axe's 4.21 to the
+ * digit. A coincidence at that precision is not available.
+ *
+ * The direction that matters is the one this did NOT do here. A transient
+ * sample can just as easily read *higher* than the steady state and turn a real
+ * failure green, and it is not reproducible run to run, which is D6.2's rule
+ * about a gate whose answer changes between identical runs. So this settles
+ * every animation before axe looks, rather than special-casing the toggle.
+ */
+async function settleAnimations(page, timeout = 3_000) {
+  try {
+    await page.waitForFunction(
+      () =>
+        document.getAnimations().every((a) => {
+          // `finished`/`idle` are done; an infinite decorative loop (the
+          // skeleton shimmer, the indeterminate progress bar) never finishes
+          // and must not hold the run open.
+          if (a.playState !== "running") return true
+          const end = a.effect?.getComputedTiming?.().activeDuration
+          return end === Infinity || a.effect?.getComputedTiming?.().iterations === Infinity
+        }),
+      { timeout, polling: 50 },
+    )
+  } catch {
+    // Best effort: a page whose animations never settle is still worth
+    // auditing, and failing the whole route here would be a worse trade than
+    // the transient this exists to avoid.
+  }
+}
+
 async function runAxe(page, slug) {
+  await settleAnimations(page)
   await page.addScriptTag({ path: AXE_SCRIPT })
   const results = await page.evaluate(() => window.axe.run())
   fs.writeFileSync(path.join(AXE_DIR, `${slug}.json`), JSON.stringify(results, null, 2))
@@ -532,40 +666,82 @@ async function runLighthouseAudit(url, page, slug, { authed }) {
 /** Fails loudly (throws) if the page has horizontal overflow at its current
  * viewport — MISSION §11's "no horizontal scroll at any breakpoint from
  * 320px up" as a real, non-optional check rather than something only a
- * screenshot review would catch. 1px tolerance for sub-pixel rounding. */
+ * screenshot review would catch. 1px tolerance for sub-pixel rounding.
+ *
+ * ── P6.1: this check could not fail, and had not been able to since Phase 2 ──
+ *
+ * It used to open with a guard clause:
+ *
+ *     const { scrollWidth, clientWidth } = ...documentElement...
+ *     if (scrollWidth <= clientWidth + 1) return null
+ *
+ * Phase 2 added `overflow-x: clip` to html and body in `index.css` — itself one
+ * of the hallmark mobile non-negotiables, and correct. But clipping suppresses
+ * the very scroll this function measured, so from that commit onward
+ * `documentElement.scrollWidth` could never exceed `clientWidth`, the guard
+ * returned `null` on every route at every breakpoint, and the DOM walk below it
+ * — the part that names offenders — became unreachable code. Every "no
+ * horizontal scroll at 320/375/1440" claim made after Phase 2 rests on this.
+ *
+ * Measured, not reasoned about: in a 320px viewport, a 900px-wide div reports
+ * `scrollWidth 900 / clientWidth 320` without the clip rule and
+ * `scrollWidth 320 / clientWidth 320` with it, while its own bounding rect ends
+ * at x=900 in both cases.
+ *
+ * So overflow is now read off element geometry, which the clip rule does not
+ * touch. The cost is walking the DOM on the clean case too; that is the price
+ * of a check that can actually fail. The ancestor exemption is what keeps it
+ * honest in the other direction: an element clipped or scrolled by an ancestor
+ * BETWEEN it and body is contained, not page overflow. html and body are
+ * excluded from that exemption on purpose — their clip is the mask being seen
+ * through.
+ *
+ * Note this changes the failure mode being guarded, not just the measurement.
+ * With the clip in place there is no scrollbar to find; content simply gets cut
+ * off the side of the page with nothing telling the reader it is there. */
 async function checkNoHorizontalScroll(page, slug, bpWidth) {
-  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }))
-  if (scrollWidth <= clientWidth + 1) return null
-
-  // Only walk the DOM once we know there IS a violation — naming the
-  // offending elements is the difference between a fixable report and
-  // "something on this page is 10px too wide", but it is wasted work on the
-  // (overwhelmingly common) clean case.
-  const offenders = await page.evaluate(() => {
+  const { scrollWidth, clientWidth, offenders } = await page.evaluate(() => {
     const clientWidth = document.documentElement.clientWidth
-    const offenders = []
+    const contained = (el) => {
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        if (/hidden|clip|auto|scroll/.test(getComputedStyle(p).overflowX)) return true
+      }
+      return false
+    }
+    const found = []
     for (const el of document.querySelectorAll("body *")) {
       const rect = el.getBoundingClientRect()
       if (rect.width === 0 && rect.height === 0) continue
+      const cs = getComputedStyle(el)
+      if (cs.visibility === "hidden" || cs.display === "none") continue
+      // Screen-reader-only text is a deliberately clipped 1px box, not layout.
+      if (cs.clipPath !== "none" && rect.width <= 2 && rect.height <= 2) continue
+      if (el.closest("[aria-hidden='true']")) continue
       const overhang = Math.round(rect.right - clientWidth)
       if (overhang <= 1) continue
-      const cls = typeof el.className === "string" ? el.className : ""
-      offenders.push({
+      if (contained(el)) continue
+      found.push({
         overhang,
         tag: el.tagName.toLowerCase(),
         id: el.id || null,
-        className: cls.slice(0, 200) || null,
+        className: (typeof el.className === "string" ? el.className : "").slice(0, 200) || null,
         width: Math.round(rect.width),
         left: Math.round(rect.left),
         text: (el.textContent || "").trim().slice(0, 60) || null,
+        el,
       })
     }
-    offenders.sort((a, b) => b.overhang - a.overhang)
-    return offenders.slice(0, 8)
+    // An overflowing container drags every descendant past the edge with it.
+    // Report only the outermost, so the finding names the cause.
+    const outermost = found.filter((f) => !found.some((o) => o !== f && o.el.contains(f.el)))
+    outermost.sort((a, b) => b.overhang - a.overhang)
+    return {
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth,
+      offenders: outermost.slice(0, 8).map(({ el: _el, ...rest }) => rest),
+    }
   })
+  if (offenders.length === 0) return null
   return { slug, bpWidth, scrollWidth, clientWidth, offenders }
 }
 
@@ -751,7 +927,7 @@ async function driveToQuestionnaire(page) {
  * backend state and cannot be undone through this UI, which is why the
  * registry entry below orders `teacher-corrected` after `low-confidence`. */
 async function resolveReviewItemViaAdjustForm(page, url) {
-  await gotoReady(page, url, (p) => waitForText(p, "← Back to queue"))
+  await gotoReady(page, url, (p) => waitForLoadedHeading(p))
   await clickButtonByText(page, "Adjust marks instead")
   const marksInput = await page.waitForSelector('input[type="number"]', { timeout: 15_000 })
 
@@ -1012,7 +1188,7 @@ function buildRouteRegistry(seed) {
   const childId = seed.students.declining.userId
   const subjectCode = "0625" // scripts/seed_e2e.py's SUBJECT_CODE — every declining-student attempt is this subject.
   const reviewItemUrl = `/teacher/review/${seed.reviewItem.itemId}`
-  const reviewItemReady = (page) => waitForText(page, "← Back to queue")
+  const reviewItemReady = (page) => waitForLoadedHeading(page)
   const quizDetailUrl = `/teacher/quizzes/${seed.quiz.quizId}`
   const quizResultsUrl = `/teacher/quizzes/${seed.quiz.quizId}/assignments/${seed.quiz.assignmentId}/results`
 
@@ -1024,6 +1200,31 @@ function buildRouteRegistry(seed) {
       path: "/login/parent",
       session: null,
       ready: (page) => waitForText(page, "Check on your child"),
+      authed: false,
+    },
+    // ── P6.5 · How your data is handled — unauthenticated ─────────────────
+    // The second public content page in the product (D6.8 option A). Its
+    // `screenId` is not a UI-spec id, because this page answers no line of the
+    // spec: it is a §5 Phase 6.5 strategic-omissions item and the spec predates
+    // it. The field is still filled rather than left off, since it names the
+    // screenshot directory and every log line for the entry, and an entry
+    // without one writes its captures to `screens/undefined/`.
+    //
+    // It is in this gate for the reason the entry above it is: a page reachable
+    // without a session is a page anybody can land on, including the readers
+    // this audit exists for, and it is six headings of running prose, which is
+    // exactly the shape where a heading-order or contrast slip goes unnoticed.
+    //
+    // `ready` keys off the `<h1>` rather than a sentence from the body, because
+    // D6.6's finding was that a fixture asserting on prose rots the moment the
+    // prose is edited — and the body of this page is expected to change every
+    // time the product's behaviour does.
+    {
+      screenId: "P65-DATA",
+      slug: "data-handling",
+      path: "/data",
+      session: null,
+      ready: (page) => waitForText(page, "What Lemely does with your work"),
       authed: false,
     },
     // ── G-11 · Account & devices — the devices section (P5.7 chunk B) ─────
@@ -1075,7 +1276,11 @@ function buildRouteRegistry(seed) {
         {
           state: "default",
           slug: "teacher-overview",
-          ready: (page) => waitForText(page, "Good morning"),
+          // P3.2: the teacher header greets by the reader's real local time
+          // now, so a fixed "Good morning" gate would fail this audit for
+          // sixteen hours a day. `waitForText` compiles its argument as a
+          // case-insensitive RegExp, so the alternation works as-is.
+          ready: (page) => waitForText(page, "Good (morning|afternoon|evening)"),
         },
         // Honest CDP `offline` capture. `web/src/components/ui/state-views.tsx`
         // defines an `OfflineState` primitive but nothing under `portals/`
@@ -1206,16 +1411,21 @@ function buildRouteRegistry(seed) {
           slug: "teacher-review-detail-loading",
           lighthouse: false,
           waitUntil: "domcontentloaded",
-          ready: (page) => waitForText(page, "Loading review item"),
+          ready: (page) => waitForLoadingRegion(page),
           ...loadingStateHooks(`/api${reviewItemUrl}`),
         },
         {
           state: "error",
           slug: "teacher-review-detail-error",
           lighthouse: false,
-          // Distinguish from the *loaded* state's own "← Back to queue" —
-          // the error state's secondary action reads "Back to queue", no
-          // arrow (see ReviewItem.tsx).
+          // The error state's own sentence, which is the thing that
+          // distinguishes it: it renders an `sr-only` h1 like the loading
+          // state, so `waitForLoadedHeading` would never resolve here and
+          // must not be reached for. (This comment used to say the
+          // distinction was the arrow in the loaded state's back link;
+          // P7.1 removed every arrow character from the product, so that
+          // distinction no longer exists — the heading contract is what
+          // separates them now.)
           ready: (page) => waitForText(page, "Couldn't load this review item"),
           ...errorStateHooks(`/api${reviewItemUrl}`),
         },
@@ -1245,14 +1455,14 @@ function buildRouteRegistry(seed) {
         {
           state: "default",
           slug: "teacher-quiz-detail",
-          ready: (page) => waitForText(page, "← All quizzes"),
+          ready: (page) => waitForLoadedHeading(page),
         },
         {
           state: "loading",
           slug: "teacher-quiz-detail-loading",
           lighthouse: false,
           waitUntil: "domcontentloaded",
-          ready: (page) => waitForText(page, "Loading quiz"),
+          ready: (page) => waitForLoadingRegion(page),
           ...loadingStateHooks(`/api${quizDetailUrl}`),
         },
         {
@@ -1291,7 +1501,7 @@ function buildRouteRegistry(seed) {
           slug: "teacher-quiz-results-loading",
           lighthouse: false,
           waitUntil: "domcontentloaded",
-          ready: (page) => waitForText(page, "Loading results"),
+          ready: (page) => waitForLoadingRegion(page),
           ...loadingStateHooks(`/api${quizResultsUrl}`),
         },
         {
@@ -1360,7 +1570,11 @@ function buildRouteRegistry(seed) {
           state: "empty",
           slug: "teacher-overview-empty",
           lighthouse: false,
-          ready: (page) => waitForText(page, "Good morning"),
+          // P3.2: the teacher header greets by the reader's real local time
+          // now, so a fixed "Good morning" gate would fail this audit for
+          // sixteen hours a day. `waitForText` compiles its argument as a
+          // case-insensitive RegExp, so the alternation works as-is.
+          ready: (page) => waitForText(page, "Good (morning|afternoon|evening)"),
         },
       ],
     },
@@ -1693,15 +1907,30 @@ function buildRouteRegistry(seed) {
       // submitted, and marked through the unmodified quiz-taking/marking
       // repos. The richest of S-21's five captures, so this is the one
       // Lighthouse-scored (no `states` wrapper -> `lighthouse` defaults
-      // true). The ready string is `"{awarded} of {maximum} marks."`,
-      // deliberately not a heading shared with any other screen's summary
-      // copy (PlacementResult's own "X of Y marks." paragraph is a
-      // different code fragment entirely — grepped to confirm).
+      // true).
+      //
+      // P6.4: this waited on `"{awarded} of {maximum} marks."` and died on
+      // every run from P6.3 onward, because that sentence no longer exists.
+      // `PracticeResult.tsx`'s own docstring records why — "**The mark total
+      // was prose.**" — §4 gives the data face "all scores, grades, marks", so
+      // the figure is now `{awarded}/{maximum}` in `data-lg` with the noun
+      // beside it. Both the word "of" and the full stop were deleted by that
+      // change.
+      //
+      // The `\s+` is the other half, and it is the same fact S-22 hit one
+      // entry below: the data-face idiom is
+      // `<p class="flex items-baseline gap-2"><span>N</span><span>noun</span></p>`,
+      // and flex items are blockified, so `innerText` puts a **newline**
+      // between the number and its noun. Measured, not assumed — Chromium
+      // renders this markup as `"12/20\nmarks"`, while the same two spans
+      // outside a flex container read `"12/20 marks"`. Any ready string that
+      // spells a number and its noun as one phrase breaks against every
+      // number this redesign moved into the data face.
       screenId: "S-21",
       slug: "student-practice-result-marked",
       path: practiceMarkedResultUrl,
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "\\d+ of \\d+ marks?\\."),
+      ready: (page) => waitForText(page, "\\d+/\\d+\\s+marks?"),
       authed: true,
     },
     {
@@ -1729,7 +1958,13 @@ function buildRouteRegistry(seed) {
       slug: "student-flashcards-due",
       path: `/student/flashcards/${practiceSubject}`,
       session: practiceActiveSession,
-      ready: (page) => waitForText(page, "\\d+ cards? due today"),
+      // P6.4: `\s+`, not a space — see S-21 above. `FlashcardDecks.tsx` renders
+      // the count and its noun as two spans in a `flex items-baseline` row, so
+      // `innerText` reads `"7\ncards due today"`. Not a data problem: the
+      // `settled` and `empty` states of this same screen pass on their own
+      // sessions, and S-23 rides the same `active` session and needs cards to
+      // be due at all.
+      ready: (page) => waitForText(page, "\\d+\\s+cards? due today"),
       authed: true,
     },
     {
@@ -2069,22 +2304,19 @@ function buildRouteRegistry(seed) {
       ready: (page) => waitForText(page, "Thirty papers marked"),
       authed: true,
     },
-    // ── DEV-01 · Result-header design gallery (added P5.11) ───────────────
-    // Deliberately given a DEV- id rather than an S- one: this is an internal
-    // design gallery of three result-header treatments, not a product screen
-    // in docs/LEMELY_UI_SPEC.md, and it should not be mistaken for one in the
-    // screenshot corpus. It is in the registry regardless because it is a
-    // reachable route in the shipped bundle — which is the only test that
-    // matters for an accessibility gate.
-    {
-      screenId: "DEV-01",
-      slug: "student-directions",
-      path: "/student/directions",
-      session: practiceActiveSession,
-      ready: (page) =>
-        waitForText(page, "The result header is the emotional moment of the product"),
-      authed: true,
-    },
+    // ── DEV-01 · Result-header design gallery — REMOVED P4.10 (D4.8) ──────
+    // The entry that used to sit here visited `/student/directions`, and its
+    // own rationale was that "it is in the registry regardless because it is a
+    // reachable route in the shipped bundle, which is the only test that
+    // matters for an accessibility gate". DECISION D4.8 (defaulted to option A
+    // on 2026-08-14) moved the gallery to `web/dev-previews/` behind the kit's
+    // own Vite entry, so it is no longer in the shipped bundle and that
+    // rationale no longer holds. An audit entry for a path the router does not
+    // mount would fail on every run for a reason that says nothing about the
+    // product. Recorded rather than deleted silently, because the gallery
+    // still exists and a future reader should know why it stopped being
+    // audited here: it is not shipped, so this gate is not the one that
+    // applies to it.
     // ── G-10 · Device-limit challenge (added P5.11) ───────────────────────
     // The last screen in the build with no entry. It needed a seed
     // precondition rather than a navigation — an account already holding
@@ -2214,6 +2446,12 @@ function memAvailableMb() {
 }
 
 async function main() {
+  // P7.1: before anything is spawned. A preview server already on this port
+  // would be silently adopted and audited, and its `dist/` may be from another
+  // branch entirely. See scripts/serve_guard.mjs for the race that makes a
+  // post-spawn check unreachable.
+  await assertPortFree(PREVIEW_URL, PREVIEW_PORT, "the route audit")
+
   fs.mkdirSync(AXE_DIR, { recursive: true })
   fs.mkdirSync(LH_DIR, { recursive: true })
   fs.mkdirSync(SCREENS_DIR, { recursive: true })
@@ -2553,6 +2791,10 @@ async function main() {
   )
   fs.writeFileSync(CONSOLE_ERRORS_PATH, JSON.stringify(consoleErrors, null, 2))
   fs.writeFileSync(RESPONSIVE_SUMMARY_PATH, JSON.stringify(responsiveViolations, null, 2))
+  // Written unconditionally, including as `[]`. An absent file has to keep
+  // meaning "this run predates the check" rather than "nothing failed" — the
+  // distinction `check_ui_gates.py` already draws for the two files above.
+  fs.writeFileSync(ROUTE_FAILURES_PATH, JSON.stringify(routeFailures, null, 2))
 
   generateContactSheet()
 
@@ -2582,7 +2824,13 @@ async function main() {
   log(`Console errors collected: ${consoleErrors.length}`)
   log(`Horizontal-scroll violations: ${responsiveViolations.length}`)
   for (const v of responsiveViolations) {
-    log(`  ${v.slug} @ ${v.bpWidth}px — scrollWidth ${v.scrollWidth} > clientWidth ${v.clientWidth}`)
+    // Deliberately no longer phrased as "scrollWidth > clientWidth": html/body
+    // clip, so those two are always equal and saying otherwise would misdescribe
+    // the violation. What is wrong is that content sits past the viewport edge
+    // where nothing can scroll to it. See checkNoHorizontalScroll.
+    log(
+      `  ${v.slug} @ ${v.bpWidth}px — ${v.offenders.length} element(s) past the ${v.clientWidth}px edge (clipped, not scrollable)`,
+    )
     for (const o of v.offenders ?? []) {
       log(
         `      +${o.overhang}px  <${o.tag}${o.id ? `#${o.id}` : ""} class="${o.className ?? ""}">` +

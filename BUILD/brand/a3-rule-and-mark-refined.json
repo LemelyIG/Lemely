@@ -1,0 +1,10 @@
+{
+  "name": "a3-rule-and-mark-refined",
+  "model": "gemini-3.1-flash-image",
+  "booked_usd": 0.039,
+  "cumulative_usd_after": 0.3990396000000117,
+  "reported_prompt_tokens": 533,
+  "reported_candidates_tokens": 1475,
+  "generated_at": "2026-08-13T14:23:59.455319+00:00",
+  "file": "BUILD/brand/a3-rule-and-mark-refined.png"
+}

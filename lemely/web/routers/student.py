@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -53,7 +53,7 @@ from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSourc
 from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
 from lemely.db.student_profile_repo import StudentProfileService
-from lemely.db.upload_repo import StudentUploadRepository
+from lemely.db.upload_repo import StudentUploadRepository, UploadRun
 from lemely.db.xp_repo import DEFAULT_ZONE, XpService, civil_date_in_zone
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
@@ -92,6 +92,7 @@ from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
     MomentumDTO,
+    MomentumPointDTO,
     OverviewDTO,
     PaperBarDTO,
     PaperBreakdownDTO,
@@ -104,6 +105,7 @@ from lemely.web.schemas_student import (
     SubjectRankDTO,
     SubjectRowDTO,
     TopicTileDTO,
+    UploadRunDTO,
     VizColor,
     WeakThreadDTO,
 )
@@ -180,37 +182,29 @@ def _subject_records(history: StudentHistory, code: str) -> list[tuple[int, Pape
 
 
 def _momentum(records: list[PaperRecord]) -> MomentumDTO:
-    """Build the momentum sparkline from recorded-paper percentages (data-backed).
+    """Build the momentum series from recorded-paper percentages (data-backed).
 
-    Uses the same coordinate transform as ``web/src/portals/student/data.ts``
-    (300x88 viewbox, 55-100 % band). Returns empty ``path``/``area`` when fewer
-    than two papers exist (a polyline needs at least two points).
+    One point per grade-bearing paper, oldest first, each carrying its own
+    ``recorded_at`` and its percentage exactly as recorded. Returns no points
+    at all when fewer than two papers exist (a line needs at least two), which
+    is the condition the frontend's empty state keys off directly.
 
     Filters to grade-bearing records itself rather than trusting each caller to
     do it (``docs/quiz-model.md`` §5) — this is a percentage-over-time claim,
     and one quiz scoring 40% on a hard topic would draw a dive in a line the
     student reads as "my papers are getting worse".
+
+    **No coordinate transform lives here any more.** See :class:`MomentumDTO`
+    for what this used to emit and the two defects that came with it; the short
+    version is that a backend which renders SVG paths is a backend that has to
+    guess the viewbox, the axis range and the clipping behaviour of a component
+    it cannot see.
     """
     papers = grade_bearing(records)
-    series = [r.percentage for r in papers]
-    if len(series) < 2:
-        return MomentumDTO(path="", area="", lastX="0.0", lastY="88.0", labels=[])
-
-    def mx(i: int) -> float:
-        return (i / (len(series) - 1)) * 300.0
-
-    def my(v: float) -> float:
-        return 88.0 - ((v - 55.0) / 45.0) * 78.0
-
-    path = " ".join(f"{'L' if i else 'M'}{mx(i):.1f} {my(v):.1f}" for i, v in enumerate(series))
-    last_i = len(series) - 1
-    labels = [r.recorded_at[:7] for r in papers]
+    if len(papers) < 2:
+        return MomentumDTO(points=[])
     return MomentumDTO(
-        path=path,
-        area=f"{path} L300 88 L0 88 Z",
-        lastX=f"{mx(last_i):.1f}",
-        lastY=f"{my(series[last_i]):.1f}",
-        labels=labels,
+        points=[MomentumPointDTO(recordedAt=r.recorded_at, percentage=r.percentage) for r in papers]
     )
 
 
@@ -592,6 +586,87 @@ async def student_upload(
     return StudentUploadResponse(paperId=str(paper_id))
 
 
+# ── Reading a run that outlived its browser tab ───────────────────────────────
+
+
+#: How long a run may sit in ``processing`` before the screen stops promising it.
+#:
+#: The status is written once, at the top of the run, and cleared to
+#: ``complete``/``failed`` by the same function's ``finally``-adjacent paths. The
+#: only way a row stays ``processing`` past that is a process that died holding
+#: it — a deploy, a crash, an OOM — and no code will ever come back to correct
+#: it, because the thread that owned the row no longer exists.
+#:
+#: So this is not a timeout and it does not cancel anything. It is the point at
+#: which a screen should stop saying "still marking" and start saying "this
+#: stopped and you can start it again", because past it, "still marking" is a
+#: claim nothing is behind. Twenty minutes is deliberately far beyond a real
+#: run: the slowest observed full-paper mark is a small number of minutes, and
+#: the cost of being early here is telling a student their paper failed while it
+#: is still being marked, which is much worse than a few extra minutes of
+#: honest waiting.
+MARKING_RUN_STALE_AFTER = timedelta(minutes=20)
+
+
+def _run_dto(run: UploadRun, *, now: datetime | None = None) -> UploadRunDTO:
+    """Render one upload's run state, including the staleness judgement.
+
+    ``stale`` is only ever true for a ``processing`` row. A ``failed`` upload is
+    not stale, it is finished; conflating the two would put a paper that has a
+    real reported failure into the "we lost track of this" copy.
+    """
+    moment = now or datetime.now(UTC)
+    processing = run.status is UploadStatus.processing
+    return UploadRunDTO(
+        paperId=str(run.id),
+        status=run.status.value,
+        filename=run.original_filename,
+        startedAt=run.started_at if processing else None,
+        stale=processing and (moment - run.started_at) > MARKING_RUN_STALE_AFTER,
+    )
+
+
+@router.get("/student/uploads/active", response_model=UploadRunDTO | None)
+def student_active_upload(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    upload_repo: Annotated[StudentUploadRepository, Depends(get_student_upload_repo)],
+) -> UploadRunDTO | None:
+    """Return the caller's marking run that is still going, or ``null``.
+
+    The recovery half of the self-mark flow. ``POST /student/correct`` marks on a
+    background thread that does not stop when the client disconnects, so a
+    student who reloads, backgrounds the tab on a phone, or loses signal still
+    has a paper being marked — with nothing on screen that knows it. This is how
+    the screen finds it again.
+
+    ``null`` is the ordinary answer and not an error: most of the time nothing
+    is running.
+    """
+    run = upload_repo.get_active_run(user_id=auth.user_id)
+    return None if run is None else _run_dto(run)
+
+
+@router.get("/student/uploads/{paper_id}", response_model=UploadRunDTO)
+def student_upload_run(
+    paper_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    upload_repo: Annotated[StudentUploadRepository, Depends(get_student_upload_repo)],
+) -> UploadRunDTO:
+    """Return one owned upload's run state, for polling a recovered run.
+
+    Separate from ``/uploads/active`` because the two answer different
+    questions, and the difference matters at exactly the moment this is used:
+    ``active`` stops naming a paper the instant it finishes, so a client polling
+    ``active`` would watch its run disappear and never learn whether it was
+    marked or failed. Polling *the paper* ends on a terminal status that says
+    which.
+    """
+    run = upload_repo.get_run(user_id=auth.user_id, upload_id=paper_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Unknown paper: {paper_id}")
+    return _run_dto(run)
+
+
 # ── Correct a paper (SSE self-mark) ───────────────────────────────────────────
 
 
@@ -776,7 +851,31 @@ def student_correct(
         raise HTTPException(status_code=404, detail=f"Unknown paper: {payload.paperId}")
 
     def run() -> None:
+        # P6.2. `UploadStatus.processing` existed from the first migration and
+        # **no code path had ever written it**: an upload went `pending` at
+        # creation and jumped straight to `complete`/`failed` here. So a paper
+        # being marked right now was indistinguishable in the database from a
+        # scan a student uploaded and abandoned, and two things followed.
+        #
+        #   1. A reload could not recover the run, because nothing recorded that
+        #      one was in flight. That is audit M4, deferred from P4.2 with a
+        #      note that the honest fix was not a styling job.
+        #   2. The platform console's "Uploads in flight" counted `pending`, so
+        #      every abandoned scan was in flight forever and the figure only
+        #      ever grew.
+        #
+        # Written here rather than in the endpoint body so that the status is
+        # only ever set when a worker thread genuinely exists to clear it: this
+        # function IS the worker, and every exit from it below writes a terminal
+        # status. Setting it before returning the StreamingResponse would leave
+        # a row claiming to be marking if the stream were never consumed.
+        #
+        # Inside the `try`, not above it: this is a database write like any
+        # other, and if it throws from outside the block then `finally:
+        # bus.publish_done()` never runs and the client's stream hangs open
+        # instead of failing.
         try:
+            upload_repo.set_status(owned.id, UploadStatus.processing)
             with tempfile.TemporaryDirectory() as tmp_dir:
                 tmp_path = Path(tmp_dir)
                 scan_bytes = storage_backend.download(settings.storage.bucket, owned.storage_path)

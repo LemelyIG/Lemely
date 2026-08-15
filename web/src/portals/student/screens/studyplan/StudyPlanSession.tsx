@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
+import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import {
@@ -8,6 +9,7 @@ import {
   useCurrentStudyPlan,
 } from "@/lib/hooks/useStudyPlanApi"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { studentActionFailureMessage, studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   activityLabel,
   formatDayHeading,
@@ -40,11 +42,24 @@ import {
  *      so the button would be dead.
  */
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+
+/** One fact per row. `numeric` puts the value on the data face (§4): a planned
+ * duration is a figure, a topic name is prose, and rendering both in the same
+ * family is what made this table read as undifferentiated. */
+function DetailRow({
+  label,
+  value,
+  numeric = false,
+}: {
+  label: string
+  value: string
+  numeric?: boolean
+}) {
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-t border-border px-5 py-3 first:border-t-0">
-      <span className="text-dense text-t2">{label}</span>
-      <span className="text-body-md text-t1">{value}</span>
+    <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-t border-rule px-5 py-3 first:border-t-0">
+      <span className="text-body-sm text-ink-muted">{label}</span>
+      <span className={numeric ? "text-data-md text-ink" : "text-body-md text-ink"}>{value}</span>
     </div>
   )
 }
@@ -66,9 +81,10 @@ export function StudyPlanSession() {
 
   if (planQuery.isPending) {
     return (
-      <div className="lm-screen text-body-md text-t2">
+      <div className="lm-screen lm-read flex flex-col gap-6">
         <h1 className="sr-only">{heading}</h1>
-        Loading this session…
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={5} />
       </div>
     )
   }
@@ -81,7 +97,7 @@ export function StudyPlanSession() {
         <h1 className="sr-only">{heading}</h1>
         <ErrorState
           heading="Couldn't load this session"
-          body={planQuery.error?.message}
+          body={studentLoadFailureMessage(planQuery.error)}
           action={{ label: "Try again", onClick: () => void planQuery.refetch() }}
           className="lm-screen"
         />
@@ -102,6 +118,7 @@ export function StudyPlanSession() {
       <>
         <h1 className="sr-only">{heading}</h1>
         <EmptyState
+          marginalia="A page that turned"
           heading="This session isn't in your current plan"
           body={body}
           action={{ label: "Go to your week", onClick: backToWeek }}
@@ -119,6 +136,7 @@ export function StudyPlanSession() {
           // Not "not found": the session existed and may well still exist on a
           // superseded week. Saying it is missing would be a stronger claim
           // than anything this screen can check.
+          marginalia="A page that turned"
           heading="This session isn't in your current plan"
           body={`Your ${subjectName} plan has been rebuilt since this link was made, and rebuilding supersedes the previous week rather than editing it. This week's sessions are on your plan.`}
           action={{ label: "Go to your week", onClick: backToWeek }}
@@ -138,10 +156,10 @@ export function StudyPlanSession() {
   const start = sessionStartAction(session.activityType, subjectCode)
 
   return (
-    <div className="lm-screen mx-auto flex max-w-[640px] flex-col gap-6">
+    <div className="lm-screen lm-read flex flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="font-serif text-display-md leading-display text-t1 m-0">{session.topic}</h1>
-        <p className="text-body-md text-t2 m-0">
+        <h1 className="text-display-lg text-ink">{session.topic}</h1>
+        <p className="text-body-md text-ink-muted">
           {activityLabel(session.activityType)} · {formatDuration(session.durationMinutes)} ·{" "}
           {formatDayHeading(session.date)}
         </p>
@@ -150,21 +168,27 @@ export function StudyPlanSession() {
       <Card className="overflow-hidden">
         <DetailRow label="Topic" value={session.topic} />
         <DetailRow label="Activity" value={activityLabel(session.activityType)} />
-        <DetailRow label="Planned time" value={formatDuration(session.durationMinutes)} />
+        <DetailRow label="Planned time" value={formatDuration(session.durationMinutes)} numeric />
         <DetailRow label="Scheduled for" value={formatDayHeading(session.date)} />
         <DetailRow label="Status" value={done ? "Completed" : "Not done yet"} />
       </Card>
 
       <Card>
         <CardBody className="flex flex-col gap-1.5">
-          <h2 className="text-body-lg font-medium text-t1 m-0">{why.heading}</h2>
-          <p className="text-body-md text-t2 m-0">{why.body}</p>
+          <h2 className="text-display-sm text-ink">{why.heading}</h2>
+          <p className="lm-prose text-body-md text-ink-muted">{why.body}</p>
         </CardBody>
       </Card>
 
+      {/* P6.2. This appended `complete.error.message` to the sentence, so a
+          failed tap read "Couldn't mark this session complete: 500 Internal
+          Server Error" — or, on the phone this is used on, "Failed to fetch".
+          The save helper, not the load one: the student's question after a
+          failed write is whether it stuck, and none of its sentences claims it
+          did. */}
       {complete.isError ? (
-        <p className="text-body-md text-err m-0">
-          Couldn't mark this session complete: {complete.error.message}
+        <p className="text-body-md text-err">
+          {studentActionFailureMessage(complete.error, "mark this session as done")}
         </p>
       ) : null}
 
@@ -178,7 +202,7 @@ export function StudyPlanSession() {
         ) : null}
         {done ? (
           // States the fact and stops — no XP, no points (P5's seam).
-          <span className="self-center text-dense text-ok">Marked complete</span>
+          <span className="self-center text-body-sm text-ok">Marked complete</span>
         ) : (
           <Button
             variant="secondary"

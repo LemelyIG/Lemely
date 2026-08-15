@@ -1,8 +1,10 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { Eyebrow } from "@/components/ui/primitives"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { Button } from "@/components/ui/button"
 import {
   useMarkAllNotificationsRead,
@@ -119,7 +121,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
         // Same unread marker as S-28's, for the same reason: a bold title
         // fights the heading hierarchy and stops reading as emphasis once
         // three in a row are unread.
-        unread && "border-l-2 border-l-accent",
+        unread && "border-s-2 border-s-accent",
       )}
     >
       <CardBody className="flex flex-col gap-2">
@@ -134,8 +136,8 @@ function NotificationRow({ notification }: { notification: Notification }) {
                 does have "Notices"/"Calendar" <h2>s above them. Do not
                 normalize the two to the same level; the level has to describe
                 the actual outline, not match a sibling screen. */}
-            <h2 className="text-body-lg font-medium text-t1">{notification.title}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-2xs text-t3">
+            <h2 className="text-body-lg font-medium text-ink">{notification.title}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-ink-faint">
               <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
                 {typeLabel(notification.type)}
               </Chip>
@@ -150,7 +152,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
         </div>
 
         {notification.body !== null ? (
-          <p className="text-body text-t2">{notification.body}</p>
+          <p className="max-w-[65ch] text-body-md text-ink-muted">{notification.body}</p>
         ) : null}
 
         <div className="flex flex-wrap gap-2">
@@ -194,7 +196,7 @@ function InboxHeading() {
   return (
     <div>
       <Eyebrow>Inbox</Eyebrow>
-      <h1 className="text-title text-t1">Notifications</h1>
+      <h1 className="text-display-md text-ink">Notifications</h1>
     </div>
   )
 }
@@ -207,7 +209,7 @@ export function Notifications() {
     return (
       <div className="flex flex-col gap-4">
         <InboxHeading />
-        <div className="text-body text-t3">Loading your notifications…</div>
+        <ListSkeleton rows={3} />
       </div>
     )
   }
@@ -221,7 +223,7 @@ export function Notifications() {
           // An empty inbox and a failed fetch look identical if this lies, and
           // the difference matters: one means nothing has happened, the other
           // means something may have and we cannot show it.
-          body="This is a connection problem on our side. You may well have notifications waiting — nothing has been lost."
+          body="This is a connection problem on our side. You may well have notifications waiting, and nothing has been lost."
           action={{ label: "Try again", onClick: () => void refetch() }}
         />
       </div>
@@ -253,7 +255,7 @@ export function Notifications() {
               route to G-12 for a student. */}
           <Link
             to="/settings/notifications"
-            className="text-body-sm text-accent hover:underline"
+            className="text-body-sm text-accent-ink hover:underline"
           >
             Notification settings
           </Link>

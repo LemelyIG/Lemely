@@ -62,6 +62,7 @@ STUDENT = frozenset({"student"})
 PARENT = frozenset({"parent"})
 TEACHER = frozenset({"teacher"})
 SCHOOL_ADMIN = frozenset({"school_admin"})
+PLATFORM_ADMIN = frozenset({"platform_admin"})
 TEACHER_OR_SCHOOL_ADMIN = frozenset({"teacher", "school_admin"})
 STAFF = frozenset({"teacher", "school_admin", "platform_admin"})
 
@@ -73,10 +74,29 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
-    # ── SCHOOL_ADMIN (3) ────────────────────
+    # ── SCHOOL_ADMIN (7) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/{seat_id}/revoke"): SCHOOL_ADMIN,
+    # P4.7 (UI spec K-01/K-03). Same router, so the same guard by construction —
+    # but declared individually here on purpose: property 2 is a freeze, and a
+    # route inheriting a guard it should not have is exactly what a
+    # router-level `dependencies=[...]` makes easy to miss.
+    ("GET", "/api/school/overview"): SCHOOL_ADMIN,
+    ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
+    ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
+    ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
+    # ── PLATFORM_ADMIN (5) ────────────────────
+    # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
+    # to this role. Note what the 403 sweep below therefore proves here: a
+    # `school_admin` is denied every one of them. There is no super-role, and
+    # the platform console is a different door rather than a wider one
+    # (D1.6/D1.10).
+    ("GET", "/api/admin/overview"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/activations"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/activations/{subscription_id}/activate"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/activations/{subscription_id}/reject"): PLATFORM_ADMIN,
+    ("GET", "/api/admin/pipeline"): PLATFORM_ADMIN,
     # ── TEACHER_OR_SCHOOL_ADMIN (3) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
@@ -86,10 +106,17 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (5) ────────────────────
+    # ── PUBLIC (6) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     ("POST", "/api/auth/otp/request"): PUBLIC,
     ("POST", "/api/auth/otp/verify"): PUBLIC,
+    # Unauthenticated by necessity: it exists to replace an access token that
+    # has already expired, so gating it behind one would make it unreachable at
+    # exactly the moment it is needed. The refresh token in the body is the
+    # credential, and it authorises nothing else — a distinct `aud` means it is
+    # rejected as a bearer token on every other route (see test_auth_router.py's
+    # `test_a_refresh_token_cannot_be_used_as_a_bearer_token`).
+    ("POST", "/api/auth/refresh"): PUBLIC,
     ("POST", "/api/auth/signup"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
     # ── AUTH_ANY (12) ────────────────────
@@ -115,8 +142,13 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/papers"): STAFF,
     ("POST", "/api/papers/upload"): STAFF,
     ("GET", "/api/papers/{paper_id}"): STAFF,
+    # Renders page 1 of a stored scan. Staff-only for the same reason the paper
+    # detail is: it is a student's answer sheet.
+    ("GET", "/api/papers/{paper_id}/preview"): STAFF,
     ("POST", "/api/papers/{paper_id}/extract"): STAFF,
     ("POST", "/api/papers/{paper_id}/grade"): STAFF,
+    # Queues the same marking run without the stream (the console's retry).
+    ("POST", "/api/papers/{paper_id}/regrade"): STAFF,
     ("POST", "/api/quizzes/generate"): STAFF,
     ("GET", "/api/quizzes/pools"): STAFF,
     ("POST", "/api/quizzes/preview"): STAFF,
@@ -197,6 +229,8 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/student/study-plan/{subject_code}"): STUDENT,
     ("GET", "/api/student/subject/{code}"): STUDENT,
     ("POST", "/api/student/uploads"): STUDENT,
+    ("GET", "/api/student/uploads/active"): STUDENT,
+    ("GET", "/api/student/uploads/{paper_id}"): STUDENT,
     ("GET", "/api/student/xp"): STUDENT,
 }
 
@@ -394,7 +428,7 @@ def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> 
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
-    assert len(_NON_PUBLIC) == len(ROUTES) - 5  # 4 auth entrypoints + /api/health
+    assert len(_NON_PUBLIC) == len(ROUTES) - 6  # 5 auth entrypoints + /api/health
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20

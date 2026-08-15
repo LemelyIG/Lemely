@@ -1,13 +1,22 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useNavigate, Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { cn, initialsOf, relativeTime } from "@/lib/utils"
+import { GettingStarted } from "@/components/ui/getting-started"
+import {
+  PageHeaderSkeleton,
+  ListSkeleton,
+  CardGridSkeleton,
+} from "@/components/ui/loading-shapes"
+import { cn, greetingFor, relativeTime } from "@/lib/utils"
+import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import { StatCard } from "../components/StatCard"
-import { Avatar } from "../components/Avatar"
+import { Avatar } from "@/components/ui/avatar"
 import { useTeacherOverview, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { RecentActivity } from "@/lib/teacherTypes"
+import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Overview (T-01). Wired to `GET /teacher/overview` (`useTeacherOverview()`)
@@ -33,10 +42,14 @@ import type { RecentActivity } from "@/lib/teacherTypes"
  *     and quizzes; a quiz row's `grade` is `null` by design and rendered as
  *     an honest absence (an origin label), never the student's last paper
  *     grade substituted in.
- *  5. Quick actions — quiz builder (T-09) and announcement composer (T-12)
+ *  5. Quick actions — all three are real routes. **Corrected in P3.2:** this
+ *     note used to read "quiz builder (T-09) and announcement composer (T-12)
  *     don't exist yet (P3.8); rendered as visibly disabled buttons with a
- *     "Coming soon" tag, never a button that silently does nothing. "Add a
- *     class" is real — it routes to T-02, where creation lives.
+ *     'Coming soon' tag". Both were built after it was written, and the
+ *     comment plus the two disabled buttons it described outlived them, so the
+ *     dashboard was telling teachers a shipped feature was unavailable while
+ *     linking to it from the sidebar. The buttons are enabled and this note is
+ *     no longer describing code that exists.
  *
  * Deliberate deviation from the spec's wording (D3.12, reported): "average
  * predicted grade" on the class cards is NOT computed — averaging letter
@@ -47,6 +60,11 @@ import type { RecentActivity } from "@/lib/teacherTypes"
  * (T-02) in place of the card grid. Loading / error are handled per-query
  * before the main render so a failure on one call never hides data the
  * other call already has.
+ *
+ * P3.2 adds a state in front of all of those: a genuinely new account (no
+ * classes AND no submissions anywhere) gets the `GettingStarted` view instead
+ * of a dashboard of zeroes. P3.3 replaced the loading text with skeletons that
+ * match this layout.
  */
 
 const ORIGIN_LABEL: Record<RecentActivity["origin"], string> = {
@@ -60,24 +78,30 @@ export function Overview() {
   const overviewQuery = useTeacherOverview()
   const classesQuery = useTeacherClasses()
 
+  // P3.3: skeleton matching the real layout (header, "Needs you" list, class
+  // card grid, activity list) rather than one line of "Loading overview…"
+  // text. See the same note on the student Overview: the old line reserved a
+  // single text row for a screen that renders four stacked regions, so the
+  // page jumped every time data landed.
   if (overviewQuery.isPending || classesQuery.isPending) {
     return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
+      <div className="lm-screen flex flex-col gap-8 min-w-0">
         <h1 className="sr-only">Overview</h1>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading overview…
-        </div>
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={3} />
+        <CardGridSkeleton count={3} />
+        <ListSkeleton rows={4} avatar />
       </div>
     )
   }
 
   if (overviewQuery.isError) {
     return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
+      <div className="lm-screen flex flex-col gap-8 min-w-0">
         <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load the overview"
-          body={overviewQuery.error.message}
+          body={teacherLoadFailureMessage(overviewQuery.error)}
           action={{ label: "Retry", onClick: () => overviewQuery.refetch() }}
         />
       </div>
@@ -86,11 +110,11 @@ export function Overview() {
 
   if (classesQuery.isError) {
     return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
+      <div className="lm-screen flex flex-col gap-8 min-w-0">
         <h1 className="sr-only">Overview</h1>
         <ErrorState
           heading="Couldn't load your classes"
-          body={classesQuery.error.message}
+          body={teacherLoadFailureMessage(classesQuery.error)}
           action={{ label: "Retry", onClick: () => classesQuery.refetch() }}
         />
       </div>
@@ -103,17 +127,95 @@ export function Overview() {
   const needsEyes = stats.find((s) => s.key === "Need your eyes")
   const needsEyesCount = needsEyes ? Number(needsEyes.value) : null
 
+  const now = new Date()
+  const greeting = greetingFor(now.getHours())
+  // The reader's own locale and timezone, not a hardcoded English string.
+  const today = now.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  })
+
+  /*
+   * First run (P3.2): a teacher who has just been given an account.
+   *
+   * Both conditions are required, and that is deliberate. No classes alone is
+   * not proof of a first run — a teacher can archive their last class mid-year
+   * and should get their dashboard back, not an onboarding screen. No classes
+   * *and* no submissions anywhere is the state only a genuinely new account
+   * reaches. Rendering the full dashboard for them means a wall of zeroes and
+   * four separate "nothing here yet" panels, which is the grid of empty cards
+   * this phase exists to remove.
+   *
+   * Every step below is `later` except the first, for the same reason as the
+   * student screen: nothing this account can query reports whether a teacher
+   * has, say, uploaded a mark scheme, and a tick we cannot substantiate is a
+   * claim about the reader's own history that we are not entitled to make.
+   */
+  if (classes.length === 0 && recentActivity.length === 0) {
+    return (
+      <div className="lm-screen flex flex-col gap-8 min-w-0">
+        <div>
+          <div className="text-eyebrow text-ink-faint">
+            {today}
+          </div>
+          <h1 className="text-display-lg text-ink mt-2">{greeting}.</h1>
+        </div>
+        <GettingStarted
+          heading="Start with one class"
+          body="Everything else in Lemely hangs off a class: marking, at-risk flags and the analytics all read from who is in it."
+          steps={[
+            {
+              title: "Create your first class",
+              body: "Give it a name and a subject code. You can add students straight away or send them a join link later.",
+              status: "now",
+              to: "/teacher/classes",
+              actionLabel: "Create a class",
+            },
+            {
+              title: "Mark a set of papers",
+              body: "Upload scanned scripts and Lemely marks them against the official Cambridge scheme, question by question, with a confidence score on every mark.",
+              status: "later",
+            },
+            {
+              title: "Look at what marking flagged",
+              body: "Anything the marker was not confident about goes to your review queue instead of being guessed at. That queue is the one place your judgement is actually needed.",
+              status: "later",
+            },
+            {
+              title: "Watch for students drifting",
+              body: "At-risk flags come from trajectory across several papers, not from one bad afternoon, so they need a few marked papers before they mean anything.",
+              status: "later",
+            },
+          ]}
+          footnote="These panels stay empty until there is real work in them. Nothing on this dashboard is filled in with sample data."
+        />
+      </div>
+    )
+  }
+
   return (
-    <div className="lm-screen flex flex-col gap-6 min-w-0">
+    <div className="lm-screen flex flex-col gap-8 min-w-0">
       <div className="flex items-end gap-5 flex-wrap gap-y-2.5">
         <div>
-          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
-            Helwan Science Centre · Sunday 27 July
+          {/*
+            * P3.2. This eyebrow read "Helwan Science Centre · Sunday 27 July",
+            * both halves hardcoded. The school name is the same fabricated
+            * affiliation P3.7 chunk b deleted from the teacher sidebar and
+            * P3.10 chunk c from the student one — no field in any DTO supplies
+            * a school name, so it is shown to every teacher regardless of where
+            * they teach. The date was a literal, so it read "Sunday 27 July"
+            * on every day of the year.
+            *
+            * The date is real now. The school name is simply gone rather than
+            * replaced: there is nothing to replace it with, and inventing an
+            * affiliation is the defect, not the formatting.
+            */}
+          <div className="text-eyebrow text-ink-faint">
+            {today}
           </div>
-          <h1 className="text-display-lg mt-2">
-            Good morning.
-          </h1>
-          <div className="text-sm text-t2 mt-2 max-w-[62ch] text-pretty">
+          <h1 className="text-display-lg text-ink mt-2">{greeting}.</h1>
+          <div className="text-body-lg text-ink-muted mt-2 max-w-[62ch] text-pretty">
             {papersGraded ? `${papersGraded.value} papers graded so far. ` : ""}
             {needsEyes
               ? `${needsEyes.value} answers want your eyes`
@@ -127,39 +229,39 @@ export function Overview() {
         </div>
         <div className="flex-1" />
         <Button variant="ink" size="lg" onClick={() => navigate("/teacher/review")}>
-          Open review queue →
+          Open review queue <ForwardArrow />
         </Button>
       </div>
 
       {/* 1. Needs you — the permanent top item */}
-      <div className="bg-surface border border-border rounded-lg overflow-hidden max-w-[620px] w-full">
-        <div className="px-5 pt-[18px] pb-[13px]">
-          <div className="text-display-sm">Needs you</div>
-          <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mt-[5px]">
+      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden w-full">
+        <div className="px-6 pt-5 pb-3.5">
+          <div className="text-display-md text-ink">Needs you</div>
+          <div className="text-eyebrow text-ink-faint mt-1.5">
             Flagged by trajectory, not by one bad day
           </div>
         </div>
         {atRisk.length === 0 ? (
-          <div className="border-t border-border px-5 py-[15px] text-dense text-ok">
+          <div className="border-t border-rule px-6 py-4 text-body-md text-ok">
             No students flagged right now.
           </div>
         ) : (
           atRisk.map((r) => (
             <div
               key={r.name}
-              className="border-t border-border px-5 py-[15px] flex gap-[13px] items-start"
+              className="border-t border-rule px-6 py-4 flex gap-[13px] items-start"
             >
-              <Avatar initials={initialsOf(r.name)} className="w-8 h-8 text-xs" />
+              <Avatar name={r.name} size="sm" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-[9px] flex-wrap gap-y-1">
-                  <div className="text-dense-lg font-medium">{r.name}</div>
-                  <div className="text-xs text-t2">Grade {r.grade}</div>
+                  <div className="text-body-lg font-medium text-ink">{r.name}</div>
+                  <div className="text-body-sm text-ink-muted">Grade {r.grade}</div>
                   <div className="flex-1" />
                   {r.delta !== null ? (
                     <div
                       className={cn(
-                        "font-mono text-xs",
-                        r.delta < 0 ? "text-err" : r.delta > 0 ? "text-ok" : "text-t2",
+                        "text-data-md",
+                        r.delta < 0 ? "text-err" : r.delta > 0 ? "text-ok" : "text-ink-muted",
                       )}
                     >
                       {r.delta > 0 ? "+" : ""}
@@ -168,7 +270,7 @@ export function Overview() {
                   ) : null}
                 </div>
                 {r.weakTopic ? (
-                  <div className="text-dense-sm text-t2 mt-[5px] leading-[1.45] text-pretty">
+                  <div className="text-body-sm text-ink-muted mt-1.5 text-pretty">
                     Weakest topic: {r.weakTopic}
                   </div>
                 ) : null}
@@ -177,13 +279,13 @@ export function Overview() {
                     {r.flags.map((f) => (
                       <div
                         key={f.reason}
-                        className="flex items-start gap-2 text-dense-sm text-t2 leading-[1.45]"
+                        className="flex items-start gap-2 flex-wrap text-body-sm text-ink-muted"
                       >
                         <span
                           aria-hidden="true"
                           className="text-err mt-[6px] w-[5px] h-[5px] rounded-full bg-err flex-none"
                         />
-                        <span className="flex-1 text-pretty">{f.summary}</span>
+                        <span className="flex-1 min-w-[24ch] text-pretty">{f.summary}</span>
                         {f.acknowledged ? (
                           <Chip tone="neutral" className="flex-none">
                             Acknowledged
@@ -216,18 +318,19 @@ export function Overview() {
         ))}
       </div>
       {needsEyesCount === 0 ? (
-        <div className="text-dense text-ok -mt-2">
-          Nothing needs your review right now — good news.
+        <div className="text-body-md text-ok -mt-2">
+          Nothing needs your review right now. Good news.
         </div>
       ) : null}
 
       {/* 3. Class summary cards */}
       <div>
-        <div className="text-display-sm mb-3">Your classes</div>
+        <div className="text-display-md text-ink mb-3">Your classes</div>
         {classes.length === 0 ? (
           <EmptyState
             heading="Add your first class"
             body="Create a class to start tracking students, marks, and at-risk flags."
+            marginalia="Everything else hangs off this"
             action={{ label: "Create a class", onClick: () => navigate("/teacher/classes") }}
           />
         ) : (
@@ -236,12 +339,12 @@ export function Overview() {
               <Link
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
-                className="block bg-surface border border-border rounded-lg p-[18px] hover:bg-surface-2 transition-colors"
+                className="block bg-paper-raised border border-rule rounded-lg p-6 hover:bg-paper-sunk transition-colors"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-display-xs">{c.label}</div>
-                    <div className="font-mono text-2xs text-t3 mt-0.5">
+                    <div className="text-display-sm text-ink">{c.label}</div>
+                    <div className="text-data-sm text-ink-faint mt-1">
                       {c.subjectCode ?? "No subject set"} · {c.studentCount} student
                       {c.studentCount === 1 ? "" : "s"}
                     </div>
@@ -254,23 +357,28 @@ export function Overview() {
                 </div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <div>
-                    <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+                    <div className="text-eyebrow text-ink-faint">
                       Average mark
                     </div>
-                    <div className="text-display-sm mt-1">
+                    {/* A percentage, so the data face, for the same reason
+                        `StatCard` moved: §4 gives the mono face every score
+                        and mark in the product. These sit in a card grid where
+                        the eye compares one class against the next, which is
+                        exactly what tabular numerals are for. */}
+                    <div className="text-data-md text-ink mt-1">
                       {c.average != null ? `${Math.round(c.average)}%` : "—"}
                     </div>
                   </div>
                   <div>
-                    <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+                    <div className="text-eyebrow text-ink-faint">
                       Top weakness
                     </div>
-                    <div className="text-dense mt-1 text-pretty">
+                    <div className="text-body-md text-ink mt-1 text-pretty">
                       {c.topWeakness ?? "Not enough data yet"}
                     </div>
                   </div>
                 </div>
-                <div className="text-xs text-t3 mt-3">
+                <div className="text-body-sm text-ink-faint mt-3">
                   {c.lastActivityAt ? `Active ${relativeTime(c.lastActivityAt)}` : "No activity yet"}
                 </div>
               </Link>
@@ -280,55 +388,67 @@ export function Overview() {
       </div>
 
       {/* 4. Recent activity */}
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="px-5 pt-[18px] pb-[13px]">
-          <div className="text-display-sm">Recent activity</div>
-          <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mt-[5px]">
+      <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden">
+        <div className="px-6 pt-5 pb-3.5">
+          <div className="text-display-md text-ink">Recent activity</div>
+          <div className="text-eyebrow text-ink-faint mt-1.5">
             Submissions across your classes
           </div>
         </div>
         {recentActivity.length === 0 ? (
-          <div className="border-t border-border px-5 py-[15px] text-dense text-t2">
+          <div className="border-t border-rule px-6 py-4 text-body-md text-ink-muted">
             No submissions yet.
           </div>
         ) : (
           recentActivity.map((a) => (
             <div
               key={`${a.studentId}-${a.subjectCode}-${a.recordedAt}`}
-              className="border-t border-border px-5 py-[13px] flex items-center gap-3 flex-wrap gap-y-1.5"
+              className="border-t border-rule px-6 py-3.5 flex items-center gap-3 flex-wrap gap-y-1.5"
             >
-              <Avatar initials={initialsOf(a.studentName)} tone="neutral" className="w-7 h-7 text-3xs" />
-              <div className="text-dense">{a.studentName}</div>
-              <div className="font-mono text-xs text-t3">{a.subjectCode}</div>
+              <Avatar name={a.studentName} size="sm" />
+              <div className="text-body-md text-ink">{a.studentName}</div>
+              <div className="text-data-sm text-ink-faint">{a.subjectCode}</div>
               <div className="flex-1" />
-              <div className="font-mono text-dense">{Math.round(a.percentage)}%</div>
+              <div className="text-data-md text-ink">{Math.round(a.percentage)}%</div>
               {a.grade ? (
                 <GradeBadge grade={a.grade} size="inline" basis="achieved" />
               ) : (
-                <span className="text-2xs text-t3 font-mono">{ORIGIN_LABEL[a.origin]}</span>
+                <span className="text-data-sm text-ink-faint">{ORIGIN_LABEL[a.origin]}</span>
               )}
-              <div className="text-2xs text-t3 w-[72px] text-right">{relativeTime(a.recordedAt)}</div>
+              <div className="text-data-sm text-ink-faint w-[72px] text-end">{relativeTime(a.recordedAt)}</div>
             </div>
           ))
         )}
       </div>
 
-      {/* 5. Quick actions */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" disabled aria-disabled="true" title="Coming in a later release">
-            Build a quiz
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" disabled aria-disabled="true" title="Coming in a later release">
-            Post an announcement
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
-        <Button variant="ink" onClick={() => navigate("/teacher/classes")}>
-          + Add a class
+      {/*
+        * 5. Quick actions.
+        *
+        * P3.2: "Build a quiz" and "Post an announcement" were `disabled` with
+        * a "Coming soon" chip and a `title` of "Coming in a later release".
+        * Both features shipped. `/teacher/quizzes` is wired to
+        * `GET /teacher/quizzes` and the full quiz-builder API, and
+        * `/teacher/announcements` to `useAnnouncements()`; both are screens in
+        * the sidebar this teacher can already open. So the dashboard was
+        * telling them a feature does not exist while linking to it two feet to
+        * the left, which is worse than a dead button: it is a reason not to
+        * click a working one. Enabled and pointed at the real screens.
+        */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" onClick={() => navigate("/teacher/quizzes")}>
+          Build a quiz
+        </Button>
+        <Button variant="secondary" onClick={() => navigate("/teacher/announcements")}>
+          Post an announcement
+        </Button>
+        {/* All three are secondary. "Add a class" used to be `ink`, which put
+            two filled primary buttons on one screen alongside "Open review
+            queue" at the top — and DESIGN.md §2 gives the Operate lane a
+            single obvious primary action per screen. The review queue is that
+            action here: it is the work only this teacher can do, and the
+            reason the portal exists. */}
+        <Button variant="secondary" onClick={() => navigate("/teacher/classes")}>
+          Add a class
         </Button>
       </div>
     </div>

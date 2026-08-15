@@ -1,11 +1,19 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V3 */
 import { useState, type FormEvent } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip, type ChipProps } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { Input } from "@/components/ui/input"
+import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import {
+  teacherLoadFailureMessage,
+  teacherMutationFailureMessage,
+} from "@/lib/teacherOutcome"
 import { useCreateQuiz, useTeacherQuizzes } from "@/lib/hooks/useTeacherApi"
 import type { QuizSummary } from "@/lib/teacherTypes"
+import { ForwardArrow, SortArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Quiz list (T-09's entry screen). Wired to `GET /teacher/quizzes`
@@ -30,10 +38,15 @@ import type { QuizSummary } from "@/lib/teacherTypes"
  * longer accepts edits once it's not a draft — see `QuizSummary`'s doc) so
  * that cell reads "—" rather than a stale number.
  *
- * Uses `text-t2` for muted labels, not the `text-t3` pattern
- * `Classes.tsx`/`ReviewItem.tsx` use for identical eyebrow/caption text —
- * see `QuizBuilder.tsx`'s module doc for why (a real, pre-existing
- * `--t3`-contrast defect found by axe, not a copy-paste inconsistency).
+ * **P4.5 retires this screen's contrast workaround.** It used to use the
+ * `--t2` step for muted labels where `Classes.tsx`/`ReviewItem.tsx` used
+ * `--t3` for identical eyebrow and caption text, because `--t3` failed
+ * contrast under the build-era palette and axe caught it. The Study Notebook
+ * palette fixes that by construction: DESIGN.md §3.2 sets `--ink-faint` at
+ * L 0.529 specifically so it clears AA on all three paper surfaces (4.94:1 on
+ * `--paper`, 4.60:1 on the darkest, `--paper-sunk`), and there is deliberately
+ * no lighter step to reach for. So the divergence has no reason to exist any
+ * more and this screen uses `--ink-faint` like its neighbours.
  */
 
 const STATUS_LABEL: Record<string, string> = {
@@ -43,9 +56,17 @@ const STATUS_LABEL: Record<string, string> = {
   archived: "Archived",
 }
 
+/*
+ * P4.5: `assigned` was `accent`. On the Study Notebook palette the accent is a
+ * warm coral-red, so the healthy live state rendered in the product's alert
+ * register while `closed` sat beside it in `ok` teal — a teacher scanning the
+ * list read alarm on the working rows and success on the finished ones.
+ * `info` is §3.6's neutral-notice pair and is what "currently live" should
+ * look like.
+ */
 const STATUS_TONE: Record<string, NonNullable<ChipProps["tone"]>> = {
   draft: "neutral",
-  assigned: "accent",
+  assigned: "info",
   closed: "ok",
   archived: "neutral",
 }
@@ -115,9 +136,8 @@ export function Quizzes() {
     return (
       <div className="lm-screen flex flex-col gap-5 min-w-0">
         <h1 className="sr-only">AI quizzes</h1>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading quizzes…
-        </div>
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={5} />
       </div>
     )
   }
@@ -128,7 +148,7 @@ export function Quizzes() {
         <h1 className="sr-only">AI quizzes</h1>
         <ErrorState
           heading="Couldn't load your quizzes"
-          body={quizzesQuery.error.message}
+          body={teacherLoadFailureMessage(quizzesQuery.error)}
           action={{ label: "Retry", onClick: () => quizzesQuery.refetch() }}
         />
       </div>
@@ -170,24 +190,29 @@ export function Quizzes() {
 
   return (
     <div className="lm-screen flex flex-col gap-5 min-w-0">
-      <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-3">
+      <div className="flex items-end gap-[18px] pb-5 border-b border-rule flex-wrap gap-y-3">
         <div>
-          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t2">
+          <div className="text-eyebrow text-ink-faint">
             {quizzes.length} quiz{quizzes.length === 1 ? "" : "zes"}
           </div>
-          <h1 className="text-display-md mt-1.5">AI quizzes</h1>
+          <h1 className="text-display-lg text-ink mt-1.5">AI quizzes</h1>
         </div>
         <div className="flex-1" />
-        <label className="flex flex-col gap-1">
-          <span className="sr-only">Search quizzes</span>
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search quizzes or subjects…"
-            className="border border-border bg-surface rounded-lg px-3.5 py-2 text-dense w-[240px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          />
-        </label>
+        {/* The kit's `<Input>`, which requires a label by type rather than by
+            convention — §12 bans placeholder-as-label and the kit enforces it
+            at the prop signature. `labelClassName="sr-only"` keeps this one
+            visually hidden, which is the right call for a search field beside
+            a heading that names what is being searched, and is different from
+            having no label at all. */}
+        <Input
+          type="search"
+          label="Search quizzes"
+          labelClassName="sr-only"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search quizzes or subjects…"
+          wrapperClassName="w-[240px]"
+        />
         <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
           {showCreate ? "Cancel" : "+ New quiz"}
         </Button>
@@ -196,34 +221,30 @@ export function Quizzes() {
       {showCreate ? (
         <form
           onSubmit={handleCreate}
-          className="bg-surface border border-border rounded-lg p-[18px] flex flex-wrap items-end gap-3"
+          className="bg-paper-raised border border-rule rounded-lg p-6 flex flex-wrap items-end gap-3"
         >
-          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 flex-1 min-w-[220px]">
-            Quiz title
-            <input
-              required
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Y11 Thermal physics catch-up"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            />
-          </label>
-          <label className="flex flex-col gap-1.5 text-dense-sm text-t2 w-[160px]">
-            Subject code
-            <input
-              required
-              value={subjectCode}
-              onChange={(e) => setSubjectCode(e.target.value)}
-              placeholder="e.g. 0625"
-              className="border border-border bg-surface rounded-lg px-3 py-2 text-dense text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            />
-          </label>
+          <Input
+            required
+            label="Quiz title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Y11 Thermal physics catch-up"
+            wrapperClassName="flex-1 min-w-[220px]"
+          />
+          <Input
+            required
+            label="Subject code"
+            value={subjectCode}
+            onChange={(e) => setSubjectCode(e.target.value)}
+            placeholder="e.g. 0625"
+            wrapperClassName="w-[160px]"
+          />
           <Button type="submit" variant="ink" disabled={createQuiz.isPending}>
             {createQuiz.isPending ? "Creating…" : "Create draft"}
           </Button>
           {createQuiz.isError ? (
-            <div className="text-dense-sm text-err w-full">
-              Couldn't create the quiz: {createQuiz.error.message}
+            <div className="text-body-sm text-err w-full">
+              Couldn't create the quiz: {teacherMutationFailureMessage(createQuiz.error)}
             </div>
           ) : null}
         </form>
@@ -232,20 +253,20 @@ export function Quizzes() {
       {quizzes.length === 0 ? (
         <EmptyState
           heading="No quizzes yet"
-          body="A quiz is a set of past-paper or AI-generated questions targeted at a grade, assigned to a class, and auto-marked when students submit it. Start one below — you can save it as a draft at any step and come back later."
+          body="A quiz is a set of past-paper or AI-generated questions targeted at a grade, assigned to a class, and auto-marked when students submit it. Start one below. You can save it as a draft at any step and come back later."
           action={{ label: "Create a quiz", onClick: () => setShowCreate(true) }}
         />
       ) : (
         <div
-          className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
+          className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
           tabIndex={0}
           role="region"
           aria-label="Your quizzes, scrollable horizontally"
         >
-          <table className="w-full text-dense border-collapse">
+          <table className="w-full text-body-md border-collapse">
             <caption className="sr-only">Your quizzes, sortable by every column</caption>
             <thead>
-              <tr className="bg-surface-2 border-b border-border">
+              <tr className="bg-paper-sunk border-b border-rule">
                 {COLUMNS.map((col) => {
                   const active = col.key === sortColumn
                   return (
@@ -253,20 +274,27 @@ export function Quizzes() {
                       key={col.key}
                       scope="col"
                       aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                      className="text-left px-[18px] py-[10px]"
+                      className="text-start px-6 py-2.5"
                     >
                       <button
                         type="button"
                         onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 font-mono text-3xs tracking-[0.09em] uppercase text-t2 hover:text-t1 cursor-pointer bg-transparent border-0 p-0"
+                        // `whitespace-nowrap` (P6.1): "Target grade" is two
+                        // words in an uppercase eyebrow inside a table header
+                        // cell, and it broke across two lines at every width
+                        // from 320 to 768 — a two-line clickable target, and on
+                        // a sort control the second line looks like a separate
+                        // header. The column can be wider; the label cannot
+                        // break.
+                        className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                       >
                         {col.label}
-                        {active ? <span aria-hidden="true">{sortDir === 1 ? "↑" : "↓"}</span> : null}
+                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
                       </button>
                     </th>
                   )
                 })}
-                <th scope="col" className="px-[18px] py-[10px]">
+                <th scope="col" className="px-6 py-2.5">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -274,40 +302,48 @@ export function Quizzes() {
             <tbody>
               {sorted.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1} className="px-[18px] py-6 text-t2 text-dense">
+                  <td colSpan={COLUMNS.length + 1} className="px-6 py-6 text-ink-muted text-body-md">
                     No quizzes match "{search}".
                   </td>
                 </tr>
               ) : (
                 sorted.map((q) => (
-                  <tr key={q.id} className="border-b border-border last:border-b-0">
-                    <td className="px-[18px] py-[13px]">
-                      <Link to={`/teacher/quizzes/${q.id}`} className="text-t1 hover:underline">
+                  <tr key={q.id} className="border-b border-rule last:border-b-0">
+                    <td className="px-6 py-3.5">
+                      {/* Opts out of §6.1's two-line-clickable rule: a quiz
+                          title is the teacher's own words, and truncating it in
+                          the one column that identifies the row would be worse
+                          than letting it wrap. See scripts/adapt_audit.mjs. */}
+                      <Link
+                        to={`/teacher/quizzes/${q.id}`}
+                        data-wraps-content-title
+                        className="text-ink hover:underline"
+                      >
                         {q.title}
                       </Link>
                       {q.status === "draft" ? (
-                        <div className="text-xs text-t2 mt-0.5">
+                        <div className="text-body-sm text-ink-faint mt-1">
                           Step {q.builderStep} of 6
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-[18px] py-[13px] font-mono text-dense-sm text-t2">
+                    <td className="px-6 py-3.5 text-data-sm text-ink-faint">
                       {q.subjectCode}
                     </td>
-                    <td className="px-[18px] py-[13px]">
+                    <td className="px-6 py-3.5">
                       <Chip tone={statusTone(q.status)}>{statusLabel(q.status)}</Chip>
                     </td>
-                    <td className="px-[18px] py-[13px] font-mono text-dense-sm">{q.questionCount}</td>
-                    <td className="px-[18px] py-[13px]">
+                    <td className="px-6 py-3.5 text-data-md text-ink">{q.questionCount}</td>
+                    <td className="px-6 py-3.5">
                       {q.targetGrade ? (
-                        <GradeBadge grade={q.targetGrade} size="inline" basis="predicted" />
+                        <GradeBadge grade={q.targetGrade} size="inline" basis="target" />
                       ) : (
-                        <span className="text-xs text-t2">Not set</span>
+                        <span className="text-body-sm text-ink-faint">Not set</span>
                       )}
                     </td>
-                    <td className="px-[18px] py-[13px] text-right whitespace-nowrap">
+                    <td className="px-6 py-3.5 text-end whitespace-nowrap">
                       <Button size="sm" variant="secondary" onClick={() => navigate(`/teacher/quizzes/${q.id}`)}>
-                        {q.status === "draft" ? "Continue →" : "Open →"}
+                        <>{q.status === "draft" ? "Continue" : "Open"} <ForwardArrow /></>
                       </Button>
                     </td>
                   </tr>

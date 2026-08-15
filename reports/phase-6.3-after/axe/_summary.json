@@ -1,0 +1,706 @@
+[
+  {
+    "slug": "login",
+    "url": "http://127.0.0.1:4173/login",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-correct",
+    "url": "http://127.0.0.1:4173/student/correct",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-result",
+    "url": "http://127.0.0.1:4173/student/result/eb550570-2670-4f9e-bff4-57ee65cde105",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-notifications-populated",
+    "url": "http://127.0.0.1:4173/student/notifications",
+    "violationCount": 1,
+    "counts": {
+      "critical": 0,
+      "serious": 1,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-overview",
+    "url": "http://127.0.0.1:4173/student",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "parent-login",
+    "url": "http://127.0.0.1:4173/login/parent",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "settings-devices",
+    "url": "http://127.0.0.1:4173/settings/devices",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "settings-notifications",
+    "url": "http://127.0.0.1:4173/settings/notifications",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-overview",
+    "url": "http://127.0.0.1:4173/teacher",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-overview-offline",
+    "url": "http://127.0.0.1:4173/teacher",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-classes",
+    "url": "http://127.0.0.1:4173/teacher/classes",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-class-roster",
+    "url": "http://127.0.0.1:4173/teacher/classes/4161386a-31c1-4abe-89cc-3051c62ef4d8",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-class-analytics",
+    "url": "http://127.0.0.1:4173/teacher/classes/4161386a-31c1-4abe-89cc-3051c62ef4d8/analytics",
+    "violationCount": 1,
+    "counts": {
+      "critical": 0,
+      "serious": 1,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-student-detail",
+    "url": "http://127.0.0.1:4173/teacher/students/431ef808-70c3-4723-801b-012905b035e7",
+    "violationCount": 2,
+    "counts": {
+      "critical": 0,
+      "serious": 1,
+      "moderate": 1,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-at-risk",
+    "url": "http://127.0.0.1:4173/teacher/at-risk",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-review",
+    "url": "http://127.0.0.1:4173/teacher/review",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-review-detail",
+    "url": "http://127.0.0.1:4173/teacher/review/b83d6b84-1001-40bf-8f76-de14ca89f778",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-review-detail-corrected",
+    "url": "http://127.0.0.1:4173/teacher/review/b83d6b84-1001-40bf-8f76-de14ca89f778",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-quizzes",
+    "url": "http://127.0.0.1:4173/teacher/quizzes",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-quiz-detail",
+    "url": "http://127.0.0.1:4173/teacher/quizzes/da53b044-24c7-49b1-a62c-a589b775910a?step=4",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-quiz-results",
+    "url": "http://127.0.0.1:4173/teacher/quizzes/da53b044-24c7-49b1-a62c-a589b775910a/assignments/a6c161c6-dd01-4335-a26f-515c6c1e6c79/results",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-announcements",
+    "url": "http://127.0.0.1:4173/teacher/announcements",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-grading",
+    "url": "http://127.0.0.1:4173/teacher/grading",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-schemes",
+    "url": "http://127.0.0.1:4173/teacher/schemes",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "teacher-overview-empty",
+    "url": "http://127.0.0.1:4173/teacher",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "parent-children",
+    "url": "http://127.0.0.1:4173/parent/children/431ef808-70c3-4723-801b-012905b035e7",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "parent-children-empty",
+    "url": "http://127.0.0.1:4173/parent",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "parent-child-overview",
+    "url": "http://127.0.0.1:4173/parent/children/431ef808-70c3-4723-801b-012905b035e7",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "parent-subject-detail",
+    "url": "http://127.0.0.1:4173/parent/children/431ef808-70c3-4723-801b-012905b035e7/subjects/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "parent-weaknesses",
+    "url": "http://127.0.0.1:4173/parent/children/431ef808-70c3-4723-801b-012905b035e7/weaknesses",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-parents",
+    "url": "http://127.0.0.1:4173/student/parents",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-onboard-subjects",
+    "url": "http://127.0.0.1:4173/student/onboard",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-onboard-questionnaire",
+    "url": "http://127.0.0.1:4173/student/onboard",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-onboard-questionnaire-skipped",
+    "url": "http://127.0.0.1:4173/student/onboard",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-placement-invite",
+    "url": "http://127.0.0.1:4173/student/placement/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-placement-invite-unavailable",
+    "url": "http://127.0.0.1:4173/student/placement/0580",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-placement-test",
+    "url": "http://127.0.0.1:4173/student/placement/test/0e51b5ca-4a1a-477a-9aac-2d4471c0d78f",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-placement-result",
+    "url": "http://127.0.0.1:4173/student/placement/result/18040d7a-4bf6-4c67-b962-7f38537f86cb",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-practice-generator",
+    "url": "http://127.0.0.1:4173/student/practice/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-practice-generator-no-questions",
+    "url": "http://127.0.0.1:4173/student/practice/0580",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-practice-generator-no-weaknesses",
+    "url": "http://127.0.0.1:4173/student/practice/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-practice-set-working",
+    "url": "http://127.0.0.1:4173/student/practice/set/163cef5b-694c-4af7-a9d4-f966d735727f",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-practice-result-not-submitted",
+    "url": "http://127.0.0.1:4173/student/practice/result/163cef5b-694c-4af7-a9d4-f966d735727f",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-practice-result-marking",
+    "url": "http://127.0.0.1:4173/student/practice/result/3edbb22b-5790-487a-975a-0dfa29e72979",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-practice-print",
+    "url": "http://127.0.0.1:4173/student/practice/print/2bc8ee60-2218-4fe7-8b93-14f24ef739f1",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-flashcards-settled",
+    "url": "http://127.0.0.1:4173/student/flashcards/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-flashcards-empty",
+    "url": "http://127.0.0.1:4173/student/flashcards/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-flashcards-no-weaknesses",
+    "url": "http://127.0.0.1:4173/student/flashcards/0625",
+    "violationCount": 1,
+    "counts": {
+      "critical": 0,
+      "serious": 1,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-flashcard-review",
+    "url": "http://127.0.0.1:4173/student/flashcards/review/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-flashcard-review-settled",
+    "url": "http://127.0.0.1:4173/student/flashcards/review/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-study-plan-week",
+    "url": "http://127.0.0.1:4173/student/plan/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-study-plan-week-refused",
+    "url": "http://127.0.0.1:4173/student/plan/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-study-plan-week-not-generated",
+    "url": "http://127.0.0.1:4173/student/plan/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-study-plan-week-complete",
+    "url": "http://127.0.0.1:4173/student/plan/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-study-plan-session",
+    "url": "http://127.0.0.1:4173/student/plan/0625/session/cc6e22fa-47b0-4a75-8b53-92da38c36d3c",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-study-plan-session-not-in-week",
+    "url": "http://127.0.0.1:4173/student/plan/0625/session/00000000-0000-4000-8000-000000000000",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-announcements",
+    "url": "http://127.0.0.1:4173/student/announcements",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-standings",
+    "url": "http://127.0.0.1:4173/student/board",
+    "violationCount": 1,
+    "counts": {
+      "critical": 0,
+      "serious": 1,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-friends",
+    "url": "http://127.0.0.1:4173/student/friends",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-profile",
+    "url": "http://127.0.0.1:4173/student/profile",
+    "violationCount": 1,
+    "counts": {
+      "critical": 0,
+      "serious": 1,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-notifications",
+    "url": "http://127.0.0.1:4173/student/notifications",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-subject",
+    "url": "http://127.0.0.1:4173/student/subject/0625",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "student-landing",
+    "url": "http://127.0.0.1:4173/landing",
+    "violationCount": 1,
+    "counts": {
+      "critical": 0,
+      "serious": 1,
+      "moderate": 0,
+      "minor": 0
+    }
+  },
+  {
+    "slug": "login-device-limit",
+    "url": "http://127.0.0.1:4173/login",
+    "violationCount": 0,
+    "counts": {
+      "critical": 0,
+      "serious": 0,
+      "moderate": 0,
+      "minor": 0
+    }
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "name": "a2-pen-pressure",
+  "model": "gemini-3.1-flash-image",
+  "booked_usd": 0.039,
+  "cumulative_usd_after": 0.28203960000001177,
+  "reported_prompt_tokens": 342,
+  "reported_candidates_tokens": 1382,
+  "generated_at": "2026-08-13T14:22:10.129867+00:00",
+  "file": "BUILD/brand/a2-pen-pressure.png"
+}

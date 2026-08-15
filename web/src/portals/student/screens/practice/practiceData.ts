@@ -156,7 +156,7 @@ export function practiceUnavailableMessage(reason: string | null): PracticeUnava
     case "no_weaknesses":
       return {
         heading: "No weak topics recorded yet",
-        body: "\"Weak topics only\" needs at least one recorded weakness for this subject — take a placement test or some general practice first, then this option will have something to draw from.",
+        body: "\"Weak topics only\" needs at least one recorded weakness for this subject. Take a placement test or some general practice first, then this option will have something to draw from.",
       }
     default:
       return {

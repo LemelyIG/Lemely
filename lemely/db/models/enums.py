@@ -112,12 +112,18 @@ class SubscriptionStatus(enum.Enum):
 
     Activation is manual (platform-admin toggle); payment is out of scope for
     Phase 1.
+
+    ``rejected`` and ``cancelled`` are deliberately distinct (migration
+    ``0019``): a rejection is the platform declining a request, a cancellation is
+    the subscriber ending one. They are different events with different parties
+    responsible, and X-02's queue is the one place that difference is read.
     """
 
     inactive = "inactive"
     active = "active"
     cancelled = "cancelled"
     expired = "expired"
+    rejected = "rejected"
 
 
 class SeatStatus(enum.Enum):

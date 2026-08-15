@@ -12,10 +12,31 @@ import threading
 import time
 from collections import deque
 from collections.abc import Iterator
+from typing import Any
 
 from lemely.runtime.events import Event, EventType, bus
 
 _MAX_LINES = 300  # ring buffer capacity
+
+
+def _progress_counter(payload: dict[str, Any]) -> str:
+    """Return ``" (7/21)"`` for a payload carrying a real per-question counter.
+
+    Progress publishers pass ``index`` (1-based position in the work list, from
+    enumerate — never a tally of frames emitted, so a question that errors out
+    does not desync the ones after it) alongside ``total``. Both are optional:
+    payloads are free-form dicts and older/other publishers omit them entirely,
+    hence ``.get`` rather than indexing.
+
+    Returns the empty string when the counter is absent or unusable. The log
+    shows a position only when the backend actually supplied one — it must not
+    guess a denominator (docs/LEMELY_UI_SPEC.md S-14).
+    """
+    index = payload.get("index")
+    total = payload.get("total")
+    if isinstance(index, int) and isinstance(total, int) and total > 0:
+        return f" ({index}/{total})"
+    return ""
 
 
 def _format_event(event: Event) -> str:
@@ -41,10 +62,12 @@ def _format_event(event: Event) -> str:
         return f"{ts}  ⬆  escalate q={p.get('question_id', '?')} → {p.get('escalation_model', '?')}"
     if t == EventType.EXTRACTION_PROGRESS:
         conf = p.get("confidence", 0)
-        return f"{ts}  📄 extract q={p.get('question_id', '?')} conf={conf:.2f}"
+        return (
+            f"{ts}  📄 extract q={p.get('question_id', '?')}{_progress_counter(p)} conf={conf:.2f}"
+        )
     if t == EventType.MARKING_PROGRESS:
         return (
-            f"{ts}  🖊  mark q={p.get('question_id', '?')} "
+            f"{ts}  🖊  mark q={p.get('question_id', '?')}{_progress_counter(p)} "
             f"src={p.get('marker_source', '?')} "
             f"conf={p.get('confidence', 0):.2f}"
         )

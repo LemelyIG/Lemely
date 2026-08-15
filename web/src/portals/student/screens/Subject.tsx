@@ -1,7 +1,12 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import { useNavigate, useParams } from "react-router-dom"
 import { Card } from "@/components/ui/card"
+import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { PageHeaderSkeleton, CardGridSkeleton } from "@/components/ui/loading-shapes"
 import { ApiError } from "@/lib/api"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useSubject } from "@/lib/hooks/useStudentApi"
+import { cn } from "@/lib/utils"
 import { vizText } from "../components/colors"
 
 /*
@@ -10,6 +15,36 @@ import { vizText } from "../components/colors"
  * with forecast/weighted-mean stat cards, two per-paper breakdown cards (bar
  * strips + boundary/position), then a paper history ledger and a topic map
  * grid — every section is backed by the `Subject` DTO.
+ *
+ * ── P4.10, and a topic map that printed an impossible fraction ────────────
+ *
+ * **Every tile read "73% / of 24 marks".** The section was titled "Marks
+ * earned / marks available, per syllabus unit", each tile printed `t.acc`, and
+ * under it a hardcoded "of 24 marks". Two things are wrong and they compound:
+ *
+ *   - `acc` is not a mark count. `routers/student.py:364` builds it as
+ *     `f"{round(area.accuracy * 100.0)}%"` — a percentage. So the pair read as
+ *     a numerator of 73 over a denominator of 24.
+ *   - **There is no denominator on the wire at all.** `TopicTileDTO` carries
+ *     `name`, `acc`, `color`, `weak` and nothing else, so the 24 was not a
+ *     stale value or a rounding of something real; it was invented, and it was
+ *     the same 24 on every tile of every subject.
+ *
+ * The fix is to say what the number is. The tiles show accuracy per syllabus
+ * unit, the heading now says that, and no denominator is rendered because none
+ * exists (UI spec §1.4: an absent figure beats an invented one).
+ *
+ * **The weighted-mean delta was green whatever it said.** `weightedMeanDelta`
+ * is built as `f"{'+' if delta >= 0 else ''}{delta} since first paper"`, so it
+ * is "-8 since first paper" for a student who has got worse — and it was
+ * rendered in `text-ok` unconditionally. A student sliding backwards was shown
+ * their decline in the product's success colour. This is D4.1's "+0 in teal"
+ * finding on a different screen, and the tone is derived from the sign now.
+ *
+ * **The whole screen was arbitrary values.** ~40 `text-[13.5px]`-class
+ * literals, three raw `oklch()` backgrounds bypassing the token block
+ * entirely (§3.2 item 13), and `font-serif`/`font-mono` paired with a size
+ * literal rather than the rungs that name their own face.
  */
 export function Subject() {
   const navigate = useNavigate()
@@ -29,112 +64,136 @@ export function Subject() {
     return (
       <div className="lm-screen flex flex-col gap-6">
         {fallbackHeading}
-        <div className="text-[13.5px] text-t2">Loading subject…</div>
+        <PageHeaderSkeleton />
+        <CardGridSkeleton count={2} />
       </div>
     )
   }
 
   if (isError) {
+    // A 404 here is not a failure: it is a subject with no corrected papers
+    // yet, which is every subject on a new account. It gets the empty state
+    // rather than the error state, and says what to do about it.
     if (error instanceof ApiError && error.status === 404) {
       return (
         <div className="lm-screen flex flex-col gap-6">
           {fallbackHeading}
-          <div className="text-[13.5px] text-t2">
-            No papers recorded for {code} yet.
-          </div>
+          <EmptyState
+            heading={`Nothing recorded for ${code} yet`}
+            body="Once you correct a paper in this subject, your grade forecast, per-paper breakdown and topic map all appear here."
+            action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
+          />
         </div>
       )
     }
     return (
       <div className="lm-screen flex flex-col gap-6">
         {fallbackHeading}
-        <div className="text-[13.5px] text-accent">
-          Couldn't load this subject: {error.message}
-        </div>
+        <ErrorState
+          heading="We couldn't load this subject"
+          body={studentLoadFailureMessage(error)}
+          action={{ label: "Try again", onClick: () => window.location.reload() }}
+        />
       </div>
     )
   }
 
-  const { header: subjectHeader, papersBreakdown, topicMap, paperHistory } =
-    data
+  const { header: subjectHeader, papersBreakdown, topicMap, paperHistory } = data
+
+  // The backend renders the sign into the string ("+4 since first paper" /
+  // "-8 since first paper"), so the sign is what decides the tone. Neither
+  // arm is the accent: on this palette accent is the alert register, and a
+  // decline is disappointing news rather than an error the student can act on.
+  const declining = subjectHeader.weightedMeanDelta.trimStart().startsWith("-")
 
   return (
     <div className="lm-screen flex flex-col gap-6">
-      <div className="flex items-start gap-[22px] flex-wrap">
-        <div className="flex-1 min-w-[320px]">
-          <div className="font-mono text-[12px] text-t2">
-            {subjectHeader.meta}
-          </div>
-          <h1 className="font-serif text-[38px] leading-[1.1] mt-1">
-            {subjectHeader.title}
-          </h1>
-          <div className="text-[14px] text-t2 mt-2 max-w-[62ch] text-pretty">
+      <div className="flex flex-wrap items-start gap-6">
+        {/* `basis-80` + `min-w-0`, not `min-w-80` (P6.1). The intent is "keep
+            this column beside the cards until there is no longer room for
+            both", and a flex BASIS says that without also forbidding the column
+            from ever being narrower than 320px. `min-w-80` forbade it: at the
+            320px viewport §6.1 requires, 320px of column plus the screen's own
+            horizontal padding is wider than the screen, so the header ran off
+            the side. It did not show up as a scrollbar either, because html and
+            body clip — the title simply had its end cut off. */}
+        <div className="min-w-0 flex-1 basis-80">
+          <div className="text-data-sm text-ink-muted">{subjectHeader.meta}</div>
+          <h1 className="mt-1 text-display-lg text-ink">{subjectHeader.title}</h1>
+          <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-ink-muted">
             {subjectHeader.intro}
           </div>
         </div>
-        <div className="flex gap-3">
-          <Card className="px-5 py-4 rounded-[13px] text-center min-w-[132px]">
-            <div className="text-[11px] tracking-[0.09em] uppercase text-t3">
-              Forecast grade
-            </div>
-            <div className="font-serif text-[44px] leading-[1.1] text-accent">
-              {subjectHeader.forecast}
-            </div>
-            <div className="text-[11.5px] text-t2">at current trajectory</div>
+        <div className="flex flex-wrap gap-3">
+          <Card className="min-w-33 px-5 py-4 text-center">
+            <div className="text-eyebrow text-ink-faint">Forecast grade</div>
+            {/* The data face for both figures: §4.2 puts grades, scores and
+                percentages on the tabular rung, not the display face. They
+                were `font-serif text-[44px]`, which is the display face wearing
+                a literal size. */}
+            <div className="text-data-lg text-ink">{subjectHeader.forecast}</div>
+            <div className="text-body-sm text-ink-muted">at current trajectory</div>
           </Card>
-          <Card className="px-5 py-4 rounded-[13px] text-center min-w-[132px]">
-            <div className="text-[11px] tracking-[0.09em] uppercase text-t3">
-              Weighted mean
-            </div>
-            <div className="font-serif text-[44px] leading-[1.1]">
+          <Card className="min-w-33 px-5 py-4 text-center">
+            <div className="text-eyebrow text-ink-faint">Weighted mean</div>
+            <div className="text-data-lg text-ink">
               {subjectHeader.weightedMean}
-              <span className="text-[22px]">%</span>
+              <span className="text-data-md">%</span>
             </div>
-            <div className="text-[11.5px] text-ok">
+            <div className={cn("text-body-sm", declining ? "text-ink-muted" : "text-ok")}>
               {subjectHeader.weightedMeanDelta}
             </div>
           </Card>
         </div>
       </div>
 
-      <div className="lm-cols grid grid-cols-2 gap-5 max-[1180px]:grid-cols-1">
+      <div className="grid grid-cols-1 gap-5 min-[1180px]:grid-cols-2">
         {papersBreakdown.map((p) => (
           <Card key={p.title} className="p-5">
             <div className="flex items-baseline gap-2.5">
-              <div className="text-[15px] font-semibold">{p.title}</div>
-              <div className="text-[12px] text-t2">{p.sub}</div>
+              <div className="text-body-md font-semibold text-ink">{p.title}</div>
+              <div className="text-body-sm text-ink-muted">{p.sub}</div>
               <div className="flex-1" />
-              <div className="font-serif text-[26px] leading-none">{p.mean}</div>
+              <div className="text-data-md text-ink">{p.mean}</div>
             </div>
-            <div className="flex items-end gap-1.5 h-24 my-5 mb-2.5">
+            <div className="my-5 mb-2.5 flex h-24 items-end gap-1.5">
               {p.bars.map((b) => (
                 <div
                   key={b.label}
-                  className="flex-1 flex flex-col justify-end items-center gap-1.5 h-full"
+                  className="flex h-full flex-1 flex-col items-center justify-end gap-1.5"
                 >
+                  {/* Two fixes in one element. `bg-rule-strong` for the
+                      resting bar, not a raw `oklch()` literal (§3.2 item 13:
+                      every colour comes from the token block, and this one
+                      bypassed it).
+
+                      And `bg-ink` for the highlighted bar, not `bg-accent`.
+                      `highlight` marks the most recent paper, which is
+                      emphasis; the row directly beneath it uses accent to mean
+                      "you are short of the boundary". Having one colour carry
+                      both in the same card is how a student reads "your latest
+                      paper" as "your latest paper is a problem" on the card
+                      where it isn't. */}
                   <div
-                    className={`w-full rounded-t-[4px] ${b.highlight ? "bg-accent" : "bg-[oklch(0.88_0.02_35)]"}`}
+                    className={cn(
+                      "w-full rounded-t-sm",
+                      b.highlight ? "bg-ink" : "bg-rule-strong",
+                    )}
                     style={{ height: `${b.value}%` }}
                   />
-                  <div className="text-[9.5px] text-t3 font-mono">{b.label}</div>
+                  <div className="text-data-sm text-ink-faint">{b.label}</div>
                 </div>
               ))}
             </div>
-            <div className="border-t border-border pt-3 flex gap-[18px]">
+            <div className="flex gap-5 border-t border-rule pt-3">
               <div>
-                <div className="text-[11px] text-t3 tracking-[0.08em] uppercase">
-                  Predicted boundary
-                </div>
-                <div className="text-[13.5px] font-mono mt-[3px]">
-                  {p.boundary}
-                </div>
+                <div className="text-eyebrow text-ink-faint">Predicted boundary</div>
+                <div className="mt-0.5 text-data-sm text-ink">{p.boundary}</div>
               </div>
               <div>
-                <div className="text-[11px] text-t3 tracking-[0.08em] uppercase">
-                  Your position
-                </div>
+                <div className="text-eyebrow text-ink-faint">Your position</div>
                 <div
-                  className={`text-[13.5px] font-mono mt-[3px] ${p.positionOk ? "text-ok" : "text-accent"}`}
+                  className={cn("mt-0.5 text-data-sm", p.positionOk ? "text-ok" : "text-accent-ink")}
                 >
                   {p.position}
                 </div>
@@ -144,50 +203,51 @@ export function Subject() {
         ))}
       </div>
 
-      <div className="lm-cols grid grid-cols-[1.3fr_1fr] gap-5 items-start max-[1180px]:grid-cols-1">
+      <div className="grid grid-cols-1 items-start gap-5 min-[1180px]:grid-cols-[1.3fr_1fr]">
         <Card className="overflow-hidden">
-          <div className="px-5 pt-[18px] pb-3 flex items-baseline gap-2.5">
-            <div className="text-[15px] font-semibold">Paper history</div>
-            <div className="text-[12px] text-t2">newest first</div>
+          <div className="flex items-baseline gap-2.5 px-5 pt-4 pb-3">
+            <div className="text-body-md font-semibold text-ink">Paper history</div>
+            <div className="text-body-sm text-ink-muted">newest first</div>
           </div>
           {paperHistory.map((h) => (
             <button
               key={h.id}
               onClick={() => navigate(`/student/result/${h.id}`)}
-              className="grid grid-cols-[150px_1fr_90px_70px_44px] gap-3 items-center w-full text-left border-0 border-t border-border bg-transparent font-sans cursor-pointer px-5 py-3 transition-colors hover:bg-surface-2"
+              className="grid w-full cursor-pointer grid-cols-[150px_1fr_90px_70px_44px] items-center gap-3 border-0 border-t border-rule bg-transparent px-5 py-3 text-start transition-colors hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
             >
-              <span className="font-mono text-[12px]">{h.paper}</span>
-              <span className="text-[12.5px] text-t2">{h.note}</span>
-              <span className="font-mono text-[12px] text-t2">{h.marks}</span>
-              <span className="font-mono text-[12px]">{h.pct}</span>
-              <span
-                className={`font-serif text-[21px] text-right ${vizText(h.gradeColor)}`}
-              >
-                {h.grade}
-              </span>
+              <span className="text-data-sm text-ink">{h.paper}</span>
+              <span className="text-body-sm text-ink-muted">{h.note}</span>
+              <span className="text-data-sm text-ink-muted">{h.marks}</span>
+              <span className="text-data-sm text-ink">{h.pct}</span>
+              {/* `text-end`, not `text-right`: this column follows `dir`. */}
+              <span className={cn("text-data-md text-end", vizText(h.gradeColor))}>{h.grade}</span>
             </button>
           ))}
         </Card>
 
         <Card className="p-5">
-          <div className="text-[15px] font-semibold">Topic map</div>
-          <div className="text-[12px] text-t2 mb-4">
-            Marks earned / marks available, per syllabus unit
+          <div className="text-body-md font-semibold text-ink">Topic map</div>
+          {/* Says what the number is. It used to promise "marks earned /
+              marks available", which no field on this DTO supplies. */}
+          <div className="mb-4 text-body-sm text-ink-muted">
+            Your accuracy in each syllabus unit, across every paper you've corrected
           </div>
-          <div className="lm-cols grid grid-cols-2 gap-2 max-[1180px]:grid-cols-1">
+          <div className="grid grid-cols-1 gap-2 min-[1180px]:grid-cols-2">
             {topicMap.map((t) => (
               <div
                 key={t.name}
-                className={`border border-border rounded-[10px] px-3 py-[11px] ${t.weak ? "bg-[oklch(0.985_0.012_35)]" : "bg-[oklch(0.985_0.004_40)]"}`}
+                className={cn(
+                  "rounded-lg border border-rule px-3 py-2.5",
+                  t.weak ? "bg-accent-wash" : "bg-paper-sunk",
+                )}
               >
-                <div className="text-[12.5px] font-medium leading-[1.25]">
-                  {t.name}
-                </div>
-                <div className="flex items-baseline gap-1.5 mt-1.5">
-                  <div className={`font-mono text-[16px] ${vizText(t.color)}`}>
-                    {t.acc}
-                  </div>
-                  <div className="text-[11px] text-t2">of 24 marks</div>
+                <div className="text-body-sm font-medium text-ink">{t.name}</div>
+                <div className="mt-1.5 flex items-baseline gap-1.5">
+                  <div className={cn("text-data-md", vizText(t.color))}>{t.acc}</div>
+                  {/* No denominator: `TopicTileDTO` carries none, and the one
+                      that used to be here was a hardcoded 24 on every tile of
+                      every subject. `acc` is already a percentage. */}
+                  <div className="text-body-sm text-ink-muted">accuracy</div>
                 </div>
               </div>
             ))}

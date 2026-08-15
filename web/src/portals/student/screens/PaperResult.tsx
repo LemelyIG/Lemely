@@ -1,19 +1,20 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+import type { ReactNode } from "react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { Check, Minus, Warning } from "@phosphor-icons/react"
 import { Card } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
-import { Eyebrow } from "@/components/ui/primitives"
 import { PaperIdentity } from "@/components/ui/paper-identity"
 import { MarkDisplay } from "@/components/ui/mark-display"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { BoundaryBar, type GradeBoundary } from "@/components/ui/boundary-bar"
-import {
-  ConfidenceIndicatorSummary,
-  type ConfidenceTier,
-} from "@/components/ui/confidence-indicator"
+import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator"
 import { QuestionRow, type MarkState } from "@/components/ui/question-row"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ApiError } from "@/lib/api"
+import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
 
@@ -29,6 +30,30 @@ import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
  *     replaces the list instead of an empty or fabricated one.
  * The shared header (marks/percentage/grade, boundary bar, integrity +
  * provenance sidebar) renders from whichever source is active.
+ *
+ * ── P4.2 (redesign Phase 4, surface 2 of 10) ──────────────────────────────
+ *
+ * Migrated to the Study Notebook system. Three changes are not styling:
+ *
+ *   1. **The confidence threshold disagreed with the backend.** Bucketing
+ *      moved to `lib/markingConfidence.ts`, which uses the real 0.90 review
+ *      floor instead of the 0.85 this screen had invented, and is pinned
+ *      against the Python constant by a test. See that file: at 0.85 a mark
+ *      scoring 0.87 read "confident" to the student and "not confident" to
+ *      their teacher, on the same paper.
+ *   2. **Loading was one line of text where a full result arrives.** Replaced
+ *      with skeletons shaped like the header and the question list, so the
+ *      page does not jump several hundred pixels when the data lands
+ *      (DESIGN.md §12, CLS < 0.1).
+ *   3. **The four terminal states were four hand-built page shells.** They
+ *      share one now, so a heading, a container width or a gap can no longer
+ *      be right in three of them and wrong in the fourth.
+ *
+ * **Not done here: the celebration register.** DESIGN.md §9.3 names "the
+ * marked-paper result reveal" as one of the five moments that earn expressive
+ * motion, and this is that screen. Phase 5 owns the motion sweep product-wide,
+ * and building a count-up here first would set the register from one surface
+ * before the spec for it exists in code.
  */
 
 type LiveResult = Result & { questions: QuestionResult[] }
@@ -62,47 +87,19 @@ function markState(q: QuestionResult): MarkState {
   return "partial"
 }
 
-/**
- * `reviewReason` is the backend's explicit "a human needs to look at this"
- * signal, so it always wins. Below that, `confidence` (0-1) is bucketed
- * against the product's stated 0.70 escalation floor (see `data.ts`'s
- * `proof` stat "confidence floor before a human is asked") with an
- * additional, softer 0.85 band for "uncertain but not review-worthy" — that
- * second threshold isn't backend-supplied, it's a frontend judgement call
- * made for this retrofit (see the P2.5.3 report).
- */
-function confidenceTier(q: QuestionResult): ConfidenceTier {
-  if (q.reviewReason) return "needs-review"
-  if (typeof q.confidence === "number" && q.confidence < 0.85) return "uncertain"
-  return "confident"
-}
-
-function confidenceSummary(questions: QuestionResult[]) {
-  return questions.reduce(
-    (acc, q) => {
-      const tier = confidenceTier(q)
-      if (tier === "confident") acc.confident += 1
-      else if (tier === "uncertain") acc.uncertain += 1
-      else acc.needsReview += 1
-      return acc
-    },
-    { confident: 0, uncertain: 0, needsReview: 0 },
-  )
-}
-
 function IntegrityMark({ row }: { row: IntegrityRow }) {
   const Icon = row.mark === "check" ? Check : row.mark === "bang" ? Warning : Minus
   return (
     <div
       // DESIGN.md "Borders: 1px solid borders in the `border` color provide
       // the primary containment strategy" — snapped to the canonical 1px
-      // (border) instead of the undocumented border-[1.5px].
+      // (rule) instead of the undocumented border-[1.5px].
       className={`w-4 h-4 flex-none mt-px rounded-full border flex items-center justify-center ${
         row.color === "ok"
           ? "border-ok text-ok"
           : row.color === "warn"
             ? "border-warn text-warn"
-            : "border-t2 text-t2"
+            : "border-ink-muted text-ink-muted"
       }`}
     >
       <Icon size={9} weight="bold" />
@@ -110,78 +107,117 @@ function IntegrityMark({ row }: { row: IntegrityRow }) {
   )
 }
 
-function ResultHeader({ res }: { res: Result }) {
+/**
+ * One page shell for every state this screen can be in.
+ *
+ * The four terminal states each carried their own copy of the wrapper, and
+ * they had already drifted: the loaded states used `gap-container-mobile`
+ * (22px, a build-era rung) while the loading and error states used `gap-6`.
+ * A container that differs by state is a container nobody chose.
+ */
+function ResultScreen({
+  children,
+  srHeading,
+}: {
+  children: ReactNode
+  srHeading?: string
+}) {
   return (
-    <Card className="rounded-xl overflow-hidden">
-      <div className="lm-cols grid grid-result-cols max-tablet:grid-cols-1">
-        <div className="px-7 py-26px">
-          <div className="flex items-center gap-9px flex-wrap">
+    <div className="lm-screen flex flex-col gap-6">
+      {srHeading ? <h1 className="sr-only">{srHeading}</h1> : null}
+      {children}
+    </div>
+  )
+}
+
+function ResultHeader({ res, reveal = false }: { res: Result; reveal?: boolean }) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="grid grid-result-cols max-tablet:grid-cols-1">
+        <div className="px-7 py-6">
+          <div className="flex flex-wrap items-center gap-2.5">
             <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />
             {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
           </div>
           {res.headline ? (
-            <h1 className="text-display-md text-t1 mt-2.5">
-              {res.headline}
-            </h1>
+            <h1 className="mt-2.5 text-display-md text-ink">{res.headline}</h1>
           ) : (
             <h1 className="sr-only">
-              Paper result — {res.code} {res.paper}
+              Paper result: {res.code} {res.paper}
             </h1>
           )}
           {/* max-w-[56ch] kept: a reading-measure width (character-count
            * based, not a pixel spacing value) — same reasoning as
            * CorrectPaper's max-w ch value. */}
           {res.summary ? (
-            <div className="text-body-md text-t2 mt-9px max-w-[56ch] text-pretty">
+            <p className="mt-2 max-w-[56ch] text-pretty text-body-md text-ink-muted">
               {res.summary}
-            </div>
+            </p>
           ) : null}
 
-          <div className="flex items-end gap-6 mt-6 flex-wrap">
-            <MarkDisplay awarded={res.awarded} available={res.max} size="hero" />
+          <div className="mt-6 flex flex-wrap items-end gap-6">
+            <MarkDisplay awarded={res.awarded} available={res.max} size="hero" reveal={reveal} />
             <GradeBadge grade={res.grade} size="hero" basis="predicted" />
           </div>
 
-          <div className="mt-30px border-t border-border pt-container-mobile">
-            <div className="flex items-baseline gap-2.5 mb-3 flex-wrap">
-              <Eyebrow>Against the {res.boundaryYear} boundaries</Eyebrow>
-              <div className="flex-1" />
-              {res.railFoot ? (
-                <div className="font-mono text-xs text-t2">{res.railFoot}</div>
-              ) : null}
-            </div>
-            <BoundaryBar score={res.awarded} maxScore={res.max} boundaries={NO_BOUNDARIES} />
+          {/*
+           * P4.2, two removals here, both of something that was said twice.
+           *
+           * This section rendered its own "Against the 2024 boundaries"
+           * eyebrow immediately above `BoundaryBar`'s built-in "Grade
+           * boundaries" one, so the flagship screen carried two stacked
+           * kickers and an indented empty widget beneath them. The year is the
+           * only thing the outer one added, and `BoundaryBar` now takes it as
+           * a label.
+           *
+           * `railFoot` is the DTO's own "63/80" foot string, and it was
+           * rendered on the same card as `MarkDisplay`, which is already
+           * showing 63 / 80 at 32px a few lines above. Same judgement as
+           * D4.1's "Forecast" removal: the field stays on the DTO, this
+           * presentation of it goes.
+           */}
+          <div className="mt-8 border-t border-rule pt-6">
+            <BoundaryBar
+              score={res.awarded}
+              maxScore={res.max}
+              boundaries={NO_BOUNDARIES}
+              label={`Against the ${res.boundaryYear} boundaries`}
+              className="p-0"
+            />
             {res.railNote ? (
-              <div className="text-body-md text-t2 leading-normal mt-2 text-pretty">
-                {res.railNote}
-              </div>
+              <p className="mt-2 text-pretty text-body-md text-ink-muted">{res.railNote}</p>
             ) : null}
           </div>
         </div>
 
-        <div className="border-l border-border bg-surface-2 px-container-mobile py-6 flex flex-col gap-4">
-          <div className="text-sm font-semibold">
-            Integrity &amp; provenance
-          </div>
+        {/* `border-s`, not `border-l`: this is the divider between the result
+            and its sidebar, and under `dir="rtl"` the sidebar moves to the
+            other edge with it (P3.4). */}
+        <div className="flex flex-col gap-4 border-s border-rule bg-paper-sunk px-6 py-6">
+          <h2 className="text-label text-ink">Integrity and provenance</h2>
           {res.integrity.length === 0 ? (
-            <div className="text-xs text-t2 leading-snug">
+            <p className="text-body-sm text-ink-muted">
               No integrity checks recorded for this paper.
-            </div>
+            </p>
           ) : (
             res.integrity.map((i) => (
-              <div key={i.label} className="flex gap-2.5 items-start">
+              <div key={i.label} className="flex items-start gap-2.5">
                 <IntegrityMark row={i} />
                 <div>
-                  <div className="text-xs leading-tight">{i.label}</div>
-                  <div className="text-xs text-t2 mt-0.5 leading-snug">
-                    {i.detail}
-                  </div>
+                  <div className="text-body-sm text-ink">{i.label}</div>
+                  <div className="mt-0.5 text-body-sm text-ink-muted">{i.detail}</div>
                 </div>
               </div>
             ))
           )}
+          {/* `mt-4`, not `mt-auto`. This sidebar is a short column in a grid
+              stretched to its much taller sibling, so pinning the provenance
+              to the bottom opened roughly 600px of empty space in the middle
+              of the flagship card. Exactly the finding D4.1 recorded against
+              the momentum panel: a component pinned to the extremes of a box
+              it did not ask to be that tall. */}
           {res.provenance ? (
-            <div className="mt-auto font-mono text-3xs text-t3 leading-relaxed break-all border-t border-border pt-3 whitespace-pre-line">
+            <div className="mt-4 whitespace-pre-line break-all border-t border-rule pt-3 text-data-sm leading-relaxed text-ink-faint">
               {res.provenance}
             </div>
           ) : null}
@@ -206,7 +242,14 @@ function ResultHeader({ res }: { res: Result }) {
  */
 function QuestionList({ questions }: { questions: QuestionResult[] }) {
   if (questions.length === 0) {
-    return <EmptyState {...NO_QUESTION_DETAIL} />
+    // Inside a Card, like the populated list it stands in for. Bare, it
+    // floated in the middle of the page with nothing to say which region was
+    // empty — and this is the *history* view's normal state, not an edge case.
+    return (
+      <Card>
+        <EmptyState {...NO_QUESTION_DETAIL} marginalia="Not kept for this one" />
+      </Card>
+    )
   }
   return (
     <Card className="px-3">
@@ -217,7 +260,7 @@ function QuestionList({ questions }: { questions: QuestionResult[] }) {
           awarded={q.awardedMarks}
           available={q.maxMarks}
           state={markState(q)}
-          confidence={confidenceTier(q)}
+          confidence={confidenceTierFor(q)}
           topic={q.topic}
         >
           <div className="flex flex-col gap-2.5">
@@ -225,12 +268,12 @@ function QuestionList({ questions }: { questions: QuestionResult[] }) {
               {q.markerSource}
             </Chip>
             {q.feedback ? (
-              <div className="rounded-md bg-surface-2 px-3.5 py-3 text-body-md text-t2 text-pretty">
+              <div className="rounded-md bg-paper-sunk px-3.5 py-3 text-pretty text-body-md text-ink-muted">
                 {q.feedback}
               </div>
             ) : null}
             {q.reviewReason ? (
-              <div className="text-body-md text-warn leading-snug">
+              <div className="text-body-md leading-snug text-warn">
                 Needs review: {q.reviewReason}
               </div>
             ) : null}
@@ -250,10 +293,10 @@ export function PaperResult() {
   const { data, isPending, isError, error, refetch } = useResult(live ? "" : (paperId ?? ""))
 
   if (live) {
-    const summary = confidenceSummary(live.questions)
+    const summary = confidenceSummaryOf(live.questions)
     return (
-      <div className="lm-screen flex flex-col gap-container-mobile">
-        <ResultHeader res={live} />
+      <ResultScreen>
+        <ResultHeader res={live} reveal />
         {live.questions.length > 0 ? (
           <ConfidenceIndicatorSummary
             confident={summary.confident}
@@ -262,51 +305,70 @@ export function PaperResult() {
           />
         ) : null}
         <QuestionList questions={live.questions} />
-      </div>
+      </ResultScreen>
     )
   }
 
+  /*
+   * P4.2: this was a single line reading "Loading result…" where a full paper
+   * result arrives — a header card with a hero mark, a grade badge, a boundary
+   * bar and a sidebar, then a question list. One text row standing in for all
+   * of that is the layout shift DESIGN.md §12 names, and it is at its worst
+   * here: this screen is what a student lands on straight after watching the
+   * marking finish, so the jump happens at the exact moment they are looking
+   * for their score.
+   */
   if (isPending) {
     return (
-      <div className="lm-screen flex flex-col gap-6">
-        <h1 className="sr-only">Paper result</h1>
-        <div role="status" className="text-sm text-t2">
-          Loading result…
-        </div>
-      </div>
+      <ResultScreen srHeading="Paper result">
+        <PanelSkeleton bodyClassName="h-40" />
+        <ListSkeleton rows={5} />
+      </ResultScreen>
     )
   }
 
   if (isError) {
     if (error instanceof ApiError && error.status === 404) {
       return (
-        <div className="lm-screen flex flex-col gap-6">
-          <h1 className="sr-only">Paper result</h1>
+        <ResultScreen srHeading="Paper result">
           <EmptyState
             heading="No paper recorded at this address"
-            body={`We don't have a result at ${paperId}.`}
+            body="We don't have a result stored under this link. It may have been removed, or the address may be wrong."
+            marginalia="Nothing filed here"
             action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
             secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
           />
-        </div>
+        </ResultScreen>
       )
     }
     return (
-      <div className="lm-screen flex flex-col gap-6">
-        <h1 className="sr-only">Paper result</h1>
+      <ResultScreen srHeading="Paper result">
         <ErrorState
-          heading="Couldn't load this result"
-          body={error.message}
+          heading="We couldn't load this result"
+          /* P6.2. This rendered `error.message`, which on a dropped connection
+             is the browser's "Failed to fetch" and on a 500 is the status line.
+             The 404 above is handled properly and was doing the work of hiding
+             that: it is the failure anyone testing this screen reaches for, and
+             it never touches this branch.
+
+             Status-first, not detail-first. `routers/student.py`'s read paths
+             raise `f"No paper {paper_id}"` — a bare UUID — so there is no
+             sentence here worth keeping, which is the exact evidence
+             `studentOutcome.ts` was written on. `correctionOutcome.ts` is the
+             detail-first one and belongs to the marking stream, not to this
+             GET. */
+          body={studentLoadFailureMessage(error)}
           action={{ label: "Try again", onClick: () => refetch() }}
+          secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
         />
-      </div>
+      </ResultScreen>
     )
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-container-mobile">
+    <ResultScreen>
       <ResultHeader res={data} />
-      <EmptyState {...NO_QUESTION_DETAIL} />
-    </div>
+      <QuestionList questions={[]} />
+    </ResultScreen>
   )
 }

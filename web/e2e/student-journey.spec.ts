@@ -31,19 +31,50 @@ test("the corrected-paper student sees their real dashboard data and the parents
   await page.getByRole("button", { name: /sign in/i }).click()
   await expect(page).toHaveURL(/\/student$/, { timeout: 15_000 })
 
-  await expect(page.getByText("Loading overview…")).toHaveCount(0, { timeout: 15_000 })
-  // Non-empty: the first-run empty state must NOT render — this student has
-  // one seeded, persisted attempt (88%, subject 0625).
-  await expect(page.getByText("Correct your first paper to see it here")).toHaveCount(0)
+  // P3.3 replaced the "Loading overview…" text with layout-matching
+  // skeletons, which announce themselves as a `status` region named
+  // "Loading" instead of rendering that string.
+  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, {
+    timeout: 15_000,
+  })
+  // Non-empty: the first-run view must NOT render — this student has one
+  // seeded, persisted attempt (88%, subject 0625). P3.2 replaced the single
+  // centred EmptyState ("Correct your first paper to see it here") with the
+  // composed `GettingStarted` panel, so the string this asserted against no
+  // longer exists anywhere. Anchored on the new panel's heading instead.
+  await expect(page.getByText("Let's get your first paper marked")).toHaveCount(0)
   await expect(page.getByText("Subjects this session")).toBeVisible()
   // The subject row itself, not a bare `getByText("0625")` — the sidebar's
   // static "Physics" nav item is also tagged "0625" (student/data.ts), and
   // `SubjectRowDTO.name` echoes `code` (no human subject name source), so
   // "0625" appears twice more inside the row's own button — all three would
   // make an untargeted text lookup ambiguous.
-  const subjectRow = page.getByRole("button", { name: /0625/ })
+  /*
+   * P4.10 · updated for the redesign, and the change is the point (§9.7).
+   *
+   * This was `getByRole("button")`. Surface 1 replaced the
+   * `<button onClick={navigate(...)}>` with a real `<Link>` — the audit's M8
+   * finding, raised against the teacher portal and sitting unremarked on the
+   * student side: a button that navigates cannot be opened in a new tab,
+   * middle-clicked or copied as a link, and it tells assistive technology that
+   * something will happen rather than that somewhere will be reached. So the
+   * role is `link` now, deliberately, and this asserts the better markup.
+   *
+   * The row's own text changed with it: "1 papers corrected" (which was also
+   * ungrammatical at one) is now "88% · 1 paper", pluralised.
+   *
+   * And it is scoped to the ledger panel. The comment above warned that a bare
+   * "0625" lookup is ambiguous; as a `link` it is ambiguous four more ways,
+   * because P3.1's sidebar gives Physics, Practice, Flashcards and Study plan
+   * their own `0625`-tagged links. Scoping to the panel is what makes the
+   * assertion about the ledger row rather than about whatever matched first.
+   */
+  const ledger = page.locator("section, div").filter({
+    has: page.getByRole("heading", { name: "Subjects this session" }),
+  }).last()
+  const subjectRow = ledger.getByRole("link", { name: /0625/ })
   await expect(subjectRow).toBeVisible()
-  await expect(subjectRow).toContainText("1 papers corrected")
+  await expect(subjectRow).toContainText("1 paper")
   await expect(page.getByRole("progressbar", { name: "0625 mastery: 88%" })).toBeVisible()
   await expect(
     page.getByRole("img", { name: /^Predicted grade [A-Z*]+$/ }).first(),
@@ -56,7 +87,18 @@ test("the corrected-paper student sees their real dashboard data and the parents
   // This student was never linked to a parent (only the "declining" student
   // was, by scripts/seed_e2e.py) — the honest empty state, not a fabricated
   // row.
-  await expect(page.getByText("Nobody is linked to your account yet.")).toBeVisible()
+  /*
+   * P4.10 · the bare `<p>` became the kit's `EmptyState` (§9.7), so the
+   * sentence is split: the heading states the fact, the body says what to do
+   * about it. Both are asserted rather than only the first, because the second
+   * half is the part that stops an empty screen reading as a broken one.
+   */
+  // `getByText`, not `getByRole("heading")`: `EmptyState` renders its heading
+  // as a non-heading element, a Phase-2.5 gap recorded in that phase's report
+  // §8 and still open. Asserting the role here would fail for a reason that has
+  // nothing to do with this journey.
+  await expect(page.getByText("Nobody is linked to your account yet")).toBeVisible()
+  await expect(page.getByText("Only you can add someone.")).toBeVisible()
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })

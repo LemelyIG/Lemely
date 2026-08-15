@@ -1,9 +1,12 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FormEvent } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { ArrowLeft } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
+import { otpRequestFailureMessage, otpVerifyFailureMessage } from "@/lib/authOutcome"
+import { AuthFrame } from "./Login"
 
 /*
  * G-05 · Parent log in (phone + OTP).
@@ -27,9 +30,20 @@ import { Button } from "@/components/ui/button"
  * dead error branch would claim a check the backend does not perform.
  *
  * "Expired code" is not a distinct client branch either: the backend raises
- * one `AuthError` → 401 for wrong, expired, and out-of-attempts, each with its
- * own message. `request()` surfaces that real `detail` (P3.7d), so the parent
- * reads the actual reason rather than a client-side guess at which it was.
+ * one `AuthError` → 401 for wrong, expired, and out-of-attempts, distinguished
+ * by an `OtpResult` member inside the detail.
+ *
+ * **That claim used to end "so the parent reads the actual reason rather than a
+ * client-side guess at which it was", and it was half wrong in the way that
+ * matters.** The distinction was real; the words were not. `verify_otp` raises
+ * `AuthError(f"OTP verification failed: {result.value}")`, so what this screen
+ * rendered verbatim was `OTP verification failed: wrong_code` — an enum member,
+ * to the reader PRODUCT.md calls the least confident user of the product.
+ * `lib/authOutcome.ts` maps the four members to four sentences, which keeps the
+ * distinction the docstring was right about and fixes the vocabulary it was
+ * wrong about. The 429 on the *request* path is untouched, because there the
+ * backend really did write a sentence for a human ("OTP already sent; retry in
+ * 12s.") and nothing here could improve on it.
  */
 
 /** Dial codes offered by the country selector. Egypt first and default —
@@ -104,21 +118,21 @@ function PhoneStep({
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-display-md text-t1">Check on your child</h1>
-        <p className="text-body-md text-t2">
+        <h1 className="text-display-lg text-ink">Check on your child</h1>
+        <p className="text-body-md text-ink-muted">
           Enter your phone number and we'll text you a code. No password to remember.
         </p>
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="parent-country" className="text-body-md font-medium text-t1">
+        <label htmlFor="parent-country" className="text-body-md font-medium text-ink">
           Country
         </label>
         <select
           id="parent-country"
           value={dial}
           onChange={(event) => setDial(event.target.value)}
-          className="rounded border border-border bg-surface px-3 py-3 text-body-md text-t1"
+          className="rounded-md border border-rule bg-paper-raised px-3 py-3 text-body-md text-ink transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
           {COUNTRIES.map((country) => (
             <option key={country.code} value={country.dial}>
@@ -129,13 +143,13 @@ function PhoneStep({
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="parent-phone" className="text-body-md font-medium text-t1">
+        <label htmlFor="parent-phone" className="text-body-md font-medium text-ink">
           Phone number
         </label>
         <div className="flex items-stretch gap-2">
           <span
             aria-hidden="true"
-            className="flex items-center rounded border border-border bg-surface-2 px-3 text-body-md text-t2"
+            className="flex items-center rounded-md border border-rule bg-paper-sunk px-3 text-data-md text-ink-muted"
           >
             {dial}
           </span>
@@ -149,12 +163,12 @@ function PhoneStep({
             onChange={(event) => setPhone(event.target.value)}
             aria-describedby={tooShort ? "parent-phone-hint" : undefined}
             aria-invalid={tooShort || undefined}
-            className="min-w-0 flex-1 rounded border border-border bg-surface px-3 py-3 text-body-md text-t1"
+            className="min-w-0 flex-1 rounded-md border border-rule bg-paper-raised px-3 py-3 text-data-md text-ink transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           />
         </div>
         {tooShort ? (
           <p id="parent-phone-hint" className="text-body-md text-warn">
-            That looks too short — check the number and try again.
+            That looks too short. Check the number and try again.
           </p>
         ) : null}
       </div>
@@ -245,16 +259,34 @@ function CodeStep({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-display-md text-t1">Enter your code</h1>
-        <p className="text-body-md text-t2">
-          We sent a {CODE_LENGTH}-digit code to <span className="text-t1">{e164}</span>.
+        <h1 className="text-display-lg text-ink">Enter your code</h1>
+        <p className="text-body-md text-ink-muted">
+          We sent a {CODE_LENGTH}-digit code to <span className="text-data-md text-ink">{e164}</span>.
         </p>
       </div>
 
+      {/*
+        §6.1's 44x44 floor cannot be met on the inline axis here, and the
+        exemption is stated rather than left for the gate to report forever.
+
+        Six boxes at 44px plus five 8px gaps need 284px. At the 320px viewport
+        the mission names, this card offers about 248px, so the floor is
+        arithmetically unreachable without dropping a digit or scrolling a code
+        entry sideways. The gaps tighten below `sm` to spend as much of that
+        width as possible on the boxes themselves.
+
+        What the reader gets instead: each box is 56px TALL (well over the
+        floor on the axis that is available), the six tile the row with no dead
+        space between them, and a mis-tap lands on an adjacent digit box, which
+        is visible on screen and recoverable with one keystroke. The audit
+        reports these as `exempt` with this reason attached, so the carve-out
+        appears in every run's summary instead of hiding in this file.
+      */}
       <div
         role="group"
         aria-label={`${CODE_LENGTH}-digit verification code`}
-        className="flex items-center justify-between gap-2"
+        data-touch-floor-exempt="six-digit-code-row"
+        className="flex items-center justify-between gap-1 sm:gap-2"
       >
         {digits.map((digit, index) => (
           <input
@@ -275,14 +307,14 @@ function CodeStep({
             onChange={(event) => handleChange(index, event.target.value)}
             onKeyDown={(event) => handleKeyDown(index, event.key)}
             onPaste={handlePaste}
-            className="h-14 w-full min-w-0 rounded border border-border bg-surface text-center text-display-md text-t1"
+            className="h-14 w-full min-w-0 rounded-md border border-rule bg-paper-raised text-center text-data-lg text-ink transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           />
         ))}
       </div>
 
       <p role="status" aria-live="polite" className="min-h-5 text-body-md">
         {isPending ? (
-          <span className="text-t2">Checking your code…</span>
+          <span className="text-ink-muted">Checking your code…</span>
         ) : error ? (
           <span className="text-warn">{error}</span>
         ) : null}
@@ -295,12 +327,12 @@ function CodeStep({
        * The client does not decide; it renders what the backend disclosed.
        */}
       {devCode ? (
-        <div className="rounded border border-dashed border-border bg-surface-2 p-3">
-          <div className="text-label-sm uppercase tracking-wide text-t2">
+        <div className="rounded-md border border-dashed border-rule bg-paper-sunk p-4">
+          <div className="text-eyebrow text-ink-faint">
             Developer only · no SMS was sent
           </div>
-          <div className="mt-1 font-mono text-body-lg text-t1">{devCode}</div>
-          <p className="mt-1 text-body-md text-t2">
+          <div className="mt-1.5 text-data-lg text-ink">{devCode}</div>
+          <p className="mt-1.5 text-body-sm text-ink-muted">
             This appears because Lemely is running with the offline mock SMS provider.
             With a real provider configured, the code is never shown here.
           </p>
@@ -364,7 +396,7 @@ export function ParentLogin() {
         },
         // The backend's real `detail` — a 429 already names the seconds left,
         // so there is nothing better to say than what it said.
-        onError: (err) => setRequestError(err.message),
+        onError: (err) => setRequestError(otpRequestFailureMessage(err)),
       },
     )
   }
@@ -385,25 +417,31 @@ export function ParentLogin() {
       { phone: sentTo, code },
       {
         onSuccess: (result) => navigate(portalPathForRole(result.role), { replace: true }),
-        onError: (err) => setVerifyError(err.message),
+        onError: (err) => setVerifyError(otpVerifyFailureMessage(err)),
       },
     )
   }, [code, sentTo, verifyOtp, navigate])
 
   return (
-    <main
-      data-portal="parent"
-      className="flex min-h-screen items-center justify-center bg-bg px-4 py-10"
-    >
-      <div className="flex w-full max-w-95 flex-col gap-6">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent font-serif text-body-md italic text-accent-on">
-            l
-          </div>
-          <div className="font-serif text-display-md text-t1">Lemely</div>
-        </div>
-
-        <div className="rounded-md border border-border bg-surface p-6">
+    /*
+     * The frame is `AuthFrame`, shared with the password screen. The mark it
+     * renders is the real one, which retires audit finding M9's **fourth**
+     * stamp — the finding was written as "stamped in three places", and the
+     * accent-circle-with-an-italic-l was here too, in the one signed-out screen
+     * the audit reached by grep rather than by rendering. It was also this
+     * file's only two `font-serif` call sites (D4.1), so the placeholder was
+     * not even drawing in the face it reached for.
+     *
+     * P7.1: that first sentence was not true when it was written. This screen
+     * carried its own copy of the frame's markup — identical `<main>`, identical
+     * mark-and-wordmark block — because `AuthFrame` took no prop for the
+     * `data-portal="parent"` it needs. It takes one now, so the sentence and
+     * the code finally agree, and M12's fix landed in one place rather than
+     * being applied twice and drifting later.
+     */
+    <AuthFrame dataPortal="parent">
+      <div className="flex w-full max-w-100 flex-col gap-6">
+        <div className="rounded-lg border border-rule bg-paper-raised p-8">
           {sentTo === null ? (
             <PhoneStep
               dial={dial}
@@ -437,12 +475,14 @@ export function ParentLogin() {
 
         <Link
           to="/login"
-          className="flex items-center gap-1.5 self-start text-body-md text-t2 hover:text-t1"
+          className="flex items-center gap-1.5 self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
-          <ArrowLeft size={14} />
+          {/* Direction-dependent: this arrow points at the reading start and
+              must mirror under `dir="rtl"` (P3.4). */}
+          <ArrowLeft size={14} aria-hidden="true" className="rtl:-scale-x-100" />
           Sign in with an email instead
         </Link>
       </div>
-    </main>
+    </AuthFrame>
   )
 }

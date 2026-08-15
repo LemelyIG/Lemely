@@ -39,7 +39,12 @@ test("student can log in, upload a scan, and see the marked result", async ({ pa
   await page.getByRole("button", { name: /sign in/i }).click()
 
   await expect(page).toHaveURL(/\/student/, { timeout: 15_000 })
-  await expect(page.getByText("Loading overview…")).toHaveCount(0, { timeout: 15_000 })
+  // P3.3 replaced the "Loading overview…" text with layout-matching
+  // skeletons, which announce themselves as a `status` region named
+  // "Loading" instead of rendering that string.
+  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, {
+    timeout: 15_000,
+  })
   await page.screenshot({
     path: path.join(SCREENS_DIR, "p2.10-01-student-dashboard.png"),
     fullPage: true,

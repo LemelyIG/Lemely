@@ -141,12 +141,19 @@ class GeminiAnswerExtractor:
             new_conf = _calibrate_confidence(a, question_type_hint=hint)
             calibrated.append(a.model_copy(update={"confidence": new_conf}))
         answers = calibrated
-        for a in answers:
+        # `index` is the 1-based position inside `answers` (from enumerate), not a
+        # tally of frames already emitted. Should a publish ever be skipped for one
+        # answer, the later indices still match the real work list, so the UI's
+        # "Question 7 of 21" keeps pointing at the question actually being reported.
+        total_answers = len(answers)
+        for index, a in enumerate(answers, start=1):
             bus.publish(
                 EventType.EXTRACTION_PROGRESS,
                 question_id=a.question_id,
                 confidence=a.confidence,
                 has_working=a.working_out is not None,
+                index=index,
+                total=total_answers,
             )
         manifest_ids = [
             q.id for q in mark_scheme.all_questions_flat() if q.marks > 0 and not q.parts

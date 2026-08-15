@@ -6671,3 +6671,3487 @@ results are unchanged by construction. Web test/typecheck/oxlint/build and all t
 hooks were run and are green. **What would genuinely close this class** is a harness that
 exercises the SPA over a non-localhost HTTP origin; that is a new test-infrastructure task, not
 a line in this fix, and it is recorded here rather than started unattended.
+
+---
+
+## D3.22 — Redesign Phase 3: the audit could not see the largest IA defect, because source is not a viewport
+
+Phase 3 (IA & UX flows) implemented DECISIONs D1.1–5 as approved-by-timeout, and
+found more in the doing than the audit found in the looking. The findings worth
+carrying forward:
+
+**1. Neither the student nor the teacher portal had any navigation below
+820px / 768px.** Both sidebars are `hidden` at those widths and nothing replaced
+them: no tab bar, no menu, no drawer. A student on a phone could reach the screen
+they landed on and whatever it happened to link to, and nothing else. The mission's
+framing is "students live on phones".
+
+The Phase 1 audit mapped nav *inventories* per role and got them right. It read
+them from source, and source records which items a sidebar contains, never the
+width at which that sidebar exists. The audit said so about itself — "nothing was
+verified against a rendered viewport" — and this is what that limitation was
+hiding. **The generalisable lesson is the same one D6.12 records from the build
+era, arriving from the opposite direction:** there, every harness ran under one
+condition (localhost) and so could not test it; here, the audit ran under one
+condition (source, no viewport) and so could not see a whole class of defect.
+A responsive defect is invisible to a reader who never resizes.
+
+**Why a drawer and not a bottom tab bar.** The student nav carries eleven
+destinations, the teacher's eight. A five-slot bar means ranking the survivors
+and dropping the rest, which is a product decision Phase 3 has no answer for and
+should not invent. The drawer carries every item the desktop sidebar carries.
+`BottomNav` stays in the kit, unused, as the fast path Phase 4 may add *alongside*
+it once daily-use data exists.
+
+**2. Two cross-portal links were dead for every role that exists.** "Open the
+teacher portal" in the student sidebar and "Open the student portal" in the
+teacher's. `RequireAuth` gates each portal to disjoint role sets, so following
+either one redirects straight back. No account holds both. They are build-era
+conveniences from before the guard existed, left rendering in the product.
+
+**3. Honesty defects survive in the places nobody re-reads.** The teacher
+dashboard showed "Helwan Science Centre · Sunday 27 July" — a fabricated school
+name of exactly the kind P3.7 and P3.10 had already deleted from both sidebars,
+plus a hardcoded date, to every teacher every day. Both dashboards hardcoded the
+time-of-day greeting. "Build a quiz" and "Post an announcement" sat disabled
+under "Coming soon" chips while both features shipped and sat in the sidebar.
+That last one had a *comment* above it asserting the features did not exist:
+**the comment outlived the fact it described, and made the stale code read as
+deliberate.**
+
+**4. What gets a gate, and what gets left.** Three rules this phase could have
+"swept" were instead given enforcement, because a sweep decays and a gate does not:
+`scripts/check_copy.mjs` for the em-dash ban, `tests/unit/rtlSafety.test.ts` for
+logical properties, `tests/unit/navigation.test.ts` cross-checking every nav
+destination and crumb against the routes the router actually mounts. Each found a
+defect while being written — dead keys in the student `crumbs` map, three false
+positives in the copy checker, `isRange` blind to `${...}` interpolation — which
+is the argument for writing them.
+
+§9.8 binds the copy gate to "all new/edited copy", so the 91 remaining prose
+em-dashes on un-migrated screens are Phase 4's, per surface, not a silent
+exemption.
+
+**5. Not everything should be unified.** The parent portal's first-run screen was
+reviewed and deliberately left alone rather than converted to the shared
+`GettingStarted` component. Every step there is an action somebody else takes on
+another device, and that component models steps the reader performs, each with
+somewhere to go. Forcing the shape would have produced three inert steps or three
+buttons that lead nowhere. Only its copy changed.
+
+**6. `GettingStarted` is constrained by what can be observed, not by what would
+look good.** No endpoint reports per-step onboarding progress. So `done` is
+caller-supplied and only passed with evidence, and in practice neither dashboard
+passes it. A tick we cannot substantiate is a claim about the reader's own
+history, and is worse than a fabricated statistic: it tells a student they have
+already done something they have not.
+
+**Standing gap, recorded not hidden:** Phase 2 emitted 19 kit components without
+the hallmark pre-emit critique stamp §9.1 requires on every emitted surface.
+Phase 3's six are stamped. The 19 are not, and Phase 4 should stamp each as it
+touches it rather than back-fill scores nobody re-derived.
+
+**Blocked, see `BUILD/BLOCKERS.md` B4:** the e2e functional-safety gate cannot be
+fully evidenced. `reuseExistingServer` made Playwright adopt an unrelated
+`python -m lemely.web` process squatting on port 8000 instead of starting
+`scripts/e2e_server.py`, so the mocked vision seam never loaded and
+`correct-paper.spec.ts` fails. Verified pre-existing (identical failure at
+`0451e5e`) and verified environmental, not a product defect. Four of the five
+specs whose assertions Phase 3 changed pass.
+
+---
+
+## D4.1 — Redesign Phase 4, surface 1 (student dashboard): the display face was never on screen, and three states nobody could see
+
+Phase 4's first surface is the student dashboard: `screens/Overview.tsx` plus
+the portal shell (`portals/student/index.tsx`) that every other student screen
+renders inside. Migrating it to the Study Notebook found more than styling.
+
+**1. The product's display typeface was not rendering anywhere.** `--font-serif`
+was never a token in this system, so Tailwind's own default
+(`ui-serif, Georgia, Cambria, "Times New Roman", Times, serif`) survived
+untouched, and the ~20 `font-serif` call sites across Landing, Subject,
+QuizBuilder, FlashcardReview and `primitives.tsx::Display` were rendering
+**Georgia**. Newsreader was installed, imported, tokenised, documented in
+DESIGN.md §4, and reached by nothing that used this class name.
+
+Verified in the shipped bundle rather than reasoned about: `dist/assets/*.css`
+carried the literal default stack before, and carries
+`.font-serif{font-family:var(--font-display)}` after. The fix is one line in
+the compatibility block, deliberately placed there rather than swept: Phase 4
+migrates surfaces one at a time, and the un-migrated ones should not spend the
+intervening phases in the wrong typeface.
+
+**The generalisable point is what made it invisible.** Every gate this build
+runs would pass a screen in the wrong font. The token-discipline gate greps for
+raw values *bypassing* the token block, and `font-serif` is not a raw value —
+it is a well-formed utility that happens to resolve to somebody else's default.
+`tests/test_design_tokens.py` pins contrast, which typeface does not affect.
+Nothing compares what DESIGN.md declares against what the bundle emits. A
+missing definition fails silently where a wrong definition would not.
+
+**2. Both dashboard panels rendered a blank chart instead of an empty state**,
+which DESIGN.md §11 makes mandatory. `MomentumDTO` returns `path=""`,
+`area=""`, `lastX="0.0"`, `lastY="88.0"` below two grade-bearing papers,
+because a polyline needs two points, and this screen drew that unconditionally:
+an empty plot box with one stray dot pinned to the bottom-left corner and an
+empty label row. That state is not an edge case, it is **every student who has
+just marked their first paper** — precisely the reader the first-run
+getting-started view hands over to. Both panels now route through `ChartFrame`,
+which has no children-only path that can skip the check.
+
+**3. The trend column told a student with one paper that they were improving.**
+`trend` is the first-to-last percentage delta, so with one paper first *is*
+last and the delta is 0, while `trendUp` is `delta >= 0` and therefore true —
+"+0" rendered in teal with an upward reading. A flat arm is now derived from
+the number rather than the flag. Separately, the column carried its meaning in
+colour alone (teal vs red on a bare signed integer) against §3.6; it now pairs
+colour with a direction glyph and a spoken label, and the bare integer gets a
+unit in its accessible name, since "+4" beside a percentage column does not say
+percentage *points*.
+
+**4. "Forecast" was a concatenation presented as a value.** The DTO builds it
+as `" ".join(row.grade for row in subjects)`, so a student with three subjects
+read "Forecast B A C" under a label promising one number. Every grade in that
+string is already rendered one row below, attached to the subject it belongs
+to. The presentation is removed; the DTO field is untouched.
+
+**5. What the screenshot round caught that source review did not.** The
+desktop grade badges rendered as "BPredicted" on one line: `GradeBadge` is an
+`inline-flex flex-col`, and the call site's `md:block` overrode its display
+mode, so the desktop copy collapsed while the mobile copy of the same component
+stacked correctly. This is D3.22's lesson arriving a third time — a defect
+invisible to a reader who never renders the thing. Also caught and fixed in the
+same batch: ~600px of dead space in each subject row (the text column held the
+flex share, and a subject row has almost no text, because `SubjectRowDTO.name`
+echoes the code), and a momentum panel a third empty because an 88px chart was
+pinned to the top of a card stretched to its taller sibling.
+
+**6. The capture harness lied once, and now cannot.** `scripts/capture_surface.mjs`
+stubs the API so the five states are deterministic, which is necessary because
+**B4 still blocks the real corpus** — the foreign `python -m lemely.web` process
+still holds port 8000, and a fresh signup against it can only ever produce the
+zero-paper view, not the populated ledger or the one-paper state these changes
+are about. Its first run produced ten images that were byte-identical per
+viewport: Playwright matches the most recently registered route first, so the
+catch-all swallowed `/api/me/profile`, `data.role.split("_")` threw, and every
+state photographed the same error screen. Nothing said so; the only tell was
+the file sizes. The script now hashes every capture and fails when two states
+that must differ do not. **A capture round that silently photographs the same
+screen five times is worse than no capture round, because it looks like
+evidence.**
+
+Worth recording that the bad round did prove one thing: Phase 2's error
+boundary caught the render exception and showed its designed error screen
+rather than white-screening, which is the gap audit finding C3 raised.
+
+**Also fixed, smaller:** the student portal's breadcrumb was an inert mono
+string while teacher and parent got D1.5's real trail, so no student sub-screen
+had a back path that was not the browser gesture; it is now `Breadcrumbs`, fed
+by a `resolveCrumbTrail` derived from `resolveCrumb` so the two cannot disagree.
+`/student/result/:paperId` was interpolating a raw UUID into that crumb on the
+flagship screen, against the honesty rule the teacher trail states and tests;
+it now reads "This result", pinned by a test verified to fail on the old
+behaviour. The sidebar's accent dot became the real Phase-2 mark (audit M9's
+fourth stamp), eleven identical nav dots became Phosphor glyphs, the nav's
+focus ring stopped being the accent (§3.9 makes focus deliberately blue so it
+is distinguishable from the *active* state, which this nav marks in accent),
+and the hand-rolled circular avatar became the kit's squircle `Avatar` — a
+circle in a sidebar footer sitting directly under eleven circular nav dots is
+exactly the collision §6 reserves the circle against.
+
+**Deferred, not silently dropped:**
+
+- `SubjectRowDTO.name` echoes the syllabus code, so the dashboard shows "0625"
+  where "Physics" would read far better. The authoritative table exists
+  (`lemely/db/seed.py::DEMO_SUBJECTS`); `_subjects` in
+  `lemely/web/routers/student.py` should resolve against it. Not done here:
+  that is a data change, and smuggling one into a design pass is how a phase
+  stops being reviewable. Subject *colour* is handled client-side in
+  `subject-tag.tsx` because which pastel means Physics is a design decision.
+- The kit uses `focus-visible:outline-accent` in several components, against
+  §3.9's deliberately-blue focus ring. Fixed in this surface's nav only;
+  product-wide it belongs to the surfaces that own those components.
+- `primitives.tsx::Eyebrow` is mono where DESIGN.md §4.2 puts the `eyebrow`
+  rung in Geist. Left alone on purpose: changing the face would restyle a dozen
+  screens this surface does not gate and cannot see.
+- `check_copy` holds at 91. This surface had no prose em-dashes of its own to
+  clear, so the count is unchanged rather than reduced.
+
+---
+
+## D4.2 — Redesign Phase 4, surface 2 (past-paper correction flow): a run that could fail in silence, and two numbers set in the wrong face
+
+Surface 2 is the flagship flow: `screens/CorrectPaper.tsx` (upload, the marking
+wait, the failure) and `screens/PaperResult.tsx` (the result a student comes to
+the product to read). Migrating it to the Study Notebook found five things that
+are not styling. Two of them are defects no gate in this build could see.
+
+**1. A marking run could end with no result, no error, and no way to tell.**
+`streamActivity` (`lib/api.ts`) never checked `res.ok`. A FastAPI 500 or 503
+carries a JSON body, so `res.body` was truthy, the reader found no `data:` lines
+in it, the generator ended, and `CorrectPaper`'s `for await` loop simply
+finished. `finally` set `running` to false and the panel went back to reading
+**"Ready when you are"**. A student pressed the button, watched nothing happen,
+and was told the screen was ready. `request()` and `fetchBlobUrl()` both throw
+on a non-OK response; this was the one transport of the three that did not, and
+it is the one carrying the longest-running request in the product.
+
+Fixed in two places, because there are two ways to end without a result. `api.ts`
+now throws an `ApiError` built the same way `request()` builds it (so a caller
+reading `.detail` gets the same shape from all three transports), and the screen
+now treats *falling out of the loop* — a connection that dropped mid-run — as
+the failure it is, with `STREAM_ENDED_WITHOUT_RESULT`.
+
+**Worth noting what made it invisible.** The comment directly above the missing
+check already described the failure mode: "a failure here is silent (no body,
+generator ends, the screen just never shows progress)". It was written about the
+401 path, and the fix it prompted was a token refresh. The same sentence was
+true of every other status code and nobody read it that way.
+
+**2. The student's confidence threshold disagreed with the backend's and with
+the teacher's.** `PaperResult` bucketed each mark against **0.85**, described in
+its own comment as "a frontend judgement call made for this retrofit". The real
+review floor is `lemely.core.schemas.REVIEW_CONFIDENCE_THRESHOLD` = **0.90**, it
+is not operator-tunable, and `routers/teacher.py:688` counts confidence against
+it directly. So a mark at 0.87 was called *confident* on the student's copy of
+the paper and *not confident* on the teacher's copy of the same paper, and the
+number shown to the student was the invented one.
+
+Nothing in either test suite could see it, because each side was internally
+consistent. It now lives in `lib/markingConfidence.ts` and is pinned against the
+Python constant by `tests/test_web_shared_constants.py`, which also fails on any
+*other* web module that reintroduces a bare numeric confidence comparison —
+verified by inversion, not assumed.
+
+The landing page has already been corrected on this exact number once: D2's
+record notes its stated "confidence floor" read 0.70 and the real one is 0.90.
+Same number, wrong in a second place, found eleven phases apart.
+
+**3. The mark and the grade were set in the heading face.** DESIGN.md §4 gives
+the data face "all scores, **grades**, marks, XP, timers, paper codes, IDs", and
+§4.2's `data-lg` rung is named for precisely this: "the big number: a score, a
+predicted grade". `MarkDisplay` rendered its hero as `display-hero` (60px
+Newsreader) and `GradeBadge` rendered its letter with `font-serif`. The two
+figures a student reads first on the flagship screen were both in the wrong
+family.
+
+`MarkDisplay`'s own docstring stated the rule while the code broke it: "Numeric
+figures use JetBrains Mono **at the inline size**". The rule was applied
+everywhere except the one call site it was written for. This is D4.1's
+`--font-serif` finding a second time and it fails the same way — a well-formed
+utility resolving to a face nobody chose, invisible to a token gate that greps
+for raw values *bypassing* the block. Both are corrected and verified in the
+shipped bundle (`dist/assets/*.css` carries
+`.text-data-lg{font-family:var(--font-mono)…}`), not reasoned about.
+
+**4. The page could not do what its own first sentence promised.** "Scan or drop
+the paper" has been the opening line of this screen since the build era, and
+there was no drop target anywhere on it — a bare `<input type="file">` with a
+styled `file:` pseudo-element. `FileDrop` (C-21) is a real one, and it is a real
+`<input>` underneath: visually hidden but focusable, with a bound `<label>`, so
+it works from a keyboard and on a phone where there is nothing to drop from.
+Drag-and-drop is layered on as a pointer-only enhancement, which is the correct
+direction. All 8 states, with a preview cell.
+
+**5. Retry in place (audit M5).** The only path out of a failed run was to pick
+the file again and re-upload it, redoing the one part of the run that had
+succeeded. `paperId` is now held past the failure, so the retry re-opens the
+stream against the scan the server already has, and the panel says so
+("Your scan is already uploaded"). `uploadScan` and `runCorrection` were always
+two calls; nothing about this needed a backend change.
+
+**Audit M4 is deliberately NOT done here**, and the reason is worth recording
+rather than deferring silently. The run lives in component state, so a refresh
+mid-marking loses it. The teacher console hit the identical defect and the fix
+was architectural: D6.13 records that marking became a server-side job the
+console *polls*, "precisely so a reload could not wipe the only progress
+readout". The student side still drives its run from the browser stream, i.e.
+**the defect was fixed on one side of the product and left on the other.** That
+is a backend change, Phase 6.2 owns it, and smuggling it into a design pass is
+how a phase stops being reviewable. What is done here is the half that is honest
+to do now: the failure has a way out.
+
+**What the screenshot round caught that source review did not** (four findings,
+fixed in one batch, one confirm round, stopped there per §3.2 item 16):
+
+- **On a phone, everything that reports progress sat below the whole upload
+  form.** Pressing "Mark this paper" pushed the status panel roughly 1700px off
+  the bottom of the screen. On the product's longest, highest-latency flow, on
+  the device its own brief says students live on, the panel that says what is
+  happening was the one thing you could not see while it happened. It now leads
+  on mobile once a run is in flight or has failed, and does not on desktop,
+  where both columns are visible anyway.
+- **Two identically sized drop zones stacked**, giving a reader nothing to tell
+  the required upload from the optional one. `FileDrop` grew a `compact`
+  density; the scheme field uses it.
+- **Two buttons reading "Start marking again" at once**, the header's and the
+  panel's. The header action is now hidden while a failure is showing, so the
+  screen keeps the single obvious primary action the Operate lane asks for and
+  it sits next to its reason.
+- **The result card's integrity sidebar was two-thirds empty**: a short column
+  in a grid stretched to a much taller sibling, with the provenance block pinned
+  to the bottom by `mt-auto`. Identical in shape to D4.1's momentum-panel
+  finding, one surface later.
+
+**Also fixed, smaller.** The result screen rendered two stacked kickers
+("Against the 2024 boundaries" above `BoundaryBar`'s own "Grade boundaries")
+with an indented empty widget beneath them; `BoundaryBar` now takes the label.
+`railFoot` ("63/80") was removed from the presentation — it is the same number
+`MarkDisplay` shows at 32px four lines above, the same judgement as D4.1's
+"Forecast" removal, and the DTO field is untouched. The 404 body interpolated
+the raw paper id into a sentence for the reader. The four terminal states of
+`PaperResult` were four hand-built page shells that had already drifted (two
+used a build-era 22px gap, two used 24px); they share one now. And the student
+shell's "Correct a paper" CTA was a `<Button onClick={navigate}>` — the same
+finding D4.1 fixed on the dashboard's subject rows, sitting unremarked in the
+shell that renders above *every* student screen — and it rendered on
+`/student/correct` itself, where pressing it does nothing observable. It is a
+`<Link>`, and it is not rendered on the screen it points at.
+
+**The capture harness now takes a surface.** `scripts/capture_surface.mjs` was
+written for one screen; it is now a registry of surfaces over a shared harness
+(server, session, viewports, catch-all route, duplicate detector, console-error
+log). Copying the file per surface was the alternative, and eight copies of a
+duplicate-detector is how the detector ends up disabled in seven of them.
+Surface 1 was re-run through the generalised version to prove it still produces
+its ten distinct captures.
+
+**Gates.** typecheck / lint / **694 unit tests (+32)** / `check:copy` **90, down
+from 91** / 30 Python token+constant tests / both builds / pre-commit (with
+`.venv/bin` on PATH — `mypy` and `lint-imports` are `language: system` hooks and
+are invisible to a bare `pre-commit` invocation): **all green**. 28 captures
+across three surfaces, all distinct, console errors only the deliberately-failing
+states' own 404/500/503. **e2e still blocked by B4** — port 8000 is still held by
+the foreign `python -m lemely.web` process, verified again this session.
+
+---
+
+## D4.3 — Redesign Phase 4, surface 3 (study surfaces): two destructive actions with no confirmation and no failure report, and a bar that measured something other than the number beside it
+
+Surface 3 is the Read lane's first appearance in this redesign: `screens/flashcards/`
+(decks + review), `screens/studyplan/` (week + session), `screens/practice/`
+(generator, set, result, print). Eight screens, ~1,970 lines. "Classifieds" in the
+mission's surface list has no screen of its own — it is the **classified-worksheet
+practice flow**, i.e. `PracticeGenerator`, which builds a set from topic and
+difficulty filters. Recorded here so a later reader does not go looking for a
+missing screen.
+
+**1. Deleting a deck was unconfirmed, and both deletes were silent on failure.**
+One tap on a Trash glyph destroyed a deck and every card in it. There was no
+confirmation step, and — the part no gate could see — `useDeleteDeck` and
+`useDeleteCard` both expose `isError` that **nothing rendered**. So a delete that
+failed left the deck sitting exactly where it was, with no message, which is
+indistinguishable on screen from a delete the student imagined pressing.
+
+What makes it a finding rather than an omission is which mutations were covered:
+`addCard.isError` and `editCard.isError` were both rendered, carefully, right next
+to their fields. The two mutations with no error path were the two **destructive**
+ones. The reversible operations reported their failures and the irreversible ones
+did not.
+
+This is D4.2's headline shape a second time. There it was `streamActivity` falling
+out of its loop and the panel going back to "Ready when you are"; here it is a
+DELETE returning 500 and the screen showing the deck as though nothing happened.
+Both are "the action failed and the UI's resting state is indistinguishable from
+success". Both now say so.
+
+The fix uses `Modal`'s `dismissible={false}`, whose own docstring names this exact
+case — "destructive confirmations where an accidental Escape must not discard a
+decision silently" — and which had **no call site in the product**. Phase 2 built
+the affordance; this is the first surface that needed it.
+
+**2. The week bar and the count beside it measured different things.** On
+`StudyPlanWeek`, `weekProgress().percentComplete` is completed **minutes** over
+planned minutes. The line directly above the bar counts **sessions**. So a student
+who had finished two short sessions out of four read "2 of 4 sessions done" beside
+a bar sitting at 25%, with nothing on screen accounting for the gap. Neither
+number was wrong; the screen just presented two different denominators as though
+they were one fact rendered twice. The bar now carries its own label stating its
+own denominator ("45m of 2h 5m planned study time done").
+
+Found by reading `studyPlanData.ts` rather than the screen — the screen's own
+`aria-label` said "Study time completed this week", which was *correct* and was the
+clue. `completedMinutes` was computed by the DTO and rendered nowhere.
+
+**3. That same bar animated `width`.** It was hand-rolled — `role="progressbar"`
+plus a filled `<div>` driven by `transition-[width]` — where DESIGN.md §9.2 says
+animate only `transform` and `opacity`, no exceptions. A layout-animating property
+on the one element that changes every time a session is ticked off. It is C-24
+`ProgressBar` now, which is also what `FlashcardReview` two screens away was
+already using: one surface shipped two progress bars, and the hand-rolled one was
+the one that broke the rule.
+
+**4. The Read lane rendered at four different widths.** DESIGN.md §13 fixes the
+Read container at 680px. The eight screens carried `max-w-[560px]`, `[640px]`,
+`[720px]` and `[840px]`, so the same lane changed measure depending on which link
+a student followed. They share one `lm-read` utility now, with `lm-prose` (65ch)
+separate from it, because §2 caps *prose* at 65ch while the column still has to
+hold full-width cards and rows — collapsing the two would have shrunk every card
+to text measure.
+
+**5. The texture layer had never been used.** `ruled-bg` and `dotted-bg` were
+written in Phase 2, are named by §8 item 2 **for the Read lane specifically**, and
+had **zero call sites product-wide**. Not a defect in prior work — surfaces 1 and 2
+were both Operate, where §13 turns texture down — but this is the first Read
+surface, so it is the first one where they were supposed to appear. The flashcard
+card face is ruled now, and it is the only texture element on that viewport, well
+inside §8's budget of two. `EmptyState`'s `marginalia` prop (the Caveat layer) had
+two call sites in the entire product, both on surface 2; the empty states here now
+carry it.
+
+**Also fixed, smaller.** The card editor hand-rolled six `<input>`s off a local
+`CARD_INPUT_CLASS` that pinned focus to the accent, against §3.9's deliberately-blue
+focus ring — they are C-6 `Input`s now. The new-deck size control was a raw
+`<input type="range">` while the practice generator on the same surface used the
+kit `Slider`. The keyboard shortcuts on the review screen ("(Space)", "(1)") were
+plain prose spans, so the affordance that makes that screen fast was
+typographically identical to the label it annotated; C-19 `Kbd` existed and was
+unused. Six text loaders became layout-matching skeletons. `PracticePrint` indented
+its MCQ options with a physical `pl-4` (the one real RTL violation this sweep
+found) and had no zero-questions case, so an empty export rendered as an empty
+bordered box under a Print button that would have printed a blank sheet. The
+"nothing due today" panel was drawn with a **warn** border — a colour that says
+"this needs your attention" about the one state on that screen needing nothing.
+And `PracticeResult`'s marking wait was a bare spinning glyph, where §12 permits a
+spinner only "for an indeterminate action under ~1s inside a button"; it is
+`ProgressBar`'s indeterminate mode now, which its docstring describes as being for
+exactly this.
+
+**A judgement call, stated rather than buried.** DESIGN.md §2 says the Read lane
+has "no sidebar; navigation collapses to a back path and progress". These screens
+keep the student sidebar. Removing it is a shell-level IA change affecting every
+student route, and these are screens a student moves *between* (practice →
+flashcards → plan); stranding them without the portal nav to satisfy a macrostructure
+line would cost more than it bought. What is applied is the rest of the lane: the
+680px column, the prose measure, the texture allowance. Flagged for Phase 6 rather
+than silently half-done.
+
+**QuizTaker: tokens only, deliberately.** `PracticeSet` is a thin wrapper around
+`components/quiz/QuizTaker.tsx` (708 lines), which is **shared with `PlacementTest`**
+— a screen belonging to the Auth/onboarding surface this one does not gate. Its 21
+compat-token call sites were migrated because the aliases are *value-identical*, so
+that change is provably a no-op for placement while removing this surface's last
+compat dependency. Its layout and structure were left alone. Same reasoning as
+D4.1's `Eyebrow` deferral: changing what another surface's gate has not seen is how
+a phase stops being reviewable.
+
+**The new gate, and why it is a source gate.** `tests/unit/studyNotebookMigration.test.ts`
+asserts that a migrated file names no compat-layer alias, that every Read screen
+takes its column from `lm-read` rather than an arbitrary pixel width, and that no
+migrated file animates a layout property. It has to read source rather than pixels:
+the compat aliases resolve to the correct values *today*, so `text-t1` renders
+identically to `text-ink` and no screenshot, contrast measurement or rendered check
+can tell them apart. That is the D4.1 `--font-serif` failure shape exactly — a
+class that is well-formed, resolves to something, and is therefore invisible to
+every gate that looks at output. All three assertions were **verified by inversion**
+(a real violation reintroduced, the gate observed failing, then reverted), and the
+comment-stripping needed a cross-line block-state machine rather than a per-line
+test — assuming per-line was enough is what made the gate first report the middle
+line of a JSX comment describing the very fix it was checking for.
+
+**Gates.** typecheck / lint / **752 unit tests (+58)** / `check:copy` **69, down
+from 90** (21 cleared; the surface's own em-dashes were page titles of the form
+"Flashcards — Physics", replaced by restructuring rather than by swapping
+punctuation) / 30 Python token+constant tests / both builds / pre-commit with
+`.venv/bin` on PATH: **all green**. Visual round: 28 captures across four
+registered sub-surfaces at 1440 and 375, all distinct, console errors only from the
+deliberately-failing state. Four findings from the round, fixed in one batch, one
+confirm round, stopped there (§3.2 item 16): the revealed answer was the quietest
+thing on the card that exists to show it; a whole sentence was set in the data face
+where §4 gives that face figures only; two deck counts with no delimiter scanned as
+one run-on string; and the review card floated in the top third of a tall empty
+desktop well, D4.2's integrity-sidebar shape on the screen least able to carry it.
+**e2e still blocked by B4** — port 8000 re-verified occupied this session.
+
+**Deferred, not silently dropped:**
+
+- `ConfidenceIndicatorSummary` renders in full error-red whenever any question
+  needs review, so a routine practice result (2 of 4 confident) is framed as an
+  alarm. It is a kit component shared with `PaperResult`, which surface 2 gated and
+  shipped, so retoning it here would restyle a screen this surface cannot see.
+  Belongs with the Phase 5/6 pass that owns the kit's semantic tones.
+- `Chip` (`components/ui/chip.tsx`) is still the build-era component and is written
+  entirely against compat aliases. This surface's call sites moved to `Badge`; the
+  component itself is still consumed by un-migrated screens and dies with them.
+
+---
+
+## D4.4 — Redesign Phase 4, surface 4 (gamification): a page-title class that was never a class, and the celebration register built at last
+
+Surface 4 is `screens/Standings.tsx` (leaderboards), `screens/Friends.tsx`,
+`screens/Profile.tsx` (the training log) and `components/ui/xp-streak.tsx`.
+This is the surface DESIGN.md §9.3 was written for: the celebration register
+had no implementation anywhere in the product, only four unused tokens
+(`--ease-celebrate`, `--dur-celebrate`) and a paragraph of prose.
+
+### The headline: `text-display` is not a class, and four `<h1>`s carried it
+
+D4.1's finding was `--font-serif`: a token that never existed, so ~20 call
+sites rendered Georgia instead of Newsreader for the whole build era. **The
+same shape is here in a different family.** `text-display` is defined nowhere
+in `index.css`, there is no `--text-display` or `--color-display` for Tailwind
+to generate it from, and the shipped bundle contains **zero** rules matching
+it — verified by grepping `dist/assets/*.css` for `.text-display{`, not by
+reasoning about it.
+
+Four page titles named it: `Profile`, `Standings`, `Friends` and
+`Announcements`. All four rendered at the browser's default `<h1>` — 2em bold
+in the body sans face — where §4.2 puts `display-lg`, 32px Newsreader. Three
+are on this surface; the fourth is on an un-migrated screen and was fixed
+anyway, per P4.2's second lesson.
+
+**Twice is a pattern, so the deliverable is a gate for the pattern**:
+`tests/unit/utilityExistence.test.ts`. It compares the `text-`/`bg-`/`border-`/
+`font-` names migrated source uses against the names the stylesheet actually
+defines, and fails on any that resolve through none of the legitimate routes
+(a literal `.class`, a theme variable, a Tailwind built-in, an arbitrary value,
+an opacity modifier). Verified by inversion on the real string.
+
+Why nothing else caught either one, stated because it is the interesting part:
+the token gate greps for raw values *bypassing* the token block, and a missing
+class contains no value; the migration gate lists *build-era* names, and a
+name that never existed is not on it; contrast tests measure declared tokens,
+and this one was never declared; screenshots and axe see a heading that still
+looks like a heading. **A well-formed class name that resolves to nothing is
+invisible from every direction except comparing source against stylesheet.**
+
+### The celebration register (§9.3), and the one moment it deliberately omits
+
+`lib/celebration.ts` (rules, DOM-free, 20 tests) + `components/ui/celebration.tsx`
+(`CountUp`, `Flourish`, `Celebrate`, `MilestoneSticker`) + two keyframes in
+`index.css`. Three properties are load-bearing:
+
+1. **A count-up never displays a figure the student has not earned.**
+   `--ease-celebrate` overshoots y=1 by design; on a scale that is the spring,
+   on a *number* it would render ~1,240 XP on the way to 1,180. The easing is
+   shared, the number's progress is clamped, and monotonicity plus the ceiling
+   are pinned by tests.
+2. **Reduced motion is read in JS, not just CSS.** index.css's global rule
+   flattens CSS durations and cannot reach a `requestAnimationFrame` loop.
+   Without the `matchMedia` check, "reduced motion" would have meant
+   "everywhere except the one animation written in JavaScript".
+3. **Only an increase celebrates, and never a first observation.** A mount or a
+   refresh staging a gain that did not happen on this visit is §9.3's banned
+   engagement-celebration arrived at by accident. Day 1 is not a milestone for
+   the same reason.
+
+**§9.3 names "a leaderboard climb" and this surface does not have one.**
+`LeaderboardRow.rank` and `LeaderboardViewer.rank` are the only rank fields on
+the wire and both are *current*; nothing records where the student stood
+before. A climb flourish would have to invent the movement it congratulates, on
+a screen whose own header comment forbids inventing a last place. Not faked.
+It needs a `previousRank` on the DTO.
+
+### Five other findings
+
+- **C-9 `XPStreak` had no call site anywhere in the product.** Built in Phase 2
+  for this surface; this surface then hand-rolled its own cards. Same shape as
+  surface 3's unused texture classes. Resolved by giving it the call site its
+  docstring names: the student header. That pill has history — P3.10 chunk c
+  deleted a "24 day streak" pill because the 24 was a literal, and recorded
+  that wiring it to `StandingsDTO.streakDays` "would have replaced a hardcoded
+  lie with a mislabelled one" since that field counts distinct active days, not
+  consecutive ones. Its closing note was "streaks are Phase 5's to build for
+  real". Phase 5 built them, so the pill is restored from
+  `GET /api/student/xp`'s genuine `streak.current`. It renders nothing while
+  loading and nothing on failure (a `0` would state a broken streak the student
+  may not have), is hidden below 640px where this row has previously
+  overflowed, and is a `<Link>` to the training log.
+- **The header pill is shape-checked, not presence-checked.** It renders above
+  all 24 student routes, so `xp.data.streak.current` on a body without a
+  `streak` would throw *inside the shell* and blank every screen.
+  `request<XpProfile>` is a cast, not a validation. Found while stubbing the
+  captures, whose catch-all answers unmatched calls with `{}` — exactly that
+  body, exactly that crash.
+- **Friends reported every mutation failure in the wrong words, and two of
+  three in the wrong place.** All three rendered `err.message` verbatim, so a
+  dropped connection showed the browser's `TypeError: Failed to fetch`; and
+  accept/remove printed theirs in a block at the very bottom of the page, below
+  every section, so a student who declined a request at the top got a notice
+  quite possibly off-screen. `lib/friendOutcome.ts` owns the wording (keeping
+  the backend's own sentence where it wrote one for a human, which was a
+  considered decision and survives); placement moved into the section that
+  produced it.
+- **The opt-out toggle's `isError` was rendered nowhere.** A failed "Hide me"
+  left the control reading its old value with no explanation, and the student
+  reasonably concludes they are hidden when they are not. Same shape as surface
+  3's two destructive deletes.
+- **`npm run check:copy` never read a `.ts` file.** User-facing copy has been
+  moving out of components since P4.2 (`correctionOutcome.ts`, every screen's
+  `*Data.ts`). Extending the walk found **9 real em-dashes in user-facing
+  strings no run of this gate had ever seen, five of them on surface 3, which
+  had been reported clean.** D6.12's lesson again: a condition every harness
+  shares is a condition no harness tests. Here it was a file extension. The
+  reported total is not comparable across the change — 64 under the old scope,
+  67 under the new one. The count did not grow, the gate's eyesight did.
+
+### Found by the gates, in my own new code, worth recording
+
+- `tsc` caught `Celebrate` accepting a documented `flourish` prop and never
+  reading it — so `flourish={false}` on the training log's XP total was
+  throwing confetti anyway. That is P4.2's first lesson (a docstring stating a
+  rule the component breaks) reproduced by me, and caught by an
+  unused-parameter check rather than by anything looking at the screen.
+- The token gate rejected an arbitrary one-pixel radius on the confetti pieces,
+  then rejected the *comment* explaining the old value. Both correct.
+- A "known reference value" I asserted for the Bézier solver was wrong from
+  memory; the implementation was right. Replaced with a point derived by hand
+  in the test's own docstring, so the test asserts something other than that
+  the code equals itself.
+
+### Visual round
+
+30 captures across 3 registered sub-surfaces (`standings`, `friends`,
+`profile`), 1440 + 375, all distinct, console errors only from the deliberately
+failing states. One inspection round found four, all fixed in one batch, one
+confirm round, stopped (§3.2 item 16):
+(a) the Level and Streak cards labelled their figures in opposite orders while
+sitting side by side; (b) the "Your subjects" rank column had no label, so a
+tone-coloured "3" sat beside "9 papers" inviting the two to be read as a pair;
+(c) the Send request button was aligned to the field *wrapper*, which grows a
+line on error, so pressing it with a bad code dropped the button below the
+field; (d) the friend-code field spanned the full card width, about 1350px at
+1440, for an eight-character value.
+
+### Deliberately not done
+
+- **A confirmation modal on "Remove" / "Decline" / "Cancel".** D5.6 §3 settled
+  this: all three delete the same row, the mistake is cheap and recoverable by
+  asking again, and a modal would cost more than the error it prevents. Surface
+  3's confirmation finding was about *irreversible* destruction; this is not
+  that, and applying the same fix here would be pattern-matching rather than
+  reasoning.
+- **Lifetime stats and achievements on the training log.** Still absent, still
+  correct (D5.13 §3): every available source is wrong by construction under the
+  daily caps and the dedupe. The screen looks thin because that is its honest
+  shape.
+- **`Chip` migration.** Still build-era, still consumed by un-migrated screens,
+  unchanged from D4.3's note.
+- **Placement's three em-dashes**, now visible to the widened copy gate. They
+  belong to an un-migrated surface and clear when it lands.
+
+---
+
+## D4.5 — Redesign Phase 4, surface 5 (teacher portal): a class family the gate could not see, and a review queue that painted doubt green
+
+Surface 5 is the whole teacher portal — 19 files, 7,432 lines, 908 build-era
+class usages, none of them migrated. The mission names this surface "teacher
+dashboard + quiz builder", and those are its two headline screens, but no later
+surface covers Grading, Review, ReviewItem, MarkSchemes, Classes, ClassDetail,
+ClassRoster, StudentDetail or Announcements. Leaving them would ship a portal
+half in each language and fail §12's "zero pages left in the old language", so
+the surface is the portal. It landed in five commits, A–E.
+
+### The headline: the resolves-to-nothing shape, third and fourth time, inside the gate's own blind spot
+
+D4.1 was `--font-serif`, a token that never existed. D4.4 was `text-display`, a
+class that never existed, and its deliverable was `utilityExistence.test.ts` —
+a gate for the *pattern* rather than the instance, on the grounds that twice is
+a pattern.
+
+It recurred anyway, because that gate checks `text-`/`bg-`/`border-`/`font-`:
+the four families where **Tailwind** owns the vocabulary. `lm-` is the one
+family where the **project** owns it outright, and it was never scanned.
+`lm-head` and `lm-body` sat on the student shell's `<header>` and `<main>` —
+in a file the gate already listed by name. Widening it to a fifth family
+immediately found a fourth instance, `lm-cols`, on nine elements across four
+screens, two of them migrated surfaces.
+
+All six emit **zero** rules in `dist/assets/*.css`, verified by grepping the
+shipped bundle rather than by reasoning about it, and nothing selects on them
+in source, tests, scripts or the capture harness. They are removed rather than
+defined; in every case the layout was already carried entirely by the real
+utilities beside them.
+
+The `lm-` family is the *easiest* of the five to check, not the hardest: there
+is exactly one legitimate route, a literal `.lm-x` rule in `index.css`, with
+none of Tailwind's generated-utility, arbitrary-value or built-in escape
+hatches to allow for. It was unscanned because the gate was written from the
+two instances in front of it, and both happened to be Tailwind-shaped.
+
+### The second headline: the review queue called sub-floor marks confident
+
+`Review.tsx` carried its own `confidenceTone`, bucketing at **0.8**. The review
+queue exists *because* a mark scored below `REVIEW_CONFIDENCE_THRESHOLD`
+(0.90) — that is what puts an item in it. So a mark at 0.85 arrived in the
+queue as not-confident and was then painted in the same green the product uses
+for marks it is sure about, on the one screen whose entire job is directing a
+teacher's attention to doubt.
+
+This is D4.2's finding a second time, and `lib/markingConfidence.ts` was built
+in P4.2 to be the single owner of this decision precisely so it could not
+recur.
+
+**Why the gate written to prevent it missed is the part worth keeping.**
+`tests/test_web_shared_constants.py::test_no_other_web_module_invents_its_own_confidence_floor`
+greps for a bare numeric comparison against the word `confidence`. This
+function's parameter is called `score`, so the word never appeared beside the
+operator and the gate saw nothing. That is D6.12's lesson in miniature — a
+condition every harness shares is a condition no harness tests — and here the
+shared condition was an assumption about *naming*: that a variable holding a
+confidence would be called one. The gate now matches a list of aliases, skips
+comment lines so it cannot fail on its own fix note, and carries an inversion
+test asserting it catches the exact line that shipped.
+
+**The fix also drops the queue from three confidence tones to two, and that is
+the point rather than a casualty.** The old third band split "uncertain" again
+at 0.5, and no such number exists anywhere in the product: the backend has one
+threshold, so any second boundary is a frontend invention — the defect class
+the module exists to close. Nothing is lost to the reader, since the score is
+printed beside the chip.
+
+### Portal-wide findings
+
+- **Every one of the fifteen screens rendered a raw `error.message`**, at 44
+  call sites. A dropped connection put the browser's `TypeError: Failed to
+  fetch` in front of a teacher. This is surface 4's Friends finding at fifteen
+  times the scale, so it gets `lib/teacherOutcome.ts` — the third module in the
+  family after `correctionOutcome.ts` and `friendOutcome.ts`. Two entry points,
+  because a failed read asks "can I retry" and a failed write asks "did it
+  save"; the honest answer to the second is always no, since every mutation in
+  this portal is a single request. The endpoint's own `detail` still wins where
+  there is one: the at-risk acknowledge route's 422 is a real race with no
+  other spelling.
+
+- **Destructive actions were confirmed by `window.confirm`, at four sites**,
+  including deleting a class, which the dialog itself says "removes it for
+  every enrolled student". Surface 3 established `Modal dismissible={false}` as
+  the pattern and built exactly one, on the student flashcard deletes; the
+  teacher portal never used it. `window.confirm` is worse than it looks: its
+  buttons say "OK" and "Cancel" so the destructive choice is never named, it
+  cannot show the pending or failed state of the mutation behind it, and
+  browsers may suppress it after repeated use, so a confirmation the product
+  believes it is showing can silently stop appearing. C-24 `ConfirmModal` lifts
+  surface 3's implementation into the kit and `FlashcardDecks.tsx` now consumes
+  it rather than owning a private copy.
+
+  The four do not say the same thing. The component's default consequence is
+  "This cannot be undone.", true for deleting a class or an announcement and
+  **false** for removing a student from a class (reversible from the form
+  directly above it, and it does not touch their marked work) and for
+  unassigning a quiz. Each states its own real consequence; that is why
+  `consequence` is a prop rather than a constant.
+
+- **`portals/teacher/components/Avatar.tsx` was a `rounded-full` circle at six
+  call sites across five screens** — the exact violation the kit's `<Avatar>`
+  was written to prevent (§6: avatars are squircles, circles mean status). The
+  kit component had one call site product-wide. Same shape as surface 4's
+  unused `XPStreak`. Deleted; the six move over and gain an accessible name
+  they did not have.
+
+- **`StatCard`'s big number was `display-lg` Newsreader** where §4 puts the
+  data face, and the same defect recurred on the class cards' average mark, the
+  six engagement figures, and four mark inputs. Every one of those values is
+  `str(round(...))` from the server. D4.2 again: the same figures in the same
+  product set two different ways depending on which portal you were looking at.
+
+- **Ten hand-rolled inputs and three selects**, all with `outline-accent` where
+  §3.9 puts a deliberately blue focus ring, none with the disabled/error states
+  §9 gate 4 requires. One `<label>` wrapped a loading branch, so while classes
+  were fetching it pointed at no control at all.
+
+- **The teacher portal had no texture layer at all** — no `paper-grain`, which
+  the student shell has had since surface 1. It is the cheapest carrier of §1's
+  protected quality and its absence is most of why the portal read as the
+  generic dashboard §1's anti-references name.
+
+- **The brand lockup was still the placeholder** accent circle with an italic
+  `l` (audit M9, "stamped in three places"). The student copy was replaced in
+  surface 1; this one was still live. P4.2's second lesson exactly. It was also
+  a `font-serif` call site, so the placeholder was not even rendering in the
+  face it reached for.
+
+### A workaround retired because the thing it worked around was fixed
+
+`Quizzes.tsx` and `QuizBuilder.tsx` both deliberately avoided the `--t3` step
+and used `--t2` for every muted label. The reason was real and measured: axe
+put the build-era `--t3` at **4.36:1** against the default surface, below the
+4.5:1 AA floor, at the 10–13px sizes those labels use. `QuizBuilder`'s module
+doc recorded that fixing the shared token was out of that chunk's scope.
+
+Phase 2 fixed the shared token. `--ink-faint` sits at L 0.529 *specifically* so
+it clears AA against the darkest surface it ever meets — 4.94:1 on `--paper`,
+5.17:1 on `--paper-raised`, 4.60:1 on `--paper-sunk` — and DESIGN.md §3.2
+removes the lighter fifth step that made the defect reachable. All three ratios
+are pinned by `tests/test_design_tokens.py`. The divergence is retired: these
+screens are AA by construction rather than by avoidance.
+
+### The copy gate's classifier had two gaps, and the classifier was fixed rather than the source
+
+`check_copy` reports prose em-dashes and exempts placeholders. Two exemptions
+were too narrow and were reporting real placeholders:
+
+1. It bailed out of the quoted-placeholder exemption whenever a line held more
+   than one dash, so the review queue's `{awarded ?? "–"}/{maximum ?? "–"}` — a
+   row where neither figure is known — was counted as prose. The bound existed
+   only because `indexOf` cannot locate a second match.
+2. The JSX exemption looked for `>` and `<` within 12 characters *on the same
+   line*, so a dash a formatter had wrapped onto its own line was missed.
+
+Both widenings are pinned in the strict direction too: a line holding a
+placeholder **and** a prose dash must still report, and a lone dash with words
+beside it is still prose. Contorting the source to satisfy a classifier would
+have been the wrong repair — the gate encodes judgement calls, and these two
+were wrong.
+
+Count: **67 → 18**, and none of the 18 are in the teacher portal. 51 of the
+original 67 were.
+
+### Deliberately not done
+
+- **Nivo charts.** `@nivo/*` is not installed; §11's chart theme is Phase 5's
+  named work and building it here would pull that phase forward into a surface
+  pass. `ClassAnalytics`'s hand-rolled grade bars and cohort table are migrated
+  in place, and the empty-data states §11 requires already exist.
+- **A confirmation on bulk-approve.** It approves marks rather than destroying
+  rows, and every item it touches remains individually reviewable afterwards.
+  Applying surface 3's confirmation finding here would be pattern-matching
+  rather than reasoning, the same call D4.4 recorded for the friend actions.
+- **`Chip` migration.** Still build-era, still consumed by un-migrated screens,
+  unchanged from D4.3's and D4.4's notes.
+
+---
+
+## D4.6 — Redesign Phase 4, surface 6 (parent views): the banned easing was the default on every transition, and two back links to one place
+
+**Surface:** the whole parent portal — the shell plus its four screens
+(`portals/parent/`, 5 files, 1,015 lines), plus the two kit components only it
+and one teacher screen still consume (`weakness-chip.tsx`,
+`trend-sparkline.tsx`).
+
+### The headline: DESIGN.md's banned easing was in force product-wide, and no call site named it
+
+§3.2 item 14 says "never `linear` or `ease-in-out` on a designed transition",
+and §9.1 gives four custom easings for the purpose. Every one of the 27
+`transition-colors` / `transition-transform` call sites across the migrated
+surfaces and the whole component kit was running on
+`cubic-bezier(0.4, 0, 0.2, 1)` — symmetric ease-in-out under another spelling —
+because Tailwind's own `--default-transition-timing-function` is that curve and
+a bare `transition-*` inherits it.
+
+**Verified in the shipped bundle before and after, not reasoned about.**
+`dist/assets/index-*.css` carried
+`--default-transition-timing-function: cubic-bezier(.4, 0, .2, 1)` with six
+utilities resolving through `var(--tw-ease, var(--default-transition-timing-function))`;
+after the change it carries `var(--ease-out-soft)` at `.12s`.
+
+This is D4.1's `--font-serif` shape a fourth time — a well-formed utility
+silently resolving to somebody else's default — with one difference that
+matters and is worth stating: `font-serif`, `text-display` and `lm-head`
+resolved to *nothing*, which is what `utilityExistence.test.ts` was built to
+see. These classes emit rules. They emit the **wrong** ones, which is invisible
+from every direction that gate looks. So the deliverable is a gate that checks
+the *value* rather than the name (`tests/unit/motionDefaults.test.ts`), pinned
+in both directions and inversion-tested: with the default put back to
+Tailwind's curve, four of its assertions fail.
+
+The fix is two lines in the `@theme` block rather than an edit to 27 call
+sites, and it is deliberately the defaults rather than a sweep: a plain
+`transition-colors` is the idiom the codebase already writes, and the right
+repair is to make that idiom correct, not to ask every future call site to
+remember an easing.
+
+**Found because I nearly shipped the same defect myself.** The parent shell's
+first draft wrote `duration-instant`, on the assumption that `--dur-instant`
+generates a utility the way `--ease-out-soft` does. It does not: the easings
+live in `@theme` and the durations live in `:root`, so `duration-instant`
+emits nothing. Checking that assumption rather than trusting it is what
+surfaced the defaults. `motionDefaults.test.ts` pins the named-duration case
+too.
+
+### The second finding: every child screen had two back links to the same place
+
+P3.1 added the shell's breadcrumb trail without removing the inline back links
+the three child screens already carried, so each of them shipped a crumb row
+with a second, redundant affordance stacked directly beneath it — "‹ Your
+children" under `Your children › Overview`, "‹ Back" under `… › Overview ›
+This subject`. For the reader PRODUCT.md describes as having "no interest in
+learning an interface", two controls in a column doing one job is not a
+convenience; it is a decision to make. The crumb stays and the three inline
+links are gone.
+
+The crumb also stopped saying "This subject". It now names the subject, read
+from the react-query entry the screen below has already filled
+(`useCachedChildSubject`, `enabled: false` — subscribed to the cache, never
+fetching), falling back to the syllabus code from the URL. `getQueryData` was
+tried first and is wrong here: it reads without subscribing, so the crumb would
+have stayed on its fallback for the life of the screen.
+
+### `parentOutcome.ts` is not `teacherOutcome.ts` with the nouns changed
+
+All four parent screens rendered a raw `error.message`. The obvious fix was to
+reuse the teacher module. Reading the endpoints rather than assuming showed why
+that would have been wrong: **every `detail` the parent API can produce is
+machine text** — `str(exc)` from a stringified Python exception (`parent.py`
+122–130), and raw UUIDs in the 403 and 404 (`Child 6f2c… is not linked to this
+parent`). `teacherOutcome.ts` is detail-first precisely because several teacher
+endpoints write their 4xx `detail` for a human; the parent routes have no such
+case. So this module classifies on status and writes every sentence itself, and
+a test asserts the negative directly: no branch may echo the server's detail,
+and no message may contain a UUID.
+
+It also has **no `mutationFailureMessage`**, because `routers/parent.py` has no
+write route. A write-failure helper here would be a function with no caller
+asserting "nothing was saved" about saves that cannot happen. Its absence is
+recorded so the next surface does not add it back for symmetry.
+
+### Found by looking at the rendered pages (six fixes, one batch)
+
+1. **The same fact, two numbers, stacked.** The "Last worked" stat card printed
+   `relativeTime(lastActiveAt)` above `daysSinceLastActivity`, and the capture
+   photographed them disagreeing: **"1d ago" directly over "2 days ago"**, from
+   one timestamp. Two derivations of the same fact — one in the browser, one on
+   the server — round differently across a day boundary, and a parent has no
+   way to tell which is the answer. This is the D3.3/D3.4/D3.5 divergence
+   again, except visible in a single card rather than across two screens. One
+   figure now.
+2. **"6 more marks for a A".** A hardcoded article, producing the wrong one for
+   exactly the grades a parent most wants to read about. `gradeArticle` spells
+   the rule out by letter name rather than by vowel test, because "F" fails a
+   vowel test and "U" passes one. Pinned by test.
+3. **Good news in the alert register.** The boundary-distance panel — "6 more
+   marks for an A", the most encouraging sentence on the screen — was on
+   `--accent-wash`, which sits a hair from `--err-wash` on this palette. This
+   is surface 5's finding (d) recurring: there, a healthy "Assigned" state was
+   accent-toned and read as alarm. It is `info` now, which is §3.6's register
+   for a neutral notice.
+4. **A tone-coloured percentage with no label**, for the third time in this
+   surface family after surface 4's rank column and surface 5's review-queue
+   confidence. A bare "36%" pinned to the end of a row on a page headed "what
+   to work on" invites being read as a score out of a hundred; it is the share
+   of the marks available on a topic that the child has taken, and it says so.
+5. **The same chip crowded the row at 375**, taking half the width and wrapping
+   both the topic title and its sentence. It drops below the text at mobile.
+6. **An empty state that was a bare sentence in a box.** §12 wants marginalia
+   plus an explanation plus the action that fills it; the composed version has
+   the first two, and deliberately not the third — everything that fills a
+   parent's page is done by the child on their own account, and a button for
+   this reader to press would be a button that does nothing.
+
+### Also fixed, each already fixed once elsewhere
+
+- **The placeholder brand lockup**, audit finding M9's third and last stamp
+  (student sidebar went with surface 1, teacher with surface 5). It was also
+  this file's only `font-serif` call site.
+- **No texture layer**, the same gap surface 5 found in the teacher portal.
+  `paper-grain` on the shell, `margin-rule` on each screen header, one Caveat
+  line on the two empty states.
+- **Text loaders** on all four screens, replaced with `loading-shapes`.
+- **Counts and marks set in the body or display face**, moved to the data face
+  (§4): the papers-marked total, every `marks` string, every paper code.
+
+Three surfaces running have now each found a defect already fixed on another.
+That is the standing lesson, not a coincidence.
+
+### The container width, recorded rather than quietly kept
+
+The portal stays at 960px, which is none of §13's three container values.
+§2 puts parent views in the Operate lane, but Operate's 1200px is measured
+beside a 240–280px sidebar — it is a content well, not a page — and this portal
+has no sidebar by design (UI spec §4.8, "two taps to the answer"). 960px is
+that same well without the sidebar in front of it. Stated in the shell's
+module doc so the next reader finds a reason rather than a drift.
+
+### One gate inconsistency, observed and deliberately not changed
+
+`design-tokens.test.ts` does not strip comments, so it reported the two hex
+values quoted in a code comment explaining finding 3. Its sibling
+`studyNotebookMigration.test.ts` strips comments precisely so a file may name
+the thing it stopped using. The comment was reworded rather than the gate
+loosened: relaxing a colour gate to let my own prose through is the wrong
+direction to resolve that in, and the inconsistency is small. Recorded here
+rather than fixed.
+
+### Gates
+
+typecheck / lint / **980 unit (+53)** / check:copy **14** (down from 18, none
+in the parent portal) / both builds / 31 Python token+constant tests: green.
+e2e: **still blocked, B4**. Visual round: 32 captures across 4 registered
+sub-surfaces, all distinct, console errors only from the deliberately-failing
+states.
+
+---
+
+## D4.7 — Redesign Phase 4, surface 8 (auth): the first screen anyone sees spent the build era as scaffolding, and a parent was shown an enum member
+
+**Surface:** the two signed-out screens and the refusal between them —
+`portals/auth/Login.tsx`, `ParentLogin.tsx`, `DeviceLimitNotice.tsx` (695
+lines). Surface 7 (admin views) is deferred behind D1.6, not skipped; see
+STEERING.md.
+
+### The headline: the OTP failure a parent reads was an enum member
+
+`ParentLogin.tsx` rendered `err.message` verbatim for a failed code, and
+`AuthService.verify_otp` raises
+`AuthError(f"OTP verification failed: {result.value}")`
+(`lemely/auth/service.py:320`), which the router passes through as the 401
+detail. So the sentence on screen was literally
+
+    OTP verification failed: wrong_code
+
+shown to the reader PRODUCT.md describes as the least confident user of the
+product, on the screen the UI spec calls "the lowest-friction entry".
+
+**The file's own docstring asserted the opposite**, in as many words: "the
+parent reads the actual reason rather than a client-side guess at which it
+was." That claim was half right in the way that matters most — the backend's
+*distinction* was real and worth keeping, and its *vocabulary* was never fit to
+show anyone. A docstring stating an intention is not evidence the code meets
+it, and this is the second time this phase that a comment described the fix
+rather than the behaviour (surface 2's `MarkDisplay` docstring stated the type
+rule it was breaking).
+
+`lib/authOutcome.ts` maps the four `OtpResult` members to four sentences, which
+keeps the distinction and fixes the words. An unmapped member falls through to
+a written sentence rather than the raw string, so a member added server-side
+later cannot become copy — asserted directly by test.
+
+### The same module makes the opposite call one endpoint over, on purpose
+
+The OTP *request* 429 keeps the server's own wording. `OtpRateLimitError` says
+"OTP already sent; retry in 12s." (`lemely/auth/otp.py:112`) — a real sentence
+with the one number the reader wants, and nothing written in the client could
+improve on it.
+
+That is the family's actual rule, stated properly now that five modules exist:
+**keep the detail where a human wrote it for a human**, and that has to be
+decided per endpoint by reading the endpoint. `teacherOutcome` is detail-first,
+`parentOutcome` is never detail-first, and `authOutcome` is both, three lines
+apart. Copying any one of them into the next surface would have been wrong.
+
+### And a third rule on the same screen, for a different reason entirely
+
+The password 401 says only "That email and password don't match an account."
+It never reveals which half was wrong, and it never echoes a backend detail
+that might. Distinguishing "no such account" from "wrong password" hands an
+account-enumeration oracle to anyone with a form and a word list, and this
+product's users are children. The cost is accepted and stated: someone who
+mistyped their email gets a less helpful message than they could have.
+`authOutcome.test.ts` asserts the two cases produce the identical string.
+
+### Login.tsx had been scaffolding since the build era, and said so
+
+Its module docstring opened "infrastructure to exercise the auth plumbing, not
+final UI. Screen polish is P2.7/P2.8's job." Those chunks came and went; the
+note stayed accurate. Three defects follow directly:
+
+1. **The card was invisible.** Page and card were both `bg-surface`, so a panel
+   sat on a background of its own colour with a hairline as the only evidence
+   it existed. DESIGN.md §3.1's tonal system exists precisely for this.
+2. **The error sat at the bottom of the form**, below both fields and above the
+   button — the arrangement §12 rules out. The fields are the kit's `Input`
+   now (visible label, eight states, field-level errors under their own field),
+   and the form-level error sits with the button that produced it.
+3. **It rendered `login.error.message` raw**, and `request()` falls back to
+   `` `${res.status} ${res.statusText}` `` when a body carries no string
+   detail, so a failed sign-in could put **"401 Unauthorized"** on screen.
+   Pinned by test.
+
+### M9's fourth stamp
+
+The audit's finding M9 reads "the logo is a lowercase italic *l* in a filled
+circle, **stamped in three places**". Surface 1 replaced the student's, surface
+5 the teacher's, surface 6 the parent portal's — and it was here too, in
+`ParentLogin`, the one signed-out screen the audit reached by grep rather than
+by rendering. Four places. It was also this file's only two `font-serif` call
+sites (D4.1), so the placeholder was not drawing in the face it reached for.
+
+`AuthFrame` now owns the mark, the paper, the grain and the column for both
+signed-out screens, because three copies of a frame is how three screens end up
+with three ideas of where the logo goes.
+
+### Smaller, and each one a rule this system already had
+
+- **The OTP boxes were set in Newsreader** (`text-display-md`). A one-time code
+  is data (§4: "all scores, grades, marks, XP, timers, paper codes, IDs"), and
+  it is on `data-lg` now. Same category error as surface 2's mark and grade.
+- **"Will be signed out" was `--t2` muted text** — the quietest register on the
+  screen, marking the one row about to be destroyed. It is a `warn` chip, on a
+  row with a `warn` border, so the warning has two carriers and neither is
+  colour alone (§3.6). The row is deliberately *not* washed: `Chip tone="warn"`
+  is itself `warn-wash`, and washing the row would hide the chip in its own
+  colour.
+- Radius, type scale and tokens across all three files; `paper-grain` on both
+  screens, which had no texture layer at all.
+
+### The harness caught its own fixture
+
+The `device-limit` capture photographed the login form where the device notice
+should have been: the invented challenge omitted `reason:
+"device_limit_reached"`, which `isDeviceLimitChallenge` narrows on, so the 409
+fell through to the generic sign-in failure. That is the fixture being wrong
+and the product being right — and it is exactly what a batched capture round
+over states-that-must-differ is for. Fixture corrected, re-captured, verified.
+
+### Gates
+
+typecheck / lint / **1,013 unit (+33)** / check:copy **14** (flat; none in
+auth) / both builds / pre-commit / 31 Python token+constant tests: green.
+e2e: **still blocked, B4**. Visual round: 16 captures across 2 registered
+sub-surfaces, all distinct, console errors only from the deliberately-failing
+states.
+
+---
+
+## D4.8 — Phase 4, surface 9: Marketing / landing
+
+### The headline: the marketing page had no reader
+
+`/student/landing` sat inside `studentRoute`, which `App.tsx` wrapped in
+`RequireAuth allowedRoles={["student"]}`. Following that through:
+
+- a signed-out visitor, the *entire audience* of a marketing page, was
+  redirected to `/login`;
+- a signed-in **teacher** was redirected to `/teacher`, so the page whose own
+  eyebrow reads "For CAIE teachers and their students" was unreachable by one
+  of the two audiences it names;
+- `/` sent every signed-out visitor to `/login` too, so the product had **no
+  public page of any kind**;
+- and the one reader who could reach it, a signed-in student, is the person
+  who least needs selling. They saw it wrapped in the app shell: sidebar,
+  breadcrumb trail, streak pill, and a "Correct a paper" header CTA sitting
+  directly above a hero that says "Mark a paper".
+
+The part worth recording is that this was **known and half-fixed**. D1.1's note
+in `portals/student/data.ts` calls it "the marketing page, orphaned inside the
+authenticated app" and removes its *nav entry* — which fixed the symptom a
+student saw and left the page with no reader at all. A route removed from the
+nav is invisible; a route removed from the nav *and* behind an auth guard for
+the wrong role is dead.
+
+Nothing could have caught it. Typecheck passed, lint passed, the route rendered
+correctly for the one person who did not need it, and the audit reached it by
+grep. A guard placed around the wrong subtree is invisible to every gate this
+build runs, which is why the fix ships with `tests/unit/marketing.test.ts`
+asserting which top-level routes are public and which are guarded, in both
+directions.
+
+**IA change (REDESIGN-MISSION §1 permits, §7 requires documenting):** a new
+`portals/marketing/` lane with its own public frame; `/landing` mounted at the
+top level with no guard; `/` renders it for a signed-out visitor and still
+redirects a signed-in one to their portal; `/student/landing` stays mounted as
+a redirect so saved links, D1.1's explicit condition and `navigation.test.ts`
+all keep working.
+
+### The second finding: the audit deleted the numbers and left the sentences
+
+DESIGN-AUDIT C1/C2/C3 were closed in Phase 2. **Six fabrications were still
+live on this page**, each verified against the backend one at a time rather
+than assumed:
+
+1. `cardMeta` read "marked in 41s" — the *exact figure* C1 deleted from the
+   proof band for having no source, still standing four sections up the same
+   file.
+2. The hero footnote read "Free for every student of a partnered teacher - No
+   card to start". PRODUCT.md:105 lists partner schools among the things that
+   must not be fabricated, and this promised both a partner programme and a
+   billing arrangement one screen above the placeholder saying pricing is
+   undecided. That is C2's fabrication, in prose.
+3. "QR attendance with face or 2FA check" — there is no QR code, no facial
+   check and no 2FA anywhere in the repository, and
+   `lemely/web/schemas_teacher.py:7` records attendance itself as a screen
+   field with **no backend source**.
+4. "Lesson retention down to the replayed minute" — same file, same line:
+   `retention` is structurally empty by construction.
+5. "Results by WhatsApp the moment marking ends" — WhatsApp appeared nowhere
+   in the product except this sentence.
+6. "Course payments in the same place" — PRODUCT.md:74 puts payment processing
+   out of scope outright.
+
+Every bullet now traces to a shipped route and carries that module in a comment
+beside it. `tests/unit/marketing.test.ts` pins the ten banned claims literally,
+because the failure mode is not a wrong number, it is a plausible sentence
+about a feature nobody built.
+
+Two smaller honesty corrections in the same pass: the hero body said Lemely
+"pulls the official mark scheme", which B1 established it cannot do (there is
+no download path; `resolve_mark_scheme` reads an uploaded sibling PDF or a
+parsed cache), and the hero's result card showing 38/40 now carries an
+**Example** tag inside the card, because the product has no customers whose
+result it could be.
+
+### What the capture round found that reading could not
+
+- **The page had two left edges.** `Section` took a `wide` prop, so the hero
+  and proof band sat at 1280 and the loop, pillars and close at 1200, jogging
+  40px on alternate sections. §13 gives the Persuade lane one container.
+- **Three proof stats in a two-column grid** left the third beside an empty
+  cell, a hole in the middle of the one band that has to look considered.
+- **`ruled-bg` drew nothing.** The three loop cards are opaque
+  `--paper-raised` and cover every pixel of their parent, so the texture
+  existed in the class list and nowhere on screen. One step along from the
+  shape `utilityExistence.test.ts` catches: the rule *is* emitted, it is simply
+  painted over. Removed rather than kept as a claim in the markup.
+- **The Parents link was hidden below 640px** — on the phone, for the login
+  route whose entire selling point is that a phone number is the whole of it.
+- Both hero CTAs pointed at `/login`. The secondary now scrolls to the teacher
+  case on the page, which is what its label promises and the only destination
+  that honestly exists.
+
+### The capture harness needed two corrections, and made both of them itself
+
+The duplicate detector failed the first round: six "scroll position" states
+were six copies of one image, because `fullPage` captures the document without
+scrolling. The second round then failed with `full == reduced-motion` — which
+was **correct behaviour** the detector cannot express, since a reduced-motion
+reader sees the same settled page.
+
+Both are now assertions rather than pictures, which is stronger in each case:
+
+- `/` is verified to render the landing page for a signed-out visitor. An
+  image proves nothing about which URL produced it.
+- Reduced motion is verified to render the **foot of the page opaque without
+  scrolling at all**. `Reveal` starts every section at `opacity: 0`, so the
+  failure mode of getting this wrong is not too much movement, it is a blank
+  page for the reader least able to tolerate one.
+
+The ordinary capture now scrolls the page before the shutter, because the
+first `full` image photographed four blank sections and would have read as
+evidence.
+
+### New capability
+
+- **`components/ui/reveal.tsx`** — the scroll-entry motion DESIGN.md §9 and
+  REDESIGN-MISSION §4 both specify and **nothing in the product implemented**.
+  `lm-screen` is a different thing: it fades a whole route in once on mount, so
+  for content below the fold the animation finishes before anyone arrives.
+  IntersectionObserver only, transform/opacity only, reduced-motion read in JS
+  at mount (a media query that skips the transition while leaving the element
+  at `opacity: 0` is exactly how a page ends up permanently invisible), and a
+  fallback to visible when the observer is missing — the failure to avoid is
+  the blank page, not the unanimated one.
+- **`src/routes.tsx`** — the route table, split out of `App.tsx`.
+  `createBrowserRouter` touches `document` at import, and `vitest.config.ts`
+  runs the node environment on purpose, so routing facts could previously only
+  be checked by reading the file as text. That is how the guard defect above
+  survived. `App.tsx` is now one line.
+
+### D4.8 (the decision) — does the design gallery ship?
+
+`/student/directions` is an internal A/B/C gallery, reachable by any signed-in
+student, showing mock data, with no nav entry. Same shape as the kit preview,
+which Phase 2 moved behind its own Vite entry precisely so the product could
+never ship it. Sent to the steering channel with a 30-minute timeout and
+default **A, move it to `web/dev-previews/`**. Not blocking.
+
+It was migrated in place either way, and while migrating it two things
+surfaced: every heading was `font-serif` (D4.1's non-token, so the screen whose
+job is to demonstrate typography was demonstrating Georgia), and **direction C
+is now ruled out by the design system it is illustrating** — DESIGN.md §3.1
+bans a dark panel inside an app screen. Each treatment now renders what became
+of it, which is the one thing a gallery has to say and this one never did.
+
+### Gates
+
+typecheck / lint / **1,061 unit (+48)** / check:copy **14** (flat; none in the
+marketing lane) / both builds / pre-commit / 31 Python token+constant tests:
+green. No horizontal scroll at 320 / 375 / 414 / 768 / 1024 / 1440.
+e2e: **still blocked, B4** (port 8000 re-verified occupied this session).
+Visual round: 4 captures plus 4 in-harness assertions, all distinct, zero
+console errors.
+
+---
+
+## D4.9 — Redesign Phase 4, surface 10 (404 / misc): the surface that was not a tidy-up
+
+**2026-08-14.** Branch `redesign/study-surfaces`. Commits `9619dd6`, `7a70e5a`, and this one.
+
+### What the surface was supposed to be, and what it was
+
+STATE.md scoped surface 10 as `NotFound.tsx` "plus whatever the sweep finds
+unmigrated", naming two settings screens. The sweep found **twelve** files
+carrying **181 live compat-layer call sites**, and ten of them were product
+screens no row of the Phase 4 ledger had ever claimed: the whole of onboarding
+(3 files), the whole placement flow (3), `Subject`, `Parents`, `Notifications`,
+`Announcements` and `PracticeSet`.
+
+MISSION §1 names "onboarding/placement test" in scope outright and §12 requires
+zero pages in the old language, so this was not a judgement call and no DECISION
+was raised for it — only more work than the ledger recorded. It was reported to
+the human on ntfy at the point it was found, not at the end.
+
+**The consequence is worth more than the count.** The first three screens a new
+account ever sees stood between it and every screen that had been redesigned.
+
+### The mechanism, which is the real finding
+
+The three gate lists (`MIGRATED_FILES`, `RTL_CLEAN_FILES`, `SCANNED_FILES`) grow
+by hand, one entry per surface as it lands. **A screen no surface claims is
+therefore a screen no gate reads.**
+
+`text-body` and `text-title` sat on the notification inbox's own `<h1>` and body
+copy, emitting **zero CSS rules** in the shipped bundle for the entire build —
+the resolves-to-nothing shape for the fifth and sixth time. Proved by inversion
+rather than assumed: putting `text-title` back with `Notifications.tsx` now in
+`SCANNED_FILES` makes `utilityExistence.test.ts` fail immediately. So the gate
+was never too narrow. The file was never in it.
+
+That is the opposite conclusion from surface 5's, where the gate genuinely
+needed widening, and it needs the opposite fix: not a better gate, but a
+guarantee that no screen escapes the list. Recorded in STATE.md as binding.
+
+### Findings, each verified against the source of truth rather than reasoned about
+
+1. **A sign-out that did not happen reported nothing.** `DELETE /me/devices/{id}`
+   never raises: a device id that does not exist, is already revoked, or belongs
+   to another account all answer `200 {removed: false}`, deliberately, so the
+   route cannot probe another account (`schemas_devices.py`). React-query ran
+   `onSuccess`, the list invalidated, the row came back, and the screen said
+   nothing at all. This is surface 3's "deletes that could not fail out loud"
+   on the one screen a reader opens *because* they think somebody else is
+   signed in to their account.
+
+2. **"Skip for now" deleted the answer it offered to defer.** Rendered only when
+   `answered` was true, so a student who left a question blank never saw it and
+   a student who filled one in was offered a button whose label promises
+   deferral and whose handler set the field to `undefined` before advancing.
+   Split into "Clear my answer" (unsets, stays put) and "Skip" (the primary
+   action when unanswered, still clearing first because a seeded value can be
+   `null` and only an explicit unset keeps it out of the PATCH body, D4.5).
+
+3. **The Subject topic map printed an impossible fraction.** Each tile showed
+   `acc` — which `routers/student.py:364` builds as
+   `f"{round(area.accuracy * 100.0)}%"` — above a hardcoded "of 24 marks", under
+   a heading promising "marks earned / marks available". So "73% / of 24 marks",
+   a numerator above its own denominator. `TopicTileDTO` carries no denominator
+   at all, so the 24 was not stale, it was invented, and it was the same 24 on
+   every tile of every subject. The heading now says what the number is and no
+   denominator is rendered.
+
+4. **The weighted-mean delta was green whatever it said.** Built as
+   `f"{'+' if delta >= 0 else ''}{delta} since first paper"`, rendered in
+   `text-ok` unconditionally, so a student sliding backwards saw their decline
+   in the product's success colour. D4.1's "+0 in teal" on a different screen.
+
+5. **A fourth docstring asserting an intention the code did not meet.**
+   `Parents.tsx`'s `linkErrorMessage` said non-404s "keep the backend's own
+   `detail`", implying one worth keeping. The only `ValueError` the parent-link
+   repo raises is `f"Identifier must be a UUID, got {value!r}"`.
+
+6. **Two 404s that were the same screen and should not have been.** An unmatched
+   path inside a portal fell to the top-level catch-all, ejecting the reader
+   from the app they were inside. Both `routes.tsx` and `NotFound.tsx` carried
+   it as a written note from P3.1. A note is not a gate.
+
+7. **A compat rung on the 404 screen itself**, `font-mono text-metadata`, which
+   declares `font-family` twice because `text-metadata`'s replacement already
+   names the data face (D4.2's shape). Invisible until the file joined
+   `MIGRATED_FILES` — it was written in P3.1, before that list existed.
+
+### Two new outcome modules, and why not one
+
+The family reaches **seven** and stops. `settingsOutcome.ts` exists because the
+settings lane's reader is *all five roles at once*, which is the first time that
+has been true and means it cannot tune its register the way the other six do.
+`studentOutcome.ts` exists because `correctionOutcome.ts` is deliberately
+detail-first (the marking router writes its 4xx `detail` for a human) and these
+routers answer `str(exc)` with raw UUIDs and Python reprs, so widening it would
+have been wrong for half the student's screens. Both headers carry the
+endpoint-by-endpoint evidence. Neither was written by symmetry.
+
+### Alternatives considered and rejected
+
+- **Reusing one outcome module for both.** Rejected on evidence: see above.
+- **Making the exam countdown's urgency conditional on proximity.** Rejected —
+  any threshold for "now it is urgent" would be invented. It moved to the
+  neutral `info` register and lets the number carry the urgency.
+- **Migrating the 17 remaining component-kit files too.** Rejected as scope: they
+  are Phase 2's deliverable, they render correct *values* through the aliases so
+  nothing is visually wrong, and folding them in would have expanded this
+  surface a third time. Recorded in STATE.md as what `index.css`'s compat block
+  is waiting on, and as Phase 6 work.
+- **Adding a confirmation to every list removal.** Rejected. Only the current
+  device gets one, because signing out the browser you are reading on ends the
+  session mid-sentence while signing out a phone costs it one sign-in. C-24's
+  `consequence` is overridden to say what really happens rather than the
+  default's "cannot be undone", which would be false.
+
+### D4.8, defaulted
+
+30-minute timeout elapsed with no reply, so option A: the design-directions
+gallery left the product route table for `web/dev-previews/`, behind the kit's
+own Vite entry — the call this project had already made once, for the component
+kit. **Verified rather than assumed:** its marker string appears nowhere in
+`dist/`, and the product precache dropped 129 → 127 entries.
+`navigation.test.ts` flips from "keeps it mounted" to "no longer mounts it",
+documented in place per §9.7, and `audit.mjs`'s DEV-01 entry is retired with its
+reason recorded rather than deleted silently — its own rationale was "it is a
+reachable route in the shipped bundle", which stopped being true.
+
+### Gate results
+
+typecheck / lint / **1,166** unit (+105) / **check:copy 0** (down from 14; the
+product now has no prose em-dash in any UI copy) / both builds / pre-commit / 31
+Python token+constant tests: green. No horizontal scroll at
+320/375/414/768/1024/1440. Visual round: 38 captures across 6 registered
+sub-surfaces, all distinct, plus 6 in-harness assertions; console errors only
+from the deliberately-failing states.
+
+**e2e remains blocked by B4** and is unchanged: port 8000 is still held by
+another local user's process, so `scripts/e2e_server.py`'s offline marking seam
+is still never installed. Not killed unattended.
+
+### What this leaves
+
+**Phase 4 blocks.** Admin views are the only surface left and D1.6 is still
+unanswered and deliberately undefaulted; §10 says a question with no sane
+default must not be a timeout question, so this is the point to block rather
+than guess. Phase 5 does not depend on it.
+
+### Addendum — B4 resolved the same day, and what the first honest e2e run found
+
+The human freed port 8000 and reported `correct-paper` passing. Verified rather
+than accepted: the *whole* suite was run, and it found **four more failures**
+that had been invisible for the entire redesign because the suite could never
+run correctly (B4: Playwright adopted a stranger's process on 8000 and never
+installed `e2e_server.py`'s offline marking seam).
+
+All four are assertion drift against deliberate, documented redesign changes,
+not functional regressions. Each is updated in place with its reason recorded,
+per §9.7:
+
+- **`student-journey`** asserted `getByRole("button", {name: /0625/})` on the
+  dashboard. Surface 1 replaced that `<button onClick={navigate}>` with a real
+  `<Link>` — the audit's own M8 finding, raised against the teacher portal and
+  sitting unremarked on the student side. The spec now asserts the better
+  markup, scoped to the ledger panel (as a link, "0625" is ambiguous with four
+  sidebar entries). Its row text and this surface's `EmptyState` split moved
+  too.
+- **`engagement`** counted five listitems where three board rows exist, because
+  a page-wide `getByRole("listitem")` began matching P3.1's `Breadcrumbs`
+  trail. Scoped to the list, which the spec's own comment always meant — it
+  warned that a global selector "asserts nothing a refactor would not silently
+  break", and then was one.
+- **`parent-journey`** read the OTP dev code with `div.font-mono`; surface 8
+  moved it onto the `data-lg` rung.
+- **`phase4-practice`** expected a heading "Practice — …"; §3.2 item 10's
+  em-dash ban made it "Practice for …".
+
+**Result: 34 passed, 0 failed.** Hard Gate §9.7 (functional safety) is green for
+the first time in this redesign; every earlier surface reported it as blocked,
+which was accurate and is now closed. Every surface row in STATE.md has been
+updated, because leaving nine rows claiming a blocker that is resolved is the
+same class of staleness this phase keeps finding.
+
+**Not done, and still the real bug:** `reuseExistingServer: !process.env.CI`
+reuses whatever answers on 8000 without checking it is the process the config
+would have started. B4's own proposed guard — a `GET /__e2e__` marker route
+asserted in `e2e/global-setup.ts` — remains unimplemented. Today it works only
+because nothing else holds the port.
+
+### D1.6, answered
+
+The human answered on the same channel: *"fully build the required screens and
+completely wire them"*. That is stronger than option A as it was worded, and the
+wording matters — "completely wired" rules out the scaffold-and-shell reading
+that option C offered. Phase 4 unblocks; surface 7 is the next work unit, and it
+must check what `routers/school.py` actually exposes before designing a screen
+around it rather than stubbing a panel and calling it wired.
+
+---
+
+## D4.10 — Redesign Phase 4, surface 7 (admin views): the two roles in one guard were never alike, and the platform console had no backend at all
+
+**Date:** 2026-08-14 · **Phase:** 4, surface 7 (the last one) · **Branch:**
+`redesign/study-surfaces`
+
+D1.6 was answered by the human on 2026-08-14: *"fully build the required screens
+and completely wire them"*. This records what "completely wired" turned out to
+cost, and the two findings that only appeared once the wiring was attempted.
+
+### Headline 1 — `TEACHER_ROLES` bundled two roles that are opposites
+
+`routes.tsx` gated the teacher portal to `["teacher", "school_admin",
+"platform_admin"]` for the whole build. The bundle looked harmless because it
+was *correct about permissions*: `require_role` really does admit all three on
+every `/api/teacher/*` route. It was wrong about data, and in opposite
+directions for the two admin roles:
+
+* **`school_admin` genuinely holds that data.** `ClassService.list_classes`
+  branches on role and returns every class in the schools they administer;
+  `_visible_students`, `review.py` and `announcements.py` scope them the same
+  way. The teacher portal works for them, and removing their access would have
+  deleted working capability — marking review, class analytics and school-wide
+  announcements are not rebuilt on the new surface. They keep `/teacher` and
+  gain `/school` as their **home**, with a cross-link in the sidebar.
+* **`platform_admin` holds none of it, deliberately.** Every one of those same
+  services returns **empty** for the role, stated outright in `class_repo.py`,
+  `review.py`, `teacher.py` and `at_risk_repo.py` ("no super-role bypass",
+  D1.6/D1.10). So the console a platform admin landed in could only ever have
+  been blank — and a permanently blank console is indistinguishable on screen
+  from a broken one. They are removed from `TEACHER_ROLES` and live at
+  `/platform`.
+
+Nothing could have caught this. A guard that admits a role the API also admits
+passes typecheck, lint, the design hook and every existing test; the defect is
+that the *data* behind it is empty by design. `tests/unit/adminRoutes.test.ts`
+now asserts the removal by name and in both directions, and was **verified by
+inversion**: re-adding `platform_admin` to the list fails exactly one test.
+
+### Headline 2 — X-01/X-02/X-03 had no backend whatsoever
+
+`school.py` shipped three endpoints (list seats, invite, revoke). There was no
+`/api/admin/*` router at all, and no service that could answer a global
+question, because every service in `lemely/db` is tenant-scoped by construction.
+"Completely wired" therefore meant building the backend first:
+
+| New | What it is |
+|---|---|
+| `lemely/db/school_admin_repo.py` | K-01 counts, K-03 staff roster, invite-teacher, remove-teacher-with-reassignment |
+| `lemely/db/admin_repo.py` | The first service in the product with **no tenant scope**, reached by its own router rather than by widening an existing one |
+| `lemely/web/routers/admin.py` | 5 routes gated to `platform_admin` alone |
+| `lemely/web/schemas_admin.py` | X-01/X-02/X-03 DTOs |
+| migration `0019_activation_review` | `subscriptions.activation_note` + a `rejected` status value |
+| `SeatRow` enrichment | `assigned_display_name`, `classes`, `last_attempt_at` |
+
+**Migration 0019 is the decision worth defending.** X-02 asks for "activate /
+reject with a note", and neither existed. The note is a plain nullable column.
+The status is the interesting half: `cancelled` was the only existing exit from
+`inactive`, and it already means *the subscriber ended this*. Reusing it would
+have made "we declined your request" and "they quit" indistinguishable in the
+one table an audit would read, so `rejected` was added instead —
+transaction-safe on PG12+ because the migration only declares the value and the
+first row to carry it is written at runtime.
+
+### What was refused rather than faked
+
+Every one of these is on screen as a sentence, not silently dropped:
+
+- **K-01's subscription status.** `subscriptions` is a **per-user** table. No
+  school-level subscription, plan or billing state exists anywhere in the
+  schema. The panel is absent and the screen's header records why.
+- **K-02's "last active".** No table records a session or a login: `users` has
+  no `last_seen` and `devices` records registration, not use. The column is
+  headed **"Last marked"** and the field is named `lastAttemptAt`.
+- **K-02's "invited / active / inactive" status.** The schema has
+  `available`/`assigned`/`revoked`, the route filters revoked out, and there is
+  no "invited" state at all because an invite creates the account immediately.
+  The column became "On a seat since", which is the real fact underneath — and
+  it put `assignedAt` on screen, which nothing had rendered.
+- **K-04's create / reassign / archive.** `POST /api/classes` is teacher-only
+  (the authz matrix says so), no `archived` column exists at any level, and the
+  only delete is destructive and also teacher-only. The screen is read-only and
+  a panel at the foot says exactly which of the three exist and where.
+- **X-03's marking accuracy.** Produced by the accuracy harness into
+  `reports/`, on demand, by nothing a request can reach. The API returns prose
+  naming the harness rather than a figure the screen could not date.
+
+### The one departure from a standing instruction
+
+`BUILD/STATE.md` says the failure-copy family is closed at seven: "do not write
+an eighth by symmetry." `lib/adminOutcome.ts` is an eighth, and the header
+states the evidence. Both detail-first modules (`teacherOutcome`,
+`correctionOutcome`) are wrong here because every admin `detail` is machine text
+carrying a UUID or a JSON field name; and the status-first modules are wrong
+too, because two of these failures carry meaning no status sentence holds — a
+409 on removing a teacher and a 409 on deciding an activation both mean *"the
+thing you were looking at changed under you"*, and the only useful next action
+is to reload. Hence one helper per action rather than one `mutationFailed`.
+This is a judgement call and is flagged as one.
+
+### Inspection round
+
+One batched round (1440 + 375 together), 7 findings, all fixed in one batch, one
+confirm round, stopped there per §3.2 item 16:
+
+(a) **the accent was carrying the alarm on four panels** — the seat meter at
+quota, the spend meter past its threshold, and the boundary-fallback bars — in
+the same terracotta the links beside them use, so one colour meant both "this is
+wrong" and "this is a link". All four moved to the `warn` register and gained a
+labelled chip; (b) the stat-card links wrapped mid-link ("See" / "the roll"),
+which is a two-line clickable target and banned outright; (c) two class names in
+the seats table ran together into one string; (d) the "Status" column was a
+constant on every row; (e) `toLocaleDateString()` rendered `8/11/2026`, which is
+11 August or 8 November depending on the reader and says nothing about which;
+(f) the invite form pushed the roll below the fold on the screen whose job is
+showing the roll; (g) a docstring claimed the school heading was suppressed for
+the single-school case, which it never was — **the fifth time this phase a
+comment described an intention rather than the code**.
+
+### Gate results
+
+typecheck / lint / **1,255** unit (+89) / check:copy **0** (still) / both builds
+/ pre-commit / full Python suite (3,573, rc=0) including **33 new backend tests**
+across `test_web_school_admin.py` and `test_web_platform_admin.py`: green.
+**e2e: 34 passed, 0 failed** — the admin split changed no e2e assertion, because
+`rbac.spec.ts` tests the API's guards and those did not move. Visual round: 78
+captures across 7 registered sub-surfaces, all distinct, console errors only from
+the deliberately-failing states.
+
+`tests/test_authz_matrix_complete.py` gained 9 rows and did its job on the way:
+it failed at collection the moment the admin router mounted, which is the drift
+gate working exactly as its docstring promises.
+
+### What this leaves
+
+**Phase 4 is complete.** All ten surfaces are built. Phase 5 (motion and
+data-viz) is next and depends on none of this.
+
+Still open, carried forward: B4's own proposed fix (`GET /__e2e__` asserted in
+`global-setup.ts`) remains unimplemented, and the compat layer still cannot die
+because 17 kit components name build-era aliases in their own source.
+
+---
+
+## D5.1 — Redesign Phase 5.3 (charts): the geometry was in the wrong language, and `var()` is not a colour
+
+**Phase 5.3, "build/theme every chart on the shared Nivo theme".** Nivo installed
+(`@nivo/core`/`line`/`bar`/`theming`, 0.99, React 19 supported), one shared theme
+at `web/src/lib/nivoTheme.ts`, two wrappers (`LineChart`, `BarChart`), four charts
+moved onto them, and a new gate. Six findings, four of them defects that were
+live in the product.
+
+### The headline: a token discipline that would have drawn nothing
+
+Every component in this product references colour through a Tailwind class that
+resolves to `var(--token)`, and that is correct everywhere except inside a chart.
+Nivo hands a series colour to react-spring (`useSpring({ color })` in
+`@nivo/line`'s line and area renderers) so it can interpolate across a
+transition, and **react-spring parses the string as a colour before it ever
+reaches the DOM**. `var(--accent)` is not a parseable colour. One level lower the
+same hazard exists without react-spring: CSS custom properties are not
+substituted inside SVG presentation attributes, so `stroke="var(--accent)"`
+resolves to nothing either.
+
+So the natural, disciplined-looking thing to write would have produced a chart
+drawn in nothing — passing typecheck, lint, the token gate (no raw value to
+find), and `utilityExistence` (no class name to check). That is `--font-serif`
+(D4.1), `text-display` (D4.4), `lm-head` (D4.5) and the banned easing (D4.6)
+arriving a **fifth** time, by a route none of those four gates watch. This was
+found by reading Nivo's compiled source before building on it, not after.
+
+The theme therefore resolves tokens off `:root` at runtime, so DESIGN.md stays
+the single source of values and `nivoTheme.ts` stays a list of names. It **fails
+closed**: `ready` is false until real values resolve, and a chart renders a
+space-reserving skeleton rather than drawing in a browser default. A chart in
+the wrong colours is far harder to notice than a missing one, which is the
+asymmetry all five of these findings share.
+
+`tests/unit/chartTheme.test.ts` gates it: every named token exists in
+`index.css`, no `var()` or colour literal survives in any chart source, the
+series order matches §11, the accent stays out of the categorical set, and no
+file under `src/` imports `@nivo/*` outside the two wrappers. **It walks the
+tree rather than reading a file list** — P4.10's finding was that the gate lists
+only grow by hand, and a gate written this phase should not add a fourth list to
+forget. Verified by inversion: renaming a token, reinstating a `var()` string,
+and importing Nivo directly in a screen each fail exactly the intended test.
+
+### `MomentumDTO` shipped SVG path data, and the transform clipped
+
+The student dashboard's momentum chart had its geometry computed **in Python**:
+`path`, `area`, `lastX`, `lastY` against a hardcoded 300x88 viewbox and a
+55-100% band. Two defects came with that, and both are gone rather than fixed,
+because the geometry has left the backend.
+
+1. **The band clipped from below.** `y = 88 - ((pct - 55) / 45) * 78` puts
+   anything under 55% past the bottom of the viewbox — 40% lands at y=114, 30%
+   at y=131 — and the `<svg>` was `overflow-visible`, so the line escaped the
+   panel and drew over the labels beneath it. **The students whose momentum
+   matters most were the ones whose line left the chart.** Proved arithmetically
+   before changing anything, and pinned by
+   `test_overview_momentum_percentages_are_never_rescaled`.
+2. **`labels` was `recorded_at[:7]`**, a year-month, so five papers in one month
+   rendered five identical ticks. This also blocked the migration outright: a
+   Nivo point scale keys on its label, and five points sharing one key collapse
+   into one. The x-axis is now the paper's ordinal, which is unique by
+   construction and matches the panel's own subtitle ("per corrected paper");
+   the date moved to the tooltip and the accessible label, which is where a date
+   is useful and an axis of five identical months never was.
+
+The wire now carries `points: [{recordedAt, percentage}]`. A **third** copy of
+the same transform was found and deleted in `web/scripts/capture_surface.mjs`,
+which had to render an SVG path because the DTO shipped one.
+
+### The grade panel's empty state could never fire
+
+`grade_distribution` returns *every* rung of `GRADE_ORDER` with zero counts
+included — deliberately, so a frontend never infers "nobody on a B" from a
+missing key. Which makes `length === 0` unreachable, so a class with nothing
+marked drew a full ladder of empty tracks with a 0 beside each: a blank chart
+wearing a chart's clothes, against §11's mandatory empty state. The test is now
+"every count is zero". Same shape P4.1 got right on the momentum panel by keying
+off `path === ""`.
+
+### Two defects only a rendered capture could find
+
+Both survived typecheck, lint, 1,304 unit tests and the design hook.
+
+- **A count axis asked for four ticks produced "0 0 0 1 1 1".** Nivo divides the
+  domain evenly and hands the fractions to `format`, so a class whose largest
+  grade bucket held one student got ticks at 0, 0.25, 0.5, 0.75, 1, which
+  `Math.round` turned into six labels reading as three duplicated integers. The
+  numbers were right, the formatter was right, and the axis was gibberish.
+  `BarChart` now uses whole-number ticks whenever every value is whole.
+- **The last x-tick clipped, and clipped into a different valid date.** The tick
+  is centred on the final point, which sits on the plot's right edge, so half
+  the label hung outside a 12px right margin. A cohort trend whose last point
+  fell on **11 August rendered an axis reading "Aug 1"** — not a smudge, not an
+  ellipsis, a plausible date ten days out, with the table three lines below
+  saying "Aug 11, 2026". Margin is now 28px.
+
+### The XP calendar: colour was the only channel the quantity arrived on
+
+The four-week heatmap was carefully built (four *named* bands rather than a
+continuous ramp, a distinct empty cell, exact numbers in `title` and
+`aria-label`), and the quantity still arrived in exactly one visual channel.
+Every reader who degrades that channel had a hover tooltip as their only route
+to a number. It is now a bar chart: height is not a colour channel, and the
+tooltips and labels carried over unchanged. The window's honest property
+survives and is restated in code — a day with no XP and a day the student never
+opened Lemely are the same zero-height bar, because they are the same fact.
+
+### §11 exceptions, logged rather than assumed
+
+§11's vocabulary (grid, axis, series, legend, tooltip) describes a plot in a
+coordinate space. Four things in this product are not that, and each stayed:
+
+- **The topic-weakness heatmap** (`ClassAnalytics`). Its no-data-vs-0%
+  distinction is the single thing on that screen that must not be got wrong, and
+  Nivo's heatmap has no notion of it. Trading that guarantee for a nicer
+  transition is not a trade worth making.
+- **"Weakest threads"** and **"This week, by source"**: labelled meters where
+  every row already prints its topic and its value as text. A meter is a visual
+  aid to a number that is stated; it is not a plot.
+- **`BoundaryBar`**: a positional scale, bespoke by design.
+- **`TrendSparkline`** in table rows (`ClassRoster`, parent `ChildOverview`): one
+  Nivo canvas per table row is a real performance cost, and a table cell is not
+  a chart. It keeps the SVG polyline.
+
+The grade distribution *did* convert, and the difference is the point: it has a
+category axis, a count axis and a per-bar tooltip that now states each grade's
+share of the cohort. `BarChart` grew a `colorFor` hook so the four `--grade-*`
+band colours survive the move — that colour is not a series key, it is the one
+colour relationship in this product a teacher actually learns.
+
+### Two screens no capture surface had ever claimed
+
+`ClassAnalytics` and `StudentDetail` carry the cohort trend and the at-risk
+trend, and **neither had a capture surface of any kind** — P4.10's finding one
+phase later. Both are now registered (`teacher-analytics`, `teacher-student`),
+with states that exercise the cases the charts exist for: a class that has
+marked nothing, a single-point trend, and a *descending* student trend, since a
+capture of a flat line would not test the panel's actual job. Writing the
+fixtures found one more: the invented grade ladder had nine rungs and
+`GRADE_ORDER` has seven. A fixture that does not match the wire is a fixture
+that can be wrong and look like a bug.
+
+---
+
+## D5.2 — Redesign Phase 5.1/5.2/5.4 (motion): the rule stated in units that nothing implemented, and an `!important` that did nothing
+
+Phase 5's three remaining parts. Four findings, three gates, and one scope
+decision stated rather than taken quietly.
+
+### 26 elements changed colour in a single frame
+
+DESIGN.md §9.2 is unusually specific: "Press: `scale(0.98)` over `dur-fast`.
+Hover: a colour or 1px translate shift over `dur-instant`." Twenty-six elements
+across the teacher portal, the admin portal, onboarding and four kit components
+changed colour on hover with **no `transition-*` utility at all**, so they
+snapped. There is no global `a { transition }` rule, and P4.6's
+`--default-transition-duration`/`-timing-function` only reach an element that
+already carries a transition utility — they made the *idiom* correct, not its
+absence.
+
+This is invisible from every automated direction and it is worth naming why:
+every class is real and resolves (`utilityExistence` is happy), every value is a
+token (the token gate is happy), the easing is never the banned one because
+there is no easing at all (`motionDefaults` is happy), and a screenshot of a
+hover state is pixel-identical whether it arrived over 120ms or over 0ms. Only
+the frames *between* two states are wrong, and nothing looked at those.
+
+So the deliverable is `tests/unit/hoverTransition.test.ts`, not 26 edits. The
+check parses **balanced class-expression groups** rather than lines, because the
+naive version reported `Button` as broken: its base holds the transition and its
+variants hold the hovers, twelve lines apart, entirely correctly. It also
+ignores hovers nothing can animate (`hover:underline`, `hover:cursor-pointer`),
+since demanding a transition for those is noise. One exemption, named with its
+reason: `nav-shells.tsx`, a build-era shell with no call site, due for Phase 6's
+compat closeout.
+
+### The result reveal needed the count-up to do the thing it refuses to do
+
+§9.3 lists "the marked-paper result reveal" in the celebration register, and
+`useCountUp` — correctly — refuses to animate a first observation, because there
+is no honest origin for one: a student's XP total did not just climb from zero,
+that is simply what it has been since before the screen mounted.
+
+But a marked paper is the one place where the value genuinely *did* arrive while
+the reader watched. They uploaded a script, waited through the marking, and the
+mark went from unknown to 63 in front of them. So `CountUp` gained an explicit
+`from`, and the honesty lives entirely in **which call sites may pass it**:
+
+- `PaperResult` reveals on its `live` path (the `location.state` `CorrectPaper`
+  sets right after marking) and **not** on the path that fetches a paper by id
+  from the history table, which is exactly the "already true since yesterday"
+  case the default exists for.
+- `PracticeResult` could not tell the two apart at all — it is always fetched by
+  `assignmentId` — so `PracticeSet` now navigates with `justSubmitted: true` and
+  the screen reveals only on that. A screen that cannot distinguish a result the
+  student waited for from one they reopened must not animate either.
+
+**No flourish, at any mark, deliberately.** Confetti would require the product
+to decide a mark is good, and it has no honest basis for that: any threshold
+makes its *absence* read as disappointment, and §9.3 rules celebration out on a
+dropped mark outright. A count-up is legible drama for a number the student has
+been waiting for; it is not a verdict on it.
+
+`celebration.test.ts` gates the whole shape: which path reveals, that the reveal
+is hero-only, that no unlisted file passes `from`, and — the part that makes the
+allowlist honest — that each listed file actually *gates* on evidence rather
+than revealing unconditionally. Verified by inversion on all four.
+
+### "A correct answer" has no honest moment in this product
+
+§9.3's fifth celebration is a correct answer, and it is not implemented, because
+nowhere does this product tell a student "that one is right" at the moment they
+answer. Every assessment path is submit-then-mark: practice sets submit and
+navigate, the placement test is a diagnostic, and flashcard review is
+**self-graded** (again/hard/good/easy), so celebrating there would be
+celebrating the student's own self-report. The celebration attaches to the
+result instead, which is what was built. Recorded rather than faked, same
+judgement as D4.4's leaderboard climb — which remains impossible, because no
+`previousRank` is on the wire and inventing the movement is still refused.
+
+### An `!important` that looked like it covered the case
+
+`index.css` carries a global `prefers-reduced-motion` block that flattens every
+CSS animation and transition, including `scroll-behavior: auto !important`. That
+rule appears to settle smooth scrolling permanently. It does not: per CSSOM
+View, a `behavior` passed **explicitly** to `scrollIntoView` takes precedence
+over the CSS property, and `"auto"` is the value that defers to it. The landing
+page's secondary CTA passed `"smooth"` literally, so a reader who had asked for
+no motion was scrolled across the whole page anyway — with an `!important` rule
+sitting directly above it appearing to prevent exactly that.
+
+`motionDefaults.test.ts` now asserts the global block's three declarations and
+that no source passes a literal `behavior: "smooth"` without reading
+`prefersReducedMotion`. Both verified by inversion.
+
+The rest of the JS motion audit came back clean, and is worth recording so the
+next pass does not redo it: `Reveal` reads the query at mount (deliberately —
+it must never leave an element at `opacity-0` if the observer never fires),
+`useCountUp` and `Flourish` read it per run, `useChartAnimation` reads it *live*
+because a chart outlives a scroll entry, and the only other two
+`requestAnimationFrame` call sites — `Modal` and `NavDrawer` — defer focus
+rather than animate.
+
+### Scroll entries stayed in the Persuade lane, and that is a decision
+
+REDESIGN-MISSION §5.1 says "sweep every surface with the motion spec: scroll
+entries with stagger". Taken literally that means fade-up-on-scroll on every
+dashboard, and it is **not** what shipped. `Reveal` remains scoped to the
+marketing lane.
+
+The reasoning, stated so it can be overruled rather than discovered later:
+DESIGN.md §9 opens with "Baseline is **invisible**. The user should feel the
+interface is responsive, not watch it perform"; §2's lane model separates
+Persuade from Operate; impeccable's Operate mode ranks scanability and task
+speed above expression; and the project's named north star, Notion, has
+essentially no scroll-entry animation inside the product. Content that fades in
+as you scroll delays reading, on a product whose users are revising. Every
+surface was considered against the spec; the Operate and Read lanes were
+excluded on purpose rather than skipped.
+
+If the intent was literal, this is one prop on a handful of screens and is
+cheap to reverse.
+
+### Press feedback, three controls
+
+`Tabs`, `Stepper` and `FileDrop` are real press targets that had no press
+state — on a tab, the only thing confirming a tap was the panel changing
+underneath. All three now carry §9.2's `scale(0.98)`. `FileDrop` takes it only
+when unlocked: a locked target that springs back tells the reader it accepted a
+tap it is going to ignore.
+
+---
+
+## D6.1 — Redesign Phase 6.1 (adapt): the gate that could not fail, and a touch floor that was nowhere
+
+Phase 6's first part. §6.1 asks for every page verified at 320/375/414/768 and
+desktop, with five hallmark mobile non-negotiables enforced. Two of the five
+turned out to be unimplemented product-wide, and one of the two was being hidden
+by another that *was* implemented.
+
+### `checkNoHorizontalScroll` has been vacuous since Phase 2
+
+`scripts/audit.mjs` carries a function whose own docstring calls it "MISSION
+§11's no horizontal scroll at any breakpoint from 320px up as a real,
+non-optional check rather than something only a screenshot review would catch".
+It opened with a guard clause:
+
+    const { scrollWidth, clientWidth } = ...documentElement...
+    if (scrollWidth <= clientWidth + 1) return null
+
+Phase 2 added `overflow-x: clip` to html and body in `index.css`. That is itself
+one of the non-negotiables and it is correct. But clipping suppresses the very
+scroll the guard measured, so from that commit `documentElement.scrollWidth`
+could never exceed `clientWidth`, the function returned `null` for every route
+at every breakpoint, and the DOM walk beneath it — the part that names the
+offending elements — became unreachable code.
+
+Measured rather than reasoned about. A 900px div in a 320px viewport:
+
+| | scrollWidth | clientWidth | guard fires | element's own right edge |
+|---|---|---|---|---|
+| without `overflow-x: clip` | 900 | 320 | yes | x=900 |
+| with `overflow-x: clip` | 320 | 320 | **no** | x=900 |
+
+Every "no horizontal scroll at 320/375/1440" claim in the ledger from Phase 3
+onward rests on this function. Those claims are not necessarily wrong — the
+re-measure below found only two violations — but they were not evidence.
+
+This is D5.2's shape exactly one phase later: a rule that looks like it covers a
+case and does not, because a second correct rule changes what the first one can
+observe. Two non-negotiables, each right on its own, one silently disabling the
+enforcement of the other.
+
+The fix reads element geometry, which clipping does not touch, with an ancestor
+exemption so a table or scroller deliberately clipping its own children is not
+reported as page overflow. html and body are excluded from that exemption on
+purpose: their clip is the mask being seen through. It costs a DOM walk on the
+clean case, which is the price of a check that can fail.
+
+Note the failure mode changed too, not just the measurement. With the clip in
+place there is no scrollbar to find: content is simply cut off the side of the
+page with nothing telling the reader it is there. Silent truncation is worse
+than a scrollbar, because a scrollbar is an affordance.
+
+### The 44x44 touch floor was implemented nowhere
+
+`scripts/adapt_audit.mjs` (new) walks all 35 registered capture surfaces at
+320/375/414/768/1440 — 745 page-states — and measures the non-negotiables
+instead of photographing them. Four of the five are invisible in a picture,
+which is why five phases of visual review never surfaced this.
+
+Interactive heights across the product measured 20, 24, 27, 28, 32, 33, 34, 38
+and 40px. The kit's **default** button was 34px, so the most common control in
+the product missed the floor by ten pixels on every phone, on a product whose
+own brief says students live on phones.
+
+The floor is keyed on `(pointer: coarse)`, not on a width breakpoint, because it
+is a finger rule. A 375px-wide desktop window is not a finger, and the teacher
+and admin portals are deliberately DENSITY 7 (§3.3) for a mouse; widening their
+table controls on a narrow desktop window would be a regression dressed as a
+fix. The gate emulates the same thing rather than inferring it from width —
+verified in both directions before the rule was written: Chromium with
+`hasTouch: true` reports `(pointer: coarse)` true and `(pointer: fine)` false.
+
+Two carve-outs, both deliberate and both stated in the CSS:
+
+- **Links inside a sentence** are `display: inline`, and `min-block-size` has no
+  effect on a non-replaced inline box, so prose links keep their line height and
+  stay exempt. That is the same carve-out WCAG 2.5.5 makes, for the same reason,
+  and here it falls out of the cascade rather than needing a selector.
+- **Checkbox and radio inputs are excluded, and the exclusion is load-bearing.**
+  Both render the real input as `absolute inset-0 h-full w-full` inside an 18px
+  painted box (the `appearance-none` technique that keeps the native control in
+  the accessibility tree). A 44px floor on the input would not enlarge the box;
+  it would leave a 44px invisible hit area hanging 26px below an 18px control,
+  overlapping whatever sits under it — in a radio group, the next option. That
+  turns a tap on one choice into a tap on another, which is worse than the
+  defect being fixed. The floor goes on the label row, which is what a person
+  aims at. Found by reading the components before shipping the rule, not by
+  measuring afterwards.
+
+### `overflow-wrap` was absent product-wide, and the clip rule hid it
+
+No display rung, and nothing else in `src/`, set `overflow-wrap` anywhere. A
+display heading is the largest type on the page and the most likely to hold
+something unbreakable — a school name, an email address — and at 320px one long
+token is wider than the viewport.
+
+The two non-negotiables interact, which is the point worth carrying forward:
+implementing `overflow-x: clip` without `overflow-wrap` does not produce a
+scrollbar you can find, it produces a heading with its end cut off and nothing
+saying so. Implementing one alone makes the absence of the other invisible.
+
+`anywhere` rather than `break-word`, deliberately: only `anywhere` participates
+in min-content sizing, which is what lets a heading inside a grid or flex track
+actually shrink. `break-word` breaks the glyphs but leaves the track sized to
+the unbroken word, so the overflow it is supposed to prevent survives.
+
+The **data** rungs are deliberately excluded and the gate's selector was
+narrowed to match after one run. They carry marks, percentages and XP, where a
+break would split "128" across two lines and read as a different number. No
+value that short can overflow; if one ever does, the geometric check reports it
+as overflow, which is the honest signal. A wrap rule there would make a wrong
+number look intentional.
+
+### Three grid templates, and one that nothing used
+
+`grid-subject-ledger` was written correctly in P4.1 with `minmax(0, 1fr)` and a
+comment explaining why. The three build-era templates beside it used a bare
+`1fr`, whose `auto` minimum is the classic refusal-to-shrink. `grid-subjects-row`
+was deleted rather than fixed: zero call sites product-wide, and the comment
+claiming un-migrated screens still referenced it stopped being true when Phase 4
+migrated the last of them.
+
+### Two real overflows at 320px
+
+- **The parent portal header, in every state.** The brand lockup plus the child
+  switcher, Settings and Sign out are wider than the 288px the row has between
+  its own padding. Because html and body clip, Sign out was not merely awkward
+  there: it was off the side of the screen, unreachable, with nothing on screen
+  to say it existed. The row wraps now.
+- **`Subject`'s `min-w-80`.** 320px of minimum column plus the screen's own
+  horizontal padding is wider than a 320px screen, by construction. The intent
+  was "keep this column beside the cards until there is no longer room for
+  both", which is what a flex *basis* says; a min-width also forbids the column
+  from ever being narrower, which is not what was meant.
+
+### Two-line clickable text, and where the rule has to yield
+
+§6 bans a clickable label breaking across lines — P4.7's "See" / "the roll" is
+the canonical case, where the second line reads as a separate control. Fixed:
+the admin sidebar's two footer links (each one long sentence in a 219px column,
+so they broke at every width from 320 to 768), "See all" on the parent overview,
+and the "Target grade" sort header.
+
+The remaining cases are a different thing and are exempted explicitly rather
+than quietly: a link whose text is a class name, a quiz title or a syllabus
+topic is **content the school typed**, and the only ways to keep it on one line
+are to truncate it or let it overflow. Both cost the reader information the
+product does not own and cannot shorten. Those opt out with a
+`data-wraps-content-title` attribute, so the exemption is visible in the source
+of the screen taking it rather than buried in a list nobody reading the JSX
+would find.
+
+### One list, not two
+
+`adapt_audit.mjs` imports `SURFACES` from `capture_surface.mjs` rather than
+restating it, and `capture_surface.mjs` became importable to allow that. P4.10's
+finding was that a hand-maintained gate list is a list some screen is missing
+from; a second copy of a 35-entry registry is that finding waiting to happen.
+
+### Gate
+
+`tests/unit/adaptRules.test.ts`, 9 tests, **verified by inversion**: reinstating
+the `scrollWidth` guard, reverting a grid track to a bare `1fr`, dropping one
+display rung from the wrap rule, and re-keying the touch floor to a width
+breakpoint each fail exactly the intended test (the last fails two, correctly).
+
+The last test is the one that matters. The vacuous-gate defect cannot be caught
+by asking whether a check exists — it did exist and it ran. It can only be
+caught by pinning the *shape* that made it vacuous, so the gate asserts that
+neither audit script compares `scrollWidth` to `clientWidth`, and that both
+still call `getBoundingClientRect`. The cheap guard looks entirely reasonable,
+which is how it survived four phases.
+
+### Correction, found while verifying this record rather than trusting it
+
+**The pin above did not do what this section says it did, and the inversion that
+"verified" it was the reason.** Its first draft matched
+`/scrollWidth\s*<=?\s*clientWidth/` — the *destructured* spelling the original
+guard happened to use, because the original read
+`const { scrollWidth, clientWidth } = ...`. It was then inverted against that
+same spelling, which is the one shape it could see. Measured, not argued:
+
+| Reinstated guard | Pin fires |
+|---|---|
+| `if (scrollWidth <= clientWidth + 1) return null` | yes |
+| `if (el.scrollWidth > el.clientWidth) return null` | **no** |
+| `if (doc.clientWidth >= doc.scrollWidth) return null` | **no** |
+| `if (document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1) return null` | **no** |
+
+Three of the four are the identical defect, one property access or one flipped
+operator away, and the fourth is the *literal original line* with its receiver
+written out instead of destructured. So the gate caught a verbatim revert and
+nothing else, while its own docstring claimed it caught "ANY check gated on the
+difference between them".
+
+This is D6.1's own finding one level up. The section above is about a rule that
+looks like it covers a case and does not; the check written to stop that
+recurring had the same property, and an inversion pass agreed with it because
+inverting against the one spelling you already have in mind cannot discover the
+spellings you do not. **An inversion proves a gate fires on the case you
+inverted. It is not evidence about the case class.** That is the reusable part,
+and it applies to every "verified by inversion" claim in this file.
+
+The pin now matches either identifier order, any comparison operator, and any
+receiver, within a single statement, and is inverted against all four rows of
+the table above — each fails exactly one test, and the clean tree passes 9/9.
+
+---
+
+## D6.2 — Redesign Phase 6.1, second pass: the gate was aiming at the wrong element
+
+D6.1 recorded the `adapt` work as though it were finished. It was not: the
+record was written, the gate was never run to green, and `STATE.md` still had
+Phase 6 as PENDING. Running it produced **198 findings** (156 `smallTarget`,
+42 `tightPair`).
+
+Three of the four defects below are in the gate itself, not the product. That is
+worth stating plainly, because D6.1's whole subject is a check that could not
+fail, and the check written to replace it shipped with three ways of being
+wrong about its own subject.
+
+### It reported the product's largest tap target as its smallest, 40 times
+
+`FileDrop` binds **two** labels to one input: a 13px caption ("Scanned paper")
+and the drop zone, which is the thing a finger lands on. `aimedAt` resolved the
+label with `querySelector`, which returns document order, so it picked the
+caption every time.
+
+Forty of the 156 findings were the paper-upload control on the flow the whole
+product exists for, reported at 83x13 while the real target beside it was
+several hundred pixels wide. Choosing by area rather than by document order is
+what makes the answer independent of markup order:
+
+| | picked | measured |
+|---|---|---|
+| `querySelector` (before) | caption | 83x13 — fails |
+| largest bound label (after) | drop zone | passes |
+
+`correct-paper` went from 40 findings to 0 with no product change at all, which
+is the tell: nothing was wrong on that screen.
+
+### It reported a box as "44" and failed it for being under 44
+
+The comparison ran on the raw float and the finding printed `Math.round`. A link
+hand-padded to 43.7px was reported as `44`, i.e. as a finding that appears to
+contradict its own rule. Findings now print tenths. That single change is what
+made the next defect visible.
+
+### It gave a different answer on identical runs
+
+Three consecutive runs of `teacher-analytics` returned one finding, then two,
+then a different element — always in a transient `loading` state, always at
+43.95-44.0 on an element whose CSS floor is exactly `min-block-size: 44px`.
+Chromium lays out in 1/64px LayoutUnits, so a 44px box measures fractionally
+under depending on the offset it lands on.
+
+A gate whose result changes between identical runs is worse than the vacuous one
+it replaced: that one was at least consistently wrong, whereas this teaches
+people to re-run until it passes. Fixed with 0.5px of tolerance, pinned so it
+cannot be widened, and applied to the spacing rule as well — a control that
+clears the size rule must not still count as `tiny` for spacing.
+
+The genuine 43.7px miss is still caught, with 0.3px to spare. Every other real
+finding was 20px or shorter.
+
+### A waiver that covered one rule and not the other
+
+The last 30 findings were all one control: the six-box OTP row, which carries
+`data-touch-floor-exempt` with a stated reason. The gate honoured that waiver
+for the size rule and then failed the same six inputs on **spacing**, 30 times.
+
+The two are the same arithmetic. Six 44px boxes plus five gaps need 284px and
+the card offers ~248px at 320px; that is why the boxes are under-width, and it
+is equally why they sit 4px apart. No edit could have cleared those 30 findings
+without undoing the reason the exemption exists.
+
+Now honoured on both rules, but only when **both** sides share the same waiver:
+one exempt control crowding an ordinary one is still a real mis-tap risk, and
+the reason written on the OTP row is about the digit boxes among themselves,
+where a mis-tap lands on an adjacent digit and is visible and recoverable. It is
+reported as `exemptPair`, never dropped, on the same principle as
+`exemptTarget`.
+
+### The product defects underneath
+
+Once the gate was measuring the right things, what was left was real:
+
+- **`py-[11px]` is not a 44px floor.** 21.7px of line plus 22px of padding is
+  43.7px. Two call sites (the review queue's student link, the study-plan topic
+  link) had been tuned by hand to a number that depends on the rung's
+  line-height, so it was right for neither. Both now state `min-h-11` and centre
+  their content. `truncate` moved to an inner span at the same time: on a flex
+  container the text is an anonymous flex item and `text-overflow` has nothing
+  to apply to, so the ellipsis would have silently stopped working.
+- **The bulk-approve checkboxes were 18px wide.** `Checkbox` in a table cell
+  carries an `aria-label` and no visible text, so the label row the floor sits
+  on collapses to the width of the painted box — a target twice as tall as it is
+  wide, in the one place a teacher taps repeatedly. The inline axis is now
+  floored on the label row too, which is a no-op on every labelled checkbox in
+  the product.
+- **The only way out of a class on a phone was 19.5px tall** (`← All classes`).
+- Inline-axis misses on three standalone controls that had been given the block
+  axis and not the inline one: breadcrumb crumbs (34px), the landing sign-in
+  links (41px), the parent overview's "See all" (38px). Centred where they sit
+  mid-row, end-aligned where the row ends, so the extra width does not shift the
+  label off the edge its heading aligns to.
+
+### What this pass did not change
+
+The three impeccable design-hook findings on `index.css` are left as they are,
+and deliberately: `--ease-spring` / `--ease-celebrate` overshoot **on purpose**
+(§4's celebration register, and `celebration.ts` says so at the token), and
+`ruled-bg` / `dotted-bg` are §4's notebook texture, which §1 names as the one
+protected quality of this entire redesign. §3 says this mission's text wins over
+a skill's when they conflict, and here they conflict. Not suppressed either: a
+waiver needs the human, and this ran unattended.
+
+### Gate
+
+`adaptRules.test.ts` is 14 tests, up from 9. The three new pins are verified by
+inversion **against the spelling that would actually be reached for**, per
+D6.1's own correction: reverting to `querySelector`, widening the tolerance to
+2px, and relaxing the pair waiver to "either side is exempt" each fail exactly
+one intended test.
+
+The reusable part is narrower than "run your gates". It is that a gate reporting
+zero and a gate reporting nonsense are both consistent with a green ledger row,
+and the only thing separating them is looking at what it named.
+
+---
+
+## D6.3 — Redesign Phase 6.2 (harden): the run was never lost, only the thing reporting it
+
+Phase 6.2 is `harden`, and REDESIGN-MISSION §6.2 names one flow outright: the
+paper upload and marking wait, "that flow has real latency; design the waiting
+experience, progress feedback, and failure recovery properly". Two findings came
+out of it. Neither was a styling job, and neither was where the audit said to
+look.
+
+### Audit M4: `UploadStatus.processing` had never been written by anything
+
+`CorrectPaper.tsx`'s own docstring has carried M4 since P4.2 — "the marking run
+lives in component state, so a refresh mid-run loses it" — deferred to this
+phase with a note that the honest fix was architectural, as it had been for the
+teacher console (D6.13, build era: marking became a server-side job the console
+polls).
+
+**The premise was wrong, and that is the finding.** A refresh never lost the
+marking. `POST /student/correct` does its work on a background thread that does
+not stop when the client disconnects, and it persists the attempt, marks the
+upload complete, awards the XP and sends the notification regardless of whether
+anyone is still reading the stream. A student who reloaded had a paper that
+*would be marked*, and no way to find out.
+
+What was missing was much smaller and much worse: **nothing recorded that a run
+was in flight.** `UploadStatus.processing` shipped in the very first migration
+and **no code path in the product had ever written it.** An upload went
+`pending` at creation and jumped straight to `complete`/`failed` at the end of
+the run, so for the entire duration of the marking — the minutes this whole
+feature is about — the database said `pending`, which is also exactly what it
+says about a scan somebody uploaded and abandoned.
+
+Two things followed from that, and only one of them was known:
+
+- **The reload could not recover** (M4), because there was no state to recover
+  *from*. This is why the fix looked architectural: with the status unwritten,
+  the only remaining evidence of a run really was in the browser tab.
+- **The platform console's "Uploads in flight" was `pending + processing`**,
+  i.e. entirely `pending`, i.e. every scan any student had ever uploaded and
+  not marked. Nothing clears it. The figure could only grow, and the one
+  question that panel exists to answer is "is anything stuck?". It is
+  `processing` alone now, which returns to zero when marking stops — which is
+  what makes a non-zero reading mean anything — and `pending` is reported
+  beside it as what it is, "uploaded and never marked".
+
+Recovery is then a read, not an architecture: `GET /student/uploads/active` and
+`GET /student/uploads/{paperId}`. Two endpoints rather than one, because they
+end differently — `active` stops naming a paper the instant it reaches a
+terminal status, so a client polling only that would watch its run vanish and
+never learn whether it was marked or failed. Discovery finds it; polling
+follows it.
+
+Three things the recovered screen deliberately does not do:
+
+1. **It does not redraw the stage panel.** The SSE frames go to a
+   process-global bus with no replay, so a recovered reader knows the run is
+   going and nothing else. Ticking the three stages off from a status word
+   would be the invented progress S-14 rules out by name. It renders prose.
+2. **It does not re-POST `/correct`.** That would start a *second* marking run
+   over the same scan: double spend against a hard-capped Gemini budget, a
+   second attempt row, and — because the bus is global and single-stream —
+   cross-talk between the two readers. It polls, and the start control is
+   disabled for the duration.
+3. **It does not animate the result.** A recovered run that finishes navigates
+   without the `live` state, so `PaperResult` does not play §9.3's reveal. The
+   reveal is for a figure that arrived while this reader watched it; a paper
+   marked before the reload is not that.
+
+`stale` is the fourth piece and is computed server-side, because the server owns
+the clock the timestamp came from. A row can only stay `processing` if the
+process holding it died, and nothing will ever come back to finish it, so past
+`MARKING_RUN_STALE_AFTER` (20 minutes, far beyond a real run) the screen stops
+saying "still marking" and starts offering to start again. `startedAt` is the
+row's `updated_at`, which needs no migration and is exactly "when the status
+last changed" — meaningful while processing and offered for nothing else.
+
+One capability fell out of it that could not have worked before: **after a
+reload there is no `File` object, and the scan is still on the server**, so
+`canRetryInPlace` is the real test of whether marking can start. Requiring the
+local file is what made a stopped run a dead end.
+
+### The failure-copy family was never closed, and this is the sixth time
+
+The same sweep found **fifteen live sites rendering an `Error`'s own `message`
+to a reader** — after five previous phases each reported the family closed
+(P4.2 the marking stream, P4.4 friends, P4.5 the teacher portal's 44 sites,
+P4.6 the parent portal, P4.7 auth).
+
+The mechanism is worth more than the count. **The outcome modules were written
+surface by surface, and a screen redesigned before its module existed was never
+revisited.** `studentOutcome.ts` arrived on surface 10. `Overview` and
+`PaperResult` are surfaces **1 and 2** — the student's two most-read screens —
+and both still answered a dropped connection with the browser's "Failed to
+fetch". Nothing connected those two facts because nothing was looking.
+
+Also found: every student `ErrorState` on the flashcard, practice and study-plan
+screens (8 sites), both quiz-taker paths, the teacher grading console's stage
+failure, and two in `CameraCapture` where the leaked text was **pdf-lib's** —
+so a student who photographed a paper page by page and pressed done could be
+told "Input image is not a JPEG", about a file they never chose, at the end of
+the longest piece of work the product asks of them.
+
+`studentActionFailureMessage` is new and is a third helper rather than a call
+site of the second, for a stated reason: `STUDENT_SAVE_REJECTED` leads with
+"Nothing you typed has been lost", which is the right reassurance for a form and
+a confusing one after a button press where nothing was typed. It also keeps the
+action in the sentence, because two different actions can fail on one screen and
+a reader told only that something went wrong has to guess which.
+
+### Gates
+
+`tests/unit/failureCopy.test.ts` is the deliverable, not the fifteen edits. It
+**walks `src/` rather than reading a file list** — P4.10's finding was that a
+hand-maintained list is a list some screen is missing from, and that is precisely
+the mechanism that let this survive five fixes. A new screen is covered the day
+it is written.
+
+Its own first draft was wrong in the instructive direction: it matched any
+`.message` reaching a render and reported `setQuietError(result.message)` in the
+notification settings, where `result` is this codebase's own quiet-hours
+validator and its message is a sentence written for that exact reader. **A gate
+that reports good copy teaches people to route good copy through an outcome
+module to make a test go quiet**, which is worse than the defect. It now
+requires an error-shaped receiver, and it found a sixteenth site the manual grep
+had missed on the way. One rename fell out of it — `toggleError` held
+already-converted copy, so it is `toggleFailure` now, which is both what it is
+and unambiguous to the check.
+
+`tests/unit/uploadRun.test.ts` pins the recovery decision as *logic*, not as
+source text: `runPhase`/`canStartRun` live in `lib/uploadRun.ts` precisely so
+the web runner (`environment: "node"`, no jsdom) can test them, because a
+source-reading gate cannot tell a rule that works from a rule that still has the
+right words in it. The two rules that are not expressible as a function — never
+re-run a recovered paper, never redraw progress it cannot know — are read off
+the source and **stated as the weaker evidence they are**; the behavioural proof
+is in the Python suite, against a real database and a real run.
+
+Six new backend tests, and both halves verified by inversion: removing the
+`processing` write fails exactly the two tests about it, and widening
+`get_active_run` to include `pending` fails exactly the one about that. Three
+inversions on the web side each fail exactly one intended test.
+
+### What this did not change
+
+The event bus is still process-global and single-stream, and `sse.py` still says
+so in a warning. Recovery is designed around that constraint rather than
+fixing it — polling instead of re-attaching is what makes a second reader safe
+today. Fixing the bus is a backend change with no design content, and it is not
+what §6.2 asked for.
+
+### The long-content pass, and the row that lost its own button
+
+§6.2 also asks for a long-content pass, and the adapt gate does not give one:
+its `badWrap` rule checks that display headers *carry* `overflow-wrap`, which is
+a statement about CSS, not about what a long string does to a layout. Nothing in
+the capture corpus had ever rendered one — every fixture name is "Amina Farouk".
+
+The state added here is aimed rather than general: the teacher review queue's
+student cell, because P6.1 had just moved its `truncate` onto an inner span (on
+a flex container the text is an anonymous flex item and `text-overflow` has
+nothing to apply to). A long name is the only thing that can show whether that
+landed.
+
+What it showed was worse than a missing ellipsis. The table is `w-full` with the
+default `table-layout: auto`, so a long name **grows its own column**: at 1440,
+one student's name widened the student cell by roughly 170px and pushed the
+per-row **"Review →" button off the right edge of the card**. The action every
+row exists for became unreachable without horizontal scrolling, on a desktop
+screen with room to spare, because of one name.
+
+Neither existing gate can see it. The adapt gate's overflow rule exempts an
+element whose ancestor establishes its own clipping or scrolling context — which
+is correct, and is exactly what the `overflow-x-auto` table wrapper is — so a
+row scrolling inside a deliberately scrollable region is not page overflow and
+should not be reported. The defect is not that something overflowed; it is that
+*the primary action left the screen*, which is a layout judgement no geometric
+check makes.
+
+Fixed with a character measure on the cell (`max-w-[20ch]`, a count of glyphs
+rather than a spacing value, same exemption as `CorrectPaper`'s `max-w-[60ch]`).
+The first attempt used 30ch and **did not bind** — the name truncated and the
+table still grew past the card, which is worth recording because the capture is
+the only reason that was visible. 20ch is about the column's own natural width,
+so ordinary names never reach it.
+
+### A file in neither gate list, again
+
+`src/components/CameraCapture.tsx` was in neither `rtlSafety.test.ts` nor
+`utilityExistence.test.ts`. This is surface 10's mechanism for the third time —
+"a screen no surface claims is a screen no gate reads" — and here it is not a
+screen but the camera half of the flow the whole product exists for.
+
+Adding it found a defect on the first run: `left-1` on the page-number badge,
+against §3.4's RTL rule, so in a right-to-left layout the page number would sit
+at the far corner from where the eye starts. One line, and it had been sitting
+in an unread file since the build era.
+
+The pattern is now three-for-three: every time a file has been added to these
+lists, it has failed something. That is an argument for the lists being the
+wrong shape, and `failureCopy.test.ts` and `chartTheme.test.ts` both walk the
+tree instead. Converting the other two is not a Phase 6.2 job, but it is the
+right Phase 7 note.
+
+---
+
+## D6.4 — Redesign Phase 6.3 (optimize): the report was stale, the render-blocker was 403 bytes, and the lazy image could not be made lazy
+
+Phase 6.3 is `optimize`, and REDESIGN-MISSION §5 lists six things:
+transform/opacity-only animation, no blur on scrolling content, the z-index
+scale respected, lazy images (WebP/AVIF), skeletons that reserve space
+(CLS < 0.1), and a font-display strategy. Two of the six were already true, one
+was true for a reason nobody had written down, and the three that were not led
+somewhere other than where they pointed.
+
+### 0. The correction that has to come first: I built on a stale report
+
+There was a Lighthouse corpus at `reports/phase-6/`, and it said this:
+
+    teacher-quiz-detail   CLS 0.2427   cause: "Web font loaded"
+    teacher-schemes       CLS 0.1807   cause: "Web font loaded" (x2)
+
+That is two routes at 2.4x and 1.8x §6.3's stated CLS ceiling, with a single
+named cause. I noted its date (2026-08-12, before Phase 5's charts and all of
+Phase 6), said out loud that it was a hypothesis and not evidence, and then
+**wrote the font-preload plugin before measuring.**
+
+Running the audit against HEAD says something different:
+
+    41 routes, 0 over CLS 0.1.
+    Worst: student-overview 0.0982. Second: student-announcements 0.0242.
+    teacher-quiz-detail: 0.0000. teacher-schemes: 0.0000.
+
+The stale corpus names `instrument-serif-latin-400-normal-*.woff2`. Phase 2
+replaced that face with Newsreader and **the font that caused the 0.2427 has not
+been in the bundle since**. The crisis was three phases dead.
+
+Two things follow, and the second matters more than the first.
+
+**The work still stands, for a smaller and better-stated reason.** The one
+remaining CLS failure is on the student dashboard, the product's most-visited
+screen, and every shift Lighthouse attributes on that page has the same cause —
+"Web font loaded", naming Newsreader, Caveat and JetBrains Mono landing together
+on the Momentum panel. 0.098 on surface 1 is worth removing. It is not what I
+started out believing I was removing, and the record says so.
+
+**Build-era D6.9 warns that this number is not reproducible**, and it applies to
+my own measurement, not just to the stale one: "the shifts only count when the
+skeleton paints before the data arrives, so a fast run hides them entirely."
+A single run cannot distinguish *fixed* from *fast*. So the honest defence of
+the preload is not the after-number — it is that a preload **removes the race
+rather than winning it**. The face is discovered in the HTML instead of three
+steps into the CSS, so there is no window in which the fallback is painted and
+then replaced. That argument does not depend on which run you look at.
+
+### 1. The largest render-blocker in the product was 403 bytes and nobody's code
+
+`render-blocking-insight` failed on **41 of 41 routes**. It names two resources.
+The first is the stylesheet, which has to block. The second:
+
+    http://127.0.0.1:4173/registerSW.js    403 bytes    301ms
+
+`vite-plugin-pwa`'s default `injectRegister: "auto"` emits
+`<script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script>` as the
+last thing in `<head>` — no `defer`, no `async`, not a module. So it is
+parser-blocking, and the parser has not reached `<body>` when it stops. 403
+bytes whose entire job is to register a service worker that has nothing to do
+until well after first paint, delaying first paint on every route in the
+product, for the whole redesign.
+
+`injectRegister: "script-defer"`. One line, all 41 routes, and nothing about
+when the worker becomes useful changes.
+
+This one is worth naming as a shape rather than a bug: **it was in nobody's
+diff.** Every gate this build runs reads code the project wrote. This was
+generated at build time by a dependency's default, and the only thing that could
+ever have seen it was a measurement of the built artifact.
+
+### 2. "Lazy images" could not be done by making the image lazy
+
+§6.3 asks for lazy images. The product has one content image worth the name —
+the teacher grading console's per-paper scan thumbnail — and `loading="lazy"` on
+it would have done **nothing**, because the bytes are not fetched by the image
+element. `useScanPreview` calls `fetchBlobUrl("/papers/{id}/preview")` and hands
+the resulting `blob:` object URL to `<img src>`. By the time the element exists
+the download has happened; a `blob:` URL is local and there is no request left
+to defer.
+
+That matters more than an ordinary lazy-loading miss, because the endpoint is
+not a static file. `GET /papers/{id}/preview` opens the stored scan with PyMuPDF
+and **renders page 1 to a PNG on demand**, and `GET /papers` is unpaginated
+(`"""Return every tracked paper as grid cards"""`), and every card mounts its
+own hook. Opening the console re-rendered every scan the school has ever
+uploaded, server-side, at once, to fill a 64px strip most readers never scroll
+to.
+
+The cost was known and answered in the wrong place. The endpoint's own comment
+reads: "every step up costs a bigger payload on every card in the grid at once
+(96 dpi produced a 320KB PNG per paper)" — so the fix applied was to shrink the
+image rather than to stop asking for it.
+
+`useInViewOnce` + `useScanPreview(paper.id, nearViewport)`. The deferral is on
+the fetch, which is where the request actually is. It fires a screen-height
+early, because a lazy fetch whose point is that the image is *there* when the
+reader arrives must not trade an over-eager grid for a visibly empty one — an
+empty thumbnail on this card is also what a scan that failed to render looks
+like. It fails **open** (no `IntersectionObserver` → fetch immediately),
+restoring exactly the old behaviour rather than a grid of permanent blanks.
+
+`Reveal` was deliberately not folded into the new hook. It runs the same
+mechanism with a different policy — it fires when an element is genuinely on
+screen and slightly past it, and it is short-circuited by
+`prefers-reduced-motion`, which is load-bearing there and meaningless here (a
+reader who wants less motion still wants their thumbnails). Merging them would
+mean one call site silently inheriting the other's timing.
+
+### 3. The z-index scale was a gate that had never existed
+
+`index.css` has carried this comment directly above the scale since Phase 2:
+
+    /* A raw z-index outside this scale is a gate failure. */
+
+No gate read it. Four raw values had accumulated, and the scale was being spelled
+two ways at once (`z-nav` in three files, `z-[var(--z-index-sticky)]` in ten).
+
+Three of the four were in kit components no screen renders. **One was live**:
+`ConfidenceIndicator`'s per-question tooltip declared `z-10`, which is
+`--z-index-sticky`'s value — a floating layer sitting in the band this product
+reserves for sticky table headers and portal top bars, i.e. the two things most
+likely to be over it. Every other floating layer in the kit (`popover.tsx`) was
+already in the dropdown band. It is live on `PaperResult` and `PracticeResult`
+via `QuestionRow`, which is the screen a student reads their marks on.
+
+Nothing could have caught it. `z-10` is a real Tailwind utility emitting a real
+rule, so `utilityExistence.test.ts` sees a class that resolves and the token gate
+sees no raw colour. It resolves to the **wrong** thing rather than to nothing,
+which is D4.6's shape and not D4.1's.
+
+All ten `z-[var(--z-index-*)]` were converted to the named utilities as well, so
+the rule the gate enforces is one vocabulary rather than two spellings, and
+`z-dropdown`/`z-nav`/`z-sticky`/`z-modal` were each verified to emit real rules
+in the shipped bundle (`.z-dropdown{z-index:30}`) rather than assumed to.
+
+### 4. The blur exception had one permitted value and the product used two
+
+§3.2 item 6 bans glassmorphism with one carve-out: a subtle `backdrop-blur` on
+the navbar, never on scrolling content. Four top bars use it. Three app shells
+declared `backdrop-blur-[10px]`; the marketing header declared
+`backdrop-blur-sm`, which is 8px in Tailwind v4. Both are arbitrary values
+outside the token block, for a rule that permits exactly one thing.
+
+Also: the marketing header sat at `z-sticky` while the three app shells sat at
+`z-nav` — four bars doing one job in two bands, with the odd one out in the band
+`table.tsx` reserves for sticky table *headers*.
+
+`--blur-nav: 10px`, so `backdrop-blur-nav` is greppable and anything else is not;
+marketing moved to `z-nav`. The comment above it claimed to be "the one permitted
+`backdrop-blur` in the whole product" when there are four. Corrected in place.
+
+### 5. `unicode-range` made nine font subsets free, and the service worker paid for them anyway
+
+Every `@font-face` @fontsource emits carries a `unicode-range`, so a browser
+rendering English never requests the Cyrillic, Greek or Vietnamese subsets. They
+cost nothing **precisely because they are never fetched**.
+
+The precache glob named all nine by filename. A service worker install does not
+consult `unicode-range`; it fetches what the manifest lists. So every student's
+first visit downloaded **187KB of glyphs no English page in this product can
+display**, most of them on a phone on mobile data.
+
+`globIgnores` on the non-latin subsets: precache 146 → 137 entries,
+2621 → 2435 KiB, a 186 KiB drop that matches the measured figure.
+
+The trade is stated rather than hidden. Online nothing changes — the browser
+still fetches one of these the moment a glyph needs it, e.g. a student whose name
+is not in latin. Offline, such a name renders in the fallback face. Precache is
+the app *shell*, and a subset reachable only through particular user data is not
+shell.
+
+One thing I got wrong on the way and corrected by looking: the three PWA icons
+appear **twice** in the precache manifest, which I first read as 267KB of
+duplicated download. They carry identical revisions, so Workbox collapses them.
+137 entries, 134 unique. Not a defect, and the 534KB I had written down was my
+double-count and not the browser's.
+
+### 6. The two items that were already true, and why one of them was luck
+
+**Transform/opacity-only (§9.2) is clean.** Every `@keyframes` in `index.css`
+animates `opacity` and `transform` and nothing else, verified by extracting the
+animated property names rather than by reading the rules. The one
+`transition-[width]` in the tree is a comment recording its own removal.
+`progress-bar.tsx` reaches the same answer twice over, scaling a full-width layer
+rather than resizing it and translating a segment rather than sweeping a
+background.
+
+**No blur on scrolling content** was true, but only because all four call sites
+happened to be on `sticky` elements. Nothing checked it. The gate now does,
+structurally: a `backdrop-blur-` and a `sticky`/`fixed` must appear in the same
+class expression.
+
+### 7. The new gate's first run flagged the best comment in the file
+
+`elevationScale.test.ts` walks `src/` rather than reading a file list — P4.10's
+finding, and three of the four z-index offenders were in kit components no
+surface-derived list would ever have contained.
+
+Its first draft reported six offenders. **All six were prose.** Five were the
+comments this phase had just written explaining the fix ("`z-dropdown`, not the
+raw `z-10` this carried"). The sixth was `celebration.tsx` explaining that it
+deliberately uses DOM order instead of a `z-*` utility, "because a raw `z-1`
+outside the scale is exactly what that gate exists to catch."
+
+So the gate's first act was to flag the one component that had reasoned its way
+to the right answer, and the cheapest way to make it green would have been to
+delete the reasoning. That is D6.3's finding — a gate that reports good work
+teaches people to launder it — arriving one phase later inside the gate written
+to honour it. Restricting matches to quoted spans is not enough on its own,
+because these files quote class names inside comments with backticks, which is
+indistinguishable from a template literal to anything not tracking comment
+state. Hence a small real lexer.
+
+The allowlist is **derived from `index.css` every run** rather than written into
+the test, so a renamed token cannot leave the gate checking names the product no
+longer has. Verified by inversion, four ways: reinstating `z-10`, reverting to
+`backdrop-blur-sm`, moving a blur onto a non-sticky element, and renaming a scale
+token each fail exactly the intended test.
+
+### 8. What this phase found and did not fix
+
+- **The standing `ui-thresholds` gate is red on HEAD, and has been unrun since
+  Phase 5.** 13 violations: 7 serious axe + 6 Lighthouse. Five are student-route
+  performance below the §11 floor of 80 (`student-profile` 57,
+  `student-standings` 70, `student-overview` 74,
+  `student-study-plan-session` 76, `student-correct` 77) and one is
+  `teacher-student-detail` accessibility 94 < 95. Note `student-standings`:
+  build-era D6.9 fixed exactly that route to 93, so it has either regressed or
+  the run was slow, and one run cannot say which.
+- **The 7 axe serious violations are root-caused for 6.4, not fixed here.**
+  42 of them are one mechanism: Nivo emits `aria-label` + `tabindex` +
+  `focusable` on a bare `<rect>` with no `role`, which is prohibited ARIA, on
+  `student-profile` (28), `teacher-class-analytics` (11) and
+  `teacher-student-detail` (3). The rest are `color-contrast`:
+  `text-ink-faint` (#686c6f) measures **4.48:1 on the pastel `#ffe7e1`** where AA
+  needs 4.5. `tests/test_design_tokens.py` pins ink-on-paper contrast and has
+  never measured ink-on-**pastel**, which is the actual gap.
+- **`@fontsource/instrument-serif` is still a declared dependency with zero
+  imports**, orphaned when Phase 2 switched the display face. Left in place
+  during the audit run rather than removed mid-flight; removing it is a
+  package-lock change and belongs in its own commit.
+- **`index.html` still carries the build-era favicon and `theme-color`**, and
+  there is still no `meta description` (41/41) and no valid `robots.txt`
+  (41/41). All three are 6.5's scope, already itemised in STATE.md, and left
+  there deliberately rather than pulled forward.
+
+### 9. The confirm round, and why its headline number is not the evidence
+
+The after-run is `reports/phase-6.3-after/` — a full 41-route pass against a
+real build of the finished work. **Its Lighthouse performance mean went *down*
+1.61 points, and that is reported first because it is the number a reader would
+most expect to be hidden.**
+
+    login                   93 -> 89   (-4)     student-overview        74 -> 82   (+8)
+    settings-notifications  91 -> 85   (-6)     student-standings       70 -> 84  (+14)
+    teacher-quizzes         85 -> 75  (-10)     student-study-plan-...  76 -> 84   (+8)
+    teacher-student-detail  73 -> 62  (-11)     teacher-announcements   79 -> 85   (+6)
+
+Swings of ±11 land on routes this phase did not touch in any way, in both
+directions, which is build-era D6.9's warning arriving exactly as written: a
+composite Lighthouse score measured on a loaded local machine is not
+reproducible, and **a single after-run cannot separate *fixed* from *fast*, in
+either direction.** So the composite score is reported and then set aside. It
+is not evidence that this phase helped, and equally not evidence that it hurt.
+
+What the run *can* settle are the structural audits, which are facts about the
+built artifact rather than timings, and each of these was checked as a
+before/after pair rather than asserted:
+
+- **`registerSW.js` is off the render-blocking list on all 41 routes.** Before:
+  every route named two blocking resources, `index-*.css` and `registerSW.js`.
+  After: every route names one, the stylesheet, which has to block. The audit
+  still *fails* 41/41 for that stylesheet, and saying "render-blocking fixed"
+  would have been false — what was fixed is the half that had no business
+  being there.
+- **The student dashboard's CLS is 0.098 -> 0**, and it was the only one of 41
+  routes over the 0.1 ceiling. Per §0 this remains the weakest of the three
+  numbers here, because a fast run hides shifts; the preload's defence is still
+  structural.
+- **The dashboard's unused JavaScript is 103KB over two chunks -> 53KB over
+  one.** The 50KB `nivoTheme-*.js` chunk is gone from first paint entirely,
+  which is precisely what `lazy-chart.tsx` claimed and the one place a
+  code-split can be confirmed rather than believed.
+- **Precache 146 entries / 2621.92 KiB -> 137 / 2435.27 KiB**, verified by
+  building both ways rather than by trusting the earlier note: a 186.65 KiB
+  drop, matching §5's figure.
+
+The gate-failing route count fell 6 -> 3 (`student-correct` 79, `student-profile`
+57, `teacher-student-detail` accessibility 94). Given the noise above, **that
+drop is not claimed as an improvement** — `student-overview`, `student-standings`
+and `student-study-plan-session` cleared the floor on a run whose mean fell, and
+regression to the mean explains that at least as well as this phase's work does.
+The `ui-thresholds` gate is still red, for the reasons §8 root-caused.
+
+### 10. The confirm round found something the corpus had never recorded
+
+**Five routes died mid-run — T-08, T-09-detail, T-10, S-21 and S-22 — every one
+of them on its `loading` state, with "Waiting failed: 15000ms exceeded".** They
+did it in the after-run and, checked state by state against the before corpus,
+in the before-run identically: the same five routes, the same missing state, the
+same surviving states. This is not a Phase 6.3 regression, and it is not new.
+
+The part worth keeping is why nobody had seen it. A route that dies on its
+*last* state has already written its axe and Lighthouse rows, so
+`reports/phase-6.3-before/` shows **41 lighthouse rows, an empty
+`console-errors.json`, an empty `responsive-summary.json`, and reads as a clean
+sweep.** `audit.mjs` did throw and did name them on stdout — but the run's own
+output is not the corpus, and **nothing that survives a run recorded that five
+routes had been unreachable.** Every gate downstream reads the files.
+
+That is D6.1's finding pointed at the harness rather than at a product screen:
+a gate reporting zero and a gate that never looked are both consistent with a
+green ledger row. So `audit.mjs` now writes `route-failures.json` beside the two
+summary files it already writes, always, including as `[]`; and
+`check_ui_gates.py` reads it with the *same* convention it already applies to
+those two — **missing is "not checked", not "clean"** — so a corpus baselined
+before this change says so out loud instead of passing by omission. Verified
+against both 6.3 corpora, which is exactly the case that must report the gap:
+neither has the file, and the gate now names it.
+
+**The file itself lands on the next audit run, not this one**, because the
+change was written while the after-run was already in flight and a harness
+artefact must not be authored by hand. The five failures are recorded here
+instead, and 6.4 runs the audit that produces the file.
+
+Their cause is not diagnosed and is not claimed to be: all five are `loading`
+states, which the harness drives by holding a request open, so a teardown
+timeout is as likely to be the fixture's as the product's. It is 6.4's to pick
+up with the axe work, on the same run.
+
+---
+
+## D6.5 — Redesign Phase 6.4 (accessibility), part 1: the chart that was 28 tab stops, the rule with no gate, and a contrast number the browser does not agree with
+
+Phase 6.3 root-caused the axe corpus rather than sweeping it, so this phase
+starts from evidence: **47 serious/critical violations across 7 routes, and
+only two mechanisms.** Both are now closed, and a third thing fell out of
+verifying the second that is larger than either.
+
+### 1. 42 of the 47 were one library default, and making them *valid* would have kept the worse half
+
+Nivo emits per-datum accessibility as
+
+    <rect ... focusable="true" tabindex="0" aria-label="18 Jul: 0. No XP earned">
+    <g    ... focusable="true" tabindex="0" aria-label="Aug 8: 82%">
+
+`aria-label` is prohibited on an element exposing no role, so axe reports
+`aria-prohibited-attr`: 28 nodes on `student-profile`, 11 on
+`teacher-class-analytics`, 3 on `teacher-student-detail`.
+
+Our wrappers asked for this deliberately and said why —
+`line-chart.tsx`'s docstring argued that `isFocusable` + `pointAriaLabel` make
+every datum reachable without a mouse, which §11 requires and a hover-only
+tooltip does not deliver. **The intent was right and the mechanism never
+worked.** A label on an unlabellable element is announced or dropped at each
+screen reader's discretion, so the guarantee the docstring claimed was never
+one. (Read off Nivo's compiled source rather than assumed: `aria-label` is
+emitted whenever the prop is passed, *independently* of `isFocusable` — the two
+read as coupled and are not.)
+
+**The half no rule reported is the one that mattered more.** 28 prohibited
+attributes on `student-profile` is 28 sequential tab stops on one XP panel: a
+keyboard reader trying to reach the content below the chart pressed Tab 28
+times. Fixing only the ARIA — adding `role="img"` per rect — would have left
+that exactly as it was, and axe would have gone quiet.
+
+So the per-datum labels are gone from the SVG and the same values render as a
+`sr-only` `<table>` (`components/ui/chart-data-table.tsx`): `<caption>`,
+`<th scope="col">` per series, `<th scope="row">` per datum. A screen reader
+gets table navigation over exact values with the header repeated per cell; a
+keyboard user gets one tab stop for the panel. The plot keeps `role="img"` and
+its summary label, and the caption is *the same string*, so the two cannot
+drift into two descriptions of one panel.
+
+Three decisions inside it are deliberate: rows and columns are keyed by index
+rather than by label (two papers marked the same day share an x label, and a
+duplicate key would silently drop a datum from the only copy a screen reader
+gets); the line chart's x values are a **union across series in first-seen
+order**, because a cohort trend and an at-risk trend are built from different
+papers and taking one series' axis would drop every date only the other has;
+and a gap reads `"No data"` rather than `0` or a dash, because `y: null` is a
+gap the data genuinely has, zero would invent a reading, and bare punctuation
+is announced inconsistently in a table whose whole purpose is to be spoken.
+
+### 2. The remaining 5 were a rule this codebase wrote down in Phase 2 and never enforced
+
+`index.css` has carried this directly above the accent tokens since Phase 2:
+
+    --accent      4.34:1 on paper — fills, marks, large text only
+    --accent-ink  9.75:1 on paper — any accent-coloured small text
+
+Correct, measured, and **read by nothing**. `text-accent` had accumulated on
+**11** small-text elements: both marketing eyebrows (11px, the smallest text in
+the product), a notification-settings link, four teacher panel headings, three
+status counts, and two hover states that *reduced* contrast from the
+`accent-ink` they darkened from.
+
+**axe found 2 of the 11**, because axe sees only what a route it audits happens
+to render. That is the whole argument for a source gate beside the rendered
+one, and it is P6.3's z-index finding again: a rule stated in a comment above
+the tokens, nine phases unenforced. `contrastRules.test.ts` derives the
+sub-24px rungs from the `--fs-*` scale in `index.css` every run (a renamed rung
+fails the gate loudly rather than leaving it checking names the product no
+longer has), parses balanced class-expression groups, and **leaves
+`text-accent` on icons alone** — an icon is a non-text element answering to the
+3:1 graphics floor, which the accent clears. Verified by inversion three ways:
+reinstating an eyebrow's `text-accent` fails, an icon-only `text-accent` does
+not, and renaming `--fs-eyebrow` fails the vocabulary test rather than passing
+vacuously.
+
+Its limit is stated in its own header rather than left to be discovered: it
+reads one class expression at a time, so a `text-body-sm` parent with a
+`text-accent` child is the same defect and invisible to it. That case is axe's,
+which is why both still run.
+
+The sixth site was `--ink-faint` on `--accent-wash` — **4.47:1 where AA needs
+4.5** — on the leaderboard's viewer row, the one row of the board that carries
+a tint. It is 5.12:1 on paper, which is why it survived: the pairing that fails
+exists only on one variant of one row. `--ink-muted` is 5.51:1 there and stays
+de-emphasised. Note what the standing token test measures: it pins
+ink-on-**paper** and has never measured ink-on-**pastel** at all.
+
+### 3. The finding that outgrew the phase: `test_design_tokens.py` asserts a contrast the browser does not render
+
+Chasing the last violation — white on the accent fill, which axe scored 4.21
+and the token block claims is a comfortable 4.65 — produced this:
+
+    token  oklch(0.576 0.146 33)  ->  our oklch_to_srgb: #c0523c
+    same token, rendered by Chromium:                    #c25741
+
+    white on #c0523c (what the test computes): 4.658  -> passes AA
+    white on #c25741 (what a user sees):       4.436  -> fails AA
+
+**`--accent-on` is `#ffffff` and the token block calls it "the ONE permitted
+pure white" at 4.65:1 on the accent fill. On screen it is 4.436:1, which is
+below the 4.5 floor it was chosen to clear.** The gate is green and the
+rendered product fails, because the gate and the browser disagree about what
+`oklch(0.576 0.146 33)` *is*.
+
+The disagreement is tiny — (192,82,60) against (194,87,65) — and that is
+precisely why it matters here: every contrast value in this design system was
+chosen to *just* clear its threshold, so a 2-5/255 error in the conversion is
+enough to move a claim across the line. `test_design_tokens.py` "caught two
+real AA failures" in Phase 2 and has been cited as the contrast authority ever
+since; what it has actually been validating is its own colour space.
+
+**Not fixed here, deliberately, and this is a refusal rather than a deferral.**
+The honest repair is not a one-line nudge to `--accent`: it is (a) reconciling
+the conversion with what browsers do, then (b) re-deriving *every* contrast
+claim in the token block against the corrected values, then (c) whatever token
+changes fall out — and `--accent` is the brand accent, present on every
+surface, chosen in Phase 2 against a brand strategy. Changing it unattended on
+the strength of one arithmetic run, at the end of a long session, is exactly
+the kind of wide-blast-radius decision §10 says to put in front of the human.
+The numbers above are the evidence; the decision is D6.6's.
+
+What ships now is the part that is unambiguous and self-contained: the 42
+prohibited attributes, the 11 accent-size misuses, the pastel pairing, and the
+two gates that keep them from regrowing. The white-on-accent node is **still
+red and left red** — per the standing rule from INBOX item 8, a bar that is not
+met is not loosened.
+
+---
+
+## D6.6 — RESOLVED: the contrast authority was right, and the browser never disagreed (redesign P6.4 part 2)
+
+**Answered by the human 2026-08-14 (`D6.6 = A`, ntfy `jEmAdfevMO65`, ts 1786722798).**
+Option A: reconcile `oklch_to_srgb` with what browsers do, re-derive every
+contrast claim, and **propose** the resulting token changes before applying any.
+
+### Step 1: there was nothing to reconcile
+
+| route | `oklch(0.576 0.146 33)` renders as |
+|---|---|
+| `oklch_to_srgb` (the Python) | **(192, 82, 60)** |
+| `getComputedStyle` | preserved as `oklch(...)`, unconverted |
+| canvas 2d `fillStyle` readback | **(192, 82, 60)** |
+| screenshot, default colour profile | **(192, 82, 60)** |
+| screenshot, `--force-color-profile=srgb` | **(192, 82, 60)** |
+| screenshot, `--force-color-profile=display-p3` | **(192, 82, 60)** |
+| a literal `#c0523c` painted beside it | **(192, 82, 60)** — the same pixel |
+
+axe-core 4.12.1, run against an isolated reproduction of the same button,
+reports `fg=#ffffff bg=#c0523c ratio=4.65` and **passes**.
+
+So the conversion, Chromium and axe all agree, and `--accent-on` is **4.653:1**,
+above the 4.5 floor it was chosen to clear.
+
+### Where 4.21 came from, proved rather than narrated
+
+axe reported `fg=#f9f9fa bg=#c25741`. Neither value is a design token, and the
+foreground is not the `#ffffff` the token declares. Both are one CSS transition
+sampled mid-flight: the state is reached by *clicking* a toggle
+(`pressToggleOnce`), which flips that button from `variant="secondary"`
+(`paper-raised` fill, `ink` text) to `variant="accent"` (accent fill, white text)
+under `transition-colors`, and axe ran before it settled.
+
+Solving each channel for its interpolation fraction:
+
+    background  253 -> 192, observed 194   t = 0.9672
+                252 ->  82, observed  87   t = 0.9706
+                250 ->  60, observed  65   t = 0.9737
+    foreground   47 -> 255, observed 249   t = 0.9712
+                 52 -> 255, observed 249   t = 0.9704
+                 55 -> 255, observed 250   t = 0.9750
+
+**One fraction, t = 0.971 ± 0.004, explaining all six channels across two colour
+pairs with different endpoints**, and reconstructing 4.216 against axe's reported
+4.21. A coincidence at that precision is not available.
+
+### What this retracts, and what it costs
+
+D6.5 §3 read the disagreement as the Python being wrong about its colour space,
+and said so at length. That reading is **withdrawn**. What it actually compared
+was axe's mid-transition sample against a correct conversion, as though the
+former were "what a user sees". The lesson is not that the arithmetic was hard —
+it is that **a measurement was trusted because it came from a rendered page**,
+and "rendered" was doing work the number could not support. The token block's
+claims stand exactly as written; no token changed.
+
+### The real defect, which is fixed
+
+`runAxe` measured before animations settled. `settleAnimations()` now runs first
+(infinite decorative loops — the skeleton shimmer, the indeterminate progress bar
+— are excluded so they cannot hold a route open, and it fails open on timeout).
+
+The direction that matters is the one that did **not** bite here: a transient
+sample can read *higher* than the steady state just as easily, turning a real
+failure green, and it is not reproducible between identical runs — D6.2's rule
+about a gate whose answer changes between identical runs, arriving in the
+measurement layer this time rather than in a gate's own logic.
+
+---
+
+## D6.7 — OPEN: `--ink-faint` clears paper and misses every tint (redesign P6.4 part 2)
+
+**Status: PROPOSED, not applied.** Raised by D6.6 option A's step 2 (*re-derive
+every contrast claim*), which is the step that found it.
+
+### The hole
+
+`test_design_tokens.py` has been this project's contrast authority since Phase 2,
+and everything it asserts about text is measured against `TEXT_SURFACES` — the
+three paper rungs. The product also paints text on **eleven tinted fills** (six
+pastels, four semantic washes, `--accent-wash`), and not one of those pairings
+had ever been measured.
+
+P6.4 part 1 found `--ink-faint` on `--accent-wash` at 4.47:1 and found it *via
+axe on a rendered page*, because axe sees what a route happens to render and this
+file was not looking. Deriving the full matrix shows that instance was not
+special:
+
+| | ink | ink-muted | **ink-faint** | accent-ink |
+|---|---|---|---|---|
+| accent-wash | 10.65 | 5.51 | **4.47** | 8.84 |
+| pastel-rose | 10.43 | 5.40 | **4.38** | 8.67 |
+| pastel-amber | 10.73 | 5.56 | 4.51 | 8.91 |
+| pastel-sage | 10.70 | 5.54 | **4.49** | 8.89 |
+| pastel-sky | 10.63 | 5.51 | **4.46** | 8.83 |
+| pastel-lilac | 10.50 | 5.44 | **4.41** | 8.72 |
+| pastel-clay | 10.53 | 5.45 | **4.42** | 8.75 |
+| ok-wash | 10.86 | 5.62 | 4.56 | 9.02 |
+| warn-wash | 10.73 | 5.56 | 4.51 | 8.91 |
+| err-wash | 10.39 | 5.38 | **4.36** | 8.63 |
+| info-wash | 10.63 | 5.51 | **4.46** | 8.83 |
+
+**Eight of eleven below AA**, and the three that clear do so by 0.01–0.06. This
+is not a bad pairing on one surface; it is a token that clears paper and misses
+every tint. The other three ink tokens are unaffected and are now pinned.
+
+### The proposal
+
+`--ink-faint: oklch(0.529 0.006 240)` -> `oklch(0.52 0.006 240)`.
+
+- clears 4.5 on **all fourteen** surfaces (worst pairing 4.530, was 4.360)
+- 5.13:1 on paper, so it stays comfortably the muted rung
+- still lighter than `--ink-muted` (6.09:1 on paper), so the hierarchy holds
+- the largest L that clears everything is 0.5216; 0.52 takes the round number
+  just inside it
+
+### Why it is not applied
+
+`text-ink-faint` has **334 call sites** — it is the caption colour of the entire
+product — and A's own wording is *propose the resulting token changes for review
+before applying any of them*. Live exposure today is small (one same-expression
+pairing, `bg-warn-wash`, which passes) but the nested case is invisible to a
+source gate by construction, and the one live instance found so far was found by
+axe, not by grep.
+
+Held as eight `xfail(strict=True)` cases rather than a note. `strict` is the
+point: if the token is changed, they start passing, and a strict xfail that
+passes **fails** — so the proposal can be neither quietly forgotten nor quietly
+applied without this record moving with it.
+
+### RESOLVED — 2026-08-14, the human accepted the proposal
+
+Steering `VqpbRSelzmn9`, ts 1786723759: `D6.7 = "--ink-faint 0.529 -> 0.52
+(Proposal Accepted)"`. Applied as proposed, in three places that must agree:
+`web/src/index.css` (the implementation), `DESIGN.md` §3.2 (the canonical
+record, including the ≈hex, which moves `#696C6F` -> `#66696C`), and
+`tests/test_design_tokens.py` (the transcription).
+
+The eight `xfail(strict=True)` cases are gone, and not by deletion: `ink-faint`
+joins `ink`/`ink-muted`/`accent-ink` in the one parametrised matrix, so the
+token is now checked by the same rule as its three siblings rather than by a
+special case. Measured after the change — 5.13 on `--paper`, 5.38 on
+`--paper-raised`, 4.78 on `--paper-sunk`, and worst-of-fourteen **4.53 on
+`--err-wash`**. The ink hierarchy holds (11.77 / 6.09 / 5.13).
+
+One thing replaced the xfails rather than being dropped with them. The split
+list encoded *which pairing was binding*, and folding it into the matrix would
+have thrown that away — so `test_err_wash_is_the_binding_constraint_on_ink_faint`
+asserts by name that `--err-wash` is still the tightest of the fourteen. L 0.52
+was chosen **because** err-wash was worst; if that stops being true, the value
+was derived against a constraint that has since moved, and one named test says
+so instead of one of eleven parametrised cases going red anonymously.
+
+### The finding this turned up, which is bigger than the token
+
+**`TOKENS` in `test_design_tokens.py` is transcribed by hand from DESIGN.md, and
+nothing checked it against `web/src/index.css`.** So the file that calls itself
+this project's contrast authority could measure one palette while the browser
+painted another, and every ratio it asserts would still be green.
+
+That is not hypothetical — it happened here, during this decision's own
+application. `index.css` was edited first, the suite was re-run, and eight tests
+went red **reporting the old value**, because the transcription had not been
+mirrored yet. That direction is loud, and it is luck that the edit happened in
+that order. The opposite order is silent: nudge a colour in `index.css` alone
+and the authority proves AA about a value nothing renders. This is D6.2's shape
+("a comment describing an intention is not evidence the code has it") relocated
+into the gate itself, and it is the *third* time this redesign has found a check
+whose subject and object had drifted apart.
+
+Closed by `test_transcribed_token_matches_the_css_the_product_ships`, which
+**parses** `:root` rather than transcribing a third time, plus a guard asserting
+the parser matched at least as many tokens as the file measures — so a regex
+that stops matching cannot silently pass everything beneath it. Verified by
+inversion: `index.css` alone set to L 0.515 fails with `--ink-faint is
+oklch(0.515, 0.006, 240.0) in index.css but oklch(0.52, 0.006, 240) here`, which
+is precisely the silent direction. Today the transcription is faithful — 36
+oklch tokens parsed, 33 measured, zero drift, and the three unmeasured are the
+`--rule-*` hairlines, which are borders rather than text/background pairs.
+
+**Not yet gated at the time of writing: the change is unproven in the browser.**
+`npm test`, typecheck, lint, both builds and `pre-commit` have **not** run,
+because `/tmp` filled and no Bash command can execute (**B5**). The colour
+arithmetic is fully verified; the product build around it is not. 107 Python
+token tests pass (rc=0, up from 64 passed + 8 xfailed).
+
+---
+
+## D6.8 — legal links in the marketing footer (redesign P6.5)
+
+**Status: TIMED OUT UNANSWERED, default A applied 2026-08-14.** Sent
+`gAGLBRpzyxmd` at ts 1786727791 with a 60-minute timeout, due at 1786731391;
+polled nine times across the window including after expiry, no reply. §10 says
+proceed on the default and log it, which is what happened. `LAST STEERING TS` is
+deliberately NOT advanced: a timeout is not an answer, and recording it as one
+would put a decision in the human's mouth. One message reverses this.
+
+What shipped is in D6.10. Reversing it is small in either direction: the page is
+two files plus a route, and option B (ship nothing) is deleting them.
+
+§5 Phase 6.5's closeout list ends with "legal links". The footer currently has
+none and says so in its own comment, correctly: a link to a page that does not
+exist is the dead navigation the Phase 1 audit went looking for.
+
+**Why it is a question rather than a task.** Facts about this product can be
+derived from this repo: what is stored, that a scan is sent to Google Gemini,
+that Supabase holds the database. **Promises cannot**, and a privacy policy and
+a terms of service are mostly promises. Writing one unattended would be
+inventing content in the one category where invention has legal consequences,
+which is a different act from inventing a testimonial and a worse one.
+
+Options as sent: **A** one factual, promise-free "How Lemely handles your data"
+page and no ToS [default]; **B** ship nothing and record the omission as
+needing a lawyer; **C** A plus placeholders. C was argued against in the same
+message rather than merely listed, because it is the dead-link pattern the
+footer already refused.
+
+**Found while preparing A, and true whichever way this goes: the product has no
+account-deletion path and no retention rule anywhere in `lemely/`.** Nothing
+purges, anonymises or expires a scan, an attempt or an account. A can still
+ship (the page would state that, which is honest and more useful than silence),
+but on a product whose users are minors this is a real gap, and it is exactly
+what a policy would normally have to describe. Not fixed here: building a
+deletion path is far beyond a footer link, and it is a product decision.
+
+---
+
+## D6.9 — Redesign Phase 6.5 (strategic omissions): the tab that said "Lemely" 48 times, and the one surface the redesign never reached
+
+Three of the five §5 Phase 6.5 items shipped here. Two were already done and
+were **verified rather than assumed**: the custom 404 landed in P3.1 and gained
+its in-portal variant in P4.10, and the skip link is imported by all six frames
+(`SkipLink` has call sites in the student, teacher, parent, admin, marketing and
+settings shells plus the standalone 404). The fifth, legal links, is open behind
+D6.8.
+
+### 1. No screen in the product had ever set a `document.title`
+
+All 48 routes were "Lemely", from the single static tag in `index.html`, for the
+whole build and the whole redesign.
+
+Three of the four costs are ordinary: indistinguishable tabs, useless bookmarks,
+a tab-search feature that cannot find anything in this product by name. **The
+fourth makes it an accessibility defect rather than a metadata one.** A screen
+reader announces the document title on navigation, and in a single-page app
+nothing else announces that the page changed at all — so a non-sighted reader
+clicking through the sidebar heard "Lemely" after every single navigation and
+was never once told where they had arrived. That is the reason this was worth
+doing for authenticated screens no crawler will ever read, which is otherwise
+the obvious place to stop.
+
+**The mechanism was chosen for what could gate it, not for what was shortest.**
+The obvious fix is `useDocumentTitle("...")` at the top of 48 screens. It was
+rejected because a per-screen hook has nothing to check itself against, so route
+49 ships untitled and nothing says so. That is not a hypothetical: it is how
+`text-title` sat on a live `<h1>` emitting zero CSS for an entire build, how the
+compat layer outlived every screen that used it, and how two whole admin portals
+ended up in none of the three gate lists (P4.10). Route `handle` puts the title
+**in the route table**, which can be walked, so `documentMeta.test.ts` walks it
+and fails naming the exact route. Verified by inversion.
+
+Titles name the **screen**, never the record on it. `result/:paperId` is "Paper
+result", not the paper. The subject routes are the interesting case, because the
+code is right there in the path and is still not used: a title assembled from a
+URL segment is a value restated from somewhere else, and D6.7's whole lesson is
+what happens to those.
+
+Descriptions and `og:` tags go **only** on the four routes a signed-out reader
+can reach. Everything else is behind `RequireAuth` where no scraper will ever
+look, and writing marketing prose into the head of a teacher's review queue
+would be inventing copy for an audience that does not exist.
+
+### 2. The browser tab was the one surface the redesign never reached
+
+`public/favicon.svg` was the build-era mark: a `#863bff` purple glyph, still
+shipping three phases after Phase 2 replaced the identity. §4 names purple-blue
+as this redesign's **hard anti-reference**, so the most frequently seen piece of
+Lemely's brand was the one piece painted in the banned family. The three PNG
+icons beside it were rasterised from that same purple mark on 2026-08-12, before
+Phase 2 existed.
+
+**Nothing here could have caught it.** Every gate this build runs reads code or
+reads a rendered page. An icon is a binary that no test opens, displayed by an
+operating system in a place no screenshot harness captures. It is D6.4's
+`registerSW.js` finding in a second form: the defect was not in anybody's diff.
+
+Fixed by generating them from the real mark with a checked-in script
+(`scripts/generate_icons.mjs`, `npm run icons`), so the vector is the source and
+the PNGs are the artifact. A PNG in a diff is unreviewable, and "how do I
+regenerate the icons" is otherwise knowledge that lives in one head until it is
+lost. The maskable cut is a **different image, not a resize**: Android crops to
+the central 80% diameter, so a square of side s survives only when
+`s * sqrt(2) <= 0.8w`, i.e. `s <= 0.566w`. The scale is 0.46 and the bound is
+asserted in the script itself as well as in the test, because that is where
+somebody editing the number is actually looking.
+
+### 3. The manifest colours had already drifted, exactly as D6.7 predicted
+
+`vite.config.ts` carried `theme_color: "#1e1310"` and `background_color:
+"#faf4f2"` under a comment stating they were "computed from index.css's
+student/default theme tokens via a real oklch->sRGB conversion (culori
+formatHex): --ink oklch(0.2 0.02 35)".
+
+**Every clause of that comment was false.** `--ink` is `oklch(0.321 0.009 234)`.
+There is no `--bg` token. culori is not a dependency of this project and by the
+look of the lockfile never was. Both hexes are build-era Material-3 values that
+no token in the product has produced since Phase 2 rewrote the palette.
+
+The consequence is small and constant: a phone drew a **near-black address bar
+directly above a warm paper page**, on all 48 routes, for the entire redesign,
+on the one device class the brief says students live on. Nothing failed because
+nothing was checking — a manifest colour is read by an operating system, not by
+a test.
+
+`vite/brandTokens.ts` now computes them from `index.css` at build time and the
+transcription is **deleted rather than corrected**, which is the only fix that
+cannot drift again. `vite/themeColor.ts` injects the `<meta name="theme-color">`
+from the same source and **throws** if anyone puts a literal hex back. Both
+verified by inversion; the throw's message names the reason.
+
+This is D6.7's question — *what re-states a value, and what checks that the two
+still agree?* — asked of the three files P6.5 was always going to touch, and it
+had already been answered badly in all three.
+
+### 4. Two things found by verifying rather than reasoning
+
+**`router.state.matches` is not `useMatches()`.** The former is
+`DataRouteMatch[]`, where the handle lives at `match.route.handle`; the latter
+hoists it to `match.handle`. They look interchangeable. Reading the wrong one
+returns `undefined` for every route, so every page would have fallen back to the
+default title and **the entire feature would have shipped doing nothing**, with
+all 15 new tests still green (they exercise the pure functions and the route
+table, not the wiring). `tsc` caught it. Worth recording plainly: this is the
+one defect in P6.5 that a type checker could see, and the other three are a
+catalogue of things it could not.
+
+**`mark-favicon.svg` carried 12 lines of comment above its opening tag.**
+`mark.svg`'s own comment warns, in as many words, that libvips (and so sharp)
+sniffs only the first bytes and rejects the file when `<svg` is pushed out of
+that window. The favicon cut was authored after that warning and did it anyway.
+Nothing had noticed because nothing had yet asked sharp to read that particular
+file — a latent defect that only becomes real the first time somebody uses the
+asset for the thing it is for.
+
+### 5. The OG card carries no text, deliberately
+
+The obvious card sets "Lemely" in Newsreader beside the mark. It cannot be built
+honestly here: @fontsource ships **woff2 only**, which librsvg cannot load, so an
+SVG asking for `font-family: Newsreader` renders in whatever fontconfig picks,
+almost certainly DejaVu Sans. §3.2 item 2 bans that class of face outright, and
+a wrong face inside a generated binary is invisible to every gate in this repo,
+because nobody diffs a PNG and the file only ever renders inside somebody else's
+chat app.
+
+So the card is the mark on ruled paper, and the product's name is carried by
+`og:title`, which is real text in the scraper's own typography. A smaller card
+than a wordmark lockup, and one that cannot quietly be wrong.
+
+### 6. Found while checking a sentence: no deployment of this code can send an SMS
+
+Not a P6.5 item, not fixed here, and recorded because it is the largest thing
+this phase walked past.
+
+Writing a meta description for `/login/parent` meant restating the screen's own
+copy, which reads *"Enter your phone number and we'll text you a code."* That
+sentence is checkable, so it was checked:
+
+- `lemely/web/deps.py` wires `sms=MockSmsProvider()` **unconditionally**. There
+  is no config switch and no alternative implementation in the repo.
+- `MockSmsProvider.send_code` **logs the code at INFO level** instead of sending
+  it. Its own docstring says so.
+- `SmsProvider` (the protocol) documents a `delivers_out_of_band` flag whose
+  comment reads "Any real provider added later **must** set this True" — which
+  is a statement that, as of now, none has been.
+
+So the parent OTP flow is real (codes are generated, stored with a TTL, rate
+limited, and verified), and the **delivery** of it is not. `ParentLogin` already
+renders a `devCode` panel whose own comment states it exists only when there is
+no real gateway, so the product is internally consistent about this in code and
+inconsistent about it in copy.
+
+This matters more than a copy defect usually would, because §5's own framing
+calls the phone route "the lowest-friction entry in the product" and it is the
+only way a parent gets in. **A parent following that screen's instruction waits
+for a text that no code path sends.**
+
+Two things were deliberately not done. The screen's copy was not changed:
+integrating an SMS gateway is the actual fix, it needs credentials and a
+provider choice, and rewording the sentence to describe the mock would be
+dressing a missing feature as a design decision. And the claim was **not carried
+into the new meta description**, which says "a one-time code" instead of "a code
+sent by text" — one file repeating an unverifiable claim is a defect; two files
+repeating it is how it becomes a fact nobody rechecks.
+
+### Gates
+
+typecheck, lint (0 errors), **1,403 web unit tests (+15)**, `check:copy` 0, both
+builds, 107 Python token tests, `pre-commit run --all-files`: all green. Titles
+confirmed in a real browser on public and authenticated routes, including a
+client-side navigation (the path `router.subscribe` exists for) and a portal
+catch-all. Both new build-time throws verified by inversion.
+
+---
+
+## D6.10 — Redesign Phase 6.5 closeout: the page that describes instead of promising, and the gate that could not reach the pages it measured
+
+Phase 6.5's last item (§5: "legal links") and the `adapt` re-run STATE asked
+Phase 7 to do. The second one is the finding.
+
+### 1. The adapt gate died at surface 8 of 35, and had been able to for four phases
+
+Started at the top of the D6.8 wait window as independent work, the gate crashed
+with `page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:4319/landing`
+after seven surfaces. It reproduces deterministically with `--surface=landing`.
+
+**`adapt_audit.mjs` served `dist/` on port 4321. Six of the `act` callbacks it
+imports from `capture_surface.mjs` navigate by absolute URL to 4319**, because
+they assert on routing itself ("`/` renders the landing page for a signed-out
+visitor", and both 404 surfaces answering on their own path), and an absolute
+URL needs a host. The audit's own header opens with the sentence "this walks the
+SAME registry that harness does — imported, never restated". The registry was
+imported. The port was restated.
+
+Consequences, in order of how bad they are:
+
+- The run dies at the `landing` surface, **eighth of thirty-five**, so the
+  twenty-seven surfaces after it were never measured at any width. Everything
+  from `login` onwards, which is every auth screen, every marketing state and
+  both 404s.
+- **Unless something else is listening on 4319.** Then the goto succeeds and a
+  stranger's server answers a question about our build. This project has that
+  exact defect written down already: BLOCKERS.md B4, "the e2e suite silently
+  runs against whatever is already on port 8000". This is it again, in the gate
+  written three phases after it, and it was observed live this session: a
+  leftover `vite preview` from a diagnostic run made the failure disappear, and
+  the process holding the port was still there minutes later because
+  `server.kill()` kills the `npx` wrapper and not the vite process under it.
+- The port mismatch dates from `4aa77e5` (Phase 6.1's own wip commit), and the
+  landing `act`s that trip it date from `cee06e9` (Phase 4). So it was live for
+  the whole of Phase 6. **D6.1 recorded 6.1's adapt gate as "745 page-states
+  across 35 surfaces, 0 findings", and there is no findings artifact in the tree
+  to check it against** (`reports/redesign/p6-adapt/` exists and is empty, and
+  nothing under it is committed or ignored). The most likely reading is that
+  that run had a capture server on 4319 to lean on. Recorded as the honest
+  reading rather than a certainty: what is certain is that the mismatch was live
+  and that the number cannot be reproduced from this tree.
+
+D6.1's own lesson was "a gate reporting zero and a gate reporting nonsense are
+both consistent with a green ledger row". The gate that lesson came from was
+this one.
+
+**Fixed by deleting the restatement, not by syncing it.** `PORT`/`BASE` are
+exported from `capture_surface.mjs` and imported by the audit, which is the rule
+the surface registry already followed. Two further changes, both because the
+diagnosis was harder than the bug:
+
+- **The gate now refuses to measure a server it did not start.** With
+  `--strictPort`, a busy port makes our server exit, and the wait loop's `fetch`
+  would then be satisfied by whoever is already there. The child's `exitCode` is
+  checked before the fetch is believed, and the failure names the port.
+- **The gate keeps its server's output.** `stdio` was `["ignore","pipe","pipe"]`
+  with neither pipe ever read, so vite's own `Error: Port 4319 is already in
+  use` went into a buffer nobody emptied, and recovering it took a throwaway
+  script. **A gate that discards the evidence of its own failure makes every
+  failure look like a flake**, and a flake gets re-run rather than read.
+  Draining the pipes also removes the 64KB-buffer stall a 25-minute run invites.
+
+Pinned by four tests in `adaptRules.test.ts`: the port is declared once, the
+audit imports it, the exit-code guard exists, and both pipes are drained.
+
+### 2. Legal links: a description, not a policy (D6.8 default A)
+
+D6.8 timed out unanswered after nine polls, so its default applied. `/data`,
+"How your data is handled", linked once from the marketing footer. No terms of
+service, no privacy policy, no placeholders.
+
+The reasoning is worth keeping because it generalises past this page: **facts
+about this product can be derived from this repository, and promises cannot.** A
+policy is mostly promises, made by an operator who is not in the code, under a
+jurisdiction nobody has chosen. Writing one unattended would be inventing
+content in the one category where invention has legal consequences.
+
+So the page says only what a named module does, and `dataHandling.ts` carries
+the module beside every sentence, which is `data.ts`'s rule applied where the
+cost of breaking it is higher. Six sections: what an account holds (no password
+on the row; Supabase Auth holds the credential), the device registry and the
+three-device limit, what an upload stores, **that the scan file itself is sent
+to Google Gemini rather than text extracted from it locally**, who else can see
+a student's work, and what the site does not do.
+
+Three things are deliberately absent and their absence is the design: no legal
+basis or controller identity, no retention period (there is no retention
+machinery to describe), and **no contact address**, because inventing
+`privacy@lemely` is the dead-link pattern wearing a serious face.
+
+The panel at the foot is the one that matters. **There is no account deletion
+and no way to remove a scan, and nothing expires on a schedule** — verified
+across `lemely/` rather than assumed, and stated on the page in those words
+rather than left out. It is in `warn` with a labelled chip, per §4's rule that a
+caveat does not travel as a colour alone.
+
+### 3. The page is gated against both ways it can stop being true
+
+A page about the backend is a comment describing an intention: true the day it
+is written, and nothing notices when it stops being. `dataHandling.test.ts` (20
+tests) therefore reads the *backend*, not the page:
+
+- **Every `@router.delete` path in `lemely/web/routers/` is parsed**, and the
+  test fails if an account-deletion or scan-deletion route appears. Its message
+  is an instruction, not a diff: the right response to it going red is to
+  celebrate and then edit the page. Verified by inversion (pointed at
+  `/devices/{device_id}`, it fails with that message), and it has its own
+  not-vacuous check, because a regex that stops matching would make every
+  assertion pass by finding nothing.
+- A promise list: no "we will/never", no "your data is safe", no guarantee, no
+  commitment, no retention period in days, no GDPR/controller language, no
+  em-dash. **The fix for a failure there is never to reword.** It is to
+  establish that the code does the thing, and then say what it does.
+- Plus the facts the page exists to carry, asserted positively so it cannot pass
+  by saying nothing.
+
+### 4. Four registries, because a screen no list claims is a screen no gate reads
+
+P4.10's finding, now applied preemptively rather than after the fact: the new
+page is in `capture_surface.mjs`'s surface registry (so the adapt gate measures
+it at all five widths and the screenshot rounds photograph it), in `audit.mjs`'s
+a11y registry (axe and Lighthouse, signed out), and in all three file lists
+(`RTL_CLEAN_FILES`, `MIGRATED_FILES`, `SCANNED_FILES`).
+
+The third of those earned its place immediately: the migration gate failed the
+new file for using `text-display-xs`, a compat-layer token, twice. A file added
+to the lists on the day it is written is a file the lists actually cover.
+
+### 5. What the gate found once it could see: 10 findings, both classes real
+
+The first honest full run: **765 page-states across 36 surfaces, 10 findings,
+66 exemptions** (all from the one OTP row that states its reason). Both classes
+were in surfaces the gate had never reached.
+
+**Four `overflow` findings, and the cause is a rule that does not do what its
+name says.** `ChartDataTable` renders the accessible copy of every chart as
+`<table className="sr-only">`. `sr-only` is `position:absolute; width:1px;
+height:1px; overflow:hidden; clip-path:inset(50%)`, which yields a 1px box on a
+block element. **On a table it does not**: CSS auto table layout treats a
+specified width as a *minimum*, so the table expands to its content anyway. The
+boxes measured **357px** wide on the student dashboard and **316px** on the
+profile page, hanging off the right edge at 320px and 375px.
+
+Nothing was visible (`clip-path` paints none of it) and nothing scrolled
+(`overflow-x: clip` on html and body). So the only instrument in this repository
+that could ever have seen it is a gate that measures element geometry through
+that clip, which is precisely what this gate was built to do and had never once
+reached those surfaces. Fixed by putting `sr-only` on a `<div>` wrapper, which
+honours `width: 1px` and clips the table inside it; the accessibility tree is
+unchanged.
+
+Worth noting what was NOT done: the gate's `visible()` helper already exempts
+screen-reader-only boxes, keyed to `clip-path` **and** a rect under 2px. Widening
+that to "any clip-path, any size" would have turned all four findings green in
+one line. It is the shape of waiver this mission has twice recorded as worse than
+the defect, and the product was genuinely wrong.
+
+**Six `twoLine` findings, all six caused by this phase's own footer link.**
+Adding a third link made the row too wide for the 276px of content box a 320px
+screen leaves, so "How your data is handled" wrapped onto two lines and pushed
+"Parent sign in" onto two as well. Hallmark's non-negotiable is that clickable
+text never wraps: the second line is a strip of link that reads as body copy,
+and a thumb aimed between them hits neither. The footer links now stack into a
+column below `sm`, so each gets the full width, one line, and a full-width
+target.
+
+That is the useful shape of this pair. **The gate caught this phase's own defect
+in the same run that it caught a four-phase-old one**, which is the argument for
+fixing a broken gate before the work rather than after it.
+
+### 6. Small, and worth writing down
+
+**A check that a word is absent cannot tell an implementation from a sentence
+about one.** The first draft of "puts no auth guard on it" grepped `index.tsx`
+for `RequireAuth` and failed, because that file states in a comment that it
+deliberately contains none. It now walks the route element tree, which is what
+`marketing.test.ts` already did.
+
+### Gates
+
+typecheck, lint (0 errors), **1,432 web unit tests (+29)**, `check:copy` 0, both
+builds. Full `adapt` re-run, Python tests and `pre-commit run --all-files`
+recorded with the commit.

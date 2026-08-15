@@ -96,3 +96,24 @@ tests/fixtures/real-papers/
 # either. Only reports/accuracy-real/REPORT.md is committed (numbers-only,
 # no transcribed text, no imagery) — directive items 3, 4, 7.
 reports/accuracy-real/*/
+
+# Component-kit preview build output (REDESIGN-MISSION Phase 2.6). The preview
+# is a dev tool with its own Vite entry; its build artifact is never shipped.
+web/dist-previews/
+
+# Scratch files written to the repo root when the harness lost stdout capture
+# (BLOCKERS.md B5: /tmp full, so redirecting a command's output to a file and
+# reading it back was the only way to see anything at all). They are transient
+# diagnostic dumps, never inputs to anything, and the risk they carry is that a
+# `git add -A` in the recovery commit sweeps them into history. Ignored rather
+# than deleted because the same blocker means no `rm` can run either.
+/.pytest-out.txt
+/.tmpinfo.txt
+/.tmpdiag
+
+# Stray dependency/build caches at the repo root. `web/.gitignore` covers
+# `web/node_modules`, but the root had no rule, so a Node command accidentally
+# run from the repo root (rather than from `web/`) creates `node_modules/.vite`
+# here and `git add -A` stages it. Caught in P6.4 when a vitest cache file
+# landed in a commit that way.
+/node_modules/

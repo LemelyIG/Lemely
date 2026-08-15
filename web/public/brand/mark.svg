@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="Lemely">
+  <title>Lemely</title>
+  <!--
+    Lemely mark, "the margin and the mark".
+
+    Concept a3 from BUILD/BRAND.md §3: the letter L drawn as the corner of a
+    ruled page (a thin PRINTED hairline rule) with a heavy warm-red tick laid
+    across the corner as the teacher's HANDWRITTEN mark. The contrast between
+    the two weights is the whole idea: the printed page, and the human
+    correction on top of it.
+
+    Hand-authored rather than traced from the Gemini renders. Four candidates
+    and one targeted refinement pass were generated (BUILD/brand/*.png, with
+    receipts in the sibling .json files); the refinement named five specific
+    defects and the model fixed none of them. The geometry is simple enough to
+    state exactly, so it is stated exactly here, which also makes it a real
+    vector at every size instead of a raster approximation.
+
+    Colours are duplicated in DESIGN.md's token block (the ink and accent
+    tokens) and must stay in sync. This file is the only place they appear as
+    literals in an asset.
+
+    Two notes for editors:
+    - XML comments cannot contain a double hyphen, so CSS custom-property names
+      are spelled out in words here rather than written with their dashes.
+    - This comment sits INSIDE the svg element on purpose. libvips (and so
+      sharp, and so the screenshot tooling) sniffs only the first bytes of a
+      file to detect SVG; a long leading comment pushes the opening tag out of
+      that window and the file is rejected as an unknown format. Keep the
+      opening tag at the top.
+  -->
+  <!-- The printed page: one hairline margin rule meeting one hairline baseline.
+       Butt caps, not round: this is ruled by a machine, not by a hand. -->
+  <g fill="none" stroke="#2F3437" stroke-width="2" stroke-linecap="butt">
+    <path d="M20 10 V46" />
+    <path d="M20 46 H44" />
+  </g>
+  <!-- The correction: one stroke, short upstroke into a long one, its lower
+       vertex landing exactly on the baseline at x=33 so the tick sits ON the
+       page rather than floating above it. Round joins: this one is drawn by a
+       hand holding a felt pen. -->
+  <path d="M27 37 L33 46 L47 19" fill="none" stroke="#C0523D" stroke-width="6"
+        stroke-linecap="round" stroke-linejoin="round" />
+</svg>

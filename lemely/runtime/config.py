@@ -210,16 +210,27 @@ class SupabaseSettings(BaseModel):
 
 
 class AuthSettings(BaseModel):
-    """Auth lifecycle tuning (phone-OTP challenge store).
+    """Auth lifecycle tuning (token lifetimes + the phone-OTP challenge store).
 
-    Email/password identity is delegated to Supabase GoTrue; these knobs only
-    govern the in-memory parent phone-OTP challenge lifecycle owned by
+    Email/password identity is delegated to Supabase GoTrue; these knobs govern
+    the token lifetimes the backend mints under (D1.5 — the backend is the sole
+    issuer) and the in-memory parent phone-OTP challenge lifecycle, both owned by
     ``lemely.auth.service.AuthService``. Override via ``lemely.toml`` under the
     ``[auth]`` section or via ``LEMELY_AUTH__*`` env vars.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    # Lifetime of a minted access token. Deliberately short: it is a bearer
+    # credential with no revocation of its own, so the window in which a leaked
+    # one is useful is bounded by this. The client refreshes silently, so
+    # shortening it costs the user nothing — see `refresh_token_ttl_seconds`.
+    access_token_ttl_seconds: int = Field(default=3600, ge=60)
+    # Lifetime of a refresh token — how long a signed-in device stays signed in
+    # without re-entering a credential. Long by design; the security comes from
+    # the token being bound to a `devices` row, so signing that device out (or
+    # evicting it past the 3-device cap) kills it immediately regardless of exp.
+    refresh_token_ttl_seconds: int = Field(default=60 * 60 * 24 * 30, ge=300)
     # Time-to-live for a pending OTP challenge, in seconds.
     otp_ttl_seconds: int = Field(default=300, ge=1)
     # Maximum verify attempts before a challenge is locked out.

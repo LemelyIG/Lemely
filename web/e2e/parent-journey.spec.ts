@@ -47,7 +47,7 @@ test("a parent with a never-challenged phone completes the real OTP UI and lands
   const devLabel = page.getByText("Developer only · no SMS was sent")
   await expect(devLabel).toBeVisible({ timeout: 15_000 })
   const devPanel = devLabel.locator("xpath=..")
-  const code = (await devPanel.locator("div.font-mono").innerText()).trim()
+  const code = (await devPanel.locator("div.text-data-lg").innerText()).trim()
   expect(code).toMatch(/^\d{6}$/)
 
   await page.getByLabel("Digit 1 of 6").click()
@@ -58,7 +58,9 @@ test("a parent with a never-challenged phone completes the real OTP UI and lands
   // empty state, not a list.
   await expect(page).toHaveURL(/\/parent$/, { timeout: 15_000 })
   await expect(
-    page.getByRole("heading", { name: "You're signed in — one step to go" }),
+    // Copy changed in P3.2: the em-dash the mission bans in UI text (§3.2
+    // item 10) became a full stop. Same heading, same level, same meaning.
+    page.getByRole("heading", { name: "You're signed in. One step to go." }),
   ).toBeVisible({ timeout: 15_000 })
   // The "how to link" explanation the spec mandates in place of a bare
   // empty list.

@@ -1,13 +1,18 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { ErrorState } from "@/components/ui/state-views"
-import { TrendSparkline } from "@/components/ui/trend-sparkline"
+import { ChartFrame } from "@/components/ui/chart-frame"
+import { LineChart } from "@/components/ui/lazy-chart"
 import { WeaknessChip, type WeaknessSeverity } from "@/components/ui/weakness-chip"
 import { relativeTime } from "@/lib/utils"
 import { useStudentDetail } from "@/lib/hooks/useTeacherApi"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { StudentWeakness } from "@/lib/teacherTypes"
+import { BackArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Student detail, teacher view (T-05). `GET /teacher/students/{studentId}`
@@ -24,8 +29,10 @@ import type { StudentWeakness } from "@/lib/teacherTypes"
  *    `WeaknessChip` with its lost/maximum marks and accuracy as the `meta`
  *    line — the evidence, not a verdict (spec §1.4).
  *  - Trend chart                   -> `trend` (this student's own percentage
- *    series, chronological) via `TrendSparkline` + an accessible table
- *    underneath, same pattern `ClassAnalytics` uses for the cohort trend.
+ *    series, chronological) via `LineChart` + an accessible table underneath,
+ *    same pattern `ClassAnalytics` uses for the cohort trend. P5.3 moved both
+ *    off `TrendSparkline` onto Nivo and the shared chart theme (DESIGN.md
+ *    §11); see `StudentTrendPanel` below.
  *  - At-risk status and reason     -> `isAtRisk`/`atRiskFlags`, each flag's
  *    real `summary` sentence rendered directly, acknowledged flags tagged
  *    and never hidden (D3.5). Display only here, same as T-03's roster — the
@@ -76,6 +83,103 @@ function WeaknessRow({ weakness }: { weakness: StudentWeakness }) {
   )
 }
 
+/**
+ * This student's own percentage series (`trend`), on the shared chart theme.
+ *
+ * The teacher-facing sibling of `ClassAnalytics`'s `CohortTrendPanel`, and it
+ * is the "at-risk trends" chart §5.3 names: the panel a teacher opens *because*
+ * a student was flagged, to see whether the flag describes a slide or a single
+ * bad morning. A 140px sparkline could not answer that question — it had no
+ * scale, no dates, and no way to tell a drop from 90 to 80 apart from a drop
+ * from 40 to 30.
+ *
+ * The axis is pinned 0–100 for the same reason the cohort line is: on an auto
+ * domain, three papers within four points of each other fill the panel and
+ * read as a collapse.
+ *
+ * The table underneath stays, unchanged, as the exact-value channel.
+ */
+function StudentTrendPanel({
+  trend,
+}: {
+  trend: readonly { recordedAt: string; percentage: number }[]
+}) {
+  const series = [
+    {
+      id: "Percentage",
+      data: trend.map((p) => ({
+        x: new Date(p.recordedAt).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        }),
+        y: p.percentage,
+      })),
+    },
+  ]
+
+  return (
+    <ChartFrame
+      // `h2`, not the default `h3`: this panel is a top-level section under the
+      // page's `h1`, with no section heading between them, so the default
+      // skipped a level (axe `heading-order`, P7.1). `ClassAnalytics` and the
+      // student `Overview` both have their own `h2` above the chart and keep
+      // the default.
+      headingLevel={2}
+      title="Performance over time"
+      subtitle="Percentage per marked paper"
+      isEmpty={trend.length === 0}
+      emptyMarginalia="No graded papers yet"
+      emptyBody="This line starts once this student has a marked paper. Until then there is nothing to read a trend from, and a flat line would imply there was."
+    >
+      <LineChart
+        series={series}
+        height={200}
+        enableArea
+        yMin={0}
+        yMax={100}
+        formatValue={(v) => `${Math.round(v)}%`}
+        ariaLabel="This student's percentage per marked paper, over time"
+      />
+      <div
+        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-rule pt-2"
+        tabIndex={0}
+        role="region"
+        aria-label="Percentage over time, scrollable"
+      >
+        <table className="w-full border-collapse text-body-sm">
+          <caption className="sr-only">This student's percentage over time</caption>
+          <thead>
+            <tr className="text-ink-faint">
+              <th scope="col" className="px-1 py-1 text-start text-eyebrow">
+                Date
+              </th>
+              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
+                Percentage
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {trend.map((p) => (
+              <tr key={p.recordedAt} className="border-t border-rule">
+                <td className="px-1 py-1 text-ink-muted">
+                  {new Date(p.recordedAt).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </td>
+                <td className="px-1 py-1 text-end text-data-sm text-ink">
+                  {Math.round(p.percentage)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </ChartFrame>
+  )
+}
+
 export function StudentDetail() {
   const { studentId } = useParams<{ studentId: string }>()
   const navigate = useNavigate()
@@ -85,9 +189,8 @@ export function StudentDetail() {
     return (
       <div className="lm-screen flex flex-col gap-6 min-w-0">
         <h1 className="sr-only">Student detail</h1>
-        <div role="status" className="text-dense-lg text-t2">
-          Loading student…
-        </div>
+        <PanelSkeleton />
+        <PanelSkeleton />
       </div>
     )
   }
@@ -98,7 +201,7 @@ export function StudentDetail() {
         <h1 className="sr-only">Student detail</h1>
         <ErrorState
           heading="Couldn't load this student"
-          body={detailQuery.error.message}
+          body={teacherLoadFailureMessage(detailQuery.error)}
           action={{ label: "Retry", onClick: () => detailQuery.refetch() }}
           secondaryAction={{ label: "Go back", onClick: () => navigate(-1) }}
         />
@@ -114,16 +217,16 @@ export function StudentDetail() {
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="text-xs text-t3 hover:text-t1 w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
-          ← Back
+          <BackArrow /> Back
         </button>
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">
             <h1 className="text-display-md mt-1.5 text-pretty">
               {student.displayName}
             </h1>
-            <div className="text-dense-sm text-t2 mt-1">
+            <div className="text-body-sm text-ink-muted mt-1">
               {student.engagement.totalPapers} paper
               {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}
               {student.engagement.lastActiveAt
@@ -144,9 +247,9 @@ export function StudentDetail() {
       {student.atRiskFlags.length > 0 ? (
         <section className="flex flex-col gap-3">
           <div className="text-display-sm">At-risk flags</div>
-          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3">
+          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3">
             {student.atRiskFlags.map((f) => (
-              <div key={f.reason} className="flex items-start gap-2.5 text-dense text-t2 leading-[1.5]">
+              <div key={f.reason} className="flex items-start gap-2.5 text-body-md text-ink-muted leading-[1.5]">
                 <span
                   aria-hidden="true"
                   className="text-err mt-[6px] w-[6px] h-[6px] rounded-full bg-err flex-none"
@@ -167,20 +270,20 @@ export function StudentDetail() {
       <section className="flex flex-col gap-3">
         <div className="text-display-sm">Subjects</div>
         {student.subjects.length === 0 ? (
-          <div className="text-dense text-t2">No subjects recorded yet.</div>
+          <div className="text-body-md text-ink-muted">No subjects recorded yet.</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {student.subjects.map((s) => (
               <div
                 key={s.subjectCode}
-                className="bg-surface border border-border rounded-lg p-[18px] flex items-center gap-4"
+                className="bg-paper-raised border border-rule rounded-lg p-[18px] flex items-center gap-4"
               >
                 <GradeBadge grade={s.predictedGrade} size="medium" basis="predicted" />
                 <div className="min-w-0">
-                  <div className="font-mono text-2xs tracking-[0.08em] uppercase text-t3">
+                  <div className="text-eyebrow text-ink-faint">
                     {s.subjectCode}
                   </div>
-                  <div className="text-dense text-t2 mt-1">
+                  <div className="text-body-md text-ink-muted mt-1">
                     {subjectPercent(s.latestPercentage)} latest · {s.paperCount} paper
                     {s.paperCount === 1 ? "" : "s"}
                   </div>
@@ -192,68 +295,20 @@ export function StudentDetail() {
       </section>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
-        {/* Trend chart */}
-        <section className="flex flex-col gap-3 min-w-0">
-          <div className="text-display-sm">Performance over time</div>
-          <div className="bg-surface border border-border rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
-            {student.trend.length === 0 ? (
-              <div className="text-dense text-t2">No graded papers yet.</div>
-            ) : (
-              <>
-                <TrendSparkline values={student.trend.map((p) => p.percentage)} width={140} />
-                <div
-                  className="max-h-[180px] overflow-y-auto border-t border-border pt-2 -mx-1"
-                  tabIndex={0}
-                  role="region"
-                  aria-label="Percentage over time, scrollable"
-                >
-                  <table className="w-full text-xs border-collapse">
-                    <caption className="sr-only">This student's percentage over time</caption>
-                    <thead>
-                      <tr className="text-t3">
-                        <th scope="col" className="text-left font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
-                          Date
-                        </th>
-                        <th scope="col" className="text-right font-mono text-3xs uppercase tracking-[0.08em] px-1 py-1">
-                          Percentage
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {student.trend.map((p) => (
-                        <tr key={p.recordedAt} className="border-t border-border">
-                          <td className="px-1 py-1 text-t2">
-                            {new Date(p.recordedAt).toLocaleDateString(undefined, {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </td>
-                          <td className="px-1 py-1 text-right font-mono">
-                            {Math.round(p.percentage)}%
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
-        </section>
+        <StudentTrendPanel trend={student.trend} />
 
         {/* Activity / engagement */}
         <section className="flex flex-col gap-3 min-w-0">
           <div className="text-display-sm">Engagement</div>
-          <div className="bg-surface border border-border rounded-lg p-[18px] grid grid-cols-2 gap-4">
+          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] grid grid-cols-2 gap-4">
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Total papers
               </div>
               <div className="text-display-sm mt-1">{student.engagement.totalPapers}</div>
             </div>
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Last active
               </div>
               <div className="text-display-sm mt-1">
@@ -263,7 +318,7 @@ export function StudentDetail() {
               </div>
             </div>
             <div>
-              <div className="font-mono text-3xs uppercase tracking-[0.08em] text-t3">
+              <div className="text-eyebrow text-ink-faint">
                 Days since last submission
               </div>
               <div className="text-display-sm mt-1">
@@ -278,7 +333,7 @@ export function StudentDetail() {
       <section className="flex flex-col gap-3">
         <div className="text-display-sm">Weaknesses</div>
         {student.weaknesses.length === 0 ? (
-          <div className="text-dense text-t2">No weakness data yet.</div>
+          <div className="text-body-md text-ink-muted">No weakness data yet.</div>
         ) : (
           <div className="flex flex-col gap-2">
             {student.weaknesses.map((w) => (
@@ -292,31 +347,31 @@ export function StudentDetail() {
       <section className="flex flex-col gap-3 min-w-0">
         <div className="text-display-sm">Attempt history</div>
         {student.attempts.length === 0 ? (
-          <div className="text-dense text-t2">No papers recorded yet.</div>
+          <div className="text-body-md text-ink-muted">No papers recorded yet.</div>
         ) : (
           <div
-            className="bg-surface border border-border rounded-lg overflow-hidden overflow-x-auto min-w-0"
+            className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
             tabIndex={0}
             role="region"
             aria-label="Attempt history, scrollable horizontally"
           >
-            <table className="w-full text-dense border-collapse">
+            <table className="w-full text-body-md border-collapse">
               <caption className="sr-only">Full attempt history, newest first</caption>
               <thead>
-                <tr className="bg-surface-2 border-b border-border">
-                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                <tr className="bg-paper-sunk border-b border-rule">
+                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
                     Paper
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
                     Marks
                   </th>
-                  <th scope="col" className="text-right px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
                     Percentage
                   </th>
-                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
                     Grade
                   </th>
-                  <th scope="col" className="text-left px-4 py-2.5 font-mono text-3xs tracking-[0.09em] uppercase text-t3">
+                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
                     Recorded
                   </th>
                   <th scope="col" className="px-4 py-2.5">
@@ -336,23 +391,23 @@ export function StudentDetail() {
                   // produced a real duplicate-React-key console error when
                   // verified against seeded multi-attempt data. `recordedAt`
                   // (a full ISO timestamp, one per submission) disambiguates.
-                  <tr key={`${a.paperId}-${a.recordedAt}`} className="border-b border-border last:border-b-0">
-                    <td className="px-4 py-2.5 font-mono text-dense-sm whitespace-nowrap">
+                  <tr key={`${a.paperId}-${a.recordedAt}`} className="border-b border-rule last:border-b-0">
+                    <td className="px-4 py-2.5 text-data-sm whitespace-nowrap">
                       {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
+                    <td className="px-4 py-2.5 text-end text-data-sm">
                       {a.awardedMarks}/{a.maximumMarks}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-dense-sm">
+                    <td className="px-4 py-2.5 text-end text-data-sm">
                       {Math.round(a.percentage)}%
                     </td>
                     <td className="px-4 py-2.5">
                       <GradeBadge grade={a.grade} size="inline" basis="achieved" />
                     </td>
-                    <td className="px-4 py-2.5 text-t2 whitespace-nowrap">
+                    <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">
                       {relativeTime(a.recordedAt)}
                     </td>
-                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                    <td className="px-4 py-2.5 text-end whitespace-nowrap">
                       <div className="inline-flex items-center gap-2">
                         <Button
                           size="sm"

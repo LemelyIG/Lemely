@@ -1,7 +1,9 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V3 */
 import type { HTMLAttributes } from "react"
 import { Fire, Snowflake, Lightning } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Eyebrow } from "@/components/ui/primitives"
+import { CountUp } from "@/components/ui/celebration"
 
 /*
  * C-9 · XP / streak indicator — effort-only motivation display. HARD RULE
@@ -12,10 +14,33 @@ import { Eyebrow } from "@/components/ui/primitives"
  * `frozen` swaps the flame glyph for a snowflake (a SHAPE change, not just a
  * color change, per "no meaning by color alone") and mutes the tone, so
  * "streak paused" reads even in greyscale. Numbers render in the mono/
- * metadata face (JetBrains Mono, "reserved for... technical logs" per
- * DESIGN.md) rather than the Instrument Serif hero treatment used for marks/
- * grades — deliberately, so this never visually reads as a mark. See S-31
- * design note: "make it feel like a training log."
+ * metadata face rather than the display face used for marks and grades —
+ * deliberately, so this never visually reads as a mark. See S-31 design note:
+ * "make it feel like a training log."
+ *
+ * ── P4.4 ────────────────────────────────────────────────────────────────
+ *
+ * **This component had no call site anywhere in the product.** It was built in
+ * Phase 2 for the gamification surface and the gamification surface, when it
+ * arrived, hand-rolled its own cards instead. Same shape as the §8 texture
+ * classes surface 3 found unused, and the same resolution: give it the call
+ * site it was written for rather than leave a kit component that nothing
+ * proves works. `compact` now sits in the student header — see the note there
+ * on why that pill was once removed and is honest to restore.
+ *
+ * Two corrections came with the migration:
+ *
+ * - **The figures are on the `data-*` rungs now.** They were `font-mono` plus
+ *   a size utility, which is audit finding N2: the tabular alignment depended
+ *   on JetBrains Mono happening to be fixed-width rather than on
+ *   `font-variant-numeric`, and would have broken silently the day the face
+ *   changed. Every `text-data-*` rung carries `tabular-nums` by construction.
+ * - **`frozen` is a prop with no wire field behind it.** `Streak` carries
+ *   `freezesAvailable` (how many the student holds) but nothing that says a
+ *   freeze is being spent today, so no caller can currently pass `frozen`
+ *   truthfully. The prop stays because the state is real and modelled; it is
+ *   noted here so nobody wires it to `freezesAvailable > 0`, which would tell
+ *   a student their streak is frozen whenever it is not.
  */
 
 export interface XPStreakDaily {
@@ -32,7 +57,8 @@ export interface XPStreakSource {
 export interface XPStreakProps extends HTMLAttributes<HTMLDivElement> {
   variant?: "compact" | "expanded"
   streakDays: number
-  /** Streak-freeze is active today — a distinct frost state, not a broken streak. */
+  /** Streak-freeze is active today — a distinct frost state, not a broken
+   * streak. Nothing on the wire reports this yet; see this file's header. */
   frozen?: boolean
   xpTotal?: number
   level?: number
@@ -59,31 +85,29 @@ export function XPStreak({
   if (variant === "expanded") {
     return (
       <div
-        className={cn("rounded-lg border border-border bg-surface p-5", className)}
+        className={cn("rounded-lg border border-rule bg-paper-raised p-5", className)}
         {...props}
       >
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <StreakGlyph frozen={frozen} size={26} />
             <div>
-              <div className="font-mono text-3xl font-semibold text-t1">
-                {streakDays}
-              </div>
+              <div className="text-data-lg text-ink">{streakDays}</div>
               <Eyebrow className="mt-0.5">Day streak</Eyebrow>
             </div>
           </div>
           {typeof level === "number" ? (
-            <div className="text-right">
+            <div className="text-end">
               <Eyebrow>Level</Eyebrow>
-              <div className="font-mono text-3xl font-semibold text-t1">{level}</div>
+              <div className="text-data-lg text-ink">{level}</div>
             </div>
           ) : null}
         </div>
 
         {frozen ? (
-          <div className="mt-3 flex items-center gap-1.5 rounded-md bg-surface-2 px-2.5 py-1.5 text-xs text-t2">
-            <Snowflake size={12} className="text-t2" />
-            Streak freeze active — today is protected
+          <div className="mt-3 flex items-center gap-1.5 rounded-md bg-paper-sunk px-2.5 py-1.5 text-body-sm text-ink-muted">
+            <Snowflake size={12} className="text-ink-muted" />
+            Streak freeze active. Today is protected.
           </div>
         ) : null}
 
@@ -96,13 +120,16 @@ export function XPStreak({
         ) : null}
 
         {typeof xpTotal === "number" ? (
-          <div className="mt-5 flex items-center gap-2 border-t border-border pt-4">
+          <div className="mt-5 flex items-center gap-2 border-t border-rule pt-4">
             <Lightning size={16} weight="fill" className="text-accent" />
-            <span className="text-body-lg font-medium text-t1">
-              {xpTotal.toLocaleString()} XP
+            <span className="text-data-md text-ink">
+              {xpTotal.toLocaleString()}
             </span>
+            <span className="text-body-md text-ink-muted">XP</span>
             {typeof weeklyXp === "number" ? (
-              <span className="text-metadata text-t3">+{weeklyXp} this week</span>
+              <span className="text-body-sm text-ink-faint">
+                +{weeklyXp} this week
+              </span>
             ) : null}
           </div>
         ) : null}
@@ -114,8 +141,8 @@ export function XPStreak({
                 key={s.label}
                 className="flex items-center justify-between text-body-md"
               >
-                <span className="text-t2">{s.label}</span>
-                <span className="text-metadata text-t1">{s.xp} XP</span>
+                <span className="text-ink-muted">{s.label}</span>
+                <span className="text-data-sm text-ink">{s.xp} XP</span>
               </div>
             ))}
           </div>
@@ -128,19 +155,30 @@ export function XPStreak({
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-7px rounded-md border border-border bg-surface px-11px py-7px",
+        "inline-flex items-center gap-7px rounded-md border border-rule bg-paper-raised px-11px py-7px",
         className,
       )}
       {...props}
     >
       <StreakGlyph frozen={frozen} size={14} />
-      <span className="text-metadata font-semibold text-t1">{streakDays}</span>
-      <span className="text-xs text-t2">{frozen ? "streak frozen" : "day streak"}</span>
+      {/* Counts up when it grows, which on this pill means the moment a study
+          session or a marked paper lands while the student is on another
+          screen (§9.3, "XP gained"). No flourish: the header is chrome, and
+          confetti in the chrome would fire over whatever the student is
+          actually reading. */}
+      <span className="text-data-sm text-ink">
+        <CountUp value={streakDays} />
+      </span>
+      <span className="text-body-sm text-ink-muted">
+        {frozen ? "streak frozen" : "day streak"}
+      </span>
       {typeof xpTotal === "number" ? (
         <>
-          <span className="h-3 w-px bg-border" />
+          <span className="h-3 w-px bg-rule" />
           <Lightning size={12} weight="fill" className="text-accent" />
-          <span className="text-metadata text-t1">{xpTotal.toLocaleString()}</span>
+          <span className="text-data-sm text-ink">
+            <CountUp value={xpTotal} />
+          </span>
         </>
       ) : null}
     </div>
@@ -153,7 +191,7 @@ function StreakGlyph({ frozen, size }: { frozen: boolean; size: number }) {
       <Snowflake
         size={size}
         weight="bold"
-        className="text-t2"
+        className="text-ink-muted"
         aria-label="Streak frozen"
       />
     )
@@ -181,7 +219,7 @@ function DayDot({ status }: { status: XPStreakDaily["status"] }) {
   if (status === "frozen") {
     return (
       <span
-        className="h-2.5 w-2.5 rounded-full border-2 border-t3 bg-surface-2"
+        className="h-2.5 w-2.5 rounded-full border-2 border-ink-faint bg-paper-sunk"
         role="img"
         aria-label="Frozen"
       />
@@ -190,7 +228,7 @@ function DayDot({ status }: { status: XPStreakDaily["status"] }) {
   if (status === "missed") {
     return (
       <span
-        className="h-2.5 w-2.5 rounded-full border border-border"
+        className="h-2.5 w-2.5 rounded-full border border-rule"
         role="img"
         aria-label="Missed"
       />
@@ -198,7 +236,7 @@ function DayDot({ status }: { status: XPStreakDaily["status"] }) {
   }
   return (
     <span
-      className="h-2.5 w-2.5 rounded-full border border-dashed border-border"
+      className="h-2.5 w-2.5 rounded-full border border-dashed border-rule"
       role="img"
       aria-label="Upcoming"
     />

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="Lemely">
+  <title>Lemely</title>
+  <!--
+    Lemely mark, favicon cut.
+
+    Same geometry as mark.svg, but the strokes are thickened and the mark is
+    scaled to fill more of the frame. This is a genuine optical cut, not
+    laziness: mark.svg's 2px hairline on a 64-unit viewBox resolves to half a
+    physical pixel at 16x16 and disappears entirely in a browser tab. The
+    hairline/heavy contrast that carries the concept is preserved as a RATIO
+    (here 3.5 against 7) rather than as absolute widths.
+
+    Keep in sync with mark.svg if the geometry ever changes.
+
+    P6.5 moved this comment from above the opening tag to inside it. mark.svg's
+    own comment states the reason and this file was authored after it anyway:
+    libvips (and so sharp, and so the screenshot tooling) sniffs only the first
+    bytes to detect SVG, so a long leading comment pushes `<svg` out of that
+    window and the file is rejected as an unknown format. Nothing had noticed
+    because nothing had yet asked sharp to read this particular file.
+  -->
+  <!-- Geometry snapped to the 16px pixel grid. At 16x16 one viewBox unit is
+       exactly 0.25px, so a stroke of 4 is exactly 1 device pixel. The catch is
+       that a stroke is centred on its path: putting the rule at x=16 spans
+       14..18, i.e. half of pixel 3 and half of pixel 4, and antialiasing
+       renders it grey instead of charcoal. Centring at x=18 spans 16..20,
+       which is pixel 4 exactly. Same reasoning puts the baseline at y=46
+       (spanning 44..48, row 11 exactly). The diagonal tick is left to
+       antialias, which is correct for a diagonal. -->
+  <g fill="none" stroke="#2F3437" stroke-width="4" stroke-linecap="butt">
+    <path d="M18 8 V46" />
+    <path d="M18 46 H48" />
+  </g>
+  <path d="M24 36 L32 46 L48 16" fill="none" stroke="#C0523D" stroke-width="8"
+        stroke-linecap="round" stroke-linejoin="round" />
+</svg>

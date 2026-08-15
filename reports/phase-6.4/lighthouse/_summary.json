@@ -1,0 +1,411 @@
+[
+  {
+    "slug": "login",
+    "scores": {
+      "performance": 89,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/correct",
+    "slug": "student-correct",
+    "scores": {
+      "performance": 78,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/result/5d416e47-f632-4808-bc10-684248e90588",
+    "slug": "student-result",
+    "scores": {
+      "performance": 83,
+      "accessibility": 100,
+      "best-practices": 96,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student",
+    "slug": "student-overview",
+    "scores": {
+      "performance": 80,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/login/parent",
+    "slug": "parent-login",
+    "scores": {
+      "performance": 91,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/settings/devices",
+    "slug": "settings-devices",
+    "scores": {
+      "performance": 88,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/settings/notifications",
+    "slug": "settings-notifications",
+    "scores": {
+      "performance": 87,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher",
+    "slug": "teacher-overview",
+    "scores": {
+      "performance": 84,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/classes",
+    "slug": "teacher-classes",
+    "scores": {
+      "performance": 86,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/classes/d69f60e2-70d2-4db1-9112-7c4ef3c42fc9",
+    "slug": "teacher-class-roster",
+    "scores": {
+      "performance": 89,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/classes/d69f60e2-70d2-4db1-9112-7c4ef3c42fc9/analytics",
+    "slug": "teacher-class-analytics",
+    "scores": {
+      "performance": 56,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/students/00c4a410-38c5-4d4e-855d-0537102a2321",
+    "slug": "teacher-student-detail",
+    "scores": {
+      "performance": 68,
+      "accessibility": 98,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/at-risk",
+    "slug": "teacher-at-risk",
+    "scores": {
+      "performance": 82,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/review",
+    "slug": "teacher-review",
+    "scores": {
+      "performance": 81,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/review/143a484a-18c1-4a12-8ab9-1ef1615f3c5a",
+    "slug": "teacher-review-detail",
+    "scores": {
+      "performance": 84,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/quizzes",
+    "slug": "teacher-quizzes",
+    "scores": {
+      "performance": 87,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/quizzes/8c12ed92-8698-40c3-909a-266ced7d2d5b",
+    "slug": "teacher-quiz-detail",
+    "scores": {
+      "performance": 80,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/quizzes/8c12ed92-8698-40c3-909a-266ced7d2d5b/assignments/beff021a-83b7-4e69-bca2-18c1778d1fc4/results",
+    "slug": "teacher-quiz-results",
+    "scores": {
+      "performance": 86,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/announcements",
+    "slug": "teacher-announcements",
+    "scores": {
+      "performance": 85,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/grading",
+    "slug": "teacher-grading",
+    "scores": {
+      "performance": 84,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/teacher/schemes",
+    "slug": "teacher-schemes",
+    "scores": {
+      "performance": 86,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/parent",
+    "slug": "parent-children",
+    "scores": {
+      "performance": 86,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/parent/children/00c4a410-38c5-4d4e-855d-0537102a2321",
+    "slug": "parent-child-overview",
+    "scores": {
+      "performance": 88,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/parent/children/00c4a410-38c5-4d4e-855d-0537102a2321/subjects/0625",
+    "slug": "parent-subject-detail",
+    "scores": {
+      "performance": 89,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/parent/children/00c4a410-38c5-4d4e-855d-0537102a2321/weaknesses",
+    "slug": "parent-weaknesses",
+    "scores": {
+      "performance": 90,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/parents",
+    "slug": "student-parents",
+    "scores": {
+      "performance": 83,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/onboard",
+    "slug": "student-onboard-subjects",
+    "scores": {
+      "performance": 83,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/placement/0625",
+    "slug": "student-placement-invite",
+    "scores": {
+      "performance": 85,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/placement/test/b6543a60-0920-47fe-a9ce-5065ff7109ef",
+    "slug": "student-placement-test",
+    "scores": {
+      "performance": 85,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/placement/result/db5578c8-3452-4eb5-8a53-3e5de54d73ab",
+    "slug": "student-placement-result",
+    "scores": {
+      "performance": 85,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/practice/0625",
+    "slug": "student-practice-generator",
+    "scores": {
+      "performance": 82,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/flashcards/review/0625",
+    "slug": "student-flashcard-review",
+    "scores": {
+      "performance": 86,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/plan/0625",
+    "slug": "student-study-plan-week",
+    "scores": {
+      "performance": 84,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/plan/0625/session/bd267a03-196d-420c-a964-5b7ef39de405",
+    "slug": "student-study-plan-session",
+    "scores": {
+      "performance": 85,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/announcements",
+    "slug": "student-announcements",
+    "scores": {
+      "performance": 88,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/board",
+    "slug": "student-standings",
+    "scores": {
+      "performance": 83,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/friends",
+    "slug": "student-friends",
+    "scores": {
+      "performance": 85,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/profile",
+    "slug": "student-profile",
+    "scores": {
+      "performance": 56,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/notifications",
+    "slug": "student-notifications",
+    "scores": {
+      "performance": 88,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/subject/0625",
+    "slug": "student-subject",
+    "scores": {
+      "performance": 87,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  },
+  {
+    "path": "/student/landing",
+    "slug": "student-landing",
+    "scores": {
+      "performance": 92,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 82
+    }
+  }
+]

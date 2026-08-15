@@ -45,8 +45,16 @@
 
 import type { MarkerSource, QuestionResult as BaseQuestionResult, WeakArea } from "./types"
 
-/** Kind of a tracked paper, driving the grading-grid card variant (mirrors `PaperKind`). */
-export type PaperKind = "graded" | "review" | "processing" | "queued"
+/**
+ * Kind of a tracked paper, driving the grading-grid card variant (mirrors
+ * `PaperKind`). `queued` means "waiting for the grading worker", `processing`
+ * means "being marked right now", and `failed` is terminal — a run that can
+ * never produce marks (it crashed, or no mark scheme could be resolved).
+ * `failed` exists because leaving such a paper at `queued` is indistinguishable
+ * from one still waiting its turn, which was the unexplained "queued forever"
+ * state D6.13 removes.
+ */
+export type PaperKind = "graded" | "review" | "processing" | "queued" | "failed"
 
 /** Mark-scheme parse/lifecycle status (mirrors `SchemeStatus`). */
 export type SchemeStatus = "parsed" | "pending" | "custom"
@@ -105,6 +113,10 @@ export interface BatchTab {
  * One paper card in the grading grid (mirrors `PaperSummaryDTO`).
  * `pageCount` is structurally-empty (`null`) unless the pipeline recorded
  * it — no backend source exists for it yet.
+ *
+ * `name` is the detected-paper label (`Paper 3 V1 May/June 2020 - 2026-08-12`)
+ * once the backend has read the scan's metadata, and the teacher's own uploaded
+ * filename until then. `error` is populated only when `kind === "failed"`.
  */
 export interface PaperSummary {
   id: string
@@ -116,6 +128,7 @@ export interface PaperSummary {
   confidence: number | null
   needsReview: boolean
   pageCount: number | null
+  error: string | null
 }
 
 /** Response for `GET /papers` (mirrors `PaperListDTO`). */
@@ -136,14 +149,24 @@ export interface QuestionResult extends BaseQuestionResult {
   aiDetectionFlagged: boolean
 }
 
-/** Response for `GET /papers/{paperId}` (mirrors `PaperDetailDTO`). */
+/**
+ * Response for `GET /papers/{paperId}` (mirrors `PaperDetailDTO`).
+ *
+ * Served for papers that have *not* finished grading too, which is why the mark
+ * totals are nullable. That route used to 409 until a report existed, so the
+ * console's Pipeline panel had nothing to render after a page reload and the
+ * stepper simply vanished mid-run (D6.13). `questions`/`weakAreas` stay empty
+ * until there is a real correction behind them; `pipeline` carries live job
+ * progress, so it is the one thing that *does* survive a refresh.
+ */
 export interface PaperDetail {
   id: string
   name: string
   kind: PaperKind
-  awardedMarks: number
-  maxMarks: number
+  awardedMarks: number | null
+  maxMarks: number | null
   needsReview: boolean
+  error: string | null
   metadata: DetectedField[]
   pipeline: PipelineStep[]
   questions: QuestionResult[]
@@ -1122,6 +1145,18 @@ export interface TeacherPipelineFrame {
   question_id?: string
   confidence?: number
   has_working?: boolean
+  // extraction_progress (answer_extraction.py) and the live marking loop
+  // (correction_ai.py): `index` is this question's 1-based position in the
+  // stage's work list, `total` is that list's length — the real "Question 7 of
+  // 21" counter behind C-10's per-stage progress. Both publishers derive
+  // `index` from `enumerate` over the source list rather than counting frames
+  // already emitted, so a question that fails and reports an `error` instead
+  // does not shift the indices after it. Not published by the cached-report
+  // replay branch in `grade_paper_endpoint`, which iterates an already-graded
+  // `AccuracyReport` — frames from that path carry no counter at all and the
+  // UI must render the stage without one rather than invent a denominator.
+  index?: number
+  total?: number
   // marking_progress (correction_ai.py live loop and/or the cached-report replay)
   marker_source?: MarkerSource
   awarded?: number

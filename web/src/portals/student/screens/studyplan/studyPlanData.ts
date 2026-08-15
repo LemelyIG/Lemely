@@ -55,7 +55,7 @@ export function planUnavailableMessage(reason: string | null): PlanUnavailableMe
     case "no_signal":
       return {
         heading: "Not enough to plan from yet",
-        body: "A plan is built from three things: topics you have lost marks on, your placement test, and the confidence ratings you gave during onboarding. None of those is recorded for this subject yet, so there is nothing to schedule around — take the placement test or correct a paper, then rebuild.",
+        body: "A plan is built from three things: topics you have lost marks on, your placement test, and the confidence ratings you gave during onboarding. None of those is recorded for this subject yet, so there is nothing to schedule around. Take the placement test or correct a paper, then rebuild.",
       }
     default:
       return {
@@ -227,14 +227,14 @@ export function rationaleCopy(rationale: SessionRationale, topic: string): Ratio
     case "recordedWeakness":
       return {
         heading: "Why this is in your plan",
-        body: `${topic} is one of your recorded weak topics for this subject — you have lost marks on it in work that has been marked. That is one of the three signals the planner weighs.`,
+        body: `${topic} is one of your recorded weak topics for this subject. You have lost marks on it in work that has been marked. That is one of the three signals the planner weighs.`,
       }
     case "notRecordedWeakness":
       return {
         heading: "Why this is in your plan",
         // Deliberately does not guess. Placement and confidence are real
         // inputs, and which one drove *this* session is not recorded.
-        body: `${topic} is not one of your recorded weak topics, so this session came from one of the planner's other two signals — your placement result or the confidence rating you gave it during onboarding. Which of the two is not recorded, so this page will not guess.`,
+        body: `${topic} is not one of your recorded weak topics, so this session came from one of the planner's other two signals: your placement result or the confidence rating you gave it during onboarding. Which of the two is not recorded, so this page will not guess.`,
       }
     case "unknown":
       return {

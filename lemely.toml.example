@@ -69,3 +69,21 @@ jwt_audience = "authenticated"
 # jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"
 # anon_key = "..."
 # service_role_key = "..."
+
+[auth]
+# How long a minted access token is accepted for. Short on purpose: it is a
+# bearer credential with no revocation of its own, so this bounds the window
+# in which a leaked one is useful. The SPA renews silently in the background
+# (POST /api/auth/refresh), so shortening it does not sign anyone out.
+access_token_ttl_seconds = 3600
+# How long a signed-in device stays signed in without re-entering a
+# credential. Long by design — the security is not the expiry but the
+# binding: a refresh token names a row in `devices`, so signing that device
+# out from the device list, or evicting it past the 3-device cap, kills it
+# immediately.
+refresh_token_ttl_seconds = 2592000  # 30 days
+# Parent phone-OTP challenge lifecycle.
+otp_ttl_seconds = 300
+otp_max_attempts = 5
+otp_length = 6
+otp_min_resend_seconds = 30

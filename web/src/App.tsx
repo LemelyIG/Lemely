@@ -1,125 +1,53 @@
-import { lazy, Suspense } from "react"
-import { RouteFallback } from "@/components/ui/state-views"
-import { createBrowserRouter, Navigate } from "react-router-dom"
-import { teacherRoute } from "@/portals/teacher"
-import { studentRoute } from "@/portals/student"
-import { parentRoute } from "@/portals/parent"
-import { useAuth } from "@/lib/auth/AuthContext"
-import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
+import { createBrowserRouter } from "react-router-dom"
+import { appRoutes } from "@/routes"
+import { applyDocumentMeta } from "@/lib/meta/documentMeta"
 
 /*
- * One role-based app. The Teacher (teal), Student (terracotta) and Parent
- * (muted rose) portals are route subtrees, each owning its own layout, nav and
- * screens. The active portal sets data-portal on its layout root so the token
- * layer swaps accent + neutrals (see index.css).
+ * The router instance, and nothing else.
  *
- * Every portal subtree is gated by RequireAuth: no session -> /login; wrong
- * role for the portal -> the portal that does match. Root "/" and both login
- * routes resolve against the session too (see Root/LoginRoute below).
+ * Everything that decides *what* is mounted lives in `routes.tsx`; this file
+ * is the one line that turns it into a browser router. The split is P4.9's:
+ * `createBrowserRouter` reaches for `document` at import time, so keeping the
+ * table in the same module made the product's routing untestable outside a DOM
+ * environment. See the note at the top of `routes.tsx`.
  */
+export const router = createBrowserRouter(appRoutes)
 
-// P6.1b: these four top-level screens sit outside any portal layout (no
-// shared chrome to keep painted around them, unlike the three portals below,
-// which each wrap their own Outlet in one Suspense boundary — see e.g.
-// `portals/student/index.tsx`). With no shared wrapper to hang a single
-// boundary off, each lazy element gets its own inline `<Suspense>` at the
-// route definition instead of one boundary around the whole router tree —
-// that keeps a slow-loading DeviceSettings chunk from blanking an
-// already-rendered Login screen if a session is mid-navigation between them.
-const Login = lazy(() => import("@/portals/auth/Login").then((m) => ({ default: m.Login })))
-const ParentLogin = lazy(() =>
-  import("@/portals/auth/ParentLogin").then((m) => ({ default: m.ParentLogin })),
-)
-const DeviceSettings = lazy(() =>
-  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettings })),
-)
-const NotificationSettings = lazy(() =>
-  import("@/portals/settings/NotificationSettings").then((m) => ({
-    default: m.NotificationSettings,
-  })),
-)
+/*
+ * P6.5 · the document title, driven from the route table.
+ *
+ * A subscription rather than a component. The alternative is a `<DocumentMeta>`
+ * calling `useMatches()`, which has to live *inside* the router — and there is
+ * no shared layout route to hang it on, so it would mean wrapping all eleven
+ * top-level routes in a new parent purely to host it. That parent would also
+ * change where `errorElement` bubbles to, which `routes.tsx` sets deliberately
+ * per route and explains at length. Restructuring the route tree to set a title
+ * is a large change to make for a small reason.
+ *
+ * `router.subscribe` gives the same match chain with none of that. It is also
+ * the honest shape for what this is: a side effect on `document`, not a piece
+ * of rendered UI.
+ *
+ * The explicit first call matters — `subscribe` fires on state *changes*, so a
+ * reader who loads a deep link directly and never navigates would otherwise
+ * keep `index.html`'s default title on a page that has its own.
+ */
+/*
+ * `router.state.matches` is `DataRouteMatch[]`, where the handle lives at
+ * `match.route.handle`. The `useMatches()` hook returns `UIMatch[]`, which
+ * hoists it to `match.handle`. They look interchangeable and are not, and the
+ * difference is silent at runtime: reading `.handle` off a DataRouteMatch
+ * yields `undefined` for every route, so every page would have fallen back to
+ * the default title and the feature would have shipped doing nothing.
+ *
+ * `tsc` caught it, which is worth recording: this is the one defect in P6.5
+ * that a type checker could see, and the rest of the phase is a catalogue of
+ * things it could not.
+ */
+const applyFrom = (matches: readonly { route: { handle?: unknown } }[]) =>
+  applyDocumentMeta(matches.map((match) => ({ handle: match.route.handle })))
 
-
-const STUDENT_ROLES = ["student"] as const
-const PARENT_ROLES = ["parent"] as const
-/* `parent` was in this list until P3.9 — every /api/teacher/* route is gated
- * teacher+school_admin, so a parent who signed in landed in a console where
- * every panel 403'd. school_admin/platform_admin genuinely hold those roles and
- * stay; their own surfaces (K-01, X-01) are later phases. */
-const TEACHER_ROLES = ["teacher", "school_admin", "platform_admin"] as const
-/* G-11 is "All" in the UI spec, and the device limit is enforced per account
- * regardless of role, so its guard admits every role and only excludes callers
- * with no session at all. */
-const ALL_ROLES = [...STUDENT_ROLES, ...PARENT_ROLES, ...TEACHER_ROLES] as const
-
-function Root() {
-  const { session } = useAuth()
-  return <Navigate to={session ? portalPathForRole(session.role) : "/login"} replace />
-}
-
-function LoginRoute({ children }: { children: React.ReactNode }) {
-  const { session } = useAuth()
-  if (session) return <Navigate to={portalPathForRole(session.role)} replace />
-  return children
-}
-
-export const router = createBrowserRouter([
-  { path: "/", element: <Root /> },
-  {
-    path: "/login",
-    element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" />}><Login /></Suspense></LoginRoute>,
-  },
-  // G-05. A separate route rather than a tab on /login: the parent flow shares
-  // no field with email/password, and the spec's whole framing for it is
-  // "the lowest-friction entry in the product".
-  {
-    path: "/login/parent",
-    element: (
-      <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
-          <ParentLogin />
-        </Suspense>
-      </LoginRoute>
-    ),
-  },
-  // G-11 (devices section). Top-level rather than inside a portal subtree: the
-  // 3-device limit applies to every account, so all five roles reach the same
-  // screen — the same reason `/api/me/devices` is role-agnostic (P5.7).
-  {
-    path: "/settings/devices",
-    element: (
-      <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
-          <DeviceSettings />
-        </Suspense>
-      </RequireAuth>
-    ),
-  },
-  // G-12. Top-level for the same reason, and one it does not share: the
-  // at-risk-alert preference belongs to the **teacher and the parent**
-  // (`routers/me.py` gates it to those two roles), so mounting this inside the
-  // student portal would have put a toggle out of reach of the only roles it
-  // applies to.
-  {
-    path: "/settings/notifications",
-    element: (
-      <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
-          <NotificationSettings />
-        </Suspense>
-      </RequireAuth>
-    ),
-  },
-  {
-    ...teacherRoute,
-    element: <RequireAuth allowedRoles={TEACHER_ROLES}>{teacherRoute.element}</RequireAuth>,
-  },
-  {
-    ...studentRoute,
-    element: <RequireAuth allowedRoles={STUDENT_ROLES}>{studentRoute.element}</RequireAuth>,
-  },
-  {
-    ...parentRoute,
-    element: <RequireAuth allowedRoles={PARENT_ROLES}>{parentRoute.element}</RequireAuth>,
-  },
-])
+applyFrom(router.state.matches)
+router.subscribe((state) => {
+  applyFrom(state.matches)
+})

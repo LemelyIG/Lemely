@@ -23,7 +23,13 @@ from pydantic import Field
 from lemely.core.history import PaperOrigin
 from lemely.web.schemas import ApiModel, QuestionResultDTO, WeakAreaDTO
 
-PaperKind = Literal["graded", "review", "processing", "queued"]
+#: Lifecycle of a tracked paper. ``queued`` means "waiting for the grading
+#: worker", ``processing`` means "being marked right now", and ``failed`` is the
+#: terminal state for a run that can never produce marks (crashed, or no mark
+#: scheme resolvable). ``failed`` exists because the alternative — leaving such
+#: a paper at ``queued`` — is indistinguishable from one still waiting its turn,
+#: which is precisely the unexplained "queued forever" state D6.13 removes.
+PaperKind = Literal["graded", "review", "processing", "queued", "failed"]
 SchemeStatus = Literal["parsed", "pending", "custom"]
 
 
@@ -86,10 +92,18 @@ class BatchTabDTO(ApiModel):
 class PaperSummaryDTO(ApiModel):
     """One paper card in the grading grid.
 
-    Data-backed: ``id``, ``name`` (student id), ``kind``/``status``,
+    Data-backed: ``id``, ``name``, ``kind``/``status``,
     ``awardedMarks``/``maxMarks``, ``confidence``, ``needsReview``. ``pageCount``
     is *structurally-empty* (``None``) unless the pipeline recorded it — the mock's
     "12 pg" has no backend source.
+
+    ``name`` is the detected-paper label (``Paper 3 V1 May/June 2020 - 2026-08-12``)
+    once metadata detection has run, and the teacher's own uploaded filename until
+    then. It is deliberately *not* the student id: ``upload_paper`` sets that to the
+    server-generated ``paper_id`` (no teacher->student ownership model exists yet,
+    D1.12), so rendering it put a bare 32-char uuid on every card.
+
+    ``error`` is populated only for ``kind == "failed"`` and carries why.
     """
 
     id: str
@@ -101,6 +115,7 @@ class PaperSummaryDTO(ApiModel):
     confidence: float | None = None
     needsReview: bool = False
     pageCount: int | None = None
+    error: str | None = None
 
 
 class PaperListDTO(ApiModel):
@@ -116,14 +131,22 @@ class PaperDetailDTO(ApiModel):
     Data-backed: ``metadata`` (detected fields), ``pipeline`` steps, and the full
     per-question ``questions`` list plus ``weakAreas`` from the stored
     :class:`CorrectionResult`.
+
+    Served for papers that have *not* finished grading too, which is why the mark
+    totals are nullable. This route used to 409 until a report existed, so the
+    console's Pipeline panel had nothing to render after a page reload and the
+    stepper simply vanished mid-run (D6.13) — the run was still going, the screen
+    just could not say so. ``questions``/``weakAreas`` stay empty until there is a
+    real correction to read them from; ``pipeline`` reflects live job progress.
     """
 
     id: str
     name: str
     kind: PaperKind
-    awardedMarks: int
-    maxMarks: int
-    needsReview: bool
+    awardedMarks: int | None = None
+    maxMarks: int | None = None
+    needsReview: bool = False
+    error: str | None = None
     metadata: list[DetectedFieldDTO] = Field(default_factory=list)
     pipeline: list[PipelineStepDTO] = Field(default_factory=list)
     questions: list[QuestionResultDTO] = Field(default_factory=list)

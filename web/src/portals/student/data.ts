@@ -7,39 +7,26 @@
  * from these constants, no live fetch.
  */
 
+import {
+  Atom,
+  Bell,
+  CalendarBlank,
+  Cards,
+  HandHeart,
+  House,
+  Megaphone,
+  NotePencil,
+  PencilSimpleLine,
+  Trophy,
+  UserCircle,
+  UsersThree,
+  type Icon,
+} from "@phosphor-icons/react"
+
+import type { Crumb } from "@/components/ui/breadcrumbs"
+
 /** Semantic colour keys used by data-viz rows/bars, resolved to tokens per use. */
 export type VizColor = "accent" | "ok" | "warn" | "t1" | "t2" | "t3"
-
-/* ── MCQ answer grid (Paper 1) ─────────────────────────────────────────── */
-
-const studentAnswers = [
-  "A", "A", "A", "D", "C", "D", "A", "A", "B", "C",
-  "B", "B", "D", "A", "A", "C", "A", "C", "B", "A",
-  "D", "A", "A", "A", "C", "D", "C", "A", "A", "D",
-  "D", "D", "A", "C", "B", "C", "B", "B", "A", "B",
-] as const
-
-// The scheme differs from the student on Q2 and Q34 (two dropped marks).
-const expectedAnswers = studentAnswers.map((a, i) =>
-  i === 1 ? "B" : i === 33 ? "D" : a,
-)
-
-export interface McqCell {
-  id: number
-  ans: string
-  correct: boolean
-  title: string
-}
-
-export const mcq: McqCell[] = studentAnswers.map((ans, i) => {
-  const correct = ans === expectedAnswers[i]
-  return {
-    id: i + 1,
-    ans,
-    correct,
-    title: `Q${i + 1} - you: ${ans} - scheme: ${expectedAnswers[i]}`,
-  }
-})
 
 /* ── Sidebar nav groups ─────────────────────────────────────────────────── */
 
@@ -48,6 +35,17 @@ export interface NavItem {
   label: string
   tag?: string
   end?: boolean
+  /**
+   * Phosphor glyph for the row (P4.1). DESIGN.md §10 prefers icon-plus-label
+   * "wherever space allows", and the Operate lane ranks scanability above
+   * expression — eleven identical dots gave a student nothing to aim at, so
+   * every row was read rather than recognised.
+   *
+   * The icon lives on the item, not in a lookup keyed by label, so a renamed
+   * destination cannot quietly lose its glyph and fall back to a default that
+   * means something else.
+   */
+  icon: Icon
 }
 
 export interface NavGroup {
@@ -55,56 +53,87 @@ export interface NavGroup {
   items: NavItem[]
 }
 
+/*
+ * P3.1 (DECISION D1.1 and D1.3, both defaulted-approved on timeout).
+ *
+ * D1.1 — the "Elsewhere" group is gone. It put three internal surfaces in front
+ * of every real student: `/student/onboard` (a flow the student is *routed*
+ * into once, not a place to revisit), `/student/landing` (the marketing page,
+ * orphaned inside the authenticated app), and `/student/directions` (an
+ * internal A/B/C design-comparison gallery that exists to help us choose a
+ * result header, and means nothing to a fifteen-year-old). All three **routes
+ * survive** — they are still mounted in `portals/student/index.tsx` and still
+ * deep-linkable, which is what onboarding's redirect and our own review links
+ * depend on. Only the navigation entries are removed.
+ *
+ * D1.3 — Notifications joins the list. Until now the single entry point to
+ * `/student/notifications` was a push deep link, so a student who declined the
+ * push permission prompt, or whose browser never offered it, had no route to
+ * their own notification history from anywhere in the product.
+ *
+ * Grouping note: these labels are the sidebar's section headings, so they are
+ * read by students, not by us. "Marking" stays its own group because
+ * "Correct a paper" is the product's central action and burying it in a list
+ * of ten siblings is the one thing this nav must not do.
+ */
 export const navGroups: NavGroup[] = [
   {
     label: "Student",
     items: [
-      { to: "/student", label: "Overview", end: true },
-      { to: "/student/subject/0625", label: "Physics", tag: "0625" },
-      { to: "/student/practice/0625", label: "Practice", tag: "0625" },
-      { to: "/student/flashcards/0625", label: "Flashcards", tag: "0625" },
-      { to: "/student/plan/0625", label: "Study plan", tag: "0625" },
-      { to: "/student/board", label: "Standings" },
-      { to: "/student/friends", label: "Friends" },
-      { to: "/student/profile", label: "Your profile" },
-      { to: "/student/announcements", label: "Announcements" },
-      { to: "/student/parents", label: "Your parents" },
+      { to: "/student", label: "Overview", end: true, icon: House },
+      { to: "/student/subject/0625", label: "Physics", tag: "0625", icon: Atom },
+      { to: "/student/practice/0625", label: "Practice", tag: "0625", icon: PencilSimpleLine },
+      { to: "/student/flashcards/0625", label: "Flashcards", tag: "0625", icon: Cards },
+      { to: "/student/plan/0625", label: "Study plan", tag: "0625", icon: CalendarBlank },
+      { to: "/student/board", label: "Standings", icon: Trophy },
+      { to: "/student/friends", label: "Friends", icon: UsersThree },
+      { to: "/student/profile", label: "Your profile", icon: UserCircle },
+      { to: "/student/notifications", label: "Notifications", icon: Bell },
+      { to: "/student/announcements", label: "Announcements", icon: Megaphone },
+      { to: "/student/parents", label: "Your parents", icon: HandHeart },
     ],
   },
   {
     label: "Marking",
-    items: [{ to: "/student/correct", label: "Correct a paper" }],
-  },
-  {
-    label: "Elsewhere",
-    items: [
-      { to: "/student/onboard", label: "Onboarding" },
-      { to: "/student/landing", label: "Landing page" },
-      { to: "/student/directions", label: "Directions", tag: "A/B/C" },
-    ],
+    items: [{ to: "/student/correct", label: "Correct a paper", icon: NotePencil }],
   },
 ]
 
-/** Breadcrumb per route path (matches the mock's crumb map). */
+/**
+ * Breadcrumb per route path. **Exact pathnames only** — anything with a route
+ * parameter in it is resolved by a pattern arm in `resolveCrumb` instead.
+ *
+ * P3.1 removed four keys from this map: `/student/subject`,
+ * `/student/practice`, `/student/flashcards` and `/student/result`. All four
+ * were dead lookups. Every one of those routes is parameterised
+ * (`subject/:code`, `practice/:subjectCode`, `flashcards/:subjectCode`,
+ * `result/:paperId`), so no pathname the router can produce ever equals the
+ * bare key, and `resolveCrumb` was already answering all four from its pattern
+ * arms below. This is the same defect the note about `/student/plan` describes
+ * having deliberately avoided when P4.10 parameterised that route; its four
+ * siblings kept theirs. Behaviour is unchanged — unreachable entries cannot
+ * change what anything renders — but a map with dead keys in it is a map the
+ * next person edits the wrong half of.
+ *
+ * Found by `tests/unit/navigation.test.ts`, which asserts that every key here
+ * matches a route the router actually mounts.
+ */
 export const crumbs: Record<string, string> = {
   "/student": "Home",
-  "/student/subject": "Home / Physics 0625",
-  "/student/practice": "Home / Practice",
-  "/student/flashcards": "Home / Flashcards",
-  "/student/result": "Home / Physics / Paper result",
   "/student/correct": "Marking / Correct a paper",
-  // `/student/plan` is deliberately absent: P4.10 made the route
-  // subject-scoped (`/student/plan/:subjectCode`), so it is resolved by a
-  // pattern arm in `resolveCrumb` alongside practice and flashcards. Leaving
-  // the bare key here would be a lookup no pathname can ever hit.
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
   "/student/profile": "Home / Your profile",
+  // Absent until P3.1, and silently so: with no nav entry the only way onto
+  // this route was a push deep link, and a wrong-but-valid breadcrumb ("Home")
+  // trips no typecheck and no axe rule — the exact failure mode `resolveCrumb`
+  // is documented below as having already had once. Giving the route a nav
+  // entry (D1.3) without giving it a crumb would have repeated it.
+  "/student/notifications": "Home / Notifications",
   "/student/announcements": "Home / Announcements",
   "/student/parents": "Home / Your parents",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
-  "/student/directions": "Design directions",
 }
 
 /**
@@ -125,8 +154,19 @@ export function resolveCrumb(pathname: string): string {
   const subjectMatch = pathname.match(/^\/student\/subject\/([^/]+)$/)
   if (subjectMatch) return `Home / ${subjectMatch[1]}`
 
-  const resultMatch = pathname.match(/^\/student\/result\/([^/]+)$/)
-  if (resultMatch) return `Home / Result ${resultMatch[1]}`
+  // "This result", not `Result ${paperId}`. The teacher portal's `resolveTrail`
+  // states the rule and a test enforces it there: no crumb interpolates an id,
+  // because a UUID in a breadcrumb is noise and fetching a name to replace it
+  // would make navigation chrome depend on a request that can lag or fail. The
+  // student portal was doing exactly that on `/student/result/:paperId` — the
+  // product's flagship screen — and it showed. The header's own comment
+  // recorded "Home / Result <uuid>" as the longest string on the row, i.e. the
+  // one that forced the responsive fix, without anyone asking what it was for.
+  //
+  // The subject/practice/flashcard/plan arms below keep their parameter on
+  // purpose: a syllabus code is a short, meaningful, reader-facing identifier,
+  // which an opaque paper id is not.
+  if (/^\/student\/result\/[^/]+$/.test(pathname)) return "Home / This result"
 
   const practiceGeneratorMatch = pathname.match(/^\/student\/practice\/([^/]+)$/)
   if (practiceGeneratorMatch) return `Home / Practice / ${practiceGeneratorMatch[1]}`
@@ -154,6 +194,40 @@ export function resolveCrumb(pathname: string): string {
   return "Home"
 }
 
+/**
+ * The same breadcrumb as a structured trail, for `<Breadcrumbs>` (P4.1).
+ *
+ * D1.5 gave the teacher and parent portals a real trail with a working back
+ * path. The student portal was left rendering `resolveCrumb`'s flat string as
+ * inert mono text, so on every drilled-into student screen — a subject, a
+ * result, a practice set, a plan session — the only way back was the browser's
+ * own back gesture. That is the exact hole D1.5 was raised to close, and the
+ * student portal is the one the mission says lives on a phone, where that
+ * gesture is inconsistent across browsers and absent from an installed PWA.
+ *
+ * Derived from `resolveCrumb` rather than replacing it, deliberately: one
+ * function decides what a pathname is called, so the two forms cannot drift
+ * into disagreeing about the same route. `resolveCrumb` keeps its exported
+ * string contract and its existing tests.
+ *
+ * Only "Home" is linked. The other leading segments this map produces
+ * ("Marking", "Practice", "Flashcards", "Study plan") are grouping labels with
+ * no route of their own — `/student/practice` is not a mounted path, and
+ * linking it would manufacture a dead end to fix a missing back path.
+ * `Breadcrumbs` supports an unlinked intermediate crumb and collapses to the
+ * nearest *linked* ancestor below `sm`, so those rows still get a working back
+ * tap to Home.
+ */
+export function resolveCrumbTrail(pathname: string): Crumb[] {
+  const parts = resolveCrumb(pathname).split(" / ")
+  return parts.map((label, i) => {
+    // The page you are already on is never a link (`Breadcrumbs` renders the
+    // final crumb as `aria-current`).
+    if (i === parts.length - 1) return { label }
+    return label === "Home" ? { label, to: "/student" } : { label }
+  })
+}
+
 // `studentName`/`studentMeta` ("Maya Rahman" / "Year 11 - Helwan Science
 // Centre") were removed in P3.10 chunk c. They were the student-side twin of
 // the fabricated teacher identity P3.7 chunk b deleted, and no field anywhere
@@ -179,78 +253,28 @@ export const railTicks: RailTick[] = [
 /* ── Correct a paper ────────────────────────────────────────────────────── */
 
 export const reassure: { t: string }[] = [
-  { t: "Multiple choice is matched letter for letter against the official Cambridge scheme. No judgement, no model - the same answer key a marker would use." },
+  // The spaced hyphen here was a dash used as punctuation (audit N1), which
+  // the copy gate's own classifier flags. Restructured into two sentences
+  // rather than swapped for a middle dot: a dot separates a label from a
+  // value, and this is a clause.
+  { t: "Multiple choice is matched letter for letter against the official Cambridge scheme. No judgement and no model, just the same answer key a marker would use." },
   { t: "Written answers are marked point by point, and anything the system is unsure about is handed to you rather than guessed at." },
   { t: "Set your own paper and your own mark scheme, and it will be marked to the same standard." },
 ]
 
 /* ── Landing ────────────────────────────────────────────────────────────── */
 
-export const landingHero = {
-  eyebrow: "For CAIE teachers and their students",
-  titleTop: "Thirty papers marked",
-  titleBottom: "before Sunday lunch.",
-  body: "Lemely reads a scanned paper, identifies the session and variant, pulls the official mark scheme, and marks it question by question - showing its working, and its confidence, for every mark it gives.",
-  primaryCta: "Mark a paper free",
-  secondaryCta: "For centres & teachers",
-  footnote: "Free for every student of a partnered teacher - No card to start",
-  cardMeta: "0625/12 - May/June 2020 - marked in 41s",
-  cardScore: "38",
-  cardMax: "/40",
-  cardGrade: "A",
-  cardNote: "Two marks dropped, both on interpreting a distance-time gradient. A worksheet of twelve similar questions is already waiting.",
-}
-
-export interface Pillar {
-  kicker: string
-  title: string
-  body: string
-  bullets: string[]
-}
-
-export const pillars: Pillar[] = [
-  { kicker: "Student", title: "Feedback that names the next move", body: "Every dropped mark is traced to a mark point and a topic, then turned into a worksheet of questions that look exactly like it.", bullets: ["Predicted grade against real boundaries", "Classified worksheets and flashcards", "A study plan that rewrites itself"] },
-  { kicker: "Teacher", title: "A group you can see through", body: "At-risk students surface by trajectory. Class-wide weak topics surface before the exam, not after it.", bullets: ["Marking that takes minutes, not Sundays", "Lesson retention down to the replayed minute", "QR attendance with face or 2FA check"] },
-  { kicker: "Parent", title: "One honest answer", body: "A phone number is the whole login. Grades, attendance and payments, without a parent-teacher meeting.", bullets: ["Results by WhatsApp the moment marking ends", "Missed-attendance alert one hour after class", "Course payments in the same place"] },
-]
-
-export const landingProofIntro = {
-  title: "Accuracy you can argue with",
-  body: "Multiple choice is marked deterministically - no model involved. Theory answers are marked against the official mark points, and every mark carries a confidence score. Anything below threshold goes to the teacher rather than being guessed.",
-}
-
-export interface ProofStat {
-  n: string
-  l: string
-}
-
-export const proof: ProofStat[] = [
-  { n: "41s", l: "median time to mark a 40-question paper" },
-  { n: "0", l: "model calls on multiple choice" },
-  { n: "0.70", l: "confidence floor before a human is asked" },
-  { n: "19.5h", l: "saved per teacher, per month" },
-]
-
-export const pillarsIntro = {
-  title: "One engine, three people served",
-  body: "The same corrected paper becomes a study plan for the student, a teaching signal for the teacher, and a plain answer for the parent who asks \"how is she doing?\"",
-}
-
-export interface PricingPlan {
-  name: string
-  price: string
-  who: string
-  dark: boolean
-  feats: string[]
-  cta: string
-  ctaAccent: boolean
-}
-
-export const pricing: PricingPlan[] = [
-  { name: "Student", price: "Free", who: "Everything you need to mark your own practice papers.", dark: false, feats: ["5 papers a month", "Grade prediction", "Weakness report", "Basic study plan"], cta: "Start free", ctaAccent: false },
-  { name: "Student Plus", price: "EGP 180", who: "Per month. Free for every student of a partnered teacher.", dark: true, feats: ["Unlimited papers", "Classified worksheets and flashcards", "Adaptive study plan", "Marketplace booking"], cta: "Start 14-day trial", ctaAccent: true },
-  { name: "Teacher & Centre", price: "Revenue share", who: "No fee. Lemely takes a cut of marketplace bookings only.", dark: false, feats: ["Free Plus for all your students", "Automated correction and custom schemes", "CMS, sub-accounts, QR attendance", "Payments and course booking"], cta: "Talk to us", ctaAccent: false },
-]
+/*
+ * The landing block moved to `portals/marketing/data.ts` in P4.9, along with
+ * the MCQ answer-grid fixture that only the hero card ever consumed.
+ *
+ * It was never student data. It lived here because the marketing page was
+ * mounted inside this portal, behind the student auth guard, where nobody it
+ * was written for could read it — the finding written up in
+ * `portals/marketing/index.tsx`. Nothing in the student portal imported any of
+ * it, which is the tell: a data module for a page that belongs to a different
+ * lane. Do not add marketing copy back to this file.
+ */
 
 /* ── Directions (A/B/C) ─────────────────────────────────────────────────── */
 

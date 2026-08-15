@@ -1,21 +1,61 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
+import {
+  ProcessingState,
+  StageGlyph,
+  type ProcessingStage,
+  type ProcessingStageStatus,
+} from "@/components/ui/processing-state"
 import { cn } from "@/lib/utils"
-import { ApiError } from "@/lib/api"
-import { usePapers, usePaperDetail, uploadPaper, gradePaper } from "@/lib/hooks/useTeacherApi"
-import type { DetectedField, PaperKind, PaperSummary, TeacherPipelineFrame } from "@/lib/teacherTypes"
+import { CardGridSkeleton } from "@/components/ui/loading-shapes"
+import {
+  teacherLoadFailureMessage,
+  teacherMutationFailureMessage,
+} from "@/lib/teacherOutcome"
+import { failActiveStage } from "@/lib/pipelineStages"
+import { useInViewOnce } from "@/lib/hooks/useInViewOnce"
+import {
+  usePapers,
+  usePaperDetail,
+  useRegradePaper,
+  useScanPreview,
+  uploadPaper,
+} from "@/lib/hooks/useTeacherApi"
+import type { PaperKind, PaperSummary, PipelineStep } from "@/lib/teacherTypes"
+import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
- * Grading. Wired to `GET /papers` (grid + tabs) via `usePapers()`,
- * `GET /papers/{id}` (left-sidebar Detected/Pipeline panels for the
- * *selected* paper) via `usePaperDetail()`, and the real upload -> grade
- * pipeline (`uploadPaper` + `gradePaper`, which chains extract+mark
- * internally on the backend — see `grade_paper_endpoint` in
- * `lemely/web/routers/teacher.py`: when a mark scheme is attached it calls
- * `extract_answers` then `grade_paper` in the same `run()` closure, so no
- * separate `extractPaper()` call is needed here).
+ * Grading. Wired to `GET /papers` (grid + tabs) via `usePapers()` and
+ * `GET /papers/{id}` (left-sidebar Detected/Pipeline panels for the *selected*
+ * paper) via `usePaperDetail()`, plus the real upload (`uploadPaper`).
+ *
+ * ── Who runs the marking (D6.13) ─────────────────────────────────────────
+ * The server does, on its own worker, starting the moment the scan lands. This
+ * screen does not drive it and cannot stall it.
+ *
+ * It used to. `handleUpload` awaited `uploadPaper()` and then held a
+ * `POST /papers/{id}/grade` SSE stream open for the whole run, which made the
+ * browser tab load-bearing: nothing marked a paper unless a console was
+ * watching it. That turned an unrelated backend defect — `upload_paper` ran a
+ * ~60s synchronous Gemini call inside an `async def`, freezing uvicorn's only
+ * event loop — into a permanent stall, because the upload `fetch` never
+ * resolved, so `runGrading()` was never reached and no grade request was ever
+ * issued. The console sat on "Queued" indefinitely and a page refresh cleared
+ * the only progress readout that existed, since it was component state.
+ *
+ * So the SSE consumption is gone from this screen, and the Pipeline panel reads
+ * `GET /papers/{id}` instead — which now answers for papers still being marked
+ * (it used to 409 until a report existed) and carries the live stage plus the
+ * real per-question counter. Server state survives a refresh; component state
+ * never could. `usePapers`/`usePaperDetail` poll only while something is
+ * actually in flight, so an idle console makes no requests.
+ *
+ * That leaves ONE reporter per fact, which is the property the old design lost:
+ * the stepper under the upload control speaks only for the upload (the one
+ * thing this browser does), and the Pipeline panel speaks for the run.
  *
  * Cuts / judgment calls made vs. the mock (see `PaperListDTO`/`PaperDetailDTO`
  * in `lib/teacherTypes.ts`):
@@ -26,40 +66,53 @@ import type { DetectedField, PaperKind, PaperSummary, TeacherPipelineFrame } fro
  *  - The "Detected · MS 0625/31 v3 · Change" row above the tabs was
  *    batch-wide fake mark-scheme metadata with no backing source (mark
  *    schemes are attached per-paper at upload, not per-batch) — dropped.
- *  - Detected/Pipeline panels reflect the *selected* paper
- *    (`usePaperDetail(selectedPaperId)`), not a batch aggregate, since
- *    detection/pipeline data only exists per-paper. Selection defaults to
- *    whichever paper was most recently uploaded in this session (`undefined`
- *    before any upload); clicking a card also selects it.
- *  - Pipeline panel: `usePaperDetail` 409s until the paper is graded — shown
- *    as an honest idle state ("Not graded yet" / "Grading in progress…")
- *    instead of the mock's fabricated 5-step checklist.
+ *  - Detected/Pipeline panels reflect the *selected* paper, not a batch
+ *    aggregate, since detection/pipeline data only exists per-paper. Selection
+ *    defaults to whichever paper was most recently uploaded in this session;
+ *    clicking a card also selects it.
  *  - "Drop more scans" dashed box + "Use custom mark scheme" button replaced
  *    by one real dual file-input upload control (scan required, mark scheme
- *    optional, matching `CorrectPaper.tsx`'s pattern) that auto-chains
- *    upload -> grade and streams progress into a small log.
- *  - `autoGrade` donut now derives from the real `tabs` counts; the
- *    fabricated "~2 min remaining" ETA is replaced with a live
- *    "{n} processing" line (omitted when 0).
+ *    optional, matching `CorrectPaper.tsx`'s pattern).
+ *  - `autoGrade` donut derives from the real `tabs` counts; the fabricated
+ *    "~2 min remaining" ETA is replaced with a live "{n} processing" line
+ *    (omitted when 0).
  *  - Paper cards: `pageCount` is always `null` today (no backend source), so
- *    the "12 pg" text is dropped rather than fabricated. The fake
- *    "0625/31 · MAY 2020" per-card caption is dropped too. The thumbnail
- *    container + its real-status overlays (review flag, processing spinner)
- *    are kept for visual continuity, but the fake page-line bars inside it
- *    are dropped (they implied per-paper scan content that doesn't exist).
- *  - `onOpen` on a card now selects the paper (updates the sidebar) instead
- *    of navigating to `/teacher/review`, which is queue-wide, not per-paper.
+ *    the "12 pg" text is dropped rather than fabricated. The thumbnail is the
+ *    real first page of the scan, rendered server-side by
+ *    `GET /papers/{id}/preview`; the mock's fake page-line bars are gone.
+ *  - `onOpen` on a card selects the paper (updates the sidebar) instead of
+ *    navigating to `/teacher/review`, which is queue-wide, not per-paper.
  */
 
 const CIRC = 2 * Math.PI * 42
 
-const PIPE_MARK = { done: "✓", active: "●", idle: "" } as const
+/* `PipelineStep.state` is the stored per-paper summary's vocabulary; the kit's
+ * `ProcessingStage` is the live stream's. They mean the same three things and
+ * "idle" is "pending" — the wire schemas differ, the stage does not.
+ *
+ * Until P7.1 this screen drew those three states as the literal glyphs
+ * `"✓"`, `"●"` and `""` in a hand-built circle, which §3.2 item 3 (one icon
+ * library, Phosphor) and item 9 (no glyph substitutes for icons) both rule
+ * out, and which announced nothing at all for a stage that had not started.
+ * It also meant this one screen reported a marking pipeline in two visual
+ * languages 100 lines apart — the kit's `ProcessingState` renders the live
+ * upload run below, and the copy under it points the teacher up here
+ * ("Progress is in Pipeline above"). */
+const PIPE_STATUS = {
+  done: "done",
+  active: "active",
+  idle: "pending",
+} as const satisfies Record<PipelineStep["state"], ProcessingStageStatus>
 
 const CHIP_TONE: Record<PaperKind, string> = {
-  graded: "bg-ok-bg text-ok",
-  review: "bg-err-bg text-err",
-  processing: "bg-accent-subtle text-accent-subtle-on",
-  queued: "bg-surface-2 text-t2",
+  graded: "bg-ok-wash text-ok",
+  review: "bg-err-wash text-err",
+  processing: "bg-accent-wash text-accent-ink",
+  queued: "bg-paper-sunk text-ink-muted",
+  // Distinct from `review`'s red: review means "a human should look at these
+  // marks", failed means "there are no marks". Reading as the same state would
+  // send a teacher hunting for a score that was never produced.
+  failed: "bg-paper-sunk text-err border border-err",
 }
 
 type TabId = "all" | "review" | "graded" | "processing"
@@ -72,49 +125,32 @@ function filterPapers(papers: PaperSummary[], tab: TabId): PaperSummary[] {
   return papers.filter((p) => p.kind === tab)
 }
 
-/** Human label for one SSE frame, appended to the running log as it arrives. */
-function describeFrame(frame: TeacherPipelineFrame): string {
-  switch (frame.type) {
-    case "extraction_progress":
-      return frame.question_id ? `Read question ${frame.question_id}` : "Reading answers"
-    case "marking_progress":
-      if (frame.question_id) {
-        return frame.awarded != null && frame.max_marks != null
-          ? `Marked question ${frame.question_id} — ${frame.awarded}/${frame.max_marks}`
-          : `Marked question ${frame.question_id}`
-      }
-      return "Marking"
-    case "gemini_call_start":
-      return "Calling the marking model"
-    case "gemini_call_end":
-      return "Model call finished"
-    case "gemini_cache_hit":
-      return "Reused a cached model call"
-    case "gemini_retry":
-      return "Retrying the model call"
-    case "gemini_escalate":
-      return "Escalating to a stronger model"
-    case "budget_warning":
-      return frame.message ?? "Approaching the marking budget"
-    case "budget_exceeded":
-      return frame.message ?? "Marking budget exceeded"
-    default:
-      return frame.message ?? frame.type
-  }
-}
+/* The upload control's own stepper. One stage, because one stage is all this
+ * browser does: the POST is in flight, then it landed (or it didn't). Marking
+ * is reported by the Pipeline panel, from the server. A row here for "Reading
+ * the answers" would be this screen guessing at work it no longer performs. */
+const UPLOAD_STAGES: ProcessingStage[] = [
+  { id: "upload", label: "Uploading the scan", status: "pending" },
+]
 
 function PaperCard({
   paper,
-  isGrading,
   onOpen,
 }: {
   paper: PaperSummary
-  isGrading: boolean
   onOpen: () => void
 }) {
-  const showSpinner = paper.kind === "processing" || (paper.kind === "queued" && isGrading)
+  /* P6.3. The thumbnail's bytes come from a server-side render of the stored
+     scan, so the deferral has to gate the *fetch*; `loading="lazy"` on the
+     `<img>` below would defer nothing, because by then the blob is already
+     local. A callback ref rather than `useRef`, because mutating `.current`
+     does not re-run `useInViewOnce`'s effect. */
+  const [cardNode, setCardNode] = useState<HTMLDivElement | null>(null)
+  const nearViewport = useInViewOnce(cardNode)
+  const previewUrl = useScanPreview(paper.id, nearViewport)
+  const showSpinner = paper.kind === "processing"
   const confTone =
-    paper.kind === "review" ? "text-err" : paper.kind === "graded" ? "text-t2" : "text-t3"
+    paper.kind === "review" ? "text-err" : paper.kind === "graded" ? "text-ink-muted" : "text-ink-faint"
   const confText = paper.confidence != null ? `conf ${Math.round(paper.confidence * 100)}%` : null
   const scoreText =
     paper.awardedMarks != null && paper.maxMarks != null
@@ -123,6 +159,7 @@ function PaperCard({
 
   return (
     <div
+      ref={setCardNode}
       onClick={onOpen}
       role="button"
       tabIndex={0}
@@ -133,28 +170,46 @@ function PaperCard({
         }
       }}
       className={cn(
-        "rounded-md overflow-hidden bg-surface cursor-pointer transition-transform hover:-translate-y-0.5 border",
-        paper.kind === "review" ? "border-err" : "border-border",
+        "rounded-md overflow-hidden bg-paper-raised cursor-pointer transition-transform hover:-translate-y-0.5 border",
+        paper.kind === "review" ? "border-err" : "border-rule",
       )}
     >
-      <div className="relative h-[64px] bg-surface-2 border-b border-border overflow-hidden">
+      <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
+        {previewUrl ? (
+          // Top-anchored: a scan's identifying marks (subject, paper number,
+          // candidate box) are at the head of page 1, so a 64px window onto the
+          // top of the page is the part worth showing. `alt` is empty because
+          // the card's own name/status text already names this paper — a
+          // screen-reader would otherwise hear the same paper announced twice.
+          <img
+            src={previewUrl}
+            alt=""
+            className="w-full h-full object-cover object-top"
+          />
+        ) : null}
         {paper.kind === "review" ? (
-          <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-3xs flex items-center justify-center font-mono">
+          <div className="absolute top-2.5 end-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-data-sm flex items-center justify-center">
             !
           </div>
         ) : null}
         {showSpinner ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-[26px] h-[26px] rounded-full border-[3px] border-border border-t-accent animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center bg-paper-sunk/70">
+            <div className="w-[26px] h-[26px] rounded-full border-[3px] border-rule border-t-accent animate-spin" />
           </div>
         ) : null}
       </div>
       <div className="px-[13px] py-3">
         <div className="flex items-center gap-2">
-          <div className="text-dense-lg font-medium flex-1">{paper.name}</div>
+          {/* `min-w-0` + `truncate`: a flex child's default `min-width: auto`
+              refuses to shrink below its content, so a long name (the detected
+              label is longer still — "Paper 1 V2 May/June 2020 - 2026-08-12")
+              pushed the status chip off the card's right edge and clipped it. */}
+          <div className="text-body-lg font-medium flex-1 min-w-0 truncate" title={paper.name}>
+            {paper.name}
+          </div>
           <div
             className={cn(
-              "text-3xs rounded-full px-[9px] py-0.5",
+              "text-eyebrow rounded-full px-[9px] py-1 whitespace-nowrap flex-none",
               CHIP_TONE[paper.kind],
             )}
           >
@@ -163,10 +218,10 @@ function PaperCard({
         </div>
         <div className="flex items-baseline gap-2 mt-[9px]">
           {confText ? (
-            <div className={cn("font-mono text-xs", confTone)}>{confText}</div>
+            <div className={cn("text-data-sm", confTone)}>{confText}</div>
           ) : null}
           <div className="flex-1" />
-          <div className="font-mono text-md">{scoreText}</div>
+          <div className="text-data-md text-ink">{scoreText}</div>
         </div>
       </div>
     </div>
@@ -179,58 +234,55 @@ export function Grading() {
 
   const [tab, setTab] = useState<TabId>("all")
   const [selectedPaperId, setSelectedPaperId] = useState<string | undefined>(undefined)
-  const [detectedByPaper, setDetectedByPaper] = useState<Record<string, DetectedField[]>>({})
-  const [gradingIds, setGradingIds] = useState<Record<string, boolean>>({})
   const [scanFile, setScanFile] = useState<File | null>(null)
   const [schemeFile, setSchemeFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [log, setLog] = useState<string[]>([])
+  const [stages, setStages] = useState<ProcessingStage[]>(UPLOAD_STAGES)
 
   const papersQuery = usePapers()
-  const paperDetailQuery = usePaperDetail(selectedPaperId)
-
-  const runGrading = async (paperId: string) => {
-    setGradingIds((prev) => ({ ...prev, [paperId]: true }))
-    try {
-      for await (const frame of gradePaper(paperId)) {
-        if (frame.type === "warning" || frame.type === "error") {
-          setLog((prev) => [
-            ...prev,
-            frame.message ?? "Something went wrong while grading this paper.",
-          ])
-          continue
-        }
-        setLog((prev) => [...prev, describeFrame(frame)])
-      }
-    } catch (err) {
-      setLog((prev) => [...prev, err instanceof Error ? err.message : String(err)])
-    } finally {
-      setGradingIds((prev) => {
-        const next = { ...prev }
-        delete next[paperId]
-        return next
-      })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] })
-      queryClient.invalidateQueries({ queryKey: ["teacher", "paper", paperId] })
-    }
-  }
+  /* What the sidebar reports when the teacher has not picked a paper.
+   *
+   * A reload resets `selectedPaperId` to undefined, and with nothing selected
+   * the Detected and Pipeline panels have nothing to show — which is what made
+   * refreshing mid-run look like the pipeline had vanished, even after the
+   * server started answering for ungraded papers. Defaulting to the paper
+   * actually being marked (else the newest one) means the console comes back up
+   * pointed at the run in progress, which is what a teacher reloaded the page
+   * to find out about. An explicit click still wins. */
+  const papers = papersQuery.data?.papers ?? []
+  const defaultPaperId =
+    papers.find((p) => p.kind === "processing")?.id ??
+    papers.find((p) => p.kind === "queued")?.id ??
+    papers[papers.length - 1]?.id
+  const activePaperId = selectedPaperId ?? defaultPaperId
+  const paperDetailQuery = usePaperDetail(activePaperId)
+  const regrade = useRegradePaper()
 
   const handleUpload = async () => {
     if (!scanFile || uploading) return
     setUploading(true)
-    setUploadError(null)
-    setLog([])
+    // Reset to a fresh stepper and open the upload stage in one go — a second
+    // run must not inherit the first one's tick or its error.
+    setStages([{ id: "upload", label: "Uploading the scan", status: "active", detail: scanFile.name }])
     try {
-      const { paperId, detected } = await uploadPaper(scanFile, schemeFile ?? undefined)
-      setDetectedByPaper((prev) => ({ ...prev, [paperId]: detected }))
+      const { paperId } = await uploadPaper(scanFile, schemeFile ?? undefined)
+      setStages((prev) => prev.map((s) => ({ ...s, status: "done" })))
+      // Select it so the Pipeline panel starts reporting the run the server has
+      // already begun — this is the handover from "what this tab did" to "what
+      // the server is doing".
       setSelectedPaperId(paperId)
       setScanFile(null)
       setSchemeFile(null)
       queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] })
-      await runGrading(paperId)
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : String(err))
+      /* P6.2. This put `err.message` on the failed stage, so a dropped
+         connection during a class upload wrote the browser's "Failed to fetch"
+         into the pipeline panel, and a 500 wrote its status line. C-10 requires
+         a specific, actionable message per stage and this was neither.
+         `teacherMutationFailureMessage` is the mutation half of this portal's
+         own module: status-first, because every `detail` the staff upload path
+         raises is written for a client author. */
+      setStages((prev) => failActiveStage(prev, teacherMutationFailureMessage(err)))
     } finally {
       setUploading(false)
     }
@@ -246,7 +298,7 @@ export function Grading() {
   if (papersQuery.isPending) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-dense-lg text-t2">Loading papers…</div>
+        <CardGridSkeleton count={6} />
       </div>
     )
   }
@@ -254,14 +306,16 @@ export function Grading() {
   if (papersQuery.isError) {
     return (
       <div className="lm-screen flex flex-col gap-5">
-        <div className="text-dense-lg text-accent">
-          Couldn't load papers: {papersQuery.error.message}
+        <div className="text-body-lg text-accent-ink">
+          Couldn't load papers: {teacherLoadFailureMessage(papersQuery.error)}
         </div>
       </div>
     )
   }
 
-  const { papers, tabs } = papersQuery.data
+  // `papers` is already bound above (the default-selection needs it before the
+  // pending/error early-returns, where `papersQuery.data` may not exist yet).
+  const { tabs } = papersQuery.data
   const filtered = filterPapers(papers, tab)
 
   const allCount = Number(tabs.find((t) => t.id === "all")?.count ?? "0")
@@ -271,20 +325,15 @@ export function Grading() {
   const progress = allCount > 0 ? gradedCount / allCount : 0
   const dash = `${(CIRC * progress).toFixed(1)} ${CIRC.toFixed(1)}`
 
-  const detectedFields: DetectedField[] = selectedPaperId
-    ? (paperDetailQuery.data?.metadata ?? detectedByPaper[selectedPaperId] ?? [])
-    : []
-
-  const isSelectedPaperNotGraded =
-    paperDetailQuery.isError &&
-    paperDetailQuery.error instanceof ApiError &&
-    paperDetailQuery.error.status === 409
+  const detail = paperDetailQuery.data
+  const detectedFields = detail?.metadata ?? []
+  const hasRunStarted = stages.some((s) => s.status !== "pending")
 
   return (
     <div className="lm-screen flex flex-col gap-5">
-      <div className="flex items-end gap-[18px] pb-[18px] border-b border-border flex-wrap gap-y-2.5">
+      <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-2.5">
         <div>
-          <div className="font-mono text-2xs tracking-[0.11em] uppercase text-t3">
+          <div className="text-eyebrow text-ink-faint">
             Grading console
           </div>
           {/* A real h1, not a styled div: axe's `page-has-heading-one` fired
@@ -296,40 +345,45 @@ export function Grading() {
         </div>
         <div className="flex-1" />
         <Button variant="ink" onClick={() => navigate("/teacher/review")}>
-          Open review queue →
+          Open review queue <ForwardArrow />
         </Button>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-6 items-start">
         {/* Left column */}
         <div className="flex flex-col gap-4">
-          <div className="bg-surface border border-border rounded-lg px-5 py-[18px]">
-            <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3">
+          <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
+            <div className="text-eyebrow text-ink-faint">
               Detected
             </div>
-            {!selectedPaperId ? (
-              <div className="text-dense text-t2 mt-[18px]">
+            {!activePaperId ? (
+              <div className="text-body-md text-ink-muted mt-[18px]">
                 Upload a scan to see detected fields.
               </div>
             ) : detectedFields.length === 0 ? (
-              <div className="text-dense text-t2 mt-[18px]">
-                No metadata detected for this paper.
+              // Detection is the first phase of the server-side run, so an
+              // in-flight paper genuinely has no answer yet — say which of the
+              // two it is rather than reporting "none" for both.
+              <div className="text-body-md text-ink-muted mt-[18px]">
+                {detail && (detail.kind === "queued" || detail.kind === "processing")
+                  ? "Reading this scan's exam details…"
+                  : "No metadata detected for this paper."}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-x-[14px] gap-y-4 mt-[18px]">
                 {detectedFields.map((d) => (
                   <div key={d.key}>
-                    <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3">
+                    <div className="text-eyebrow text-ink-faint">
                       {d.key}
                     </div>
-                    <div className="font-mono text-md mt-1">{d.value}</div>
+                    <div className="text-data-md text-ink mt-1">{d.value}</div>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          <div className="bg-surface border border-border rounded-lg p-5 flex gap-5 items-center">
+          <div className="bg-paper-raised border border-rule rounded-lg p-5 flex gap-5 items-center">
             <svg
               viewBox="0 0 100 100"
               className="w-[92px] h-[92px] flex-none -rotate-90"
@@ -354,16 +408,16 @@ export function Grading() {
               />
             </svg>
             <div className="flex-1">
-              <div className="text-md font-semibold">Auto-grading</div>
+              <div className="text-display-sm text-ink">Auto-grading</div>
               {processingCount > 0 ? (
-                <div className="font-mono text-xs text-t2 mt-[5px]">
+                <div className="text-data-sm text-ink-faint mt-[5px]">
                   {processingCount} processing
                 </div>
               ) : null}
               <div className="flex gap-[22px] mt-[14px]">
                 <div>
                   <div className="text-display-sm">{gradedCount}</div>
-                  <div className="font-mono text-3xs text-t3 mt-[3px]">
+                  <div className="text-data-sm text-ink-faint mt-[3px]">
                     AUTO-CONFIRMED
                   </div>
                 </div>
@@ -371,7 +425,7 @@ export function Grading() {
                   <div className="text-display-sm text-err">
                     {reviewCount}
                   </div>
-                  <div className="font-mono text-3xs text-t3 mt-[3px]">
+                  <div className="text-data-sm text-ink-faint mt-[3px]">
                     NEED REVIEW
                   </div>
                 </div>
@@ -379,57 +433,72 @@ export function Grading() {
             </div>
           </div>
 
-          <div className="bg-surface border border-border rounded-lg px-5 py-[18px]">
-            <div className="font-mono text-3xs tracking-[0.1em] uppercase text-t3 mb-[14px]">
+          <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
+            <div className="text-eyebrow text-ink-faint mb-[14px]">
               Pipeline
             </div>
-            {!selectedPaperId ? (
-              <div className="text-dense text-t2">Upload a scan to see its pipeline.</div>
+            {!activePaperId ? (
+              <div className="text-body-md text-ink-muted">Upload a scan to see its pipeline.</div>
             ) : paperDetailQuery.isPending ? (
-              <div className="text-dense text-t2">Loading…</div>
-            ) : isSelectedPaperNotGraded ? (
-              <div className="text-dense text-t2">
-                {gradingIds[selectedPaperId] ? "Grading in progress…" : "Not graded yet."}
-              </div>
+              <div className="text-body-md text-ink-muted">Loading…</div>
             ) : paperDetailQuery.isError ? (
-              <div className="text-dense text-accent">
-                Couldn't load pipeline: {paperDetailQuery.error.message}
+              <div className="text-body-md text-accent-ink">
+                Couldn't load pipeline: {teacherLoadFailureMessage(paperDetailQuery.error)}
               </div>
-            ) : (
-              paperDetailQuery.data.pipeline.map((p) => (
-                <div key={p.label} className="flex items-center gap-3 py-[9px]">
-                  <span
-                    className={cn(
-                      "w-[19px] h-[19px] flex-none rounded-full border-[1.5px] flex items-center justify-center text-3xs font-mono",
-                      p.state === "done"
-                        ? "bg-ok border-ok text-accent-on"
-                        : p.state === "active"
-                          ? "bg-transparent border-accent text-accent"
-                          : "bg-transparent border-border text-accent",
-                    )}
-                  >
-                    {PIPE_MARK[p.state]}
-                  </span>
-                  <span
-                    className={cn(
-                      "flex-1 text-dense-lg",
-                      p.state === "idle" ? "text-t3" : "text-t1",
-                    )}
-                  >
-                    {p.label}
-                  </span>
-                  <span className="font-mono text-xs text-t2">{p.count}</span>
-                </div>
-              ))
-            )}
+            ) : detail ? (
+              <>
+                {detail.pipeline.map((p) => (
+                  <div key={p.label} className="flex items-center gap-3 py-[9px]">
+                    <span className="flex-none">
+                      <StageGlyph status={PIPE_STATUS[p.state]} />
+                    </span>
+                    <span
+                      className={cn(
+                        "flex-1 text-body-lg",
+                        p.state === "idle" ? "text-ink-faint" : "text-ink",
+                      )}
+                    >
+                      {p.label}
+                    </span>
+                    <span className="text-data-sm text-ink-faint">{p.count}</span>
+                  </div>
+                ))}
+                {detail.kind === "queued" ? (
+                  <div className="text-body-md text-ink-muted mt-2">
+                    Waiting for the marking worker.
+                  </div>
+                ) : null}
+                {detail.error ? (
+                  // The specific reason, from the server — never a generic
+                  // "something went wrong". A paper that produced no marks has
+                  // to say why, or the teacher has nothing to act on.
+                  <div className="mt-3 pt-3 border-t border-rule flex flex-col gap-2.5 items-start">
+                    <div className="text-body-md text-err">{detail.error}</div>
+                    <Button
+                      variant="ink"
+                      size="sm"
+                      disabled={regrade.isPending}
+                      onClick={() => regrade.mutate(detail.id)}
+                    >
+                      {regrade.isPending ? "Queueing…" : "Try again"}
+                    </Button>
+                    {regrade.isError ? (
+                      <div className="text-body-md text-err">
+                        Couldn't re-queue: {teacherMutationFailureMessage(regrade.error)}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
           </div>
 
-          <div className="border border-border rounded-lg p-5 bg-surface-2 flex flex-col gap-3">
-            <div className="text-sm font-medium">Upload a scan</div>
+          <div className="border border-rule rounded-lg p-5 bg-paper-sunk flex flex-col gap-3">
+            <div className="text-body-md font-medium">Upload a scan</div>
             <div>
               <label
                 htmlFor="grading-scan-file"
-                className="text-xs font-medium block mb-1.5"
+                className="text-body-sm font-medium block mb-1.5"
               >
                 Scanned paper
               </label>
@@ -439,13 +508,13 @@ export function Grading() {
                 accept="application/pdf,image/*"
                 disabled={uploading}
                 onChange={handleScanChange}
-                className="text-xs text-t2 file:mr-3 file:border file:border-border file:bg-surface file:rounded-lg file:px-3 file:py-1.5 file:text-xs file:cursor-pointer file:font-sans"
+                className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
               />
             </div>
             <div>
               <label
                 htmlFor="grading-scheme-file"
-                className="text-xs font-medium block mb-1.5"
+                className="text-body-sm font-medium block mb-1.5"
               >
                 Mark scheme (optional)
               </label>
@@ -455,12 +524,12 @@ export function Grading() {
                 accept="application/pdf,image/*"
                 disabled={uploading}
                 onChange={handleSchemeChange}
-                className="text-xs text-t2 file:mr-3 file:border file:border-border file:bg-surface file:rounded-lg file:px-3 file:py-1.5 file:text-xs file:cursor-pointer file:font-sans"
+                className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
               />
               {!schemeFile ? (
-                <div className="font-mono text-3xs text-t3 mt-1.5">
-                  Attach a mark scheme to enable grading — otherwise the scan is
-                  uploaded but nothing gets marked.
+                <div className="text-data-sm text-ink-faint mt-1.5">
+                  Attach a mark scheme unless you've already uploaded one for this
+                  paper — without either, there is nothing to mark against.
                 </div>
               ) : null}
             </div>
@@ -472,17 +541,20 @@ export function Grading() {
             >
               {uploading ? "Uploading…" : "Upload & grade"}
             </Button>
-            {uploadError ? (
-              <div className="text-xs text-accent">{uploadError}</div>
-            ) : null}
-            {log.length > 0 ? (
-              <div className="flex flex-col gap-1 max-h-[140px] overflow-auto lm-scroll border-t border-border pt-2">
-                {log.map((line, i) => (
-                  <div key={i} className="text-xs text-t2 leading-[1.4]">
-                    {line}
+            {/* Hidden until an upload has actually been attempted: a pending row
+                sitting under an empty file input would be a promise, not a
+                report. Errors surface on the stage that failed, so there is no
+                separate error line here to contradict it. */}
+            {hasRunStarted ? (
+              <>
+                <ProcessingState stages={stages} className="border-t border-rule pt-4" />
+                {stages.every((s) => s.status === "done") ? (
+                  <div className="text-body-md text-ink-muted">
+                    Marking runs on the server, so it keeps going if you close this
+                    page. Progress is in Pipeline above.
                   </div>
-                ))}
-              </div>
+                ) : null}
+              </>
             ) : null}
           </div>
         </div>
@@ -490,7 +562,7 @@ export function Grading() {
         {/* Right column: tabs + papers */}
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-[14px] flex-wrap">
-            <div className="flex gap-1 bg-surface-2 p-1 rounded-md">
+            <div className="flex gap-1 bg-paper-sunk p-1 rounded-md">
               {tabs.map((t) => {
                 const on = tab === t.id
                 return (
@@ -498,17 +570,17 @@ export function Grading() {
                     key={t.id}
                     onClick={() => setTab(t.id)}
                     className={cn(
-                      "border-0 cursor-pointer text-dense px-[14px] py-2 rounded-lg",
+                      "border-0 cursor-pointer text-body-md px-[14px] py-2 rounded-lg",
                       on
-                        ? "bg-surface text-t1 font-medium shadow-sm"
-                        : "bg-transparent text-t2 font-normal",
+                        ? "bg-paper-raised text-ink font-medium shadow-sm"
+                        : "bg-transparent text-ink-muted font-normal",
                     )}
                   >
                     {t.label}{" "}
                     <span
                       className={cn(
-                        "font-mono text-xs",
-                        on ? "text-accent" : "text-t3",
+                        "text-data-sm",
+                        on ? "text-accent-ink" : "text-ink-faint",
                       )}
                     >
                       {t.count}
@@ -521,15 +593,10 @@ export function Grading() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {filtered.length === 0 ? (
-              <div className="text-dense text-t2">No papers in this view yet.</div>
+              <div className="text-body-md text-ink-muted">No papers in this view yet.</div>
             ) : (
               filtered.map((p) => (
-                <PaperCard
-                  key={p.id}
-                  paper={p}
-                  isGrading={!!gradingIds[p.id]}
-                  onOpen={() => setSelectedPaperId(p.id)}
-                />
+                <PaperCard key={p.id} paper={p} onOpen={() => setSelectedPaperId(p.id)} />
               ))
             )}
           </div>

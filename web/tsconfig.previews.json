@@ -1,0 +1,19 @@
+{
+  /* The component-kit preview page (REDESIGN-MISSION §5 Phase 2.6).
+     Its own project rather than folded into tsconfig.app.json, for the same
+     reason it has its own Vite config: the preview must never be part of the
+     product build. It still typechecks under `npm run typecheck`, because a
+     preview that has silently stopped compiling proves nothing about the kit.
+
+     `noUnusedLocals` is relaxed here alone: the preview deliberately imports
+     and renders components it may not exercise in every state cell, and
+     failing the whole typecheck over an unused demo import would push someone
+     towards deleting coverage to get green. */
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.previews.tsbuildinfo",
+    "noUnusedLocals": false,
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["dev-previews", "vite.preview.config.ts"]
+}

@@ -58,7 +58,11 @@ function describeCameraError(err: unknown): string {
         return `Could not access the camera (${err.name}).`
     }
   }
-  if (err instanceof Error) return err.message
+  /* P6.2. This returned `err.message` for a non-`DOMException` Error, which is
+     a programming fault rather than a camera one — so the sentence a student
+     read was whatever a library happened to throw. Every camera failure a
+     browser actually reports is named above; anything else has no message worth
+     showing, and the generic sentence is already right here. */
   return "Could not access the camera."
 }
 
@@ -189,11 +193,15 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
     try {
       const file = await assemblePagesToPdf(pages)
       onComplete(file)
-    } catch (err) {
+    } catch {
+      /* P6.2. This rendered `err.message`, which here is pdf-lib's, so a
+         student who photographed their paper and pressed done could be told
+         "Input image is not a JPEG" — machine text, about a file they never
+         chose, at the end of the longest piece of work this screen asks for.
+         The binding is dropped rather than left unread: nothing in this client
+         logs, so an unused `err` would only be there to look thorough. */
       setAssembleError(
-        err instanceof Error
-          ? err.message
-          : "Could not assemble the scanned pages into a PDF.",
+        "Could not assemble the scanned pages into a PDF. Try retaking the last page.",
       )
     } finally {
       setAssembling(false)
@@ -209,14 +217,19 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
             alt={`Captured page ${i + 1}`}
             className="w-[74px] h-[98px] object-cover rounded-md border border-border"
           />
-          <span className="absolute top-1 left-1 rounded-full bg-ink/70 text-accent-on text-3xs leading-none px-1.5 py-0.5">
+          {/* P6.2: `start-1`, not `left-1`. §3.4's RTL rule, found the moment
+              this file was added to `rtlSafety.test.ts` — it had never been in
+              either gate list, which is the same "a file no gate reads"
+              mechanism surface 10 named, on the camera half of the flagship
+              flow. The page number belongs at the reading-start corner. */}
+          <span className="absolute top-1 start-1 rounded-full bg-ink/70 text-accent-on text-3xs leading-none px-1.5 py-0.5">
             {i + 1}
           </span>
           <button
             type="button"
             onClick={() => removePage(page.id)}
             aria-label={`Remove page ${i + 1}`}
-            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-accent-on flex items-center justify-center cursor-pointer hover:bg-ink-hover"
+            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-ink text-accent-on flex items-center justify-center cursor-pointer transition-colors hover:bg-ink-hover"
           >
             <Trash size={11} weight="bold" />
           </button>

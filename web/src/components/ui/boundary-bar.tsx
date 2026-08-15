@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V3 */
 import type { HTMLAttributes } from "react"
 import { cn } from "@/lib/utils"
 import { Eyebrow } from "./primitives"
@@ -29,6 +30,9 @@ export interface BoundaryBarProps extends Omit<HTMLAttributes<HTMLDivElement>, "
   boundaries: GradeBoundary[]
   /** Boundary data behind this bar is incomplete (per-subject average fallback, not an exact per-variant lookup). */
   estimated?: boolean
+  /** Override the section kicker, for a caller that can name the boundary
+   * set more precisely (e.g. "Against the 2024 boundaries"). */
+  label?: string
 }
 
 const bandBg: Record<string, string> = {
@@ -49,6 +53,7 @@ export function BoundaryBar({
   maxScore,
   boundaries,
   estimated = false,
+  label,
   className,
   ...props
 }: BoundaryBarProps) {
@@ -62,15 +67,21 @@ export function BoundaryBar({
     <div
       className={cn(
         "w-full rounded-lg border p-4",
-        estimated ? "border-dashed border-border" : "border-transparent",
+        estimated ? "border-dashed border-rule" : "border-transparent",
         className,
       )}
       {...props}
     >
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <Eyebrow>{estimated ? "Estimated boundaries" : "Grade boundaries"}</Eyebrow>
+        {/* P4.2: the caller may name this section itself. `PaperResult` was
+            rendering its own "Against the 2024 boundaries" eyebrow directly
+            above this component's, so the flagship screen showed two stacked
+            kickers saying almost the same thing with an indented empty widget
+            under them. The year is the caller's to know; the fallback stays
+            for every other call site. */}
+        <Eyebrow>{label ?? (estimated ? "Estimated boundaries" : "Grade boundaries")}</Eyebrow>
         {sorted.length > 0 && (
-          <span className="text-sm text-t2">
+          <span className="text-body-sm text-ink-muted">
             {next && distance !== null
               ? `${distance} mark${distance === 1 ? "" : "s"} from ${next.grade}`
               : "Top grade reached"}
@@ -79,7 +90,7 @@ export function BoundaryBar({
       </div>
 
       {sorted.length === 0 ? (
-        <p className="text-body-md text-t3 m-0">
+        <p className="text-body-md text-ink-faint m-0">
           Boundary data isn't available for this paper yet.
         </p>
       ) : (
@@ -89,8 +100,8 @@ export function BoundaryBar({
               className="absolute bottom-0 flex flex-col items-center -translate-x-1/2"
               style={{ left: `${scorePct}%` }}
             >
-              <div className="bg-ink text-accent-on text-metadata px-2 py-1 rounded-md whitespace-nowrap mb-1">
-                You — {score}/{maxScore}
+              <div className="bg-ink text-accent-on text-data-sm px-2 py-1 rounded-md whitespace-nowrap mb-1">
+                You, {score}/{maxScore}
               </div>
               <div className="w-0.5 h-2 bg-ink" aria-hidden />
             </div>

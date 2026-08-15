@@ -13,6 +13,13 @@ GoTrue's own (ES256) token is discarded rather than forwarded (D1.5).
   via the injected :class:`~lemely.auth.sms.SmsProvider`.
 * :meth:`verify_otp` — verifies the challenge and mints a self-signed,
   Supabase-compatible access token whose ``app_metadata.role == "parent"``.
+* :meth:`refresh` — redeems a refresh token for a new access token so a signed-in
+  device stays signed in past the (short) access-token lifetime.
+
+Each of the three sign-in flows also hands back a refresh token bound to the
+device it just registered; only a flow that registers no device (hermetic tests,
+seat-invite signups) returns ``None``, since a refresh token with no device row
+behind it could never be revoked.
 
 Every collaborator (GoTrue backend, user mirror, SMS provider, OTP store, token
 signer) is injected so the whole service is swappable in hermetic tests.
@@ -25,7 +32,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from lemely.auth.otp import OtpResult
-from lemely.auth.tokens import mint_access_token, mint_otp_token
+from lemely.auth.tokens import (
+    decode_refresh_token,
+    mint_access_token,
+    mint_otp_token,
+    mint_refresh_token,
+)
+from lemely.db.device_repo import RefreshRejectedError
 from lemely.db.models.enums import Role
 from lemely.runtime.errors import AuthError
 
@@ -36,7 +49,7 @@ if TYPE_CHECKING:
     from lemely.auth.mirror import UserMirror
     from lemely.auth.otp import OtpStore
     from lemely.auth.sms import SmsProvider
-    from lemely.db.device_repo import DeviceRegistry
+    from lemely.db.device_repo import DeviceRegistration, DeviceRegistry
     from lemely.runtime.config import Settings
 
 
@@ -67,7 +80,7 @@ class TokenSigner(Protocol):
         phone: str | None = None,
         email: str | None = None,
         session_id: uuid.UUID | None = None,
-        ttl_seconds: int = 3600,
+        ttl_seconds: int | None = None,
         now: datetime | None = None,
     ) -> str:
         """Return a signed access token string."""
@@ -122,8 +135,8 @@ class AuthService:
 
     def _register_device(
         self, user_id: uuid.UUID, device: DeviceContext | None, *, allow_eviction: bool = True
-    ) -> uuid.UUID | None:
-        """Register the login's device and return its session id, or ``None``.
+    ) -> DeviceRegistration | None:
+        """Register the login's device and return the registration, or ``None``.
 
         Returns ``None`` (so no ``session_id`` claim is minted, exempting the token
         from the liveness check) when either the registry or the device context is
@@ -135,14 +148,32 @@ class AuthService:
         """
         if self._device_registry is None or device is None:
             return None
-        registration = self._device_registry.register_login(
+        return self._device_registry.register_login(
             user_id,
             client_device_id=device.client_device_id,
             user_agent=device.user_agent,
             device_label=device.label,
             allow_eviction=allow_eviction,
         )
-        return registration.session_id
+
+    def _mint_refresh(
+        self, user_id: uuid.UUID, registration: DeviceRegistration | None, provider: str
+    ) -> str | None:
+        """Mint the refresh token for a freshly-registered device, if there is one.
+
+        A session-less flow (hermetic tests, seat-invite signups) gets ``None``:
+        a refresh token with no device row behind it could never be revoked, so
+        those flows stay short-lived rather than gaining an unrevocable one.
+        """
+        if registration is None:
+            return None
+        return mint_refresh_token(
+            user_id=user_id,
+            settings=self._settings,
+            session_id=registration.session_id,
+            token_id=registration.refresh_token_id,
+            provider=provider,
+        )
 
     def signup(
         self,
@@ -169,11 +200,20 @@ class AuthService:
             phone=phone,
             display_name=display_name,
         )
-        session_id = self._register_device(created.id, device)
+        registration = self._register_device(created.id, device)
         access_token = self._mint_email_token(
-            user_id=created.id, role=role, email=created.email, phone=phone, session_id=session_id
+            user_id=created.id,
+            role=role,
+            email=created.email,
+            phone=phone,
+            session_id=registration.session_id if registration else None,
         )
-        return AuthResult(access_token=access_token, user_id=created.id, role=role)
+        return AuthResult(
+            access_token=access_token,
+            user_id=created.id,
+            role=role,
+            refresh_token=self._mint_refresh(created.id, registration, "email"),
+        )
 
     def login(
         self,
@@ -204,7 +244,7 @@ class AuthService:
         role = existing.role if existing is not None else Role.student
         phone = existing.phone if existing is not None else None
         self._mirror.upsert(token.user.id, email=token.user.email, role=role)
-        session_id = self._register_device(
+        registration = self._register_device(
             token.user.id, device, allow_eviction=confirm_device_eviction
         )
         access_token = self._mint_email_token(
@@ -212,9 +252,14 @@ class AuthService:
             role=role,
             email=token.user.email,
             phone=phone,
-            session_id=session_id,
+            session_id=registration.session_id if registration else None,
         )
-        return AuthResult(access_token=access_token, user_id=token.user.id, role=role)
+        return AuthResult(
+            access_token=access_token,
+            user_id=token.user.id,
+            role=role,
+            refresh_token=self._mint_refresh(token.user.id, registration, "email"),
+        )
 
     def _mint_email_token(
         self,
@@ -285,16 +330,73 @@ class AuthService:
                 user_id, email=_phone_placeholder_email(phone), role=Role.parent, phone=phone
             )
 
-        session_id = self._register_device(user_id, device)
+        registration = self._register_device(user_id, device)
         token = self._token_signer(
             user_id=user_id,
             settings=self._settings,
             app_role=Role.parent.value,
             phone=phone,
             email=email,
-            session_id=session_id,
+            session_id=registration.session_id if registration else None,
         )
-        return AuthResult(access_token=token, user_id=user_id, role=Role.parent)
+        return AuthResult(
+            access_token=token,
+            user_id=user_id,
+            role=Role.parent,
+            refresh_token=self._mint_refresh(user_id, registration, "phone"),
+        )
+
+    def refresh(self, refresh_token: str) -> AuthResult:
+        """Redeem a refresh token for a new access token, keeping the session alive.
+
+        The token is verified, then *disbelieved*: the only thing taken from it is
+        which device row it names. That row decides whether the session is still
+        live and who it belongs to, and the caller's role, email, and phone are
+        re-read from ``public.users`` — so a user demoted, renamed, or deleted
+        since sign-in gets an access token reflecting that on their next refresh,
+        rather than riding the role they held for the refresh token's full
+        lifetime. The refresh token itself is returned unchanged: it does not
+        rotate (see :meth:`~lemely.db.device_repo.DeviceRegistry.redeem_refresh_token`),
+        so two browser tabs refreshing at once cannot invalidate each other.
+
+        Raises:
+            AuthError: The token is malformed, expired, not a refresh token, or
+                names a session that has been signed out, evicted, or superseded
+                — and likewise if the user it belongs to no longer exists.
+        """
+        claims = decode_refresh_token(refresh_token, self._settings)
+        if self._device_registry is None:
+            raise AuthError("Refresh is unavailable: no device registry configured")
+        try:
+            user_id = self._device_registry.redeem_refresh_token(claims.session_id, claims.token_id)
+        except RefreshRejectedError as exc:
+            raise AuthError(f"Refresh token rejected: {exc}") from exc
+
+        # The registry's answer wins over the token's own `sub`. They cannot
+        # disagree without the signing secret, but authority is read from the
+        # database here on principle rather than trusted from the credential.
+        if str(user_id) != claims.sub:
+            raise AuthError("Refresh token subject does not match its session")
+
+        user = self._mirror.get_by_id(user_id)
+        if user is None:
+            raise AuthError("Refresh token belongs to a user that no longer exists")
+
+        access_token = mint_access_token(
+            user_id=user_id,
+            settings=self._settings,
+            app_role=user.role.value,
+            provider=claims.provider,
+            phone=user.phone,
+            email=user.email,
+            session_id=uuid.UUID(claims.session_id),
+        )
+        return AuthResult(
+            access_token=access_token,
+            user_id=user_id,
+            role=user.role,
+            refresh_token=refresh_token,
+        )
 
 
 def _phone_placeholder_email(phone: str) -> str:

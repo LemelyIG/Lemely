@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes, ReactNode } from "react"
 import {
   CheckCircle,
@@ -57,19 +58,40 @@ function capitalize(word: string) {
   return word.length === 0 ? word : word[0].toUpperCase() + word.slice(1)
 }
 
-function StageGlyph({ status }: { status: ProcessingStageStatus }) {
+/* The stage vocabulary, exported because the teacher grading console renders a
+ * second pipeline panel from a different wire type (`PipelineStep`, a stored
+ * per-paper summary rather than a live SSE stream) and drew its own glyphs
+ * until P7.1. `pipelineStages.ts` already states the rule this serves: a
+ * progress panel that reports the pipeline differently depending on where you
+ * are is the "roughly true" UI S-14 forbids — and the same screen showing it
+ * two ways is that rule's worst case.
+ *
+ * Every state carries an accessible name, not only `active`. Until P7.1 the
+ * other three had none, so a reader who could not see the icon got the stage
+ * label and nothing about whether it had run: done, not started and failed
+ * were announced identically, distinguished on screen by shape and colour
+ * alone. `role="img"` because an `aria-label` on a bare `<svg>` is not
+ * reliably announced without it. */
+export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
   if (status === "done") {
-    return <CheckCircle size={20} weight="fill" className="text-ok" />
+    return (
+      <CheckCircle size={20} weight="fill" className="text-ok" role="img" aria-label="Done" />
+    )
   }
   if (status === "active") {
     return (
-      <CircleNotch size={20} className="animate-spin text-accent" aria-label="In progress" />
+      <CircleNotch
+        size={20}
+        className="animate-spin text-accent"
+        role="img"
+        aria-label="In progress"
+      />
     )
   }
   if (status === "error") {
-    return <XCircle size={20} weight="fill" className="text-err" />
+    return <XCircle size={20} weight="fill" className="text-err" role="img" aria-label="Failed" />
   }
-  return <Circle size={20} className="text-border" />
+  return <Circle size={20} className="text-rule" role="img" aria-label="Not started" />
 }
 
 export function ProcessingState({
@@ -90,7 +112,7 @@ export function ProcessingState({
                 <span
                   className={cn(
                     "min-h-4 w-px flex-1",
-                    stage.status === "done" ? "bg-ok" : "bg-border",
+                    stage.status === "done" ? "bg-ok" : "bg-rule",
                   )}
                 />
               ) : null}
@@ -100,13 +122,13 @@ export function ProcessingState({
                 <span
                   className={cn(
                     "text-body-md font-medium",
-                    stage.status === "pending" ? "text-t3" : "text-t1",
+                    stage.status === "pending" ? "text-ink-faint" : "text-ink",
                   )}
                 >
                   {stage.label}
                 </span>
                 {stage.status === "active" && stage.progress ? (
-                  <span className="flex-none text-metadata text-t2">
+                  <span className="flex-none text-data-sm text-ink-muted">
                     {capitalize(stage.progress.unit ?? "item")} {stage.progress.current} of{" "}
                     {stage.progress.total}
                   </span>
@@ -115,13 +137,13 @@ export function ProcessingState({
               {stage.status === "error" && stage.errorMessage ? (
                 <p className="mt-1 text-body-md text-err">{stage.errorMessage}</p>
               ) : stage.detail ? (
-                <p className="mt-1 text-metadata text-t3">{stage.detail}</p>
+                <p className="mt-1 text-body-sm text-ink-faint">{stage.detail}</p>
               ) : null}
             </div>
           </div>
         )
       })}
-      {footer ? <div className="mt-2 border-t border-border pt-4">{footer}</div> : null}
+      {footer ? <div className="mt-2 border-t border-rule pt-4">{footer}</div> : null}
     </div>
   )
 }

@@ -30,12 +30,12 @@ export function unavailableMessage(reason: string | null): UnavailableMessage {
     case "no_questions":
       return {
         heading: "No placement test yet for this subject",
-        body: "We haven't ingested any questions for this subject yet, so there's nothing to build a placement test from. This isn't something you can fix — check back once more content has been added.",
+        body: "We haven't ingested any questions for this subject yet, so there's nothing to build a placement test from. This isn't something you can fix. Check back once more content has been added.",
       }
     case "no_eligible_questions":
       return {
         heading: "Not enough usable questions yet",
-        body: "We have questions for this subject, but not enough that are tagged to a topic and fully ready to serve. Check back later — this fills in as more content is classified.",
+        body: "We have questions for this subject, but not enough that are tagged to a topic and fully ready to serve. Check back later. This fills in as more content is classified.",
       }
     case "insufficient_topics":
       return {
@@ -74,7 +74,7 @@ export function formatPlacementEstimate(
   const q = `${questionCount} question${questionCount === 1 ? "" : "s"}`
   const t = `${topicCount} topic${topicCount === 1 ? "" : "s"}`
   const minutes = Math.round(estimatedMinutes)
-  return `${q} across ${t} — about ${minutes} minute${minutes === 1 ? "" : "s"}`
+  return `${q} across ${t}, about ${minutes} minute${minutes === 1 ? "" : "s"}`
 }
 
 // ── S-03 view state — the whole render decision as one discriminated

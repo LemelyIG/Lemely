@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { cn, downloadCsv, initialsOf, relativeTime } from "@/lib/utils"
+import { cn, downloadCsv, greetingFor, initialsOf, relativeTime } from "@/lib/utils"
 
 describe("cn", () => {
   it("merges conditional inputs the way clsx does", () => {
@@ -166,5 +166,48 @@ describe("downloadCsv", () => {
   it("clicks the anchor exactly once", () => {
     downloadCsv("x", [["a"]])
     expect(anchor.click).toHaveBeenCalledTimes(1)
+  })
+})
+
+/*
+ * P3.2. The student Overview greeted every reader with "Good afternoon"
+ * unconditionally, at every hour of the day, and the teacher Overview with
+ * "Good morning." — the first line of the first screen in both portals, and
+ * the one sentence on either page that was reliably false for most readers.
+ * Students revise at night.
+ *
+ * Boundaries get their own cases because that is the whole of this function:
+ * an off-by-one here is invisible in review and wrong for exactly one hour a
+ * day, which is the kind of defect that survives for years.
+ */
+describe("greetingFor", () => {
+  it.each([
+    [5, "Good morning"],
+    [8, "Good morning"],
+    [11, "Good morning"],
+    [12, "Good afternoon"],
+    [15, "Good afternoon"],
+    [17, "Good afternoon"],
+    [18, "Good evening"],
+    [22, "Good evening"],
+    [23, "Good evening"],
+  ])("greets hour %i with %s", (hour, expected) => {
+    expect(greetingFor(hour)).toBe(expected)
+  })
+
+  /*
+   * Evening deliberately wraps past midnight rather than flipping to morning
+   * at 00:00. "Good morning" at two in the morning is the same error in the
+   * other direction, and a student still working then has not started their
+   * morning yet.
+   */
+  it.each([0, 2, 4])("still says evening at %i:00, not morning", (hour) => {
+    expect(greetingFor(hour)).toBe("Good evening")
+  })
+
+  it("covers all 24 hours with no gap", () => {
+    for (let hour = 0; hour < 24; hour += 1) {
+      expect(["Good morning", "Good afternoon", "Good evening"]).toContain(greetingFor(hour))
+    }
   })
 })

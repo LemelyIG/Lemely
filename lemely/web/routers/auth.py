@@ -26,6 +26,7 @@ from lemely.web.schemas_auth import (
     OtpRequestDTO,
     OtpRequestResponseDTO,
     OtpVerifyDTO,
+    RefreshRequestDTO,
     SignupRequestDTO,
     TokenResponseDTO,
 )
@@ -132,6 +133,33 @@ def login(
         )
     except DeviceLimitReachedError as exc:
         raise HTTPException(status_code=409, detail=_to_challenge(exc).model_dump()) from exc
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return _to_token_dto(result)
+
+
+@router.post("/auth/refresh", response_model=TokenResponseDTO)
+def refresh(
+    body: RefreshRequestDTO,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> TokenResponseDTO:
+    """Exchange a refresh token for a new access token.
+
+    Access tokens are short-lived (``auth.access_token_ttl_seconds``), so the SPA
+    redeems here when one expires rather than dumping the user back at the login
+    screen every hour. Unauthenticated by design: the credential this route
+    exists to replace has expired by the time it is called, so requiring it would
+    make the route unreachable exactly when it is needed. The refresh token is
+    itself the credential, and it authorises nothing else — a different ``aud``
+    means it cannot be presented as a bearer token on any other route.
+
+    Any reason the session is no longer valid — expired, signed out from the
+    device list, evicted past the 3-device cap, superseded by a newer login, or
+    belonging to a deleted user — is a **401**, which is the client's cue to
+    clear its stored session and send the user to sign in.
+    """
+    try:
+        result = service.refresh(body.refreshToken)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     return _to_token_dto(result)

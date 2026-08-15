@@ -1,9 +1,11 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { Link, useParams } from "react-router-dom"
-import { CaretLeft } from "@phosphor-icons/react"
 import { useChildSubject } from "@/lib/hooks/useParentApi"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { ErrorState } from "@/components/ui/state-views"
+import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { accuracyTone, TONE_TO_SEVERITY } from "@/lib/severity"
 import { relativeTime } from "@/lib/utils"
 
@@ -15,7 +17,12 @@ import { relativeTime } from "@/lib/utils"
  *
  * Read-only is structural here, not a discipline: `useParentApi.ts` exposes no
  * mutation for any parent route, so there is nothing on this screen that could
- * write even by mistake.
+ * write even by mistake. That is also why `parentOutcome.ts` has no
+ * write-failure helper for it to call.
+ *
+ * The screen's own "‹ Back" link is gone (P4.6): the shell's breadcrumb row
+ * sits immediately above it and goes to the same place, and that row now names
+ * the subject rather than reading "This subject". See `ParentTrail`.
  */
 
 /**
@@ -28,9 +35,24 @@ import { relativeTime } from "@/lib/utils"
  * inventing precision, and "predicted" is the single word most likely to be
  * over-read by the audience this screen is for.
  */
+/**
+ * "a" or "an" for a letter grade.
+ *
+ * The capture round photographed "6 more marks for a A", which is what a
+ * template that hardcodes the article produces for exactly the grades a parent
+ * most wants to read about. IGCSE grades are single letters, so the rule is
+ * the letter's *name*, not its spelling: A, A*, E and F are vowel-initial when
+ * spoken ("an A", "an E", "an F"), the rest are not. This is spelled out
+ * rather than reduced to a vowel test because "F" would fail a vowel test and
+ * "U" would pass one.
+ */
+export function gradeArticle(grade: string): "a" | "an" {
+  return /^[AEF]/.test(grade.trim()) ? "an" : "a"
+}
+
 function PredictedBasis({ papers }: { papers: number }) {
   return (
-    <p className="text-body-md text-t2">
+    <p className="max-w-prose text-body-md text-ink-muted">
       {papers === 1
         ? "Based on the one paper they've had marked in this subject so far."
         : `Based on their most recent of ${papers} marked papers, placed against the official grade boundaries for this paper.`}{" "}
@@ -45,9 +67,10 @@ export function SubjectDetail() {
 
   if (isPending) {
     return (
-      <p role="status" aria-live="polite" className="text-body-md text-t2">
-        Loading…
-      </p>
+      <div className="flex flex-col gap-8">
+        <PageHeaderSkeleton />
+        <ListSkeleton rows={3} />
+      </div>
     )
   }
 
@@ -55,7 +78,7 @@ export function SubjectDetail() {
     return (
       <ErrorState
         heading="We couldn't load this subject"
-        body={error instanceof Error ? error.message : "Please try again in a moment."}
+        body={parentLoadFailureMessage(error)}
         action={{ label: "Try again", onClick: () => window.location.reload() }}
       />
     )
@@ -65,20 +88,14 @@ export function SubjectDetail() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-3">
-        <Link
-          to={`/parent/children/${childId}`}
-          className="flex items-center gap-1 self-start text-body-md text-t2 hover:text-t1"
-        >
-          <CaretLeft size={14} />
-          Back
-        </Link>
+      <div className="margin-rule flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-4">
           <GradeBadge grade={data.predictedGrade} size="medium" basis="predicted" />
           <div className="flex flex-col gap-0.5">
-            <h1 className="text-display-md text-t1">{data.subjectName}</h1>
-            {/* Code as secondary detail, never the headline (§4.8 design note). */}
-            <div className="text-body-md text-t2">{data.subjectCode}</div>
+            <h1 className="text-display-lg text-ink">{data.subjectName}</h1>
+            {/* Code as secondary detail, never the headline (§4.8 design
+                note), and on the data face, which is what a syllabus code is. */}
+            <div className="text-data-sm text-ink-faint">{data.subjectCode}</div>
           </div>
         </div>
         <PredictedBasis papers={papers.length} />
@@ -92,22 +109,36 @@ export function SubjectDetail() {
        * would assert a distance that was never calculated.
        */}
       {boundaryDistance ? (
-        <section className="rounded-md border border-border bg-accent-subtle p-5">
-          <div className="text-body-lg font-medium text-t1">
+        /*
+         * The tone is `info`, and that is a fix rather than a preference.
+         * This panel shipped on `--accent-wash`, which on this palette sits a
+         * hair away from `--err-wash` — the two are the same washed red to
+         * anything but a measuring instrument, and DESIGN.md §3.4 and §3.6
+         * list their values side by side. So "6 more marks for an A", the
+         * most encouraging sentence on the screen, was
+         * rendered in the register the product uses for failures, to the
+         * audience least equipped to know that was not deliberate. This is
+         * surface 5's finding (d) again, where "Assigned" was accent-toned and
+         * a healthy live state read as alarm. `info` is the right register:
+         * §3.6 gives it to neutral notices and "how this works", and a
+         * distance to the next boundary is a fact, not a verdict either way.
+         */
+        <section className="rounded-lg border border-rule bg-info-wash p-6">
+          <div className="text-display-sm text-info">
             {boundaryDistance.marksNeeded === 0
-              ? `On track for a ${boundaryDistance.nextGrade}`
+              ? `On track for ${gradeArticle(boundaryDistance.nextGrade)} ${boundaryDistance.nextGrade}`
               : `${boundaryDistance.marksNeeded} more ${
                   boundaryDistance.marksNeeded === 1 ? "mark" : "marks"
-                } for a ${boundaryDistance.nextGrade}`}
+                } for ${gradeArticle(boundaryDistance.nextGrade)} ${boundaryDistance.nextGrade}`}
           </div>
-          <p className="mt-1 text-body-md text-t1">{boundaryDistance.summary}</p>
+          <p className="mt-1.5 text-body-md text-ink">{boundaryDistance.summary}</p>
         </section>
       ) : null}
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-body-lg font-medium text-t1">Papers they've done</h2>
+        <h2 className="text-display-md text-ink">Papers they've done</h2>
         {papers.length === 0 ? (
-          <p className="rounded-md border border-border bg-surface p-4 text-body-md text-t2">
+          <p className="rounded-lg border border-rule bg-paper-raised p-5 text-body-md text-ink-muted">
             No marked papers in this subject yet.
           </p>
         ) : (
@@ -115,13 +146,16 @@ export function SubjectDetail() {
             {papers.map((paper) => (
               <div
                 key={`${paper.paperId}-${paper.recordedAt}`}
-                className="flex items-center gap-4 rounded-md border border-border bg-surface p-4"
+                className="flex items-center gap-4 rounded-lg border border-rule bg-paper-raised p-5"
               >
                 <GradeBadge grade={paper.grade} size="inline" basis="achieved" />
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="text-body-lg text-t1">{paper.marks}</div>
-                  <div className="text-body-md text-t2">
-                    {paper.paperId} · marked {relativeTime(paper.recordedAt)}
+                  {/* The mark is the row's headline and it is a figure, so it
+                      is set in the data face rather than the body face. */}
+                  <div className="text-data-md text-ink">{paper.marks}</div>
+                  <div className="text-body-sm text-ink-muted">
+                    <span className="text-data-sm">{paper.paperId}</span> · marked{" "}
+                    {relativeTime(paper.recordedAt)}
                   </div>
                 </div>
               </div>
@@ -132,16 +166,16 @@ export function SubjectDetail() {
 
       <section className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-4">
-          <h2 className="text-body-lg font-medium text-t1">Topics to work on</h2>
+          <h2 className="text-display-md text-ink">Topics to work on</h2>
           <Link
             to={`/parent/children/${childId}/weaknesses`}
-            className="text-body-md text-accent hover:underline"
+            className="rounded-sm pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 text-body-sm text-accent-ink transition-colors hover:text-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             All subjects
           </Link>
         </div>
         {weakTopics.length === 0 ? (
-          <p className="rounded-md border border-border bg-surface p-4 text-body-md text-t2">
+          <p className="rounded-lg border border-rule bg-paper-raised p-5 text-body-md text-ink-muted">
             Nothing stands out as a weak topic in this subject yet.
           </p>
         ) : (

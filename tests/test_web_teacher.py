@@ -10,7 +10,11 @@ national benchmarks) are asserted empty/None.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import re
+import threading
+import time
 import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -265,34 +269,47 @@ def _report(
     needs_review: bool = True,
     topic: str = "Moments",
     grade: str = "D",
+    question_ids: tuple[str, ...] = ("5b",),
 ) -> AccuracyReport:
-    """Build a real AccuracyReport with one non-MCQ question."""
-    question = CorrectedQuestion(
-        question_id="5b",
-        awarded_marks=awarded,
-        maximum_marks=maximum,
-        confidence=ConfidenceBand.LOW if needs_review else ConfidenceBand.HIGH,
-        confidence_score=confidence_score,
-        needs_teacher_review=needs_review,
-        marker_source="ai",
-        topic=topic,
-    )
-    correction = CorrectionResult(metadata=_metadata(), questions=[question])
+    """Build a real AccuracyReport with one non-MCQ question per id in ``question_ids``.
+
+    ``awarded``/``maximum`` are per question; the report-level totals are scaled
+    by the question count so a multi-question report stays internally consistent
+    (a paper whose parts sum to more than its own total would be fabricated
+    data, and the grading console reads both). The single-question default is
+    unchanged — every scaling factor is 1 — so existing callers see the same
+    object they always did.
+    """
+    questions = [
+        CorrectedQuestion(
+            question_id=question_id,
+            awarded_marks=awarded,
+            maximum_marks=maximum,
+            confidence=ConfidenceBand.LOW if needs_review else ConfidenceBand.HIGH,
+            confidence_score=confidence_score,
+            needs_teacher_review=needs_review,
+            marker_source="ai",
+            topic=topic,
+        )
+        for question_id in question_ids
+    ]
+    count = len(question_ids)
+    correction = CorrectionResult(metadata=_metadata(), questions=questions)
     weaknesses = WeaknessReport(
         weak_areas=[
             WeakArea(
                 topic=topic,
-                lost_marks=maximum - awarded,
-                maximum_marks=maximum,
+                lost_marks=(maximum - awarded) * count,
+                maximum_marks=maximum * count,
                 accuracy=awarded / maximum,
-                question_ids=["5b"],
+                question_ids=list(question_ids),
             )
         ],
         needs_teacher_review=needs_review,
     )
     prediction = GradePrediction(
-        awarded_marks=awarded,
-        maximum_marks=maximum,
+        awarded_marks=awarded * count,
+        maximum_marks=maximum * count,
         percentage=round(awarded / maximum * 100, 2),
         grade=grade,
         confidence=ConfidenceBand.LOW,
@@ -403,19 +420,198 @@ def test_upload_over_size_cap_is_413(client: TestClient, monkeypatch: pytest.Mon
     assert resp.status_code == 413
 
 
-def test_upload_sets_error_status_on_detection_failure(
+def test_detection_failure_is_recorded_without_failing_the_upload(
     settings: Settings,
     history_store: HistoryStore,
     gemini_client: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When metadata detection raises, the job status is 'error', not 'done'."""
+    """A detection crash marks the job 'error' but never rejects the scan.
+
+    Detection moved off the request and into the background job (D6.13), so the
+    status this asserts is now set from there rather than inline — the upload
+    itself answers long before detection has an answer either way. The scan is
+    on disk regardless: losing a teacher's upload because a metadata guess
+    failed would be a far worse outcome than an unlabelled card.
+    """
 
     def _boom(_client: object) -> object:
         raise RuntimeError("detection exploded")
 
     monkeypatch.setattr(teacher, "ScanMetadataExtractor", _boom)
 
+    with _key_client(settings, history_store, gemini_client) as local:
+        resp = local.post(
+            "/api/papers/upload",
+            files={"scan": ("scan.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+        assert resp.status_code == 200
+        job_id = resp.json()["jobId"]
+        paper_id = resp.json()["paperId"]
+
+        entry = _settle(paper_id)
+        assert teacher.registry.get(job_id).status == "error"
+        assert entry.scan_path is not None
+        assert entry.scan_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Grading console.
+# ---------------------------------------------------------------------------
+
+
+def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan uploaded *with* a mark scheme grades end to end.
+
+    The regression this pins: ``upload_paper`` used to write the scheme PDF to
+    disk under the teacher's own filename and then build the ``_PaperEntry``
+    without a ``mark_scheme=``, so ``entry.mark_scheme`` was ``None`` for every
+    uploaded paper. ``grade_paper_endpoint``'s marking branch was therefore
+    unreachable, it fell through to the "No mark scheme or graded correction
+    attached" warning, ``entry.kind`` was never reassigned, and the console sat
+    on "Queued / 0 auto-graded / N processing" forever.
+
+    Every pre-existing grade test seeded ``papers_store`` with a hand-built
+    entry that already carried a ``report``, which is exactly why a green suite
+    never noticed. This one goes through the HTTP upload route, as a teacher
+    does.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    scheme = object()
+    marked_with: dict[str, object] = {}
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: scheme)
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+
+    def _grade(mark_scheme: object, _extracted: object, **_kwargs: object) -> AccuracyReport:
+        marked_with["scheme"] = mark_scheme
+        return report
+
+    monkeypatch.setattr(grading_service, "grade_paper", _grade)
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={
+            "scan": ("scan.pdf", b"%PDF-1.4 scan", "application/pdf"),
+            # A realistic teacher filename: nothing like "mark_scheme.pdf".
+            "mark_scheme": ("0625_s20_ms_31.pdf", b"%PDF-1.4 scheme", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    paper_id = resp.json()["paperId"]
+
+    # Saved under the fixed sibling name `resolve_mark_scheme` looks for, not
+    # the client basename — otherwise the resolver could never find it.
+    entry = papers_store.get(paper_id)
+    assert entry is not None
+    assert entry.scan_path is not None
+    assert (entry.scan_path.parent / "mark_scheme.pdf").exists()
+
+    with client.stream("POST", f"/api/papers/{paper_id}/grade") as stream:
+        text = "".join(stream.iter_text())
+    assert "No mark scheme or graded correction attached" not in text
+
+    # The resolved scheme is what actually reached the marker.
+    assert marked_with["scheme"] is scheme
+
+    # The paper left the queue, and the console's counters move with it.
+    graded = papers_store.get(paper_id)
+    assert graded is not None
+    assert graded.kind == "graded"
+    assert graded.report is report
+    counts = {tab["id"]: tab["count"] for tab in client.get("/api/papers").json()["tabs"]}
+    assert counts == {"all": "1", "review": "0", "graded": "1", "processing": "0"}
+
+
+def test_grade_reports_worker_failure_as_an_error_frame(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash inside the grading worker is named, not swallowed into silence.
+
+    ``bus_event_stream`` runs ``run()`` on a bare thread it never inspects, and
+    the ``finally`` publishes DONE regardless — so before this, an exception
+    closed the stream cleanly with nothing said, which looks identical to the
+    stuck-at-queued bug above but has a completely different cause.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("gemini exploded")
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", _boom)
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={
+            "scan": ("scan.pdf", b"%PDF-1.4 scan", "application/pdf"),
+            "mark_scheme": ("ms.pdf", b"%PDF-1.4 scheme", "application/pdf"),
+        },
+    )
+    paper_id = resp.json()["paperId"]
+
+    with client.stream("POST", f"/api/papers/{paper_id}/grade") as stream:
+        text = "".join(stream.iter_text())
+
+    assert '"type": "error"' in text
+    assert "gemini exploded" in text
+
+
+# ---------------------------------------------------------------------------
+# Background grading job (D6.13).
+#
+# The defect these pin, in one sentence: ``upload_paper`` ran a ~60s synchronous
+# Gemini metadata call inside an ``async def`` endpoint, blocking uvicorn's only
+# event loop for its whole duration, so the browser's upload ``fetch`` never
+# returned, ``runGrading()`` was never reached, and every uploaded paper sat at
+# "Queued" forever with no ``POST /papers/{id}/grade`` ever issued. Detection is
+# now deferred into a background job that also owns the grading run, so the
+# outcome no longer depends on a client holding a connection open.
+# ---------------------------------------------------------------------------
+
+
+def _settle(paper_id: str, timeout: float = 15.0) -> _PaperEntry:
+    """Block until the background grading job for ``paper_id`` has finished.
+
+    Deterministic rather than a poll loop: the entry carries the ``Future`` the
+    grading pool handed back, which is the same handle ``grade_paper_endpoint``
+    waits on.
+    """
+    entry = papers_store.get(paper_id)
+    assert entry is not None
+    if entry.job is not None:
+        entry.job.result(timeout=timeout)
+    return entry
+
+
+def _upload(client: TestClient, *, scheme: bool = True, name: str = "scan.pdf") -> str:
+    """Upload a scan (+ optional mark scheme) and return the new paper id."""
+    files: dict[str, tuple[str, bytes, str]] = {"scan": (name, b"%PDF-1.4 scan", "application/pdf")}
+    if scheme:
+        files["mark_scheme"] = ("0625_s20_ms_31.pdf", b"%PDF-1.4 scheme", "application/pdf")
+    resp = client.post("/api/papers/upload", files=files)
+    assert resp.status_code == 200
+    return str(resp.json()["paperId"])
+
+
+@contextlib.contextmanager
+def _key_client(
+    settings: Settings,
+    history_store: HistoryStore,
+    gemini_client: MagicMock,
+) -> Iterator[TestClient]:
+    """A ``client`` whose settings carry an API key, so detection actually runs.
+
+    The shared ``client`` fixture deliberately has none — most teacher routes
+    must work without one — but every metadata-detection test needs the branch
+    that a configured key opens.
+    """
     papers_store.clear()
     teacher.registry.clear()
     app = create_app()
@@ -424,24 +620,471 @@ def test_upload_sets_error_status_on_detection_failure(
     app.dependency_overrides[get_history_store] = lambda: history_store
     app.dependency_overrides[get_gemini_client] = lambda: gemini_client
     app.dependency_overrides[get_auth_context] = lambda: _TEACHER_AUTH
-    local = TestClient(app)
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+        papers_store.clear()
 
-    resp = local.post(
-        "/api/papers/upload",
-        files={"scan": ("scan.pdf", b"%PDF-1.4", "application/pdf")},
-        data={"student_id": "jonas"},
+
+def test_upload_does_not_wait_on_metadata_detection(
+    settings: Settings,
+    history_store: HistoryStore,
+    gemini_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The upload request returns without waiting on the Gemini detection call.
+
+    This is the event-loop block itself, reproduced: detection is pinned open on
+    an ``Event`` and the upload must still answer promptly. Before the fix the
+    extractor ran inline in the ``async def`` handler, so the request could not
+    complete until detection did — 60s in production, and the whole process was
+    unresponsive for every one of them.
+    """
+    release = threading.Event()
+    detected = ExamMetadata(
+        subject_code="0625", paper_number=3, paper_variant=1, session_month="May/June"
     )
-    assert resp.status_code == 200
-    job_id = resp.json()["jobId"]
-    assert teacher.registry.get(job_id).status == "error"
 
-    app.dependency_overrides.clear()
-    papers_store.clear()
+    class _SlowExtractor:
+        def __init__(self, _client: object) -> None: ...
+
+        def __call__(self, _scan_path: object) -> ExamMetadata:
+            release.wait(timeout=10)
+            return detected
+
+    monkeypatch.setattr(teacher, "ScanMetadataExtractor", _SlowExtractor)
+
+    with _key_client(settings, history_store, gemini_client) as local:
+        started = time.monotonic()
+        paper_id = _upload(local, scheme=False)
+        elapsed = time.monotonic() - started
+
+        release.set()
+        _settle(paper_id)
+
+    # Generous by two orders of magnitude against the real 60s call, and still
+    # decisive against the 10s the extractor above is pinned for.
+    assert elapsed < 3.0, f"upload blocked {elapsed:.1f}s on detection"
+
+
+def test_upload_grades_without_the_client_ever_asking(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uploading is enough to get a paper graded — no ``POST /grade`` required.
+
+    The console's browser tab is not what drives marking any more. This is the
+    "queued indefinitely" symptom: the client never reached ``runGrading()``, so
+    with the old client-driven design nothing on the server ever marked it.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", lambda *_a, **_k: report)
+
+    paper_id = _upload(client)
+    entry = _settle(paper_id)
+
+    assert entry.kind == "graded"
+    assert entry.report is report
+    counts = {tab["id"]: tab["count"] for tab in client.get("/api/papers").json()["tabs"]}
+    assert counts == {"all": "1", "review": "0", "graded": "1", "processing": "0"}
+
+
+def test_console_upload_writes_no_history_record(
+    client: TestClient, history_store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A console-uploaded paper is attributed to nobody, so nothing is persisted.
+
+    Found by running the fixed pipeline against the real stack, not by this
+    suite — which is the point of the test. ``upload_paper`` set
+    ``student_id = paper_id`` (D1.12: no teacher may bind a scan to a student
+    account) and then handed that id to ``history_store.append`` anyway. The
+    JSON store every test here uses accepts any string as a student, so it
+    passed; the DB-backed store the product actually runs raises
+    ``ForeignKeyViolation`` against ``users`` — *after* marking all 40 questions,
+    throwing the completed report away with it.
+
+    So the assertion is the absence: marks land in the paper store and are
+    served by ``GET /papers/{id}``, with no student's history touched.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    seen: dict[str, object] = {}
+
+    def _grade(*_a: object, **kwargs: object) -> AccuracyReport:
+        seen["student_id"] = kwargs.get("student_id")
+        seen["history_store"] = kwargs.get("history_store")
+        return report
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", _grade)
+
+    paper_id = _upload(client)
+    entry = _settle(paper_id)
+
+    assert entry.kind == "graded"
+    assert entry.report is report
+    # Both belt and braces: no id to record under, and no store handed over.
+    assert seen["student_id"] is None
+    assert seen["history_store"] is None
+    assert history_store.list_students() == []
+    # The marks are still reachable — they just live on the paper, not a student.
+    assert client.get(f"/api/papers/{paper_id}").json()["awardedMarks"] == 2
+
+
+def test_progress_tracker_survives_another_streams_end_of_stream() -> None:
+    """One paper's stream closing must not freeze the next paper's counter.
+
+    ``EventBus.publish_done`` puts its ``None`` sentinel on *every* subscriber
+    queue, so the obvious "stop on None" tracker loop stops on somebody else's
+    end-of-stream too. With a single grading worker that is a real ordering: job
+    A finishes, the pool starts job B (and its tracker), and only then does the
+    SSE stream still attached to A wake up and publish done. B's stage would go
+    on advancing while its per-question counter sat frozen.
+    """
+    from lemely.runtime.events import EventType, bus
+
+    entry = _PaperEntry(paper_id="p-track", student_id=None)
+    q = bus.subscribe_queue()
+    stop = threading.Event()
+    tracker = threading.Thread(target=teacher._track_progress, args=(entry, q, stop), daemon=True)
+    tracker.start()
+    try:
+        bus.publish_done()  # a different stream ending
+        bus.publish(EventType.MARKING_PROGRESS, question_id="3a", index=7, total=22)
+
+        deadline = time.monotonic() + 5.0
+        while entry.progress is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert entry.progress == (7, 22), "tracker stopped on a foreign end-of-stream"
+        assert entry.stage == "mark"
+    finally:
+        bus.unsubscribe_queue(q)
+        stop.set()
+        tracker.join(timeout=5)
+
+
+def test_paper_being_marked_reports_processing_not_queued(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A paper mid-run reads "Processing"; "Queued" is reserved for waiting work.
+
+    ``entry.kind`` was never reassigned between upload and a finished grade, so
+    a paper actively being marked reported the same "Queued" as one nothing had
+    ever touched — indistinguishable from the stalled state being fixed here.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    release = threading.Event()
+    report = _report(needs_review=False, grade="A")
+
+    def _slow_grade(*_a: object, **_k: object) -> AccuracyReport:
+        release.wait(timeout=10)
+        return report
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", _slow_grade)
+
+    paper_id = _upload(client)
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        card = client.get("/api/papers").json()["papers"][0]
+        if card["kind"] == "processing":
+            break
+        time.sleep(0.02)
+    else:  # pragma: no cover - only on a genuinely stuck job
+        pytest.fail("paper never reported kind=processing while being marked")
+
+    assert card["status"] == "Processing"
+
+    release.set()
+    assert _settle(paper_id).kind == "graded"
+
+
+def test_failed_grade_is_terminal_and_carries_the_reason(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crashed run ends at ``failed`` with the message, not back at queued.
+
+    A paper that can never progress must say so. Left at "Queued" it is
+    indistinguishable from one still waiting its turn, which is exactly the
+    unexplained-forever state this whole change exists to remove.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("gemini exploded")
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", _boom)
+
+    paper_id = _upload(client)
+    entry = _settle(paper_id)
+
+    assert entry.kind == "failed"
+    assert entry.error is not None
+    assert "gemini exploded" in entry.error
+
+    card = client.get("/api/papers").json()["papers"][0]
+    assert card["kind"] == "failed"
+    assert "gemini exploded" in client.get(f"/api/papers/{paper_id}").json()["error"]
+
+
+def test_paper_without_a_resolvable_scheme_does_not_sit_queued(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No scheme anywhere is a terminal, explained state — not a silent queue."""
+    from lemely.web.routers import student as student_router
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: None)
+
+    entry = _settle(_upload(client, scheme=False))
+
+    assert entry.kind == "failed"
+    assert entry.error is not None
+    assert "mark scheme" in entry.error.lower()
+
+
+def test_grade_stream_reports_a_late_attachers_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Attaching after the job already failed still yields the error frame.
+
+    With grading started at upload, a stream can arrive after the run is over.
+    Reporting only what happens *while attached* would show such a client a
+    clean, empty stream for a paper that had already crashed.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("gemini exploded")
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", _boom)
+
+    paper_id = _upload(client)
+    _settle(paper_id)  # the run is definitively over before the client attaches
+
+    with client.stream("POST", f"/api/papers/{paper_id}/grade") as stream:
+        text = "".join(stream.iter_text())
+
+    assert '"type": "error"' in text
+    assert "gemini exploded" in text
+
+
+def test_paper_detail_reports_live_pipeline_instead_of_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An in-flight paper has a real pipeline, so a page refresh keeps the stepper.
+
+    ``GET /papers/{id}`` used to 409 until a report existed, so the console's
+    Pipeline panel had nothing to render after a reload and the stepper simply
+    vanished — the run was still going, the screen just could not say so.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    release = threading.Event()
+    report = _report(needs_review=False, grade="A")
+
+    def _slow_grade(*_a: object, **_k: object) -> AccuracyReport:
+        release.wait(timeout=10)
+        return report
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", lambda *_a, **_k: {"5b": "42"})
+    monkeypatch.setattr(grading_service, "grade_paper", _slow_grade)
+
+    paper_id = _upload(client)
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        resp = client.get(f"/api/papers/{paper_id}")
+        if resp.status_code == 200 and resp.json()["kind"] == "processing":
+            break
+        time.sleep(0.02)
+    else:  # pragma: no cover - only on a genuinely stuck job
+        pytest.fail("paper detail never served a live pipeline while processing")
+
+    body = resp.json()
+    assert body["awardedMarks"] is None
+    assert body["questions"] == []
+    states = [step["state"] for step in body["pipeline"]]
+    assert "active" in states, body["pipeline"]
+    assert states[0] == "done", "the scan is on disk, so ingestion is genuinely done"
+
+    release.set()
+    _settle(paper_id)
+    assert client.get(f"/api/papers/{paper_id}").json()["awardedMarks"] == 2
+
+
+def test_unknown_paper_detail_is_still_404(client: TestClient) -> None:
+    """Serving live state for known papers must not turn an unknown id into a 200."""
+    assert client.get("/api/papers/nope").status_code == 404
+
+
+def test_regrade_requeues_a_failed_paper(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retrying a failed paper runs it again and can succeed the second time.
+
+    Without this a ``failed`` paper is a dead end — which would make the new
+    terminal state worse than the old "queued forever" it replaces, not better.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    report = _report(needs_review=False, grade="A")
+    attempts = {"n": 0}
+
+    def _flaky(*_a: object, **_k: object) -> dict[str, str]:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("gemini exploded")
+        return {"5b": "42"}
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", _flaky)
+    monkeypatch.setattr(grading_service, "grade_paper", lambda *_a, **_k: report)
+
+    paper_id = _upload(client)
+    assert _settle(paper_id).kind == "failed"
+
+    assert client.post(f"/api/papers/{paper_id}/regrade").status_code == 202
+    entry = _settle(paper_id)
+
+    assert entry.kind == "graded"
+    assert entry.error is None
+    assert attempts["n"] == 2
+
+
+def test_regrade_does_not_start_a_second_run_over_one_in_flight(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Leaning on Retry cannot double-mark one scan (or double-charge for it)."""
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    release = threading.Event()
+    runs = {"n": 0}
+    report = _report(needs_review=False, grade="A")
+
+    def _slow_extract(*_a: object, **_k: object) -> dict[str, str]:
+        runs["n"] += 1
+        release.wait(timeout=10)
+        return {"5b": "42"}
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: object())
+    monkeypatch.setattr(grading_service, "extract_answers", _slow_extract)
+    monkeypatch.setattr(grading_service, "grade_paper", lambda *_a, **_k: report)
+
+    paper_id = _upload(client)
+
+    deadline = time.monotonic() + 10.0
+    while runs["n"] == 0 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert runs["n"] == 1, "the upload's own job never started"
+
+    for _ in range(3):
+        assert client.post(f"/api/papers/{paper_id}/regrade").status_code == 202
+
+    release.set()
+    assert _settle(paper_id).kind == "graded"
+    assert runs["n"] == 1, "a second marking run was started over one already going"
 
 
 # ---------------------------------------------------------------------------
-# Grading console.
+# Card identity: name and preview.
 # ---------------------------------------------------------------------------
+
+
+def test_card_name_is_the_detected_paper_label(
+    settings: Settings,
+    history_store: HistoryStore,
+    gemini_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once detected, a card is named for the paper — not the server-side uuid.
+
+    ``_paper_summary`` used ``entry.student_id``, which ``upload_paper`` sets to
+    the generated ``paper_id`` because no teacher->student ownership model
+    exists yet — so every card in the console was a bare 32-char hex uuid.
+    """
+    from lemely.web.routers import student as student_router
+
+    detected = ExamMetadata(
+        subject_code="0625",
+        paper_number=3,
+        paper_variant=1,
+        session_month="May/June",
+        session_year=2020,
+    )
+
+    class _Extractor:
+        def __init__(self, _client: object) -> None: ...
+
+        def __call__(self, _scan_path: object) -> ExamMetadata:
+            return detected
+
+    monkeypatch.setattr(teacher, "ScanMetadataExtractor", _Extractor)
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: None)
+
+    with _key_client(settings, history_store, gemini_client) as local:
+        paper_id = _upload(local, scheme=False)
+        _settle(paper_id)
+        name = local.get("/api/papers").json()["papers"][0]["name"]
+
+    assert re.fullmatch(r"Paper 3 V1 May/June 2020 - \d{4}-\d{2}-\d{2}", name), name
+
+
+def test_card_name_falls_back_to_the_uploaded_filename(client: TestClient) -> None:
+    """Before detection lands there is no label to render, so show the filename.
+
+    Never the uuid: the teacher chose the filename and can recognise it, which
+    is the whole point of the card.
+    """
+    paper_id = _upload(client, scheme=False, name="0625_s20_qp_31.pdf")
+    card = next(p for p in client.get("/api/papers").json()["papers"] if p["id"] == paper_id)
+    assert card["name"] == "0625_s20_qp_31.pdf"
+    _settle(paper_id)
+
+
+def test_preview_renders_page_one_as_png(client: TestClient) -> None:
+    """The card thumbnail is the real scan, rendered server-side."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "Question 1")
+    pdf_bytes: bytes = doc.tobytes()
+    doc.close()
+
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", pdf_bytes, "application/pdf")},
+    )
+    paper_id = resp.json()["paperId"]
+
+    preview = client.get(f"/api/papers/{paper_id}/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_preview_for_unknown_paper_is_404(client: TestClient) -> None:
+    """An id with no stored scan cannot produce a preview, and does not pretend to."""
+    assert client.get("/api/papers/nope/preview").status_code == 404
 
 
 def test_list_papers_empty(client: TestClient) -> None:
@@ -496,10 +1139,28 @@ def test_get_paper_unknown_404(client: TestClient) -> None:
     assert client.get("/api/papers/nope").status_code == 404
 
 
-def test_get_paper_ungraded_409(client: TestClient) -> None:
-    """A paper without a graded report yields 409 rather than fabricating a grade."""
+def test_get_paper_ungraded_reports_state_without_fabricating_a_grade(
+    client: TestClient,
+) -> None:
+    """An ungraded paper reports its live state, and no marks at all.
+
+    This used to be a 409. The refusal was the right instinct — never fabricate
+    a grade — applied to the wrong scope: it also withheld the pipeline, which
+    is exactly the honest, non-fabricated information a console needs to show a
+    run in flight. The 409 is why the Pipeline panel went blank on a mid-run
+    refresh (D6.13). Marks stay ``None``; only the state is served.
+    """
     papers_store.put(_PaperEntry(paper_id="p9", student_id="lina", kind="queued"))
-    assert client.get("/api/papers/p9").status_code == 409
+
+    body = client.get("/api/papers/p9").json()
+
+    assert body["kind"] == "queued"
+    assert body["awardedMarks"] is None
+    assert body["maxMarks"] is None
+    assert body["questions"] == []
+    assert body["weakAreas"] == []
+    # Nothing is claimed to be running: the worker has not picked it up yet.
+    assert [s["state"] for s in body["pipeline"]] == ["done", "idle", "idle", "idle", "idle"]
 
 
 def test_grading_queue_flags_low_confidence(client: TestClient) -> None:
@@ -532,6 +1193,37 @@ def test_grade_replays_and_persists(client: TestClient, history_store: HistorySt
     assert len(records) == 1
     assert records[0].grade == "D"
     assert records[0].student_id == "jonas"
+
+
+def test_grade_replay_frames_carry_the_per_question_counter(client: TestClient) -> None:
+    """Replayed MARKING_PROGRESS frames number questions 1..N against a constant N.
+
+    The replay path is what the UI gets for an already-graded paper, so its
+    counter has to read exactly like a live marking run's: same 1-based index,
+    same constant total, same order. Otherwise the same paper appears to contain
+    a different number of questions depending on which path happened to serve
+    it. ``index`` is the enumerate position in the cached list — not a tally of
+    frames sent — so a question skipped mid-replay would leave a gap rather than
+    renumber the ones after it.
+    """
+    _seed_paper("p1", "jonas", _report(question_ids=("1", "2(a)", "2(b)")))
+
+    with client.stream("POST", "/api/papers/p1/grade") as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+
+    frames = [
+        json.loads(f.removeprefix("data: "))
+        for f in text.split("\n\n")
+        if f.strip() and f != "data: [DONE]"
+    ]
+    marking = [f for f in frames if f["type"] == "marking_progress"]
+    assert [f["question_id"] for f in marking] == ["1", "2(a)", "2(b)"]
+    assert [f["index"] for f in marking] == [1, 2, 3]
+    assert {f["total"] for f in marking} == {3}
+    # The counter's total must match the questions the paper really has — the
+    # number the grading console shows next to this same report.
+    assert len(marking) == len(client.get("/api/papers/p1").json()["questions"])
 
 
 def test_grade_unknown_paper_404(client: TestClient) -> None:

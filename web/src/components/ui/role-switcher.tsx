@@ -77,7 +77,9 @@ export function RoleSwitcher({
         <div
           role="menu"
           aria-label="Switch role"
-          className="absolute right-0 z-30 mt-1.5 min-w-48 rounded-md border border-border bg-surface py-1"
+          // P6.3: `z-dropdown` names the band the raw `z-30` happened to land
+          // on. Same value, but a reader can now tell it was chosen.
+          className="absolute right-0 z-dropdown mt-1.5 min-w-48 rounded-md border border-border bg-surface py-1"
         >
           {roles.map((role) => {
             const active = role.id === current.id
@@ -92,7 +94,8 @@ export function RoleSwitcher({
                   if (!active) onSwitch(role.id)
                 }}
                 className={cn(
-                  "flex w-full items-center gap-2.5 px-3 py-2 text-left text-body-md transition-colors hover:bg-surface-2",
+                  // §6.1 touch floor — see the note in nav-shells.tsx.
+                  "flex w-full items-center gap-2.5 px-3 py-2 pointer-coarse:min-h-11 text-left text-body-md transition-colors hover:bg-surface-2",
                   active ? "font-medium text-t1" : "text-t2",
                 )}
               >

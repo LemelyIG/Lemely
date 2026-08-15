@@ -349,3 +349,267 @@ confidence distribution that directive item 3 asks for will measure the marking
 rather than this defect.
 
 ---
+
+## B4 — The e2e suite silently runs against whatever is already on port 8000
+
+**Raised:** 2026-08-13 (redesign Phase 3 gate) · **Status:** **RESOLVED
+2026-08-14** by the human, exactly as the "Unblock" section asked. See the
+resolution note at the end of this section.
+**Severity:** the Hard Gate §9.7 (functional safety) cannot be fully evidenced
+until this is cleared. It is **not** a product defect and **not** a Phase 3
+regression.
+
+### What happens
+
+`e2e/correct-paper.spec.ts` — "student can log in, upload a scan, and see the
+marked result", the product's flagship flow — fails. The upload succeeds,
+marking starts, and the run stops with an on-screen warning:
+
+> No mark scheme available for this paper; cannot mark.
+
+The page stays on `/student/correct` and never reaches `/student/result/:id`.
+
+### Why, established rather than guessed
+
+`playwright.config.ts` declares two `webServer` entries, and the backend one is
+
+```
+command: .venv/bin/python scripts/e2e_server.py
+port: 8000
+reuseExistingServer: !process.env.CI
+```
+
+`scripts/e2e_server.py` is not merely "the app on port 8000". It is the *only*
+thing that installs the offline marking seam:
+
+```python
+student.resolve_mark_scheme = lambda *a, **k: _fixture_mark_scheme()
+student.extract_answers     = lambda *a, **k: _fixture_extracted()
+```
+
+Without it, `resolve_mark_scheme` runs for real against the golden fixture's
+scan, finds no scheme it can match, returns `None`, and
+`routers/student.py:816` publishes exactly the warning above.
+
+**Port 8000 is already occupied.** A long-running plain instance of the app —
+`python -m lemely.web`, owned by a different local user (`dnsmasq`), up since
+Aug 12 — is listening there. Because `reuseExistingServer` is true outside CI,
+Playwright sees a healthy port, adopts that process, and **never starts
+`e2e_server.py` at all**. The seam is never installed.
+
+### Why this matters more than one red test
+
+The suite does not announce the substitution. Nine of the ten specs pass
+against the unmocked server because they never exercise the vision seam, so
+the run reads as "1 failed, N passed" rather than "the harness under test was
+not the harness configured". Any spec that needs the mock will fail
+mysteriously, and — worse — a spec that *should* need it could pass against
+real behaviour and be believed.
+
+This is the same class of finding as the build era's own recorded lesson
+(`BUILD/DECISIONS.md` D6.12): *a condition every harness shares is a condition
+no harness tests.* There it was "everything ran against localhost". Here it is
+"everything ran against whatever answered on 8000".
+
+### What was verified
+
+- Reproducible, not flaky: two consecutive runs, identical failure.
+- **Not a Phase 3 regression.** A clean git worktree at `0451e5e` (the Phase 3
+  starting commit, i.e. Phase 2's close) fails identically on the same spec.
+  Phase 2 therefore closed with this already red.
+- The other four specs touched by Phase 3's assertion changes
+  (`student-journey`, `teacher-journey`, `parent-journey`, and
+  `correct-paper`'s own login half) **pass**.
+
+### Unblock
+
+Free the port, then re-run. The occupying process belongs to another local
+user, so this was deliberately **not** killed unattended:
+
+```
+sudo fuser -k 8000/tcp        # or stop the `python -m lemely.web` instance
+cd web && npx playwright test correct-paper
+```
+
+### Worth fixing properly afterwards
+
+`reuseExistingServer: !process.env.CI` is the actual bug. Reusing a stranger's
+process is only safe if it is the *same* process the config would have started,
+and nothing checks that. A cheap guard: have `scripts/e2e_server.py` expose a
+marker route (`GET /__e2e__` returning the fixture id) and have
+`e2e/global-setup.ts` assert it before any spec runs, so a substituted backend
+fails loudly at setup instead of quietly at the one spec that notices.
+
+### RESOLVED — 2026-08-14, by the human freeing the port
+
+The human ran `sudo fuser -k 8000/tcp` and reported `correct-paper` passing,
+which was the whole of the unblock this section asked for. Port 8000 is now
+free, so Playwright starts `scripts/e2e_server.py` itself and the offline
+marking seam is installed as configured.
+
+**Verified independently rather than taken on trust** (MISSION §5): the full
+suite was run, not just the one spec. The first honest run of the entire e2e
+suite in the redesign found **four more failures**, all of them assertion drift
+against deliberate, documented redesign changes rather than functional
+regressions, and every one is now updated in place with the reason recorded
+(§9.7):
+
+| Spec | Why it drifted |
+|---|---|
+| `student-journey` | Surface 1 replaced the dashboard's `<button onClick={navigate}>` with a real `<Link>` (the audit's own M8 finding), so the role changed; the row text is now "88% · 1 paper"; and this surface turned the Parents empty state into the kit's `EmptyState`, splitting one sentence into heading and body. Also scoped to the ledger panel, because as a link "0625" is ambiguous with four sidebar entries. |
+| `engagement` | A page-wide `getByRole("listitem")` started counting P3.1's `Breadcrumbs` trail, which renders `<li>`s. Three board rows plus two crumbs is five. Scoped to the list, which is what the spec's own comment always meant. |
+| `parent-journey` | Surface 8 moved the OTP dev code off `font-mono` onto the `data-lg` rung, so `div.font-mono` matched nothing and the read timed out. |
+| `phase4-practice` | The heading was "Practice — <subject>"; §3.2 item 10's em-dash ban made it "Practice for <subject>". |
+
+**Result: 34 passed, 0 failed.** The Hard Gate §9.7 (functional safety) is
+green for the first time in this redesign — every prior surface reported it as
+"still blocked, B4", which was true and is now closed.
+
+The improvement this section proposed for afterwards — a `GET /__e2e__` marker
+route asserted in `global-setup.ts`, so a substituted backend fails loudly at
+setup rather than quietly at the one spec that notices — is **not done**, and is
+still worth doing. `reuseExistingServer: !process.env.CI` remains the real bug:
+today it happens to reuse the right process because nothing else holds the port.
+
+---
+
+## B5 — `/tmp` is 100% full, so no Bash command can run at all
+
+**Raised:** 2026-08-14 · **Status:** **RESOLVED 2026-08-14 (session 3).**
+**Blocked:** everything after D6.7, for two whole sessions.
+
+### What happens
+
+Every Bash invocation now fails before it runs anything:
+
+```
+the temp filesystem at /tmp/claude-1001/<session>/tasks is full (0MB free).
+The child process's stdout/stderr writes failed with ENOSPC.
+```
+
+`/tmp` is a 3.9G tmpfs at 100%. This is not a repo problem and not a disk
+problem — `/home` is fine. It is stale scratch from earlier sessions that
+outlived them, and tmpfs is never reclaimed until something deletes it.
+
+### What is using it — measured, not guessed
+
+| Path | Size | Age | What it is |
+|---|---|---|---|
+| `/tmp/lemely-fresh-1` | 953M | 2026-08-12 | scratch clone of this repo, `git status` clean, HEAD at `be49d34` (session 102, build era) |
+| `/tmp/cargo-installfGfZo4` | 799M | 2026-08-14 | abandoned `cargo install` temp dir |
+| `/tmp/ps_true`, `ps_slug`, `ps-mut2`, `ps_mut`, `ps-mut`, `ps_count` | 248M each, **1.5G total** | 2026-08-12 | six scratch clones of PaperScraper |
+| `/tmp/claude-1001` | 563M | — | harness session dirs; **this session's own dir measures 0 bytes**, so I am not the consumer |
+
+Nothing in that list is durable state. The real repos are at `/home/sico/Lemely`
+and `/home/sico/PaperScraper`; the corpus lives in `Sources/`. The scratch clone
+was checked for uncommitted work before being proposed for deletion — it has
+none.
+
+### Why I did not just delete it
+
+I tried. The permission layer denied the `rm -rf`, which is the correct default
+for an unattended agent issuing a recursive delete outside its working
+directory. I did not retry it in a different shape.
+
+### Unblock
+
+```
+rm -rf /tmp/lemely-fresh-1 /tmp/ps_true /tmp/ps_slug /tmp/ps-mut2 \
+       /tmp/ps_mut /tmp/ps-mut /tmp/ps_count /tmp/cargo-installfGfZo4
+```
+
+That frees ~3.2G of a 3.9G filesystem. Deleting only the six 2026-08-12
+PaperScraper dirs and the scratch clone (2.4G) is enough on its own if you would
+rather leave today's cargo dir alone.
+
+### What this cost, and what it did not
+
+**D6.7 was applied and fully verified before the wall was hit**, including the
+inversion check on the new gate, so nothing is committed unproven. What is
+**not** done is the commit itself and every gate that needs a process:
+`npm test`, typecheck, lint, both builds, `pre-commit`, and the Phase 6.5 work.
+The tree is therefore dirty with verified-but-uncommitted work; the next session
+should commit it rather than redo it.
+
+**Two scratch files of mine are stranded in the repo root** and must not be
+committed: `.pytest-out.txt` and `.tmpinfo.txt`. They exist because once stdout
+capture broke, redirecting a command's output to a file and `Read`ing it was the
+only way left to see any output at all. `rm` them (or add them to `.gitignore`)
+before the D6.7 commit — `git add -A` would otherwise sweep them in.
+
+### Session 2 (2026-08-14, later) — re-confirmed, still open, nothing retried
+
+A second unattended session started, read this file, and re-tested rather than
+assuming. The state is unchanged and the diagnosis above is confirmed on one
+new point:
+
+- **The failure is not "output is lost", it is "no process starts".** A
+  zero-output command (`true`) fails identically to `df -h /tmp`. So this is not
+  a capture problem that could be worked around by redirecting to a file — the
+  earlier session's `.pytest-out.txt` trick is itself no longer available.
+- The `rm -rf` was attempted **once**, on the six PaperScraper scratch dirs
+  only (the smallest sufficient subset, 1.5G of a 3.9G filesystem), and was
+  denied by the permission layer exactly as before. **Not retried in another
+  shape, not split into six commands, not routed through a different tool.**
+  A permission denial is an answer, not an obstacle.
+- Outbound ntfy remains impossible for the reason recorded below, and that was
+  not re-attempted either.
+
+**One thing was fixed without a shell**, because it is the failure mode most
+likely to damage the recovery commit: the three stranded scratch files
+(`.pytest-out.txt`, `.tmpinfo.txt`, `.tmpdiag`) are now in `.gitignore` rather
+than waiting to be `rm`ed. The instruction above said "`rm` them **or** add them
+to `.gitignore`"; only the second half can be executed from here, and it is the
+safer half anyway — an ignore rule survives whoever runs the recovery commit,
+whereas a delete depends on them remembering. The files themselves are still on
+disk for the human to inspect or remove.
+
+**No product work was done.** Phase 6.5 is pure file editing and could have been
+started blind, and that is precisely why it was not: the tree already carries
+D6.7's verified-but-ungated change across `index.css` (334 `--ink-faint` call
+sites), `DESIGN.md` and `test_design_tokens.py`, and adding a second unverifiable
+change on top would mean the recovery session can no longer tell which of the two
+broke a gate. **A dirty tree is a cost that compounds; the correct move while
+blocked is to stop adding to it.**
+
+**No ntfy was sent for this**, and that is a second finding worth keeping.
+Outbound steering is `curl` to `http://home-server:7532`, which is a Bash
+command, so the channel the mission relies on to report a blocker **shares a
+single point of failure with the thing most likely to be blocked**. The one
+non-Bash HTTP tool available upgrades HTTP to HTTPS and cannot reach a plain-HTTP
+LAN host. So this file is the only channel that still worked, which is exactly
+what §10's file fallback is for — but §10 assumes the file is a *mirror* of an
+ntfy message, and here it is the original. Worth a real fix later: a reporting
+path that does not depend on the same shell as the work.
+
+
+### RESOLVED — 2026-08-14, session 3
+
+`/tmp` is free and Bash works. The first command of the session was a
+deliberate re-test rather than an assumption (`true; echo ok; df -h /tmp`), and
+it returned normally.
+
+The recovery ran in the order this section asked for, and nothing was rebuilt:
+
+1. `pre-commit run --all-files`, then the D6.7 commit (`f313a9a`). The tree was
+   exactly as session 1 left it: `--ink-faint`, `DESIGN.md` §3.2 and the parsed
+   token gate, all verified and none of them committed.
+2. The gates that had never run on it: 107 Python token tests, **1,388 web unit
+   tests**, typecheck, lint (0 errors), both builds, `check:copy` 0. All green.
+   `--ink-faint` has 334 call sites and was the change most likely to move a
+   rendered pixel in the whole of Phase 6; nothing moved.
+3. Phase 6.5.
+
+The three stranded scratch files were **both** removed and left ignored. Session
+2 could only do the ignore half and said so; the `rm` half is now done too, and
+the `.gitignore` rule stays, because an ignore rule survives whoever runs the
+next recovery and a delete does not.
+
+**The finding that outlives the blocker** is the one session 2 recorded: the
+outbound steering channel is `curl` to a plain-HTTP LAN host, i.e. a Bash
+command, so **the channel that reports a blocker shares a single point of
+failure with the work it reports on**. Two sessions could not send a single
+ntfy. `BUILD/STEERING.md` and this file were the only channels that survived,
+which is what §10's file fallback is for, except §10 assumes the file mirrors
+an ntfy message and there it *was* the message. Still worth a real fix: a
+reporting path that does not need the same shell.

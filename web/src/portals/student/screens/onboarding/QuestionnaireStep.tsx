@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -19,8 +20,40 @@ import {
  * touch targets" — applied at every breakpoint here, both because it keeps
  * the flow honest about pace and because it's the simplest thing that is
  * unambiguously still correct on mobile without a second, untested desktop
- * layout branch), a visible progress meter, and a "Skip for now" action on
- * every question — none of these fields are essential (D4.5).
+ * layout branch), a visible progress meter, and a way past every question —
+ * none of these fields are essential (D4.5).
+ *
+ * ── P4.10, and the button that erased the answer it offered to defer ───────
+ *
+ * **"Skip for now" appeared only once you had answered, and it deleted your
+ * answer.** The condition was `!isLast && answered`, so a student who left a
+ * question blank never saw it, and a student who filled one in was offered a
+ * button whose label promises deferral and whose handler set the field back to
+ * `undefined` before advancing. The two readings of "skip" — *I will come back
+ * to this* and *throw away what I just typed* — are not the same act, and the
+ * screen used the gentler word for the destructive one.
+ *
+ * The capability is worth keeping: answers seed from an existing profile
+ * (`Onboarding.tsx`), so a student resuming onboarding may genuinely want to
+ * unset a previous answer, and the Yes/No and slider questions offer no other
+ * way to do it. So it stays, split into the two things it was doing at once:
+ *
+ *   - **Clear my answer** unsets the field and stays on the question, so the
+ *     student sees it cleared rather than being moved on from a state they
+ *     cannot check. It appears only when there is an answer to clear.
+ *   - **Skip** is the primary action when a question is unanswered, which is
+ *     what it already said. It still clears before advancing, because a seeded
+ *     value can be `null` rather than `undefined` and only an explicit unset
+ *     keeps it out of the PATCH body (D4.5).
+ *
+ * **Focus was drawn in the accent colour** on both free-text questions, which
+ * DESIGN.md §3.9 reserves against precisely so focus stays distinguishable from
+ * accent-coloured selection. Same fix as `SubjectsStep`.
+ *
+ * **A set slider value was rendered in the accent.** On this palette the accent
+ * is the alert register (recorded on surfaces 5 and 6), so "8 hours/week" and a
+ * confidence of 4 out of 5 — both of them good news, or at worst neutral — were
+ * shown to a new student in the colour the product uses for problems.
  */
 
 /** A slider question that has never been touched must not render as an
@@ -47,9 +80,14 @@ function SkippableSlider({
   const touched = value !== undefined
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between">
-        <span className="text-dense-sm text-t2">{ariaLabel}</span>
-        <span className={touched ? "text-body-md font-medium text-accent" : "text-dense-sm text-t3"}>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-body-sm text-ink-muted">{ariaLabel}</span>
+        {/* The data face, and never the accent: a set value here is neutral or
+            good news, and accent is this palette's alert register. Weight and
+            the mono face carry "this is your answer" instead. */}
+        <span
+          className={touched ? "text-data-sm font-medium text-ink" : "text-body-sm text-ink-faint"}
+        >
           {touched ? formatValue(value) : unsetLabel}
         </span>
       </div>
@@ -64,14 +102,55 @@ function SkippableSlider({
   )
 }
 
+/*
+ * P3.3. The question heading doubles as the accessible name for whatever
+ * control the step renders inside it.
+ *
+ * The two free-text steps ("Which school are you at?", "What year or grade
+ * level are you in?") had a `placeholder` and nothing else — no `<label>`, no
+ * `aria-label`. A placeholder is not a label: it is announced inconsistently
+ * across screen readers, and it disappears the moment the student starts
+ * typing, so it fails the reader who most needs it. The mission bans exactly
+ * this ("visible labels, never placeholder-only").
+ *
+ * A separate visible `<label>` would be the obvious fix and is the wrong one
+ * here: the question already IS the visible label, in display type, and adding
+ * a second smaller copy of it above the field would be the same words twice.
+ * Pointing the control at the heading with `aria-labelledby` gives the field a
+ * real name taken from text that is already on screen, with no visual change.
+ *
+ * This is also why the kit's `Input` is deliberately not used on these two
+ * steps, and the only place in the product where a bare `<input>` is the right
+ * answer: `Input` requires a `label` by construction (§12 bans
+ * placeholder-as-label), so using it here would render the question twice. The
+ * field carries the kit's own border ladder and focus treatment by hand
+ * instead, and has no error or loading state because this step validates
+ * nothing.
+ *
+ * A module constant rather than `useId` because the id has to be referenced
+ * from the sibling branches below, and exactly one `QuestionShell` is ever
+ * mounted at a time (`steps[stepIndex]`), so it cannot collide with itself.
+ */
+export const QUESTION_HEADING_ID = "onboarding-question-heading"
+
+/** The shared class list for the two free-text questions. See `QuestionShell`. */
+const FREE_TEXT_FIELD =
+  "min-h-11 rounded-lg border border-rule bg-paper-raised px-4 py-3 text-body-lg text-ink transition-colors hover:border-rule-strong focus-visible:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+
 function QuestionShell({ question, children }: { question: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-5">
       {/* The question IS the page title on this step, and exactly one
        * `QuestionShell` renders at a time (`steps[stepIndex]` above), so this
        * is the screen's single h1 — not a decorative div wearing display
-       * type. QUALITY-BAR.md: "one h1 per page, heading order unbroken". */}
-      <h1 className="font-serif text-display-md leading-display text-t1 m-0">{question}</h1>
+       * type. QUALITY-BAR.md: "one h1 per page, heading order unbroken".
+       *
+       * `display-md` alone, not `font-serif text-display-md`: the rung already
+       * names the display face, and pairing it with `font-serif` set
+       * `font-family` twice on one element (D4.2). */}
+      <h1 id={QUESTION_HEADING_ID} className="text-display-md text-ink">
+        {question}
+      </h1>
       {children}
     </div>
   )
@@ -81,7 +160,11 @@ export interface QuestionnaireStepProps {
   steps: QuestionnaireStepDef[]
   stepIndex: number
   onBack: () => void
+  /** Unset this question's answer and advance. The primary action when a
+   * question is unanswered. */
   onSkip: () => void
+  /** Unset this question's answer and stay put. See the module note. */
+  onClear: () => void
   onContinue: () => void
   onFinish: () => void
   answers: QuestionnaireAnswers
@@ -100,6 +183,7 @@ export function QuestionnaireStep({
   stepIndex,
   onBack,
   onSkip,
+  onClear,
   onContinue,
   onFinish,
   answers,
@@ -133,8 +217,9 @@ export function QuestionnaireStep({
           autoFocus
           value={answers.schoolName ?? ""}
           onChange={(event) => onSchoolName(event.target.value)}
+          aria-labelledby={QUESTION_HEADING_ID}
           placeholder="e.g. Greenwood International School"
-          className="rounded-lg border border-border bg-surface px-4 py-3 text-body-lg text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-h-[44px]"
+          className={FREE_TEXT_FIELD}
         />
       </QuestionShell>
     )
@@ -188,8 +273,9 @@ export function QuestionnaireStep({
           autoFocus
           value={answers.gradeLevel ?? ""}
           onChange={(event) => onGradeLevel(event.target.value)}
+          aria-labelledby={QUESTION_HEADING_ID}
           placeholder="e.g. Year 11"
-          className="rounded-lg border border-border bg-surface px-4 py-3 text-body-lg text-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-h-[44px]"
+          className={FREE_TEXT_FIELD}
         />
       </QuestionShell>
     )
@@ -201,12 +287,14 @@ export function QuestionnaireStep({
       <QuestionShell
         question={`How confident do you feel in ${subject?.name ?? "this subject"} right now?`}
       >
-        <Card className="p-5 flex flex-col gap-5">
+        <Card className="flex flex-col gap-5 p-5">
           {(subject?.confidenceTopics ?? []).map((topic) => (
             <SkippableSlider
               key={topic}
               value={ratings[topic]}
-              onChange={(rating) => step.subjectCode && onConfidence(step.subjectCode, topic, rating)}
+              onChange={(rating) =>
+                step.subjectCode && onConfidence(step.subjectCode, topic, rating)
+              }
               min={CONFIDENCE_MIN}
               max={CONFIDENCE_MAX}
               ariaLabel={topic}
@@ -222,28 +310,38 @@ export function QuestionnaireStep({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1.5">
-        <Meter
-          value={progressPct}
-          label={`Question ${stepIndex + 1} of ${total}`}
-          className="h-1.5"
-        />
-        <span className="text-dense-sm text-t3">
+        <Meter value={progressPct} label={`Question ${stepIndex + 1} of ${total}`} />
+        <span className="text-data-sm text-ink-faint">
           Question {stepIndex + 1} of {total}
         </span>
       </div>
 
       {body}
 
-      {error ? <p className="text-dense-sm text-err">{error}</p> : null}
+      {/* Above the buttons, which is where §12 puts a form-level error. */}
+      {error ? (
+        <p role="alert" className="text-body-sm text-err">
+          {error}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" variant="ghost" size="lg" onClick={onBack} disabled={stepIndex === 0 || saving}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="lg"
+          onClick={onBack}
+          disabled={stepIndex === 0 || saving}
+        >
           Back
         </Button>
         <div className="flex-1" />
-        {!isLast && answered ? (
-          <Button type="button" variant="ghost" size="lg" onClick={onSkip} disabled={saving}>
-            Skip for now
+        {/* Only when there is an answer to clear, and it says so. It does not
+            advance: being moved on from a question whose state you cannot see
+            is what made the old "Skip for now" misleading. */}
+        {answered ? (
+          <Button type="button" variant="ghost" size="lg" onClick={onClear} disabled={saving}>
+            Clear my answer
           </Button>
         ) : null}
         <Button

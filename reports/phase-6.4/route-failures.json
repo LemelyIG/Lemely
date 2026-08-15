@@ -1,0 +1,27 @@
+[
+  {
+    "screenId": "T-08",
+    "path": "/teacher/review/143a484a-18c1-4a12-8ab9-1ef1615f3c5a",
+    "error": "Waiting failed: 15000ms exceeded"
+  },
+  {
+    "screenId": "T-09-detail",
+    "path": "/teacher/quizzes/8c12ed92-8698-40c3-909a-266ced7d2d5b",
+    "error": "Waiting failed: 15000ms exceeded"
+  },
+  {
+    "screenId": "T-10",
+    "path": "/teacher/quizzes/8c12ed92-8698-40c3-909a-266ced7d2d5b/assignments/beff021a-83b7-4e69-bca2-18c1778d1fc4/results",
+    "error": "Waiting failed: 15000ms exceeded"
+  },
+  {
+    "screenId": "S-21",
+    "path": "/student/practice/result/9f225a58-315d-4901-86dc-c874bb6ac888",
+    "error": "Waiting failed: 15000ms exceeded"
+  },
+  {
+    "screenId": "S-22",
+    "path": "/student/flashcards/0625",
+    "error": "Waiting failed: 15000ms exceeded"
+  }
+]

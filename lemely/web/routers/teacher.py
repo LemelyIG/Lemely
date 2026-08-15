@@ -20,13 +20,16 @@ horizontal scaling is required.
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import uuid
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+import structlog
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -84,7 +87,7 @@ from lemely.io.question_generation import QuestionGenerator
 from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.teacher_quiz import TeacherQuizBuilder
 from lemely.runtime.config import Settings
-from lemely.runtime.events import EventType, bus
+from lemely.runtime.events import Event, EventType, bus
 from lemely.web.deps import (
     AuthContext,
     get_at_risk_ack_service,
@@ -144,6 +147,8 @@ from lemely.web.upload_utils import (
     safe_upload_name,
     write_upload_capped,
 )
+
+log = structlog.get_logger(__name__)
 
 # Every teacher-portal route is staff-only. Gating at the router level means a
 # 401 (no/invalid token) or 403 (student/parent) is enforced uniformly and any
@@ -233,41 +238,343 @@ class _PaperStore:
             self._papers.clear()
 
 
+#: The phases :func:`_run_grading_job` walks, in the order it walks them, paired
+#: with the console's label for each. ``_PaperEntry.stage`` always holds one of
+#: these ids; :func:`_live_pipeline_steps` turns it into the Pipeline panel's
+#: rows. Ingestion is not here because it is finished before the job starts.
+_JOB_STAGES: tuple[tuple[str, str], ...] = (
+    ("detect", "Exam details read"),
+    ("scheme", "Mark scheme parsed"),
+    ("extract", "Handwriting read"),
+    ("mark", "Questions marked"),
+)
+
+
 class _PaperEntry:
-    """A single tracked paper: identity plus its grade result once available."""
+    """A single tracked paper: identity, live job state, and its grade result.
+
+    Mutated from the grading worker thread and read from request handlers. The
+    fields the worker writes (``kind``, ``stage``, ``progress``, ``metadata``,
+    ``report``, ``error``) are each a single attribute rebind, which CPython
+    performs atomically — readers therefore see a consistent value per field,
+    never a torn one. They are deliberately *not* guarded by a lock: a reader
+    holding one while the worker ran a multi-minute Gemini call chain would
+    stall every ``GET /papers`` for the duration, which is the class of bug
+    D6.13 exists to remove, not repeat.
+    """
 
     __slots__ = (
+        "content_type",
+        "error",
+        "job",
         "kind",
         "mark_scheme",
         "metadata",
+        "original_filename",
         "paper_id",
+        "progress",
         "report",
         "scan_path",
+        "stage",
         "student_id",
+        "uploaded_at",
     )
 
     def __init__(
         self,
         paper_id: str,
-        student_id: str,
+        student_id: str | None,
         *,
         kind: PaperKind = "queued",
         metadata: ExamMetadata | None = None,
         scan_path: Path | None = None,
         mark_scheme: MarkScheme | None = None,
         report: AccuracyReport | None = None,
+        original_filename: str | None = None,
+        content_type: str | None = None,
+        uploaded_at: str | None = None,
     ) -> None:
         """Initialise a paper entry, optionally pre-graded."""
         self.paper_id = paper_id
+        #: Whose history this paper's marks belong in, or ``None`` when nobody's.
+        #:
+        #: ``None`` for anything uploaded through the console: D1.12 forbids a
+        #: teacher binding a scan to a student account without the ownership
+        #: model, so there is no one to attribute the marks to and no record is
+        #: written. ``upload_paper`` used to pass the generated ``paper_id`` here
+        #: and hand it to ``history_store.append`` regardless — which the JSON
+        #: test double accepted happily and Postgres rejects with a foreign-key
+        #: violation against ``users``, killing the run *after* it had marked the
+        #: whole paper. The marks live in this store and are served by
+        #: ``GET /papers/{id}`` and the review queue; they do not need a fake
+        #: student to exist.
         self.student_id = student_id
         self.kind = kind
         self.metadata = metadata
         self.scan_path = scan_path
         self.mark_scheme = mark_scheme
         self.report = report
+        self.original_filename = original_filename
+        self.content_type = content_type
+        self.uploaded_at = uploaded_at or now_iso()
+        #: Why this paper is ``failed``; ``None`` in every other state.
+        self.error: str | None = None
+        #: Stage id from :data:`_JOB_STAGES` the job is currently on.
+        self.stage: str = _JOB_STAGES[0][0]
+        #: ``(current, total)`` within :attr:`stage`, when the pipeline reports
+        #: a countable unit of work; ``None`` when it does not.
+        self.progress: tuple[int, int] | None = None
+        #: Handle on the background grading run, once one has been submitted.
+        self.job: Future[None] | None = None
 
 
 papers_store: _PaperStore = _PaperStore()
+
+# ---------------------------------------------------------------------------
+# Background grading (D6.13).
+# ---------------------------------------------------------------------------
+
+# Deliberately ONE worker. Two reasons, both load-bearing:
+#
+#   1. ``lemely.runtime.events.bus`` is process-global and fans every published
+#      event out to every subscriber queue with no per-run scoping (see the
+#      warning in ``lemely/web/sse.py``). Two papers marking at once would each
+#      stream the other's per-question progress into the teacher's console.
+#   2. It gives "Queued" an honest meaning — a paper genuinely waiting its turn
+#      behind another — rather than being the label for "nothing is happening".
+#
+# Raising this requires per-run event scoping first, not just a bigger number.
+_grading_pool: ThreadPoolExecutor = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="lemely-grading"
+)
+
+# Guards the submit-or-reuse decision in :func:`_ensure_grading_job`. Without it
+# two concurrent ``POST /papers/{id}/grade`` calls could both observe "no job in
+# flight" and each submit one, double-marking the paper (and double-charging the
+# Gemini budget).
+_jobs_lock: threading.Lock = threading.Lock()
+
+#: How long :func:`_track_progress` blocks on its queue before re-checking its
+#: stop flag. Bounds tracker shutdown latency; it is not a progress-poll rate,
+#: since a queued event wakes the ``get`` immediately.
+_TRACKER_POLL_SECONDS = 0.2
+
+
+def _set_stage(entry: _PaperEntry, stage: str) -> None:
+    """Move ``entry`` to ``stage``, clearing the previous stage's counter."""
+    entry.progress = None
+    entry.stage = stage
+
+
+def _track_progress(
+    entry: _PaperEntry,
+    q: queue.SimpleQueue[Event | None],
+    stop: threading.Event,
+) -> None:
+    """Drain bus events onto ``entry`` so ``GET /papers/{id}`` can report them.
+
+    The pipeline publishes ``EXTRACTION_PROGRESS`` / ``MARKING_PROGRESS`` with
+    ``index``/``total`` as it walks the question list. Mirroring them onto the
+    entry is what lets a teacher who reloads the page mid-run still see how far
+    the run has got: the SSE stream only reaches a client that is attached, and
+    a reloaded page has, by definition, missed everything already sent.
+
+    Shutdown is the caller's ``stop`` flag, deliberately **not** the queue's
+    ``None`` sentinel. ``EventBus.publish_done`` broadcasts that ``None`` to
+    *every* subscriber, so an SSE stream finishing with one paper would
+    otherwise silently kill the tracker of the paper the worker had just moved
+    on to — its stage would keep advancing while its per-question counter sat
+    frozen at whatever it last read. A foreign end-of-stream is skipped instead.
+
+    Runs on its own daemon thread for the lifetime of one job.
+    """
+    while not stop.is_set():
+        try:
+            event = q.get(timeout=_TRACKER_POLL_SECONDS)
+        except queue.Empty:
+            continue
+        if event is None:
+            continue
+        if event.type is EventType.EXTRACTION_PROGRESS:
+            entry.stage = "extract"
+        elif event.type is EventType.MARKING_PROGRESS:
+            entry.stage = "mark"
+        else:
+            continue
+        index = event.payload.get("index")
+        total = event.payload.get("total")
+        if isinstance(index, int) and isinstance(total, int) and total > 0:
+            entry.progress = (index, total)
+
+
+def _run_grading_job(
+    entry: _PaperEntry,
+    settings: Settings,
+    history_store: HistoryStoreProtocol,
+    gemini_client: GeminiClient,
+    job_id: str | None,
+) -> None:
+    """Detect, resolve, extract and mark one paper. Never raises.
+
+    This is the whole pipeline, running on the grading pool rather than on
+    whatever request happened to trigger it. That is the point: before D6.13 the
+    only thing that ran marking was an ``await``-ed SSE stream in the teacher's
+    browser, so a paper whose upload response never made it back to the tab (the
+    event-loop block in :func:`upload_paper`) was never marked by anything, and
+    sat at "Queued" indefinitely with no request in either access log.
+
+    Failures are recorded on ``entry`` rather than raised: the caller is a pool
+    worker with nobody to catch them, and :func:`grade_paper_endpoint` reports
+    ``entry.error`` as the stream's terminal frame — which is also what a client
+    attaching *after* the run finished needs in order to learn what happened.
+    """
+    from lemely.web.services.grading import extract_answers, grade_paper
+
+    progress_queue = bus.subscribe_queue()
+    tracker_stop = threading.Event()
+    tracker = threading.Thread(
+        target=_track_progress,
+        args=(entry, progress_queue, tracker_stop),
+        daemon=True,
+    )
+    tracker.start()
+    try:
+        entry.kind = "processing"
+        entry.error = None
+        _set_stage(entry, "detect")
+
+        # Detection is advisory: it names the card and helps `_entry_mark_scheme`
+        # match the parsed-scheme corpus, but a paper with an attached scheme
+        # marks fine without it. A failure here must not cost the teacher their
+        # marks, so it is warned about and stepped over.
+        needs_detection = (
+            entry.metadata is None
+            and entry.scan_path is not None
+            and _detection_available(settings)
+        )
+        if needs_detection and entry.scan_path is not None:
+            try:
+                entry.metadata = ScanMetadataExtractor(gemini_client)(entry.scan_path)
+            except Exception as exc:
+                log.exception("teacher_detection_failed", paper_id=entry.paper_id)
+                if job_id is not None:
+                    registry.update(
+                        job_id, status="error", error=f"metadata detection failed: {exc}"
+                    )
+                bus.publish(
+                    EventType.WARNING,
+                    paper_id=entry.paper_id,
+                    message=f"Could not read this scan's exam details: {exc}",
+                )
+
+        _set_stage(entry, "scheme")
+        mark_scheme = _entry_mark_scheme(entry, settings, gemini_client)
+        if mark_scheme is not None and entry.scan_path is not None:
+            _set_stage(entry, "extract")
+            extracted = extract_answers(entry.scan_path, mark_scheme, gemini_client=gemini_client)
+            _set_stage(entry, "mark")
+            # `student_id=None` short-circuits the history append inside
+            # `grade_paper`, which is the correct behaviour for a console upload
+            # (see `_PaperEntry.student_id`) and the only reason this call can
+            # complete at all against the real DB-backed store.
+            report = grade_paper(
+                mark_scheme,
+                extracted,
+                gemini_client=gemini_client,
+                student_id=entry.student_id,
+                history_store=history_store if entry.student_id else None,
+            )
+            entry.report = report
+            entry.kind = _paper_kind(report)
+            return
+
+        cached_report: AccuracyReport | None = entry.report
+        if cached_report is None:
+            entry.kind = "failed"
+            entry.error = (
+                "No mark scheme could be resolved for this paper — nothing was marked. "
+                "Attach one on upload, or add it under Mark schemes and re-run."
+            )
+            bus.publish(
+                EventType.WARNING,
+                paper_id=entry.paper_id,
+                message="No mark scheme or graded correction attached to paper.",
+            )
+            return
+
+        # Replay path: an entry that already carries a full report but has never
+        # been walked (e.g. one produced by a prior service run). `index` is the
+        # enumerate position within the cached question list, matching what a
+        # live marking run publishes, so the UI counter reads the same on a
+        # replay as it does on a fresh grade. It is not a count of frames
+        # emitted — a question skipped here must not shift the numbers reported
+        # for the questions after it.
+        _set_stage(entry, "mark")
+        replayed_questions = cached_report.correction.questions
+        total_questions = len(replayed_questions)
+        for index, question in enumerate(replayed_questions, start=1):
+            bus.publish(
+                EventType.MARKING_PROGRESS,
+                paper_id=entry.paper_id,
+                question_id=question.question_id,
+                marker_source=question.marker_source,
+                confidence=question.confidence_score,
+                index=index,
+                total=total_questions,
+            )
+        if entry.student_id:
+            history_store.append(
+                entry.student_id,
+                PaperRecord(
+                    student_id=entry.student_id,
+                    metadata=cached_report.correction.metadata,
+                    awarded_marks=cached_report.correction.awarded_marks,
+                    maximum_marks=cached_report.correction.maximum_marks,
+                    percentage=cached_report.grade_prediction.percentage,
+                    grade=cached_report.grade_prediction.grade,
+                    weak_areas=cached_report.weaknesses.weak_areas,
+                    recorded_at=now_iso(),
+                ),
+            )
+        entry.kind = _paper_kind(cached_report)
+    except Exception as exc:
+        # Marking is a long Gemini/parser call chain and can genuinely fail.
+        # Recording it as a terminal state with the reason attached is the whole
+        # difference between a console that explains itself and one that shows
+        # "Queued" until someone reads the server log.
+        log.exception("teacher_grade_failed", paper_id=entry.paper_id)
+        entry.kind = "failed"
+        entry.error = f"Grading failed: {exc}"
+    finally:
+        # Unsubscribe first, so nothing else can be queued behind the stop flag.
+        bus.unsubscribe_queue(progress_queue)
+        tracker_stop.set()
+
+
+def _ensure_grading_job(
+    entry: _PaperEntry,
+    settings: Settings,
+    history_store: HistoryStoreProtocol,
+    gemini_client: GeminiClient,
+    *,
+    job_id: str | None = None,
+) -> Future[None]:
+    """Return the in-flight grading job for ``entry``, submitting one if needed.
+
+    Attach-or-start, not always-start: a teacher who uploads and then watches the
+    stream must not trigger a second marking run over the same scan (and a second
+    Gemini bill). A *finished* job is not reused — re-requesting ``/grade`` on a
+    settled paper re-runs it, which is what that endpoint has always done.
+    """
+    with _jobs_lock:
+        existing = entry.job
+        if existing is not None and not existing.done():
+            return existing
+        future = _grading_pool.submit(
+            _run_grading_job, entry, settings, history_store, gemini_client, job_id
+        )
+        entry.job = future
+        return future
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +629,38 @@ def _paper_kind(report: AccuracyReport | None) -> PaperKind:
     return "review" if report.correction.needs_teacher_review else "graded"
 
 
+def _detection_available(settings: Settings) -> bool:
+    """Whether scan-metadata detection can run at all (an API key is configured)."""
+    return settings.gemini_api_key is not None
+
+
+def _paper_label(entry: _PaperEntry) -> str:
+    """Human name for a paper card.
+
+    ``Paper 3 V1 May/June 2020 - 2026-08-12`` once detection (or a completed
+    grade) has produced metadata: what the paper *is*, plus the date it was
+    uploaded so repeat attempts at the same paper stay distinguishable.
+
+    Until then, the teacher's own filename — the one thing about this upload
+    they already recognise. Never the id: ``upload_paper`` sets ``student_id``
+    to the generated ``paper_id`` (D1.12: no teacher may bind a scan to a real
+    student without the ownership model), and rendering that put a bare 32-char
+    hex uuid on every card in the console.
+    """
+    metadata = entry.metadata
+    if metadata is None and entry.report is not None:
+        metadata = entry.report.correction.metadata
+    if metadata is None:
+        return entry.original_filename or entry.student_id or entry.paper_id
+    session: str = metadata.session_month
+    if metadata.session_year is not None:
+        session = f"{session} {metadata.session_year}"
+    return (
+        f"Paper {metadata.paper_number} V{metadata.paper_variant} "
+        f"{session} - {entry.uploaded_at[:10]}"
+    )
+
+
 def _mean(values: list[float]) -> float | None:
     """Return the arithmetic mean rounded to 2 dp, or ``None`` for an empty list."""
     if not values:
@@ -329,12 +668,19 @@ def _mean(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 2)
 
 
-def _pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
+def _graded_pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
     """Derive the five pipeline steps from a completed grade result.
 
     Counts are the real per-question totals: total questions, questions marked,
     and questions clearing the review-confidence threshold. All ``done`` after a
     completed grade (the pipeline ran to the boundary-resolution stage).
+
+    Deliberately a *different* list from :func:`_live_pipeline_steps`: this one
+    reports what the finished run found (how many questions cleared the
+    confidence threshold, whether boundaries resolved), which is analysis that
+    does not exist yet while a paper is still being marked. Reusing one list for
+    both would mean either dropping the confidence/boundary counts from the
+    graded view or inventing them for the running one.
     """
     questions = report.correction.questions
     total = len(questions)
@@ -347,6 +693,43 @@ def _pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
         PipelineStepDTO(label="Confidence check", count=f"{confident} / {total}", state="done"),
         PipelineStepDTO(label="Grade boundaries", count=f"{total} / {total}", state="done"),
     ]
+
+
+def _live_pipeline_steps(entry: _PaperEntry) -> list[PipelineStepDTO]:
+    """Derive the pipeline for a paper that has not finished grading.
+
+    Stages before the current one are ``done``, the current one is ``active``,
+    and the rest are ``idle`` — read straight off the job's own ``stage``, which
+    :func:`_track_progress` keeps in step with the bus. ``count`` carries the
+    real ``current / total`` question counter when the running stage publishes
+    one, and is blank otherwise: a fabricated denominator on a stage that has
+    not started would be the invented progress this console exists to avoid.
+
+    Nothing is ``active`` for a ``queued`` paper (it is waiting for the worker,
+    not running) or a ``failed`` one — a failed paper freezes on the stage it
+    stopped at, so the panel shows how far the run actually got instead of
+    resetting to zero or claiming to still be working.
+    """
+    order = [stage for stage, _label in _JOB_STAGES]
+    current = order.index(entry.stage) if entry.stage in order else 0
+    running = entry.kind == "processing"
+    steps = [
+        # The bytes are on disk before the job is even submitted, so this is
+        # genuinely done in every state a live pipeline is rendered for.
+        PipelineStepDTO(label="Scan received", count="", state="done"),
+    ]
+    for index, (_stage, label) in enumerate(_JOB_STAGES):
+        if index < current:
+            state: Literal["done", "active", "idle"] = "done"
+        elif index == current and running:
+            state = "active"
+        else:
+            state = "idle"
+        count = ""
+        if index == current and entry.progress is not None:
+            count = f"{entry.progress[0]} / {entry.progress[1]}"
+        steps.append(PipelineStepDTO(label=label, count=count, state=state))
+    return steps
 
 
 def _latest_records(history_store: HistoryStoreProtocol) -> list[PaperRecord]:
@@ -386,16 +769,33 @@ def _student_delta(history: StudentHistory) -> float | None:
 @router.post("/papers/upload", response_model=UploadResponseDTO)
 async def upload_paper(
     settings: Annotated[Settings, Depends(get_settings)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     scan: Annotated[UploadFile, File()],
     mark_scheme: Annotated[UploadFile | None, File()] = None,
 ) -> UploadResponseDTO:
-    """Ingest a scanned paper (+ optional mark scheme) and detect its metadata.
+    """Ingest a scanned paper (+ optional mark scheme) and queue it for marking.
 
-    Persists the uploads under ``output_dir/uploads/{paperId}`` and registers a
-    job + paper entry. Detected metadata comes from
-    :class:`ScanMetadataExtractor` when an API key is configured; when detection
-    is unavailable the ``detected`` list is empty (never fabricated).
+    Persists the uploads under ``output_dir/uploads/{paperId}``, registers a job +
+    paper entry, and hands the paper to the background grading pool. Returns as
+    soon as the bytes are on disk.
+
+    **This endpoint does no Gemini work (D6.13).** It used to run
+    :class:`ScanMetadataExtractor` inline — a synchronous file-upload +
+    ``generateContent`` round trip, ~60s on a real scan — from inside an ``async
+    def`` handler. A coroutine that never awaits owns uvicorn's only event loop
+    for its whole duration, so that call did not merely make *this* request slow:
+    it froze every other request in the process, health checks included, until it
+    returned. The teacher's browser gave up long before then (nginx logged a 499
+    half a minute before the backend finished), so the upload ``fetch`` never
+    resolved, the console never issued ``POST /papers/{id}/grade``, and the paper
+    sat at "Queued" forever with no grade request in any access log. Detection now
+    runs as the first phase of :func:`_run_grading_job`, exactly as the student
+    portal defers it out of ``student_upload`` and into ``student_correct``.
+
+    ``detected`` is therefore always empty here — the answer does not exist yet.
+    The console reads detected fields from ``GET /papers/{id}`` once the job has
+    produced them; an invented placeholder would be worse than an honest absence.
 
     Security (D1.12, fixes the acceptance-review H2): the interim paper bucket is
     keyed on the server-generated ``paper_id`` only. A teacher-supplied student
@@ -407,42 +807,40 @@ async def upload_paper(
     """
     job = registry.create("paper_upload", filename=scan.filename)
     paper_id = job.id
-    resolved_student = paper_id
 
     upload_dir = settings.paths.output_dir / "uploads" / paper_id
     upload_dir.mkdir(parents=True, exist_ok=True)
     # Server-controlled destinations: the directory is namespaced by ``paper_id``
     # and the basename is sanitised, so the client filename can never escape the
     # sandbox (path traversal) or overwrite files outside this upload.
-    scan_path = upload_dir / _safe_upload_name(scan.filename, "scan.pdf")
+    safe_name = _safe_upload_name(scan.filename, "scan.pdf")
+    scan_path = upload_dir / safe_name
     _write_upload_capped(await scan.read(), scan_path)
 
     if mark_scheme is not None:
-        ms_path = upload_dir / _safe_upload_name(mark_scheme.filename, "mark_scheme.pdf")
-        _write_upload_capped(await mark_scheme.read(), ms_path)
+        # Fixed server-side name, deliberately NOT the sanitised client basename:
+        # `resolve_mark_scheme` locates an attached scheme by looking for a
+        # sibling called exactly `mark_scheme.pdf` next to the scan — the same
+        # contract `routers/student.py` writes to. Saving it as the teacher's own
+        # filename (e.g. `0625_s20_ms_31.pdf`) left the bytes on disk with nothing
+        # in the codebase able to read them back, so every uploaded paper reached
+        # `grade_paper_endpoint` scheme-less and stalled at `queued` forever.
+        _write_upload_capped(await mark_scheme.read(), upload_dir / "mark_scheme.pdf")
 
-    detected: list[DetectedFieldDTO] = []
-    metadata: ExamMetadata | None = None
-    detection_failed = False
-    if settings.gemini_api_key is not None:
-        try:
-            metadata = ScanMetadataExtractor(gemini_client)(scan_path)
-            detected = _detected_fields(metadata)
-        except Exception as exc:
-            detection_failed = True
-            registry.update(job.id, error=f"metadata detection failed: {exc}")
-
-    papers_store.put(
-        _PaperEntry(
-            paper_id=paper_id,
-            student_id=resolved_student,
-            kind="queued",
-            metadata=metadata,
-            scan_path=scan_path,
-        )
+    entry = _PaperEntry(
+        paper_id=paper_id,
+        student_id=None,
+        kind="queued",
+        scan_path=scan_path,
+        original_filename=safe_name,
+        content_type=scan.content_type,
     )
-    registry.update(job.id, status="error" if detection_failed else "done")
-    return UploadResponseDTO(jobId=job.id, paperId=paper_id, detected=detected)
+    papers_store.put(entry)
+    registry.update(job.id, status="done")
+    # Marking starts here, not when a browser asks for it. A teacher who uploads
+    # and immediately closes the tab still gets a graded paper.
+    _ensure_grading_job(entry, settings, history_store, gemini_client, job_id=job.id)
+    return UploadResponseDTO(jobId=job.id, paperId=paper_id, detected=[])
 
 
 def _require_paper(paper_id: str) -> _PaperEntry:
@@ -453,9 +851,48 @@ def _require_paper(paper_id: str) -> _PaperEntry:
     return entry
 
 
+def _entry_mark_scheme(
+    entry: _PaperEntry,
+    settings: Settings,
+    gemini_client: GeminiClient,
+) -> MarkScheme | None:
+    """Return — and memoise onto ``entry`` — the parsed mark scheme for a paper.
+
+    Resolution is deferred to first use rather than performed in
+    :func:`upload_paper`, because parsing a scheme PDF runs the deterministic
+    parser with a Gemini fallback: far too slow to hold a multipart upload open
+    for, and both callers here already run inside a worker thread that streams
+    progress. ``routers/student.py`` defers it the same way (it resolves at
+    correct-time, not at upload-time).
+
+    Delegates to :func:`lemely.web.routers.student.resolve_mark_scheme` rather
+    than reimplementing the lookup, so the two portals cannot drift on what
+    counts as "the scheme for this scan": it prefers the sibling
+    ``mark_scheme.pdf`` the teacher attached at upload, and otherwise matches the
+    parsed-scheme corpus in ``output_dir/schemes`` (populated by ``POST
+    /api/schemes``) against this paper's detected metadata. That second branch is
+    why a teacher who has already uploaded the scheme once can grade a scan
+    without re-attaching it.
+
+    Returns ``None`` when neither source yields a scheme; callers warn rather
+    than invent marks.
+    """
+    if entry.mark_scheme is not None:
+        return entry.mark_scheme
+    if entry.scan_path is None:
+        return None
+    from lemely.web.routers.student import resolve_mark_scheme
+
+    entry.mark_scheme = resolve_mark_scheme(
+        entry.scan_path, settings, gemini_client, metadata=entry.metadata
+    )
+    return entry.mark_scheme
+
+
 @router.post("/papers/{paper_id}/extract")
 def extract_paper(
     paper_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
 ) -> StreamingResponse:
     """Extract student answers for a paper and stream ``EXTRACTION_PROGRESS`` over SSE.
@@ -473,7 +910,8 @@ def extract_paper(
 
     def run() -> None:
         try:
-            if entry.mark_scheme is None or entry.scan_path is None:
+            mark_scheme = _entry_mark_scheme(entry, settings, gemini_client)
+            if mark_scheme is None or entry.scan_path is None:
                 bus.publish(
                     EventType.WARNING,
                     paper_id=paper_id,
@@ -482,8 +920,18 @@ def extract_paper(
                 return
             extract_answers(
                 entry.scan_path,
-                entry.mark_scheme,
+                mark_scheme,
                 gemini_client=gemini_client,
+            )
+        except Exception as exc:
+            # Same reasoning as `grade_paper_endpoint`: an exception escaping
+            # this worker thread would end the stream silently. See the comment
+            # there.
+            log.exception("teacher_extract_failed", paper_id=paper_id)
+            bus.publish(
+                EventType.ERROR,
+                paper_id=paper_id,
+                message=f"Answer extraction failed: {exc}",
             )
         finally:
             bus.publish_done()
@@ -494,91 +942,76 @@ def extract_paper(
 @router.post("/papers/{paper_id}/grade")
 def grade_paper_endpoint(
     paper_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
 ) -> StreamingResponse:
-    """Grade a paper and stream ``MARKING_PROGRESS`` over SSE.
+    """Watch a paper's grading run, streaming its progress over SSE.
 
-    Two paths, both data-backed:
+    Attaches to the background job :func:`upload_paper` already started for this
+    paper, and starts one if none is in flight (which is how a paper seeded with
+    a report, or one being re-graded, gets marked). All the marking logic lives
+    in :func:`_run_grading_job`; this endpoint is a *view* onto it.
 
-    * When the paper has an attached mark scheme, reuses
-      :func:`lemely.web.services.grading.grade_paper` — which runs hybrid marking,
-      resolves grade boundaries, and (given ``student_id`` + the history store)
-      appends a :class:`PaperRecord` — then stores the resulting report.
-    * When a fully-graded :class:`AccuracyReport` is already attached (e.g. from a
-      prior service run), replays its ``MARKING_PROGRESS`` events and persists a
-      :class:`PaperRecord`.
+    That split is the fix for the stall (D6.13). When this route owned the work,
+    a paper was only ever marked while a browser held the connection open — so a
+    console that never got as far as opening one left the paper at "Queued"
+    indefinitely, and closing the tab mid-run had the same effect.
 
-    Never invents marks: if neither a mark scheme nor a report is present, a
-    ``WARNING`` frame is emitted.
+    The stream ends with a single ``ERROR`` frame when the run failed, published
+    here rather than by the job. Publishing from the job would reach only clients
+    that happened to be attached at that instant; a teacher who opens the console
+    *after* a run has already crashed would otherwise get a clean, empty stream
+    for a paper that never produced marks. One frame, from settled state, so a
+    live watcher is not told twice either.
     """
-    from lemely.web.services.grading import extract_answers, grade_paper
     from lemely.web.sse import bus_event_stream
 
     entry = _require_paper(paper_id)
 
     def run() -> None:
         try:
-            if entry.mark_scheme is not None and entry.scan_path is not None:
-                extracted = extract_answers(
-                    entry.scan_path,
-                    entry.mark_scheme,
-                    gemini_client=gemini_client,
-                )
-                report = grade_paper(
-                    entry.mark_scheme,
-                    extracted,
-                    gemini_client=gemini_client,
-                    student_id=entry.student_id,
-                    history_store=history_store,
-                )
-                entry.report = report
-                entry.kind = _paper_kind(report)
-                return
-            cached_report: AccuracyReport | None = entry.report
-            if cached_report is None:
-                bus.publish(
-                    EventType.WARNING,
-                    paper_id=paper_id,
-                    message="No mark scheme or graded correction attached to paper.",
-                )
-                return
-            for question in cached_report.correction.questions:
-                bus.publish(
-                    EventType.MARKING_PROGRESS,
-                    paper_id=paper_id,
-                    question_id=question.question_id,
-                    marker_source=question.marker_source,
-                    confidence=question.confidence_score,
-                )
-            record = PaperRecord(
-                student_id=entry.student_id,
-                metadata=cached_report.correction.metadata,
-                awarded_marks=cached_report.correction.awarded_marks,
-                maximum_marks=cached_report.correction.maximum_marks,
-                percentage=cached_report.grade_prediction.percentage,
-                grade=cached_report.grade_prediction.grade,
-                weak_areas=cached_report.weaknesses.weak_areas,
-                recorded_at=now_iso(),
+            _ensure_grading_job(entry, settings, history_store, gemini_client).result()
+            if entry.error is not None:
+                bus.publish(EventType.ERROR, paper_id=paper_id, message=entry.error)
+        except Exception as exc:
+            # `_run_grading_job` records its own failures and does not raise, so
+            # reaching here means the pool itself refused the work (shutdown, or
+            # a submit that never ran). Saying so beats a stream that closes
+            # cleanly having explained nothing.
+            log.exception("teacher_grade_dispatch_failed", paper_id=paper_id)
+            bus.publish(
+                EventType.ERROR,
+                paper_id=paper_id,
+                message=f"Grading could not be started: {exc}",
             )
-            history_store.append(entry.student_id, record)
-            entry.kind = _paper_kind(cached_report)
         finally:
             bus.publish_done()
 
     return StreamingResponse(bus_event_stream(run), media_type="text/event-stream")
 
 
+def _entry_kind(entry: _PaperEntry) -> PaperKind:
+    """The paper's lifecycle state.
+
+    A stored report is authoritative once one exists — it decides ``graded`` vs
+    ``review``. Otherwise the job's own ``kind`` stands, which is what carries
+    ``queued`` / ``processing`` / ``failed``.
+    """
+    return entry.kind if entry.report is None else _paper_kind(entry.report)
+
+
 def _paper_summary(entry: _PaperEntry) -> PaperSummaryDTO:
     """Build the grid-card DTO for a stored paper."""
     report = entry.report
-    kind = entry.kind if report is None else _paper_kind(report)
+    kind = _entry_kind(entry)
     if report is None:
         return PaperSummaryDTO(
             id=entry.paper_id,
-            name=entry.student_id,
+            name=_paper_label(entry),
             kind=kind,
-            status=kind.capitalize(),
+            status="Failed" if kind == "failed" else kind.capitalize(),
+            error=entry.error,
         )
     correction = report.correction
     min_conf = min(
@@ -587,7 +1020,7 @@ def _paper_summary(entry: _PaperEntry) -> PaperSummaryDTO:
     )
     return PaperSummaryDTO(
         id=entry.paper_id,
-        name=entry.student_id,
+        name=_paper_label(entry),
         kind=kind,
         status="Review" if kind == "review" else "Graded",
         awardedMarks=correction.awarded_marks,
@@ -599,7 +1032,7 @@ def _paper_summary(entry: _PaperEntry) -> PaperSummaryDTO:
 
 def _batch_tabs(entries: list[_PaperEntry]) -> list[BatchTabDTO]:
     """Compute live batch-filter tab counts from the stored papers."""
-    kinds = [e.kind if e.report is None else _paper_kind(e.report) for e in entries]
+    kinds = [_entry_kind(e) for e in entries]
     total = len(kinds)
     review = sum(1 for k in kinds if k == "review")
     graded = sum(1 for k in kinds if k == "graded")
@@ -622,25 +1055,114 @@ def list_papers() -> PaperListDTO:
     )
 
 
+@router.post("/papers/{paper_id}/regrade", status_code=202)
+def regrade_paper(
+    paper_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+) -> dict[str, str]:
+    """Queue a paper for (re-)grading and return immediately.
+
+    The fire-and-forget sibling of ``POST /papers/{id}/grade``: same work, no
+    stream. It exists so the console can offer a failed paper a retry without
+    holding a connection open for the minutes a marking run takes — the grid
+    polls for the outcome either way, now that the run is server-side.
+
+    Idempotent while a run is in flight: :func:`_ensure_grading_job` attaches to
+    the existing job rather than starting a second one, so a teacher leaning on
+    the button cannot double-charge the Gemini budget for one scan.
+    """
+    entry = _require_paper(paper_id)
+    _ensure_grading_job(entry, settings, history_store, gemini_client)
+    return {"paperId": paper_id, "status": _entry_kind(entry)}
+
+
 @router.get("/papers/{paper_id}", response_model=PaperDetailDTO)
 def get_paper(paper_id: str) -> PaperDetailDTO:
-    """Return the full grade detail (questions, weak areas, pipeline) for a paper."""
+    """Return the grade detail (questions, weak areas, pipeline) for a paper.
+
+    Served for papers still being graded too, with a live pipeline and no marks.
+    This used to answer 409 until a report existed, which is why the console's
+    Pipeline panel went blank on a page reload mid-run (D6.13): the browser-side
+    stepper is component state and does not survive a refresh, and the one
+    server-side source of the same information refused to answer. An unknown id
+    is still a 404 — a paper nobody uploaded has no state to report.
+    """
     entry = _require_paper(paper_id)
     report = entry.report
     if report is None:
-        raise HTTPException(status_code=409, detail=f"Paper {paper_id} has not been graded yet.")
+        return PaperDetailDTO(
+            id=entry.paper_id,
+            name=_paper_label(entry),
+            kind=_entry_kind(entry),
+            error=entry.error,
+            metadata=_detected_fields(entry.metadata) if entry.metadata else [],
+            pipeline=_live_pipeline_steps(entry),
+        )
     correction = report.correction
     return PaperDetailDTO(
         id=entry.paper_id,
-        name=entry.student_id,
+        name=_paper_label(entry),
         kind=_paper_kind(report),
         awardedMarks=correction.awarded_marks,
         maxMarks=correction.maximum_marks,
         needsReview=correction.needs_teacher_review,
         metadata=_detected_fields(correction.metadata),
-        pipeline=_pipeline_steps(report),
+        pipeline=_graded_pipeline_steps(report),
         questions=[question_to_dto(q) for q in correction.questions],
         weakAreas=[weak_area_to_dto(w) for w in report.weaknesses.weak_areas],
+    )
+
+
+@router.get(
+    "/papers/{paper_id}/preview",
+    responses={200: {"content": {"image/png": {}}, "description": "Page 1 of the scan"}},
+)
+def get_paper_preview(paper_id: str) -> Response:
+    """Render page 1 of a paper's stored scan as a PNG thumbnail.
+
+    Rendered server-side rather than handing the browser the raw PDF: the card
+    thumbnail is a 64px strip, and an ``<embed>``-ed PDF there would pull a
+    multi-megabyte file and a viewer chrome into every card in the grid. It also
+    keeps the scan itself behind the router's staff guard — the response is an
+    image of one page, not the document.
+
+    Image uploads (the console accepts ``image/*`` as well as PDFs) are passed
+    through PyMuPDF the same way, so one code path covers both.
+    """
+    entry = _require_paper(paper_id)
+    if entry.scan_path is None or not entry.scan_path.exists():
+        raise HTTPException(status_code=404, detail=f"No stored scan for paper {paper_id}")
+
+    import pymupdf
+
+    try:
+        # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
+        # call needs the ignore. Narrowed to this one code, not the module.
+        with pymupdf.open(entry.scan_path) as doc:  # type: ignore[no-untyped-call]
+            if doc.page_count == 0:
+                raise HTTPException(status_code=422, detail="Stored scan has no pages")
+            # ~600px on the long edge of an A4 page. Sized against the consumer:
+            # the card thumbnail is a ~300px-wide strip, so this is still sharp
+            # on a 2x display, and every step up costs a bigger payload on every
+            # card in the grid at once (96 dpi produced a 320KB PNG per paper).
+            pixmap = doc.load_page(0).get_pixmap(dpi=72)
+            png: bytes = pixmap.tobytes("png")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # A scan that cannot be rendered is not a server fault — it is a file the
+        # teacher uploaded that is not the document type it claimed to be.
+        log.warning("paper_preview_failed", paper_id=paper_id, error=str(exc))
+        raise HTTPException(status_code=422, detail=f"Could not render this scan: {exc}") from exc
+
+    # Immutable for the lifetime of the paper id: the stored scan never changes
+    # once uploaded, so the grid can cache every thumbnail it has already drawn.
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 
@@ -657,7 +1179,12 @@ def grading_queue() -> GradingQueueDTO:
                 rows.append(
                     QueueRowDTO(
                         paperId=entry.paper_id,
-                        name=entry.student_id,
+                        # Whose paper this is, when that is known. A console
+                        # upload is attributed to nobody (see
+                        # `_PaperEntry.student_id`), and this row used to render
+                        # that absence as the raw paper uuid; it now falls back
+                        # to the same label the grading grid shows.
+                        name=entry.student_id or _paper_label(entry),
                         questionId=question.question_id,
                         topic=question.topic,
                         confidence=round(question.confidence_score, 2),

@@ -1,17 +1,19 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense } from "react"
-import {
-  Link,
-  NavLink,
-  Outlet,
-  useLocation,
-  useNavigate,
-} from "react-router-dom"
+import { lazy, Suspense, useState } from "react"
+import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
+import { Avatar } from "@/components/ui/avatar"
+import { Breadcrumbs } from "@/components/ui/breadcrumbs"
+import { buttonVariants } from "@/components/ui/button"
 import { RouteFallback } from "@/components/ui/state-views"
+import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { PortalNotFound } from "@/portals/misc/NotFound"
+import { XPStreak } from "@/components/ui/xp-streak"
 import { useProfile } from "@/lib/hooks/useMeApi"
-import { navGroups, resolveCrumb } from "./data"
+import { useXpProfile } from "@/lib/hooks/useXpApi"
+import { navGroups, resolveCrumbTrail } from "./data"
 
 /*
  * Student portal (terracotta). Grouped sidebar nav + a sticky top header
@@ -76,8 +78,9 @@ const FlashcardDecks = lazy(() =>
 const FlashcardReview = lazy(() =>
   import("./screens/flashcards/FlashcardReview").then((m) => ({ default: m.FlashcardReview })),
 )
-const Landing = lazy(() => import("./screens/Landing").then((m) => ({ default: m.Landing })))
-const Directions = lazy(() => import("./screens/Directions").then((m) => ({ default: m.Directions })))
+// The Landing screen left this portal in P4.9 (see the redirect below). Its
+// lazy import went with it: a chunk nothing in this subtree renders is a
+// chunk the build still emits and the router still resolves.
 const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
 
 /**
@@ -99,20 +102,13 @@ function UserBlock() {
 
   if (isPending || isError || !data) {
     return (
-      <div className="flex items-center gap-2.5 px-0.5 text-xs text-t3">
+      <div className="flex items-center gap-2.5 px-0.5 text-body-sm text-ink-faint">
         {isPending ? "Loading…" : "Signed in"}
       </div>
     )
   }
 
   const name = data.displayName ?? data.email.split("@")[0]
-  const initials = name
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
   const roleLabel = data.role
     .split("_")
     .map((w) => w[0].toUpperCase() + w.slice(1))
@@ -120,81 +116,212 @@ function UserBlock() {
 
   return (
     <div className="flex items-center gap-2.5">
-      <div className="w-8 h-8 rounded-full bg-accent-subtle text-accent-subtle-on flex items-center justify-center text-dense-sm font-semibold flex-none">
-        {initials}
-      </div>
-      <div className="leading-[1.25] min-w-0">
-        <div className="text-dense font-medium truncate">{name}</div>
-        <div className="text-2xs text-t2">{roleLabel}</div>
+      {/* P4.1: the hand-rolled circle is now the kit's `Avatar`, which is a
+          squircle. DESIGN.md §6 reserves the circle for status and live dots
+          "so a dot never reads as a person" — and this one sat in a sidebar
+          footer directly under eleven circular nav dots, which is the exact
+          collision that rule describes. The initials logic it carried was a
+          second copy of `Avatar`'s own; two copies of the same fallback is how
+          one of them ends up handling a single-word name differently. */}
+      <Avatar name={name} size="md" />
+      <div className="min-w-0">
+        <div className="truncate text-body-sm font-medium text-ink">{name}</div>
+        <div className="text-body-sm text-ink-faint">{roleLabel}</div>
       </div>
     </div>
   )
 }
 
-function Sidebar() {
+/**
+ * The grouped destination list itself, with no chrome around it.
+ *
+ * Extracted from `Sidebar` in P3.1 so the desktop aside and the mobile drawer
+ * render the same list from the same code. Two copies would have been the
+ * shorter diff and the wrong answer: the whole defect being fixed here is a
+ * navigation that exists at one width and not another, and the surest way to
+ * reintroduce it is to give each width its own copy of the item list to drift.
+ *
+ * `touch` raises every row to the 44px minimum Phase 6 requires. It is on in
+ * the drawer (a phone, a thumb) and off in the desktop aside, where a 34px row
+ * is being clicked with a pointer and eleven 44px rows would push the last of
+ * them off a laptop screen.
+ */
+function NavGroups({ touch = false }: { touch?: boolean }) {
   return (
-    <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-surface-2 border-r border-border px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
-      <div className="flex items-center gap-[9px] px-2">
-        <div className="w-[11px] h-[11px] rounded-full bg-accent" />
-        <div className="text-display-sm tracking-[0.01em]">Lemely</div>
-      </div>
-
-      <div className="flex flex-col gap-[22px] overflow-auto lm-scroll">
-        {navGroups.map((grp) => (
-          <div key={grp.label} className="flex flex-col gap-0.5">
-            <div className="text-3xs tracking-[0.12em] uppercase text-t3 px-2 pb-[7px] font-medium">
-              {grp.label}
-            </div>
-            {grp.items.map((it) => (
+    <div className="flex flex-col gap-[22px]">
+      {navGroups.map((grp) => (
+        <div key={grp.label} className="flex flex-col gap-0.5">
+          <div className="text-eyebrow text-ink-faint px-2 pb-[7px]">{grp.label}</div>
+          {grp.items.map((it) => {
+            const Glyph = it.icon
+            return (
               <NavLink
                 key={it.to}
                 to={it.to}
                 end={it.end}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-2.5 w-full text-left text-dense-lg px-[9px] py-2 rounded transition-colors",
+                    // `px-[9px]` not `pl-`/`pr-`: symmetric padding has no
+                    // direction, so this row needs no logical rewrite (P3.4).
+                    // §6.1 touch floor — see the note in nav-shells.tsx.
+                    "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 pointer-coarse:min-h-11 rounded-md",
+                    "transition-colors duration-[var(--dur-instant)] ease-out-soft",
+                    // `focus-ring`, not `accent`. DESIGN.md §3.9 makes focus
+                    // deliberately blue so it stays distinguishable from the
+                    // accent's own hover and selected states — and this nav is
+                    // exactly where that matters, since its active row is
+                    // already accent-marked. The row used `outline-accent`,
+                    // which made "focused" and "current" the same colour.
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+                    // The active rule is reserved at every state, transparent
+                    // when inactive, so turning it on cannot nudge the label
+                    // sideways by 2px as you navigate.
+                    "border-s-2",
+                    touch && "min-h-11",
                     isActive
-                      ? "bg-surface text-t1 font-medium"
-                      : "bg-transparent text-t2 font-normal hover:bg-bg",
+                      ? "border-accent bg-paper-raised text-ink"
+                      : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
                   )
                 }
               >
                 {({ isActive }) => (
                   <>
-                    <span
-                      className={cn(
-                        "w-1.5 h-1.5 rounded-full flex-none",
-                        isActive ? "bg-accent" : "bg-border",
-                      )}
+                    {/* §10 permits `fill` for a single active-state nav icon,
+                        and this is it. The active row therefore carries four
+                        independent signals — the accent margin rule, the
+                        raised sheet, full-strength ink, and the filled glyph —
+                        so none of them is carrying the state alone. */}
+                    <Glyph
+                      size={16}
+                      weight={isActive ? "fill" : "regular"}
+                      className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
+                      aria-hidden="true"
                     />
                     <span className="flex-1">{it.label}</span>
                     {it.tag ? (
-                      <span className="font-mono text-3xs text-t3">
-                        {it.tag}
-                      </span>
+                      <span className="text-data-sm text-ink-faint">{it.tag}</span>
                     ) : null}
                   </>
                 )}
               </NavLink>
-            ))}
-          </div>
-        ))}
-      </div>
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  )
+}
 
-      <div className="mt-auto border-t border-border pt-[14px] flex flex-col gap-3">
-        <Link to="/teacher" className="text-xs text-t3 px-0.5 hover:text-ink">
-          Open the teacher portal -&gt;
-        </Link>
+/*
+ * P3.1: the "Open the teacher portal →" link that used to sit in this footer
+ * is gone, and so is its twin in the teacher sidebar. Neither one worked for
+ * anybody. `RequireAuth` gates `/teacher` to teacher/school_admin/
+ * platform_admin, so a student following it is redirected straight back to
+ * `/student` by `portalPathForRole` — and there is no role that holds both, so
+ * there was no user for whom either link did anything at all. They are
+ * build-era conveniences from before the guard existed, left rendering in the
+ * product as two guaranteed dead ends. Role switching for the accounts that
+ * genuinely hold two roles is a real feature and is not this.
+ */
+
+/*
+ * The real mark, replacing the accent dot that stood in for it (audit M9: "the
+ * logo is a lowercase italic *l* in a filled circle, stamped in three places"
+ * — the student sidebar's dot was a fourth variant of the same placeholder).
+ * `web/public/brand/mark.svg` is the asset Phase 2 authored.
+ *
+ * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
+ * already says "Lemely", so describing the mark too makes a screen reader
+ * announce the brand twice. The mark file carries its own <title>, which is
+ * correct when it is used standalone (the favicon) and is suppressed here.
+ */
+function BrandLockup() {
+  return (
+    <div className="flex items-center gap-2.5 px-2">
+      <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+      <span className="text-display-sm text-ink">Lemely</span>
+    </div>
+  )
+}
+
+function Sidebar() {
+  return (
+    // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
+    // is "sidebars, table headers, code blocks, inset areas". Same value the
+    // build-era `bg-surface-2` alias resolved to; this is the name the system
+    // actually defines.
+    <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+      <BrandLockup />
+
+      <nav aria-label="Student sections" className="overflow-auto lm-scroll">
+        <NavGroups />
+      </nav>
+
+      <div className="mt-auto border-t border-rule pt-[14px]">
         <UserBlock />
       </div>
     </aside>
   )
 }
 
-function Header() {
+/**
+ * The streak pill, restored — this time from data that exists.
+ *
+ * P3.10 chunk c deleted a "24 day streak" pill from this header because the 24
+ * was a literal, and recorded the reason it was not simply rewired: the only
+ * streak-shaped field in the API at the time was `StandingsDTO.streakDays`,
+ * which counts *distinct active days* rather than consecutive ones, so wiring
+ * the pill to it "would have replaced a hardcoded lie with a mislabelled one".
+ * Its closing note was "streaks are Phase 5's to build for real". Phase 5 built
+ * them: `GET /api/student/xp` returns a genuine consecutive-day `streak.current`
+ * alongside `totalXp`, and this reads those.
+ *
+ * Three constraints on it, each the reason a line of this is written the way it
+ * is:
+ *
+ * - **Nothing renders until the read lands, and nothing renders if it fails.**
+ *   No placeholder, no skeleton, no zero. A pill is chrome, so an absent pill
+ *   costs the student nothing, while a `0` while loading would state a broken
+ *   streak they may not have.
+ * - **Hidden below 640px.** This row's fixed items already overflowed a 380px
+ *   viewport once (see the note in `Header`), and a pill is exactly the kind of
+ *   thing that would put it back over. The figure is not lost on a phone: it is
+ *   the hero of the training log, one tap away in the nav.
+ * - **It is a `<Link>`, not decoration.** A number a student is invited to care
+ *   about should go somewhere when tapped, and the place it explains itself is
+ *   the training log.
+ */
+function HeaderStreak() {
+  const xp = useXpProfile()
+  /*
+   * Shape-checked, not just presence-checked, and that is not defensive
+   * programming for its own sake. This component renders in the shell above
+   * all twenty-four student routes, so `xp.data.streak.current` on a body that
+   * came back without a `streak` would throw inside the header and take the
+   * whole portal down — every screen, not just this pill. `request<XpProfile>`
+   * is a cast, not a validation, so the type says nothing about what actually
+   * arrived. Found while stubbing this surface's captures, where the harness's
+   * catch-all answers unmatched calls with `{}`: exactly that body, and
+   * exactly that crash.
+   */
+  const streak = xp.data?.streak?.current
+  const total = xp.data?.totalXp
+  if (typeof streak !== "number" || typeof total !== "number") return null
+  return (
+    <Link
+      to="/student/profile"
+      aria-label={`Your training log: ${streak} day streak, ${total} XP`}
+      className="hidden flex-none min-[640px]:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+    >
+      <XPStreak variant="compact" streakDays={streak} xpTotal={total} />
+    </Link>
+  )
+}
+
+function Header({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation()
-  const navigate = useNavigate()
-  const crumb = resolveCrumb(location.pathname)
+  const trail = resolveCrumbTrail(location.pathname)
+  const onCorrectScreen = location.pathname === "/student/correct"
   return (
     // Responsive sizing here is load-bearing, not cosmetic: this row's fixed
     // items (34px padding either side, the 138px CTA and the gaps) overflowed
@@ -215,16 +342,50 @@ function Header() {
     //     days, NOT consecutive ones. Wiring the pill to it would have
     //     replaced a hardcoded lie with a mislabelled one, so the pill is
     //     gone instead; streaks are Phase 5's to build for real.
-    <header className="lm-head flex items-center gap-[18px] px-4 min-[640px]:px-[34px] py-4 border-b border-border bg-bg/80 backdrop-blur-[10px] sticky top-0 z-20">
-      <div className="font-mono text-xs text-t2 min-w-0 truncate">{crumb}</div>
-      <div className="flex-1" />
-      <Button
-        variant="accent"
-        size="md"
-        onClick={() => navigate("/student/correct")}
-      >
-        Correct a paper
-      </Button>
+    // `backdrop-blur` on a *fixed* bar is the one glassmorphism exception
+    // DESIGN.md §7 permits, and this is that bar. `z-nav` replaces the raw
+    // `z-20`: same number, but the z-index scale is a gate and a literal
+    // bypasses it.
+    <header className="flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop py-4 border-b border-rule bg-paper/80 backdrop-blur-nav sticky top-0 z-nav">
+      {/* P3.1: the only navigation entry point below 820px, which is where the
+          sidebar stops existing. `-ms-2` pulls the 44px target back level with
+          the crumb's text edge without shrinking the target itself. */}
+      <NavDrawerTrigger
+        onClick={onOpenNav}
+        label="Open student navigation"
+        className="-ms-2 min-[820px]:hidden"
+      />
+      {/* P4.1: the inert mono string is now the same `Breadcrumbs` trail D1.5
+          gave the teacher and parent portals, so a student drilled into a
+          subject, a result or a plan session has a route back that is not the
+          browser's own gesture. `text-metadata` was also the wrong rung: the
+          mono `data-sm` scale is scoped to paper codes, IDs and timestamps,
+          and a crumb label is none of those — it is words a reader reads. */}
+      <Breadcrumbs items={trail} className="flex-1" />
+      <HeaderStreak />
+      {/*
+       * P4.2, two corrections to one control.
+       *
+       * It was a `<Button onClick={navigate(...)}>` for a pure navigation —
+       * the identical finding D4.1 fixed on the dashboard's subject rows
+       * (audit M8), sitting unremarked in the shell that renders above every
+       * student screen. As a button it could not be middle-clicked, opened in
+       * a new tab, copied as a link or previewed, and it announced to
+       * assistive technology that something would happen rather than that
+       * somewhere would be reached.
+       *
+       * And it rendered on `/student/correct` itself, where pressing it does
+       * nothing observable: the product's single most prominent call to
+       * action was a dead control on the one screen it points at.
+       */}
+      {onCorrectScreen ? null : (
+        <Link
+          to="/student/correct"
+          className={buttonVariants({ variant: "primary", size: "md" })}
+        >
+          Correct a paper
+        </Link>
+      )}
     </header>
   )
 }
@@ -241,17 +402,53 @@ function Header() {
 // drifted to three different type/padding combinations before they were merged.
 
 function StudentLayout() {
+  const [navOpen, setNavOpen] = useState(false)
+
   return (
-    <div data-portal="student" className="flex min-h-screen">
+    // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise
+    // overlay at 0.035 opacity across the whole portal. This is the cheapest
+    // and most durable way the one protected quality — the notebook feel —
+    // reaches every student screen, including the ~20 this surface does not
+    // touch. It is fixed rather than scrolled precisely so it never repaints
+    // on scroll on the mid-range Android phones §7 keeps naming.
+    <div data-portal="student" className="paper-grain flex min-h-screen">
+      <SkipLink />
       <Sidebar />
-      <main className="flex-1 min-w-0 flex flex-col">
-        <Header />
-        <div className="lm-body flex-1 p-[34px] max-w-[1320px] w-full">
-          <Suspense fallback={<RouteFallback className="text-dense-lg" />}>
+
+      {/* Same list, same source, different chrome — see `NavGroups`. The
+          drawer closes itself on navigation, so nothing here has to. */}
+      <NavDrawer
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+        title="Lemely"
+        footer={<UserBlock />}
+      >
+        <nav aria-label="Student sections">
+          <NavGroups touch />
+        </nav>
+      </NavDrawer>
+
+      <div className="flex-1 min-w-0 flex flex-col">
+        <Header onOpenNav={() => setNavOpen(true)} />
+        {/* `<main>` moved inward in P3.1. It used to wrap the header as well,
+            which made the skip link's target include the navigation it exists
+            to skip past, and gave the page two competing landmarks for "the
+            content". The header is chrome; `main` is what the route rendered. */}
+        {/* Container and gutters are now the ones DESIGN.md §5 defines for
+            the Operate lane — 1200px content max (`max-w-app`), and a page
+            gutter that steps 16 / 20 / 32px rather than sitting at a flat
+            34px from 320px upward. The old `p-[34px]` spent 68px of a 375px
+            phone on margin, which is 18% of the viewport given to nothing. */}
+        <main
+          id={MAIN_CONTENT_ID}
+          tabIndex={-1}
+          className="flex-1 w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
+        >
+          <Suspense fallback={<RouteFallback className="text-body-md" />}>
             <Outlet />
           </Suspense>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   )
 }
@@ -260,30 +457,96 @@ export const studentRoute: RouteObject = {
   path: "student",
   element: <StudentLayout />,
   children: [
-    { index: true, element: <Overview /> },
-    { path: "subject/:code", element: <Subject /> },
-    { path: "result/:paperId", element: <PaperResult /> },
-    { path: "correct", element: <CorrectPaper /> },
-    { path: "plan/:subjectCode", element: <StudyPlanWeek /> },
-    { path: "plan/:subjectCode/session/:sessionId", element: <StudyPlanSession /> },
-    { path: "board", element: <Standings /> },
-    { path: "announcements", element: <Announcements /> },
-    { path: "notifications", element: <Notifications /> },
-    { path: "friends", element: <Friends /> },
-    { path: "profile", element: <Profile /> },
+    /*
+     * P6.5 · `handle.title` on every child.
+     *
+     * Titles name the SCREEN, never the record on it. A route table cannot know
+     * which paper `result/:paperId` is showing, and reading the id back into
+     * the tab ("Paper 4f3c9a...") would be worse than a general name. The
+     * subject routes are the interesting case, because the code IS right there
+     * in the path, and it still is not used: a title assembled from a URL
+     * segment is a value restated from somewhere else, and P6.4's whole lesson
+     * is what happens to those.
+     */
+    { index: true, element: <Overview />, handle: { title: "Dashboard" } },
+    { path: "subject/:code", element: <Subject />, handle: { title: "Subject" } },
+    { path: "result/:paperId", element: <PaperResult />, handle: { title: "Paper result" } },
+    { path: "correct", element: <CorrectPaper />, handle: { title: "Mark a paper" } },
+    { path: "plan/:subjectCode", element: <StudyPlanWeek />, handle: { title: "Study plan" } },
+    {
+      path: "plan/:subjectCode/session/:sessionId",
+      element: <StudyPlanSession />,
+      handle: { title: "Study session" },
+    },
+    { path: "board", element: <Standings />, handle: { title: "Leaderboard" } },
+    { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
+    { path: "notifications", element: <Notifications />, handle: { title: "Notifications" } },
+    { path: "friends", element: <Friends />, handle: { title: "Friends" } },
+    { path: "profile", element: <Profile />, handle: { title: "Your profile" } },
     // The only place a parent_child_links row is created (D3.11).
-    { path: "parents", element: <Parents /> },
-    { path: "onboard", element: <Onboarding /> },
-    { path: "placement/:subjectCode", element: <PlacementInvite /> },
-    { path: "placement/test/:assignmentId", element: <PlacementTest /> },
-    { path: "placement/result/:assignmentId", element: <PlacementResult /> },
-    { path: "practice/:subjectCode", element: <PracticeGenerator /> },
-    { path: "practice/set/:assignmentId", element: <PracticeSet /> },
-    { path: "practice/result/:assignmentId", element: <PracticeResult /> },
-    { path: "practice/print/:assignmentId", element: <PracticePrint /> },
-    { path: "flashcards/:subjectCode", element: <FlashcardDecks /> },
-    { path: "flashcards/review/:subjectCode", element: <FlashcardReview /> },
-    { path: "landing", element: <Landing /> },
-    { path: "directions", element: <Directions /> },
+    { path: "parents", element: <Parents />, handle: { title: "Parent access" } },
+    { path: "onboard", element: <Onboarding />, handle: { title: "Getting set up" } },
+    {
+      path: "placement/:subjectCode",
+      element: <PlacementInvite />,
+      handle: { title: "Placement test" },
+    },
+    {
+      path: "placement/test/:assignmentId",
+      element: <PlacementTest />,
+      handle: { title: "Placement test" },
+    },
+    {
+      path: "placement/result/:assignmentId",
+      element: <PlacementResult />,
+      handle: { title: "Placement result" },
+    },
+    {
+      path: "practice/:subjectCode",
+      element: <PracticeGenerator />,
+      handle: { title: "New practice set" },
+    },
+    { path: "practice/set/:assignmentId", element: <PracticeSet />, handle: { title: "Practice" } },
+    {
+      path: "practice/result/:assignmentId",
+      element: <PracticeResult />,
+      handle: { title: "Practice result" },
+    },
+    {
+      path: "practice/print/:assignmentId",
+      element: <PracticePrint />,
+      handle: { title: "Print practice set" },
+    },
+    {
+      path: "flashcards/:subjectCode",
+      element: <FlashcardDecks />,
+      handle: { title: "Flashcards" },
+    },
+    {
+      path: "flashcards/review/:subjectCode",
+      element: <FlashcardReview />,
+      handle: { title: "Flashcard review" },
+    },
+    /*
+     * P4.9 moved the marketing page out of this portal and onto a public
+     * route. The path stays mounted, as a redirect, for three reasons that
+     * each matter on their own: D1.1's explicit condition was that these
+     * routes survive their nav entries; `tests/unit/navigation.test.ts`
+     * asserts `/student/landing` is still a mounted, deep-linkable path; and
+     * any link anyone has already saved should land on the page rather than
+     * on a 404. `replace` so the redirect does not sit in the back stack.
+     */
+    // The handle is the landing page's own, not a name for the redirect: this
+    // path resolves to `/landing` immediately, and a title is only ever read on
+    // a page a reader is looking at.
+    { path: "landing", element: <Navigate to="/landing" replace />, handle: { title: "Lemely" } },
+    /*
+     * P4.10. Last, so it only matches what nothing above did. Before this, an
+     * unmatched path inside this portal fell through to the top-level `*` and
+     * the reader lost the sidebar, the header and the trail on a typo. See
+     * `portals/misc/NotFound.tsx` for why it is a separate component and not
+     * the standalone screen.
+     */
+    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
   ],
 }
