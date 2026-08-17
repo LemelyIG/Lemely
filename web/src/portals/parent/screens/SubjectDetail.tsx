@@ -6,6 +6,7 @@ import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
+import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { accuracyTone, TONE_TO_SEVERITY } from "@/lib/severity"
 import { relativeTime } from "@/lib/utils"
 
@@ -85,6 +86,11 @@ export function SubjectDetail() {
   }
 
   const { papers, boundaryDistance, weakTopics } = data
+  const { primary, secondary } = subjectIdentifier(
+    data.subjectName,
+    data.subjectCode,
+    data.qualificationLevel,
+  )
 
   return (
     <div className="flex flex-col gap-8">
@@ -92,10 +98,10 @@ export function SubjectDetail() {
         <div className="flex flex-wrap items-center gap-4">
           <GradeBadge grade={data.predictedGrade} size="medium" basis="predicted" />
           <div className="flex flex-col gap-0.5">
-            <h1 className="text-display-lg text-ink">{data.subjectName}</h1>
-            {/* Code as secondary detail, never the headline (§4.8 design
+            <h1 className="text-display-lg text-ink">{primary}</h1>
+            {/* Level + code as secondary detail, never the headline (§4.8 design
                 note), and on the data face, which is what a syllabus code is. */}
-            <div className="text-data-sm text-ink-faint">{data.subjectCode}</div>
+            <div className="text-data-sm text-ink-faint">{secondary}</div>
           </div>
         </div>
         <PredictedBasis papers={papers.length} />

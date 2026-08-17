@@ -8,6 +8,7 @@ import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
+import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { accuracyTone, TONE_TO_SEVERITY } from "@/lib/severity"
 import { relativeTime } from "@/lib/utils"
 import type { ParentAtRiskFlag, SubjectOverview, WeakTopic } from "@/lib/parentTypes"
@@ -42,6 +43,11 @@ import type { ParentAtRiskFlag, SubjectOverview, WeakTopic } from "@/lib/parentT
  * inconsistency once) — the same number must not read differently on two
  * screens, and least of all across two audiences. */
 function SubjectRow({ childId, subject }: { childId: string; subject: SubjectOverview }) {
+  const { primary, secondary } = subjectIdentifier(
+    subject.subjectName,
+    subject.subjectCode,
+    subject.qualificationLevel,
+  )
   return (
     <Link
       to={`/parent/children/${childId}/subjects/${subject.subjectCode}`}
@@ -49,9 +55,9 @@ function SubjectRow({ childId, subject }: { childId: string; subject: SubjectOve
     >
       <GradeBadge grade={subject.predictedGrade} size="inline" basis="predicted" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="text-body-lg font-medium text-ink">{subject.subjectName}</div>
+        <div className="text-body-lg font-medium text-ink">{primary}</div>
         <div className="text-body-sm text-ink-muted">
-          <span className="text-data-sm">{subject.subjectCode}</span> ·{" "}
+          <span className="text-data-sm">{secondary}</span> ·{" "}
           {subject.paperCount === 1 ? "1 paper" : `${subject.paperCount} papers`} · latest{" "}
           <span className="text-data-sm">{Math.round(subject.latestPercentage)}%</span>
         </div>
