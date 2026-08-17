@@ -112,9 +112,12 @@ export function Classes() {
                     // `subjectToneForCode` rather than `SubjectTag`'s
                     // name-based lookup, which would fall back to "other" for
                     // every class in the school.
-                    <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
-                      {schoolClass.subjectCode}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
+                        {schoolClass.subjectName ?? schoolClass.subjectCode}
+                      </Badge>
+                      <span className="text-data-sm text-ink-faint">{schoolClass.subjectCode}</span>
+                    </div>
                   ) : (
                     <span className="text-body-sm text-ink-faint">Not set</span>
                   )}

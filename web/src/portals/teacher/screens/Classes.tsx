@@ -350,7 +350,14 @@ export function Classes() {
                       )}
                     </td>
                     <td className="px-[18px] py-[13px] text-data-sm text-ink-faint">
-                      {c.subjectCode ?? "—"}
+                      {c.subjectCode ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-body-sm text-ink">{c.subjectName ?? c.subjectCode}</span>
+                          <span className="text-data-sm text-ink-faint">{c.subjectCode}</span>
+                        </div>
+                      ) : (
+                        <span className="text-body-sm text-ink-faint">Not set</span>
+                      )}
                     </td>
                     <td className="px-[18px] py-[13px] text-data-sm">{c.studentCount}</td>
                     <td className="px-[18px] py-[13px] text-data-sm">
