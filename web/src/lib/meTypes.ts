@@ -41,6 +41,7 @@ export interface ConfidenceRating {
  * Mirrors `SubjectEnrolmentDTO`. */
 export interface SubjectEnrolment {
   subjectCode: string
+  qualificationLevel: string | null
   targetGrade: string | null
   sessionMonth: string | null
   sessionYear: number | null
@@ -96,6 +97,7 @@ export interface StudentProfileUpdate {
  * state, not a patch — `papers: null`/omitted means "no papers". */
 export interface EnrolmentUpsert {
   subjectCode: string
+  qualificationLevel: string | null
   targetGrade: string | null
   sessionMonth: string | null
   sessionYear: number | null
