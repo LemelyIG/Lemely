@@ -1456,7 +1456,7 @@ export interface ClassDetail {
 
 - [ ] **Step 5: Run the TypeScript compiler to surface every call site these renamed/added fields break**
 
-Run: `cd web && npx tsc --noEmit`
+Run: `cd web && npm run typecheck`
 Expected: a list of errors in exactly the screens Tasks 10-14 are about to fix (e.g. `Property 'title' does not exist on type 'SubjectHeader'` in `Subject.tsx`). This list is the authoritative checklist for those tasks — do not fix them here, just confirm the errors are the expected ones (name/title/meta mismatches in the screens listed in this plan) and none are unrelated collateral damage.
 
 - [ ] **Step 6: Commit**
@@ -1533,7 +1533,7 @@ This removes the `row.name !== row.code` guard entirely (the backend now always 
 
 - [ ] **Step 3: Type-check**
 
-Run: `cd web && npx tsc --noEmit`
+Run: `cd web && npm run typecheck`
 Expected: the `Overview.tsx` errors from Task 9 Step 5 are gone.
 
 - [ ] **Step 4: Manual verification**
@@ -1593,7 +1593,7 @@ Replace the destructure and the `meta`/`title` render (line 101 and 120-126):
 
 - [ ] **Step 2: Type-check**
 
-Run: `cd web && npx tsc --noEmit`
+Run: `cd web && npm run typecheck`
 Expected: the `Subject.tsx` errors from Task 9 Step 5 are gone.
 
 - [ ] **Step 3: Manual verification**
@@ -1667,7 +1667,7 @@ function SubjectNavGroup({
 
 - [ ] **Step 2: Type-check**
 
-Run: `cd web && npx tsc --noEmit`
+Run: `cd web && npm run typecheck`
 Expected: no new errors from this file.
 
 - [ ] **Step 3: Manual verification**
@@ -1766,7 +1766,7 @@ export function SubjectDetail() {
 
 - [ ] **Step 3: Type-check**
 
-Run: `cd web && npx tsc --noEmit`
+Run: `cd web && npm run typecheck`
 Expected: no new errors in either file.
 
 - [ ] **Step 4: Manual verification**
@@ -1860,7 +1860,7 @@ Replace the subject badge cell (line 108-121):
 
 - [ ] **Step 4: Type-check**
 
-Run: `cd web && npx tsc --noEmit`
+Run: `cd web && npm run typecheck`
 Expected: no new errors in any of the three files.
 
 - [ ] **Step 5: Manual verification**
@@ -2077,7 +2077,7 @@ Expected: PASS — including every pre-existing test in this file (confirms the 
 
 - [ ] **Step 7: Type-check**
 
-Run: `cd web && npx tsc --noEmit`
+Run: `cd web && npm run typecheck`
 Expected: clean.
 
 - [ ] **Step 8: Manual verification**
@@ -2109,7 +2109,7 @@ Expected: PASS (Postgres-dependent tests skip cleanly if no local Postgres; run 
 
 - [ ] **Step 2: Run the full frontend test suite**
 
-Run: `cd web && npx vitest run && npx tsc --noEmit`
+Run: `cd web && npx vitest run && npm run typecheck`
 Expected: PASS, no type errors.
 
 - [ ] **Step 3: Run pre-commit across the whole tree**
