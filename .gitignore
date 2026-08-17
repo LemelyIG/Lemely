@@ -18,9 +18,6 @@ ENV/
 .coverage
 htmlcov/
 
-# Lemely runtime cache
-.lemely-cache/
-
 # Build artefacts
 build/
 dist/
@@ -42,11 +39,11 @@ dist/
 .env
 .env.local
 
-Sources/
-outputs/
-lemely.toml
-.tokensave
-.omc/
+# Sources/
+# outputs/
+# lemely.toml
+# .tokensave
+# .omc/
 
 # Accuracy harness run output (timestamped, regenerable; .gitkeep stays tracked)
 tests/golden/results/*.json
@@ -86,7 +83,7 @@ reports/**/e2e-seed.json
 # one line; un-committing binary personal data is a history rewrite. This
 # doubles as INBOX item 7's "dataset/export exclusion list" entry: these are
 # test fixtures only, never served, never bundled.
-tests/fixtures/real-papers/
+# tests/fixtures/real-papers/
 
 # Real-past-paper accuracy artefacts (INBOX-2026-08-07-ACC). raw_run.json and
 # per_question.json carry the student's transcribed handwriting; annotation_
