@@ -11,6 +11,7 @@ import { GradeBadge } from "@/components/ui/grade-badge"
 import { ErrorState } from "@/components/ui/state-views"
 import { GettingStarted } from "@/components/ui/getting-started"
 import { subjectToneForCode } from "@/components/ui/subject-tag"
+import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { toneFill } from "@/components/ui/badge"
 import {
   PageHeaderSkeleton,
@@ -144,31 +145,31 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
       )}
     >
       <div className="flex items-center gap-3 md:contents">
-        {/* The syllabus code is the row's identity, and it is genuinely a
-            code — mono `data-sm`, which §4.2 scopes to exactly "paper codes,
-            IDs, timestamps". The pastel is §3.8's subject colouring, resolved
-            from the one table allowed to decide it. */}
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center rounded-sm px-2 py-1 text-data-sm",
-            toneFill(subjectToneForCode(row.code)),
-          )}
-        >
-          {row.code}
-        </span>
+        {(() => {
+          const { primary, secondary } = subjectIdentifier(row.name, row.code, row.qualificationLevel)
+          return (
+            <>
+              {/* Name leads — the pastel tone still comes from `subjectToneForCode`,
+                  §3.8's single lookup table, now carrying the code chip rather
+                  than doubling as the row's identity. */}
+              <span
+                className={cn(
+                  "inline-flex shrink-0 items-center rounded-sm px-2 py-1 text-data-sm",
+                  toneFill(subjectToneForCode(row.code)),
+                )}
+              >
+                {row.code}
+              </span>
 
-        <span className="flex flex-col gap-0.5 flex-1 min-w-0 md:flex-none">
-          {/* `SubjectRowDTO.name` echoes the code today, because a
-              `PaperRecord` carries no human subject name. Rendering it beside
-              the code chip in that case prints "0625" twice, so it appears
-              only when it actually says something the chip does not. No
-              client-side code-to-name table is invented to fill the gap: that
-              data has an authoritative home in the backend. */}
-          {row.name !== row.code ? (
-            <span className="truncate text-body-md font-medium text-ink">{row.name}</span>
-          ) : null}
-          <span className="truncate text-body-sm text-ink-faint">{row.detail}</span>
-        </span>
+              <span className="flex flex-col gap-0.5 flex-1 min-w-0 md:flex-none">
+                <span className="truncate text-body-md font-medium text-ink">{primary}</span>
+                <span className="truncate text-body-sm text-ink-faint">
+                  {secondary} · {row.detail}
+                </span>
+              </span>
+            </>
+          )
+        })()}
 
         <GradeBadge
           grade={row.grade}
