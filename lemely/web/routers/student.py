@@ -333,6 +333,7 @@ def student_subject(
     code: str,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> SubjectDTO:
     """Return one subject's papers breakdown, topic map, and paper history.
 
@@ -422,9 +423,19 @@ def student_subject(
         for index, record in reversed(indexed_records)
     ]
 
+    try:
+        enrolments = profile_service.list_enrolments(auth.user_id)
+    except ValueError:
+        enrolments = []
+    enrolment = next((e for e in enrolments if e.subject_code == code), None)
     header = SubjectHeaderDTO(
-        meta=f"{code} - Extended",
-        title=code,
+        name=get_profile(code).name or code,
+        code=code,
+        qualificationLevel=(
+            enrolment.qualification_level.value
+            if enrolment and enrolment.qualification_level
+            else None
+        ),
         intro=f"{len(records)} papers corrected.",
         forecast=_grade_for(float(pct), boundaries),
         weightedMean=str(pct),

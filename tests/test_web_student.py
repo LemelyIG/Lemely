@@ -366,11 +366,17 @@ def test_overview_malformed_id_returns_200_not_500(
 # ── Subject ───────────────────────────────────────────────────────────────────
 
 
-def test_subject_breakdown_and_history(client: TestClient) -> None:
+def test_subject_breakdown_and_history(client: TestClient, profile_service: MagicMock) -> None:
     """Subject endpoint returns per-paper bars, topic map, and paper history."""
+    profile_service.list_enrolments.return_value = [
+        SimpleNamespace(subject_code="0625", qualification_level=QualificationLevel.o_level),
+    ]
+
     body = client.get("/api/student/subject/0625").json()
 
-    assert body["header"]["title"] == "0625"
+    assert body["header"]["name"] == "Physics"
+    assert body["header"]["code"] == "0625"
+    assert body["header"]["qualificationLevel"] == "o_level"
     assert body["header"]["weightedMean"] == "89"
 
     breakdown = body["papersBreakdown"]
@@ -398,6 +404,37 @@ def test_subject_breakdown_and_history(client: TestClient) -> None:
     result_1 = client.get(f"/api/student/result/{body['paperHistory'][1]['id']}").json()
     assert result_1["awarded"] == 33
     assert result_1["max"] == 40
+
+
+def test_subject_malformed_id_returns_200_not_500(
+    pg_sessionmaker: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """A non-UUID ``auth.user_id`` degrades to no enrolment, not a 500.
+
+    Regression test: ``StudentProfileService.list_enrolments`` calls
+    ``_as_uuid()`` unconditionally and raises ``ValueError`` for a non-UUID
+    string. The route must guard that call the same way ``student_overview``
+    does, so a friendly string id (what hermetic history-store tests use)
+    never reaches the DB layer. Uses the real, unmocked
+    :class:`StudentProfileService` bound to a live Postgres sessionmaker — a
+    mock would not have caught this regression.
+    """
+    store = HistoryStore(tmp_path / "history")
+    store.append("not-a-uuid", _record(subject_code="0625"))
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_student_profile_service] = lambda: StudentProfileService(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id="not-a-uuid", role="student"
+    )
+    response = TestClient(app).get("/api/student/subject/0625")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["header"]["code"] == "0625"
+    assert body["header"]["qualificationLevel"] is None
 
 
 def test_subject_unknown_code_is_404(client: TestClient) -> None:
