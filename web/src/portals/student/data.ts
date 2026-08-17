@@ -10,13 +10,12 @@
 import {
   Atom,
   Bell,
-  CalendarBlank,
-  Cards,
+  Books,
+  Calculator,
   HandHeart,
   House,
   Megaphone,
   NotePencil,
-  PencilSimpleLine,
   Trophy,
   UserCircle,
   UsersThree,
@@ -81,10 +80,10 @@ export const navGroups: NavGroup[] = [
     label: "Student",
     items: [
       { to: "/student", label: "Overview", end: true, icon: House },
-      { to: "/student/subject/0625", label: "Physics", tag: "0625", icon: Atom },
-      { to: "/student/practice/0625", label: "Practice", tag: "0625", icon: PencilSimpleLine },
-      { to: "/student/flashcards/0625", label: "Flashcards", tag: "0625", icon: Cards },
-      { to: "/student/plan/0625", label: "Study plan", tag: "0625", icon: CalendarBlank },
+      // Enrolled subjects render here as a collapsible accordion — see
+      // `SubjectNavGroup` in `index.tsx`. They come from `GET
+      // /student/overview`'s real `subjects` list, not this static array,
+      // since which subjects a student sits is per-account data.
       { to: "/student/board", label: "Standings", icon: Trophy },
       { to: "/student/friends", label: "Friends", icon: UsersThree },
       { to: "/student/profile", label: "Your profile", icon: UserCircle },
@@ -98,6 +97,57 @@ export const navGroups: NavGroup[] = [
     items: [{ to: "/student/correct", label: "Correct a paper", icon: NotePencil }],
   },
 ]
+
+/**
+ * Glyph per subject code. `SubjectRow` (the real `/student/overview` DTO)
+ * carries no icon field — a syllabus code is curriculum data, not a UI
+ * concern the backend should own — so the mapping lives here, same spot the
+ * old hardcoded Physics row's `Atom` came from. `Books` is the fallback for
+ * any subject added to the curriculum before this map is.
+ */
+export function subjectIcon(code: string): Icon {
+  switch (code) {
+    case "0625":
+      return Atom
+    case "0580":
+    case "0606":
+      return Calculator
+    default:
+      return Books
+  }
+}
+
+/**
+ * The enrolled subject a pathname is currently inside, or null. Drives which
+ * subject's accordion row starts open in the sidebar. Mirrors the
+ * route-parameter arms `resolveCrumb` below already matches — kept as its
+ * own function (not folded into `resolveCrumb`) because it answers a
+ * different question ("which subject nav row") than that one does ("what
+ * breadcrumb string").
+ *
+ * Deliberately narrower than a blanket `/student/(practice|flashcards)/`
+ * match: `practice/set/:assignmentId`, `practice/result/:assignmentId`,
+ * `practice/print/:assignmentId` and `flashcards/review/:subjectCode` all
+ * have a non-subject segment in the position a subject code would sit, and
+ * the `$`-anchored arms below exclude them rather than misreading that
+ * segment as a syllabus code.
+ */
+export function currentSubjectCode(pathname: string): string | null {
+  const exactArms = [
+    /^\/student\/subject\/([^/]+)$/,
+    /^\/student\/practice\/([^/]+)$/,
+    /^\/student\/flashcards\/([^/]+)$/,
+  ]
+  for (const arm of exactArms) {
+    const match = pathname.match(arm)
+    if (match) return match[1]
+  }
+  // Not `$`-anchored: also matches the session sub-route
+  // (`plan/:subjectCode/session/:sessionId`), where the subject code is
+  // still the segment right after `plan/`.
+  const planMatch = pathname.match(/^\/student\/plan\/([^/]+)/)
+  return planMatch ? planMatch[1] : null
+}
 
 /**
  * Breadcrumb per route path. **Exact pathnames only** — anything with a route

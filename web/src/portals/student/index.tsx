@@ -1,7 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense, useState } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
+import { CalendarBlank, Cards, CaretDown, PencilSimpleLine, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
@@ -13,7 +14,9 @@ import { PortalNotFound } from "@/portals/misc/NotFound"
 import { XPStreak } from "@/components/ui/xp-streak"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
-import { navGroups, resolveCrumbTrail } from "./data"
+import { useOverview } from "@/lib/hooks/useStudentApi"
+import type { SubjectRow } from "@/lib/studentTypes"
+import { currentSubjectCode, navGroups, resolveCrumbTrail, subjectIcon } from "./data"
 
 /*
  * Student portal (terracotta). Grouped sidebar nav + a sticky top header
@@ -146,66 +149,238 @@ function UserBlock() {
  * is being clicked with a pointer and eleven 44px rows would push the last of
  * them off a laptop screen.
  */
+function NavRow({
+  to,
+  end,
+  label,
+  icon: Glyph,
+  tag,
+  touch,
+  indent = false,
+  onClick,
+}: {
+  to: string
+  end?: boolean
+  label: string
+  icon: Icon
+  tag?: string
+  touch?: boolean
+  /** Sub-items nested under a subject's accordion header sit one step in. */
+  indent?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      onClick={onClick}
+      className={({ isActive }) =>
+        cn(
+          // `px-[9px]` not `pl-`/`pr-`: symmetric padding has no
+          // direction, so this row needs no logical rewrite (P3.4).
+          // §6.1 touch floor — see the note in nav-shells.tsx.
+          "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 pointer-coarse:min-h-11 rounded-md",
+          "transition-colors duration-[var(--dur-instant)] ease-out-soft",
+          // `focus-ring`, not `accent`. DESIGN.md §3.9 makes focus
+          // deliberately blue so it stays distinguishable from the
+          // accent's own hover and selected states — and this nav is
+          // exactly where that matters, since its active row is
+          // already accent-marked. The row used `outline-accent`,
+          // which made "focused" and "current" the same colour.
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+          // The active rule is reserved at every state, transparent
+          // when inactive, so turning it on cannot nudge the label
+          // sideways by 2px as you navigate.
+          "border-s-2",
+          touch && "min-h-11",
+          indent && "ps-[30px]",
+          isActive
+            ? "border-accent bg-paper-raised text-ink"
+            : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {/* §10 permits `fill` for a single active-state nav icon,
+              and this is it. The active row therefore carries four
+              independent signals — the accent margin rule, the
+              raised sheet, full-strength ink, and the filled glyph —
+              so none of them is carrying the state alone. */}
+          <Glyph
+            size={16}
+            weight={isActive ? "fill" : "regular"}
+            className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
+            aria-hidden="true"
+          />
+          <span className="flex-1">{label}</span>
+          {tag ? <span className="text-data-sm text-ink-faint">{tag}</span> : null}
+        </>
+      )}
+    </NavLink>
+  )
+}
+
+/**
+ * One subject's accordion row: the subject itself (a `NavRow` to its
+ * overview page) plus a chevron toggle, and — when open — its three
+ * subject-scoped destinations.
+ *
+ * The chevron is a separate control from the subject link rather than
+ * making the whole header row a button, for the same reason `QuestionRow`
+ * keeps its expand toggle beside rather than wrapping its content: a button
+ * cannot contain a link (invalid HTML, breaks keyboard/AT semantics), and a
+ * student browsing another subject's sub-items without leaving the page
+ * they're on needs a control that doesn't navigate.
+ */
+function SubjectNavGroup({
+  subject,
+  expanded,
+  onToggle,
+  onNavigate,
+  touch,
+}: {
+  subject: SubjectRow
+  expanded: boolean
+  onToggle: () => void
+  onNavigate: () => void
+  touch?: boolean
+}) {
+  const Glyph = subjectIcon(subject.code)
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-1">
+        <div className="min-w-0 flex-1">
+          <NavRow
+            to={`/student/subject/${subject.code}`}
+            label={subject.name}
+            icon={Glyph}
+            tag={subject.code}
+            touch={touch}
+            onClick={onNavigate}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${subject.name}`}
+          className={cn(
+            "flex-none rounded-md p-1.5 text-ink-faint transition-colors",
+            "hover:bg-paper hover:text-ink",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+            touch && "min-h-11 min-w-11",
+          )}
+        >
+          <CaretDown
+            size={14}
+            className={cn("transition-transform duration-[var(--dur-instant)]", expanded && "rotate-180")}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+      {expanded ? (
+        <div className="flex flex-col gap-0.5">
+          <NavRow
+            to={`/student/practice/${subject.code}`}
+            label="Practice"
+            icon={PencilSimpleLine}
+            touch={touch}
+            indent
+          />
+          <NavRow
+            to={`/student/flashcards/${subject.code}`}
+            label="Flashcards"
+            icon={Cards}
+            touch={touch}
+            indent
+          />
+          <NavRow
+            to={`/student/plan/${subject.code}`}
+            label="Study plan"
+            icon={CalendarBlank}
+            touch={touch}
+            indent
+          />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * The grouped destination list itself, with no chrome around it.
+ *
+ * Extracted from `Sidebar` in P3.1 so the desktop aside and the mobile drawer
+ * render the same list from the same code. Two copies would have been the
+ * shorter diff and the wrong answer: the whole defect being fixed here is a
+ * navigation that exists at one width and not another, and the surest way to
+ * reintroduce it is to give each width its own copy of the item list to drift.
+ *
+ * `touch` raises every row to the 44px minimum Phase 6 requires. It is on in
+ * the drawer (a phone, a thumb) and off in the desktop aside, where a 34px row
+ * is being clicked with a pointer and eleven 44px rows would push the last of
+ * them off a laptop screen.
+ *
+ * Subjects render as an accordion: at most one open at a time, the one
+ * matching the current route opens automatically, and the desktop aside and
+ * mobile drawer each own an independent open/closed state since they are
+ * separate mounted instances, not two views of one. `useOverview()` is the
+ * same query `Overview.tsx` already reads — react-query dedupes the two
+ * subscriptions onto one request, so this does not add a second fetch.
+ */
 function NavGroups({ touch = false }: { touch?: boolean }) {
+  const location = useLocation()
+  const overview = useOverview()
+  const routeSubject = currentSubjectCode(location.pathname)
+  const [openCode, setOpenCode] = useState<string | null>(routeSubject)
+
+  // Opens the subject the student navigates into (e.g. from a link on
+  // Overview, not just from this sidebar). Deliberately one-directional: it
+  // never closes a manually-opened group when the route stops matching a
+  // subject, so browsing to a non-subject screen doesn't collapse the
+  // subject the student was just looking at.
+  useEffect(() => {
+    if (routeSubject) setOpenCode(routeSubject)
+  }, [routeSubject])
+
   return (
     <div className="flex flex-col gap-[22px]">
       {navGroups.map((grp) => (
         <div key={grp.label} className="flex flex-col gap-0.5">
           <div className="text-eyebrow text-ink-faint px-2 pb-[7px]">{grp.label}</div>
-          {grp.items.map((it) => {
-            const Glyph = it.icon
-            return (
-              <NavLink
+          {grp.label === "Student" ? (
+            <>
+              {grp.items.slice(0, 1).map((it) => (
+                <NavRow key={it.to} to={it.to} end={it.end} label={it.label} icon={it.icon} touch={touch} />
+              ))}
+              {overview.data?.subjects.map((subject) => (
+                <SubjectNavGroup
+                  key={subject.code}
+                  subject={subject}
+                  expanded={openCode === subject.code}
+                  onToggle={() => setOpenCode((prev) => (prev === subject.code ? null : subject.code))}
+                  onNavigate={() => setOpenCode(subject.code)}
+                  touch={touch}
+                />
+              ))}
+              {grp.items.slice(1).map((it) => (
+                <NavRow key={it.to} to={it.to} end={it.end} label={it.label} icon={it.icon} touch={touch} />
+              ))}
+            </>
+          ) : (
+            grp.items.map((it) => (
+              <NavRow
                 key={it.to}
                 to={it.to}
                 end={it.end}
-                className={({ isActive }) =>
-                  cn(
-                    // `px-[9px]` not `pl-`/`pr-`: symmetric padding has no
-                    // direction, so this row needs no logical rewrite (P3.4).
-                    // §6.1 touch floor — see the note in nav-shells.tsx.
-                    "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 pointer-coarse:min-h-11 rounded-md",
-                    "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-                    // `focus-ring`, not `accent`. DESIGN.md §3.9 makes focus
-                    // deliberately blue so it stays distinguishable from the
-                    // accent's own hover and selected states — and this nav is
-                    // exactly where that matters, since its active row is
-                    // already accent-marked. The row used `outline-accent`,
-                    // which made "focused" and "current" the same colour.
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
-                    // The active rule is reserved at every state, transparent
-                    // when inactive, so turning it on cannot nudge the label
-                    // sideways by 2px as you navigate.
-                    "border-s-2",
-                    touch && "min-h-11",
-                    isActive
-                      ? "border-accent bg-paper-raised text-ink"
-                      : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    {/* §10 permits `fill` for a single active-state nav icon,
-                        and this is it. The active row therefore carries four
-                        independent signals — the accent margin rule, the
-                        raised sheet, full-strength ink, and the filled glyph —
-                        so none of them is carrying the state alone. */}
-                    <Glyph
-                      size={16}
-                      weight={isActive ? "fill" : "regular"}
-                      className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
-                      aria-hidden="true"
-                    />
-                    <span className="flex-1">{it.label}</span>
-                    {it.tag ? (
-                      <span className="text-data-sm text-ink-faint">{it.tag}</span>
-                    ) : null}
-                  </>
-                )}
-              </NavLink>
-            )
-          })}
+                label={it.label}
+                icon={it.icon}
+                tag={it.tag}
+                touch={touch}
+              />
+            ))
+          )}
         </div>
       ))}
     </div>
