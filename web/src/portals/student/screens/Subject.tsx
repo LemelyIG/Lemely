@@ -5,6 +5,7 @@ import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { PageHeaderSkeleton, CardGridSkeleton } from "@/components/ui/loading-shapes"
 import { ApiError } from "@/lib/api"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
+import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { useSubject } from "@/lib/hooks/useStudentApi"
 import { cn } from "@/lib/utils"
 import { vizText } from "../components/colors"
@@ -99,6 +100,11 @@ export function Subject() {
   }
 
   const { header: subjectHeader, papersBreakdown, topicMap, paperHistory } = data
+  const { primary, secondary } = subjectIdentifier(
+    subjectHeader.name,
+    subjectHeader.code,
+    subjectHeader.qualificationLevel,
+  )
 
   // The backend renders the sign into the string ("+4 since first paper" /
   // "-8 since first paper"), so the sign is what decides the tone. Neither
@@ -118,8 +124,8 @@ export function Subject() {
             the side. It did not show up as a scrollbar either, because html and
             body clip — the title simply had its end cut off. */}
         <div className="min-w-0 flex-1 basis-80">
-          <div className="text-data-sm text-ink-muted">{subjectHeader.meta}</div>
-          <h1 className="mt-1 text-display-lg text-ink">{subjectHeader.title}</h1>
+          <div className="text-data-sm text-ink-muted">{secondary}</div>
+          <h1 className="mt-1 text-display-lg text-ink">{primary}</h1>
           <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-ink-muted">
             {subjectHeader.intro}
           </div>
