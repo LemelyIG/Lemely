@@ -24,7 +24,7 @@
 ## Task 1: Migration — `qualification_level` on `student_subject_enrolments`
 
 **Files:**
-- Create: `lemely/db/migrations/versions/0020_enrolment_qualification_level.py`
+- Create: `lemely/db/migrations/versions/0020_enrolment_qual_level.py`
 - Modify: `lemely/db/models/profiles.py:93-142` (add column to `StudentSubjectEnrolment`)
 - Test: `tests/test_db_schema.py`
 
@@ -91,12 +91,12 @@ Expected: PASS (or SKIP if no local Postgres — acceptable, CI has Postgres)
 
 - [ ] **Step 5: Write the migration**
 
-Create `lemely/db/migrations/versions/0020_enrolment_qualification_level.py`:
+Create `lemely/db/migrations/versions/0020_enrolment_qual_level.py`:
 
 ```python
 """per-subject qualification level on student_subject_enrolments (P5.x)
 
-Revision ID: 0020_enrolment_qualification_level
+Revision ID: 0020_enrolment_qual_level
 Revises: 0019_activation_review
 Create Date: 2026-08-17 00:00:00.000000
 
@@ -115,7 +115,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0020_enrolment_qualification_level"
+revision: str = "0020_enrolment_qual_level"
 down_revision: str | Sequence[str] | None = "0019_activation_review"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -167,7 +167,7 @@ Expected: both clean.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add lemely/db/migrations/versions/0020_enrolment_qualification_level.py lemely/db/models/profiles.py tests/test_db_schema.py
+git add lemely/db/migrations/versions/0020_enrolment_qual_level.py lemely/db/models/profiles.py tests/test_db_schema.py
 git commit -S -m "feat(db): add per-subject qualification level to student_subject_enrolments"
 ```
 
