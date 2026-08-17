@@ -37,6 +37,7 @@ class SubjectEnrolmentDTO(ApiModel):
     """
 
     subjectCode: str
+    qualificationLevel: str | None = None
     targetGrade: str | None = None
     sessionMonth: str | None = None
     sessionYear: int | None = None
@@ -101,6 +102,7 @@ class EnrolmentUpsertDTO(ApiModel):
     """
 
     subjectCode: str
+    qualificationLevel: str | None = None
     targetGrade: str | None = None
     sessionMonth: str | None = None
     sessionYear: int | None = None

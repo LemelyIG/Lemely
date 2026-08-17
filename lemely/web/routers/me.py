@@ -237,6 +237,7 @@ def _enrolment_to_dto(
 ) -> SubjectEnrolmentDTO:
     return SubjectEnrolmentDTO(
         subjectCode=row.subject_code,
+        qualificationLevel=row.qualification_level.value if row.qualification_level else None,
         targetGrade=row.target_grade,
         sessionMonth=row.session_month.value if row.session_month else None,
         sessionYear=row.session_year,
@@ -342,8 +343,8 @@ def put_student_profile_enrolments(
     the moment a client's payload merely omitted it — the exact failure mode
     ``delete_enrolment`` requires an explicit, separate call for. Within one
     enrolment object, every field is the full desired state for that
-    subject (not a patch) — an explicit ``null`` on ``targetGrade``/
-    ``sessionMonth``/``sessionYear`` clears it.
+    subject (not a patch) — an explicit ``null`` on ``qualificationLevel``/
+    ``targetGrade``/``sessionMonth``/``sessionYear`` clears it.
     """
     results: list[SubjectEnrolmentDTO] = []
     try:
@@ -354,6 +355,7 @@ def put_student_profile_enrolments(
                 target_grade=item.targetGrade,
                 session_month=_session_month_from_dto(item.sessionMonth),
                 session_year=item.sessionYear,
+                qualification_level=item.qualificationLevel,
             )
             enrolment = service.set_enrolment_papers(
                 auth.user_id, item.subjectCode, item.papers or []
