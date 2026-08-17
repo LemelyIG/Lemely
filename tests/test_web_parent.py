@@ -604,6 +604,33 @@ def test_child_overview_surfaces_a_real_below_target_flag_when_a_target_is_set(
     }
 
 
+def test_child_overview_includes_qualification_level_per_subject(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    history_store: HistoryStore,
+    profile_service: StudentProfileService,
+) -> None:
+    """A subject's qualificationLevel comes from the child's own enrolment for it."""
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    student = _seed_user(pg_sessionmaker, Role.student)
+    _link(pg_sessionmaker, parent_id=parent, child_id=student)
+    _seed_subject(pg_sessionmaker, code="0625", name="Physics")
+    profile_service.upsert_enrolment(student, "0625", qualification_level="igcse")
+    history_store.append(
+        str(student),
+        _paper(
+            student_id=student, percentage=80.0, grade="B", recorded_at="2026-08-04T10:00:00+00:00"
+        ),
+    )
+
+    _auth_as(client, parent, Role.parent)
+    overview = client.get(f"/api/parent/children/{student}").json()
+    assert overview["subjects"][0]["qualificationLevel"] == "igcse"
+
+    detail = client.get(f"/api/parent/children/{student}/subjects/0625").json()
+    assert detail["qualificationLevel"] == "igcse"
+
+
 def test_below_target_evidence_translates_through_the_converter() -> None:
     """Pin the ``below_target`` branch of the parent evidence converter directly.
 
