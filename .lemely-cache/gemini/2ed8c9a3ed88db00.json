@@ -1,0 +1,6 @@
+{
+  "awarded_marks": 0,
+  "confidence": 0.9,
+  "matched_point_ids": [],
+  "feedback": "The final answer '875 km' is not accepted. While the working shows 875000 cm, which is equivalent to 8.75 km, the mark scheme specifically requires '8.75' without units for full credit, or implies a unit-less numerical answer. The student provided '875 km' which is incorrect. No marks awarded."
+}

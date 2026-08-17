@@ -1,0 +1,9 @@
+{
+  "awarded_marks": 2,
+  "confidence": 0.9,
+  "matched_point_ids": [
+    "p1",
+    "p2"
+  ],
+  "feedback": "M1 awarded for correctly setting up the quadratic formula with substitution and simplification to (4 ± √(16-12)) / (2(2+√5)). A1 awarded for the correct numerator (4 + 2) or (4 - 2) which leads to one exact solution, even though only one branch is shown. The final simplification to (4 ± 2) / (2(2+√5)) is equivalent to two A1 marks for p2 (one for each solution), but the student has only provided one of the two possible final solutions and hasn't fully simplified it."
+}

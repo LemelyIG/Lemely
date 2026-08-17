@@ -1,0 +1,11 @@
+{
+  "awarded_marks": 4,
+  "confidence": 0.98,
+  "matched_point_ids": [
+    "p1",
+    "p2",
+    "p3",
+    "p4"
+  ],
+  "feedback": "All 4 marks awarded. M1 for the principle of moments. M1 for correct substitution into the moments equation. M1 for correct rearrangement/calculation to find F. A1 for the correct final answer of 3.0 N."
+}

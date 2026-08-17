@@ -1,0 +1,28 @@
+{
+  "student_id": "maya",
+  "weekly_hours": 8.0,
+  "sessions": [
+    {
+      "week": 1,
+      "topic": "Thermal physics",
+      "subject_code": "0620",
+      "hours": 1.7,
+      "focus": "Practice and review: Thermal physics"
+    },
+    {
+      "week": 1,
+      "topic": "Waves",
+      "subject_code": "0620",
+      "hours": 0.8,
+      "focus": "Practice and review: Waves"
+    },
+    {
+      "week": 1,
+      "topic": "Moles",
+      "subject_code": "0620",
+      "hours": 5.5,
+      "focus": "Practice and review: Moles"
+    }
+  ],
+  "narrative": "Welcome, Maya! This week marks the beginning of a focused and effective study journey. We're going to dive into some key Physics and Chemistry topics, ensuring you build a strong foundation. For Thermal Physics and Waves, dedicate your time to reviewing core concepts and immediately applying them through practice questions. Don't just read notes; actively work through problems to solidify your understanding. Think about how these concepts relate to real-world phenomena. \n\nOur biggest focus this week will be 'Moles' in Chemistry, a topic that many students find challenging but is absolutely crucial for success. With 5.5 hours dedicated, your goal is to master mole calculations. Break down the time: spend the first portion revisiting definitions and formulas, then move quickly to working through a wide variety of past paper questions. If you get stuck, re-check your steps and identify where the confusion lies. Practice makes perfect here!\n\nRemember, consistency is key. Treat each session as an opportunity to improve. Set small, achievable goals for each study block and celebrate your progress. If a concept feels difficult, don't get discouraged – it's a sign that your brain is working hard! Stay positive, ask for help if you need it, and know that every minute you put in this week will bring you closer to your IGCSE goals. You've got this!"
+}

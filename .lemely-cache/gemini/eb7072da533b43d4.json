@@ -1,0 +1,10 @@
+{
+  "awarded_marks": 3,
+  "confidence": 0.98,
+  "matched_point_ids": [
+    "p1",
+    "p2",
+    "p3"
+  ],
+  "feedback": "M1 awarded for the idea of three half-lives, M1 for the correct division 36/8, and A1 for the correct final answer of 4.5 mg. Although the final answer in the 'ANSWER' box is incorrect, the 'WORKING' section demonstrates full correct working, so all marks are awarded."
+}

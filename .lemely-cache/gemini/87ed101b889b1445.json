@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.85,
+  "matched_point_ids": [
+    "p2"
+  ],
+  "feedback": "C1 awarded for correctly identifying 1.7m as the effective distance, but the final answer for the moment is incorrect. The calculation in working (1.3x10^7 x 3.4) does not match the expected values for the moment of the weight."
+}

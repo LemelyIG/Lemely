@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.85,
+  "matched_point_ids": [
+    "p1"
+  ],
+  "feedback": "B1 awarded for identifying x=3 as a critical value (from 5x-2 = 4x+1). No further marks could be awarded as the student only considered the equality and not the full inequality with both positive and negative cases or squaring both sides."
+}

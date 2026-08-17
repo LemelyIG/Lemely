@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.85,
+  "matched_point_ids": [
+    "p2"
+  ],
+  "feedback": "M1 awarded for correct method of calculating the shaded area using their incorrect AC value (ECF). B1 for AC and A1 for the final answer are not awarded as AC is incorrect and the final answer is also incorrect."
+}

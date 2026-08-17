@@ -1,0 +1,53 @@
+{
+  "answers": [
+    {
+      "question_id": "1",
+      "answer": "-13",
+      "confidence": 0.98,
+      "source_region": "page 1, Q1",
+      "working_out": "-5-8=-13"
+    },
+    {
+      "question_id": "2",
+      "answer": "47 and 61",
+      "confidence": 0.95,
+      "source_region": "page 1, Q2",
+      "working_out": "47 and 61 are the two primes in the list. 47 + 61 = 108"
+    },
+    {
+      "question_id": "4",
+      "answer": "8.75 km",
+      "confidence": 0.92,
+      "source_region": "page 1, Q4",
+      "working_out": "3.5 x 250000 = 875000 cm = 8.75 km"
+    },
+    {
+      "question_id": "12a",
+      "answer": "a=2, b=53",
+      "confidence": 0.90,
+      "source_region": "page 1, Q12a",
+      "working_out": "a x 8^2 + b = 181, so 64a + b = 181. Trying a = 2 (both >1): b = 181 - 128 = 53"
+    },
+    {
+      "question_id": "12b",
+      "answer": "-8",
+      "confidence": 0.95,
+      "source_region": "page 1, Q12b",
+      "working_out": "x^2 = 64 has two roots, 8 and -8, so the other solution is x = -8"
+    },
+    {
+      "question_id": "14",
+      "answer": "(x - 2) / 5",
+      "confidence": 0.92,
+      "source_region": "page 1, Q14",
+      "working_out": "y = 5x + 2, so 5x = y - 2, x = (y - 2) / 5. f^-1(x) = (x - 2) / 5"
+    },
+    {
+      "question_id": "19",
+      "answer": "0.16",
+      "confidence": 0.90,
+      "source_region": "page 1, Q19",
+      "working_out": "m = k / (t+2)^2. 0.64 = k / 25 so k = 16. When t = 8: m = 16 / 100 = 0.16"
+    }
+  ]
+}

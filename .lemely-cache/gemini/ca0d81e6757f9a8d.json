@@ -1,0 +1,46 @@
+{
+  "answers": [
+    {
+      "question_id": "1",
+      "answer": "a = 1, b = 2, c = 3, found by inspection.",
+      "confidence": 0.98,
+      "source_region": "page 1 Q1",
+      "working_out": null
+    },
+    {
+      "question_id": "2",
+      "answer": "x = 2",
+      "confidence": 0.95,
+      "source_region": "page 1 Q2",
+      "working_out": "This is a linear equation, so x = 4 divided by 2, which is x = 2."
+    },
+    {
+      "question_id": "3a",
+      "answer": "The polynomial can be sketched as an upward curve crossing the x-axis around x = 0 and x = 5.",
+      "confidence": 0.92,
+      "source_region": "page 1 Q3a",
+      "working_out": null
+    },
+    {
+      "question_id": "3b",
+      "answer": "x = 3",
+      "confidence": 0.96,
+      "source_region": "page 1 Q3b",
+      "working_out": "5x − 2 = 4x + 1, so x = 3 is the only solution."
+    },
+    {
+      "question_id": "4a",
+      "answer": "r is about 12 and is a right angle.",
+      "confidence": 0.90,
+      "source_region": "page 1 Q4a",
+      "working_out": "The arc length is proportional to the radius"
+    },
+    {
+      "question_id": "4b",
+      "answer": "145",
+      "confidence": 0.94,
+      "source_region": "page 1 Q4b",
+      "working_out": "The shaded region is a semicircle, so area = ½ × ㅠ × r²"
+    }
+  ]
+}

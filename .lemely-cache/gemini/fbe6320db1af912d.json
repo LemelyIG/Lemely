@@ -1,0 +1,53 @@
+{
+  "answers": [
+    {
+      "question_id": "1a_i",
+      "answer": "0.19 cm",
+      "confidence": 0.97,
+      "source_region": "page 1, Q1a_i area",
+      "working_out": "average thickness = 3.8 / 20"
+    },
+    {
+      "question_id": "1b",
+      "answer": "8.9 g/cm3",
+      "confidence": 0.97,
+      "source_region": "page 1, Q1b area",
+      "working_out": "density = mass / volume = 148 / 16.6"
+    },
+    {
+      "question_id": "4a",
+      "answer": "31 m/s",
+      "confidence": 0.97,
+      "source_region": "page 1, Q4a area",
+      "working_out": "speed = distance / time = 200 / 6.4"
+    },
+    {
+      "question_id": "5b",
+      "answer": "3.0 N",
+      "confidence": 0.97,
+      "source_region": "page 1, Q5b area",
+      "working_out": "clockwise moments = anticlockwise moments. 200 = (2.0 x 10) + (F x 60). F = (200-20)/60 = 180 / 60"
+    },
+    {
+      "question_id": "11b",
+      "answer": "16 V",
+      "confidence": 0.97,
+      "source_region": "page 1, Q11b area",
+      "working_out": "Vs/Vp = NS/Np, so Vs = (64 / 240) x 960"
+    },
+    {
+      "question_id": "12b",
+      "answer": "81",
+      "confidence": 0.97,
+      "source_region": "page 1, Q12b area",
+      "working_out": "137-56"
+    },
+    {
+      "question_id": "12c",
+      "answer": "4.5 mg",
+      "confidence": 0.97,
+      "source_region": "page 1, Q12c area",
+      "working_out": "three half-lives have passed, so 36 / 8"
+    }
+  ]
+}

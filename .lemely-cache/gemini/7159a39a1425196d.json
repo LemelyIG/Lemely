@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 2,
+  "confidence": 0.96,
+  "matched_point_ids": [
+    "p1"
+  ],
+  "feedback": "2 marks awarded for the correct numerical value '8.75', which matches point p1. The unit 'km' is also correct based on the working shown."
+}

@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.85,
+  "matched_point_ids": [
+    "p2"
+  ],
+  "feedback": "C1 awarded for the correct formula F=ma and its application (6.5 = 0.50 a). The resultant force calculation is missing, leading to an incorrect final answer, so A marks cannot be awarded."
+}

@@ -1,0 +1,9 @@
+{
+  "awarded_marks": 2,
+  "confidence": 0.9,
+  "matched_point_ids": [
+    "p1",
+    "p2"
+  ],
+  "feedback": "B1 awarded for 'Kinetic energy'. B1 awarded for 'internal energy'. The mention of 'gravitational potential' is ignored as it doesn't contradict the correct energy transformation."
+}

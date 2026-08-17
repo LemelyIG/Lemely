@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.98,
+  "matched_point_ids": [
+    "p1"
+  ],
+  "feedback": "B1 awarded: The student correctly states 'area under the graph', which is equivalent to the mark scheme point 'area under the (graph) line'."
+}

@@ -1,0 +1,11 @@
+{
+  "awarded_marks": 4,
+  "confidence": 0.95,
+  "matched_point_ids": [
+    "p1",
+    "p2",
+    "p3",
+    "p4"
+  ],
+  "feedback": "B1 awarded for identifying critical value 3 from 5x-2 ≥ 4x+1. M1 awarded for setting up the second case 5x-2 < -4x-1. A1 awarded for the critical value 1/9 from the second case. A1 awarded for the correct final answer 1/9 ≤ x ≤ 3. All marks are credited from the working."
+}
