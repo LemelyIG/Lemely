@@ -37,6 +37,7 @@ from lemely.db.base import Base
 from lemely.db.models import User
 from lemely.db.models.enums import QualificationLevel, Role
 from lemely.db.parent_repo import ParentLinkService
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
@@ -309,9 +310,6 @@ def test_overview_momentum_percentages_are_never_rescaled(tmp_path: Path) -> Non
         store.append(STUDENT_ID, _record(percentage=pct, grade=grade, recorded_at=when))
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: store
-    app.dependency_overrides[get_student_profile_service] = lambda: MagicMock(
-        list_enrolments=MagicMock(return_value=[])
-    )
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=STUDENT_ID, role="student"
     )
@@ -325,9 +323,6 @@ def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
     store = HistoryStore(tmp_path / "empty")
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: store
-    app.dependency_overrides[get_student_profile_service] = lambda: MagicMock(
-        list_enrolments=MagicMock(return_value=[])
-    )
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id="nobody", role="student"
     )
@@ -336,6 +331,36 @@ def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
     assert body["subjects"] == []
     assert body["weakGlobal"] == []
     assert body["momentum"]["points"] == []
+
+
+def test_overview_malformed_id_returns_200_not_500(
+    pg_sessionmaker: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """A non-UUID ``auth.user_id`` degrades to neutral defaults, not a 500.
+
+    Regression test: ``StudentProfileService.list_enrolments`` calls
+    ``_as_uuid()`` unconditionally and raises ``ValueError`` for a non-UUID
+    string. The route must guard that call the same way it already guards
+    the ``mirror.get_by_id`` lookup, so a friendly string id (what hermetic
+    history-store tests use) never reaches the DB layer. Uses the real,
+    unmocked :class:`StudentProfileService` bound to a live Postgres
+    sessionmaker — a mock would not have caught this regression.
+    """
+    store = HistoryStore(tmp_path / "history")
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_student_profile_service] = lambda: StudentProfileService(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id="not-a-uuid", role="student"
+    )
+    response = TestClient(app).get("/api/student/overview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["subjects"] == []
+    assert body["studentName"] == ""
 
 
 # ── Subject ───────────────────────────────────────────────────────────────────

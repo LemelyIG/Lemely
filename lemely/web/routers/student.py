@@ -289,13 +289,22 @@ def student_overview(
     to do before a name store existed. ``auth.user_id`` is a real UUID for
     every token this route ever sees in production (``require_role`` only
     admits tokens minted against the real auth service); the malformed-id
-    branch below only ever fires for hermetic tests that key
+    handling below only ever fires for hermetic tests that key
     :class:`~lemely.core.history.StudentHistory` by a friendly string id, and
-    falls back to the same typed-neutral default this router uses elsewhere
-    rather than a 500.
+    falls back to the same typed-neutral defaults this router uses elsewhere
+    (no enrolments, no mirrored name) rather than a 500.
+    ``profile_service.list_enrolments`` internally rejects a non-UUID id with
+    ``ValueError`` (:meth:`StudentProfileService._as_uuid`); that is caught
+    here so a malformed id degrades to no enrolments instead of a 500.
+    ``mirror.get_by_id`` needs a real :class:`uuid.UUID` object rather than
+    raising on a bad one, so its guard parses ``auth.user_id`` up front and
+    skips the lookup entirely when it isn't a UUID.
     """
     history = history_store.load(auth.user_id)
-    enrolments = {e.subject_code: e for e in profile_service.list_enrolments(auth.user_id)}
+    try:
+        enrolments = {e.subject_code: e for e in profile_service.list_enrolments(auth.user_id)}
+    except ValueError:
+        enrolments = {}
     subjects = _subjects(history, enrolments)
     weaknesses = aggregate_weaknesses_from_history(history)
     student_name = ""
