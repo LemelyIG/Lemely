@@ -38,6 +38,7 @@ class SubjectRowDTO(ApiModel):
 
     code: str
     name: str
+    qualificationLevel: str | None = None
     detail: str
     pct: int
     papers: int

@@ -15,6 +15,7 @@ No Gemini client is exercised anywhere in this module — the one path that did
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -34,7 +35,7 @@ from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
 from lemely.db.models import User
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import QualificationLevel, Role
 from lemely.db.parent_repo import ParentLinkService
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings
@@ -44,6 +45,7 @@ from lemely.web.deps import (
     get_auth_context,
     get_history_store,
     get_parent_link_service,
+    get_student_profile_service,
     get_user_mirror,
 )
 
@@ -143,10 +145,18 @@ def seeded_store(tmp_path: Path) -> HistoryStore:
 
 
 @pytest.fixture
-def client(seeded_store: HistoryStore) -> TestClient:
+def profile_service() -> MagicMock:
+    mock = MagicMock()
+    mock.list_enrolments.return_value = []
+    return mock
+
+
+@pytest.fixture
+def client(seeded_store: HistoryStore, profile_service: MagicMock) -> TestClient:
     """A TestClient whose store + auth resolve to the seeded student."""
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_student_profile_service] = lambda: profile_service
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=STUDENT_ID, role="student"
     )
@@ -183,6 +193,26 @@ def test_overview_subjects_are_aggregated_from_history(client: TestClient) -> No
     chem = by_code["0620"]
     assert chem["papers"] == 1
     assert chem["trend"] == "+0"
+
+
+def test_overview_subject_name_is_real_and_qualification_level_is_included(
+    client: TestClient, profile_service: MagicMock
+) -> None:
+    """SubjectRowDTO.name is a real human name (not the code), and qualificationLevel
+    is sourced from the student's enrolment when one exists."""
+    profile_service.list_enrolments.return_value = [
+        SimpleNamespace(subject_code="0625", qualification_level=QualificationLevel.igcse),
+    ]
+
+    body = client.get("/api/student/overview").json()
+
+    by_code = {row["code"]: row for row in body["subjects"]}
+    assert by_code["0625"]["name"] == "Physics"
+    assert by_code["0625"]["qualificationLevel"] == "igcse"
+    # "0620" has no matching enrolment in the fixture — no level, and the
+    # unsupported code falls back to itself rather than an invented name.
+    assert by_code["0620"]["name"] == "0620"
+    assert by_code["0620"]["qualificationLevel"] is None
 
 
 def test_overview_weak_threads_and_momentum(client: TestClient) -> None:
@@ -279,6 +309,9 @@ def test_overview_momentum_percentages_are_never_rescaled(tmp_path: Path) -> Non
         store.append(STUDENT_ID, _record(percentage=pct, grade=grade, recorded_at=when))
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_student_profile_service] = lambda: MagicMock(
+        list_enrolments=MagicMock(return_value=[])
+    )
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=STUDENT_ID, role="student"
     )
@@ -292,6 +325,9 @@ def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
     store = HistoryStore(tmp_path / "empty")
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_student_profile_service] = lambda: MagicMock(
+        list_enrolments=MagicMock(return_value=[])
+    )
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id="nobody", role="student"
     )

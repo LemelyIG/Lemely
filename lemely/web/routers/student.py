@@ -53,9 +53,10 @@ from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
 from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
-from lemely.db.student_profile_repo import StudentProfileService
+from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
 from lemely.db.upload_repo import StudentUploadRepository, UploadRun
 from lemely.db.xp_repo import DEFAULT_ZONE, XpService, civil_date_in_zone
+from lemely.io.det.profiles import get_profile
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.io.parsers import ChainedMarkSchemeParser, GeminiMarkSchemeParser
@@ -210,14 +211,20 @@ def _momentum(records: list[PaperRecord]) -> MomentumDTO:
     )
 
 
-def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
+def _subjects(
+    history: StudentHistory, enrolments: dict[str, SubjectEnrolmentRow]
+) -> list[SubjectRowDTO]:
     """Aggregate history into per-subject Overview rows (data-backed).
 
     ``pct`` is the mark-weighted mean across the subject's papers; ``trend`` is
     the percentage delta between the first and last recorded paper; ``grade``
-    resolves against real boundaries. ``name``/``detail`` are neutral (history
-    records carry no human subject name or teacher), so ``name`` echoes the code
-    and ``detail`` reports the paper count only.
+    resolves against real boundaries. ``name`` is a real human name resolved
+    via :func:`get_profile`, falling back to the raw code for a subject
+    outside the three the build supports (never invented — mirrors
+    ``lemely.web.routers.parent._subject_name``). ``qualificationLevel``
+    comes from the student's enrolment for this subject, when one exists;
+    ``None`` for a subject with recorded papers but no formal enrolment.
+    ``detail`` reports the paper count only.
 
     Grade-bearing records only (``docs/quiz-model.md`` §5): every number on
     this row — the mark-weighted mean, the first-to-last delta, and a grade
@@ -238,10 +245,16 @@ def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
         pct = round((awarded / maximum) * 100.0) if maximum else 0
         boundaries, _ = boundary_store.resolve(records[-1].metadata)
         delta = round(records[-1].percentage - records[0].percentage)
+        enrolment = enrolments.get(code)
         rows.append(
             SubjectRowDTO(
                 code=code,
-                name=code,
+                name=get_profile(code).name or code,
+                qualificationLevel=(
+                    enrolment.qualification_level.value
+                    if enrolment and enrolment.qualification_level
+                    else None
+                ),
                 detail=f"{len(records)} papers corrected",
                 pct=pct,
                 papers=len(records),
@@ -262,6 +275,7 @@ def student_overview(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> OverviewDTO:
     """Return the student Overview: subject rows, global weak threads, momentum.
 
@@ -281,7 +295,8 @@ def student_overview(
     rather than a 500.
     """
     history = history_store.load(auth.user_id)
-    subjects = _subjects(history)
+    enrolments = {e.subject_code: e for e in profile_service.list_enrolments(auth.user_id)}
+    subjects = _subjects(history, enrolments)
     weaknesses = aggregate_weaknesses_from_history(history)
     student_name = ""
     try:
