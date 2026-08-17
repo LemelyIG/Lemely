@@ -228,6 +228,26 @@ def test_list_classes_summarises_real_roster(
     assert classes[0]["joinCode"] == cls.join_code
 
 
+def test_class_summary_includes_a_real_subject_name(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> None:
+    """subjectName resolves the human name for a known code; unset code -> unset name."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    class_service.create_class(teacher, "Physics 10A", subject_code="0625")
+    class_service.create_class(teacher, "Untitled Class")
+
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(teacher), role=Role.teacher.value
+    )
+    classes = client.get("/api/teacher/classes").json()["classes"]
+    physics = next(c for c in classes if c["subjectCode"] == "0625")
+    assert physics["subjectName"] == "Physics"
+    no_subject = next(c for c in classes if c["subjectCode"] is None)
+    assert no_subject["subjectName"] is None
+
+
 def test_list_classes_excludes_other_teachers_classes(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
