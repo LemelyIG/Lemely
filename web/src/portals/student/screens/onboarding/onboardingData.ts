@@ -75,13 +75,9 @@ export const SUPPORTED_SUBJECTS: SupportedSubject[] = [
   },
 ]
 
-/** Mirrors `lemely.db.models.enums.QualificationLevel`. */
-export const QUALIFICATION_LEVELS: { value: string; label: string }[] = [
-  { value: "igcse", label: "IGCSE" },
-  { value: "o_level", label: "O-Level" },
-  { value: "as_level", label: "AS-Level" },
-  { value: "a_level", label: "A-Level" },
-]
+/** Mirrors `lemely.db.models.enums.QualificationLevel`. Re-exported from the
+ * shared table so there is exactly one source of truth for it. */
+export { QUALIFICATION_LEVELS } from "@/lib/qualificationLevels"
 
 /** Mirrors `lemely.db.models.enums.SESSION_MONTH_LABELS`. */
 export const SESSION_MONTHS: { value: string; label: string }[] = [
