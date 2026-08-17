@@ -1,0 +1,20 @@
+[gradio]
+host = "127.0.0.1"
+port = 7860
+max_file_size_mb = 25
+
+[paths]
+sources_dir = "Sources"
+output_dir = "outputs"
+cache_dir = ".lemely-cache"
+
+[logging]
+level = "INFO"
+format = "auto"
+
+[gemini]
+model = "gemini-2.5-flash"
+max_retries = 3
+backoff_seconds = 2.0
+per_run_token_ceiling = null
+total_usd_ceiling = 25.00

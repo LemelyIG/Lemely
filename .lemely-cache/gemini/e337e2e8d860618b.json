@@ -1,0 +1,6 @@
+{
+  "awarded_marks": 3,
+  "confidence": 0.96,
+  "matched_point_ids": ["p1", "p2", "p3"],
+  "feedback": "A3 awarded for the correct final answer of 17100 years. The working clearly shows the calculation of three half-lives (C1, C1) leading to the correct proportion and then multiplication by 5700 years/half-life, which correctly rounds to 17000 years, but 17100 is also acceptable as a more precise calculation."
+}

@@ -1,0 +1,6 @@
+{
+  "awarded_marks": 2,
+  "confidence": 0.96,
+  "matched_point_ids": ["p1"],
+  "feedback": "M2 awarded: Although the final answer given is '47 and 61', the working clearly shows the correct calculation 47 + 61 = 108, which matches the mark scheme's expected answer. Full marks awarded as the working implies the correct final answer, even if not explicitly stated in the 'ANSWER' field."
+}

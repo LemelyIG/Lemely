@@ -1,0 +1,6 @@
+{
+  "awarded_marks": 0,
+  "confidence": 0.7,
+  "matched_point_ids": [],
+  "feedback": "No marks awarded. The student's answer is contradictory, stating voltage decreases, then increases, and finally is constant. This does not match point p1 (voltmeter reading decreases) nor does it provide a clear explanation for point p2."
+}

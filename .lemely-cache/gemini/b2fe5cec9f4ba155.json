@@ -1,0 +1,10 @@
+{
+  "awarded_marks": 3,
+  "confidence": 0.88,
+  "matched_point_ids": [
+    "p1",
+    "p2",
+    "p3"
+  ],
+  "feedback": "M1 awarded for mentioning 'diffraction' in working. A1 for 'not enough diffraction' (owtte for little diffraction). A1 for 'wide gap' (owtte for gap width large compared to wavelength). A1 for point 4 not awarded as the student did not explicitly contrast sound at J and K, only stating 'Sound wave won't reach that point' for J."
+}

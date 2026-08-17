@@ -1,0 +1,53 @@
+{
+  "answers": [
+    {
+      "question_id": "1a_i",
+      "answer": "5 cm",
+      "confidence": 0.9,
+      "source_region": "page 1 Q1a_i",
+      "working_out": "The average thickness is read directly off a micrometer scale, about"
+    },
+    {
+      "question_id": "1b",
+      "answer": "2.5",
+      "confidence": 0.9,
+      "source_region": "page 1 Q1b",
+      "working_out": "Density is measured with a hydrometer. The reading was"
+    },
+    {
+      "question_id": "4a",
+      "answer": "",
+      "confidence": 0.05,
+      "source_region": "page 1 Q4a",
+      "working_out": "The object was moving quickly because it had a lot of energy."
+    },
+    {
+      "question_id": "5b",
+      "answer": "2.0 N",
+      "confidence": 0.9,
+      "source_region": "page 1 Q5b",
+      "working_out": "The see-saw balances because both sides weigh the same amount, so F ="
+    },
+    {
+      "question_id": "11b",
+      "answer": "100 V",
+      "confidence": 0.9,
+      "source_region": "page 1 Q11b",
+      "working_out": "Transformers increase voltage using magnets. The output is around"
+    },
+    {
+      "question_id": "12b",
+      "answer": "137",
+      "confidence": 0.9,
+      "source_region": "page 1 Q12b",
+      "working_out": "The number stays the same because mass is conserved, so it is"
+    },
+    {
+      "question_id": "12c",
+      "answer": "1 mg",
+      "confidence": 0.9,
+      "source_region": "page 1 Q12c",
+      "working_out": "Radioactive decay happens randomly. After a while there is very little left, about"
+    }
+  ]
+}

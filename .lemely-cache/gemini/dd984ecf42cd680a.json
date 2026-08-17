@@ -1,0 +1,1 @@
+{"awarded_marks": 0, "confidence": 0.95, "matched_point_ids": [], "feedback": "M1 not awarded for method to isolate x: the student correctly rearranged to `5x = y - 2` but then incorrectly divided by 5 as `x/5 - 2` rather than `(y - 2)/5`. The final answer `x/5 - 2` is incorrect for the inverse function."}

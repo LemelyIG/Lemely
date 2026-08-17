@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.9,
+  "matched_point_ids": [
+    "p1"
+  ],
+  "feedback": "B1 awarded for correctly identifying the critical value 3 from the first case of the inequality (p1). The second case was not fully solved, and the final combined solution is incorrect, therefore M1, A1, A1 were not awarded."
+}

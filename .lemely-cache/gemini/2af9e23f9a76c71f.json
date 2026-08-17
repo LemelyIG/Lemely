@@ -1,0 +1,46 @@
+{
+  "answers": [
+    {
+      "question_id": "1",
+      "answer": "a = 4, b = 3/8, c = -2",
+      "confidence": 0.98,
+      "source_region": "page 1 Q1 area",
+      "working_out": null
+    },
+    {
+      "question_id": "2",
+      "answer": "(4 + 2) / (2(2+√5))",
+      "confidence": 0.85,
+      "source_region": "page 1 Q2 area",
+      "working_out": "x = [4 + √(16 + 12(2+√5)(2-√5))] / [2(2+√5)]. Since (2+√5)(2-√5) = 4-5 = -1, this simplifies to x = (4 + √(16-12)) / (2(2+√5))"
+    },
+    {
+      "question_id": "3a",
+      "answer": "leading coefficient = +3, one factor = (x+2), remaining factors = (x-1)(x-4)",
+      "confidence": 0.96,
+      "source_region": "page 1 Q3a area",
+      "working_out": null
+    },
+    {
+      "question_id": "3b",
+      "answer": "1/9 ≤ x ≤ 3",
+      "confidence": 0.95,
+      "source_region": "page 1 Q3b area",
+      "working_out": "Case 1: 5x-2 ≥ 4x+1 gives x > 3 (critical value 3). Case 2: 5x-2 < -4x-1 gives 9x ≤ 1 so x ≤ 1/9 (critical value 1/9)."
+    },
+    {
+      "question_id": "4a",
+      "answer": "1.25",
+      "confidence": 0.90,
+      "source_region": "page 1 Q4a area",
+      "working_out": "r = 12 and πr² = 57.6. Dividing the second by the first: ½r = 57.6/12 = 4.8, so r = 9.6. Then = 12/9.6"
+    },
+    {
+      "question_id": "4b",
+      "answer": "81.1",
+      "confidence": 0.90,
+      "source_region": "page 1 Q4b area",
+      "working_out": "AC = r tan = 9.6 × tan(1.25) = 28.89. Shaded area = (½ × 28.89 × 9.6) - 57.6 = 138.67 - 57.6"
+    }
+  ]
+}

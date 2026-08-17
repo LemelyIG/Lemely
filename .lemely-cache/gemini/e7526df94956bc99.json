@@ -1,0 +1,53 @@
+{
+  "answers": [
+    {
+      "question_id": "1a_i",
+      "answer": "1.9 cm",
+      "confidence": 0.98,
+      "source_region": "page 1 Q1a_i",
+      "working_out": "3.8 / 20"
+    },
+    {
+      "question_id": "1b",
+      "answer": "89 g/cm3",
+      "confidence": 0.98,
+      "source_region": "page 1 Q1b",
+      "working_out": "density = mass / volume = 148 / 16.6"
+    },
+    {
+      "question_id": "4a",
+      "answer": "30 m/s",
+      "confidence": 0.98,
+      "source_region": "page 1 Q4a",
+      "working_out": "speed = distance / time = 200 / 6.4"
+    },
+    {
+      "question_id": "5b",
+      "answer": "200 / 60",
+      "confidence": 0.90,
+      "source_region": "page 1 Q5b",
+      "working_out": "clockwise moments = anticlockwise moments. 200 = (2.0 x 10) + (F x 60). F ="
+    },
+    {
+      "question_id": "11b",
+      "answer": "3600 V",
+      "confidence": 0.98,
+      "source_region": "page 1 Q11b",
+      "working_out": "Vs/Vp = Ns/Np, so Vs = (240 / 64) x 960"
+    },
+    {
+      "question_id": "12b",
+      "answer": "81",
+      "confidence": 0.98,
+      "source_region": "page 1 Q12b",
+      "working_out": "137-56"
+    },
+    {
+      "question_id": "12c",
+      "answer": "9 mg",
+      "confidence": 0.98,
+      "source_region": "page 1 Q12c",
+      "working_out": "idea of three half-lives, so 36 / 8"
+    }
+  ]
+}

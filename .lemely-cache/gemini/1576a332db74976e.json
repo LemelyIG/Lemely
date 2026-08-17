@@ -1,0 +1,9 @@
+{
+  "awarded_marks": 3,
+  "confidence": 0.98,
+  "matched_point_ids": [
+    "p1",
+    "p3"
+  ],
+  "feedback": "B1 awarded for 'turning effect of a force'. A2 awarded for 'force X perpendicular distance'. The student correctly defines moment and provides the full formula."
+}

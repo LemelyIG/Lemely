@@ -1,0 +1,305 @@
+{
+  "answers": [
+    {
+      "question_id": "1a_i",
+      "answer": "43cm",
+      "confidence": 0.97,
+      "source_region": "page 3, q1a_i",
+      "working_out": null
+    },
+    {
+      "question_id": "1a_ii",
+      "answer": "63cm",
+      "confidence": 0.97,
+      "source_region": "page 3, q1a_ii",
+      "working_out": null
+    },
+    {
+      "question_id": "1b",
+      "answer": "20cm",
+      "confidence": 0.97,
+      "source_region": "page 3, q1b area",
+      "working_out": "reading- original length\n63-43"
+    },
+    {
+      "question_id": "1c_i",
+      "answer": "4.9N",
+      "confidence": 0.97,
+      "source_region": "page 4, q1c_i area",
+      "working_out": "w=mg\nW = 0.50X9.8"
+    },
+    {
+      "question_id": "1c_ii",
+      "answer": "13m/s²",
+      "confidence": 0.88,
+      "source_region": "page 4, q1c_ii area",
+      "working_out": "F=ma\n6.5 = 0.50 a\na = 6.5/0.50"
+    },
+    {
+      "question_id": "2a_i",
+      "answer": "180000 kg m/s",
+      "confidence": 0.88,
+      "source_region": "page 6, q2a_i area",
+      "working_out": "m = mass X velocity\nm = 1400 x 130 = 182000"
+    },
+    {
+      "question_id": "2a_ii",
+      "answer": "area under the graph",
+      "confidence": 0.97,
+      "source_region": "page 6, q2a_ii area",
+      "working_out": "line"
+    },
+    {
+      "question_id": "2a_iii",
+      "answer": "422.5 m",
+      "confidence": 0.97,
+      "source_region": "page 6, q2a_iii area",
+      "working_out": "Distance = 1/2 bh\n=1/2 x 6.5 x 130 = 422.5"
+    },
+    {
+      "question_id": "2b_i",
+      "answer": "Speed decreases with increasing rate",
+      "confidence": 0.85,
+      "source_region": "page 6, q2b_i area",
+      "working_out": null
+    },
+    {
+      "question_id": "2b_ii",
+      "answer": "The line is curved not a straight line",
+      "confidence": 0.97,
+      "source_region": "page 6, q2b_ii area",
+      "working_out": null
+    },
+    {
+      "question_id": "2c",
+      "answer": "from Kinetic energy to gravitational potential internal energy",
+      "confidence": 0.92,
+      "source_region": "page 6, q2c area",
+      "working_out": null
+    },
+    {
+      "question_id": "3a",
+      "answer": "moment is the turning effect of a force around a pivot and is defined by moment = force X perpendicular distance. It has both magnitude and direction",
+      "confidence": 0.90,
+      "source_region": "page 7, q3a area",
+      "working_out": null
+    },
+    {
+      "question_id": "3b_i",
+      "answer": "A body's whole Point where all of its mass / weight is considered to act",
+      "confidence": 0.85,
+      "source_region": "page 7, q3b_i area",
+      "working_out": null
+    },
+    {
+      "question_id": "3b_ii",
+      "answer": "1.7M",
+      "confidence": 0.65,
+      "source_region": "page 7, q3b_ii area",
+      "working_out": "m = fxID\nm = 1.3x10^7 x 3.4 = 44200000\nmoment of weight = 44000000N/m"
+    },
+    {
+      "question_id": "3c",
+      "answer": "1. total upward forces is equal to total downward forces\n2. total moment clockwise is equal to total moment anti-clockwise",
+      "confidence": 0.95,
+      "source_region": "page 8, q3c area",
+      "working_out": null
+    },
+    {
+      "question_id": "4a",
+      "answer": "Using balance find the mass of the aluminum block. To find the energy multiply power supplied by heater by time taken in seconds. Find initial and final temperature by thermometer.",
+      "confidence": 0.85,
+      "source_region": "page 9, q4a area",
+      "working_out": "Q = MCΔθ\nQ = P x time\nThermometer heater balance"
+    },
+    {
+      "question_id": "4b_i",
+      "answer": "as thermal heat in water is transfered to aluminium by conduction. Water has high temperature. Particles gain high kinetic energy so they vibrate hitting neighbouring aluminium particles.",
+      "confidence": 0.85,
+      "source_region": "page 10, q4b_i area",
+      "working_out": null
+    },
+    {
+      "question_id": "4b_ii",
+      "answer": "Particles gain kinetic energy, so particles vibrate and intermolecular forces become weaker, so they move further apart",
+      "confidence": 0.90,
+      "source_region": "page 10, q4b_ii area",
+      "working_out": null
+    },
+    {
+      "question_id": "4b_iii",
+      "answer": "when most energetic water molecules with enough energy out the surface escape, leaving least energetic particles behind cooling the water.",
+      "confidence": 0.85,
+      "source_region": "page 10, q4b_iii area",
+      "working_out": null
+    },
+    {
+      "question_id": "5a",
+      "answer": "0.2m",
+      "confidence": 0.97,
+      "source_region": "page 11, q5a area",
+      "working_out": null
+    },
+    {
+      "question_id": "5b",
+      "answer": "330m/s",
+      "confidence": 0.97,
+      "source_region": "page 11, q5b area",
+      "working_out": "330"
+    },
+    {
+      "question_id": "5c_i",
+      "answer": "1700 Hz",
+      "confidence": 0.90,
+      "source_region": "page 11, q5c_i area",
+      "working_out": "s = f.λ\n330 = f x 0.2\nf = 330/0.2 = 1650"
+    },
+    {
+      "question_id": "5c_ii",
+      "answer": "Yes because the range of human ear is from 20 Hz to 20,000 Hz",
+      "confidence": 0.95,
+      "source_region": "page 11, q5c_ii area",
+      "working_out": null
+    },
+    {
+      "question_id": "5d",
+      "answer": "point J: no because Sound wave won't reach that point\npoint K: yes because sound wave reached point\nNo, wide gap and not enough diffraction\nPasses right through it",
+      "confidence": 0.80,
+      "source_region": "page 12, q5d area",
+      "working_out": "diffraction"
+    },
+    {
+      "question_id": "6a",
+      "answer": "work done by a unit charge passing through a component converted from electrical to any form. units (J)",
+      "confidence": 0.85,
+      "source_region": "page 13, q6a area",
+      "working_out": null
+    },
+    {
+      "question_id": "6b",
+      "answer": "E - reading on the voltmeter",
+      "confidence": 0.70,
+      "source_region": "page 13, q6b area",
+      "working_out": null
+    },
+    {
+      "question_id": "6c_i",
+      "answer": "intensity of incident light on LDR: increase\ntemperature of thermistor: decrease",
+      "confidence": 0.95,
+      "source_region": "page 14, q6c_i area",
+      "working_out": null
+    },
+    {
+      "question_id": "6c_ii",
+      "answer": "As resistance decrease, voltage decreases, I = V/R and as resistance of the thermistor, increase, voltage increase, V = IR so voltmeter reading is the same as voltage is constant.",
+      "confidence": 0.75,
+      "source_region": "page 14, q6c_ii area",
+      "working_out": "I = V/R\nV = IR"
+    },
+    {
+      "question_id": "7a",
+      "answer": "iron",
+      "confidence": 0.97,
+      "source_region": "page 15, q7a area",
+      "working_out": null
+    },
+    {
+      "question_id": "7b_i",
+      "answer": "Magnetic field lines drawn from N to S, forming closed loops outside the bar and going through the bar, with arrows indicating direction.",
+      "confidence": 0.95,
+      "source_region": "page 15, Fig. 7.2",
+      "working_out": null
+    },
+    {
+      "question_id": "7b_ii",
+      "answer": "magnetic field decreases as current decreases, V = I x R so fewer field lines",
+      "confidence": 0.85,
+      "source_region": "page 16, q7b_ii area",
+      "working_out": "Strength V = IR"
+    },
+    {
+      "question_id": "7c",
+      "answer": "changing resistance causes changing current through solenoid, so changes magnetic field as coil cuts magnetic field. So EMF induced",
+      "confidence": 0.85,
+      "source_region": "page 16, q7c area",
+      "working_out": null
+    },
+    {
+      "question_id": "8a",
+      "answer": "Diagram shows a central nucleus with 6 protons (solid circles) and 8 neutrons (open circles). Two electrons (crosses) in the inner shell and four electrons in the outer shell.",
+      "confidence": 0.90,
+      "source_region": "page 17, Fig. 8.1",
+      "working_out": null
+    },
+    {
+      "question_id": "8b",
+      "answer": "have different number of protons and electrons, but same number of neutrons. nitrogen has one more proton and electron",
+      "confidence": 0.80,
+      "source_region": "page 17, q8b area",
+      "working_out": null
+    },
+    {
+      "question_id": "8c_i",
+      "answer": "electron",
+      "confidence": 0.97,
+      "source_region": "page 18, q8c_i area",
+      "working_out": null
+    },
+    {
+      "question_id": "8c_ii",
+      "answer": "Beta Decay, one neutron is split into a proton and an electron",
+      "confidence": 0.95,
+      "source_region": "page 18, q8c_ii area",
+      "working_out": null
+    },
+    {
+      "question_id": "8d",
+      "answer": "17100 years",
+      "confidence": 0.90,
+      "source_region": "page 18, q8d area",
+      "working_out": "9.6x10^11 / 2 = 4.8x10^11 / 2 = 2.4x10^11 / 2 = 1.2x10^11\n5700 x 3 = 17100"
+    },
+    {
+      "question_id": "9a",
+      "answer": "group of billions of stars",
+      "confidence": 0.97,
+      "source_region": "page 19, q9a area",
+      "working_out": null
+    },
+    {
+      "question_id": "9b",
+      "answer": "9.5 x 10^17 km",
+      "confidence": 0.70,
+      "source_region": "page 19, q9b area",
+      "working_out": "9.5x10^12 x 100000 = 9.5x10^17"
+    },
+    {
+      "question_id": "9c_i",
+      "answer": "red Shift",
+      "confidence": 0.97,
+      "source_region": "page 19, q9c_i area",
+      "working_out": null
+    },
+    {
+      "question_id": "9c_ii",
+      "answer": "Hubbles constant brightness of supernova",
+      "confidence": 0.80,
+      "source_region": "page 19, q9c_ii area",
+      "working_out": null
+    },
+    {
+      "question_id": "9c_iii",
+      "answer": "Ho = v/d",
+      "confidence": 0.97,
+      "source_region": "page 19, q9c_iii area",
+      "working_out": null
+    },
+    {
+      "question_id": "9c_iv",
+      "answer": "4.5 x 10^17 s",
+      "confidence": 0.80,
+      "source_region": "page 19, q9c_iv area",
+      "working_out": "Ho = 2.2x10^-18"
+    }
+  ]
+}

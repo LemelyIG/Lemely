@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.9,
+  "matched_point_ids": [
+    "p1"
+  ],
+  "feedback": "M1 awarded for correctly stating the transformer equation in any form. However, the subsequent calculation is incorrect, so M2 and A1 are not awarded."
+}

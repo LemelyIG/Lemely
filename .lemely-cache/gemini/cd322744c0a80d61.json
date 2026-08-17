@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.98,
+  "matched_point_ids": [
+    "p1"
+  ],
+  "feedback": "B1 awarded: Both conditions (increased intensity on LDR and decreased temperature of thermistor) are correctly stated."
+}

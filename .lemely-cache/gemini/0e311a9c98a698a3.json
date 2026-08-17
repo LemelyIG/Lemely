@@ -1,0 +1,8 @@
+{
+  "awarded_marks": 1,
+  "confidence": 0.85,
+  "matched_point_ids": [
+    "p2"
+  ],
+  "feedback": "B1 awarded for identifying different numbers of protons and electrons (p2). The statement 'same number of neutrons' contradicts p1, so no mark for neutrons."
+}
