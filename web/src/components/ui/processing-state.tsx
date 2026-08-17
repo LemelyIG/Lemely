@@ -1,11 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes, ReactNode } from "react"
-import {
-  CheckCircle,
-  CircleNotch,
-  Circle,
-  XCircle,
-} from "@phosphor-icons/react"
+import { Check, CircleNotch, DotsThree, X } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 
 /*
@@ -15,10 +10,13 @@ import { cn } from "@/lib/utils"
  * design note): this renders discrete, independently-stated stages, each
  * with its own success/in-progress/fail state and — for the marking stage —
  * a real per-question counter. There is no single animated bar standing in
- * for the whole pipeline. The only animation is a spinner on the ONE stage
- * that is genuinely, currently running, and that respects
- * prefers-reduced-motion via the global rule in index.css (animate-spin's
- * duration is zeroed there, not re-implemented here).
+ * for the whole pipeline: the spinner, its pulsing ring, and the
+ * width-transitioning counter bar are all scoped to the ONE stage that is
+ * genuinely, currently running, and only render a numeric bar at all when
+ * that stage carries a real `progress` value. Every animation here —
+ * `animate-spin`, `animate-ping`, and the plain CSS `transition`s on colour
+ * and width — respects prefers-reduced-motion via the global `*` rule in
+ * index.css; none of it is re-implemented per-component.
  *
  * Failure messages are caller-supplied per stage (`errorMessage`) — this
  * component never renders a generic "something went wrong" fallback; per
@@ -73,25 +71,109 @@ function capitalize(word: string) {
  * alone. `role="img"` because an `aria-label` on a bare `<svg>` is not
  * reliably announced without it. */
 export function StageGlyph({ status }: { status: ProcessingStageStatus }) {
+  /* One ring geometry for all four states, so the badges line up on the
+   * connector and only their colour/contents change between stages. */
+  const ring =
+    "flex h-7 w-7 flex-none items-center justify-center rounded-full border-2 bg-paper-raised"
+
   if (status === "done") {
     return (
-      <CheckCircle size={20} weight="fill" className="text-ok" role="img" aria-label="Done" />
+      <span
+        className={cn(
+          ring,
+          "border-ok text-ok",
+          "transition-transform duration-[var(--dur-fast)] ease-out-soft hover:scale-110",
+        )}
+      >
+        <Check size={15} weight="bold" role="img" aria-label="Done" />
+      </span>
     )
   }
   if (status === "active") {
     return (
-      <CircleNotch
-        size={20}
-        className="animate-spin text-accent"
+      /* The label lives on the wrapper, not on `CircleNotch`: the notched ring
+       * and the centre dot are one indicator, and announcing the arc alone
+       * would name a decoration rather than the state. */
+      <span
+        className="relative flex h-7 w-7 flex-none items-center justify-center text-accent"
         role="img"
         aria-label="In progress"
-      />
+      >
+        {/* Pulsing outer ring — the ONE stage that is genuinely running gets
+         * this extra emphasis; every other status is deliberately still.
+         * `animate-ping` is Tailwind's built-in keyframe, so it is already
+         * caught by the global `prefers-reduced-motion` rule in index.css
+         * (a bare `*` selector) without any component-level handling. */}
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 rounded-full bg-accent-wash animate-ping"
+        />
+        <CircleNotch
+          size={28}
+          weight="bold"
+          aria-hidden="true"
+          className="absolute inset-0 animate-spin"
+        />
+        <span aria-hidden="true" className="relative h-1.5 w-1.5 rounded-full bg-accent" />
+      </span>
     )
   }
   if (status === "error") {
-    return <XCircle size={20} weight="fill" className="text-err" role="img" aria-label="Failed" />
+    return (
+      <span className={cn(ring, "border-err text-err")}>
+        <X size={15} weight="bold" role="img" aria-label="Failed" />
+      </span>
+    )
   }
-  return <Circle size={20} className="text-rule" role="img" aria-label="Not started" />
+  return (
+    <span className={cn(ring, "border-rule text-ink-faint")}>
+      <DotsThree size={16} weight="bold" role="img" aria-label="Not started" />
+    </span>
+  )
+}
+
+/* The kicker above each stage label ("Phase 2", "Active phase", "Final
+ * phase"), uppercased by the `text-eyebrow` rung. Derived from position and
+ * status — both facts this component already has — rather than from anything
+ * the caller has to supply and could get out of step with the stage list.
+ *
+ * Returns null for a one-stage list: "Final phase" over a lone "Uploading the
+ * scan" (the teacher console's upload control) would imply a sequence that
+ * does not exist. A kicker numbering a sequence needs a sequence. */
+function phaseKicker(
+  index: number,
+  count: number,
+  status: ProcessingStageStatus,
+): string | null {
+  if (count < 2) return null
+  if (status === "active") return "Active phase"
+  if (index === count - 1) return "Final phase"
+  return `Phase ${index + 1}`
+}
+
+/* Real per-question counter only, per S-14: this reads `stage.progress` —
+ * which `frameProgress` in `pipelineStages.ts` only ever populates from an
+ * actual `index`/`total` on the wire — and renders nothing when it is
+ * undefined. It never estimates a percentage from stage position, elapsed
+ * time, or anything else that isn't the number the backend sent. */
+function StageProgressBar({ progress }: { progress: ProcessingStageProgress }) {
+  const pct = Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100)))
+  return (
+    <div className="mt-3 rounded-md border border-rule bg-paper-sunk p-3">
+      <div className="mb-2 flex items-center justify-between gap-2 text-data-sm">
+        <span className="text-ink-muted">
+          {capitalize(progress.unit ?? "item")} {progress.current} of {progress.total}
+        </span>
+        <span className="flex-none text-accent-ink">{pct}%</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-rule">
+        <div
+          className="h-full rounded-full bg-accent transition-[width] duration-[var(--dur-slow)] ease-out-soft"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
 }
 
 export function ProcessingState({
@@ -104,6 +186,7 @@ export function ProcessingState({
     <div className={cn("flex flex-col", className)} {...props}>
       {stages.map((stage, i) => {
         const isLast = i === stages.length - 1
+        const kicker = phaseKicker(i, stages.length, stage.status)
         return (
           <div key={stage.id} className="flex gap-3">
             <div className="flex flex-col items-center">
@@ -111,33 +194,48 @@ export function ProcessingState({
               {!isLast ? (
                 <span
                   className={cn(
-                    "min-h-4 w-px flex-1",
+                    "min-h-4 w-px flex-1 transition-colors duration-[var(--dur-slow)] ease-out-soft",
                     stage.status === "done" ? "bg-ok" : "bg-rule",
                   )}
                 />
               ) : null}
             </div>
-            <div className={cn("min-w-0 flex-1", !isLast && "pb-5")}>
-              <div className="flex items-center justify-between gap-2">
+            <div className={cn("min-w-0 flex-1 pt-0.5", !isLast && "pb-5")}>
+              {kicker ? (
                 <span
                   className={cn(
-                    "text-body-md font-medium",
-                    stage.status === "pending" ? "text-ink-faint" : "text-ink",
+                    "block text-eyebrow transition-colors duration-[var(--dur-fast)]",
+                    stage.status === "pending" && "text-ink-faint",
+                    stage.status === "active" && "text-accent-ink",
+                    stage.status === "done" && "text-ink-muted",
+                    stage.status === "error" && "text-err",
                   )}
                 >
-                  {stage.label}
+                  {kicker}
                 </span>
-                {stage.status === "active" && stage.progress ? (
-                  <span className="flex-none text-data-sm text-ink-muted">
-                    {capitalize(stage.progress.unit ?? "item")} {stage.progress.current} of{" "}
-                    {stage.progress.total}
-                  </span>
-                ) : null}
-              </div>
+              ) : null}
+              <span
+                className={cn(
+                  "block text-body-md transition-colors duration-[var(--dur-fast)]",
+                  kicker && "mt-1.5",
+                  stage.status === "pending" && "font-medium text-ink-faint",
+                  stage.status === "active" && "font-semibold text-ink",
+                  (stage.status === "done" || stage.status === "error") &&
+                    "font-medium text-ink",
+                )}
+              >
+                {stage.label}
+              </span>
               {stage.status === "error" && stage.errorMessage ? (
                 <p className="mt-1 text-body-md text-err">{stage.errorMessage}</p>
               ) : stage.detail ? (
                 <p className="mt-1 text-body-sm text-ink-faint">{stage.detail}</p>
+              ) : null}
+              {/* The animated bar is scoped to the one stage carrying a real
+               * counter (S-14's "no fake progress bar" — see header comment).
+               * It never stands in for the whole pipeline's completion. */}
+              {stage.status === "active" && stage.progress ? (
+                <StageProgressBar progress={stage.progress} />
               ) : null}
             </div>
           </div>
