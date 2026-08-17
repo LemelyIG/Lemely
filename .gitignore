@@ -42,7 +42,7 @@ dist/
 # Sources/
 # outputs/
 # lemely.toml
-# .tokensave
+.tokensave
 # .omc/
 
 # Accuracy harness run output (timestamped, regenerable; .gitkeep stays tracked)
