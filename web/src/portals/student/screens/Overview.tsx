@@ -359,9 +359,9 @@ export function Overview() {
 
   const { studentName, subjects, weakGlobal, momentum } = data
 
-  // `studentName` is the authenticated user's id, not a display name (no
-  // user-profile name store exists yet) — fall back to a plain greeting
-  // rather than showing a raw id/UUID.
+  // `studentName` is the caller's real display name (falling back to email
+  // server-side), and can still be empty for an account with neither set —
+  // fall back to a plain greeting rather than showing nothing.
   const greetingName = studentName || "there"
 
   // This read "Good afternoon" unconditionally, at every hour of the day, so

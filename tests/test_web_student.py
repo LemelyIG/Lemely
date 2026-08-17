@@ -44,6 +44,7 @@ from lemely.web.deps import (
     get_auth_context,
     get_history_store,
     get_parent_link_service,
+    get_user_mirror,
 )
 
 STUDENT_ID = "maya"
@@ -159,7 +160,13 @@ def test_overview_subjects_are_aggregated_from_history(client: TestClient) -> No
     """Overview subject rows aggregate marks per subject with a weighted mean."""
     body = client.get("/api/student/overview").json()
 
-    assert body["studentName"] == STUDENT_ID
+    # `STUDENT_ID` ("maya") is this file's friendly string id for the
+    # HistoryStore fixture, not a real auth UUID — no `public.users` row
+    # exists to resolve a display name against, so `studentName` is the
+    # router's typed-neutral default rather than echoing the id back
+    # (regression test: this endpoint used to literally return the caller's
+    # raw id/UUID as their "name").
+    assert body["studentName"] == ""
     by_code = {row["code"]: row for row in body["subjects"]}
     assert set(by_code) == {"0625", "0620"}
 
@@ -192,6 +199,67 @@ def test_overview_weak_threads_and_momentum(client: TestClient) -> None:
     assert all(p["recordedAt"] and isinstance(p["percentage"], (int, float)) for p in points)
     # Oldest first: the frontend plots by position and never re-sorts.
     assert [p["recordedAt"] for p in points] == sorted(p["recordedAt"] for p in points)
+
+
+class _PgUserMirror:
+    """Minimal :class:`~lemely.auth.mirror.UserMirror` bound to a test sessionmaker."""
+
+    def __init__(self, sm: sessionmaker[Session]) -> None:
+        self._sm = sm
+
+    def get_by_id(self, user_id: uuid.UUID) -> User | None:
+        with self._sm() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                session.expunge(user)
+            return user
+
+    def get_by_phone(self, phone: str) -> User | None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def upsert(self, *args: object, **kwargs: object) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+
+def _pg_overview_client(
+    pg_sessionmaker: sessionmaker[Session], history_store: HistoryStore, user_id: uuid.UUID
+) -> TestClient:
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: history_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(user_id), role="student"
+    )
+    app.dependency_overrides[get_user_mirror] = lambda: _PgUserMirror(pg_sessionmaker)
+    return TestClient(app)
+
+
+def test_overview_student_name_is_the_real_display_name_not_the_raw_id(
+    pg_sessionmaker: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """``studentName`` resolves the caller's mirrored display name.
+
+    Regression test: ``GET /student/overview`` used to set ``studentName`` to
+    the bare ``auth.user_id`` (a UUID), so the dashboard greeted every student
+    by their own id instead of their name.
+    """
+    uid = _seed_pg_user(pg_sessionmaker, Role.student, display_name="Maya Chen")
+    client = _pg_overview_client(pg_sessionmaker, HistoryStore(tmp_path / "history"), uid)
+
+    body = client.get("/api/student/overview").json()
+
+    assert body["studentName"] == "Maya Chen"
+
+
+def test_overview_student_name_falls_back_to_email_without_a_display_name(
+    pg_sessionmaker: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """No ``display_name`` set falls back to ``email``, never the raw user id."""
+    uid = _seed_pg_user(pg_sessionmaker, Role.student, display_name=None)
+    client = _pg_overview_client(pg_sessionmaker, HistoryStore(tmp_path / "history"), uid)
+
+    body = client.get("/api/student/overview").json()
+
+    assert body["studentName"] == f"{uid}@example.com"
 
 
 def test_overview_momentum_percentages_are_never_rescaled(tmp_path: Path) -> None:

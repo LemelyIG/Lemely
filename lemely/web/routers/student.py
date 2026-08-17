@@ -35,6 +35,7 @@ from fastapi.responses import StreamingResponse
 # WeaknessReport and HistoryStoreProtocol stay as runtime imports (noqa: TC001):
 # FastAPI dependency injection and the response converters resolve their
 # annotations at call time, so they cannot move into a TYPE_CHECKING block.
+from lemely.auth.mirror import UserMirror
 from lemely.core.analytics import aggregate_weaknesses_from_history
 from lemely.core.at_risk import AtRiskReason, assess_at_risk
 from lemely.core.history import (
@@ -74,6 +75,7 @@ from lemely.web.deps import (
     get_storage_backend,
     get_student_profile_service,
     get_student_upload_repo,
+    get_user_mirror,
     get_xp_service,
     require_role,
 )
@@ -259,19 +261,39 @@ def _subjects(history: StudentHistory) -> list[SubjectRowDTO]:
 def student_overview(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
 ) -> OverviewDTO:
     """Return the student Overview: subject rows, global weak threads, momentum.
 
     All fields are data-backed from the caller's :class:`StudentHistory` and
     :mod:`lemely.core.analytics`. ``forecast`` is the space-joined per-subject
     predicted grades; ``weakGlobal`` is the top weak topics folded across every
-    paper. ``studentName`` echoes the authenticated user id (no name store yet).
+    paper. ``studentName`` is the mirrored ``public.users`` row's
+    ``display_name``, falling back to ``email`` (same convention as
+    :func:`lemely.db.quiz_taking_repo._display_name`) rather than the raw
+    ``auth.user_id`` — a student greeted by their own UUID is what this used
+    to do before a name store existed. ``auth.user_id`` is a real UUID for
+    every token this route ever sees in production (``require_role`` only
+    admits tokens minted against the real auth service); the malformed-id
+    branch below only ever fires for hermetic tests that key
+    :class:`~lemely.core.history.StudentHistory` by a friendly string id, and
+    falls back to the same typed-neutral default this router uses elsewhere
+    rather than a 500.
     """
     history = history_store.load(auth.user_id)
     subjects = _subjects(history)
     weaknesses = aggregate_weaknesses_from_history(history)
+    student_name = ""
+    try:
+        user_id = uuid.UUID(auth.user_id)
+    except ValueError:
+        user_id = None
+    if user_id is not None:
+        user = mirror.get_by_id(user_id)
+        if user is not None:
+            student_name = user.display_name or user.email
     return OverviewDTO(
-        studentName=auth.user_id,
+        studentName=student_name,
         forecast=" ".join(row.grade for row in subjects),
         subjects=subjects,
         weakGlobal=_weak_threads(weaknesses, limit=6),
