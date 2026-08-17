@@ -103,6 +103,12 @@ class EnrolmentUpsertDTO(ApiModel):
 
     subjectCode: str
     qualificationLevel: str | None = None
+    """An omitted key arrives here as ``None`` and CLEARS the level, same as
+    every other field on this DTO — it never leaves ``upsert_enrolment``'s
+    ``qualification_level`` at :data:`~lemely.db.student_profile_repo.UNSET`,
+    so this endpoint can never trigger that method's create-time fallback to
+    the student's profile-level default. A client that wants the profile
+    default applied to a new subject must send it explicitly."""
     targetGrade: str | None = None
     sessionMonth: str | None = None
     sessionYear: int | None = None

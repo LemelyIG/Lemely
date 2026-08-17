@@ -278,6 +278,12 @@ class StudentProfileService:
         an *existing* enrolment with :data:`UNSET` leaves its level
         untouched, exactly like ``target_grade``.
 
+        Note that ``PUT /api/me/student-profile/enrolments`` always passes an
+        explicit ``qualification_level`` (``None`` when its DTO field is
+        omitted, per that DTO's full-desired-state semantics), so this
+        create-time default never fires for that route — it only serves
+        direct/service-layer callers that genuinely leave the keyword unset.
+
         Raises:
             StudentProfileValidationError: ``subject_code`` does not exist in
                 ``subjects``, or ``target_grade`` is supplied and not a
