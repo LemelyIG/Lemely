@@ -36,6 +36,29 @@ REPO_URL="https://github.com/LemelyIG/Lemely"
 # same topic) is the reliable path; direct agents there, not through Python.
 export LEMELY_NTFY_TOPIC="$NTFY_TOPIC"
 
+# Background-task wait ceiling for 'claude -p'. The default is 600s: a run that
+# dispatches the pytest suite or an accuracy-* workflow to the background and
+# waits on it is TERMINATED at ten minutes — and terminated with rc=0, so this
+# supervisor read it as a clean checkpoint and restarted with fresh context.
+# Runs 1-8 of 2026-08-19 did exactly that: 7 of 9 logs end in "Background tasks
+# still running after 600s; terminating", producing eight 'wip checkpoint'
+# commits and no landed work, because each fresh run re-armed the same wait.
+#
+# Bounded, NOT 0. Nothing in this supervisor kills a running 'claude -p' on a
+# timer — WATCHDOG_MINUTES is a notify-only dead-man's switch for the machine
+# or supervisor dying, and the heartbeat refreshes it regardless of what the
+# agent is doing. So this ceiling IS the only bound on a wedged run; 0 would
+# remove it entirely. 2.5h covers the full pytest suite, an accuracy-review
+# workflow, and a long accuracy-measure sweep with room to spare.
+#
+# A wait this long crosses STALL_BEATS (3 beats = 30 min with no commit), so a
+# legitimate long wait emits stall notices — that notice already reads "may be
+# on a long measurement sweep, or stuck". When the ceiling IS hit, the run is
+# terminated with rc=0 and looks identical to a clean finish, so the outcome
+# block below detects it explicitly and hands the fact to the next run rather
+# than letting it silently re-arm the same doomed wait.
+export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=$(( 150 * 60 * 1000 ))   # 2.5 hours
+
 MODEL="opus"                    # orchestrator model — Opus decides, Sonnet subagents work
 
 COST_CEILING_USD="25.00"        # lemely.toml total_usd_ceiling (pre-flight check, not a hard stop)
@@ -78,6 +101,9 @@ H_SEEN="$STATEDIR/h_blocking_seen"
 CI_RED_SEEN="$STATEDIR/ci_red_seen"    # dedup key: "<pr>:<head-sha>"
 SPEND_MARK="$STATEDIR/spend_mark"
 NRMARK="$STATEDIR/not_reportable_sig"
+TIMEOUTFILE="$STATEDIR/last_timeout"   # handoff: a run killed by the background-task
+                                       # wait ceiling leaves its story here for the next
+                                       # run's prompt. Consumed and deleted when read.
 
 # --------------------------- ntfy helpers ----------------------------------
 
@@ -872,6 +898,19 @@ Holding before run $run. Send RESUME, or delete BUILD/PAUSE in the worktree." "p
   rp="$(state_field run_pointer)"
   if [ "$run" -eq 1 ] && { [ -z "$rp" ] || [ "$rp" = "none" ]; }; then PROMPT="$FIRST_PROMPT"; else PROMPT="$RESUME_PROMPT"; fi
 
+  # If the previous run was killed by the background-task wait ceiling, lead with
+  # that. It goes FIRST, ahead of the inbox and the state file, because the state
+  # file is exactly what will mislead this run: it still says work is "in flight".
+  # Consumed once — deleted on read, so a run is told about a timeout only once.
+  if [ -f "$TIMEOUTFILE" ]; then
+    PROMPT="$(cat "$TIMEOUTFILE")
+
+---
+
+$PROMPT"
+    rm -f "$TIMEOUTFILE"
+  fi
+
   LOG="$LOGDIR/acc-run-$(printf '%04d' "$run")-$(date +%Y%m%d-%H%M%S).log"
   date +%s > "$STARTFILE"
   RUNSTART_SHA="$(git rev-parse HEAD 2>/dev/null)"
@@ -940,7 +979,59 @@ $DIFFSUM" "warning" "high" \
     fi
     sleep "$BACKOFF_CRASH"
 
+  # A run killed by the background-task wait ceiling exits rc=0 and is
+  # indistinguishable from a clean finish by return code alone — the only
+  # evidence is the line the CLI prints on its way out. Detect it, and hand the
+  # fact forward: without this the next run reads a state file that says work is
+  # "in flight", waits on it again, and dies the same way (runs 1-8, 2026-08-19).
+  # Scan the WHOLE log, not the tail: the CLI prints this line early (line 2 in
+  # every observed case) and then keeps streaming, so a tail window would miss it
+  # on any long run — silently restoring the bug. Anchored on the CLI's exact
+  # "<N>s; terminating" phrasing so prose that merely discusses timeouts is not
+  # mistaken for one.
+  elif grep -qiE "Background tasks still running after [0-9]+s; terminating" "$LOG"; then
+    stuck_on="$(state_field in_the_middle_of)"
+    cat > "$TIMEOUTFILE" <<EOF
+## ⚠ The previous run (run $run) was TERMINATED, not finished.
+
+It ran ${mins}m and was killed by the background-task wait ceiling
+($((CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS / 60000)) minutes) while waiting on
+background work. It exited rc=0, so nothing else marks this as a failure — this
+notice is the only record. Its final summary in the log is NOT a completion
+report; it is a snapshot of a run that was cut off mid-wait.
+
+What it said it was in the middle of: ${stuck_on:-(nothing recorded)}
+
+Act on this before anything else:
+
+1. **Whatever it was waiting on is gone.** Background tasks and workflows do not
+   survive the session that launched them (ACCURACY-MISSION.md §7). Any \`wf_…\`
+   id in ACCURACY-STATE.md is a dead handle, not something you can collect. Do
+   not wait on it. Do not poll it. Re-run it from scratch if its result is still
+   needed.
+2. **Do not simply re-arm the same wait** — that is the exact loop this notice
+   exists to break. If you are about to background a long task and wait on it,
+   run it in the foreground instead, or narrow it (§9: run the smallest thing
+   that answers the question; the full suite runs once, before PR).
+3. **Correct \`in_the_middle_of\`** to a fact the next run can act on without a
+   live handle — e.g. "#56: implemented, unreviewed" — via
+   \`scripts/accuracy_board.py state set in_the_middle_of "…"\`.
+4. If this has now happened on consecutive runs for the same item, stop
+   retrying it and record a blocker in BUILD/BLOCKERS.md (§11).
+EOF
+    ntfy_publish "⏱ Run $run hit the background-task ceiling" "$(progress_block)
+Ran ${mins}m, then was terminated waiting on background work (rc=0, so it is not counted as a crash).
+Waiting on: ${stuck_on:-(nothing recorded)}
+The next run is being told explicitly, so it does not re-arm the same wait.
+
+$DIFFSUM" "hourglass,warning" "high" \
+      "[$(ctrl_action Pause PAUSE),$(view_action 'Latest commit' "$(commit_url)")]" \
+      "lemely-acc-bgceiling"
+    ntfy_attach "$LOG" "Timeout log — accuracy run $run" "page_facing_up" "default"
+    sleep 20
+
   else
+    rm -f "$TIMEOUTFILE"        # a genuinely clean run clears any stale handoff
     ntfy_publish "🔄 Run $run checkpointed" "$(progress_block)
 ${mins}m · restarting with fresh context.
 
