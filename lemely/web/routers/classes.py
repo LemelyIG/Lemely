@@ -55,6 +55,7 @@ from lemely.db.class_repo import (
 )
 from lemely.db.models.enums import Role
 from lemely.db.student_profile_repo import StudentProfileService
+from lemely.io.det.profiles import get_profile
 from lemely.web.deps import (
     AuthContext,
     get_at_risk_ack_service,
@@ -173,6 +174,19 @@ def _latest_activity(histories: list[StudentHistory]) -> str | None:
     )
 
 
+def _class_subject_name(code: str | None) -> str | None:
+    """Human name for a class's subject code, or ``None`` when the class has none set.
+
+    Mirrors ``lemely.web.routers.parent._subject_name``, with the one
+    difference this call site needs: ``SchoolClass.subject_code`` is
+    nullable and not FK'd to ``subjects`` (a teacher types it freely), so an
+    absent code must stay absent rather than resolving to some default name.
+    """
+    if code is None:
+        return None
+    return get_profile(code).name or code
+
+
 def _class_row_to_summary(
     row: ClassRow,
     roster: list[RosterEntry],
@@ -212,6 +226,7 @@ def _class_row_to_summary(
         studentCount=row.student_count,
         average=average,
         subjectCode=row.subject_code,
+        subjectName=_class_subject_name(row.subject_code),
         schoolId=str(row.school_id) if row.school_id is not None else None,
         joinCode=row.join_code,
         atRiskCount=at_risk_count,
@@ -336,6 +351,7 @@ def _class_row_to_detail(
         distribution=distribution,
         students=rows,
         subjectCode=row.subject_code,
+        subjectName=_class_subject_name(row.subject_code),
         schoolId=str(row.school_id) if row.school_id is not None else None,
         joinCode=row.join_code,
         atRiskCount=at_risk,

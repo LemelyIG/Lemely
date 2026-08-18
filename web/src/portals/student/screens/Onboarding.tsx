@@ -11,6 +11,7 @@ import {
   useStudentProfile,
 } from "@/lib/hooks/useMeApi"
 import {
+  backfillNullQualificationLevels,
   buildConfidenceRatingsPayload,
   buildEnrolmentPayload,
   buildProfilePatchPayload,
@@ -97,6 +98,7 @@ export function Onboarding() {
       if (!SUPPORTED_SUBJECTS.some((s) => s.code === enrolment.subjectCode)) continue
       seededDrafts[enrolment.subjectCode] = {
         subjectCode: enrolment.subjectCode,
+        qualificationLevel: enrolment.qualificationLevel,
         papers: new Set(enrolment.papers),
         targetGrade: enrolment.targetGrade,
         sessionMonth: enrolment.sessionMonth,
@@ -128,6 +130,7 @@ export function Onboarding() {
       } else {
         next[code] = {
           subjectCode: code,
+          qualificationLevel: qualificationLevel,
           papers: new Set(),
           targetGrade: null,
           sessionMonth: null,
@@ -270,9 +273,19 @@ export function Onboarding() {
       {wizardStep === "subjects" ? (
         <SubjectsStep
           qualificationLevel={qualificationLevel}
-          onQualificationLevel={setQualificationLevel}
+          onQualificationLevel={(value) => {
+            setQualificationLevel(value)
+            // Back-fill drafts still at `null` — a subject ticked before the
+            // level was picked must not be left behind. A draft with its own
+            // per-subject override is left untouched. See
+            // `backfillNullQualificationLevels`'s docstring.
+            setDrafts((prev) => backfillNullQualificationLevels(prev, value))
+          }}
           drafts={drafts}
           onToggleSubject={toggleSubject}
+          onSubjectQualificationLevel={(code, value) =>
+            updateDraft(code, { qualificationLevel: value })
+          }
           onTogglePaper={togglePaper}
           onTargetGrade={(code, grade) => updateDraft(code, { targetGrade: grade })}
           onSessionMonth={(code, month) => updateDraft(code, { sessionMonth: month })}

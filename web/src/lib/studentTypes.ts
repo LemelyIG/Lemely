@@ -25,6 +25,7 @@ export type PointMark = "check" | "dot"
 export interface SubjectRow {
   code: string
   name: string
+  qualificationLevel: string | null
   detail: string
   pct: number
   papers: number
@@ -116,8 +117,9 @@ export interface TopicTile {
 
 /** Subject-page header block (mirrors `SubjectHeaderDTO`). */
 export interface SubjectHeader {
-  meta: string
-  title: string
+  name: string
+  code: string
+  qualificationLevel: string | null
   intro: string
   forecast: string
   weightedMean: string

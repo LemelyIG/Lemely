@@ -275,6 +275,75 @@ def test_upsert_enrolment_unknown_target_grade_raises_validation_error(
         service.upsert_enrolment(user, subject_code, target_grade="Z")
 
 
+def test_new_enrolment_defaults_qualification_level_from_profile(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A brand-new enrolment with no explicit level inherits the student's profile-level default."""
+    user = _seed_user(pg_sessionmaker)
+    subject_code = _seed_subject(pg_sessionmaker)
+    service = StudentProfileService(pg_sessionmaker)
+    service.update_profile(user, qualification_level=QualificationLevel.igcse)
+
+    row = service.upsert_enrolment(user, subject_code)
+
+    assert row.qualification_level is QualificationLevel.igcse
+
+
+def test_new_enrolment_explicit_level_overrides_profile_default(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """An explicit qualification_level on upsert wins over the profile default."""
+    user = _seed_user(pg_sessionmaker)
+    subject_code = _seed_subject(pg_sessionmaker)
+    service = StudentProfileService(pg_sessionmaker)
+    service.update_profile(user, qualification_level=QualificationLevel.igcse)
+
+    row = service.upsert_enrolment(
+        user, subject_code, qualification_level=QualificationLevel.o_level
+    )
+
+    assert row.qualification_level is QualificationLevel.o_level
+
+
+def test_updating_existing_enrolment_with_unset_level_leaves_it_untouched(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """UNSET on an update (not a create) is a no-op, matching every other field on this method."""
+    user = _seed_user(pg_sessionmaker)
+    subject_code = _seed_subject(pg_sessionmaker)
+    service = StudentProfileService(pg_sessionmaker)
+    service.upsert_enrolment(user, subject_code, qualification_level=QualificationLevel.a_level)
+
+    row = service.upsert_enrolment(user, subject_code, target_grade="A")
+
+    assert row.qualification_level is QualificationLevel.a_level
+
+
+def test_explicit_none_clears_enrolment_qualification_level(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """An explicit None on upsert clears a previously-set level, same as target_grade's None."""
+    user = _seed_user(pg_sessionmaker)
+    subject_code = _seed_subject(pg_sessionmaker)
+    service = StudentProfileService(pg_sessionmaker)
+    service.upsert_enrolment(user, subject_code, qualification_level=QualificationLevel.a_level)
+
+    row = service.upsert_enrolment(user, subject_code, qualification_level=None)
+
+    assert row.qualification_level is None
+
+
+def test_upsert_enrolment_unknown_qualification_level_string_raises_validation_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    user = _seed_user(pg_sessionmaker)
+    subject_code = _seed_subject(pg_sessionmaker)
+    service = StudentProfileService(pg_sessionmaker)
+
+    with pytest.raises(StudentProfileValidationError):
+        service.upsert_enrolment(user, subject_code, qualification_level="not-a-real-level")
+
+
 def test_delete_enrolment_removes_it(pg_sessionmaker: sessionmaker[Session]) -> None:
     user = _seed_user(pg_sessionmaker)
     subject_code = _seed_subject(pg_sessionmaker)

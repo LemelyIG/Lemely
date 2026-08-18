@@ -349,6 +349,36 @@ def test_put_enrolments_upserts_each_item(
     assert body[0]["papers"] == [2, 4]
 
 
+def test_put_enrolments_round_trips_qualification_level(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A per-subject qualificationLevel in the PUT body is stored and echoed back."""
+    student = _seed_user(pg_sessionmaker)
+    _as(client, student, Role.student)
+
+    resp = client.put(
+        "/api/me/student-profile/enrolments",
+        json={
+            "enrolments": [
+                {"subjectCode": "0625", "qualificationLevel": "igcse", "papers": []},
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body[0]["qualificationLevel"] == "igcse"
+
+    # A second PUT with the level omitted-as-None clears it (full-desired-state
+    # semantics, same as targetGrade/sessionMonth on this endpoint).
+    resp = client.put(
+        "/api/me/student-profile/enrolments",
+        json={"enrolments": [{"subjectCode": "0625", "qualificationLevel": None, "papers": []}]},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body[0]["qualificationLevel"] is None
+
+
 def test_put_enrolments_unknown_target_grade_is_422(
     client: TestClient, pg_sessionmaker: sessionmaker[Session]
 ) -> None:

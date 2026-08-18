@@ -99,6 +99,7 @@ export interface SubjectOverview {
   subjectCode: string
   /** Translated name, falling back to the raw code when unknown — never invented. */
   subjectName: string
+  qualificationLevel: string | null
   predictedGrade: string
   /** Always null until Phase 4 (see the module header). */
   target: string | null
@@ -137,6 +138,7 @@ export interface SubjectDetail {
   childId: string
   subjectCode: string
   subjectName: string
+  qualificationLevel: string | null
   predictedGrade: string
   papers: SubjectPaper[]
   /** null when not computable (already on A*, or no boundary row) — omit the panel. */

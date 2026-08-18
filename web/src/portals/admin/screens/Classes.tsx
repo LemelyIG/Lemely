@@ -112,9 +112,20 @@ export function Classes() {
                     // `subjectToneForCode` rather than `SubjectTag`'s
                     // name-based lookup, which would fall back to "other" for
                     // every class in the school.
-                    <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
-                      {schoolClass.subjectCode}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
+                        {schoolClass.subjectName ?? schoolClass.subjectCode}
+                      </Badge>
+                      {/* Omitted when the name has resolved to the code
+                          itself — a class's `subjectCode` is free text a
+                          teacher typed, so most classes hit the det
+                          registry's default profile (name === code, see
+                          `subjectIdentifier`'s docstring) and this element
+                          would otherwise print the same code twice. */}
+                      {(schoolClass.subjectName ?? schoolClass.subjectCode) !== schoolClass.subjectCode ? (
+                        <span className="text-data-sm text-ink-faint">{schoolClass.subjectCode}</span>
+                      ) : null}
+                    </div>
                   ) : (
                     <span className="text-body-sm text-ink-faint">Not set</span>
                   )}
