@@ -1,6 +1,6 @@
 # ACCURACY-STATE.md — resume pointer for the accuracy programme
 
-run_pointer: run-2026-08-19-f
+run_pointer: run-2026-08-19-g
 worktree: /home/sico/Lemely-worktrees/accuracy
 branch: feature/accuracy-56-repair-the-fixture-renderer-and
 last_run_label: none
