@@ -38,6 +38,7 @@ class SubjectRowDTO(ApiModel):
 
     code: str
     name: str
+    qualificationLevel: str | None = None
     detail: str
     pct: int
     papers: int
@@ -160,10 +161,17 @@ class TopicTileDTO(ApiModel):
 
 
 class SubjectHeaderDTO(ApiModel):
-    """Subject-page header block (mirrors ``subjectHeader``)."""
+    """Subject-page header block (mirrors ``subjectHeader``).
 
-    meta: str
-    title: str
+    ``name`` is the primary identifier (resolved via ``get_profile``,
+    falling back to the raw code); ``code`` and ``qualificationLevel`` are
+    secondary metadata the frontend composes alongside it — see
+    ``lemely.web.routers.student.student_subject``.
+    """
+
+    name: str
+    code: str
+    qualificationLevel: str | None = None
     intro: str
     forecast: str
     weightedMean: str

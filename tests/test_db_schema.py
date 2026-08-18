@@ -677,6 +677,31 @@ def test_student_subject_enrolment_unique_per_user_and_subject(pg_engine: sa.Eng
         session.commit()
 
 
+def test_student_subject_enrolment_qualification_level_is_nullable(
+    pg_engine: sa.Engine,
+) -> None:
+    from lemely.db.models import StudentSubjectEnrolment, Subject, User
+    from lemely.db.models.enums import QualificationLevel, Role
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="qual-level@example.com", role=Role.student)
+        session.add(student)
+        subject = Subject(code="0625-qle", name="Physics")
+        session.add(subject)
+        session.flush()
+
+        no_level = StudentSubjectEnrolment(user_id=student.id, subject_code=subject.code)
+        session.add(no_level)
+        session.commit()
+        session.refresh(no_level)
+        assert no_level.qualification_level is None
+
+        no_level.qualification_level = QualificationLevel.igcse
+        session.commit()
+        session.refresh(no_level)
+        assert no_level.qualification_level is QualificationLevel.igcse
+
+
 def test_student_enrolment_paper_unique_per_enrolment_and_paper_number(
     pg_engine: sa.Engine,
 ) -> None:

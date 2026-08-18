@@ -408,6 +408,7 @@ class ClassSummaryDTO(ApiModel):
     studentCount: int
     average: float | None = None
     subjectCode: str | None = None
+    subjectName: str | None = None
     schoolId: str | None = None
     joinCode: str | None = None
     atRiskCount: int | None = None
@@ -445,6 +446,7 @@ class ClassDetailDTO(ApiModel):
     distribution: list[DistributionBarDTO] = Field(default_factory=list)
     students: list[StudentRowDTO] = Field(default_factory=list)
     subjectCode: str | None = None
+    subjectName: str | None = None
     schoolId: str | None = None
     joinCode: str | None = None
     atRiskCount: int | None = None

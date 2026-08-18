@@ -37,6 +37,7 @@ class SubjectEnrolmentDTO(ApiModel):
     """
 
     subjectCode: str
+    qualificationLevel: str | None = None
     targetGrade: str | None = None
     sessionMonth: str | None = None
     sessionYear: int | None = None
@@ -101,6 +102,25 @@ class EnrolmentUpsertDTO(ApiModel):
     """
 
     subjectCode: str
+    qualificationLevel: str | None = None
+    """An omitted key arrives here as ``None`` and CLEARS the level, same as
+    every other field on this DTO — it never leaves ``upsert_enrolment``'s
+    ``qualification_level`` at :data:`~lemely.db.student_profile_repo.UNSET`,
+    so this endpoint can never trigger that method's create-time fallback to
+    the student's profile-level default. A client that wants the profile
+    default applied to a new subject must send it explicitly.
+
+    In practice this is the *only* mechanism that supplies a level, because
+    the server-side fallback described above cannot fire over this route by
+    design: ``web/src/portals/student/screens/Onboarding.tsx`` owns the
+    invariant instead. Its ``toggleSubject`` seeds a new draft's
+    ``qualificationLevel`` from the profile-wide picker's current value at
+    toggle time, and its ``onQualificationLevel`` handler back-fills every
+    still-``None`` draft when the picker changes afterwards, so a level
+    chosen after a subject was ticked still reaches this field. Weaken or
+    remove either half there and a student's explicit level choice silently
+    stops reaching enrolments created before it, with no fallback here to
+    catch it."""
     targetGrade: str | None = None
     sessionMonth: str | None = None
     sessionYear: int | None = None

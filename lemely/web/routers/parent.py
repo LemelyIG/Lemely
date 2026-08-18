@@ -70,7 +70,7 @@ from lemely.core.history import (
 from lemely.db.class_repo import ClassService
 from lemely.db.models.enums import Role
 from lemely.db.parent_repo import ChildRow, ParentLinkService
-from lemely.db.student_profile_repo import StudentProfileService
+from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
 from lemely.io.det.profiles import get_profile
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.web.deps import (
@@ -145,6 +145,17 @@ def _subject_name(code: str) -> str:
     never an invented name.
     """
     return get_profile(code).name or code
+
+
+def _qualification_level(enrolment: SubjectEnrolmentRow | None) -> str | None:
+    """Raw wire value of an enrolment's qualification level, or ``None``.
+
+    Never a formatted label — the enum's own ``.value`` (e.g. ``"igcse"``),
+    matching every other raw-enum-on-the-wire convention in this module.
+    """
+    if enrolment is None or enrolment.qualification_level is None:
+        return None
+    return enrolment.qualification_level.value
 
 
 def _paper_id(record: PaperRecord) -> str:
@@ -390,6 +401,7 @@ def parent_child_overview(
     child = _authorized_child(parent_link_service, class_service, auth, child_id)
     history = history_store.load(str(child.child_id))
     now = datetime.now(UTC)
+    enrolments = {e.subject_code: e for e in profile_service.list_enrolments(child.child_id)}
 
     by_subject: dict[str, list[PaperRecord]] = {}
     for record in grade_bearing(history.records):
@@ -398,6 +410,7 @@ def parent_child_overview(
         SubjectOverviewDTO(
             subjectCode=code,
             subjectName=_subject_name(code),
+            qualificationLevel=_qualification_level(enrolments.get(code)),
             predictedGrade=subject_records[-1].grade,
             target=None,
             latestPercentage=subject_records[-1].percentage,
@@ -449,6 +462,7 @@ def parent_child_subject(
     parent_link_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> SubjectDetailDTO:
     """Return P-03: one subject in depth for a linked child.
 
@@ -479,10 +493,15 @@ def parent_child_subject(
     ]
     subject_history = StudentHistory(student_id=history.student_id, records=subject_records)
 
+    enrolment = next(
+        (e for e in profile_service.list_enrolments(child.child_id) if e.subject_code == code),
+        None,
+    )
     return SubjectDetailDTO(
         childId=str(child.child_id),
         subjectCode=code,
         subjectName=_subject_name(code),
+        qualificationLevel=_qualification_level(enrolment),
         predictedGrade=records[-1].grade,
         papers=papers,
         boundaryDistance=_grade_boundary_distance(records[-1]),

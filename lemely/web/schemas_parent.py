@@ -185,6 +185,7 @@ class SubjectOverviewDTO(ApiModel):
 
     subjectCode: str
     subjectName: str
+    qualificationLevel: str | None = None
     predictedGrade: str
     target: str | None = None
     latestPercentage: float
@@ -252,6 +253,7 @@ class SubjectDetailDTO(ApiModel):
     childId: str
     subjectCode: str
     subjectName: str
+    qualificationLevel: str | None = None
     predictedGrade: str
     papers: list[SubjectPaperDTO] = Field(default_factory=list)
     boundaryDistance: GradeBoundaryDistanceDTO | None = None

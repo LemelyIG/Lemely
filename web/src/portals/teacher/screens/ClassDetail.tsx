@@ -114,7 +114,14 @@ export function ClassDetailLayout() {
         <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
           <div className="min-w-0">
             <div className="text-eyebrow text-ink-faint">
-              {classDetail.subjectCode ?? "No subject set"}
+              {/* No " · code" repeat when the name has already resolved to
+                  the code itself (free-text `subjectCode`, det registry's
+                  default profile — see `subjectIdentifier`'s docstring). */}
+              {classDetail.subjectCode
+                ? (classDetail.subjectName ?? classDetail.subjectCode) !== classDetail.subjectCode
+                  ? `${classDetail.subjectName ?? classDetail.subjectCode} · ${classDetail.subjectCode}`
+                  : classDetail.subjectCode
+                : "No subject set"}
             </div>
             <h1 className="text-display-md mt-1.5 text-pretty">
               {classDetail.label}

@@ -87,6 +87,7 @@ class SubjectEnrolmentRow:
     session_month: SessionMonth | None
     session_year: int | None
     papers: tuple[int, ...]
+    qualification_level: QualificationLevel | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,13 +264,32 @@ class StudentProfileService:
         target_grade: str | _UnsetType | None = UNSET,
         session_month: SessionMonth | _UnsetType | None = UNSET,
         session_year: int | _UnsetType | None = UNSET,
+        qualification_level: QualificationLevel | str | _UnsetType | None = UNSET,
     ) -> SubjectEnrolmentRow:
         """Create or partially update the ``(user_id, subject_code)`` enrolment.
+
+        ``qualification_level`` follows the same UNSET/None/value semantics as
+        every other keyword here, with one addition: when **creating** a new
+        enrolment (no existing row) and the caller leaves it at
+        :data:`UNSET`, it defaults to that student's current
+        :attr:`~lemely.db.models.profiles.StudentProfile.qualification_level`
+        rather than staying ``NULL`` — the onboarding-time default a fresh
+        subject inherits until the student overrides it per subject. Updating
+        an *existing* enrolment with :data:`UNSET` leaves its level
+        untouched, exactly like ``target_grade``.
+
+        Note that ``PUT /api/me/student-profile/enrolments`` always passes an
+        explicit ``qualification_level`` (``None`` when its DTO field is
+        omitted, per that DTO's full-desired-state semantics), so this
+        create-time default never fires for that route — it only serves
+        direct/service-layer callers that genuinely leave the keyword unset.
 
         Raises:
             StudentProfileValidationError: ``subject_code`` does not exist in
                 ``subjects``, or ``target_grade`` is supplied and not a
-                member of :data:`~lemely.core.history.GRADE_ORDER`.
+                member of :data:`~lemely.core.history.GRADE_ORDER`, or
+                ``qualification_level`` is supplied as a string that is not a
+                member of :class:`QualificationLevel`.
         """
         uid = _as_uuid(user_id)
         if (
@@ -278,6 +298,16 @@ class StudentProfileService:
             and target_grade not in GRADE_ORDER
         ):
             raise StudentProfileValidationError(f"Unknown target grade: {target_grade!r}")
+        resolved_level: QualificationLevel | _UnsetType | None
+        if isinstance(qualification_level, str):
+            try:
+                resolved_level = QualificationLevel(qualification_level)
+            except ValueError as exc:
+                raise StudentProfileValidationError(
+                    f"Unknown qualification level: {qualification_level!r}"
+                ) from exc
+        else:
+            resolved_level = qualification_level
         with self._sessionmaker() as session, session.begin():
             subject_exists = session.scalars(
                 select(Subject.code).where(Subject.code == subject_code)
@@ -290,6 +320,7 @@ class StudentProfileService:
                     StudentSubjectEnrolment.subject_code == subject_code,
                 )
             ).first()
+            is_new = row is None
             if row is None:
                 row = StudentSubjectEnrolment(user_id=uid, subject_code=subject_code)
                 session.add(row)
@@ -299,6 +330,11 @@ class StudentProfileService:
                 row.session_month = session_month
             if not isinstance(session_year, _UnsetType):
                 row.session_year = session_year
+            if not isinstance(resolved_level, _UnsetType):
+                row.qualification_level = resolved_level
+            elif is_new:
+                profile = session.get(StudentProfile, uid)
+                row.qualification_level = profile.qualification_level if profile else None
             session.flush()
             return self._enrolment_row(session, row)
 
@@ -502,6 +538,7 @@ class StudentProfileService:
             session_month=enrolment.session_month,
             session_year=enrolment.session_year,
             papers=tuple(papers),
+            qualification_level=enrolment.qualification_level,
         )
 
 

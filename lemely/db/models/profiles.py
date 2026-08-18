@@ -134,6 +134,17 @@ class StudentSubjectEnrolment(TimestampMixin, Base):
         nullable=True,
     )
     session_year: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    qualification_level: Mapped[QualificationLevel | None] = mapped_column(
+        sa.Enum(QualificationLevel, name="qualificationlevel"),
+        nullable=True,
+    )
+    """Per-*subject* qualification level (IGCSE/O-Level/AS/A-Level).
+
+    Distinct from :attr:`StudentProfile.qualification_level`, which is the
+    onboarding-time default a new enrolment is seeded from
+    (:meth:`~lemely.db.student_profile_repo.StudentProfileService.upsert_enrolment`)
+    — a student can mix levels across subjects (IGCSE Physics alongside
+    O-Level Math), which a single profile-wide value cannot represent."""
 
     papers: Mapped[list[StudentEnrolmentPaper]] = relationship(
         "StudentEnrolmentPaper",

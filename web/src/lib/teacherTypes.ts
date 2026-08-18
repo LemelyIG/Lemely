@@ -284,6 +284,7 @@ export interface ClassSummary {
   studentCount: number
   average: number | null
   subjectCode: string | null
+  subjectName: string | null
   schoolId: string | null
   joinCode: string | null
   atRiskCount: number | null
@@ -375,6 +376,7 @@ export interface ClassDetail {
   distribution: DistributionBar[]
   students: StudentRow[]
   subjectCode: string | null
+  subjectName: string | null
   schoolId: string | null
   joinCode: string | null
   atRiskCount: number | null

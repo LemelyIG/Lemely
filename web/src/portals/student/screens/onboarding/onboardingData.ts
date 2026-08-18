@@ -75,13 +75,9 @@ export const SUPPORTED_SUBJECTS: SupportedSubject[] = [
   },
 ]
 
-/** Mirrors `lemely.db.models.enums.QualificationLevel`. */
-export const QUALIFICATION_LEVELS: { value: string; label: string }[] = [
-  { value: "igcse", label: "IGCSE" },
-  { value: "o_level", label: "O-Level" },
-  { value: "as_level", label: "AS-Level" },
-  { value: "a_level", label: "A-Level" },
-]
+/** Mirrors `lemely.db.models.enums.QualificationLevel`. Re-exported from the
+ * shared table so there is exactly one source of truth for it. */
+export { QUALIFICATION_LEVELS } from "@/lib/qualificationLevels"
 
 /** Mirrors `lemely.db.models.enums.SESSION_MONTH_LABELS`. */
 export const SESSION_MONTHS: { value: string; label: string }[] = [
@@ -128,6 +124,7 @@ export function placementInviteSubject(enrolledCodes: readonly string[]): string
 
 export interface SubjectDraft {
   subjectCode: string
+  qualificationLevel: string | null
   papers: ReadonlySet<number>
   targetGrade: string | null
   sessionMonth: string | null
@@ -144,6 +141,34 @@ export function toggleInSet<T>(set: ReadonlySet<T>, item: T): Set<T> {
   return next
 }
 
+/**
+ * Back-fill the profile-wide qualification level into every draft that
+ * hasn't been given its own level yet, when the picker changes.
+ *
+ * `toggleSubject` seeds a new draft's `qualificationLevel` from the
+ * profile-wide picker's value *at toggle time*, so a student who ticks a
+ * subject before picking a level gets a draft permanently stuck at `null` —
+ * `onQualificationLevel` used to be a bare `setQualificationLevel`, which
+ * updated the profile-wide value but never reconciled drafts already
+ * sitting at `null`. The result was silent data loss: the student's
+ * explicit level choice never reached the enrolments PUT.
+ *
+ * Only `null` drafts are touched. A draft the student has already given its
+ * own level via `onSubjectQualificationLevel` (S-01's per-subject override)
+ * must not be clobbered by a later change to the profile-wide picker.
+ */
+export function backfillNullQualificationLevels(
+  drafts: Record<string, SubjectDraft>,
+  level: string | null,
+): Record<string, SubjectDraft> {
+  return Object.fromEntries(
+    Object.entries(drafts).map(([code, draft]) => [
+      code,
+      draft.qualificationLevel === null ? { ...draft, qualificationLevel: level } : draft,
+    ]),
+  )
+}
+
 /** Build the `PUT /api/me/student-profile/enrolments` body from S-01 drafts.
  * `targetGrade`/`sessionMonth`/`sessionYear` pass through as `null` when the
  * student skipped them — S-01's target-grade/session fields are per-subject
@@ -151,6 +176,7 @@ export function toggleInSet<T>(set: ReadonlySet<T>, item: T): Set<T> {
 export function buildEnrolmentPayload(drafts: SubjectDraft[]): EnrolmentUpsert[] {
   return drafts.map((draft) => ({
     subjectCode: draft.subjectCode,
+    qualificationLevel: draft.qualificationLevel,
     targetGrade: draft.targetGrade,
     sessionMonth: draft.sessionMonth,
     sessionYear: draft.sessionYear,

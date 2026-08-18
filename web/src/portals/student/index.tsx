@@ -15,6 +15,7 @@ import { XPStreak } from "@/components/ui/xp-streak"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
+import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import type { SubjectRow } from "@/lib/studentTypes"
 import { currentSubjectCode, navGroups, resolveCrumbTrail, subjectIcon } from "./data"
 
@@ -247,6 +248,7 @@ function SubjectNavGroup({
   touch?: boolean
 }) {
   const Glyph = subjectIcon(subject.code)
+  const { secondary } = subjectIdentifier(subject.name, subject.code, subject.qualificationLevel)
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-1">
@@ -255,7 +257,7 @@ function SubjectNavGroup({
             to={`/student/subject/${subject.code}`}
             label={subject.name}
             icon={Glyph}
-            tag={subject.code}
+            tag={secondary || undefined}
             touch={touch}
             onClick={onNavigate}
           />

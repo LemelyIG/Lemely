@@ -15,6 +15,7 @@ No Gemini client is exercised anywhere in this module — the one path that did
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -34,8 +35,9 @@ from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
 from lemely.db.models import User
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import QualificationLevel, Role
 from lemely.db.parent_repo import ParentLinkService
+from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
@@ -44,6 +46,7 @@ from lemely.web.deps import (
     get_auth_context,
     get_history_store,
     get_parent_link_service,
+    get_student_profile_service,
     get_user_mirror,
 )
 
@@ -143,10 +146,18 @@ def seeded_store(tmp_path: Path) -> HistoryStore:
 
 
 @pytest.fixture
-def client(seeded_store: HistoryStore) -> TestClient:
+def profile_service() -> MagicMock:
+    mock = MagicMock()
+    mock.list_enrolments.return_value = []
+    return mock
+
+
+@pytest.fixture
+def client(seeded_store: HistoryStore, profile_service: MagicMock) -> TestClient:
     """A TestClient whose store + auth resolve to the seeded student."""
     app = create_app()
     app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_student_profile_service] = lambda: profile_service
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=STUDENT_ID, role="student"
     )
@@ -183,6 +194,26 @@ def test_overview_subjects_are_aggregated_from_history(client: TestClient) -> No
     chem = by_code["0620"]
     assert chem["papers"] == 1
     assert chem["trend"] == "+0"
+
+
+def test_overview_subject_name_is_real_and_qualification_level_is_included(
+    client: TestClient, profile_service: MagicMock
+) -> None:
+    """SubjectRowDTO.name is a real human name (not the code), and qualificationLevel
+    is sourced from the student's enrolment when one exists."""
+    profile_service.list_enrolments.return_value = [
+        SimpleNamespace(subject_code="0625", qualification_level=QualificationLevel.igcse),
+    ]
+
+    body = client.get("/api/student/overview").json()
+
+    by_code = {row["code"]: row for row in body["subjects"]}
+    assert by_code["0625"]["name"] == "Physics"
+    assert by_code["0625"]["qualificationLevel"] == "igcse"
+    # "0620" has no matching enrolment in the fixture — no level, and the
+    # unsupported code falls back to itself rather than an invented name.
+    assert by_code["0620"]["name"] == "0620"
+    assert by_code["0620"]["qualificationLevel"] is None
 
 
 def test_overview_weak_threads_and_momentum(client: TestClient) -> None:
@@ -302,14 +333,50 @@ def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
     assert body["momentum"]["points"] == []
 
 
+def test_overview_malformed_id_returns_200_not_500(
+    pg_sessionmaker: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """A non-UUID ``auth.user_id`` degrades to neutral defaults, not a 500.
+
+    Regression test: ``StudentProfileService.list_enrolments`` calls
+    ``_as_uuid()`` unconditionally and raises ``ValueError`` for a non-UUID
+    string. The route must guard that call the same way it already guards
+    the ``mirror.get_by_id`` lookup, so a friendly string id (what hermetic
+    history-store tests use) never reaches the DB layer. Uses the real,
+    unmocked :class:`StudentProfileService` bound to a live Postgres
+    sessionmaker — a mock would not have caught this regression.
+    """
+    store = HistoryStore(tmp_path / "history")
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_student_profile_service] = lambda: StudentProfileService(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id="not-a-uuid", role="student"
+    )
+    response = TestClient(app).get("/api/student/overview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["subjects"] == []
+    assert body["studentName"] == ""
+
+
 # ── Subject ───────────────────────────────────────────────────────────────────
 
 
-def test_subject_breakdown_and_history(client: TestClient) -> None:
+def test_subject_breakdown_and_history(client: TestClient, profile_service: MagicMock) -> None:
     """Subject endpoint returns per-paper bars, topic map, and paper history."""
+    profile_service.list_enrolments.return_value = [
+        SimpleNamespace(subject_code="0625", qualification_level=QualificationLevel.o_level),
+    ]
+
     body = client.get("/api/student/subject/0625").json()
 
-    assert body["header"]["title"] == "0625"
+    assert body["header"]["name"] == "Physics"
+    assert body["header"]["code"] == "0625"
+    assert body["header"]["qualificationLevel"] == "o_level"
     assert body["header"]["weightedMean"] == "89"
 
     breakdown = body["papersBreakdown"]
@@ -337,6 +404,37 @@ def test_subject_breakdown_and_history(client: TestClient) -> None:
     result_1 = client.get(f"/api/student/result/{body['paperHistory'][1]['id']}").json()
     assert result_1["awarded"] == 33
     assert result_1["max"] == 40
+
+
+def test_subject_malformed_id_returns_200_not_500(
+    pg_sessionmaker: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """A non-UUID ``auth.user_id`` degrades to no enrolment, not a 500.
+
+    Regression test: ``StudentProfileService.list_enrolments`` calls
+    ``_as_uuid()`` unconditionally and raises ``ValueError`` for a non-UUID
+    string. The route must guard that call the same way ``student_overview``
+    does, so a friendly string id (what hermetic history-store tests use)
+    never reaches the DB layer. Uses the real, unmocked
+    :class:`StudentProfileService` bound to a live Postgres sessionmaker — a
+    mock would not have caught this regression.
+    """
+    store = HistoryStore(tmp_path / "history")
+    store.append("not-a-uuid", _record(subject_code="0625"))
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_student_profile_service] = lambda: StudentProfileService(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id="not-a-uuid", role="student"
+    )
+    response = TestClient(app).get("/api/student/subject/0625")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["header"]["code"] == "0625"
+    assert body["header"]["qualificationLevel"] is None
 
 
 def test_subject_unknown_code_is_404(client: TestClient) -> None:
