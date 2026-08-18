@@ -9,6 +9,15 @@ export const meta = {
   ],
 }
 
+// The harness may deliver `args` as a JSON string rather than an object. Normalise
+// it before any guard reads a key off it — on a string every `args.<key>` is
+// undefined, so guards either abort with "missing-args" or, worse, silently fall
+// through to their defaults.
+if (typeof args === 'string') {
+  try { args = args.trim() ? JSON.parse(args) : {} } catch (e) { args = {} }
+}
+if (args === null || args === undefined) { args = {} }
+
 // ---------------------------------------------------------------- args guard
 const gate = (args && args.gate !== undefined && args.gate !== null) ? String(args.gate) : ''
 const logPath = (args && args.log_path !== undefined && args.log_path !== null) ? String(args.log_path) : ''

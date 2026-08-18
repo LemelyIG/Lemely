@@ -9,6 +9,15 @@ export const meta = {
   ],
 }
 
+// The harness may deliver `args` as a JSON string rather than an object. Normalise
+// it before any guard reads a key off it — on a string every `args.<key>` is
+// undefined, so guards either abort with "missing-args" or, worse, silently fall
+// through to their defaults.
+if (typeof args === 'string') {
+  try { args = args.trim() ? JSON.parse(args) : {} } catch (e) { args = {} }
+}
+if (args === null || args === undefined) { args = {} }
+
 // ---------------------------------------------------------------- args guard
 if (!args || args.batch === undefined || args.batch === null || String(args.batch) === '') {
   log("accuracy-label-batch: args.batch is required. Call as workflow('accuracy-label-batch', { batch: '<id, e.g. b01>', size: <leaves>, pass: 1|2, mode: 'prepare'|'qa' }).")
