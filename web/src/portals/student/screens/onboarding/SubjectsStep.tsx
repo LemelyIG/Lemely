@@ -51,6 +51,7 @@ export interface SubjectsStepProps {
   onQualificationLevel: (value: string) => void
   drafts: Record<string, SubjectDraft>
   onToggleSubject: (code: string) => void
+  onSubjectQualificationLevel: (code: string, value: string | null) => void
   onTogglePaper: (code: string, paper: number) => void
   onTargetGrade: (code: string, grade: string | null) => void
   onSessionMonth: (code: string, month: string | null) => void
@@ -65,6 +66,7 @@ export function SubjectsStep({
   onQualificationLevel,
   drafts,
   onToggleSubject,
+  onSubjectQualificationLevel,
   onTogglePaper,
   onTargetGrade,
   onSessionMonth,
@@ -162,6 +164,22 @@ export function SubjectsStep({
                   </div>
 
                   <div className="flex flex-wrap gap-4">
+                    <Select
+                      label="Qualification level"
+                      value={draft.qualificationLevel ?? ""}
+                      onChange={(event) =>
+                        onSubjectQualificationLevel(subject.code, event.target.value || null)
+                      }
+                      wrapperClassName="w-44"
+                    >
+                      <option value="">Not decided yet</option>
+                      {QUALIFICATION_LEVELS.map((level) => (
+                        <option key={level.value} value={level.value}>
+                          {level.label}
+                        </option>
+                      ))}
+                    </Select>
+
                     <Select
                       label="Target grade"
                       value={draft.targetGrade ?? ""}

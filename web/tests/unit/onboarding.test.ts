@@ -75,6 +75,7 @@ describe("buildEnrolmentPayload", () => {
     const drafts: SubjectDraft[] = [
       {
         subjectCode: "0625",
+        qualificationLevel: "igcse",
         papers: new Set([4, 2]),
         targetGrade: "A",
         sessionMonth: "may_june",
@@ -84,6 +85,7 @@ describe("buildEnrolmentPayload", () => {
     expect(buildEnrolmentPayload(drafts)).toEqual([
       {
         subjectCode: "0625",
+        qualificationLevel: "igcse",
         targetGrade: "A",
         sessionMonth: "may_june",
         sessionYear: 2027,
@@ -96,6 +98,7 @@ describe("buildEnrolmentPayload", () => {
     const drafts: SubjectDraft[] = [
       {
         subjectCode: "0580",
+        qualificationLevel: null,
         papers: new Set(),
         targetGrade: null,
         sessionMonth: null,
@@ -111,10 +114,41 @@ describe("buildEnrolmentPayload", () => {
 
   it("builds one entry per selected subject", () => {
     const drafts: SubjectDraft[] = [
-      { subjectCode: "0625", papers: new Set([1]), targetGrade: null, sessionMonth: null, sessionYear: null },
-      { subjectCode: "0606", papers: new Set([2]), targetGrade: null, sessionMonth: null, sessionYear: null },
+      {
+        subjectCode: "0625",
+        qualificationLevel: null,
+        papers: new Set([1]),
+        targetGrade: null,
+        sessionMonth: null,
+        sessionYear: null,
+      },
+      {
+        subjectCode: "0606",
+        qualificationLevel: null,
+        papers: new Set([2]),
+        targetGrade: null,
+        sessionMonth: null,
+        sessionYear: null,
+      },
     ]
     expect(buildEnrolmentPayload(drafts).map((e) => e.subjectCode)).toEqual(["0625", "0606"])
+  })
+
+  it("includes each subject's own qualificationLevel in the enrolment payload", () => {
+    const drafts: SubjectDraft[] = [
+      {
+        subjectCode: "0625",
+        qualificationLevel: "igcse",
+        papers: new Set([1]),
+        targetGrade: null,
+        sessionMonth: null,
+        sessionYear: null,
+      },
+    ]
+
+    const payload = buildEnrolmentPayload(drafts)
+
+    expect(payload[0].qualificationLevel).toBe("igcse")
   })
 })
 

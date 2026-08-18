@@ -124,6 +124,7 @@ export function placementInviteSubject(enrolledCodes: readonly string[]): string
 
 export interface SubjectDraft {
   subjectCode: string
+  qualificationLevel: string | null
   papers: ReadonlySet<number>
   targetGrade: string | null
   sessionMonth: string | null
@@ -147,6 +148,7 @@ export function toggleInSet<T>(set: ReadonlySet<T>, item: T): Set<T> {
 export function buildEnrolmentPayload(drafts: SubjectDraft[]): EnrolmentUpsert[] {
   return drafts.map((draft) => ({
     subjectCode: draft.subjectCode,
+    qualificationLevel: draft.qualificationLevel,
     targetGrade: draft.targetGrade,
     sessionMonth: draft.sessionMonth,
     sessionYear: draft.sessionYear,

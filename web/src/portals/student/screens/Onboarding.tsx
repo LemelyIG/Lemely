@@ -97,6 +97,7 @@ export function Onboarding() {
       if (!SUPPORTED_SUBJECTS.some((s) => s.code === enrolment.subjectCode)) continue
       seededDrafts[enrolment.subjectCode] = {
         subjectCode: enrolment.subjectCode,
+        qualificationLevel: enrolment.qualificationLevel,
         papers: new Set(enrolment.papers),
         targetGrade: enrolment.targetGrade,
         sessionMonth: enrolment.sessionMonth,
@@ -128,6 +129,7 @@ export function Onboarding() {
       } else {
         next[code] = {
           subjectCode: code,
+          qualificationLevel: qualificationLevel,
           papers: new Set(),
           targetGrade: null,
           sessionMonth: null,
@@ -273,6 +275,9 @@ export function Onboarding() {
           onQualificationLevel={setQualificationLevel}
           drafts={drafts}
           onToggleSubject={toggleSubject}
+          onSubjectQualificationLevel={(code, value) =>
+            updateDraft(code, { qualificationLevel: value })
+          }
           onTogglePaper={togglePaper}
           onTargetGrade={(code, grade) => updateDraft(code, { targetGrade: grade })}
           onSessionMonth={(code, month) => updateDraft(code, { sessionMonth: month })}
