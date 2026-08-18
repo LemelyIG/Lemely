@@ -1,14 +1,14 @@
 # ACCURACY-STATE.md — resume pointer for the accuracy programme
 
-run_pointer: none
+run_pointer: run-2026-08-19-e
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: none
+branch: feature/accuracy-56-repair-the-fixture-renderer-and
 last_run_label: none
 last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: nothing started
+in_the_middle_of: #56: implemented on feature/accuracy-56-repair-the-fixture-renderer-and; accuracy-review running IN THIS session (must complete here, no handle survives)
 
 ---
 
