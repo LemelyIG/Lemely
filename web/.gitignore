@@ -15,6 +15,10 @@ dist
 dist-ssr
 *.local
 
+# wrangler's local state (dev sessions, wrangler.jsonc `.env` overrides)
+.wrangler
+.dev.vars
+
 # Playwright
 /test-results/
 /playwright-report/

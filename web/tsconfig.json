@@ -18,6 +18,9 @@
     },
     {
       "path": "./tsconfig.previews.json"
+    },
+    {
+      "path": "./worker/tsconfig.json"
     }
   ]
 }
