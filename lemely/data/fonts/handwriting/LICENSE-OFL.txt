@@ -9,5 +9,19 @@ IndieFlower-Regular.ttf  — Copyright 2010 The Indie Flower Authors
                             (kimberlygeswein.com)
 PatrickHand-Regular.ttf  — Copyright (c) 2010-2012 Patrick Wagesreiter
                             (mail@patrickwagesreiter.at)
+NotoSansMath-Subset.ttf   — Copyright 2022 The Noto Project Authors
+                            (https://github.com/notofonts/math). A
+                            glyph-subset of Noto Sans Math Regular, built
+                            with fontTools.subset, retaining only ASCII plus
+                            the Greek letters theta/pi/omega, degree sign,
+                            plus/minus, multiplication sign, em dash, minus
+                            sign, square root, and comparison operators
+                            (approx-equal, not-equal, less/greater-or-equal).
+                            Used as a per-glyph rendering fallback in
+                            lemely/accuracy/synth.py for characters absent
+                            from the cmap of the selected handwriting font
+                            (Caveat/IndieFlower/PatrickHand all lack theta;
+                            Caveat/IndieFlower also lack pi, omega, and the
+                            square-root sign).
 
 Full OFL 1.1 license text: https://openfontlicense.org
