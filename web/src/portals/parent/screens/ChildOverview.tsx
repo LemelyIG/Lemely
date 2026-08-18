@@ -57,7 +57,11 @@ function SubjectRow({ childId, subject }: { childId: string; subject: SubjectOve
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="text-body-lg font-medium text-ink">{primary}</div>
         <div className="text-body-sm text-ink-muted">
-          <span className="text-data-sm">{secondary}</span> ·{" "}
+          {/* `secondary` is "" for an unregistered subject code (name === code,
+              see `subjectIdentifier`) — omitted entirely rather than leaving a
+              leading " · " with nothing before it. */}
+          {secondary ? <span className="text-data-sm">{secondary}</span> : null}
+          {secondary ? " · " : null}
           {subject.paperCount === 1 ? "1 paper" : `${subject.paperCount} papers`} · latest{" "}
           <span className="text-data-sm">{Math.round(subject.latestPercentage)}%</span>
         </div>

@@ -156,15 +156,19 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
                   not disagree about which text is the headline. */}
               <span
                 className={cn(
-                  "inline-flex w-fit max-w-full items-center truncate rounded-sm px-2 py-1",
+                  "inline-flex w-fit max-w-full items-center rounded-sm px-2 py-1",
                   "text-body-md font-medium",
                   toneFill(subjectToneForCode(row.code)),
                 )}
               >
-                {primary}
+                {/* `truncate` moved onto this inner span: `text-overflow:
+                    ellipsis` cannot act on a flex item (`inline-flex` above),
+                    so a long name hard-clipped with no "…" when it sat on the
+                    flex container directly. */}
+                <span className="truncate">{primary}</span>
               </span>
               <span className="truncate text-body-sm text-ink-faint">
-                {secondary} · {row.detail}
+                {[secondary, row.detail].filter(Boolean).join(" · ")}
               </span>
             </span>
           )

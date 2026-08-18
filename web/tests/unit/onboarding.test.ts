@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  backfillNullQualificationLevels,
   buildConfidenceRatingsPayload,
   buildEnrolmentPayload,
   buildProfilePatchPayload,
@@ -149,6 +150,56 @@ describe("buildEnrolmentPayload", () => {
     const payload = buildEnrolmentPayload(drafts)
 
     expect(payload[0].qualificationLevel).toBe("igcse")
+  })
+})
+
+describe("backfillNullQualificationLevels — toggle-then-set-global level regression", () => {
+  it("backfills a draft still at null when the profile-wide level is set afterwards", () => {
+    // The bug: a student ticks Physics and Maths (both drafts seed `null`
+    // because no level has been picked yet), then scrolls up and picks
+    // "A-Level". Without the back-fill, both enrolments PUT
+    // `qualificationLevel: null` despite the explicit choice.
+    const drafts: Record<string, SubjectDraft> = {
+      "0625": {
+        subjectCode: "0625",
+        qualificationLevel: null,
+        papers: new Set([1]),
+        targetGrade: null,
+        sessionMonth: null,
+        sessionYear: null,
+      },
+      "9709": {
+        subjectCode: "9709",
+        qualificationLevel: null,
+        papers: new Set([1]),
+        targetGrade: null,
+        sessionMonth: null,
+        sessionYear: null,
+      },
+    }
+
+    const backfilled = backfillNullQualificationLevels(drafts, "a_level")
+    const payload = buildEnrolmentPayload(Object.values(backfilled))
+
+    expect(payload.every((entry) => entry.qualificationLevel !== null)).toBe(true)
+    expect(payload.map((entry) => entry.qualificationLevel)).toEqual(["a_level", "a_level"])
+  })
+
+  it("does not overwrite a draft that already has its own per-subject level", () => {
+    const drafts: Record<string, SubjectDraft> = {
+      "0625": {
+        subjectCode: "0625",
+        qualificationLevel: "igcse", // an explicit per-subject override
+        papers: new Set([1]),
+        targetGrade: null,
+        sessionMonth: null,
+        sessionYear: null,
+      },
+    }
+
+    const backfilled = backfillNullQualificationLevels(drafts, "a_level")
+
+    expect(backfilled["0625"].qualificationLevel).toBe("igcse")
   })
 })
 

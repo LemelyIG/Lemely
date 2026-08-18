@@ -100,8 +100,12 @@ export function SubjectDetail() {
           <div className="flex flex-col gap-0.5">
             <h1 className="text-display-lg text-ink">{primary}</h1>
             {/* Level + code as secondary detail, never the headline (§4.8 design
-                note), and on the data face, which is what a syllabus code is. */}
-            <div className="text-data-sm text-ink-faint">{secondary}</div>
+                note), and on the data face, which is what a syllabus code is.
+                Omitted entirely when empty — an unregistered subject code
+                resolves `name === code` and `secondary` collapses to ""
+                (see `subjectIdentifier`'s docstring) — rather than an empty
+                data-face line. */}
+            {secondary ? <div className="text-data-sm text-ink-faint">{secondary}</div> : null}
           </div>
         </div>
         <PredictedBasis papers={papers.length} />

@@ -524,8 +524,9 @@
      empty space between "4 papers corrected" and the bar, because the text
      column absorbs everything and a subject row genuinely has little text in
      it — the text column stacks the coloured subject-name pill (already
-     bounded to its own label's width) over a short secondary line ("Cambridge
-     IGCSE · 4 papers corrected"). Giving the meter the larger flex share fills
+     bounded to its own label's width) over a short secondary line ("IGCSE ·
+     0625 · 4 papers corrected", the actual string `SubjectLedgerRow` renders).
+     Giving the meter the larger flex share fills
      the row and spends the extra width on the one thing that gets better with
      resolution, which is the bar itself. */
   grid-template-columns: minmax(0, 1fr) minmax(150px, 2.4fr) 88px auto;

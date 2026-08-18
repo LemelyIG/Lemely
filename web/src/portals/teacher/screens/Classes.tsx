@@ -353,7 +353,15 @@ export function Classes() {
                       {c.subjectCode ? (
                         <div className="flex flex-col gap-0.5">
                           <span className="text-body-sm text-ink">{c.subjectName ?? c.subjectCode}</span>
-                          <span className="text-data-sm text-ink-faint">{c.subjectCode}</span>
+                          {/* Omitted when the name has resolved to the code
+                              itself — a class's `subjectCode` is free text a
+                              teacher typed, so most classes hit the det
+                              registry's default profile (name === code, see
+                              `subjectIdentifier`'s docstring) and this element
+                              would otherwise print the same code twice. */}
+                          {(c.subjectName ?? c.subjectCode) !== c.subjectCode ? (
+                            <span className="text-data-sm text-ink-faint">{c.subjectCode}</span>
+                          ) : null}
                         </div>
                       ) : (
                         <span className="text-body-sm text-ink-faint">Not set</span>

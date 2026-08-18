@@ -11,6 +11,7 @@ import {
   useStudentProfile,
 } from "@/lib/hooks/useMeApi"
 import {
+  backfillNullQualificationLevels,
   buildConfidenceRatingsPayload,
   buildEnrolmentPayload,
   buildProfilePatchPayload,
@@ -272,7 +273,14 @@ export function Onboarding() {
       {wizardStep === "subjects" ? (
         <SubjectsStep
           qualificationLevel={qualificationLevel}
-          onQualificationLevel={setQualificationLevel}
+          onQualificationLevel={(value) => {
+            setQualificationLevel(value)
+            // Back-fill drafts still at `null` — a subject ticked before the
+            // level was picked must not be left behind. A draft with its own
+            // per-subject override is left untouched. See
+            // `backfillNullQualificationLevels`'s docstring.
+            setDrafts((prev) => backfillNullQualificationLevels(prev, value))
+          }}
           drafts={drafts}
           onToggleSubject={toggleSubject}
           onSubjectQualificationLevel={(code, value) =>

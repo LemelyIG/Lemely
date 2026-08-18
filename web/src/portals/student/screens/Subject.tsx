@@ -124,7 +124,11 @@ export function Subject() {
             the side. It did not show up as a scrollbar either, because html and
             body clip — the title simply had its end cut off. */}
         <div className="min-w-0 flex-1 basis-80">
-          <div className="text-data-sm text-ink-muted">{secondary}</div>
+          {/* Rendered only when there is something to show: an unregistered
+              subject code resolves `name === code` and `secondary` collapses
+              to "" (see `subjectIdentifier`'s docstring), and an empty
+              eyebrow `<div>` would still take up a line of vertical rhythm. */}
+          {secondary ? <div className="text-data-sm text-ink-muted">{secondary}</div> : null}
           <h1 className="mt-1 text-display-lg text-ink">{primary}</h1>
           <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-ink-muted">
             {subjectHeader.intro}

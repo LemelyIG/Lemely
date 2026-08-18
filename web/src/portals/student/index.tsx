@@ -257,7 +257,7 @@ function SubjectNavGroup({
             to={`/student/subject/${subject.code}`}
             label={subject.name}
             icon={Glyph}
-            tag={secondary}
+            tag={secondary || undefined}
             touch={touch}
             onClick={onNavigate}
           />

@@ -116,7 +116,15 @@ export function Classes() {
                       <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
                         {schoolClass.subjectName ?? schoolClass.subjectCode}
                       </Badge>
-                      <span className="text-data-sm text-ink-faint">{schoolClass.subjectCode}</span>
+                      {/* Omitted when the name has resolved to the code
+                          itself — a class's `subjectCode` is free text a
+                          teacher typed, so most classes hit the det
+                          registry's default profile (name === code, see
+                          `subjectIdentifier`'s docstring) and this element
+                          would otherwise print the same code twice. */}
+                      {(schoolClass.subjectName ?? schoolClass.subjectCode) !== schoolClass.subjectCode ? (
+                        <span className="text-data-sm text-ink-faint">{schoolClass.subjectCode}</span>
+                      ) : null}
                     </div>
                   ) : (
                     <span className="text-body-sm text-ink-faint">Not set</span>

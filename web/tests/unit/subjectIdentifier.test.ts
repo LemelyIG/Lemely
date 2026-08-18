@@ -42,4 +42,21 @@ describe("subjectIdentifier", () => {
       secondary: "0625",
     })
   })
+
+  it("drops the code from secondary when the name has resolved to the code itself", () => {
+    // An unregistered subject code — `get_profile(code).name or code` falls
+    // back to the code, so `name === code` and printing the code again would
+    // stack the same string on top of itself.
+    expect(subjectIdentifier("0620", "0620", null)).toEqual({
+      primary: "0620",
+      secondary: "",
+    })
+  })
+
+  it("still shows the level when name has resolved to the code itself", () => {
+    expect(subjectIdentifier("0620", "0620", "igcse")).toEqual({
+      primary: "0620",
+      secondary: "IGCSE",
+    })
+  })
 })
