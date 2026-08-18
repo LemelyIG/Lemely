@@ -523,11 +523,12 @@
      150px meter and a `1fr` text column, a wide desktop row put ~600px of
      empty space between "4 papers corrected" and the bar, because the text
      column absorbs everything and a subject row genuinely has little text in
-     it — `SubjectRowDTO.name` echoes the code, so the row's only prose is a
-     short "N papers corrected". Giving the meter the larger flex share fills
+     it — the text column stacks the coloured subject-name pill (already
+     bounded to its own label's width) over a short secondary line ("Cambridge
+     IGCSE · 4 papers corrected"). Giving the meter the larger flex share fills
      the row and spends the extra width on the one thing that gets better with
      resolution, which is the bar itself. */
-  grid-template-columns: auto minmax(0, 1fr) minmax(150px, 2.4fr) 88px auto;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 2.4fr) 88px auto;
 }
 
 /* P6.1: every `1fr` below is `minmax(0, 1fr)`, for the reason stated on

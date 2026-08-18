@@ -148,26 +148,25 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
         {(() => {
           const { primary, secondary } = subjectIdentifier(row.name, row.code, row.qualificationLevel)
           return (
-            <>
-              {/* Name leads — the pastel tone still comes from `subjectToneForCode`,
-                  §3.8's single lookup table, now carrying the code chip rather
-                  than doubling as the row's identity. */}
+            <span className="flex flex-col gap-0.5 flex-1 min-w-0 md:flex-none">
+              {/* The name is the row's identity now, so it is the element that
+                  carries the pastel tone (§3.8's single lookup table, still
+                  resolved from the code) rather than a separate code chip —
+                  colour is a stronger signal than font-weight, and the two must
+                  not disagree about which text is the headline. */}
               <span
                 className={cn(
-                  "inline-flex shrink-0 items-center rounded-sm px-2 py-1 text-data-sm",
+                  "inline-flex w-fit max-w-full items-center truncate rounded-sm px-2 py-1",
+                  "text-body-md font-medium",
                   toneFill(subjectToneForCode(row.code)),
                 )}
               >
-                {row.code}
+                {primary}
               </span>
-
-              <span className="flex flex-col gap-0.5 flex-1 min-w-0 md:flex-none">
-                <span className="truncate text-body-md font-medium text-ink">{primary}</span>
-                <span className="truncate text-body-sm text-ink-faint">
-                  {secondary} · {row.detail}
-                </span>
+              <span className="truncate text-body-sm text-ink-faint">
+                {secondary} · {row.detail}
               </span>
-            </>
+            </span>
           )
         })()}
 
