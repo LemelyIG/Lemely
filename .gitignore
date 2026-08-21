@@ -124,3 +124,8 @@ web/dist-previews/
 # here and `git add -A` stages it. Caught in P6.4 when a vitest cache file
 # landed in a commit that way.
 /node_modules/
+
+# Scratch PR bodies written by the accuracy-pr-land workflow.
+# Untracked scratch matters here: the unattended supervisor auto-commits a
+# dirty tree, so an un-ignored leftover lands as a stray commit.
+.pr-body-*.md
