@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #56: implemented and committed at 99cebad, working tree clean, branch unpushed. ruff clean; 19/19 in tests/test_accuracy_synth.py. The full suite was green on this tree on 2026-08-21 (rc=0, 20.2 min) — do NOT re-run it, the supervisor sweeps it between runs (§9.1). Next: accuracy-review on develop...HEAD with issue 56, then accuracy-pr-land. wf_bfdc731e-612 is DEAD (supervisor STOPped 2026-08-19 02:57); any wf_ id you find in an older note is a dead handle, not something to collect.
+in_the_middle_of: Sweep of e599554 was RED (5 gates); triaged without re-running the suite. Fixed+committed: 3945e7c (import-linter resolved via PATH, died FileNotFoundError under the sweep's unactivated pytest), c524e55 (test_web_parent time bomb — seeds hardcoded 2026-08-04/05 vs _INACTIVITY_DAYS=14, went red 2026-08-19, pre-existing on develop), 809c7be (audit TMPDIR over sockaddr_un's 108B limit from any worktree). 89b85ae records the 2 still-open gates (playwright-e2e mastery 88%, impeccable-detect) in BLOCKERS.md — both need the live stack, NEITHER runs in CI (ci.yml web job stops at npm run build), and neither is #56's. #56 itself is unchanged and clean: 19/19 test_accuracy_synth, check.sh --fast all green. NOTE: the prior 'full suite green 2026-08-21' claim in this file was wrong — the parent time bomb had already fired. Coverage/70% floor still UNVERIFIED locally (fast runs used --no-cov); CI decides. Branch unpushed, tree clean. Next: accuracy-review on develop...HEAD for #56, then accuracy-pr-land.
 
 ---
 
