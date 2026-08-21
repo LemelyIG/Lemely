@@ -2430,3 +2430,57 @@ them whether or not Phase 6 fixes them.
   M0.2's corrected table is exercised).
 - **Next:** re-run the implement stage on the existing #25 branch for the three structural
   MUST-FIXes. No new branch, and no assertion weakened to go green.
+
+## 2026-08-21 — accuracy run-2026-08-21-a (cont.): M0.1 landed, and three false-green agent reports
+
+- **#25 (M0.1) landed.** PR #71 → `develop` as `d5a8424`, CI green on all five jobs. M0's Done
+  count is now 4 of 11 (#56, #26, #31, #25). The spec §4 ordering constraint is finally
+  satisfied, so `board next`'s selection of #32 no longer needs overriding.
+- **#69/PR #70 landed first, by necessity.** The supervisor-tooling fix had to reach `develop`
+  *before* #25 could drop it, because a #25 that carried the removal would have deleted those
+  files from `develop` on merge. Ordering, not preference.
+- **Learned — the collapse rule the review asked for would have inverted the defect.**
+  `_distinct_leaves` counted 68 records where the spec requires 28 leaves; the prescribed fix
+  was "a deterministic (not first-seen) collapse rule". Taken literally that keeps the first
+  of `correct` < `partial` < `wrong` — every leaf represented by its *correct* variant, and
+  accuracy driven toward 100% by construction. An honest denominator bolted to a dishonest
+  numerator is worse than the inert bug it replaces, because it looks rigorous. DA6 derives
+  the outcome from all variants instead (correct iff *every* scored record is correct).
+- **Learned — my own decision record was wrong within the hour.** DA6 asserted
+  "`exclusion_funnel` counts leaves and is unaffected by the outcome rule". The implementer
+  showed it false: the funnel collapses without a `_scored` prefilter while `wilson` filters
+  first, so one leaf could be scored+correct to `wilson` and excluded to the funnel — the
+  funnel contradicting the denominator it exists to explain. DA6a fixes it and pins
+  `exclusion_funnel` scored-count == `wilson` n with a real-corpus test. The agent was right
+  to stop and ask rather than invent the policy.
+- **Learned — `params_fingerprint` could not tell two models apart.** It hashed
+  `temperature|top_p|seed|thinking_budget` and omitted the model, while the codebase's own
+  canonical fingerprint hashes seven components. Two different models both produced
+  `ce5aa7b9ccad`. Once M0.3's A/B reads that field it reports "same parameters" — a false zero
+  delta manufactured by the instrument rather than observed in the models.
+- **Learned — agent reports were false-green three times in one session**, each caught only by
+  re-running the gate rather than accepting the claim: a "pre-commit green" describing a tree
+  that was never committed (the auto-fix was never amended in); a "ruff clean" with a live
+  D205; and a report citing commit shas that were not on the branch. The last one was a
+  *concurrency* symptom — see below.
+- **Learned — two agents ran on the single shared worktree at once, and one rewrote the branch
+  history.** Four commits left the branch under me. §3.2 forbids exactly this. It was benign
+  only because `git diff` between the old and new tips was empty and both produced an
+  identical diff against `develop` — verified, not assumed. The same race could as easily have
+  destroyed work. Never dispatch an implementer while another is live.
+- **Learned — the state-file corruption was a tool bug, and my first fix was a symptom fix.**
+  `_parse_state_header` tested `": " in line`, so an empty-valued key was invisible; `state set`
+  then *inserted* a duplicate and the supervisor's `grep -m1` read the empty one. Every handoff
+  note was invisible to the next run — the §7 failure that stalled #56 for seven runs. Repaired
+  by hand during #31, it silently returned. Now #69, with 6 tests, 4 failing against the old
+  parser.
+- **Also learned — a CI watcher that cannot run its own tools reports success.** A poll loop
+  printed `SETTLED` while three jobs were pending, because `jq` is not installed and the
+  negated `jq -e` read its own failure as "nothing pending".
+- **Deferred and filed rather than left in a state file:** #72 (`EvalRecord`s are discarded, so
+  the `run_id` → `RunManifest` join is unobservable outside `measure_accuracy`) and #73
+  (`_build_run_manifest` hardcodes `cache_mode`/`split`, which becomes wrong the moment M0.2's
+  cache bypass or an M0.7a-gated read depends on the manifest being truthful).
+- **Spend unchanged:** no Gemini calls this run; ledger still $0.4026.
+- **Next:** #32 (M0.8). No baseline run before it lands — §2 forbids it and #32 is the last
+  fixture prerequisite.
