@@ -10477,3 +10477,57 @@ by the outcome rule.
 
 Flagged to the human on #25 and the accuracy topic, because it moves every published
 accuracy figure and the spec genuinely does not decide it.
+
+## DA6a — Amendment: the DA6 scope sentence about `exclusion_funnel` was wrong (#25)
+
+**The error.** DA6's Scope paragraph above states "`exclusion_funnel` counts leaves and
+is unaffected by the outcome rule." That sentence is **false as implemented**, and this
+record does not silently rewrite it — DA6 stays as written above for the historical
+record, and this amendment supersedes only that one clause.
+
+**Why it was wrong.** DA6's Scope sentence assumed `exclusion_funnel`'s leaf set and
+`wilson`'s leaf set were built the same way. They were not. `wilson`, `review_rate` and
+`risk_coverage` all call `_scored()` — which drops `excluded` records — **before**
+collapsing to distinct leaves via `_distinct_leaves`. `exclusion_funnel` collapsed to
+distinct leaves directly, with no `_scored()` prefilter, because its whole job is to
+report the excluded count that `_scored()` elsewhere throws away. That difference is
+exactly where DA6's unanimity rule bites: take a leaf with two fixture-variant records,
+one `excluded` (that variant's extraction failed) and one `correct` (the other variant
+was scored correct). `wilson` drops the `excluded` record via `_scored()` first, so the
+surviving single `correct` record makes the leaf count as scored-and-correct. But
+`exclusion_funnel`, collapsing both records together, applies DA6 unanimity over "all of
+the leaf's records" as written — not all `correct`, so it picks a non-`correct`
+representative, which here is the `excluded` record, so the SAME leaf is reported as
+excluded by the funnel. The funnel — which exists to *explain* `wilson`'s denominator —
+could disagree with the denominator it was supposed to justify. Spec §9 gate 7 requires
+every reported rate to name its denominator and its exclusions; a funnel that can
+contradict the number it exists to explain fails that gate by construction.
+
+**Decision.** A leaf is `excluded` in `exclusion_funnel` iff **every** record for that
+leaf is `excluded` — i.e. the leaf has no scored record at all. If any record for the
+leaf was scored, the leaf is scored, not excluded: one variant's extraction failing is
+not evidence the question was never attempted, when another variant proves it was
+(spec §3.3's outcome-semantics table defines `excluded` as "never attempted"). For a
+scored leaf, the outcome is still derived by DA6 unanimity, but over its **scored**
+records only — `excluded` records are discarded first and never allowed to make an
+otherwise-scored leaf non-correct, because an `excluded` record carries no marking-
+accuracy evidence; letting it poison the outcome would understate accuracy for a reason
+unrelated to marking, which is a different-shaped dishonest numerator than the one DA6
+was written to prevent.
+
+**The checkable invariant.** `exclusion_funnel`'s scored-leaf count must equal the `n`
+that `wilson` reports on the same records. This is pinned by a regression test over the
+real `tests/golden` corpus (`tests/eval/test_analyses.py`,
+`test_exclusion_funnel_scored_count_matches_wilson_n`), not synthetic rows, so the two
+can never silently drift apart again.
+
+**Scope (superseding DA6's).** `exclusion_funnel` now collapses leaves via a
+scored-aware variant of the DA6 rule (`_distinct_leaves_scored_aware` /
+`_collapse_leaf_group_scored_aware` in `lemely/eval/analyses.py`), not the plain
+`_distinct_leaves`/`_collapse_leaf_group` that `wilson` and `review_rate` use on their
+already-`_scored()`-filtered input. `risk_coverage` was checked against the same
+question and does **not** have this bug: it filters `_scored()` before collapsing,
+exactly like `wilson` and `review_rate`, so it needs no change.
+
+Flagged to the human on #25 and the accuracy topic, alongside DA6, because it corrects a
+claim in that same record.
