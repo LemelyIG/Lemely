@@ -62,6 +62,14 @@ class GoldenCase:
     ground_truth: dict[str, GoldenAnswer]  # question_id -> GoldenAnswer
     scan_path: Path | None = None  # present only when extraction test is possible
     fixture_variant: str | None = None  # "correct" | "partial" | "wrong" | None
+    #: True when this fixture is a deliberate excerpt — it declares a full
+    #: paper's ``maximum_mark`` while carrying only a subset of leaves (spec
+    #: §2.3(d); M0.8/#32). Sourced from an explicit ``case.json`` sidecar
+    #: marker (see `load_golden_cases`), never derived from
+    #: ``maximum_mark`` vs. leaf-sum, and never stored inside
+    #: ``mark_scheme.json``'s ``MarkSchemeMetadata`` — that model is the
+    #: production Gemini-parser schema and would silently drop an unknown key.
+    is_excerpt: bool = False
 
 
 def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
@@ -76,6 +84,14 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
     (if any) is split off: it becomes ``fixture_variant`` and is stripped
     from ``paper_id``, so the three DA6 variants of the same underlying paper
     share one ``paper_id`` (spec §3.3; BUILD/DECISIONS.md DA6).
+
+    An optional ``case.json`` sidecar (``{"is_excerpt": true}``) marks a
+    fixture as a deliberate excerpt (spec §2.3(d); M0.8/#32). It is a plain
+    JSON file read directly here, never merged into ``mark_scheme.json`` —
+    that file round-trips through ``MarkScheme.model_validate_json``, whose
+    ``MarkSchemeMetadata`` is the production Gemini-parser schema and would
+    silently drop an unrecognised key. A missing sidecar (or a missing
+    ``is_excerpt`` key within it) defaults to ``False``.
     """
     cases: list[GoldenCase] = []
     for case_dir in sorted(golden_dir.iterdir()):
@@ -95,6 +111,14 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
             continue
         scan_path = case_dir / "scan.pdf"
         paper_id, fixture_variant = _split_fixture_variant(case_dir.name)
+        is_excerpt = False
+        case_marker_path = case_dir / "case.json"
+        if case_marker_path.exists():
+            try:
+                marker: dict[str, object] = json.loads(case_marker_path.read_text(encoding="utf-8"))
+                is_excerpt = bool(marker.get("is_excerpt", False))
+            except Exception as exc:
+                log.warning("golden_case_marker_load_error", case_dir=str(case_dir), error=str(exc))
         cases.append(
             GoldenCase(
                 paper_id=paper_id,
@@ -102,6 +126,7 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
                 ground_truth=ground_truth,
                 scan_path=scan_path if scan_path.exists() else None,
                 fixture_variant=fixture_variant,
+                is_excerpt=is_excerpt,
             )
         )
     return cases

@@ -57,7 +57,7 @@
   "questions": [
     {
       "id": "1a_i",
-      "parent_id": null,
+      "parent_id": "1",
       "marks": 2,
       "type": "calculation",
       "question_command": null,
@@ -133,7 +133,7 @@
     },
     {
       "id": "1b",
-      "parent_id": null,
+      "parent_id": "1",
       "marks": 3,
       "type": "calculation",
       "question_command": null,
@@ -522,7 +522,7 @@
     },
     {
       "id": "12b",
-      "parent_id": null,
+      "parent_id": "12",
       "marks": 1,
       "type": "calculation",
       "question_command": null,
@@ -581,7 +581,7 @@
     },
     {
       "id": "12c",
-      "parent_id": null,
+      "parent_id": "12",
       "marks": 3,
       "type": "calculation",
       "question_command": null,

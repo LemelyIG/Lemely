@@ -269,6 +269,79 @@ class ECFContextTests(unittest.TestCase):
         )
         self.assertIn("1(a)", prior)
 
+    def test_golden_fixture_siblings_carry_prior_results_into_ai_prompt(self):
+        """M0.8 (#32) regression: the golden corpus must actually exercise the
+        sibling_prior / PRIOR PART RESULTS path, not just a hand-built scheme.
+
+        ``0580_s23_qp_22_theory_correct`` has two leaves, ``12a`` and ``12b``,
+        sharing ``parent_id="12"``. Before #32 every golden fixture had
+        ``parent_id=None`` on every leaf, so ``correct_paper``'s
+        ``if q.parent_id is not None:`` branch (correction_ai.py:464) never
+        fired for any leaf loaded via :func:`load_golden_cases`, and this test
+        failed with ``prior_results not passed`` for ``12b``. It passes once
+        the fixture's ``mark_scheme.json`` carries real ``parent_id`` values.
+        """
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from lemely.accuracy.harness import load_golden_cases
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.io.correction_ai import correct_paper
+
+        golden_dir = Path(__file__).resolve().parent / "golden"
+        cases = load_golden_cases(golden_dir)
+        case = next(c for c in cases if c.paper_id == "0580_s23_qp_22_theory")
+
+        leaf_count = len(case.mark_scheme.all_questions_flat())
+        ai_body = json.dumps(
+            {
+                "awarded_marks": 1,
+                "confidence": 0.95,
+                "matched_point_ids": [],
+                "feedback": "ok",
+            }
+        )
+        mock_resp = MagicMock(
+            text=ai_body,
+            candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+            usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+        )
+        extracted = ExtractedAnswers(
+            paper_id=case.paper_id,
+            source_scan="golden",
+            answers=[
+                ExtractedAnswer(question_id=qid, answer=gt.student_answer, confidence=1.0)
+                for qid, gt in case.ground_truth.items()
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _client_with_seq(tmp, [mock_resp] * leaf_count)
+
+        captured: list[dict] = []
+        import lemely.io.correction_ai as _corr_mod
+        import lemely.io.prompts.correction_ai as _prompt_mod
+
+        original_fn = _prompt_mod.build_marker_user_prompt
+
+        def _spy(*args, **kwargs):
+            captured.append({"args": args, "kwargs": kwargs})
+            return original_fn(*args, **kwargs)
+
+        with patch.object(_corr_mod, "build_marker_user_prompt", side_effect=_spy):
+            correct_paper(case.mark_scheme, extracted, gemini_client=client)
+
+        call_12b = next(c for c in captured if c["args"][0].id == "12b")
+        prior = call_12b["kwargs"].get("prior_results") or (
+            call_12b["args"][3] if len(call_12b["args"]) > 3 else None
+        )
+        self.assertIsNotNone(
+            prior, "prior_results not passed to build_marker_user_prompt for sibling '12b'"
+        )
+        self.assertIn("12a", prior)
+
 
 class ThresholdTests(unittest.TestCase):
     def _make_question(self):

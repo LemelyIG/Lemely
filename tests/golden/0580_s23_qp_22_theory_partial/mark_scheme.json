@@ -192,7 +192,7 @@
     },
     {
       "id": "12a",
-      "parent_id": null,
+      "parent_id": "12",
       "marks": 2,
       "type": "recall",
       "question_command": null,
@@ -241,7 +241,7 @@
     },
     {
       "id": "12b",
-      "parent_id": null,
+      "parent_id": "12",
       "marks": 1,
       "type": "recall",
       "question_command": null,

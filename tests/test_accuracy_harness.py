@@ -127,6 +127,26 @@ class LoadGoldenCasesTests(unittest.TestCase):
             cases = load_golden_cases(Path(tmp))
         self.assertEqual(len(cases), 0)
 
+    def test_is_excerpt_defaults_false_when_marker_absent(self):
+        """M0.8 (#32): a fixture with no case.json sidecar is not an excerpt."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_case_dir(Path(tmp))
+            cases = load_golden_cases(Path(tmp))
+        self.assertFalse(cases[0].is_excerpt)
+
+    def test_is_excerpt_true_when_case_json_marker_present(self):
+        """M0.8 (#32): case.json is a sidecar, never routed through MarkScheme
+        validation, so it cannot silently be dropped as an unknown pydantic key."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = self._make_case_dir(Path(tmp))
+            (case_dir / "case.json").write_text(json.dumps({"is_excerpt": True}))
+            cases = load_golden_cases(Path(tmp))
+        self.assertTrue(cases[0].is_excerpt)
+
 
 class MetricComputationTests(unittest.TestCase):
     def _qr(

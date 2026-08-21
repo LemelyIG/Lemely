@@ -218,7 +218,7 @@
     },
     {
       "id": "3a",
-      "parent_id": null,
+      "parent_id": "3",
       "marks": 3,
       "type": "recall",
       "question_command": null,
@@ -301,7 +301,7 @@
     },
     {
       "id": "3b",
-      "parent_id": null,
+      "parent_id": "3",
       "marks": 4,
       "type": "calculation",
       "question_command": null,
@@ -469,7 +469,7 @@
     },
     {
       "id": "4a",
-      "parent_id": null,
+      "parent_id": "4",
       "marks": 4,
       "type": "calculation",
       "question_command": null,
@@ -589,7 +589,7 @@
     },
     {
       "id": "4b",
-      "parent_id": null,
+      "parent_id": "4",
       "marks": 3,
       "type": "calculation",
       "question_command": null,
