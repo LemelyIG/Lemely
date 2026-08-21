@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import unittest
+from pathlib import Path
+
+
+def _lint_imports_command() -> str:
+    """Resolve `lint-imports` next to the running interpreter.
+
+    A bare name only resolves when the venv is activated, so an unactivated
+    run (`.venv/bin/python -m pytest`, as the gate sweep invokes it) failed
+    with FileNotFoundError instead of checking the contracts.
+    """
+    script = Path(sys.executable).parent / "lint-imports"
+    return str(script) if script.exists() else "lint-imports"
 
 
 class ImportLinterTests(unittest.TestCase):
     def test_all_contracts_pass(self) -> None:
         result = subprocess.run(
-            ["lint-imports"],
+            [_lint_imports_command()],
             capture_output=True,
             text=True,
             check=False,

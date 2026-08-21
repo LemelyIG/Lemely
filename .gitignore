@@ -97,6 +97,13 @@ tests/fixtures/real-papers/
 # no transcribed text, no imagery) — directive items 3, 4, 7.
 reports/accuracy-real/*/
 
+# Rendered review evidence for accuracy-programme issues (contact sheets, page
+# renders). These are eyeball artefacts for a single PR — attach them to the PR
+# or issue, never to the tree; they are large binaries nothing reads back.
+reports/accuracy/**/*.png
+reports/accuracy/**/*.jpg
+reports/accuracy/**/*.pdf
+
 # Component-kit preview build output (REDESIGN-MISSION Phase 2.6). The preview
 # is a dev tool with its own Vite entry; its build artifact is never shipped.
 web/dist-previews/

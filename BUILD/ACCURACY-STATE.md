@@ -1,6 +1,6 @@
 # ACCURACY-STATE.md — resume pointer for the accuracy programme
 
-run_pointer: run-2026-08-19-e
+run_pointer: run-2026-08-19-g
 worktree: /home/sico/Lemely-worktrees/accuracy
 branch: feature/accuracy-56-repair-the-fixture-renderer-and
 last_run_label: none
@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #56: implemented on feature/accuracy-56-repair-the-fixture-renderer-and; accuracy-review running IN THIS session (must complete here, no handle survives)
+in_the_middle_of: #56 LANDING. Tip 9b7f18b — NOTE this is PAST the swept sha 70f8f71, so the supervisor's pytest-PASS verdict does NOT cover the tip; CI on the PR is the proof. accuracy-review wf_12993fda-d2f returned merge-with-fixes: 1 surviving finding (intra-line font-run overprint — fidelity check was vertical-only; '½r²θ' overlapped 7px, shipped in golden/0606_s23_qp_12_theory_correct). Independently reproduced, then fixed in 9b7f18b (_lay_out_font_runs + _assert_no_run_overprint, _measure_run_widths routed through same layout so wrap==render; corpus regenerated, all 20 ground-truth files verified byte-identical, only 10 scan.pdf changed). 23/23 synth tests, check.sh --fast green. IN FLIGHT: accuracy-pr-land run wf_1ea02187-f53, journal /home/sico/.claude/projects/-home-sico-Lemely-worktrees-accuracy/f60e90fa-c7c0-4894-89a4-f054c05230e1/subagents/workflows/wf_1ea02187-f53/journal.jsonl — poll it, do NOT relaunch and do NOT open a second PR. Still-red web gates (impeccable-detect, playwright-e2e, ui-thresholds) are in BLOCKERS.md, none run in CI, none from #56.
 
 ---
 
@@ -29,7 +29,7 @@ duplicate tracker state here.** This file holds only what GitHub cannot:
 | `review_rate` | current measured review rate |
 | `ratchet` | the M0.9 ratchet state the review rate is judged against |
 | `spend_usd` | cumulative Gemini spend as the ledger records it |
-| `in_the_middle_of` | one line: what was mid-flight when the session ended |
+| `in_the_middle_of` | one line: what was mid-flight when the session ended. If anything long-running was left running in the background, this must name the command **and its log path**, so the next run polls that log instead of starting a second copy (MISSION §9.1). A run must never block on work that outlives it. |
 
 The supervisor greps the header with `grep -m1 "^key:"`, so every key above
 must stay exactly one line, at column zero, in `key: value` form, above the
