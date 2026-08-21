@@ -150,10 +150,21 @@ class _TransientError(Exception):
 
 
 class GeminiClient:
-    def __init__(self, settings: Settings, *, _genai_client: Any = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        _genai_client: Any = None,
+        default_cache_mode: Literal["read_write", "bypass", "refresh"] = "read_write",
+    ) -> None:
         self._settings = settings
         self._raw_client: Any = _genai_client
         self._ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
+        #: Single source of truth for this client's cache behaviour when a
+        #: call site does not pass an explicit ``cache_mode`` (spec §3.3):
+        #: ``_build_run_manifest`` reads this attribute rather than assuming
+        #: the ``"read_write"`` literal (#73).
+        self.default_cache_mode = default_cache_mode
 
     @property
     def _client(self) -> Any:
@@ -302,8 +313,10 @@ class GeminiClient:
         model: str | None = None,
         extra_cache_key: str = "",
         task_tag: str | None = None,
-        cache_mode: Literal["read_write", "bypass", "refresh"] = "read_write",
+        cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
     ) -> _T:
+        if cache_mode is None:
+            cache_mode = self.default_cache_mode
         if cache_mode not in ("read_write", "bypass", "refresh"):
             raise ValueError(
                 f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"

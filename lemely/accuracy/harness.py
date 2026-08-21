@@ -16,8 +16,9 @@ import structlog
 from pydantic import BaseModel, Field
 
 from lemely.core.loose_schemas import MarkScheme
-from lemely.eval.manifest import RunManifest
+from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
+from lemely.eval.test_touch import authorize_test_split_join
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
 
 log = structlog.get_logger()
@@ -420,6 +421,9 @@ def _build_run_manifest(
     cases: list[GoldenCase],
     settings: object,
     prompt_versions: dict[str, str],
+    gemini_client: object = None,
+    split: Split = "dev",
+    test_split_token: str | None = None,
 ) -> RunManifest:
     """Construct the :class:`RunManifest` this run's `EvalRecord`s join to (spec §3.3).
 
@@ -427,13 +431,26 @@ def _build_run_manifest(
     ``models_by_task``/``params_fingerprint`` come from ``settings.gemini``
     when a real :class:`~lemely.runtime.config.Settings` is supplied (empty
     dict / digest-of-nothing when it is not, e.g. in unit tests that pass
-    ``settings=None``); ``cache_mode`` reflects the harness's actual, unhedged
-    behaviour (it never overrides ``GeminiClient``'s ``"read_write"``
-    default); ``split`` is ``"dev"`` because the golden corpus *is* the golden
-    dev split per spec §5's M1 acceptance ("The population is the golden dev
-    split"); ``corpus_digest`` is a real hash of the loaded corpus, not an
-    invented value.
+    ``settings=None``); ``cache_mode`` is read off *gemini_client*'s own
+    ``default_cache_mode`` attribute — the client instance is the single
+    source of truth for its cache behaviour (falls back to ``"read_write"``
+    when no client, e.g. the correction-only bypass tests, was supplied);
+    ``split`` is whatever the caller authorised via *split*/*test_split_token*
+    — defaulting to ``"dev"`` because the golden corpus *is* the golden dev
+    split per spec §5's M1 acceptance ("The population is the golden dev
+    split") when no override is requested. A ``split="test"`` request is
+    gated through :func:`lemely.eval.test_touch.authorize_test_split_join`,
+    which raises :class:`~lemely.eval.test_touch.TestSplitAccessError` when
+    unauthorised rather than silently recording "dev" or "test".
+    ``corpus_digest`` is a real hash of the loaded corpus, not an invented
+    value.
     """
+    authorize_test_split_join(
+        split,
+        token=test_split_token,
+        run_id=run_id,
+        caller="lemely.accuracy.harness.measure_accuracy",
+    )
     gemini = getattr(settings, "gemini", None)
     if gemini is not None:
         models_by_task = {
@@ -469,8 +486,8 @@ def _build_run_manifest(
         prompt_versions=prompt_versions,
         params_fingerprint=hashlib.sha256(fingerprint_raw.encode()).hexdigest()[:12],
         models_by_task=models_by_task,
-        cache_mode="read_write",
-        split="dev",
+        cache_mode=getattr(gemini_client, "default_cache_mode", "read_write"),
+        split=split,
         corpus_digest=_corpus_digest(cases),
     )
 
@@ -481,6 +498,8 @@ def measure_accuracy(
     settings: object,  # Settings
     *,
     run_id: str | None = None,
+    split: Split = "dev",
+    test_split_token: str | None = None,
 ) -> AccuracyResult:
     """Run correction over all golden cases; compute metrics.
 
@@ -496,6 +515,12 @@ def measure_accuracy(
     produces and its `RunManifest`. It defaults to a fresh id per call (never
     a constant) so repeat runs of the same arm are distinguishable — required
     for M0.3's repeat-run churn measurement.
+
+    ``split`` defaults to ``"dev"``; requesting ``"test"`` requires
+    ``test_split_token`` to match the ``LEMELY_TEST_SPLIT_TOKEN`` environment
+    variable via :func:`lemely.eval.test_touch.authorize_test_split_join`
+    (spec §4 M0.7a), raising
+    :class:`~lemely.eval.test_touch.TestSplitAccessError` otherwise.
     """
     if run_id is None:
         run_id = f"run-{uuid.uuid4().hex[:12]}"
@@ -596,7 +621,15 @@ def measure_accuracy(
         calibration=_build_calibration(all_results),
         question_results=all_results,
         prompt_versions=prompt_versions,
-        manifest=_build_run_manifest(run_id, cases, settings, prompt_versions),
+        manifest=_build_run_manifest(
+            run_id,
+            cases,
+            settings,
+            prompt_versions,
+            gemini_client=gemini_client,
+            split=split,
+            test_split_token=test_split_token,
+        ),
     )
 
 
