@@ -613,3 +613,50 @@ ntfy. `BUILD/STEERING.md` and this file were the only channels that survived,
 which is what §10's file fallback is for, except §10 assumes the file mirrors
 an ntfy message and there it *was* the message. Still worth a real fix: a
 reporting path that does not need the same shell.
+
+---
+
+## OPEN — 2026-08-21 — two live-stack gates still red after the sweep triage
+
+The supervisor's sweep of `e599554` failed five gates. Three are fixed on
+`feature/accuracy-56-repair-the-fixture-renderer-and` (`3945e7c`, `c524e55`,
+`809c7be`); two are left open here because neither is reproducible without
+the live Supabase stack, and neither is caused by #56 — my branch touches
+nothing under `lemely/web/` or `web/src/`.
+
+**Neither of these runs in CI.** `.github/workflows/ci.yml`'s web job stops at
+`npm run build`; `playwright-e2e`, `puppeteer-audit`, `ui-thresholds` and
+`impeccable-detect` exist only in `scripts/check.sh`. So they gate the
+supervisor's sweep, not a PR — which is why #56 can still land on a green CI
+run while these stay red. That asymmetry is itself worth a decision: a gate
+that only ever runs on one machine is a gate nobody is accountable to.
+
+### 1. `playwright-e2e` — `0625 mastery: 88%` progressbar not found
+
+`web/e2e/student-journey.spec.ts:78`. The row and its "1 paper" text assert
+fine on line 76-77; only the mastery figure fails. **Not** the time-bomb class
+of bug — `scripts/seed_e2e.py` already seeds every `recorded_at` relative to
+`now` (`declining_recorded_ats`, `inactive_recorded_at`, etc.), which is the
+correct pattern and the one `test_web_parent.py` was missing. So either the
+mastery computation moved or the accessible name did. Undiagnosed: reproducing
+it needs the seeded stack plus a preview server.
+
+### 2. `impeccable-detect` — unknown
+
+`bash -c 'cd web && npx --yes impeccable detect src/'`. Network-dependent `npx`
+resolve, skipped in `--fast`. The sweep tail did not include its error, so
+there is no evidence yet on whether it is a real finding or a fetch failure.
+
+**Next step for both:** they need a run that can hold the live stack, or a
+supervisor sweep that captures and persists per-gate logs. Which brings up the
+real gap below.
+
+### The gap that outlives these two
+
+The sweep's verdict reaches the next session as prose in a prompt, and **the
+full log is not persisted anywhere on disk** — `reports/` had nothing, and the
+tail I was handed had already truncated the `pytest` failure that mattered. I
+recovered it only by re-deriving the failure locally, which is exactly the
+re-run the mission tells runs not to do. Writing each gate's output to
+`reports/.scratch/sweep/<gate>.log` would have turned ~40 minutes of this run
+into about two.
