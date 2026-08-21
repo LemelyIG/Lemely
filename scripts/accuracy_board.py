@@ -678,18 +678,31 @@ def _parse_state_header(lines: list[str]) -> tuple[dict[str, int], int]:
         if line.strip() == "---":
             boundary = i
             break
-        if ": " in line:
-            key = line.split(": ", 1)[0]
-            if re.fullmatch(r"[a-z_]+", key):
-                if key in header:
-                    raise BoardError(
-                        f"{_state_path()}: key {key!r} appears twice in the header "
-                        f"(lines {header[key] + 1} and {i + 1})"
-                    )
-                header[key] = i
+        # An empty-valued key (``in_the_middle_of:`` with nothing after the
+        # colon) is still a key. Matching on ``": " in line`` missed it, so
+        # ``state set`` took its "key absent" branch and INSERTED a second
+        # line, leaving the empty one above the real one — and the supervisor's
+        # ``grep -m1`` then read the empty match, silently blinding the resume
+        # pointer. The duplicate guard below could never fire for that case
+        # either, because the offending line was never recognised as a key.
+        key_match = re.fullmatch(r"([a-z_]+):(?: (.*))?", line)
+        if key_match:
+            key = key_match.group(1)
+            if key in header:
+                raise BoardError(
+                    f"{_state_path()}: key {key!r} appears twice in the header "
+                    f"(lines {header[key] + 1} and {i + 1})"
+                )
+            header[key] = i
     if boundary is None:
         raise BoardError(f"{_state_path()}: no '---' boundary found; header is malformed")
     return header, boundary
+
+
+def _state_line_value(line: str) -> str:
+    """Value of a ``key: value`` header line; ``''`` for an empty-valued ``key:``."""
+    _, _, value = line.partition(": ")
+    return value
 
 
 def _read_state_lines() -> list[str]:
@@ -731,7 +744,7 @@ def cmd_state_get(key: str) -> int:
     if key not in header:
         print(f"error: key {key!r} is absent from {_state_path()}", file=sys.stderr)
         return 1
-    value = lines[header[key]].split(": ", 1)[1]
+    value = _state_line_value(lines[header[key]])
     print(value)
     return 0
 
@@ -745,7 +758,7 @@ def cmd_state_set(key: str, value: str) -> int:
     new_value = value
     if key == "spend_usd" and value.startswith("+"):
         delta = float(value[1:])
-        current_text = lines[header[key]].split(": ", 1)[1] if key in header else "0"
+        current_text = _state_line_value(lines[header[key]]) if key in header else "0"
         try:
             current = float(current_text)
         except ValueError:
@@ -769,7 +782,7 @@ def cmd_state_show(as_json: bool) -> int:
     lines = _read_state_lines()
     header, _boundary = _parse_state_header(lines)
     values: dict[str, str] = {
-        key: lines[header[key]].split(": ", 1)[1] for key in STATE_KEYS if key in header
+        key: _state_line_value(lines[header[key]]) for key in STATE_KEYS if key in header
     }
     if as_json:
         print(json.dumps(values, indent=2))
