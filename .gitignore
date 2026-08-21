@@ -129,3 +129,8 @@ web/dist-previews/
 # Untracked scratch matters here: the unattended supervisor auto-commits a
 # dirty tree, so an un-ignored leftover lands as a stray commit.
 .pr-body-*.md
+
+# M0.7a test-touch ledger (lemely/eval/test_touch.py) — an append-only audit
+# log of authorised test-split evaluation joins, accumulated at runtime.
+# It is evidence produced by running the programme, not a source artefact.
+reports/accuracy/test-touch-ledger.jsonl

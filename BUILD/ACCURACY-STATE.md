@@ -1,15 +1,14 @@
 # ACCURACY-STATE.md — resume pointer for the accuracy programme
 
-run_pointer: run-2026-08-19-g
+run_pointer: run-2026-08-21-a
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: feature/accuracy-26-determinism-substrate-plus-the-three
+branch: feature/accuracy-31-split-mechanism-the-split-field-test
 last_run_label: none
 last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #26 (M0.2) at HEAD on feature/accuracy-26-determinism-substrate-plus-the-three (single commit 44b4789 + develop merge 3b39646 + checkpoint). UNPUSHED, NO PR YET. IN FLIGHT: accuracy-review run wf_0a16f904-0de, journal /home/sico/.claude/projects/-home-sico-Lemely-worktrees-accuracy/f60e90fa-c7c0-4894-89a4-f054c05230e1/subagents/workflows/wf_0a16f904-0de/journal.jsonl — POLL IT, do not relaunch. When it returns clean/merge-with-fixes-addressed: accuracy-pr-land {issue:26,branch:feature/accuracy-26-determinism-substrate-plus-the-three} (branch now carries #66's 2700s cap, so its Watch should reach CI conclusion). REGRESSION FIXED THIS RUN: sweep of a9e6052 had pytest FAIL because I hand-edited lemely.toml.example without updating its GENERATOR lemely/runtime/example_toml.py (test_settings_example_drift pins them); fixed in the generator and folded into the same single commit. KEY DECISION for the human: per_run_token_ceiling stays RUN-scoped, no per-sweep reset (that would delete the budget guard, §14); the issue's 200000 premise came from the example file, not the operative lemely.toml (2000000). NOTE: current HEAD is NOT covered by any sweep or CI — do not claim green for it.
-
+in_the_middle_of: #31 (M0.7a) on feature/accuracy-31-split-mechanism-the-split-field-test at ba2aa3a. accuracy-review DONE and CLEAN for this diff (run-2026-08-21-a): merge-with-fixes, no blocker, 6/6 dimensions; its one SHOULD-FIX (duplicated empty in_the_middle_of key) is fixed at ba2aa3a and verified. pre-commit --all-files green (NOTE: the language:system hooks need .venv/bin on PATH or mypy/lint-imports report 'Executable not found' — that is an environment answer, not a code verdict). tests/eval 17/17 green with --no-cov. run-2026-08-21-a is now running accuracy-pr-land {issue:31, branch:that branch, base:develop}. If this session died mid-land: check 'gh pr list --head feature/accuracy-31-split-mechanism-the-split-field-test' FIRST — a PR may already exist; do NOT open a second one. If the PR exists and CI is green, finish the merge BY HAND (pr-land caps its CI watch short). Do NOT re-run accuracy-review unless new CODE lands. Do NOT run the full pytest. §4 precondition: origin/develop..origin/main = 0. The sweep FAIL over this branch is the three standing WEB gates, already escalated in BUILD/BLOCKERS.md, not caused by #31 and not run by ci.yml — do not re-triage. DISCLOSE IN PR BODY: accuracy-issue-execute returned ready_for_pr=false and an earlier run fixed its MUST-FIX (an AST guard matching only ast.Eq, so it flagged nothing and AC5 was unenforced) by hand, then falsified it end-to-end; plus four non-blocking design limits (gate fails open on a split value not exactly 'test'; the token check is self-referential; the ledger is gitignored/unbounded/unchained though it is M0.7a's only evidence artefact; the guard scans only lemely/ and scripts/ and skips dirs named migrations) and the unrelated supervisor/BUILD checkpoint commits on this branch.
 ---
 
 ## Contract — keep this file THIN
