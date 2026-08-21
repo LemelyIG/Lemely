@@ -71,9 +71,23 @@ class GoldenCorpusInvariantsTests(unittest.TestCase):
         the only allowed exceptions, enumerated here explicitly rather than
         inferred, so a future fixture edit that silently drops parent_id
         cannot hide behind a loose exception rule.
+
+        The enumeration is necessary but not sufficient: each listed pair must
+        ALSO still be solo, re-derived from the mark scheme below. That closes
+        the gap the #32 review named — a hardcoded allowlist that stays green
+        after the fixture stops justifying it.
         """
         # (case_dir, leaf_id) pairs that are allowed to keep parent_id=None
         # despite having a lettered id, because no sibling shares their stem.
+        #
+        # Each entry below is JUSTIFIED, not merely asserted: 4a has no 4b, 5b
+        # no 5a, 11b no 11a anywhere in that mark scheme, so they are genuinely
+        # solo sub-parts — exactly the shape lemely/io/det/rows.py itself emits
+        # with parent_id=None, and a shape correction_ai.py's exact-parent_id
+        # sibling grouping could never pair up even if a parent were fabricated.
+        # The loop below re-derives that justification per entry and fails if it
+        # stops holding, so adding a 4b later cannot let 4a keep parent_id=None
+        # by hiding behind this list (#32, M0.8 review finding).
         allowed_standalone = {
             ("0625_s20_qp_31_theory_correct", "4a"),
             ("0625_s20_qp_31_theory_correct", "5b"),
@@ -98,11 +112,33 @@ class GoldenCorpusInvariantsTests(unittest.TestCase):
                         leaves.append(q)
                 return leaves
 
-            for leaf in walk(data["questions"]):
+            all_leaves = walk(data["questions"])
+
+            def stem(leaf_id: str) -> str:
+                """The numeric question number a leaf hangs off: 4a -> 4, 11b -> 11."""
+                match = re.match(r"\d+", leaf_id)
+                return match.group(0) if match else leaf_id
+
+            for leaf in all_leaves:
                 if not _LETTERED_SUBPART.search(leaf["id"]):
                     continue
                 with self.subTest(case=case_dir_name, leaf=leaf["id"]):
                     if (case_dir_name, leaf["id"]) in allowed_standalone:
+                        # The carve-out has to earn itself: a leaf may only skip
+                        # the parent_id requirement while it really is solo.
+                        siblings = [
+                            other["id"]
+                            for other in all_leaves
+                            if other["id"] != leaf["id"] and stem(other["id"]) == stem(leaf["id"])
+                        ]
+                        self.assertEqual(
+                            siblings,
+                            [],
+                            f"{case_dir_name}:{leaf['id']} is on the standalone "
+                            f"allowlist but now has stem-sharing sibling(s) "
+                            f"{siblings} — give it a parent_id and drop it from "
+                            f"allowed_standalone",
+                        )
                         continue
                     self.assertIsNotNone(
                         leaf.get("parent_id"),
