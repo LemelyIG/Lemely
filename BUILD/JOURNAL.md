@@ -2389,3 +2389,44 @@ them whether or not Phase 6 fixes them.
   number D6.1 recorded for 6.1: `reports/redesign/p6-adapt/` was empty with nothing committed,
   and that run cannot be reproduced from this tree. This session's committed `findings.json` is
   the honest baseline.
+
+## 2026-08-21 — accuracy run-2026-08-21-a: #31 landed, #25 caught with an inert denominator
+
+- **#31 (M0.7a) landed.** `accuracy-review` returned merge-with-fixes, no blocker; PR #68
+  squash-merged to `develop` as `47977cf` with all five CI jobs green on `0c493c9`. Board
+  Done, finish comment posted, branch pruned.
+- **`accuracy-pr-land` opened the PR but could not close it.** Its CI watch hit the 690s cap
+  with the pytest matrix still pending and correctly reported `timeout` — neither pass nor
+  fail. The merge was finished by hand once all five jobs reported. This is the third run to
+  meet that cap; the workflow's watch window is shorter than a 17-minute pytest matrix.
+- **Learned — a watcher that cannot run its own tools reports success.** The first CI poll
+  loop printed `SETTLED after 60s` while three jobs were still pending. The cause was not
+  `gh`'s exit code (my first guess) but that **`jq` is not installed in this shell**: `jq -e`
+  failed, and the negated test read that failure as "nothing pending". A missing binary and
+  a green build were indistinguishable. `gh --jq` is the fix; the absence is now recorded in
+  the state file.
+- **Learned — the review found the resume pointer had been blinded.** `ACCURACY-STATE.md`
+  carried two `in_the_middle_of:` keys, the first empty, and the supervisor reads with
+  `grep -m1`. Every handoff note written into that file was invisible to the next run. That
+  is the same class of failure §7 records as having stalled #56 for seven runs, sitting in
+  the one file whose only job is to survive the session.
+- **#25 (M0.1) implemented, blocked, no PR.** `ready_for_pr: false`, review verdict blocked.
+  Two mechanical blockers fixed here: the committed tree failed `ruff format --check`
+  (the implementer's auto-fix was never amended into the commit, so its "pre-commit green"
+  described a tree that was never committed), and the working tree was dirty.
+- **Learned — the blocking finding was a denominator that silently did nothing.**
+  `_distinct_leaves` keys on `(paper_id, question_id)` while `harness.py:245` hardcodes
+  `fixture_variant=None` and the corpus encodes the variant *inside* `paper_id`. The collapse
+  removes nothing: 68 records where spec §3.3 requires 28 distinct leaves. Its tests passed
+  because they fed mark-point rows that `_question_level()` strips before the collapse ever
+  runs — the reviewer proved it by monkeypatching `_distinct_leaves` to the identity and
+  watching every assertion stay green. An inflated denominator with a green test defending it
+  is precisely D18, the defect M0 exists to remove.
+- **Ordering — `board next` was overridden deliberately.** It selects #32 (M0.8), but spec §4's
+  tighter order is M0.0 → M0.1/M0.2 → M0.8, and #25 was open only because nobody moved it out
+  of Backlog. #32 would have jumped the queue; §8 says an ordering violation invalidates the
+  measurement.
+- **Spend unchanged:** no Gemini calls this run; ledger still $0.4026 (a lower bound until
+  M0.2's corrected table is exercised).
+- **Next:** re-run the implement stage on the existing #25 branch for the three structural
+  MUST-FIXes. No new branch, and no assertion weakened to go green.

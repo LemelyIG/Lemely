@@ -7,3 +7,26 @@ labeller process cannot reach pipeline code (spec §6).
 """
 
 from __future__ import annotations
+
+from lemely.eval.analyses import (
+    ablation_2x2,
+    exclusion_funnel,
+    mcnemar,
+    review_rate,
+    risk_coverage,
+    wilson,
+)
+from lemely.eval.manifest import LabelManifest, RunManifest
+from lemely.eval.records import EvalRecord
+
+__all__ = [
+    "EvalRecord",
+    "LabelManifest",
+    "RunManifest",
+    "ablation_2x2",
+    "exclusion_funnel",
+    "mcnemar",
+    "review_rate",
+    "risk_coverage",
+    "wilson",
+]

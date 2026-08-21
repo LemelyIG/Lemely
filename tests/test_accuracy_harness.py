@@ -100,6 +100,24 @@ class LoadGoldenCasesTests(unittest.TestCase):
         self.assertEqual(cases[0].paper_id, "aaa_paper")
         self.assertEqual(cases[1].paper_id, "zzz_paper")
 
+    def test_fixture_variant_parsed_from_dir_suffix(self):
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_case_dir(Path(tmp), name="0625_s20_qp_31_theory_correct")
+            cases = load_golden_cases(Path(tmp))
+        self.assertEqual(cases[0].paper_id, "0625_s20_qp_31_theory")
+        self.assertEqual(cases[0].fixture_variant, "correct")
+
+    def test_fixture_variant_none_when_dir_has_no_variant_suffix(self):
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_case_dir(Path(tmp), name="0625_m20_qp_12_mcq")
+            cases = load_golden_cases(Path(tmp))
+        self.assertEqual(cases[0].paper_id, "0625_m20_qp_12_mcq")
+        self.assertIsNone(cases[0].fixture_variant)
+
     def test_skips_malformed_answers_json(self):
         from lemely.accuracy.harness import load_golden_cases
 
@@ -341,3 +359,280 @@ class MeasureAccuracyTests(unittest.TestCase):
         mock_extract.assert_called_once()
         self.assertEqual(result.metrics.id_match_rate, 1.0)
         self.assertEqual(len(result.question_results), 3)
+
+
+class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
+    """M0.1 acceptance line (spec §4): AccuracyMetrics reproduced bit-identically
+    from ``list[EvalRecord]``.
+
+    No literal saved 2026-08-04 JSON exists in the repo (checked), so this
+    compares the legacy ``_compute_metrics(question_results)`` path against
+    the new ``EvalRecord``-derived path over equivalent inputs, per the
+    accepted risk-mitigation reading of that acceptance line.
+    """
+
+    def _qr(
+        self, qid: str, predicted: int, truth: int, confidence: float, review: bool, is_mcq: bool
+    ) -> object:
+        from lemely.accuracy.harness import QuestionResult
+
+        return QuestionResult(
+            question_id=qid,
+            question_type="mcq" if is_mcq else "theory",
+            predicted_marks=predicted,
+            truth_marks=truth,
+            confidence_score=confidence,
+            needs_teacher_review=review,
+        )
+
+    def test_synthetic_mixed_results_reproduce_bit_identically(self):
+        from lemely.accuracy.harness import (
+            _compute_metrics,
+            _metrics_from_eval_records,
+            question_result_to_eval_record,
+        )
+
+        results = [
+            self._qr("1", 2, 2, 0.95, False, is_mcq=True),  # mcq, correct, confident
+            self._qr("2", 0, 2, 0.55, True, is_mcq=False),  # theory, under, flagged
+            self._qr("3", 3, 1, 0.91, False, is_mcq=False),  # theory, over, confident+wrong
+            self._qr("4", 1, 1, 0.88, False, is_mcq=True),  # mcq, correct
+        ]
+        id_match_rate = 0.75
+
+        legacy = _compute_metrics(results, id_match_rate=id_match_rate)
+
+        eval_records = [
+            question_result_to_eval_record(
+                r, run_id="test-run", paper_id="paper-1", arm="extract+mark"
+            )
+            for r in results
+        ]
+        derived = _metrics_from_eval_records(eval_records, id_match_rate=id_match_rate)
+
+        self.assertEqual(legacy, derived)
+
+    def test_empty_results_reproduce_bit_identically(self):
+        from lemely.accuracy.harness import _compute_metrics, _metrics_from_eval_records
+
+        legacy = _compute_metrics([], id_match_rate=None)
+        derived = _metrics_from_eval_records([], id_match_rate=None)
+        self.assertEqual(legacy, derived)
+
+    def test_all_correct_reproduces_bit_identically(self):
+        from lemely.accuracy.harness import (
+            _compute_metrics,
+            _metrics_from_eval_records,
+            question_result_to_eval_record,
+        )
+
+        results = [self._qr("1", 1, 1, 0.99, False, is_mcq=False)]
+        legacy = _compute_metrics(results, id_match_rate=1.0)
+        eval_records = [
+            question_result_to_eval_record(
+                r, run_id="test-run", paper_id="paper-1", arm="oracle+mark"
+            )
+            for r in results
+        ]
+        derived = _metrics_from_eval_records(eval_records, id_match_rate=1.0)
+        self.assertEqual(legacy, derived)
+
+    def test_measure_accuracy_pipeline_matches_legacy_compute_metrics(self):
+        """Runs the real measure_accuracy() pipeline (both arms) and checks its
+        reported AccuracyMetrics — now internally EvalRecord-derived — equal
+        what _compute_metrics(question_results) would have computed for the
+        same question_results, proving no behavioural drift end-to-end."""
+        from lemely.accuracy.harness import (
+            GoldenAnswer,
+            GoldenCase,
+            _compute_metrics,
+            measure_accuracy,
+        )
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
+        case_scan = GoldenCase(
+            paper_id="p1",
+            mark_scheme=self._mark_scheme(["1", "2"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+            },
+            scan_path=Path("/nonexistent/scan.pdf"),
+        )
+        case_bypass = GoldenCase(
+            paper_id="p2",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+        fake_extracted = ExtractedAnswers(
+            paper_id="p1",
+            source_scan="fake",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(question_id="2", answer="B", confidence=0.9),  # wrong
+            ],
+        )
+
+        with patch("lemely.web.services.grading.extract_answers", return_value=fake_extracted):
+            result = measure_accuracy([case_scan, case_bypass], gemini_client=None, settings=None)
+
+        expected = _compute_metrics(
+            result.question_results, id_match_rate=result.metrics.id_match_rate
+        )
+        self.assertEqual(result.metrics, expected)
+
+    def _mark_scheme(self, question_ids: list[str]) -> object:
+        from lemely.core.loose_schemas import MarkScheme
+
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": len(question_ids),
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": qid, "marks": 1, "type": "mcq", "mcq_answer": "A"} for qid in question_ids
+            ],
+        }
+        return MarkScheme.model_validate(ms)
+
+
+class RunManifestTests(unittest.TestCase):
+    """M0.1/#25: run_id is the join key between EvalRecord rows and a
+    RunManifest (spec §3.3); it must not be a hardcoded literal."""
+
+    def _mark_scheme(self, question_ids: list[str]) -> object:
+        from lemely.core.loose_schemas import MarkScheme
+
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": len(question_ids),
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": qid, "marks": 1, "type": "mcq", "mcq_answer": "A"} for qid in question_ids
+            ],
+        }
+        return MarkScheme.model_validate(ms)
+
+    def _case(self) -> object:
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase
+
+        return GoldenCase(
+            paper_id="p1",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+
+    def test_default_run_id_varies_between_runs(self):
+        from lemely.accuracy.harness import measure_accuracy
+
+        r1 = measure_accuracy([self._case()], gemini_client=None, settings=None)
+        r2 = measure_accuracy([self._case()], gemini_client=None, settings=None)
+        self.assertNotEqual(r1.manifest.run_id, r2.manifest.run_id)
+
+    def test_explicit_run_id_propagates_to_manifest_and_eval_records(self):
+        from lemely.accuracy.harness import measure_accuracy
+
+        result = measure_accuracy(
+            [self._case()], gemini_client=None, settings=None, run_id="run-explicit-1"
+        )
+        self.assertEqual(result.manifest.run_id, "run-explicit-1")
+
+    def _settings_with_models(self, **models):
+        """Minimal stand-in for Settings.gemini with controllable per-task models."""
+        from types import SimpleNamespace
+
+        defaults = {"mark_scheme": "m-a", "extraction": "m-a", "correction": "m-a"}
+        defaults.update(models)
+        gemini = SimpleNamespace(
+            temperature=0.0,
+            top_p=1.0,
+            seed=7,
+            thinking_budget_for={"extraction": 100},
+            model_for=lambda task: defaults[task],
+        )
+        return SimpleNamespace(gemini=gemini)
+
+    def test_params_fingerprint_distinguishes_different_models(self):
+        """Two runs on different models must NOT share a params_fingerprint.
+
+        Regression test for the false-zero-delta trap: the fingerprint omitted
+        the model entirely, so an A/B across models recorded identical
+        parameters and M0.3 would read the difference as noise from the
+        instrument rather than a real change (spec §3.3).
+        """
+        from lemely.accuracy.harness import measure_accuracy
+
+        a = measure_accuracy(
+            [self._case()], gemini_client=None, settings=self._settings_with_models()
+        )
+        b = measure_accuracy(
+            [self._case()],
+            gemini_client=None,
+            settings=self._settings_with_models(extraction="m-DIFFERENT"),
+        )
+        self.assertNotEqual(
+            a.manifest.params_fingerprint,
+            b.manifest.params_fingerprint,
+            "a different extraction model must change the run's params_fingerprint",
+        )
+
+    def test_params_fingerprint_is_stable_for_identical_settings(self):
+        """The fingerprint must be deterministic, or every run looks like a change."""
+        from lemely.accuracy.harness import measure_accuracy
+
+        a = measure_accuracy(
+            [self._case()], gemini_client=None, settings=self._settings_with_models()
+        )
+        b = measure_accuracy(
+            [self._case()], gemini_client=None, settings=self._settings_with_models()
+        )
+        self.assertEqual(a.manifest.params_fingerprint, b.manifest.params_fingerprint)
+
+    def test_params_fingerprint_covers_max_output_tokens(self):
+        """``_MAX_OUTPUT_TOKENS`` is part of the hashed input, as it is canonically."""
+        import lemely.accuracy.harness as harness_mod
+        from lemely.accuracy.harness import measure_accuracy
+
+        settings = self._settings_with_models()
+        before = measure_accuracy(
+            [self._case()], gemini_client=None, settings=settings
+        ).manifest.params_fingerprint
+
+        original = harness_mod._MAX_OUTPUT_TOKENS
+        try:
+            harness_mod._MAX_OUTPUT_TOKENS = original + 1
+            after = measure_accuracy(
+                [self._case()], gemini_client=None, settings=settings
+            ).manifest.params_fingerprint
+        finally:
+            harness_mod._MAX_OUTPUT_TOKENS = original
+
+        self.assertNotEqual(before, after)
+
+    def test_manifest_is_a_run_manifest_instance(self):
+        from lemely.accuracy.harness import measure_accuracy
+        from lemely.eval.manifest import RunManifest
+
+        result = measure_accuracy([self._case()], gemini_client=None, settings=None)
+        self.assertIsInstance(result.manifest, RunManifest)
+        self.assertEqual(result.manifest.split, "dev")
+        self.assertEqual(
+            result.manifest.prompt_versions.keys(), {"extraction", "correction", "mark_scheme"}
+        )
