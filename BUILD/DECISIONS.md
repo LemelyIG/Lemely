@@ -10427,3 +10427,53 @@ spec §7. The constraint belongs in §7's strict-orderings table:
 | ruling sweep (#52) | agreement sample (#51) | Otherwise part of the A–B gap is ruling drift, not judgement, and the ceiling is deflated |
 
 Raised on #43 together with the §6 amendment.
+
+---
+
+## DA6 — What a distinct leaf's outcome *is* when its variants disagree (#25, M0.1/M0.6)
+
+**The gap.** Spec §2.3(b) and §3.3 settle the *denominator* and nothing else. §2.3(b):
+"Observations within a family are not independent, so every interval and power
+calculation quoted on n=68 is invalid." §3.3: "every interval or power calculation
+collapses to **distinct leaves** first." Verified against the corpus this run: the 10
+golden case dirs hold 68 answer rows, and stripping the `_correct`/`_partial`/`_wrong`
+suffix yields exactly 7+6+8+7 = **28** distinct `(paper, question)` leaves, matching
+§2.3(b) exactly.
+
+What no line of the spec states is **which record represents a leaf once three variants
+of the same question collapse into one row**. That is not a detail: `_distinct_leaves`
+feeds `wilson`, `risk_coverage`, `exclusion_funnel` and `review_rate`, so the surviving
+row supplies the **numerator**, not merely the count.
+
+**Why the obvious fix is a trap.** #25's review prescribed "a deterministic (not
+first-seen) collapse rule". Taken literally — sort and keep the first — the variants sort
+`correct` < `partial` < `wrong`, so every leaf would be represented by its **correct**
+variant and measured accuracy would approach 100% by construction. That pairs an honest
+denominator with a dishonest numerator, which is worse than the inert collapse it
+replaces, because it looks rigorous. The programme already has a name for this shape
+(D18, §2): a number that improves because of how it was counted.
+
+**Decision.** A leaf's outcome is **derived from all of its variant records, never
+sampled from them**. For the binary analyses, a distinct leaf counts as `correct` iff
+**every** scored record for that leaf is `correct`; otherwise it counts as not-correct.
+Properties that make this the defensible default: it is order-independent and
+deterministic; it consumes all 68 records rather than discarding 40; it cannot be gamed
+by sort order; and it errs **conservative** — it can only lower a reported accuracy,
+never flatter it (§14).
+
+**The alternative, recorded rather than silently discarded.** The textbook treatment of
+clustered binary data is a design-effect correction: the point estimate uses all 68
+records, while the interval's `n` is the 28 independent leaves. That preserves more
+information than unanimity does and is arguably the more accurate estimator. It is
+**not** adopted here because it changes `wilson`'s contract rather than its input, and
+because M1's gate is non-regression (§2), where the conservative direction is the safe
+one. If the human prefers the design-effect form, it supersedes this record and #25's
+analyses change shape.
+
+**Scope.** Applies to `wilson`, `review_rate` and any future leaf-level binary analysis.
+`ablation_2x2` and `mcnemar` collapse per arm via `_distinct_leaves_by_arm` and take the
+same unanimity rule within each arm. `exclusion_funnel` counts leaves and is unaffected
+by the outcome rule.
+
+Flagged to the human on #25 and the accuracy topic, because it moves every published
+accuracy figure and the spec genuinely does not decide it.
