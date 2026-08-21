@@ -125,6 +125,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/prompts/**" = ["E501", "RUF001", "TCH"]
 # Pydantic model files need type imports at runtime; TCH would move them to TYPE_CHECKING.
 "lemely/core/schemas.py" = ["TCH"]
+"lemely/eval/manifest.py" = ["TCH"]
 "lemely/core/loose_schemas.py" = ["TCH", "D205", "RUF001", "UP042", "E741"]
 "lemely/runtime/config.py" = ["TCH"]
 # Prompts __init__ re-exports everything; F403 and F401 are intentional.
@@ -227,6 +228,7 @@ ignore_errors = true
 # disabling explicit-any per module avoids false positives in model files.
 [[tool.mypy.overrides]]
 module = [
+  "lemely.eval.manifest",
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
   "lemely.core.question_papers",
