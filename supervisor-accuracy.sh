@@ -6,33 +6,40 @@
 # /home/sico/Lemely-worktrees/accuracy — never in /home/sico/Lemely itself.
 # supervisor.sh is untouched by this file and must never run at the same time.
 #
-# RUN THIS FROM THE MAIN CHECKOUT, NEVER FROM THE WORKTREE IT DRIVES.
+# RUN THIS FROM THE ORCHESTRATION WORKTREE, NEVER FROM THE ONE IT DRIVES.
 #
-# The script's HOME is /home/sico/Lemely (the main checkout). Its cwd at runtime
-# must be /home/sico/Lemely-worktrees/accuracy (the worktree). Those are two
-# different things and the split is the whole point:
+#   home (where this file lives) : /home/sico/Lemely-worktrees/orch
+#                                  pinned to chore/accuracy-orchestration-and-decisions
+#   cwd  (what it operates on)   : /home/sico/Lemely-worktrees/accuracy
+#
+# Two different checkouts, and keeping them apart is the whole point:
 #
 #   - It used to be launched as ./supervisor-accuracy.sh from inside the
-#     worktree, so the live supervisor was whatever version the checked-out
-#     feature branch happened to carry. On 2026-08-19 that cost a night: the
-#     background-wait hardening below was committed to
-#     chore/accuracy-orchestration-and-decisions, the worktree was sitting on
-#     the #56 feature branch, and the supervisor ran the unfixed script for five
-#     more runs. Operator infrastructure must not be versioned by the branch it
-#     operates on — and the worktree's branch changes on every issue.
-#   - The fix for that is NOT to leave git. A copy outside the repo has no
-#     history, no diff and no backup, and silently forks from the tracked one.
-#     The main checkout gives both properties at once: under version control,
-#     and not on the branch being churned.
+#     accuracy worktree, so the live supervisor was whatever version the
+#     checked-out feature branch happened to carry. On 2026-08-19 that cost a
+#     night: the background-wait hardening below was committed to
+#     chore/accuracy-orchestration-and-decisions, the accuracy worktree was
+#     sitting on the #56 feature branch, and the supervisor ran the unfixed
+#     script for five more runs. Operator infrastructure must not be versioned
+#     by the branch it operates on — and that branch changes on every issue.
+#   - The fix is NOT to leave git. A copy outside the repo has no history, no
+#     diff and no backup, and silently forks from the tracked one. That was
+#     tried too, on 2026-08-21, and produced a live script 395 lines ahead of
+#     anything committed anywhere.
+#   - A checkout of its own gets both properties at once: under version control,
+#     and on a branch nothing else churns. /home/sico/Lemely looks like the
+#     obvious candidate and is the wrong one — it is a general-purpose checkout
+#     people switch branches on, which is the same trap in miniature.
 #
-# Residual risk, stated rather than hidden: /home/sico/Lemely is still a
-# checkout someone can switch branches on. That is far less likely than the
-# worktree, but it is the same trap in miniature — if you switch it, check this
-# file before relaunching.
+# So this worktree exists for exactly one job and should only ever sit on the
+# orchestration branch. If you find it on another branch, that is the bug, not a
+# workflow. Recreate it with:
+#   git -C /home/sico/Lemely worktree add /home/sico/Lemely-worktrees/orch \
+#     chore/accuracy-orchestration-and-decisions
 #
-# Run inside tmux — note the -c: cwd is the worktree, the script is not.
+# Run inside tmux — note the -c: cwd is the accuracy worktree, the script is not.
 #   tmux new -s lemely-acc -c /home/sico/Lemely-worktrees/accuracy \
-#     /home/sico/Lemely/supervisor-accuracy.sh
+#     /home/sico/Lemely-worktrees/orch/supervisor-accuracy.sh
 # Operator's manual: CONTROLS-ACCURACY.md
 #
 # Stops when the GitHub board reports every non-H M0/M1/M2 leaf Done, or when
@@ -1255,7 +1262,7 @@ The agent hit something it couldn't resolve and moved on. Details attached." "wa
       ntfy_publish "🛑 Long limit window — stopping" "$(progress_block)
 Reset is ~$((wait_secs / 3600))h away (likely the weekly cap). Stopping cleanly; nothing is lost.
 Relaunch after the reset:
-\`tmux new -s lemely-acc -c $REPO /home/sico/Lemely/supervisor-accuracy.sh\`
+\`tmux new -s lemely-acc -c $REPO /home/sico/Lemely-worktrees/orch/supervisor-accuracy.sh\`
 
 $DIFFSUM" "octagonal_sign" "urgent" "[$(view_action 'Open repo' "$REPO_URL")]"
       exit 0
