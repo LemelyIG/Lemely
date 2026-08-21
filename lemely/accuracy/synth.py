@@ -69,14 +69,21 @@ _MAX_ROTATION_DEG: Final[float] = 2.0
 # to a smaller y than `_MARGIN` — i.e. outside the usable text box.
 _Y_JITTER_PX: Final[int] = 4
 
+# Clear space forced between the ink of adjacent glyph-font runs on one line
+# (`_lay_out_font_runs`). One pixel is enough to keep two runs' ink from
+# touching; it is a separation guarantee, not a typographic letter-space.
+_RUN_INK_GAP: Final[int] = 1
+
 
 class RenderFidelityError(Exception):
     """Raised when the synthetic renderer cannot faithfully reproduce the input.
 
-    Covers three failure modes, all caught before any PDF bytes are written:
+    Covers four failure modes, all caught before any PDF bytes are written:
     a glyph with no available font (would silently rasterize as ``.notdef``),
-    ink that falls outside the page's usable text box, and two rendered lines
-    whose pasted bounding boxes overlap (visual overprint).
+    ink that falls outside the page's usable text box, two rendered lines
+    whose pasted bounding boxes overlap, and two adjacent glyph-font runs
+    within one line whose ink overlaps (both are visual overprint — the
+    second is the horizontal case the line-level check cannot see).
     """
 
 
@@ -230,16 +237,73 @@ def _measure_text(draw: ImageDraw.ImageDraw, text: str, font: _AnyFont) -> tuple
     return round(bbox[2] - bbox[0]), round(bbox[3] - bbox[1])
 
 
+def _lay_out_font_runs(
+    draw: ImageDraw.ImageDraw, runs: list[tuple[str, ImageFont.FreeTypeFont]]
+) -> tuple[list[int], int]:
+    """Place each font run so its ink cannot touch its neighbour's.
+
+    ``textlength`` reports a run's *advance* width, which is not its ink
+    extent. The cursive handwriting fonts overhang theirs, so advancing the
+    cursor by the advance alone let one run's ink print on top of the next
+    one's: measured against the vendored fonts, the trailing ``²`` of
+    ``'½r²θ'`` fused 7px into the following fallback-font ``θ``, and ``'2πr'``
+    collided by 3px. That is precisely the overprint this module exists to
+    make impossible, and the line-level overlap check in `_lay_out_pages`
+    could never see it — it compares consecutive lines' y-ranges and has no
+    x-axis term at all.
+
+    Where a run's ink would start left of where the previous run's ink ended,
+    nudge it right by the shortfall plus `_RUN_INK_GAP`.
+
+    Returns each run's x offset and the total width the ink needs. Both the
+    renderer and `_measure_run_widths` go through here, so wrapping is
+    computed against the same geometry that gets drawn.
+    """
+    offsets: list[int] = []
+    cursor = 0.0
+    ink_right: float | None = None
+    for run_text, font in runs:
+        left, _, right, _ = font.getbbox(run_text)
+        if ink_right is not None and cursor + left < ink_right + _RUN_INK_GAP:
+            cursor = ink_right + _RUN_INK_GAP - left
+        offsets.append(round(cursor))
+        ink_right = cursor + right
+        cursor += draw.textlength(run_text, font=font)
+    return offsets, math.ceil(max(cursor, ink_right or 0.0))
+
+
+def _assert_no_run_overprint(
+    runs: list[tuple[str, ImageFont.FreeTypeFont]], offsets: list[int], text: str
+) -> None:
+    """Post-condition for `_lay_out_font_runs`: no run's ink overlaps the next.
+
+    The layout above is what prevents intra-line overprint; this is what
+    proves it did, on the exact offsets about to be drawn. It is the
+    horizontal counterpart to the line-to-line check in `_lay_out_pages`.
+    """
+    ink_right: float | None = None
+    for (run_text, font), offset in zip(runs, offsets, strict=True):
+        left, _, right, _ = font.getbbox(run_text)
+        if ink_right is not None and offset + left < ink_right:
+            raise RenderFidelityError(
+                f"font runs overprint within a line: {text!r} — run {run_text!r} ink "
+                f"starts at x={offset + left} but the previous run's ink ends at "
+                f"x={ink_right}"
+            )
+        ink_right = offset + right
+
+
 def _measure_run_widths(draw: ImageDraw.ImageDraw, text: str, font_path: Path, size: int) -> int:
-    """Sum per-run glyph widths for *text*.
+    """Total rendered width of *text*, laid out per glyph-font run.
 
     Resolves each run's font exactly the way `_draw_handwritten_line` does — see
-    `_segment_into_font_runs`. Measuring and drawing must agree on the font for
-    every run, or wrapping is computed against different glyph widths than the
-    ones that get rendered.
+    `_segment_into_font_runs` — and lays them out through the same
+    `_lay_out_font_runs`. Measuring and drawing must agree on both the font and
+    the spacing for every run, or wrapping is computed against different
+    geometry than the one that gets rendered.
     """
     runs = _segment_into_font_runs(text, font_path, size)
-    return sum(round(draw.textlength(run_text, font=font)) for run_text, font in runs)
+    return _lay_out_font_runs(draw, runs)[1]
 
 
 def _wrap_line(
@@ -316,20 +380,19 @@ def _draw_handwritten_line(
     probe_draw = ImageDraw.Draw(probe)
     ascent = max(font.getmetrics()[0] for _, font in runs)
     descent = max(font.getmetrics()[1] for _, font in runs)
-    run_widths = [round(probe_draw.textlength(run_text, font=font)) for run_text, font in runs]
+    run_offsets, runs_width = _lay_out_font_runs(probe_draw, runs)
+    _assert_no_run_overprint(runs, run_offsets, text)
 
     pad = _RENDER_PAD
-    width = pad * 2 + sum(run_widths)
+    width = pad * 2 + runs_width
     height = pad * 2 + ascent + descent
 
     text_img = Image.new("RGBA", (width, height), (255, 255, 255, 0))
     text_draw = ImageDraw.Draw(text_img)
     ink = (rng.randint(0, 30), rng.randint(0, 30), rng.randint(20, 70), 255)
     baseline_y = pad + ascent
-    cursor_x = pad
-    for (run_text, font), run_width in zip(runs, run_widths, strict=True):
-        text_draw.text((cursor_x, baseline_y), run_text, font=font, fill=ink, anchor="ls")
-        cursor_x += run_width
+    for (run_text, font), run_offset in zip(runs, run_offsets, strict=True):
+        text_draw.text((pad + run_offset, baseline_y), run_text, font=font, fill=ink, anchor="ls")
 
     angle = rng.uniform(-_MAX_ROTATION_DEG, _MAX_ROTATION_DEG)
     rotated = text_img.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)

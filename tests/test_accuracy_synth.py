@@ -20,10 +20,14 @@ from lemely.accuracy.synth import (
     _MARGIN,
     AnswerBlock,
     RenderFidelityError,
+    _assert_no_run_overprint,
     _draw_handwritten_line,
+    _lay_out_font_runs,
     _lay_out_pages,
     _max_horizontal_render_overhead,
     _max_rendered_line_height,
+    _measure_run_widths,
+    _segment_into_font_runs,
     _wrap_line,
     render_handwritten_scan,
     write_golden_case,
@@ -427,6 +431,76 @@ class GlyphFallbackTests(unittest.TestCase):
         answers = [AnswerBlock(question_id="1", text="unrenderable glyph: \U0001f600")]
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(RenderFidelityError):
             render_handwritten_scan(answers, Path(tmp) / "scan.pdf", seed=0)
+
+
+class RunInkOverprintTests(unittest.TestCase):
+    """M0.0: adjacent glyph-font runs must not print on top of each other.
+
+    The line-level overlap check in `_lay_out_pages` compares consecutive
+    lines' y-ranges, so it is blind to the horizontal case. Before
+    `_lay_out_font_runs`, runs advanced by `textlength` — an *advance* width
+    that the cursive fonts' ink overhangs — and the trailing '²' of '½r²θ'
+    fused 7px into the following fallback-font 'θ'. Generation did not fail,
+    so the overprint shipped in the golden corpus.
+    """
+
+    #: Each mixes a cursive-font run with a math-fallback run, so every one
+    #: crosses at least one run boundary. The first two overlapped by 7px and
+    #: the third by 3px when runs advanced by advance width alone.
+    OVERPRINT_CANDIDATES = ("½r²θ", "r²θ", "2πr", "θ = πr² and Ω = 1")
+
+    def _ink_spans(self, text):
+        """(left, right) ink span of each run, at the offsets actually drawn."""
+        draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        font_path = _FONT_DIR / _FONT_FILES["Caveat"]
+        runs = _segment_into_font_runs(text, font_path, _BASE_ANSWER_FONT_SIZE)
+        offsets, _ = _lay_out_font_runs(draw, runs)
+        return [
+            (offset + font.getbbox(run_text)[0], offset + font.getbbox(run_text)[2])
+            for (run_text, font), offset in zip(runs, offsets, strict=True)
+        ]
+
+    def test_adjacent_run_ink_never_overlaps(self):
+        for text in self.OVERPRINT_CANDIDATES:
+            with self.subTest(text=text):
+                spans = self._ink_spans(text)
+                for (_, prev_right), (next_left, _) in pairwise(spans):
+                    self.assertLessEqual(
+                        prev_right,
+                        next_left,
+                        f"run ink overlaps in {text!r}: {prev_right} > {next_left}",
+                    )
+
+    def test_multi_run_text_renders_without_raising(self):
+        page = Image.new("RGB", _PAGE_SIZE, "white")
+        font_path = _FONT_DIR / _FONT_FILES["Caveat"]
+        for text in self.OVERPRINT_CANDIDATES:
+            with self.subTest(text=text):
+                _draw_handwritten_line(
+                    page, text, font_path, _MARGIN, 200, random.Random(0), _PAGE_SIZE
+                )
+
+    def test_post_condition_rejects_colliding_offsets(self):
+        # Pin the guard itself: hand it offsets that DO collide (every run at
+        # x=0) and it must raise rather than let the overprint through.
+        font_path = _FONT_DIR / _FONT_FILES["Caveat"]
+        runs = _segment_into_font_runs("r²θ", font_path, _BASE_ANSWER_FONT_SIZE)
+        self.assertGreater(len(runs), 1, "test needs a multi-run string")
+        with self.assertRaises(RenderFidelityError):
+            _assert_no_run_overprint(runs, [0] * len(runs), "r²θ")
+
+    def test_wrap_measurement_matches_laid_out_width(self):
+        # Wrapping must be computed against the same geometry that is drawn,
+        # or the added run gaps push ink past the right margin.
+        draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        font_path = _FONT_DIR / _FONT_FILES["Caveat"]
+        for text in self.OVERPRINT_CANDIDATES:
+            with self.subTest(text=text):
+                runs = _segment_into_font_runs(text, font_path, _BASE_ANSWER_FONT_SIZE)
+                self.assertEqual(
+                    _measure_run_widths(draw, text, font_path, _BASE_ANSWER_FONT_SIZE),
+                    _lay_out_font_runs(draw, runs)[1],
+                )
 
 
 class RenderFidelityAssertionTests(unittest.TestCase):
