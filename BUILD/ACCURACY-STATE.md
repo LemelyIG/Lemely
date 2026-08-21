@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #56: branch at 9659d92 (renderer scope only), unpushed; accuracy-review pending before pr-land
+in_the_middle_of: #56: implemented and committed at 99cebad, working tree clean, branch unpushed. ruff clean; 19/19 in tests/test_accuracy_synth.py. The full suite was green on this tree on 2026-08-21 (rc=0, 20.2 min) — do NOT re-run it, the supervisor sweeps it between runs (§9.1). Next: accuracy-review on develop...HEAD with issue 56, then accuracy-pr-land. wf_bfdc731e-612 is DEAD (supervisor STOPped 2026-08-19 02:57); any wf_ id you find in an older note is a dead handle, not something to collect.
 
 ---
 
@@ -29,7 +29,7 @@ duplicate tracker state here.** This file holds only what GitHub cannot:
 | `review_rate` | current measured review rate |
 | `ratchet` | the M0.9 ratchet state the review rate is judged against |
 | `spend_usd` | cumulative Gemini spend as the ledger records it |
-| `in_the_middle_of` | one line: what was mid-flight when the session ended |
+| `in_the_middle_of` | one line: what was mid-flight when the session ended. If anything long-running was left running in the background, this must name the command **and its log path**, so the next run polls that log instead of starting a second copy (MISSION §9.1). A run must never block on work that outlives it. |
 
 The supervisor greps the header with `grep -m1 "^key:"`, so every key above
 must stay exactly one line, at column zero, in `key: value` form, above the
