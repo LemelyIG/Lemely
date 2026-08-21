@@ -123,9 +123,11 @@ def _collapse_leaf_group_scored_aware(group: list[EvalRecord]) -> EvalRecord:
 
 
 def _distinct_leaves_scored_aware(records: list[EvalRecord]) -> list[EvalRecord]:
-    """DA6a leaf collapse: like :func:`_distinct_leaves`, but ``excluded``
-    records only make a leaf ``excluded`` when they are the ONLY evidence
-    for that leaf (see :func:`_collapse_leaf_group_scored_aware`).
+    """DA6a leaf collapse.
+
+    Like :func:`_distinct_leaves`, but ``excluded`` records only make a leaf
+    ``excluded`` when they are the ONLY evidence for that leaf (see
+    :func:`_collapse_leaf_group_scored_aware`).
 
     Used by :func:`exclusion_funnel`, which — unlike ``wilson``/
     ``review_rate``/``risk_coverage`` — must classify leaves as
