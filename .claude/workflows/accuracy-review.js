@@ -8,14 +8,39 @@ export const meta = {
   ],
 }
 
-// The harness may deliver `args` as a JSON string rather than an object. Normalise
-// it before any guard reads a key off it — on a string every `args.<key>` is
-// undefined, so guards either abort with "missing-args" or, worse, silently fall
-// through to their defaults.
-if (typeof args === 'string') {
-  try { args = args.trim() ? JSON.parse(args) : {} } catch (e) { args = {} }
+// -------------------------------------------------------------- ARGS-SHIM-V1
+// `args` reaches a workflow script as a JSON *STRING*, not the object the
+// caller passed. Measured 2026-08-21 with a zero-agent probe: invoking
+// Workflow({name, args: {issue: 56, head: 'HEAD'}}) delivered the literal
+// text '{"issue":56,"head":"HEAD"}', for which `typeof args === 'string'` and
+// every `args.foo` read is `undefined`. The binding is mutable, so parsing it
+// back in place here is enough — no read below this line had to change.
+//
+// Without this, accuracy-review does not fail; it runs on defaults.
+// It has no args guard, so it would review develop...HEAD at the default
+// root with no issue number and return a confident clean verdict on whatever
+// happens to be checked out — the wrong diff, reported as reviewed.
+// Double-encoding is handled too (a string that parses to another string).
+{
+  let depth = 0
+  while (typeof args === 'string' && depth < 3) {
+    const raw = args.trim()
+    if (raw === '') { args = {}; break }
+    try {
+      args = JSON.parse(raw)
+    } catch (e) {
+      log(`accuracy-review: args arrived as a string that is not JSON (${String((e && e.message) || e)}): ${raw.slice(0, 200)}`)
+      return { ok: false, error: 'unparseable-args', detail: raw.slice(0, 500) }
+    }
+    depth++
+  }
+  if (args === null || args === undefined) args = {}
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    const shape = Array.isArray(args) ? 'array' : typeof args
+    log(`accuracy-review: args must be an object, got ${shape}. Call as Workflow({ name: 'accuracy-review', args: { ... } }).`)
+    return { ok: false, error: 'bad-args-shape', detail: `expected object, got ${shape}` }
+  }
 }
-if (args === null || args === undefined) { args = {} }
 
 // ---------------------------------------------------------------- args
 const ROOT = (args && args.root) ? String(args.root) : '/home/sico/Lemely-worktrees/accuracy'
