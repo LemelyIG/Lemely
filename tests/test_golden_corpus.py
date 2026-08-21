@@ -14,7 +14,7 @@ import re
 import unittest
 from pathlib import Path
 
-from lemely.accuracy.harness import load_golden_cases
+from lemely.accuracy.harness import _split_fixture_variant, load_golden_cases
 
 _GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 
@@ -85,13 +85,6 @@ class GoldenCorpusInvariantsTests(unittest.TestCase):
             ("0625_s20_qp_31_theory_wrong", "5b"),
             ("0625_s20_qp_31_theory_wrong", "11b"),
         }
-        cases = load_golden_cases(_GOLDEN_DIR)
-        case_dirs_by_paper: dict[str, list[str]] = {}
-        for p in _GOLDEN_DIR.iterdir():
-            if not p.is_dir() or not (p / "mark_scheme.json").exists():
-                continue
-            case_dirs_by_paper.setdefault(p.name, []).append(p.name)
-
         for case_dir_name in _EXPECTED_MAXIMUM_MARK:
             ms_path = _GOLDEN_DIR / case_dir_name / "mark_scheme.json"
             data = json.loads(ms_path.read_text(encoding="utf-8"))
@@ -115,12 +108,44 @@ class GoldenCorpusInvariantsTests(unittest.TestCase):
                         leaf.get("parent_id"),
                         f"{case_dir_name}:{leaf['id']} has a lettered id but no parent_id",
                     )
-        del cases  # loaded above only to prove load_golden_cases succeeds over the corpus
 
     def test_is_excerpt_matches_the_issue_table(self):
+        """Every case DIRECTORY must carry the right ``is_excerpt``.
+
+        Keyed by directory, not by ``paper_id``: the three DA6 variants of a
+        paper share one ``paper_id``, so a ``{c.paper_id: c.is_excerpt}`` dict
+        keeps only the last-sorted variant and asserts nothing about the other
+        two. That earlier form passed with the marker deleted from two of every
+        three variants — a test that cannot fail for 2/3 of the corpus.
+        """
         cases = load_golden_cases(_GOLDEN_DIR)
-        by_paper_id = {c.paper_id: c.is_excerpt for c in cases}
-        for paper_id, expected in _EXPECTED_IS_EXCERPT.items():
+        by_case_dir = {
+            (f"{c.paper_id}_{c.fixture_variant}" if c.fixture_variant else c.paper_id): c.is_excerpt
+            for c in cases
+        }
+        # Every directory on disk is accounted for, so a new fixture cannot
+        # slip in unasserted.
+        self.assertEqual(set(by_case_dir), set(_EXPECTED_MAXIMUM_MARK))
+
+        for case_dir_name, actual in sorted(by_case_dir.items()):
+            paper_id, _ = _split_fixture_variant(case_dir_name)
+            with self.subTest(case_dir=case_dir_name):
+                self.assertIn(paper_id, _EXPECTED_IS_EXCERPT)
+                self.assertEqual(
+                    actual,
+                    _EXPECTED_IS_EXCERPT[paper_id],
+                    f"{case_dir_name}: is_excerpt={actual}, "
+                    f"expected {_EXPECTED_IS_EXCERPT[paper_id]}",
+                )
+
+    def test_all_variants_of_a_paper_agree_on_is_excerpt(self):
+        """A paper is an excerpt or it is not; its variants cannot disagree."""
+        cases = load_golden_cases(_GOLDEN_DIR)
+        by_paper: dict[str, set[bool]] = {}
+        for c in cases:
+            by_paper.setdefault(c.paper_id, set()).add(c.is_excerpt)
+        for paper_id, values in sorted(by_paper.items()):
             with self.subTest(paper_id=paper_id):
-                self.assertIn(paper_id, by_paper_id)
-                self.assertEqual(by_paper_id[paper_id], expected)
+                self.assertEqual(
+                    len(values), 1, f"{paper_id}: variants disagree on is_excerpt ({values})"
+                )
