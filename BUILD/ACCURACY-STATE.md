@@ -2,13 +2,13 @@
 
 run_pointer: run-2026-08-19-g
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: none
+branch: feature/accuracy-31-split-mechanism-the-split-field-test
 last_run_label: none
 last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: 
+in_the_middle_of: #26 (M0.2) LANDED as 49bc6cd; M0.0 and M0.2 both in. #31 (M0.7a) STARTED, branch feature/accuracy-31-split-mechanism-the-split-field-test off develop 49bc6cd. IN FLIGHT: accuracy-issue-execute run wf_ab961450-7c1, journal /home/sico/.claude/projects/-home-sico-Lemely-worktrees-accuracy/f60e90fa-c7c0-4894-89a4-f054c05230e1/subagents/workflows/wf_ab961450-7c1/journal.jsonl — POLL IT, do not relaunch. It does NOT open the PR. I passed DA1's binding constraints in args (token gates EVALUATION JOINS not file access; labelling reads UNGATED; the BUILD/reports CI grep is explicitly OUT of scope; split enum train|dev|test with train LIVE; MECHANISM only, membership is M0.7b). VERIFY the returned diff against those myself before any PR — last issue-execute (#26) shipped a vacuous test and an unimplemented acceptance criterion. WORKFLOW REGISTRY IS SNAPSHOTTED: accuracy-pr-land still runs the pre-#66 definition and caps its CI watch short, so expect a 'timeout' verdict and finish merges by hand: gh pr merge <n> --repo LemelyIG/Lemely --squash --delete-branch, then accuracy_board.py done <issue>, then clear this field. Web gates (impeccable-detect, playwright-e2e, ui-thresholds) escalated to the human in BLOCKERS.md at 26d3257 with 5 sweeps of variance evidence — do not defer them silently again, and do NOT lower the §11 floor.
 
 ---
 
