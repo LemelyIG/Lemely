@@ -660,3 +660,69 @@ recovered it only by re-deriving the failure locally, which is exactly the
 re-run the mission tells runs not to do. Writing each gate's output to
 `reports/.scratch/sweep/<gate>.log` would have turned ~40 minutes of this run
 into about two.
+
+---
+
+## OPEN — 2026-08-21 — the same three web gates, six sweeps running. Needs a human decision.
+
+Escalating rather than deferring a seventh time. `impeccable-detect`,
+`playwright-e2e` and `ui-thresholds` have failed every sweep since the live
+gates first became runnable. Every accuracy run therefore opens with a **FAIL**
+header, and that is now actively harmful: a permanently-red gate trains its
+reader to skim. It nearly cost something real — when *my own* `pytest`
+regression joined that list on 2026-08-21 (the `lemely.toml.example` /
+`example_toml.py` drift), the only thing that distinguished it from the
+standing noise was reading the failure list item by item.
+
+None of the three runs in CI (`ci.yml`'s web job stops at `npm run build`), so
+they gate the supervisor's sweep and nothing else. None is caused by the
+accuracy programme.
+
+### `ui-thresholds` — one real finding, and a floor inside the noise band
+
+Five independent readings, same machine:
+
+| sweep | student-profile | other student routes |
+|---|---|---|
+| 1 | 56 | 79, 79, 79 (correct, result, friends) |
+| 2 | 56 | 79 (standings) |
+| 3 | 58 | 76 (correct) |
+| 4 | 57 | 79 (standings) |
+| 5 | **56** | none |
+
+Two different populations. `student-profile` is stable at 56-58 and roughly 22
+points under the floor — a real performance defect worth fixing. The others
+oscillate across the 80 boundary and change identity run to run; they are the
+same handful of routes landing at 76-79 by chance. Gating on a hard 80 with
+this much variance means the gate reports a different "failure" each sweep.
+
+**Decision for the human, two parts, independent:**
+1. Fix `student-profile`'s performance. This one is genuine.
+2. Decide what the §11 floor means against measured variance — a floor of 80
+   with a +/-3 spread will keep flapping. Either widen the tolerance, take a
+   best-of-N, or state that a 1-point miss is a real failure and accept a gate
+   that is red about half the time by construction.
+
+Do **not** simply lower the floor to make it pass — that is the gate-weakening
+§14 forbids, and it would also hide the `student-profile` regression.
+
+### `playwright-e2e` — `0625 mastery: 88%` — still undiagnosed
+
+`web/e2e/student-journey.spec.ts:78`. The row and its "1 paper" text pass; only
+the mastery figure fails. Ruled out: it is **not** the hardcoded-date time-bomb
+class — `scripts/seed_e2e.py` already seeds every `recorded_at` relative to
+`now`. So either the mastery computation moved or the accessible name did.
+Needs a run that can hold the live Supabase stack.
+
+### `impeccable-detect` — still no evidence
+
+Network-dependent `npx` resolve, skipped in `--fast`. No sweep has ever
+captured its error output, so there is still nothing to say about whether it is
+a real finding or a fetch failure.
+
+### The gap underneath all three
+
+The sweep still does not persist per-gate logs. Its verdict reaches the next
+session as prose with the tail truncated — which is why `impeccable-detect` has
+been unknown for six sweeps, and why diagnosing a `pytest` failure meant
+re-deriving it locally. `reports/.scratch/sweep/<gate>.log` remains the fix.
