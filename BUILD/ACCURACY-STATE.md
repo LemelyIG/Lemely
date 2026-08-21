@@ -43,6 +43,19 @@ supervisor is running** — a manual edit racing a `state set` write can be
 clobbered, and any edit that breaks the `key: value` shape at column zero
 breaks the supervisor's `grep -m1` reads and its 50%/80% spend alarms with it.
 
+## Live workflow run (added 2026-08-22)
+
+`accuracy-issue-execute` for **#73** was relaunched as run **`wf_ff14f7e7-9a0`**
+(transcript under
+`.claude/projects/-home-sico-Lemely-worktrees-accuracy/9685e88a-9272-47a1-b3d3-3a2cbeb96c5c/subagents/workflows/wf_ff14f7e7-9a0/journal.jsonl`).
+Read that journal before launching anything for #73 — but see the header's
+self-deadlock note first: if you are the implementer this run dispatched, that
+entry describes **you**, not a rival, and you should proceed.
+
+The earlier run `wf_dba29fea-8af` returned `implementation-blocked` with no
+commits. Its **Scope** phase succeeded and its plan is worth recovering; its
+**Implement** phase refused, so resuming it replays that refusal from cache.
+
 ## Current state (seeded 2026-08-18)
 
 Nothing has been started. Five tracker issues are closed, all by the human or
