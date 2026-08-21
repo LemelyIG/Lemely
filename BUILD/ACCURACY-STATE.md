@@ -2,13 +2,13 @@
 
 run_pointer: run-2026-08-19-g
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: feature/accuracy-56-repair-the-fixture-renderer-and
+branch: feature/accuracy-26-determinism-substrate-plus-the-three
 last_run_label: none
 last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #56 LANDING. Tip 9b7f18b — NOTE this is PAST the swept sha 70f8f71, so the supervisor's pytest-PASS verdict does NOT cover the tip; CI on the PR is the proof. accuracy-review wf_12993fda-d2f returned merge-with-fixes: 1 surviving finding (intra-line font-run overprint — fidelity check was vertical-only; '½r²θ' overlapped 7px, shipped in golden/0606_s23_qp_12_theory_correct). Independently reproduced, then fixed in 9b7f18b (_lay_out_font_runs + _assert_no_run_overprint, _measure_run_widths routed through same layout so wrap==render; corpus regenerated, all 20 ground-truth files verified byte-identical, only 10 scan.pdf changed). 23/23 synth tests, check.sh --fast green. IN FLIGHT: accuracy-pr-land run wf_1ea02187-f53, journal /home/sico/.claude/projects/-home-sico-Lemely-worktrees-accuracy/f60e90fa-c7c0-4894-89a4-f054c05230e1/subagents/workflows/wf_1ea02187-f53/journal.jsonl — poll it, do NOT relaunch and do NOT open a second PR. Still-red web gates (impeccable-detect, playwright-e2e, ui-thresholds) are in BLOCKERS.md, none run in CI, none from #56.
+in_the_middle_of: TWO THINGS IN FLIGHT. (1) PR #66 OPEN https://github.com/LemelyIG/Lemely/pull/66 (branch fix/accuracy-pr-land-watch-cap-and-scratch @ 44cf7a2): pr-land tooling fixes — 2700s watch cap w/ 1800s floor, gitignore .pr-body-*.md. Opened with gh directly, NOT accuracy-pr-land (not a board issue; would misuse board review/done). Poll 'gh pr checks 66', squash-merge when green. (2) #26 (M0.2) STARTED, branch feature/accuracy-26-determinism-substrate-plus-the-three off develop 4853f3a, no commits yet. #26 MUST LAND AS ONE COMMIT (all cache-key-affecting changes batched) and invalidates all 138 cached responses by design. CAVEAT: #26's branch does NOT contain the pr-land cap fix (it is off develop, fix is in #66) — accuracy-pr-land reads .claude/workflows/ from the WORKING TREE, so merge develop into #26's branch after #66 lands, or its Watch may pick a short cap again. Sweep of 44cf7a2: pytest PASS; impeccable-detect/playwright-e2e/ui-thresholds still red, web-only, not in CI, BLOCKERS.md.
 
 ---
 
