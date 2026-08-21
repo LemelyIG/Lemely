@@ -88,6 +88,17 @@ class GeminiSettings(BaseModel):
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
     # avoids spurious mark-point-sum validation failures during structured extraction.
     thinking_budget_for: dict[str, int] = Field(default_factory=lambda: {"mark_scheme": 8000})
+    # Determinism substrate (M0.2 / #26): generation parameters that affect output
+    # reproducibility and therefore must be part of the cache-key fingerprint (see
+    # GeminiClient._cache_key / _resolved_gen_params). Global defaults below, with
+    # optional per-task overrides analogous to thinking_budget_for. Unset (None)
+    # means "let the API pick its own default" — the SDK accepts None for all three.
+    temperature: float | None = None
+    top_p: float | None = None
+    seed: int | None = None
+    temperature_for: dict[str, float] = Field(default_factory=dict)
+    top_p_for: dict[str, float] = Field(default_factory=dict)
+    seed_for: dict[str, int] = Field(default_factory=dict)
     # Pricing overrides: model_name → [input_usd_per_1k, output_usd_per_1k].
     # Built-in defaults exist for gemini-2.5-flash-lite/flash/pro; only set
     # this if you use a different model or the API pricing changes.
@@ -100,6 +111,16 @@ class GeminiSettings(BaseModel):
     total_usd_ceiling: float | None = Field(default=8.0, ge=0)
     # Cumulative-USD thresholds that emit a BUDGET_WARNING event (ntfy) exactly once.
     usd_warning_thresholds: list[float] = Field(default_factory=lambda: [4.0, 6.0])
+    # Checked against the module-level process counters in lemely.io.gemini (M0.2 /
+    # #26: this ceiling was previously dead in practice because a cache hit always
+    # returned before the check ran — cache_mode="bypass" is exactly what arms it).
+    # Those counters accumulate for the lifetime of the process deliberately: this
+    # budgets one RUN, and one run may drive many sweeps. A multi-sweep run must
+    # NOT reset between sweeps — that would turn a run-level budget guard into a
+    # per-sweep one and let a runaway script spend without limit. Size it instead:
+    # a golden sweep is ~115k tokens, and lemely.toml sets 2,000,000 (~17 sweeps).
+    # Left as None (no default ceiling) here: the operative value is set per-run in
+    # lemely.toml by whoever is sizing that run.
     per_run_token_ceiling: int | None = None
 
     def model_for(self, task_tag: str) -> str:
