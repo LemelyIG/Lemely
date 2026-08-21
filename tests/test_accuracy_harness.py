@@ -716,33 +716,60 @@ class RunManifestTests(unittest.TestCase):
         self.assertEqual(result.manifest.cache_mode, "bypass")
 
     def test_authorised_test_split_records_split_test(self):
-        """An authorised split="test" run must record manifest.split == "test" (#73)."""
+        """An authorised split="test" run must record manifest.split == "test",
+        and must append EXACTLY ONE entry to the test-touch ledger (#73).
+
+        The ledger is pointed at a tmp path, never the real
+        ``reports/accuracy/test-touch-ledger.jsonl``: this test does not touch
+        the test split in any meaningful sense, and letting it append to the
+        real M0.7a audit artefact on every unit-test run would forge audit
+        history — the artefact would record test-split touches that never
+        happened. The exactly-one assertion also pins the fix for the
+        double-gating bug: authorising in both ``measure_accuracy`` and
+        ``_build_run_manifest`` would write two entries for one run.
+        """
         from lemely.accuracy.harness import measure_accuracy
 
-        with patch.dict(os.environ, {"LEMELY_TEST_SPLIT_TOKEN": "shh-secret"}):
-            result = measure_accuracy(
-                [self._case()],
-                gemini_client=None,
-                settings=None,
-                split="test",
-                test_split_token="shh-secret",
-            )
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "test-touch-ledger.jsonl"
+            with patch.dict(os.environ, {"LEMELY_TEST_SPLIT_TOKEN": "shh-secret"}):
+                result = measure_accuracy(
+                    [self._case()],
+                    gemini_client=None,
+                    settings=None,
+                    split="test",
+                    test_split_token="shh-secret",
+                    ledger_path=ledger,
+                )
 
-        self.assertEqual(result.manifest.split, "test")
+            self.assertEqual(result.manifest.split, "test")
+            entries = ledger.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(len(entries), 1, f"expected exactly one ledger entry, got {entries}")
 
-    def test_unauthorised_test_split_raises(self):
+    def test_unauthorised_test_split_raises_before_reading_or_spending(self):
         """No/wrong token for split="test" must raise TestSplitAccessError, not
-        silently record "dev" or "test" (#73)."""
+        silently record "dev" or "test" (#73).
+
+        Crucially it must raise BEFORE the corpus is read or a single Gemini
+        call is made. The gate originally lived in ``_build_run_manifest``,
+        which runs only in ``measure_accuracy``'s final ``return`` — so an
+        unauthorised test-split run read the whole split and spent real budget
+        before being refused, which defeats the entire point of M0.7a. The
+        spy below is what pins the ordering; without it this test passes even
+        with the gate at the very end.
+        """
         from lemely.accuracy.harness import measure_accuracy
         from lemely.eval.test_touch import TestSplitAccessError
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("LEMELY_TEST_SPLIT_TOKEN", None)
-            with self.assertRaises(TestSplitAccessError):
-                measure_accuracy(
-                    [self._case()],
-                    gemini_client=None,
-                    settings=None,
-                    split="test",
-                    test_split_token=None,
-                )
+            with patch("lemely.io.correction_ai.correct_paper") as correct_spy:
+                with self.assertRaises(TestSplitAccessError):
+                    measure_accuracy(
+                        [self._case()],
+                        gemini_client=None,
+                        settings=None,
+                        split="test",
+                        test_split_token=None,
+                    )
+                correct_spy.assert_not_called()

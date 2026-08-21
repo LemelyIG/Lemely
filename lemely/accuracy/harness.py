@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from lemely.core.loose_schemas import MarkScheme
 from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
-from lemely.eval.test_touch import authorize_test_split_join
+from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
 
 log = structlog.get_logger()
@@ -423,7 +423,6 @@ def _build_run_manifest(
     prompt_versions: dict[str, str],
     gemini_client: object = None,
     split: Split = "dev",
-    test_split_token: str | None = None,
 ) -> RunManifest:
     """Construct the :class:`RunManifest` this run's `EvalRecord`s join to (spec §3.3).
 
@@ -435,22 +434,19 @@ def _build_run_manifest(
     ``default_cache_mode`` attribute — the client instance is the single
     source of truth for its cache behaviour (falls back to ``"read_write"``
     when no client, e.g. the correction-only bypass tests, was supplied);
-    ``split`` is whatever the caller authorised via *split*/*test_split_token*
-    — defaulting to ``"dev"`` because the golden corpus *is* the golden dev
-    split per spec §5's M1 acceptance ("The population is the golden dev
-    split") when no override is requested. A ``split="test"`` request is
-    gated through :func:`lemely.eval.test_touch.authorize_test_split_join`,
-    which raises :class:`~lemely.eval.test_touch.TestSplitAccessError` when
-    unauthorised rather than silently recording "dev" or "test".
-    ``corpus_digest`` is a real hash of the loaded corpus, not an invented
-    value.
+    ``split`` is whatever the caller authorised — defaulting to ``"dev"``
+    because the golden corpus *is* the golden dev split per spec §5's M1
+    acceptance ("The population is the golden dev split") when no override is
+    requested. ``corpus_digest`` is a real hash of the loaded corpus, not an
+    invented value.
+
+    This function does **not** gate the split itself. It is private and runs
+    in ``measure_accuracy``'s final ``return``, long after the corpus has been
+    read and the budget spent, so a gate here would refuse too late to prevent
+    the very access it guards (spec §4 M0.7a). ``measure_accuracy`` authorises
+    up front instead, and this function trusts the already-authorised value —
+    which also keeps the ledger at exactly one entry per run rather than two.
     """
-    authorize_test_split_join(
-        split,
-        token=test_split_token,
-        run_id=run_id,
-        caller="lemely.accuracy.harness.measure_accuracy",
-    )
     gemini = getattr(settings, "gemini", None)
     if gemini is not None:
         models_by_task = {
@@ -500,6 +496,7 @@ def measure_accuracy(
     run_id: str | None = None,
     split: Split = "dev",
     test_split_token: str | None = None,
+    ledger_path: Path = DEFAULT_LEDGER_PATH,
 ) -> AccuracyResult:
     """Run correction over all golden cases; compute metrics.
 
@@ -521,9 +518,25 @@ def measure_accuracy(
     variable via :func:`lemely.eval.test_touch.authorize_test_split_join`
     (spec §4 M0.7a), raising
     :class:`~lemely.eval.test_touch.TestSplitAccessError` otherwise.
+
+    That gate fires **here, before any case is read or any Gemini call is
+    made** — not down in :func:`_build_run_manifest`, which runs only in the
+    final ``return``. Authorising at the end would let an unauthorised
+    ``split="test"`` run read the whole test split and spend real budget
+    before being refused, which is precisely what M0.7a exists to prevent.
+    ``_build_run_manifest`` therefore trusts the ``split`` it is handed and
+    does not re-gate, so exactly one ledger entry is written per run.
     """
     if run_id is None:
         run_id = f"run-{uuid.uuid4().hex[:12]}"
+
+    authorize_test_split_join(
+        split,
+        token=test_split_token,
+        run_id=run_id,
+        caller="lemely.accuracy.harness.measure_accuracy",
+        ledger_path=ledger_path,
+    )
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
     from lemely.io.correction_ai import correct_paper
     from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
@@ -628,7 +641,6 @@ def measure_accuracy(
             prompt_versions,
             gemini_client=gemini_client,
             split=split,
-            test_split_token=test_split_token,
         ),
     )
 
