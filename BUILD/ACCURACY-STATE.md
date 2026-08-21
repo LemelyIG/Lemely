@@ -2,13 +2,13 @@
 
 run_pointer: run-2026-08-19-g
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: fix/accuracy-pr-land-watch-cap-and-scratch
+branch: feature/accuracy-26-determinism-substrate-plus-the-three
 last_run_label: none
 last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #56 (M0.0) IS LANDED: PR #65 merged (squash) to develop as 4853f3a on 2026-08-21, CI green on all 5 checks (test 3.12/3.13/3.14 + pre-commit + web), board marked Done. Overprint fix + RunInkOverprintTests verified present in develop's tree post-squash. M0.0 no longer blocks baseline runs (spec §7). NOW: small tooling branch fix/accuracy-pr-land-watch-cap-and-scratch (2 commits, off develop, UNPUSHED, no PR yet) carrying two pr-land defects found while landing #56: 5fe9ce9 gitignores .pr-body-*.md (pr-land leaves it untracked and the supervisor auto-commits dirty trees), 4f3c8a4 makes the Watch cap literal 2700s with a 1800s floor (agent had chosen 600s vs ~17min test jobs). Next: PR that branch, then board 'next' = #26 (M0.2). Red web gates unchanged and unrelated: impeccable-detect, playwright-e2e (0625 mastery 88%), ui-thresholds (lighthouse student-profile 56 is the real one; the 79s vary run-to-run — 4 routes one sweep, 3 the next — so treat those as noise near the 80 floor). All in BLOCKERS.md; none run in CI.
+in_the_middle_of: #26 (M0.2) at HEAD on feature/accuracy-26-determinism-substrate-plus-the-three (single commit 44b4789 + develop merge 3b39646 + checkpoint). UNPUSHED, NO PR YET. IN FLIGHT: accuracy-review run wf_0a16f904-0de, journal /home/sico/.claude/projects/-home-sico-Lemely-worktrees-accuracy/f60e90fa-c7c0-4894-89a4-f054c05230e1/subagents/workflows/wf_0a16f904-0de/journal.jsonl — POLL IT, do not relaunch. When it returns clean/merge-with-fixes-addressed: accuracy-pr-land {issue:26,branch:feature/accuracy-26-determinism-substrate-plus-the-three} (branch now carries #66's 2700s cap, so its Watch should reach CI conclusion). REGRESSION FIXED THIS RUN: sweep of a9e6052 had pytest FAIL because I hand-edited lemely.toml.example without updating its GENERATOR lemely/runtime/example_toml.py (test_settings_example_drift pins them); fixed in the generator and folded into the same single commit. KEY DECISION for the human: per_run_token_ceiling stays RUN-scoped, no per-sweep reset (that would delete the budget guard, §14); the issue's 200000 premise came from the example file, not the operative lemely.toml (2000000). NOTE: current HEAD is NOT covered by any sweep or CI — do not claim green for it.
 
 ---
 

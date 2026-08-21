@@ -57,7 +57,11 @@ def render_example_toml() -> str:
     lines.append("# Persistent cumulative-USD hard cap (survives process restarts).")
     lines.append(f"# total_usd_ceiling = {s.gemini.total_usd_ceiling}")
     lines.append(f"# usd_warning_thresholds = {s.gemini.usd_warning_thresholds}")
-    lines.append("# per_run_token_ceiling = 200000")
+    lines.append("# Budgets one RUN — every sweep that run drives, not each sweep separately.")
+    lines.append("# A golden sweep is ~70 calls / ~115k tokens, so 200000 (the old example value)")
+    lines.append("# was under two sweeps and would abort a legitimate A/B run mid-flight. Size it")
+    lines.append("# for the whole run; the accuracy programme uses 2000000 (~17 sweeps).")
+    lines.append("# per_run_token_ceiling = 2000000")
     lines.append("")
 
     lines.append("# gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.")

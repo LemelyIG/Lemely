@@ -40,7 +40,11 @@ backoff_seconds = 2.0
 # Persistent cumulative-USD hard cap (survives process restarts).
 # total_usd_ceiling = 8.0
 # usd_warning_thresholds = [4.0, 6.0]
-# per_run_token_ceiling = 200000
+# Budgets one RUN — every sweep that run drives, not each sweep separately.
+# A golden sweep is ~70 calls / ~115k tokens, so 200000 (the old example value)
+# was under two sweeps and would abort a legitimate A/B run mid-flight. Size it
+# for the whole run; the accuracy programme uses 2000000 (~17 sweeps).
+# per_run_token_ceiling = 2000000
 
 # gemini_api_key is a secret — prefer the GEMINI_API_KEY env var instead.
 # gemini_api_key = "sk-..."
