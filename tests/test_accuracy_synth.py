@@ -249,6 +249,40 @@ class RenderOverheadBudgetTests(unittest.TestCase):
                     self.fail(f"seed={seed} raised RenderFidelityError: {exc}")
 
 
+class WrapWidthFontAwarenessTests(unittest.TestCase):
+    """M0.0 follow-up: wrap-width measurement must use the same per-glyph font
+    resolution as the renderer, not one font for the whole line.
+
+    `_lay_out_pages` used to build a single `wrap_font` from the primary
+    handwriting font (Caveat) and hand it to `_wrap_answer_text` /
+    `_wrap_line`, which measured each candidate line with one
+    `draw.textbbox(..., font=wrap_font)` call. For characters Caveat lacks
+    (Greek/math glyphs it falls back to NotoSansMath-Subset for — see
+    `_font_path_for_char`), that measurement used Caveat's narrow `.notdef`
+    advance width while `_draw_handwritten_line` renders with the much wider
+    NotoSansMath glyph. A line dense in fallback-only glyphs can then pass
+    the wrap budget but overrun the right edge of the text box at render
+    time.
+    """
+
+    def test_line_dense_in_fallback_glyphs_never_exceeds_right_edge(self):
+        # Capital omega (U+03A9) is absent from Caveat but present in the
+        # NotoSansMath-Subset fallback (see GlyphFallbackTests). A line built
+        # almost entirely from it exposes the width-measurement mismatch:
+        # Caveat's `.notdef` advance is far narrower than NotoSansMath's real
+        # Omega glyph, so wrapping with Caveat alone packs more characters
+        # per line than the fallback font can actually render within the
+        # usable width.
+        font_path = _FONT_DIR / _FONT_FILES["Caveat"]
+        word = "Ω" * 8
+        omega_dense_answer = " ".join([word] * 20)
+        answers = [AnswerBlock(question_id="1", text=omega_dense_answer)]
+        try:
+            _lay_out_pages(answers, font_path, _PAGE_SIZE, random.Random(0))
+        except RenderFidelityError as exc:  # pragma: no cover - failure path
+            self.fail(f"raised RenderFidelityError: {exc}")
+
+
 class _ExtremeRandom(random.Random):
     """Deterministically forces jitter draws to a chosen extreme.
 
@@ -310,7 +344,11 @@ class RenderYJitterAndEdgeCheckTests(unittest.TestCase):
         probe = Image.new("RGBA", (1, 1))
         probe_draw = ImageDraw.Draw(probe)
         widest_line = _wrap_line(
-            probe_draw, " ".join(f"word{i}" for i in range(300)), wrap_font, usable_width
+            probe_draw,
+            " ".join(f"word{i}" for i in range(300)),
+            font_path,
+            max_jitter_size,
+            usable_width,
         )[0]
 
         page = Image.new("RGB", _PAGE_SIZE, "white")

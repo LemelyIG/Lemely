@@ -193,19 +193,65 @@ def _new_page(page_size: tuple[int, int]) -> Image.Image:
 _AnyFont = ImageFont.ImageFont | ImageFont.FreeTypeFont
 
 
+@functools.cache
+def _load_font(font_path: str, size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(font_path, size)
+
+
+def _segment_into_font_runs(
+    text: str, primary_font_path: Path, size: int
+) -> list[tuple[str, ImageFont.FreeTypeFont]]:
+    """Split *text* into consecutive runs sharing one resolved font.
+
+    Each run is paired with that font loaded at *size*. Used identically by
+    the wrap-width measurement (`_wrap_line`) and the renderer
+    (`_draw_handwritten_line`) so their glyph metrics — and therefore their
+    notion of a line's width — can never disagree.
+    """
+    runs: list[tuple[str, ImageFont.FreeTypeFont]] = []
+    current_chars = ""
+    current_font_path: Path | None = None
+    for ch in text:
+        resolved_path = _font_path_for_char(ch, primary_font_path)
+        if resolved_path == current_font_path:
+            current_chars += ch
+        else:
+            if current_chars and current_font_path is not None:
+                runs.append((current_chars, _load_font(str(current_font_path), size)))
+            current_font_path = resolved_path
+            current_chars = ch
+    if current_chars and current_font_path is not None:
+        runs.append((current_chars, _load_font(str(current_font_path), size)))
+    return runs
+
+
 def _measure_text(draw: ImageDraw.ImageDraw, text: str, font: _AnyFont) -> tuple[int, int]:
     bbox = draw.textbbox((0, 0), text, font=font)
     return round(bbox[2] - bbox[0]), round(bbox[3] - bbox[1])
 
 
-def _wrap_line(draw: ImageDraw.ImageDraw, text: str, font: _AnyFont, max_width: int) -> list[str]:
+def _measure_run_widths(draw: ImageDraw.ImageDraw, text: str, font_path: Path, size: int) -> int:
+    """Sum per-run glyph widths for *text*.
+
+    Resolves each run's font exactly the way `_draw_handwritten_line` does — see
+    `_segment_into_font_runs`. Measuring and drawing must agree on the font for
+    every run, or wrapping is computed against different glyph widths than the
+    ones that get rendered.
+    """
+    runs = _segment_into_font_runs(text, font_path, size)
+    return sum(round(draw.textlength(run_text, font=font)) for run_text, font in runs)
+
+
+def _wrap_line(
+    draw: ImageDraw.ImageDraw, text: str, font_path: Path, size: int, max_width: int
+) -> list[str]:
     """Greedily wrap *text* (a single paragraph, no newlines) to *max_width* pixels."""
     words = text.split(" ")
     lines: list[str] = []
     current = ""
     for word in words:
         candidate = f"{current} {word}".strip()
-        width, _ = _measure_text(draw, candidate, font)
+        width = _measure_run_widths(draw, candidate, font_path, size)
         if width <= max_width or not current:
             current = candidate
         else:
@@ -217,21 +263,24 @@ def _wrap_line(draw: ImageDraw.ImageDraw, text: str, font: _AnyFont, max_width: 
 
 
 def _wrap_answer_text(
-    draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int
+    draw: ImageDraw.ImageDraw, text: str, font_path: Path, size: int, max_width: int
 ) -> list[str]:
     """Wrap multi-line answer text, preserving explicit blank lines.
 
-    *font* must be sized at the maximum possible jitter
+    *size* must be the maximum possible jitter size
     (``_BASE_ANSWER_FONT_SIZE * _JITTER_MAX``) so wrap decisions never
     underestimate how wide a line can render — `_draw_handwritten_line` picks
-    its actual size independently, up to that same maximum.
+    its actual size independently, up to that same maximum. Each candidate
+    line is measured per-glyph-font-run (via `_segment_into_font_runs`),
+    matching exactly how `_draw_handwritten_line` resolves fonts, so a
+    fallback-glyph-dense line can never wrap narrower than it renders.
     """
     all_lines: list[str] = []
     for paragraph in text.split("\n"):
         if not paragraph.strip():
             all_lines.append("")
             continue
-        all_lines.extend(_wrap_line(draw, paragraph, font, max_width))
+        all_lines.extend(_wrap_line(draw, paragraph, font_path, size, max_width))
     return all_lines
 
 
@@ -261,23 +310,7 @@ def _draw_handwritten_line(
     page_width, page_height = page_size
     size = max(1, round(_BASE_ANSWER_FONT_SIZE * rng.uniform(_JITTER_MIN, _JITTER_MAX)))
 
-    runs: list[tuple[str, ImageFont.FreeTypeFont]] = []
-    font_cache: dict[Path, ImageFont.FreeTypeFont] = {}
-    current_chars = ""
-    current_font_path: Path | None = None
-    for ch in text:
-        resolved_path = _font_path_for_char(ch, font_path)
-        if resolved_path == current_font_path:
-            current_chars += ch
-        else:
-            if current_chars and current_font_path is not None:
-                runs.append((current_chars, font_cache[current_font_path]))
-            current_font_path = resolved_path
-            if resolved_path not in font_cache:
-                font_cache[resolved_path] = ImageFont.truetype(str(resolved_path), size)
-            current_chars = ch
-    if current_chars and current_font_path is not None:
-        runs.append((current_chars, font_cache[current_font_path]))
+    runs = _segment_into_font_runs(text, font_path, size)
 
     probe = Image.new("RGBA", (1, 1))
     probe_draw = ImageDraw.Draw(probe)
@@ -426,7 +459,7 @@ def _lay_out_pages(
         cursor_y += label_height + 14
         last_line_bbox = None
 
-        for line in _wrap_answer_text(draw, block.text, wrap_font, usable_width):
+        for line in _wrap_answer_text(draw, block.text, font_path, max_jitter_size, usable_width):
             # Reserve the true max rendered line height here, not the fixed
             # `_LINE_SPACING` — at max jitter plus padding plus rotation a
             # line can render far taller than `_LINE_SPACING`
