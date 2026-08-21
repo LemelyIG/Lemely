@@ -6,7 +6,40 @@
 # /home/sico/Lemely-worktrees/accuracy — never in /home/sico/Lemely itself.
 # supervisor.sh is untouched by this file and must never run at the same time.
 #
-# Run inside tmux:  tmux new -s lemely-acc './supervisor-accuracy.sh'
+# RUN THIS FROM THE ORCHESTRATION WORKTREE, NEVER FROM THE ONE IT DRIVES.
+#
+#   home (where this file lives) : /home/sico/Lemely-worktrees/orch
+#                                  pinned to chore/accuracy-orchestration-and-decisions
+#   cwd  (what it operates on)   : /home/sico/Lemely-worktrees/accuracy
+#
+# Two different checkouts, and keeping them apart is the whole point:
+#
+#   - It used to be launched as ./supervisor-accuracy.sh from inside the
+#     accuracy worktree, so the live supervisor was whatever version the
+#     checked-out feature branch happened to carry. On 2026-08-19 that cost a
+#     night: the background-wait hardening below was committed to
+#     chore/accuracy-orchestration-and-decisions, the accuracy worktree was
+#     sitting on the #56 feature branch, and the supervisor ran the unfixed
+#     script for five more runs. Operator infrastructure must not be versioned
+#     by the branch it operates on — and that branch changes on every issue.
+#   - The fix is NOT to leave git. A copy outside the repo has no history, no
+#     diff and no backup, and silently forks from the tracked one. That was
+#     tried too, on 2026-08-21, and produced a live script 395 lines ahead of
+#     anything committed anywhere.
+#   - A checkout of its own gets both properties at once: under version control,
+#     and on a branch nothing else churns. /home/sico/Lemely looks like the
+#     obvious candidate and is the wrong one — it is a general-purpose checkout
+#     people switch branches on, which is the same trap in miniature.
+#
+# So this worktree exists for exactly one job and should only ever sit on the
+# orchestration branch. If you find it on another branch, that is the bug, not a
+# workflow. Recreate it with:
+#   git -C /home/sico/Lemely worktree add /home/sico/Lemely-worktrees/orch \
+#     chore/accuracy-orchestration-and-decisions
+#
+# Run inside tmux — note the -c: cwd is the accuracy worktree, the script is not.
+#   tmux new -s lemely-acc -c /home/sico/Lemely-worktrees/accuracy \
+#     /home/sico/Lemely-worktrees/orch/supervisor-accuracy.sh
 # Operator's manual: CONTROLS-ACCURACY.md
 #
 # Stops when the GitHub board reports every non-H M0/M1/M2 leaf Done, or when
@@ -36,6 +69,29 @@ REPO_URL="https://github.com/LemelyIG/Lemely"
 # same topic) is the reliable path; direct agents there, not through Python.
 export LEMELY_NTFY_TOPIC="$NTFY_TOPIC"
 
+# Background-task wait ceiling for 'claude -p'. The default is 600s: a run that
+# dispatches the pytest suite or an accuracy-* workflow to the background and
+# waits on it is TERMINATED at ten minutes — and terminated with rc=0, so this
+# supervisor read it as a clean checkpoint and restarted with fresh context.
+# Runs 1-8 of 2026-08-19 did exactly that: 7 of 9 logs end in "Background tasks
+# still running after 600s; terminating", producing eight 'wip checkpoint'
+# commits and no landed work, because each fresh run re-armed the same wait.
+#
+# Bounded, NOT 0. Nothing in this supervisor kills a running 'claude -p' on a
+# timer — WATCHDOG_MINUTES is a notify-only dead-man's switch for the machine
+# or supervisor dying, and the heartbeat refreshes it regardless of what the
+# agent is doing. So this ceiling IS the only bound on a wedged run; 0 would
+# remove it entirely. 2.5h covers the full pytest suite, an accuracy-review
+# workflow, and a long accuracy-measure sweep with room to spare.
+#
+# A wait this long crosses STALL_BEATS (3 beats = 30 min with no commit), so a
+# legitimate long wait emits stall notices — that notice already reads "may be
+# on a long measurement sweep, or stuck". When the ceiling IS hit, the run is
+# terminated with rc=0 and looks identical to a clean finish, so the outcome
+# block below detects it explicitly and hands the fact to the next run rather
+# than letting it silently re-arm the same doomed wait.
+export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=$(( 150 * 60 * 1000 ))   # 2.5 hours
+
 MODEL="opus"                    # orchestrator model — Opus decides, Sonnet subagents work
 
 COST_CEILING_USD="25.00"        # lemely.toml total_usd_ceiling (pre-flight check, not a hard stop)
@@ -56,6 +112,33 @@ DIGEST_SECS=$((24 * 3600))      # daily digest cadence
 ATTACH_MAX_BYTES=1900000        # stay under ntfy's 2MB attachment cap
 BOARD_TTL=300                   # seconds to cache 'accuracy_board.py status --json'
 GATES_TIMEOUT=1800              # cap on a GATES keyword run of scripts/check.sh
+GATE_SUITE_TIMEOUT=7200         # cap on the between-runs gate sweep (gate_sweep).
+                                # Deliberately far looser than GATES_TIMEOUT: the
+                                # sweep costs wall-clock, not tokens, and a sweep
+                                # that gets cut off short reintroduces the exact
+                                # "the suite never finishes" failure it exists to
+                                # end. Only tighten this against a measured suite
+                                # duration, never against a guess.
+MAX_RESUME_CHAIN=6              # consecutive '--resume' runs before a forced cold
+                                # start. SET THIS TO 0 TO DISABLE RESUMING ENTIRELY
+                                # (0 means the chain is always already at the cap,
+                                # so every run starts cold) — that is the kill
+                                # switch if resumed runs misbehave.
+                                #
+                                # Resuming skips re-orientation, but it is not a
+                                # free win and the honest accounting is: a resumed
+                                # run re-sends the whole accumulated conversation as
+                                # a cold cache write, because the prompt cache TTL
+                                # is ~5 min and runs are 10-40 min apart. So each
+                                # resume trades a bigger input for skipped
+                                # re-reading. Measured over the 14 runs of
+                                # 2026-08-19 the re-reading it saves was small
+                                # (57 Read calls, 1.1 min of tool time total), so
+                                # expect a modest gain, not a transformation.
+                                # Six is a guess at where a growing transcript
+                                # starts costing more in in-session compaction than
+                                # a cold start would; lower it if runs begin
+                                # compacting mid-work, raise it if they never do.
 
 LOGDIR="$REPO/BUILD/logs"
 STATEDIR="$LOGDIR/.acc-supervisor"    # runtime state; BUILD/logs/ is gitignored,
@@ -78,6 +161,19 @@ H_SEEN="$STATEDIR/h_blocking_seen"
 CI_RED_SEEN="$STATEDIR/ci_red_seen"    # dedup key: "<pr>:<head-sha>"
 SPEND_MARK="$STATEDIR/spend_mark"
 NRMARK="$STATEDIR/not_reportable_sig"
+TIMEOUTFILE="$STATEDIR/last_timeout"   # handoff: a run killed by the background-task
+                                       # wait ceiling leaves its story here for the next
+                                       # run's prompt. Consumed and deleted when read.
+GATEREPORT="$STATEDIR/gate_report"     # handoff: the out-of-session gate sweep's verdict.
+GATE_SHA="$STATEDIR/gate_sha"          # the sha that verdict covers…
+GATE_DIRTY="$STATEDIR/gate_dirty"      # …and how many files were uncommitted under it.
+                                       # Unlike TIMEOUTFILE these are NOT consumed on
+                                       # read: the verdict stays valid until the tree
+                                       # moves, and every run should see it.
+SESSIONFILE="$STATEDIR/session_id"     # the Claude session runs continue into…
+RESUME_CHAINFILE="$STATEDIR/resume_chain"   # …and how many consecutive resumes it
+                                       # has carried. Both are advisory: losing them
+                                       # costs one cold start, never correctness.
 
 # --------------------------- ntfy helpers ----------------------------------
 
@@ -795,10 +891,195 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# --------------------- out-of-session gate sweep ---------------------------
+# The full gate suite — scripts/check.sh: pytest, ruff, mypy, lint-imports and
+# the web job — takes longer than any wait an agent session can survive. Until
+# 2026-08-19 the orchestrator ran it itself, inside 'claude -p', and it never
+# once finished: the run hit the background-wait ceiling, the session died and
+# took the suite with it, and the next run started the same suite from zero.
+# Five consecutive runs did nothing else. /tmp/pytest-of-sico kept one partial
+# tmpdir tree per run as the receipt.
+#
+# The suite is not the agent's job. It costs no tokens and needs no judgement,
+# so it runs HERE, in bash, between runs, where nothing terminates it at a
+# ceiling. The verdict is handed to the next run as a fact, and the prompt
+# forbids the agent from re-running it.
+#
+# Re-run policy: only when the tree moved since the last sweep. A run that
+# commits gets a fresh verdict; a run that commits nothing reuses the verdict
+# it already has rather than spending another hour on an unchanged tree.
+# check.sh tests the WORKING TREE, not HEAD, so the dirty-file count is part of
+# the identity of what was tested and is reported alongside the sha.
+gate_sweep() {
+  local head dirty glog rc secs started verdict tail_n
+
+  head="$(cd "$REPO" && git rev-parse HEAD 2>/dev/null || echo unknown)"
+  dirty="$(cd "$REPO" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+
+  if [ -f "$GATEREPORT" ] \
+     && [ "$head" = "$(cat "$GATE_SHA" 2>/dev/null)" ] \
+     && [ "$dirty" = "$(cat "$GATE_DIRTY" 2>/dev/null)" ]; then
+    return 0                     # tree unmoved — the standing verdict still applies
+  fi
+
+  glog="$LOGDIR/gates-$(date +%Y%m%d-%H%M%S).log"
+  ntfy_publish "🧪 Gate sweep running" "$(progress_block)
+scripts/check.sh over \`${head:0:8}\` ($dirty uncommitted). Up to $((GATE_SUITE_TIMEOUT / 60))m; the next run waits for it." \
+    "test_tube" "low"
+
+  started=$(date +%s)
+  ( cd "$REPO" && timeout "$GATE_SUITE_TIMEOUT" bash scripts/check.sh ) </dev/null >"$glog" 2>&1
+  rc=$?
+  secs=$(( $(date +%s) - started ))
+
+  case "$rc" in
+    0)   verdict="PASS" ;;
+    124) verdict="TIMED OUT after $((secs / 60))m — treat as UNKNOWN, not as a failure" ;;
+    *)   verdict="FAIL (rc=$rc)" ;;
+  esac
+
+  # 60 lines: check.sh prints one PASS/FAIL line per tool plus up to 60 lines of
+  # each failure, so a short tail can show the summary while hiding the reason.
+  tail_n=60
+
+  cat > "$GATEREPORT" <<EOF
+## Gate sweep — already run for you, by the supervisor
+
+\`scripts/check.sh\` ran **outside your session** at $(date -Is), over HEAD
+\`$head\` with **$dirty uncommitted file(s)** in the tree. It took $((secs / 60))m.
+
+**Result: $verdict**
+
+\`\`\`
+$(strip_ansi < "$glog" | tail -n "$tail_n")
+\`\`\`
+
+These rules follow from it, and they override any habit you have:
+
+- **Do not run the full suite yourself.** Not \`scripts/check.sh\`, not a bare
+  \`pytest\`, not in the background, not "just to confirm before the PR". It
+  outlasts a session, and every run that tried was terminated mid-wait. The
+  supervisor runs it between runs and hands you the verdict above.
+- **Targeted tests are still yours**, and always were: the test module for the
+  code you touched, plus \`ruff\`/\`mypy\` on the files you changed. Run those in
+  the **foreground** — they finish in seconds.
+- **§9.3's "pytest green" is satisfied by the verdict above** for the sha named
+  above, plus CI on the PR. If that sha is not your branch tip, the verdict does
+  not cover your latest commit — say so plainly instead of claiming green, and
+  let the next sweep pick it up.
+- A **FAIL** here is a real red gate: route it to \`accuracy-gate-triage\` (§8).
+  Do not re-run the suite hoping for a different answer.
+- A **TIMED OUT** is not a failure and not a pass. Report it as unknown.
+EOF
+
+  echo "$head"  > "$GATE_SHA"
+  echo "$dirty" > "$GATE_DIRTY"
+
+  ntfy_publish "$([ "$rc" -eq 0 ] && echo '✅ Gate sweep PASS' || echo "❌ Gate sweep $verdict")" \
+    "$(progress_block)
+\`${head:0:8}\` · $((secs / 60))m
+\`\`\`
+$(strip_ansi < "$glog" | tail -n 25)
+\`\`\`" \
+    "$([ "$rc" -eq 0 ] && echo 'white_check_mark' || echo 'x')" \
+    "$([ "$rc" -eq 0 ] && echo 'default' || echo 'high')"
+}
+
+# --------------------------- session continuity -----------------------------
+# Until 2026-08-21 every run started a COLD session. Measured over the 14 runs of
+# 2026-08-19: a 42,873-token prefix written from scratch each time, 3.79M
+# cache-write tokens against 45.4M cache-read, and not one byte of what a run
+# wrote was ever read back — the prompt cache is session-scoped with a ~5-minute
+# TTL and runs are 10-40 minutes apart. On top of that the agent re-read a 31KB
+# mission file, the state file and the board before it could touch any work.
+#
+# '--resume' keeps the conversation, so that re-orientation simply does not
+# happen and the prompt shrinks to a delta (CONTINUE_PROMPT below). But a
+# resumed session is not always right, and never right forever:
+#   - after a ceiling kill the session's own context says "waiting on a
+#     background task"; restoring that belief restores the bug the TIMEOUTFILE
+#     handoff exists to break;
+#   - after a crash or a usage-limit stop it may be mid-turn;
+#   - every resume grows the transcript, so an unbounded chain eventually pays
+#     more for in-session compaction than a cold start would have cost.
+# So: resume by default, cold on any anomaly, cold every MAX_RESUME_CHAIN runs.
+#
+# Failure is self-healing rather than sticky. We mint the id ourselves with
+# --session-id instead of scraping it from the log, and check the transcript
+# exists before resuming; if --resume still fails, claude exits non-zero, that
+# is the crash path, and the crash path forces the next run cold. One bad run,
+# not a loop.
+
+new_session_id() { cat /proc/sys/kernel/random/uuid; }
+
+# Where claude keeps the transcript for session $1 in $REPO. The project slug is
+# the absolute path with every non-alphanumeric byte replaced by '-'.
+session_transcript() {
+  printf '%s/.claude/projects/%s/%s.jsonl' \
+    "$HOME" "$(printf '%s' "$REPO" | tr -c 'a-zA-Z0-9' '-')" "$1"
+}
+
+# Decide whether this run continues the previous session. Sets RESUME_SID
+# (empty means cold start) and RESUME_CHAIN_N. Must run BEFORE the prompt is
+# chosen — the prompt depends on the answer — and before TIMEOUTFILE is consumed.
+decide_session() {
+  local sid chain reason
+  RESUME_SID=""
+  sid="$(cat "$SESSIONFILE" 2>/dev/null || true)"
+  chain="$(cat "$RESUME_CHAINFILE" 2>/dev/null || echo 0)"
+  case "$chain" in ''|*[!0-9]*) chain=0 ;; esac
+  RESUME_CHAIN_N="$chain"
+
+  if   [ -z "$sid" ];                        then reason="no previous session recorded"
+  elif [ -f "$TIMEOUTFILE" ];                then reason="previous run was killed at the background-task ceiling"
+  elif [ "$LAST_RC" != "0" ];                then reason="previous run exited rc=$LAST_RC"
+  elif [ "$LAST_LIMITED" = "1" ];            then reason="previous run stopped on a usage limit"
+  elif [ "$chain" -ge "$MAX_RESUME_CHAIN" ]; then reason="resume chain hit $MAX_RESUME_CHAIN — shedding accumulated context"
+  elif [ ! -f "$(session_transcript "$sid")" ]; then reason="session $sid has no transcript on disk"
+  else RESUME_SID="$sid"; reason=""
+  fi
+
+  if [ -n "$RESUME_SID" ]; then
+    echo "--- run $run: RESUMING session $RESUME_SID (resume $((chain + 1)) of $MAX_RESUME_CHAIN)"
+  else
+    echo "--- run $run: COLD session — $reason"
+  fi
+}
+
 # --------------------------- run loop --------------------------------------
 
-FIRST_PROMPT="Read BUILD/ACCURACY-MISSION.md end to end — it is your complete mission. Then read BUILD/ACCURACY-INBOX.md (act on any directives first), BUILD/ACCURACY-STATE.md, and run '.venv/bin/python scripts/accuracy_board.py next'. Begin execution exactly as ACCURACY-MISSION.md instructs."
-RESUME_PROMPT="You are resuming the unattended accuracy programme. Read BUILD/ACCURACY-INBOX.md FIRST and act on any unhandled directives. Then read BUILD/ACCURACY-MISSION.md and BUILD/ACCURACY-STATE.md, and run '.venv/bin/python scripts/accuracy_board.py next'. Clean up any dirty working tree with a signed wip commit, then continue from what the inbox, state file and board tell you, following ACCURACY-MISSION.md protocols exactly."
+# Carried by every prompt, with or without a gate report attached, so the rule
+# holds on the very first run too. ACCURACY-MISSION.md §9.3 says "pytest green"
+# and says nothing about who runs it; read alone it invites the agent to run the
+# whole suite in-session, which is what wedged 2026-08-19. This is the missing
+# half of that sentence.
+SUITE_RULE="The FULL gate suite (a bare whole-repo pytest, or 'scripts/check.sh' with no --fast) is the SUPERVISOR's job, not yours. It runs between runs, outside your session, and its verdict is handed to you at the top of this prompt when there is one. Measured 2026-08-21: the full backend suite takes 20.2 minutes. Never launch it yourself, foreground or background — it outlasts a session, and every run that tried was terminated mid-wait with nothing landed.
+
+Your in-run check is 'scripts/check.sh --fast [paths]': the same gate list with pytest under xdist and coverage off, narrowable to the tests you touched. Measured 96s on one module. Use it, and read ACCURACY-MISSION.md §9.1 for exactly which gate runs where.
+
+A green --fast run is never sufficient to merge. Where the mission asks for 'pytest green' (§9.3), the proof is the supervisor's verdict above plus CI on the PR — and if that verdict does not cover your branch tip, say so rather than claiming green. You do not need to watch CI yourself: accuracy-pr-land already watches it to conclusion.
+
+Never end a turn waiting on a background job. Either record the command AND its log path in in_the_middle_of so the next run can poll it, or do not start it."
+
+FIRST_PROMPT="Read BUILD/ACCURACY-MISSION.md end to end — it is your complete mission. Then read BUILD/ACCURACY-INBOX.md (act on any directives first), BUILD/ACCURACY-STATE.md, and run '.venv/bin/python scripts/accuracy_board.py next'. Begin execution exactly as ACCURACY-MISSION.md instructs.
+
+$SUITE_RULE"
+RESUME_PROMPT="You are resuming the unattended accuracy programme. Read BUILD/ACCURACY-INBOX.md FIRST and act on any unhandled directives. Then read BUILD/ACCURACY-MISSION.md and BUILD/ACCURACY-STATE.md, and run '.venv/bin/python scripts/accuracy_board.py next'. Clean up any dirty working tree with a signed wip commit, then continue from what the inbox, state file and board tell you, following ACCURACY-MISSION.md protocols exactly.
+
+$SUITE_RULE"
+
+# Used only when this run CONTINUES the previous session (see decide_session).
+# The point of resuming is that re-orientation is already done, so this prompt
+# must not ask for it again — it names only what changed while the session was
+# stopped. If you find yourself adding "read the mission" back into this string,
+# the resume is buying nothing and MAX_RESUME_CHAIN should be 0 instead.
+CONTINUE_PROMPT="Continue the unattended accuracy programme. This is a new run inside the SAME session: you still hold ACCURACY-MISSION.md, its protocols, and everything you established last run. Do not re-read the mission and do not re-derive what you already know.
+
+What you do not hold is anything that changed while you were stopped, so re-read exactly these: BUILD/ACCURACY-INBOX.md (act on any unhandled directive before anything else), BUILD/ACCURACY-STATE.md, and '.venv/bin/python scripts/accuracy_board.py next'. Also re-check the working tree — if it is dirty, commit it with a signed wip commit before continuing.
+
+Treat your own memory of the repo's contents as stale where it matters: commits may have landed, CI may have finished, and a human may have edited files under you. Verify before you rely on it. Then carry on from where you were, following ACCURACY-MISSION.md protocols exactly.
+
+$SUITE_RULE"
 
 ntfy_publish "🚀 Accuracy supervisor started" "$(progress_block)
 Host \`$(hostname)\` · model \`$MODEL\` · worktree \`$REPO\`
@@ -812,6 +1093,13 @@ start_monitor
 start_control_listener
 
 run=0
+LAST_RC=0                 # previous run's exit code, and whether it stopped on a
+LAST_LIMITED=0            # usage limit. Both feed decide_session; 'set -u' means
+                          # they must exist before the first call, and the seeded
+                          # values are the ones that permit a resume — harmless,
+                          # because run 1 has no session to resume anyway.
+RESUME_SID=""
+RESUME_CHAIN_N=0
 while [ "$run" -lt "$MAX_RUNS" ]; do
   run=$((run + 1)); echo "$run" > "$RUNFILE"
 
@@ -868,19 +1156,77 @@ Holding before run $run. Send RESUME, or delete BUILD/PAUSE in the worktree." "p
     ntfy_publish "▶️ Resumed" "$(progress_block)" "arrow_forward" "low"
   fi
 
+  # Continue the previous session, or start a cold one? Decided here because the
+  # prompt depends on the answer, and while TIMEOUTFILE is still on disk — the
+  # block below consumes it.
+  decide_session
+
   # First run ever: ACCURACY-STATE.md still carries the seeded 'run_pointer: none'.
   rp="$(state_field run_pointer)"
-  if [ "$run" -eq 1 ] && { [ -z "$rp" ] || [ "$rp" = "none" ]; }; then PROMPT="$FIRST_PROMPT"; else PROMPT="$RESUME_PROMPT"; fi
+  if [ -n "$RESUME_SID" ]; then
+    PROMPT="$CONTINUE_PROMPT"
+  elif [ "$run" -eq 1 ] && { [ -z "$rp" ] || [ "$rp" = "none" ]; }; then
+    PROMPT="$FIRST_PROMPT"
+  else
+    PROMPT="$RESUME_PROMPT"
+  fi
+
+  # Run the full gate suite here, before the agent starts, so the agent never has
+  # to wait on it. Blocks for as long as the suite takes — that is the point.
+  gate_sweep
+
+  # The standing gate verdict, if there is one. Not consumed: it holds until the
+  # tree moves, and every run needs to know both what it says and that running
+  # the suite is not this session's job.
+  if [ -f "$GATEREPORT" ]; then
+    PROMPT="$(cat "$GATEREPORT")
+
+---
+
+$PROMPT"
+  fi
+
+  # If the previous run was killed by the background-task wait ceiling, lead with
+  # that. It goes FIRST, ahead of the inbox and the state file, because the state
+  # file is exactly what will mislead this run: it still says work is "in flight".
+  # Consumed once — deleted on read, so a run is told about a timeout only once.
+  if [ -f "$TIMEOUTFILE" ]; then
+    PROMPT="$(cat "$TIMEOUTFILE")
+
+---
+
+$PROMPT"
+    rm -f "$TIMEOUTFILE"
+  fi
+
+  # Resume into the recorded session, or mint a new id and record it. The id is
+  # ours either way, so the next run never has to scrape one out of the log.
+  if [ -n "$RESUME_SID" ]; then
+    SESSION_ARGS=(--resume "$RESUME_SID")
+    SESSION_DESC="resumed $RESUME_SID"
+    echo "$((RESUME_CHAIN_N + 1))" > "$RESUME_CHAINFILE"
+  else
+    SESSION_ID="$(new_session_id)"
+    SESSION_ARGS=(--session-id "$SESSION_ID")
+    SESSION_DESC="new $SESSION_ID"
+    echo "$SESSION_ID" > "$SESSIONFILE"
+    echo 0 > "$RESUME_CHAINFILE"
+  fi
 
   LOG="$LOGDIR/acc-run-$(printf '%04d' "$run")-$(date +%Y%m%d-%H%M%S).log"
   date +%s > "$STARTFILE"
   RUNSTART_SHA="$(git rev-parse HEAD 2>/dev/null)"
-  echo "=== accuracy run $run starting $(date -Is) model=$MODEL ===" | tee -a "$LOG"
+  echo "=== accuracy run $run starting $(date -Is) model=$MODEL session=$SESSION_DESC ===" | tee -a "$LOG"
 
-  claude -p "$PROMPT" --model "$MODEL" \
-    --dangerously-skip-permissions --verbose >>"$LOG" 2>&1 &
+  # </dev/null is not cosmetic. Without it the CLI waits on stdin, prints
+  # "no stdin data received in 3s, proceeding without it", and only then starts —
+  # and under tmux stdin is a live terminal, so it is also the one input a stray
+  # keystroke could reach. The prompt arrives as an argument; stdin is never wanted.
+  claude -p "$PROMPT" --model "$MODEL" "${SESSION_ARGS[@]}" \
+    --dangerously-skip-permissions --verbose </dev/null >>"$LOG" 2>&1 &
   CLAUDE_PID=$!; echo "$CLAUDE_PID" > "$CLAUDE_PIDFILE"
   wait "$CLAUDE_PID"; rc=$?; rm -f "$CLAUDE_PIDFILE"
+  LAST_RC="$rc"; LAST_LIMITED=0     # LAST_LIMITED is raised by the outcome block
 
   echo "=== accuracy run $run exited rc=$rc $(date -Is) ===" >>"$LOG"
   mins=$(( ( $(date +%s) - $(cat "$STARTFILE") ) / 60 ))
@@ -906,6 +1252,8 @@ The agent hit something it couldn't resolve and moved on. Details attached." "wa
 
   # --- outcome -----------------------------------------------------------
   if tail -n 80 "$LOG" | grep -qiE "session limit|usage limit|rate limit|limit reached|overloaded|429"; then
+    LAST_LIMITED=1              # a run cut off at a limit may be mid-turn; the next
+                                # one starts cold rather than resuming into that
     wait_secs="$(parse_reset_seconds "$LOG")"
     if [ -n "$wait_secs" ]; then wait_secs=$((wait_secs + LIMIT_RESUME_MARGIN)); precision="from the limit message"
     else wait_secs="$BACKOFF_LIMIT_FALLBACK"; precision="estimated — no reset time given"; fi
@@ -913,7 +1261,8 @@ The agent hit something it couldn't resolve and moved on. Details attached." "wa
     if [ "$wait_secs" -gt "$MAX_LIMIT_WAIT" ]; then
       ntfy_publish "🛑 Long limit window — stopping" "$(progress_block)
 Reset is ~$((wait_secs / 3600))h away (likely the weekly cap). Stopping cleanly; nothing is lost.
-Rerun \`./supervisor-accuracy.sh\` after the reset.
+Relaunch after the reset:
+\`tmux new -s lemely-acc -c $REPO /home/sico/Lemely-worktrees/orch/supervisor-accuracy.sh\`
 
 $DIFFSUM" "octagonal_sign" "urgent" "[$(view_action 'Open repo' "$REPO_URL")]"
       exit 0
@@ -940,9 +1289,68 @@ $DIFFSUM" "warning" "high" \
     fi
     sleep "$BACKOFF_CRASH"
 
+  # A run killed by the background-task wait ceiling exits rc=0 and is
+  # indistinguishable from a clean finish by return code alone — the only
+  # evidence is the line the CLI prints on its way out. Detect it, and hand the
+  # fact forward: without this the next run reads a state file that says work is
+  # "in flight", waits on it again, and dies the same way (runs 1-8, 2026-08-19).
+  # Scan the WHOLE log, not the tail: the CLI prints this line early (line 2 in
+  # every observed case) and then keeps streaming, so a tail window would miss it
+  # on any long run — silently restoring the bug. Anchored on the CLI's exact
+  # "<N>s; terminating" phrasing so prose that merely discusses timeouts is not
+  # mistaken for one.
+  elif grep -qiE "Background tasks still running after [0-9]+s; terminating" "$LOG"; then
+    stuck_on="$(state_field in_the_middle_of)"
+    cat > "$TIMEOUTFILE" <<EOF
+## ⚠ The previous run (run $run) was TERMINATED, not finished.
+
+It ran ${mins}m and was killed by the background-task wait ceiling
+($((CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS / 60000)) minutes) while waiting on
+background work. It exited rc=0, so nothing else marks this as a failure — this
+notice is the only record. Its final summary in the log is NOT a completion
+report; it is a snapshot of a run that was cut off mid-wait.
+
+What it said it was in the middle of: ${stuck_on:-(nothing recorded)}
+
+Act on this before anything else:
+
+1. **Whatever it was waiting on is gone.** Background tasks and workflows do not
+   survive the session that launched them (ACCURACY-MISSION.md §7). Any \`wf_…\`
+   id in ACCURACY-STATE.md is a dead handle, not something you can collect. Do
+   not wait on it. Do not poll it. Re-run it from scratch if its result is still
+   needed.
+2. **Do not simply re-arm the same wait** — that is the exact loop this notice
+   exists to break. If you are about to background a long task and wait on it,
+   run it in the foreground instead, or narrow it (§9: run the smallest thing
+   that answers the question; the full suite runs once, before PR).
+3. **Correct \`in_the_middle_of\`** to a fact the next run can act on without a
+   live handle — e.g. "#56: implemented, unreviewed" — via
+   \`scripts/accuracy_board.py state set in_the_middle_of "…"\`.
+4. If this has now happened on consecutive runs for the same item, stop
+   retrying it and record a blocker in BUILD/BLOCKERS.md (§11).
+EOF
+    ntfy_publish "⏱ Run $run hit the background-task ceiling" "$(progress_block)
+Ran ${mins}m, then was terminated waiting on background work (rc=0, so it is not counted as a crash).
+Waiting on: ${stuck_on:-(nothing recorded)}
+The next run is being told explicitly, so it does not re-arm the same wait.
+
+$DIFFSUM" "hourglass,warning" "high" \
+      "[$(ctrl_action Pause PAUSE),$(view_action 'Latest commit' "$(commit_url)")]" \
+      "lemely-acc-bgceiling"
+    ntfy_attach "$LOG" "Timeout log — accuracy run $run" "page_facing_up" "default"
+    sleep 20
+
   else
+    rm -f "$TIMEOUTFILE"        # a genuinely clean run clears any stale handoff
+    # Say which it will actually be. "Fresh context" was unconditional and is now
+    # the exception, and a notice that misreports this hides a stuck resume chain.
+    if [ "$((RESUME_CHAIN_N + 1))" -ge "$MAX_RESUME_CHAIN" ]; then
+      next_desc="restarting with fresh context (resume chain full)"
+    else
+      next_desc="continuing the same session (resume $((RESUME_CHAIN_N + 1))/$MAX_RESUME_CHAIN)"
+    fi
     ntfy_publish "🔄 Run $run checkpointed" "$(progress_block)
-${mins}m · restarting with fresh context.
+${mins}m · $next_desc.
 
 $DIFFSUM" "recycle" "min" "[$(view_action 'Latest commit' "$(commit_url)")]" "lemely-acc-checkpoint" "" "$(commit_url)"
     sleep 20

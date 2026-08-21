@@ -1017,6 +1017,10 @@ def test_roster_by_non_owner_is_403(
 # Malformed ids are a clean 4xx on every route, never a 500.
 # ---------------------------------------------------------------------------
 
+# Stable stand-in for "a syntactically valid user id" in URL paths that are
+# parametrized. See the note in the parametrize block below.
+_WELL_FORMED_STUDENT_ID = "2099ffa2-a229-4258-98df-2a9e18733b63"
+
 
 @pytest.mark.parametrize(
     ("method", "path", "body"),
@@ -1025,7 +1029,14 @@ def test_roster_by_non_owner_is_403(
         ("delete", "/api/classes/not-a-uuid", None),
         ("get", "/api/classes/not-a-uuid/roster", None),
         ("post", "/api/classes/not-a-uuid/enroll", {"studentId": str(uuid.uuid4())}),
-        ("delete", f"/api/classes/not-a-uuid/students/{uuid.uuid4()}", None),
+        # Fixed, not uuid4(): this UUID lands in the *path*, so it becomes part
+        # of the parametrized test ID. A fresh random value per process makes
+        # collection non-deterministic, which pytest-xdist rejects outright
+        # ("Different tests were collected between gw0 and gw1"). The assertion
+        # only needs a well-formed student UUID beside a malformed class ID, so
+        # a constant is exactly as strong. The uuid4() on the line above is
+        # safe because it sits in `body`, which pytest names `body3`.
+        ("delete", f"/api/classes/not-a-uuid/students/{_WELL_FORMED_STUDENT_ID}", None),
     ],
 )
 def test_malformed_ids_are_4xx_not_500(

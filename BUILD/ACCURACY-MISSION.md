@@ -293,6 +293,29 @@ Anything outside these six shapes you may compose from the agents in §6 directl
 author a new workflow if it will recur — but check first that one of the six does not
 already cover it.
 
+**A workflow does not survive your session. Never end a run waiting on one.**
+Workflow results can only be collected by the session that launched them: resume is
+same-session only, so a `wf_…` id written to `ACCURACY-STATE.md` is *not* a handle a
+later run can redeem. It is a receipt for something already lost.
+
+This is not theoretical — it is what stalled #56. A run launched `accuracy-review`
+(`wf_1ba8f8f9-81f`), recorded `in_the_middle_of: accuracy-review in flight`, and was
+terminated while waiting. Seven subsequent runs read that line, waited for a verdict
+that no longer existed, and checkpointed. The branch never landed.
+
+So:
+
+- **Await every workflow in the run that launched it.** Treat the result as the point
+  of the run. Do not background one and hand the wait to your successor.
+- **Never write a `wf_…` id into `in_the_middle_of` as something to be collected.**
+  Record the *work state* instead — `#56: implemented, unreviewed` — which is a fact
+  the next run can act on with no live handle.
+- **If a run ends mid-workflow, the next run re-runs it from scratch.** A review whose
+  session died is an un-run review, not a pending one. Re-running costs a workflow;
+  trusting a dead handle costs the programme its merge gate.
+- **If a workflow genuinely cannot fit one run**, that is a blocker for
+  `BUILD/BLOCKERS.md` (§11) — not something to leave in flight and hope.
+
 ### 7.1 The PR Lifecycle
 
 The PR lifecycle — from a reviewed branch to a merged `develop` commit — is owned end to
@@ -416,6 +439,40 @@ lists no edge.
 
 ## 9. Quality Gates — every merge to `develop`
 
+**Run the expensive gates once, at the gate — not on a loop.** These checks are
+merge preconditions, not a development heartbeat. The full `pytest` suite,
+`scripts/check.sh`, `pre-commit run --all-files` and `mypy lemely` are each minutes of
+wall-clock; running them after every edit is how a run spends its whole life waiting
+and lands nothing.
+
+While implementing, use the narrowest thing that answers the question:
+
+| Situation | Run |
+|---|---|
+| Iterating on one change | The single test node — `pytest path::test_name` |
+| That change looks done | That test file, or its directory |
+| Touched code with non-obvious reach | `tokensave_run_affected_tests` / `tokensave_affected` to find the real blast radius, then just those files |
+| Formatting or import questions | `ruff check <paths>` on the touched paths only |
+| **Ready to open the PR** | The full §9 list below, **once** |
+
+Rules:
+
+- **The full suite runs once per branch, immediately before `accuracy-pr-land`** — not
+  once per run, and never speculatively "to see where we are".
+- **Do not re-run a suite that already passed on the same tree.** If nothing has been
+  committed or edited since the last green run, that result still stands. Say so and
+  move on.
+- **CI is the authority on breadth.** CI already runs pytest on Python 3.12/3.13/3.14
+  (§5). Reproducing that matrix locally buys nothing; one local interpreter is enough
+  to decide whether to open the PR.
+- **A red gate goes to `accuracy-gate-triage`, not to a re-run.** Running it again to
+  see if it is still red is not evidence-gathering.
+- The same discipline governs `accuracy-measure`: sweeps cost real money against the
+  §10 ceiling. Never launch one to explore — only against a pre-committed question.
+
+None of this weakens the gates. Everything in the list below must still be green before
+merge; this governs only how often you pay for it on the way there.
+
 Mechanical (all must be green, matching CI):
 
 1. `pre-commit run --all-files` clean.
@@ -443,6 +500,35 @@ Accuracy-specific (these are the point of the programme):
    not below the M0 baseline.
 10. No `test`-split read without an M0.7a authorisation token; every read appends to
     the test-touch ledger.
+
+### 9.1 Where each gate actually runs
+
+Gate 3 above is a **merge** condition, not a per-run one. Nothing in this section is
+relaxed by what follows; this only says which machine is responsible for proving it.
+
+The full suite is ~3800 tests, serial and coverage-instrumented, on a 4-core box. It
+does not fit inside one unattended run. Runs that started it spent their whole lifetime
+waiting, ended their turn with nothing done, and the next run — fresh context, no memory
+a suite was in flight — started it again. Four consecutive runs produced no commits.
+**Do not run the full suite inside a run.**
+
+- **In-run**, use `scripts/check.sh --fast [paths]`. Same gate list; pytest runs under
+  xdist with coverage off, optionally narrowed to the tests your change touches. It
+  skips the browser E2E/audit gates and the network-dependent `impeccable-detect`.
+  Observed: ~80s narrowed, versus the full gate's tens of minutes.
+- **Before merge**, the authoritative proof is **CI** — `.github/workflows/ci.yml` runs
+  bare `pytest` on 3.12/3.13/3.14, which picks up the coverage addopts and the 70%
+  floor, plus `pre-commit` and the web job. `accuracy-pr-land` already watches CI to
+  conclusion; that watch is what satisfies gate 3, not a local run.
+- A green `--fast` run is **never** sufficient to merge, and `--fast` output says so.
+  Running the full `scripts/check.sh` locally is still correct when you have the wall
+  clock for it (a human at the terminal, not an unattended run).
+
+A run must never block on work that outlives it. If you do start something long-running
+in the background, record how to find it in `in_the_middle_of` — the command and its log
+path — so the next run polls that log instead of starting a second copy. If you cannot
+express the wait that way, do not start it: hand the issue to `accuracy-pr-land` and let
+CI be the thing that waits.
 
 ---
 

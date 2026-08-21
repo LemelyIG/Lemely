@@ -10155,3 +10155,275 @@ deliberately contains none. It now walks the route element tree, which is what
 typecheck, lint (0 errors), **1,432 web unit tests (+29)**, `check:copy` 0, both
 builds. Full `adapt` re-run, Python tests and `pre-commit run --all-files`
 recorded with the commit.
+
+## DA1 — H4: the frozen train/dev/test split policy, and the spec contradiction it had to resolve (#49, blocks #57/#47)
+
+First decision of the accuracy programme; DA-numbered so the accuracy stream stays
+separate from the redesign's D6 series. Recorded from a human interview on 2026-08-19.
+It fixes the **rule**; the membership **list** is signed off separately, on #57, once
+#44 has restored the corpus the rule partitions (spec §7: corpus restore → split
+membership).
+
+**Unit: the question, not the paper and not the leaf.** A leaf's root parent is
+atomic — a multi-part question is never divided across splits — but two questions from
+the same paper may land in different splits. This buys control over per-stratum leaf
+counts at a budget of ~7–8 labelled papers, where paper-level assignment can only move
+ground truth in ~40-leaf chunks. It is bought with leakage, and the leakage is recorded
+rather than argued away: dev and test will share papers, so mark-scheme house style,
+layout and scan quality carry across the boundary. **The H9 write-up therefore claims
+"unseen questions", never "unseen papers".** The split manifest carries this sentence.
+
+**Proportions: 10 / 60 / 30 ≈ 30 / 180 / 90 leaves.** `train` is the only place real
+papers may be eyeballed freely — prompt work, threshold tuning, regression fixtures.
+`dev` carries all A/B measurement. `test` is read once, at H9.
+
+The arithmetic that forced the choice: §6 puts the paired-McNemar floor for 83.8% →
+88.8% at n=219, and a ~90-leaf test split gives a 95% Wilson interval of roughly ±7.5pp.
+A 300-leaf budget cannot fund both a provable dev improvement and a tight headline. Dev
+at 180 sits **below** the McNemar floor deliberately, and the consequence is accepted in
+advance: per M0.6, an improvement claim on dev prints as underpowered rather than as a
+number. The alternative (0/70/30) would have reached the floor by deleting the tuning
+pool — which does not remove the iteration, it just moves it onto dev leaves and
+contaminates them silently. Raising the label budget to ~450 was offered and declined;
+it remains the only way to get both.
+
+**Strata: pre-label observables only.** Assignment stratifies on syllabus code
+(0580/0606/0625) × parse path (det/Gemini) × tariff band (1 / 2 / 3+ marks).
+
+This resolves a contradiction in the spec. §4 requires stratification to use "the
+labeller's own type judgement, never the pipeline-emitted `question_type`" — but that
+judgement is an **output of labelling pass 2**, and the freeze is what unblocks
+labelling (#49 → #57 → #47). As written, §4 stratifies assignment on a variable that
+cannot exist at assignment time. The resolution keeps both halves of the intent: the
+labeller's type judgement drives the **published stratification table** in M2.4's
+acceptance — which is a reporting requirement — while assignment uses only what is
+observable before any label exists. The pipeline-emitted `question_type` is still never
+used for either purpose; on the det path it is hardcoded to `recall`, which is the
+defect §4 was guarding against. **§4 needs amending to say this**; raised on #43.
+
+Two alternatives were rejected. Pilot-then-freeze (label ~40 leaves, observe the type
+distribution, then freeze) makes the freeze a function of labels already seen, which is
+the independence the freeze exists to protect. A command-word heuristic
+("calculate"/"explain"/"draw"/"state") lifted from the question paper is closer to the
+intended variable but unvalidated — and on the det path the stem text is precisely what
+is least reliable.
+
+**Assignment: a deterministic hash, not a seeded shuffle.**
+`split = bucket(sha256(salt ‖ question_id))` within each stratum, with the salt recorded
+in the manifest. No RNG state, no dependence on input ordering, no Python-version
+sensitivity: a reviewer recomputes every assignment from the manifest alone and gets the
+same answer. A seeded shuffle is reproducible only if the sort order and RNG
+implementation are *also* pinned, which is three more things to get wrong. Hand-picking
+was rejected outright — with n this small it would give the most balanced splits and no
+defensible answer to "why is that hard paper in dev?".
+
+**Amendments: drop-only, logged, never backfilled.** A leaf that turns out unlabellable
+— corrupt scan, missing mark scheme, an unadjudicable question — is excluded with a
+reason in the manifest, and its split simply loses a leaf. No replacement is drawn.
+Backfilling is what lets a labeller shop for easy leaves, and deterministic backfill
+only removes the shopping, not the post-freeze membership churn. Splits will therefore
+land under their target n, and M0.5's exclusion funnel publishes the shortfall so the
+shrinkage is visible rather than silent.
+
+**Test-touch: the token gates evaluation joins, not file access.** Acceptance box 3 says
+the test split is "read exactly once", but the labeller must read test-split papers to
+label them at all, so the literal reading is unsatisfiable. What consumes the single
+read is **any run that joins pipeline output against test labels** — the harness, the
+pure analyses, `AccuracyMetrics`. Labelling a test-split paper is a ground-truth
+*write*, is unrestricted, and cannot leak results because the labeller imports no
+pipeline module (already asserted by a test, §6). One token, issued by the human at H9;
+one ledger append; CI fails an untokened join. This is the contract M0.7a (#31) builds.
+
+Gating every artefact access instead would put a token in #47's path and fill the ledger
+with routine labelling entries, diluting the one entry that matters. Extending the gate
+to reporting (a CI grep over `BUILD/` and `reports/` for test-split numbers before H9)
+was considered and not adopted; the leak path it closes — running the join locally and
+pasting the number — remains open, and is held by discipline rather than by CI.
+
+**Status.** #49 acceptance boxes 1 and 3 are met by this record. Box 2 — membership
+frozen in the manifest — stays open until #57 generates the manifest over the restored
+corpus and the human signs off on the actual list, so that "human approved the
+membership" remains a true statement rather than a pre-approved abstraction.
+
+---
+
+## DA2 — H7: the agreement ceiling becomes a two-labeller measurement (#51, blocked by #47)
+
+**The figure is inter-annotator agreement, not self-agreement.** A second named person
+(labeller B) marks the sample. This is the quantity the ceiling was always a proxy for:
+*if a competent examiner labelled this leaf independently, would they reach the same
+verdict?* Delayed self-agreement was the substitute the spec assumed because only one
+labeller was thought to be available; with a real second person the substitute is
+unnecessary. **§6's "self-agreement" paragraph needs amending**, along with #51's title
+and acceptance wording; raised on #43.
+
+**No delay, and why the delay existed.** With one labeller, re-marking a leaf soon after
+measures recall, not judgement — agreement returns near 100%, every pipeline-vs-label
+disagreement is then booked as pipeline error, and M3/M4 spend effort chasing headroom
+that is really one person's inconsistency on one weekend. The delay was the only defence
+against that. B has no memory of A's verdict to recall, so the defence is not needed and
+its schedule cost (up to a fortnight between the end of #47 and any publishable figure)
+is not paid.
+
+**Sample: rule pre-committed, membership computed after labelling.** The manifest states,
+before labelling begins, that the sample is the 10% of labelled leaves with the lowest
+`sha256(relabel_salt ‖ question_id)`, drawn **per stratum** so the ceiling is not
+computed entirely on 0580 tariff-1 recall items. Membership cannot be known during
+labelling because the ranking needs the full set of labelled leaves, which does not exist
+until #47 completes. Fixing membership up front was rejected: A would be labelling leaves
+known to be watched, and the resulting figure would bound A's care rather than A's
+consistency. This is the same rule/membership split as [[DA1]].
+
+**Both passes, marking held against A's transcription.** B redoes transcription blind,
+giving a transcription-agreement figure; B then marks against **A's** pass-1 text rather
+than B's own. This yields two separately attributable ceilings — how consistently
+handwriting is read, and how consistently the mark scheme is applied — with the marking
+figure measured on identical input in both arms, so transcription drift cannot leak into
+it. A fully independent re-run was rejected because a disagreement could then be either
+layer and the ceiling gives no direction to improve in; marking-only was rejected because
+it leaves handwriting reading, the pipeline's largest known gap, unmeasured.
+
+**B is calibrated first.** B reads the complete #52 ruling log before marking. Rulings
+are conventions with a right answer once someone decides; an uncalibrated B disagrees on
+convention, that disagreement is counted as irreducible human variability, and the
+ceiling comes out lower than the truth — which stops optimisation too early. The cost,
+accepted: a convention that is unwritten but which A and B happen to share stays
+invisible, so the log's own completeness is not tested by this exercise.
+
+**Disagreements: A's label stands.** B's verdicts compute the agreement figure and
+nothing else. Ground truth stays homogeneous — all ~300 leaves produced the same way —
+so the accuracy number is not quietly better on the 10% that got two pairs of eyes, and
+sampled leaves landing in the test split do not give the release number a mixed-quality
+reference. Where a disagreement is systematic rather than a one-off judgement call it
+goes to #52 as a new ruling applying to future labelling, which captures the value
+without making the sample special. Accepted cost: labels known to be contested are
+retained on roughly the disagreement rate of 30 leaves.
+
+**Size stays at 10%, and the interval is published.** ~30 leaves. At 93% agreement the
+95% Wilson interval is roughly ±10pp, so the ceiling is known only to lie somewhere from
+the low eighties to the high nineties. That is enough to catch a catastrophic ceiling and
+enough to print beside the headline number; it is **not** enough to justify a
+fine-grained stop-optimising decision, and the interval must appear wherever the figure
+does. Reaching ±4pp would need ~150 leaves — half the corpus — and was rejected as the
+wrong place for that effort.
+
+**Consequences for the issue.** #51's stated 45-minute effort is wrong: 1–2 h of B's
+time across both passes, plus onboarding on the labeller UI. B's identity is recorded in
+each label manifest (§6 already requires labeller identity). The published figure is
+labelled *inter-annotator agreement, two labellers, calibrated, n≈30* — never compared
+against or averaged with a single-labeller figure from any other regime.
+
+---
+
+## DA3 — H8: the ruling log is a record, not an authority (#52)
+
+**What #52 actually adds.** The person raising a judgement question during labelling is
+the same person ruling on it. #52 therefore adds no independent examiner authority, and
+the issue should stop implying one. Its entire value is the **written record**: that
+session 8 marks the same way as session 1, and that labeller B ([[DA2]]) can be
+calibrated against something explicit rather than against A's memory.
+
+**Storage.** `eval/rulings.jsonl` at repository root, append-only with a hash chain
+exactly like the labels, deliberately outside the `lemely/eval/` package (§3.1). It is
+published alongside the accuracy figures: the rulings are part of the ground-truth
+definition, and the number is not reproducible without them.
+
+**Scope is a machine-evaluable predicate.** Each ruling records its scope over a fixed
+small set of fields already present on a label — syllabus code, tariff, parse path, the
+labeller's own type judgement, and the presence of mark-scheme tokens such as `oe` or
+`ecf`. The pre-freeze sweep then selects affected leaves automatically and provably
+completely, which is the only version in which "the corpus is consistent under the final
+rule set" is a checkable claim. Free-text scope plus hand-listed keys was rejected:
+completeness would rest on the labeller recalling affected earlier leaves while
+mid-labelling on a different one, so the sweep would systematically miss exactly the
+cases most likely to be inconsistent. Free text alone was rejected because the sweep
+becomes ~300 leaves × every ruling, by hand, immediately before the freeze — which under
+time pressure gets abbreviated and the consistency claim quietly becomes false.
+
+**Retroactivity: forward immediately, one deferred sweep before the freeze.** A ruling
+governs labelling from the moment it is made. When #47's labelling completes, a single
+sweep re-serves every earlier leaf inside some ruling's scope and re-marks it, appending
+**supersede records** so the hash chain stays intact and the original verdict remains
+visible. Forward-only was rejected: it leaves the corpus inconsistent in a systematic,
+direction-carrying way, and that inconsistency is indistinguishable from pipeline error
+in the accuracy figure. It would also corrupt [[DA2]] — B reads the *final* ruling log
+while A's early leaves were marked under a partial one, so part of the measured
+disagreement would be ruling drift rather than judgement, deflating the ceiling.
+Immediate retroactive sweeps on every ruling were rejected because repeatedly
+interrupting sessions to do rework is the pattern most likely to stop the labeller
+raising questions at all.
+
+**Mid-session: park and continue.** A judgement question writes the leaf as
+`pending_ruling` and the session continues; parked leaves are resolved in a batch and
+completed. This preserves flow across a 6–8 h job split over sessions. The parked tail
+must reach zero before the split freeze, and any leaf never resolved is an **exclusion
+that appears in the M0.5 funnel with its reason** — never silently dropped from the
+denominator. Ruling provisionally in the moment was rejected: with the leaf already
+marked there is no forcing function to revisit, and provisional rulings become permanent
+by inertia. Stopping the session was rejected: a question needing real research into CAIE
+conventions blocks for hours, and the pressure to unblock is what produces a hasty
+ruling.
+
+**Blindness holds during adjudication.** A ruling is never resolved by consulting what
+the pipeline produced for that leaf. Adjudication is the natural place to breach §6's
+structural blindness — the labeller is stuck, the pipeline's answer is available, and it
+looks like evidence. It is not evidence; it is the thing being measured.
+
+---
+
+## DA4 — H9: what pre-commits the single test read, and what happens when it disappoints (#55)
+
+**Both arms in one touch.** The acceptance requires a paired McNemar comparison, which
+needs the release candidate *and* its baseline scored on the same test leaves. Both
+arms execute inside the **same authorised touch**, from a single command, with both
+results written to the ledger together. Running the baseline first "to have it ready"
+spends the one read, and the candidate's number is then the second.
+
+**Release candidate: human choice from dev-evaluated candidates.** Candidates are
+measured on dev and the human picks one. Selecting on dev is what dev is for, and the
+test split stays untouched throughout — this is not a leak. It does carry a cost that
+must be handled explicitly, because selection is otherwise invisible: many dev
+comparisons inflate the winner's dev figure through selection, so the test number is
+*expected* to regress downward. Two guardrails, both written into #55: the candidates
+considered and their dev figures are published alongside the result, and the expected
+downward regression is stated **before** the read so the gap does not read as failure
+when it appears. The candidate's git SHA is recorded before authorisation is issued.
+
+A fully pre-committed mechanical checklist was offered and not taken; it would remove
+discretion at the decision that matters most, at the price of being unable to ship
+something that misses one box for a good reason.
+
+**A disappointing result is published and the split is spent.** The number goes out with
+its Wilson interval and the McNemar comparison, whatever it says. The test split is then
+burned: all subsequent work is measured on dev only, and any future release needing a
+fresh test figure requires a **new test split drawn from currently unlabelled corpus** —
+more labelling, more of B's time for a fresh ceiling ([[DA2]]), and real schedule cost.
+Deciding this now is the whole mechanism; the cost has to be accepted before it is a live
+temptation. A disclosed re-run was rejected: it degrades the guarantee from "read once"
+to "read twice", and the second number is selected on knowledge of the first, so its
+interval understates the real uncertainty and the McNemar comparison is no longer clean.
+Leaving the response open was rejected because the decision would then be made by whoever
+is looking at a disappointing number under release pressure, which is the exact
+circumstance the mechanism exists to remove it from.
+
+**Enforcement** is the M0.7a token and ledger from [[DA1]]: one token issued by the human
+at H9, one ledger append, CI failing any untokened join of pipeline output against test
+labels.
+
+**Issue hygiene.** #55 carries no milestone, unlike #51 and #52; it needs the release
+milestone set so it cannot be picked up early by accident.
+
+---
+
+## DA5 — Ordering: B labels after the ruling sweep (#51 after #52, both after #47)
+
+[[DA2]] requires labeller B to read the complete ruling log, and [[DA3]] leaves the
+corpus consistent only after the pre-freeze sweep. B must therefore mark **after** that
+sweep, not merely after #47's labelling. Neither issue states this and neither does
+spec §7. The constraint belongs in §7's strict-orderings table:
+
+| first | then | why |
+|---|---|---|
+| ruling sweep (#52) | agreement sample (#51) | Otherwise part of the A–B gap is ruling drift, not judgement, and the ceiling is deflated |
+
+Raised on #43 together with the §6 amendment.

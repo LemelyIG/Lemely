@@ -13,12 +13,32 @@ at the same time, and `supervisor-accuracy.sh` refuses to start while
 ## Launching
 
 ```bash
-tmux new -s lemely-acc '/home/sico/Lemely/supervisor-accuracy.sh'
+tmux new -s lemely-acc -c /home/sico/Lemely-worktrees/accuracy \
+  /home/sico/Lemely-worktrees/orch/supervisor-accuracy.sh
 ```
 
-The script runs the programme in the worktree at
-`/home/sico/Lemely-worktrees/accuracy` — never in `/home/sico/Lemely` itself —
-and refuses to start until every launch-checklist item below holds.
+Two different checkouts, and the `-c` is what keeps them apart:
+
+| | path | why |
+|---|---|---|
+| the script | `/home/sico/Lemely-worktrees/orch` | pinned to `chore/accuracy-orchestration-and-decisions`; nothing else churns it |
+| its cwd | `/home/sico/Lemely-worktrees/accuracy` | the tree it drives; its branch changes every issue |
+
+Never run it from the accuracy worktree, and never from `/home/sico/Lemely`. On
+2026-08-19 the supervisor was launched from the accuracy worktree, so the live
+script was whatever the checked-out feature branch happened to carry: a fix
+committed to the orchestration branch sat unused for five runs. Operator
+infrastructure must not be versioned by the branch it operates on.
+
+If `/home/sico/Lemely-worktrees/orch` is missing, recreate it — it is a
+disposable view of a tracked branch, not a place to keep uncommitted work:
+
+```bash
+git -C /home/sico/Lemely worktree add /home/sico/Lemely-worktrees/orch \
+  chore/accuracy-orchestration-and-decisions
+```
+
+The script refuses to start until every launch-checklist item below holds.
 
 ## LAUNCH CHECKLIST
 

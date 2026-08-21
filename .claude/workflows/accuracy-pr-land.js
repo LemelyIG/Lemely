@@ -9,6 +9,39 @@ export const meta = {
   ],
 }
 
+// -------------------------------------------------------------- ARGS-SHIM-V1
+// `args` reaches a workflow script as a JSON *STRING*, not the object the
+// caller passed. Measured 2026-08-21 with a zero-agent probe: invoking
+// Workflow({name, args: {issue: 56, head: 'HEAD'}}) delivered the literal
+// text '{"issue":56,"head":"HEAD"}', for which `typeof args === 'string'` and
+// every `args.foo` read is `undefined`. The binding is mutable, so parsing it
+// back in place here is enough — no read below this line had to change.
+//
+// Without this, accuracy-pr-land does not fail; it runs on defaults.
+// Its guard would fire and return missing-args, so the failure is loud — but the
+// caller reads that as 'the workflow refused' rather than 'the args never arrived'.
+// Double-encoding is handled too (a string that parses to another string).
+{
+  let depth = 0
+  while (typeof args === 'string' && depth < 3) {
+    const raw = args.trim()
+    if (raw === '') { args = {}; break }
+    try {
+      args = JSON.parse(raw)
+    } catch (e) {
+      log(`accuracy-pr-land: args arrived as a string that is not JSON (${String((e && e.message) || e)}): ${raw.slice(0, 200)}`)
+      return { ok: false, error: 'unparseable-args', detail: raw.slice(0, 500) }
+    }
+    depth++
+  }
+  if (args === null || args === undefined) args = {}
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    const shape = Array.isArray(args) ? 'array' : typeof args
+    log(`accuracy-pr-land: args must be an object, got ${shape}. Call as Workflow({ name: 'accuracy-pr-land', args: { ... } }).`)
+    return { ok: false, error: 'bad-args-shape', detail: `expected object, got ${shape}` }
+  }
+}
+
 // ---------------------------------------------------------------- args guard
 if (!args || args.issue === undefined || args.issue === null || args.issue === '' || !args.branch) {
   log('accuracy-pr-land: missing required argument(s). Call as workflow("accuracy-pr-land", { issue: <number>, branch: "<feature branch, from accuracy_board.py start>", base: "develop" (optional, default and only allowed value) }).')

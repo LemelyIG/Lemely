@@ -9,6 +9,39 @@ export const meta = {
   ],
 }
 
+// -------------------------------------------------------------- ARGS-SHIM-V1
+// `args` reaches a workflow script as a JSON *STRING*, not the object the
+// caller passed. Measured 2026-08-21 with a zero-agent probe: invoking
+// Workflow({name, args: {issue: 56, head: 'HEAD'}}) delivered the literal
+// text '{"issue":56,"head":"HEAD"}', for which `typeof args === 'string'` and
+// every `args.foo` read is `undefined`. The binding is mutable, so parsing it
+// back in place here is enough — no read below this line had to change.
+//
+// Without this, accuracy-measure does not fail; it runs on defaults.
+// Its guard would fire on the missing mode, so no sweep could ever start —
+// which is consistent with spend_usd never moving.
+// Double-encoding is handled too (a string that parses to another string).
+{
+  let depth = 0
+  while (typeof args === 'string' && depth < 3) {
+    const raw = args.trim()
+    if (raw === '') { args = {}; break }
+    try {
+      args = JSON.parse(raw)
+    } catch (e) {
+      log(`accuracy-measure: args arrived as a string that is not JSON (${String((e && e.message) || e)}): ${raw.slice(0, 200)}`)
+      return { ok: false, error: 'unparseable-args', detail: raw.slice(0, 500) }
+    }
+    depth++
+  }
+  if (args === null || args === undefined) args = {}
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    const shape = Array.isArray(args) ? 'array' : typeof args
+    log(`accuracy-measure: args must be an object, got ${shape}. Call as Workflow({ name: 'accuracy-measure', args: { ... } }).`)
+    return { ok: false, error: 'bad-args-shape', detail: `expected object, got ${shape}` }
+  }
+}
+
 // ---------------------------------------------------------------- args guard
 const MODES = ['aa-floor', 'ablation', 'ab', 'regression']
 if (!args || args.mode === undefined || args.mode === null || args.mode === '') {
