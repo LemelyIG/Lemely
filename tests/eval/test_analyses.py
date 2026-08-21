@@ -324,11 +324,14 @@ class TestDistinctLeafDA6:
 
 
 class TestDistinctLeavesOverRealGoldenCorpus:
-    def test_wilson_n_is_28_distinct_leaves(self) -> None:
-        """Verified against the corpus (BUILD/DECISIONS.md DA6): 10 golden case
-        dirs hold 68 answer rows; stripping the _correct/_partial/_wrong
-        fixture-variant suffix collapses them to 28 distinct (paper, question)
-        leaves."""
+    def test_wilson_n_is_31_distinct_leaves(self) -> None:
+        """Verified against the corpus (BUILD/DECISIONS.md DA6): 11 golden case
+        dirs hold 71 answer rows (M0.8/#32 added the 11th, ``_theory_nested``,
+        contributing 3 leaves — 1a_i, 1a_ii, 1b — with no fixture-variant
+        suffix to collapse); stripping the _correct/_partial/_wrong
+        fixture-variant suffix collapses them to 7+6+8+7+3 = 31 distinct
+        (paper, question) leaves. This supersedes the pre-#32 baseline of 68
+        rows / 28 leaves — do not cite 28 as the current distinct-leaf count."""
         from lemely.accuracy.harness import load_golden_cases
 
         golden_dir = Path(__file__).resolve().parents[1] / "golden"
@@ -345,9 +348,9 @@ class TestDistinctLeavesOverRealGoldenCorpus:
             for case in cases
             for qid in case.ground_truth
         ]
-        assert len(records) == 68
+        assert len(records) == 71
         result = wilson(records)
-        assert result["n"] == 28
+        assert result["n"] == 31
 
     def test_exclusion_funnel_scored_count_matches_wilson_n(self) -> None:
         """DA6a invariant (BUILD/DECISIONS.md): exclusion_funnel exists to
@@ -363,8 +366,9 @@ class TestDistinctLeavesOverRealGoldenCorpus:
         variants of each multi-variant paper are marked ``correct``, the
         ``wrong`` variant of the SAME leaves is marked ``excluded`` (as if
         that one variant's extraction failed). Every leaf has at least one
-        scored record, so wilson's n must be 28, and the funnel's scored
-        count must equal it exactly."""
+        scored record, so wilson's n must be 31 (M0.8/#32 raised this from
+        the pre-#32 baseline of 28 — see the docstring on the sibling test
+        above), and the funnel's scored count must equal it exactly."""
         from lemely.accuracy.harness import load_golden_cases
 
         golden_dir = Path(__file__).resolve().parents[1] / "golden"
@@ -381,12 +385,12 @@ class TestDistinctLeavesOverRealGoldenCorpus:
             for case in cases
             for qid in case.ground_truth
         ]
-        assert len(records) == 68
+        assert len(records) == 71
 
         wilson_result = wilson(records)
         funnel_result = exclusion_funnel(records)
 
-        assert wilson_result["n"] == 28
+        assert wilson_result["n"] == 31
         assert funnel_result["scored"] == wilson_result["n"]
 
 
