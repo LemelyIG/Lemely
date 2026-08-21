@@ -2,13 +2,13 @@
 
 run_pointer: run-2026-08-19-g
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: feature/accuracy-26-determinism-substrate-plus-the-three
+branch: none
 last_run_label: none
 last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #26 (M0.2) at HEAD on feature/accuracy-26-determinism-substrate-plus-the-three (single commit 44b4789 + develop merge 3b39646 + checkpoint). UNPUSHED, NO PR YET. IN FLIGHT: accuracy-review run wf_0a16f904-0de, journal /home/sico/.claude/projects/-home-sico-Lemely-worktrees-accuracy/f60e90fa-c7c0-4894-89a4-f054c05230e1/subagents/workflows/wf_0a16f904-0de/journal.jsonl — POLL IT, do not relaunch. When it returns clean/merge-with-fixes-addressed: accuracy-pr-land {issue:26,branch:feature/accuracy-26-determinism-substrate-plus-the-three} (branch now carries #66's 2700s cap, so its Watch should reach CI conclusion). REGRESSION FIXED THIS RUN: sweep of a9e6052 had pytest FAIL because I hand-edited lemely.toml.example without updating its GENERATOR lemely/runtime/example_toml.py (test_settings_example_drift pins them); fixed in the generator and folded into the same single commit. KEY DECISION for the human: per_run_token_ceiling stays RUN-scoped, no per-sweep reset (that would delete the budget guard, §14); the issue's 200000 premise came from the example file, not the operative lemely.toml (2000000). NOTE: current HEAD is NOT covered by any sweep or CI — do not claim green for it.
+in_the_middle_of: 
 
 ---
 
