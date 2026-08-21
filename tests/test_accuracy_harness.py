@@ -554,6 +554,78 @@ class RunManifestTests(unittest.TestCase):
         )
         self.assertEqual(result.manifest.run_id, "run-explicit-1")
 
+    def _settings_with_models(self, **models):
+        """Minimal stand-in for Settings.gemini with controllable per-task models."""
+        from types import SimpleNamespace
+
+        defaults = {"mark_scheme": "m-a", "extraction": "m-a", "correction": "m-a"}
+        defaults.update(models)
+        gemini = SimpleNamespace(
+            temperature=0.0,
+            top_p=1.0,
+            seed=7,
+            thinking_budget_for={"extraction": 100},
+            model_for=lambda task: defaults[task],
+        )
+        return SimpleNamespace(gemini=gemini)
+
+    def test_params_fingerprint_distinguishes_different_models(self):
+        """Two runs on different models must NOT share a params_fingerprint.
+
+        Regression test for the false-zero-delta trap: the fingerprint omitted
+        the model entirely, so an A/B across models recorded identical
+        parameters and M0.3 would read the difference as noise from the
+        instrument rather than a real change (spec §3.3).
+        """
+        from lemely.accuracy.harness import measure_accuracy
+
+        a = measure_accuracy(
+            [self._case()], gemini_client=None, settings=self._settings_with_models()
+        )
+        b = measure_accuracy(
+            [self._case()],
+            gemini_client=None,
+            settings=self._settings_with_models(extraction="m-DIFFERENT"),
+        )
+        self.assertNotEqual(
+            a.manifest.params_fingerprint,
+            b.manifest.params_fingerprint,
+            "a different extraction model must change the run's params_fingerprint",
+        )
+
+    def test_params_fingerprint_is_stable_for_identical_settings(self):
+        """The fingerprint must be deterministic, or every run looks like a change."""
+        from lemely.accuracy.harness import measure_accuracy
+
+        a = measure_accuracy(
+            [self._case()], gemini_client=None, settings=self._settings_with_models()
+        )
+        b = measure_accuracy(
+            [self._case()], gemini_client=None, settings=self._settings_with_models()
+        )
+        self.assertEqual(a.manifest.params_fingerprint, b.manifest.params_fingerprint)
+
+    def test_params_fingerprint_covers_max_output_tokens(self):
+        """``_MAX_OUTPUT_TOKENS`` is part of the hashed input, as it is canonically."""
+        import lemely.accuracy.harness as harness_mod
+        from lemely.accuracy.harness import measure_accuracy
+
+        settings = self._settings_with_models()
+        before = measure_accuracy(
+            [self._case()], gemini_client=None, settings=settings
+        ).manifest.params_fingerprint
+
+        original = harness_mod._MAX_OUTPUT_TOKENS
+        try:
+            harness_mod._MAX_OUTPUT_TOKENS = original + 1
+            after = measure_accuracy(
+                [self._case()], gemini_client=None, settings=settings
+            ).manifest.params_fingerprint
+        finally:
+            harness_mod._MAX_OUTPUT_TOKENS = original
+
+        self.assertNotEqual(before, after)
+
     def test_manifest_is_a_run_manifest_instance(self):
         from lemely.accuracy.harness import measure_accuracy
         from lemely.eval.manifest import RunManifest

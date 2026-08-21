@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from lemely.core.loose_schemas import MarkScheme
 from lemely.eval.manifest import RunManifest
 from lemely.eval.records import Arm, EvalRecord
+from lemely.io.gemini import _MAX_OUTPUT_TOKENS
 
 log = structlog.get_logger()
 
@@ -409,9 +410,22 @@ def _build_run_manifest(
             "extraction": gemini.model_for("extraction"),
             "correction": gemini.model_for("correction"),
         }
+        # The models MUST be in the hash. Without them two runs on different
+        # models record the same params_fingerprint, and M0.3's A/B reads that
+        # as "same parameters" — a false zero delta produced by the instrument
+        # rather than by the models (spec §3.3 names all seven components).
+        # ``_MAX_OUTPUT_TOKENS`` is included for the same reason
+        # ``GeminiClient._params_fingerprint`` includes it: it can change the
+        # output. The per-call response-schema hash is deliberately absent —
+        # this manifest is run-level and a run issues calls under several
+        # schemas, so there is no single schema to name here. That is a
+        # narrower claim than the per-call fingerprint, not a weaker version
+        # of it.
         fingerprint_raw = (
-            f"{gemini.temperature}|{gemini.top_p}|{gemini.seed}"
+            f"{sorted(models_by_task.items())}"
+            f"|{gemini.temperature}|{gemini.top_p}|{gemini.seed}"
             f"|{sorted(gemini.thinking_budget_for.items())}"
+            f"|{_MAX_OUTPUT_TOKENS}"
         )
     else:
         models_by_task = {}
