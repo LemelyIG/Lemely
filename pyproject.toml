@@ -66,6 +66,14 @@ dev = [
   "mypy>=2.1,<2.2",
   "pre-commit>=4,<5",      # installed: 4.6.0
   "import-linter>=2.1,<3", # installed: 2.12
+  # Parallel test execution, used only by `scripts/check.sh --fast` (the
+  # non-authoritative in-run gate). The default `pytest` invocation — the one
+  # CI runs and the one `check.sh` runs without `--fast` — stays serial and
+  # coverage-instrumented, so xdist can never change a gate verdict. Capped
+  # like every other tool here: a worker-scheduling change that reorders tests
+  # can surface latent inter-test dependencies, and that should arrive as a
+  # deliberate commit that re-runs the gates.
+  "pytest-xdist>=3.6,<4",
 ]
 
 [project.scripts]

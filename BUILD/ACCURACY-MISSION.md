@@ -501,6 +501,35 @@ Accuracy-specific (these are the point of the programme):
 10. No `test`-split read without an M0.7a authorisation token; every read appends to
     the test-touch ledger.
 
+### 9.1 Where each gate actually runs
+
+Gate 3 above is a **merge** condition, not a per-run one. Nothing in this section is
+relaxed by what follows; this only says which machine is responsible for proving it.
+
+The full suite is ~3800 tests, serial and coverage-instrumented, on a 4-core box. It
+does not fit inside one unattended run. Runs that started it spent their whole lifetime
+waiting, ended their turn with nothing done, and the next run — fresh context, no memory
+a suite was in flight — started it again. Four consecutive runs produced no commits.
+**Do not run the full suite inside a run.**
+
+- **In-run**, use `scripts/check.sh --fast [paths]`. Same gate list; pytest runs under
+  xdist with coverage off, optionally narrowed to the tests your change touches. It
+  skips the browser E2E/audit gates and the network-dependent `impeccable-detect`.
+  Observed: ~80s narrowed, versus the full gate's tens of minutes.
+- **Before merge**, the authoritative proof is **CI** — `.github/workflows/ci.yml` runs
+  bare `pytest` on 3.12/3.13/3.14, which picks up the coverage addopts and the 70%
+  floor, plus `pre-commit` and the web job. `accuracy-pr-land` already watches CI to
+  conclusion; that watch is what satisfies gate 3, not a local run.
+- A green `--fast` run is **never** sufficient to merge, and `--fast` output says so.
+  Running the full `scripts/check.sh` locally is still correct when you have the wall
+  clock for it (a human at the terminal, not an unattended run).
+
+A run must never block on work that outlives it. If you do start something long-running
+in the background, record how to find it in `in_the_middle_of` — the command and its log
+path — so the next run polls that log instead of starting a second copy. If you cannot
+express the wait that way, do not start it: hand the issue to `accuracy-pr-land` and let
+CI be the thing that waits.
+
 ---
 
 ## 10. Budget Protocol
