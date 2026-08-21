@@ -100,6 +100,24 @@ class LoadGoldenCasesTests(unittest.TestCase):
         self.assertEqual(cases[0].paper_id, "aaa_paper")
         self.assertEqual(cases[1].paper_id, "zzz_paper")
 
+    def test_fixture_variant_parsed_from_dir_suffix(self):
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_case_dir(Path(tmp), name="0625_s20_qp_31_theory_correct")
+            cases = load_golden_cases(Path(tmp))
+        self.assertEqual(cases[0].paper_id, "0625_s20_qp_31_theory")
+        self.assertEqual(cases[0].fixture_variant, "correct")
+
+    def test_fixture_variant_none_when_dir_has_no_variant_suffix(self):
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_case_dir(Path(tmp), name="0625_m20_qp_12_mcq")
+            cases = load_golden_cases(Path(tmp))
+        self.assertEqual(cases[0].paper_id, "0625_m20_qp_12_mcq")
+        self.assertIsNone(cases[0].fixture_variant)
+
     def test_skips_malformed_answers_json(self):
         from lemely.accuracy.harness import load_golden_cases
 
@@ -484,3 +502,65 @@ class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
             ],
         }
         return MarkScheme.model_validate(ms)
+
+
+class RunManifestTests(unittest.TestCase):
+    """M0.1/#25: run_id is the join key between EvalRecord rows and a
+    RunManifest (spec §3.3); it must not be a hardcoded literal."""
+
+    def _mark_scheme(self, question_ids: list[str]) -> object:
+        from lemely.core.loose_schemas import MarkScheme
+
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": len(question_ids),
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": qid, "marks": 1, "type": "mcq", "mcq_answer": "A"} for qid in question_ids
+            ],
+        }
+        return MarkScheme.model_validate(ms)
+
+    def _case(self) -> object:
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase
+
+        return GoldenCase(
+            paper_id="p1",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+
+    def test_default_run_id_varies_between_runs(self):
+        from lemely.accuracy.harness import measure_accuracy
+
+        r1 = measure_accuracy([self._case()], gemini_client=None, settings=None)
+        r2 = measure_accuracy([self._case()], gemini_client=None, settings=None)
+        self.assertNotEqual(r1.manifest.run_id, r2.manifest.run_id)
+
+    def test_explicit_run_id_propagates_to_manifest_and_eval_records(self):
+        from lemely.accuracy.harness import measure_accuracy
+
+        result = measure_accuracy(
+            [self._case()], gemini_client=None, settings=None, run_id="run-explicit-1"
+        )
+        self.assertEqual(result.manifest.run_id, "run-explicit-1")
+
+    def test_manifest_is_a_run_manifest_instance(self):
+        from lemely.accuracy.harness import measure_accuracy
+        from lemely.eval.manifest import RunManifest
+
+        result = measure_accuracy([self._case()], gemini_client=None, settings=None)
+        self.assertIsInstance(result.manifest, RunManifest)
+        self.assertEqual(result.manifest.split, "dev")
+        self.assertEqual(
+            result.manifest.prompt_versions.keys(), {"extraction", "correction", "mark_scheme"}
+        )

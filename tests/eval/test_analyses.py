@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import random
+from pathlib import Path
+
 from lemely.eval.analyses import (
     ablation_2x2,
     exclusion_funnel,
@@ -106,23 +109,18 @@ class TestMcnemar:
         assert result["chi2"] == 0.0
         assert result["p_value"] == 1.0
 
-    def test_collapses_duplicate_mark_point_rows_to_one_leaf(self) -> None:
-        # Same question_id repeated at mark-point level must not inflate n.
+    def test_collapses_duplicate_question_level_rows_to_one_leaf(self) -> None:
+        # Two question-level rows for the SAME (paper_id, question_id) leaf —
+        # e.g. a fixture_variant duplicate — must not inflate n_pairs. This
+        # exercises _distinct_leaves_by_arm's collapsing directly: both rows
+        # are already question-level (mark_point_id=None), so a no-op
+        # "first one seen" collapse would also pass this — the assertion
+        # that catches the real defect is in TestDistinctLeafDA6 below.
         records = [
-            _rec(arm="oracle+mark", question_id="1", outcome="correct"),
-            _rec(arm="extract+mark", question_id="1", outcome="under"),
-            _rec(
-                arm="oracle+mark",
-                question_id="1",
-                mark_point_id="1a",
-                outcome="correct",
-            ),
-            _rec(
-                arm="extract+mark",
-                question_id="1",
-                mark_point_id="1a",
-                outcome="under",
-            ),
+            _rec(arm="oracle+mark", question_id="1", fixture_variant="correct", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", fixture_variant="correct", outcome="under"),
+            _rec(arm="oracle+mark", question_id="1", fixture_variant="wrong", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", fixture_variant="wrong", outcome="under"),
         ]
         result = mcnemar(records)
         assert result["n_pairs"] == 1
@@ -243,6 +241,153 @@ class TestReviewRate:
         # p1: 1/2 = 0.5, p2: 0/2 = 0.0 — p95 across two papers is dominated by
         # the worst one.
         assert result["per_paper_p95"] == 0.5
+
+
+class TestDistinctLeafDA6:
+    """DA6 (BUILD/DECISIONS.md): a leaf's outcome is derived from ALL of its
+    variant/duplicate records, never sampled from them. A leaf counts as
+    ``correct`` iff EVERY scored record for that leaf is ``correct``.
+    """
+
+    def test_unanimous_correct_variants_count_as_correct(self) -> None:
+        records = [
+            _rec(paper_id="p1", question_id="1", fixture_variant="correct", outcome="correct"),
+            _rec(paper_id="p1", question_id="1", fixture_variant="partial", outcome="correct"),
+        ]
+        result = wilson(records)
+        assert result["n"] == 1
+        assert result["successes"] == 1
+
+    def test_one_wrong_variant_prevents_the_leaf_counting_as_correct(self) -> None:
+        # The sort-order trap: variants sort correct < partial < wrong, so a
+        # naive "keep the first" collapse would represent this leaf by its
+        # correct record and inflate accuracy. It must not.
+        records = [
+            _rec(paper_id="p1", question_id="1", fixture_variant="correct", outcome="correct"),
+            _rec(paper_id="p1", question_id="1", fixture_variant="wrong", outcome="under"),
+        ]
+        result = wilson(records)
+        assert result["n"] == 1
+        assert result["successes"] == 0
+
+    def test_collapse_is_order_independent(self) -> None:
+        base = [
+            _rec(paper_id="p1", question_id="1", fixture_variant="correct", outcome="correct"),
+            _rec(paper_id="p1", question_id="1", fixture_variant="partial", outcome="under"),
+            _rec(paper_id="p1", question_id="1", fixture_variant="wrong", outcome="over"),
+            _rec(paper_id="p2", question_id="1", fixture_variant="correct", outcome="correct"),
+        ]
+        baseline = wilson(base)
+        shuffled = list(base)
+        rng = random.Random(42)
+        for _ in range(20):
+            rng.shuffle(shuffled)
+            assert wilson(shuffled) == baseline
+
+    def test_collapse_is_order_independent_under_a_full_tie_on_the_sort_key(self) -> None:
+        """Two records that tie on every field the old sort key looked at
+        (fixture_variant, mark_point_id, run_id, arm, outcome) but differ in
+        marker_conf/triggers must still produce an order-independent result —
+        the representative choice must be a content-derived total order, never
+        "whichever tied record came first in the input list"."""
+        r_high_conf = _rec(
+            paper_id="p1",
+            question_id="1",
+            fixture_variant=None,
+            outcome="under",
+            marker_conf=0.9,
+            triggers=["low_confidence"],
+        )
+        r_low_conf = _rec(
+            paper_id="p1",
+            question_id="1",
+            fixture_variant=None,
+            outcome="under",
+            marker_conf=0.5,
+            triggers=[],
+        )
+        forward = risk_coverage([r_high_conf, r_low_conf])
+        backward = risk_coverage([r_low_conf, r_high_conf])
+        assert forward == backward
+
+        # Property-style: shuffle a tie-containing group many times and
+        # confirm the collapsed representative's full field set (not just
+        # the analysis output) is identical every time.
+        from lemely.eval.analyses import _distinct_leaves
+
+        group = [r_high_conf, r_low_conf]
+        rng = random.Random(7)
+        first = _distinct_leaves(group)
+        for _ in range(30):
+            rng.shuffle(group)
+            assert _distinct_leaves(group) == first
+
+
+class TestDistinctLeavesOverRealGoldenCorpus:
+    def test_wilson_n_is_28_distinct_leaves(self) -> None:
+        """Verified against the corpus (BUILD/DECISIONS.md DA6): 10 golden case
+        dirs hold 68 answer rows; stripping the _correct/_partial/_wrong
+        fixture-variant suffix collapses them to 28 distinct (paper, question)
+        leaves."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        golden_dir = Path(__file__).resolve().parents[1] / "golden"
+        cases = load_golden_cases(golden_dir)
+        assert cases, "expected golden fixtures under tests/golden"
+
+        records = [
+            _rec(
+                paper_id=case.paper_id,
+                fixture_variant=case.fixture_variant,
+                question_id=qid,
+                outcome="correct",
+            )
+            for case in cases
+            for qid in case.ground_truth
+        ]
+        assert len(records) == 68
+        result = wilson(records)
+        assert result["n"] == 28
+
+    def test_exclusion_funnel_scored_count_matches_wilson_n(self) -> None:
+        """DA6a invariant (BUILD/DECISIONS.md): exclusion_funnel exists to
+        *explain* wilson's denominator, so its scored-leaf count must equal
+        the ``n`` wilson actually used on the same records — never disagree
+        with it. Regression for the case where one fixture variant of a leaf
+        failed extraction (``excluded``) while another variant of the SAME
+        leaf was scored ``correct``: the leaf as a whole was attempted (one
+        variant proves it), so it must count as scored, not excluded, in
+        BOTH analyses.
+
+        Built over the real tests/golden corpus: the ``correct``/``partial``
+        variants of each multi-variant paper are marked ``correct``, the
+        ``wrong`` variant of the SAME leaves is marked ``excluded`` (as if
+        that one variant's extraction failed). Every leaf has at least one
+        scored record, so wilson's n must be 28, and the funnel's scored
+        count must equal it exactly."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        golden_dir = Path(__file__).resolve().parents[1] / "golden"
+        cases = load_golden_cases(golden_dir)
+        assert cases, "expected golden fixtures under tests/golden"
+
+        records = [
+            _rec(
+                paper_id=case.paper_id,
+                fixture_variant=case.fixture_variant,
+                question_id=qid,
+                outcome="excluded" if case.fixture_variant == "wrong" else "correct",
+            )
+            for case in cases
+            for qid in case.ground_truth
+        ]
+        assert len(records) == 68
+
+        wilson_result = wilson(records)
+        funnel_result = exclusion_funnel(records)
+
+        assert wilson_result["n"] == 28
+        assert funnel_result["scored"] == wilson_result["n"]
 
 
 class TestQuestionLevelFiltering:

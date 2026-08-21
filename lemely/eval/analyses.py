@@ -26,18 +26,118 @@ def _question_level(records: list[EvalRecord]) -> list[EvalRecord]:
     return [r for r in records if r.mark_point_id is None]
 
 
+def _opt(value: object) -> tuple[bool, object]:
+    """Wrap an optional field so ``None`` sorts deterministically and safely.
+
+    Tuple comparison in Python compares element-by-element and only inspects
+    the second slot when the first slots are equal, so two records that are
+    both ``None`` compare their (equal, throwaway) second slots, and two
+    records with differing None-ness never reach a cross-type comparison
+    (e.g. ``None < 0.5``) that would raise ``TypeError``.
+    """
+    return (value is None, value if value is not None else "")
+
+
+def _leaf_sort_key(
+    r: EvalRecord,
+) -> tuple[object, ...]:
+    """Deterministic, position-independent, *exhaustive* ordering key.
+
+    Used only to make the DA6 collapse deterministic and order-independent —
+    picking *which* record represents a leaf must not depend on the order
+    records arrived in, only on their content. Two records tie under this
+    key iff they are identical in every field a downstream analysis might
+    read (``marker_conf``, ``triggers``, ``extraction_conf``, etc.) — a
+    partial key (e.g. one that stops at ``outcome``) can leave genuinely
+    distinct records tied, at which point ``min()`` falls back to input-list
+    position and silently reintroduces order-dependence.
+    """
+    return (
+        _opt(r.fixture_variant),
+        _opt(r.mark_point_id),
+        r.run_id,
+        r.arm,
+        r.outcome,
+        r.parse_path,
+        _opt(r.predicted_marks),
+        _opt(r.truth_marks),
+        _opt(r.extraction_conf),
+        _opt(r.marker_conf),
+        r.id_match,
+        tuple(r.triggers),
+        r.paper_id,
+        r.question_id,
+    )
+
+
+def _collapse_leaf_group(group: list[EvalRecord]) -> EvalRecord:
+    """Collapse one leaf's variant/duplicate records into a single representative.
+
+    Per BUILD/DECISIONS.md DA6: a leaf's outcome is derived from ALL of its
+    records, never sampled from them. A leaf counts as ``correct`` iff EVERY
+    record for it is ``correct``; otherwise it is represented by one of its
+    non-``correct`` records. This is deliberately NOT "sort and keep the
+    first" — fixture variants sort ``correct`` < ``partial`` < ``wrong``, so
+    that naive rule would represent every partially-disagreeing leaf by its
+    ``correct`` variant and inflate accuracy by construction. Choosing the
+    representative via a content-derived sort key (rather than input-list
+    position) makes the result order-independent.
+    """
+    if all(r.outcome == "correct" for r in group):
+        candidates = group
+    else:
+        candidates = [r for r in group if r.outcome != "correct"]
+    return min(candidates, key=_leaf_sort_key)
+
+
 def _distinct_leaves(records: list[EvalRecord]) -> list[EvalRecord]:
-    """Collapse to one row per ``(paper_id, question_id)`` (first one seen).
+    """Collapse to one row per ``(paper_id, question_id)`` leaf (DA6).
 
     Interval/power calculations must not be inflated by duplicate rows for
-    the same leaf (e.g. accidental point-level rows slipping through).
+    the same leaf (e.g. accidental point-level rows slipping through, or
+    genuine DA6 fixture-variant duplicates). See :func:`_collapse_leaf_group`
+    for how a leaf's collapsed outcome is derived.
     """
-    seen: dict[tuple[str, str], EvalRecord] = {}
+    groups: dict[tuple[str, str], list[EvalRecord]] = {}
     for r in records:
-        key = (r.paper_id, r.question_id)
-        if key not in seen:
-            seen[key] = r
-    return list(seen.values())
+        groups.setdefault((r.paper_id, r.question_id), []).append(r)
+    return [_collapse_leaf_group(group) for group in groups.values()]
+
+
+def _collapse_leaf_group_scored_aware(group: list[EvalRecord]) -> EvalRecord:
+    """DA6a: collapse a leaf's records with ``excluded`` treated as non-evidence.
+
+    Per BUILD/DECISIONS.md DA6a: a leaf is ``excluded`` iff EVERY record for
+    it is ``excluded`` (i.e. the leaf was never attempted at all — one
+    fixture variant's extraction succeeding is proof the question WAS
+    attempted). Otherwise the leaf is scored, and its outcome is derived by
+    :func:`_collapse_leaf_group`'s DA6 unanimity rule over its SCORED records
+    only — ``excluded`` records carry no marking-accuracy evidence and must
+    not be allowed to make an otherwise-scored leaf look excluded or
+    non-correct.
+    """
+    if all(r.outcome == "excluded" for r in group):
+        return min(group, key=_leaf_sort_key)
+    scored = [r for r in group if r.outcome != "excluded"]
+    return _collapse_leaf_group(scored)
+
+
+def _distinct_leaves_scored_aware(records: list[EvalRecord]) -> list[EvalRecord]:
+    """DA6a leaf collapse: like :func:`_distinct_leaves`, but ``excluded``
+    records only make a leaf ``excluded`` when they are the ONLY evidence
+    for that leaf (see :func:`_collapse_leaf_group_scored_aware`).
+
+    Used by :func:`exclusion_funnel`, which — unlike ``wilson``/
+    ``review_rate``/``risk_coverage`` — must classify leaves as
+    scored-vs-excluded itself rather than starting from an already
+    ``_scored()``-filtered record list; it therefore needs a collapse rule
+    that makes the same scored/excluded call those functions make, so its
+    scored-leaf count matches their denominator exactly (spec §9 gate 7).
+    """
+    groups: dict[tuple[str, str], list[EvalRecord]] = {}
+    for r in records:
+        groups.setdefault((r.paper_id, r.question_id), []).append(r)
+    return [_collapse_leaf_group_scored_aware(group) for group in groups.values()]
 
 
 def _scored(records: list[EvalRecord]) -> list[EvalRecord]:
@@ -97,17 +197,24 @@ def ablation_2x2(records: list[EvalRecord]) -> Ablation2x2Result:
 def _distinct_leaves_by_arm(
     records: list[EvalRecord],
 ) -> dict[str, dict[tuple[str, str], EvalRecord]]:
-    by_arm: dict[str, dict[tuple[str, str], EvalRecord]] = {
+    """Per-arm DA6 collapse, keyed by ``(paper_id, question_id)``.
+
+    See :func:`_collapse_leaf_group` for the collapse rule.
+    """
+    groups: dict[str, dict[tuple[str, str], list[EvalRecord]]] = {
         "oracle+mark": {},
         "extract+mark": {},
     }
     for r in records:
-        bucket = by_arm.get(r.arm)
+        bucket = groups.get(r.arm)
         if bucket is None:
             continue
         key = (r.paper_id, r.question_id)
-        bucket.setdefault(key, r)
-    return by_arm
+        bucket.setdefault(key, []).append(r)
+    return {
+        arm: {key: _collapse_leaf_group(group) for key, group in bucket.items()}
+        for arm, bucket in groups.items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +356,13 @@ def exclusion_funnel(records: list[EvalRecord]) -> ExclusionFunnelResult:
 
     Per spec §3.3's outcome-semantics table, only ``excluded`` (never
     attempted — non-leaf, no scan region) is dropped from the scored
-    denominator.
+    denominator. Per BUILD/DECISIONS.md DA6a, a leaf counts as ``excluded``
+    here iff EVERY record for it is ``excluded`` — matching the leaf set
+    that ``wilson``/``review_rate``/``risk_coverage`` treat as scored, so
+    this funnel's ``scored`` count never disagrees with the denominator it
+    exists to explain (spec §9 gate 7).
     """
-    leaves = _distinct_leaves(_question_level(records))
+    leaves = _distinct_leaves_scored_aware(_question_level(records))
     by_outcome: dict[str, int] = {}
     for r in leaves:
         by_outcome[r.outcome] = by_outcome.get(r.outcome, 0) + 1

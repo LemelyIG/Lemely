@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -13,6 +16,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from lemely.core.loose_schemas import MarkScheme
+from lemely.eval.manifest import RunManifest
 from lemely.eval.records import Arm, EvalRecord
 
 log = structlog.get_logger()
@@ -26,6 +30,28 @@ class GoldenAnswer(BaseModel):
     notes: str | None = None
 
 
+#: Golden-fixture directory-name suffixes denoting which DA6 variant a case
+#: is (spec §3.3's ``fixture_variant``, BUILD/DECISIONS.md DA6).
+_FIXTURE_VARIANT_SUFFIXES = ("_correct", "_partial", "_wrong")
+
+
+def _split_fixture_variant(dir_name: str) -> tuple[str, str | None]:
+    """Split a golden-case directory name into ``(paper_id, fixture_variant)``.
+
+    Strips a trailing ``_correct``/``_partial``/``_wrong`` suffix, if present,
+    from *dir_name* — this is what makes three sibling directories (e.g.
+    ``0625_s20_qp_31_theory_correct/_partial/_wrong``) collapse to the same
+    ``paper_id`` for distinct-leaf purposes (DA6), while ``fixture_variant``
+    keeps the specific variant for record-keeping. Directories without one of
+    these suffixes (e.g. the MCQ-only fixture) are returned unchanged with
+    ``fixture_variant=None``.
+    """
+    for suffix in _FIXTURE_VARIANT_SUFFIXES:
+        if dir_name.endswith(suffix):
+            return dir_name[: -len(suffix)], suffix[1:]
+    return dir_name, None
+
+
 @dataclass
 class GoldenCase:
     """One paper-worth of ground truth data."""
@@ -34,6 +60,7 @@ class GoldenCase:
     mark_scheme: MarkScheme
     ground_truth: dict[str, GoldenAnswer]  # question_id -> GoldenAnswer
     scan_path: Path | None = None  # present only when extraction test is possible
+    fixture_variant: str | None = None  # "correct" | "partial" | "wrong" | None
 
 
 def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
@@ -43,6 +70,11 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
       mark_scheme.json  — already-parsed JSON mark scheme
       answers.json      — ground truth per leaf question
       scan.pdf          — optional; enables extraction tests
+
+    A directory name's trailing ``_correct``/``_partial``/``_wrong`` suffix
+    (if any) is split off: it becomes ``fixture_variant`` and is stripped
+    from ``paper_id``, so the three DA6 variants of the same underlying paper
+    share one ``paper_id`` (spec §3.3; BUILD/DECISIONS.md DA6).
     """
     cases: list[GoldenCase] = []
     for case_dir in sorted(golden_dir.iterdir()):
@@ -61,12 +93,14 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
             log.warning("golden_case_load_error", case_dir=str(case_dir), error=str(exc))
             continue
         scan_path = case_dir / "scan.pdf"
+        paper_id, fixture_variant = _split_fixture_variant(case_dir.name)
         cases.append(
             GoldenCase(
-                paper_id=case_dir.name,
+                paper_id=paper_id,
                 mark_scheme=mark_scheme,
                 ground_truth=ground_truth,
                 scan_path=scan_path if scan_path.exists() else None,
+                fixture_variant=fixture_variant,
             )
         )
     return cases
@@ -139,6 +173,7 @@ class AccuracyResult:
     calibration: list[CalibrationBucket]
     question_results: list[QuestionResult]
     prompt_versions: dict[str, str]  # {"extraction": "5", "correction": "4", "mark_scheme": "3"}
+    manifest: RunManifest  # spec §3.3: the run this result's EvalRecords join to
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +237,7 @@ def question_result_to_eval_record(
     run_id: str,
     paper_id: str,
     arm: Arm,
+    fixture_variant: str | None = None,
 ) -> EvalRecord:
     """Adapt one legacy :class:`QuestionResult` into an :class:`EvalRecord` (M0.1, spec §3.3).
 
@@ -242,7 +278,7 @@ def question_result_to_eval_record(
         run_id=run_id,
         arm=arm,
         paper_id=paper_id,
-        fixture_variant=None,
+        fixture_variant=fixture_variant,
         question_id=result.question_id,
         mark_point_id=None,
         parse_path=parse_path,
@@ -314,10 +350,92 @@ def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]
 # ---------------------------------------------------------------------------
 
 
+def _current_git_sha() -> str:
+    """Short git SHA of the working tree's HEAD, or ``"unknown"`` outside a repo."""
+    import subprocess
+
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def _corpus_digest(cases: list[GoldenCase]) -> str:
+    """Digest of the exact golden corpus fed into this run.
+
+    Derived from what was actually loaded — each case's ``paper_id``,
+    ``fixture_variant``, and its ground-truth leaves — not a placeholder: two
+    runs over the same corpus reproduce the same digest, and a corpus change
+    (a fixture added/edited/removed) changes it.
+    """
+    h = hashlib.sha256()
+    for case in sorted(cases, key=lambda c: (c.paper_id, c.fixture_variant or "")):
+        h.update(case.paper_id.encode())
+        h.update(b"|")
+        h.update((case.fixture_variant or "").encode())
+        for qid in sorted(case.ground_truth):
+            gt = case.ground_truth[qid]
+            h.update(f"|{qid}:{gt.awarded_marks}:{gt.student_answer}".encode())
+    return h.hexdigest()[:16]
+
+
+def _build_run_manifest(
+    run_id: str,
+    cases: list[GoldenCase],
+    settings: object,
+    prompt_versions: dict[str, str],
+) -> RunManifest:
+    """Construct the :class:`RunManifest` this run's `EvalRecord`s join to (spec §3.3).
+
+    Every field is sourced honestly from what the harness actually knows:
+    ``models_by_task``/``params_fingerprint`` come from ``settings.gemini``
+    when a real :class:`~lemely.runtime.config.Settings` is supplied (empty
+    dict / digest-of-nothing when it is not, e.g. in unit tests that pass
+    ``settings=None``); ``cache_mode`` reflects the harness's actual, unhedged
+    behaviour (it never overrides ``GeminiClient``'s ``"read_write"``
+    default); ``split`` is ``"dev"`` because the golden corpus *is* the golden
+    dev split per spec §5's M1 acceptance ("The population is the golden dev
+    split"); ``corpus_digest`` is a real hash of the loaded corpus, not an
+    invented value.
+    """
+    gemini = getattr(settings, "gemini", None)
+    if gemini is not None:
+        models_by_task = {
+            "mark_scheme": gemini.model_for("mark_scheme"),
+            "extraction": gemini.model_for("extraction"),
+            "correction": gemini.model_for("correction"),
+        }
+        fingerprint_raw = (
+            f"{gemini.temperature}|{gemini.top_p}|{gemini.seed}"
+            f"|{sorted(gemini.thinking_budget_for.items())}"
+        )
+    else:
+        models_by_task = {}
+        fingerprint_raw = ""
+
+    return RunManifest(
+        run_id=run_id,
+        git_sha=_current_git_sha(),
+        timestamp=datetime.now(UTC),
+        prompt_versions=prompt_versions,
+        params_fingerprint=hashlib.sha256(fingerprint_raw.encode()).hexdigest()[:12],
+        models_by_task=models_by_task,
+        cache_mode="read_write",
+        split="dev",
+        corpus_digest=_corpus_digest(cases),
+    )
+
+
 def measure_accuracy(
     cases: list[GoldenCase],
     gemini_client: object,  # GeminiClient | None
     settings: object,  # Settings
+    *,
+    run_id: str | None = None,
 ) -> AccuracyResult:
     """Run correction over all golden cases; compute metrics.
 
@@ -328,7 +446,14 @@ def measure_accuracy(
     bypass: ground-truth answer text is wrapped in a synthetic, full-confidence
     ``ExtractedAnswers`` and fed straight into correction, useful for testing
     marking logic without needing a rendered scan.
+
+    ``run_id`` (spec §3.3) is the join key between the `EvalRecord`s this run
+    produces and its `RunManifest`. It defaults to a fresh id per call (never
+    a constant) so repeat runs of the same arm are distinguishable — required
+    for M0.3's repeat-run churn measurement.
     """
+    if run_id is None:
+        run_id = f"run-{uuid.uuid4().hex[:12]}"
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
     from lemely.io.correction_ai import correct_paper
     from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
@@ -402,9 +527,10 @@ def measure_accuracy(
             eval_records.append(
                 question_result_to_eval_record(
                     question_result,
-                    run_id="measure_accuracy",
+                    run_id=run_id,
                     paper_id=case.paper_id,
                     arm=arm,
+                    fixture_variant=case.fixture_variant,
                 )
             )
 
@@ -414,15 +540,18 @@ def measure_accuracy(
         else None
     )
 
+    prompt_versions = {
+        "extraction": EXT_VERSION,
+        "correction": COR_VERSION,
+        "mark_scheme": MS_VERSION,
+    }
+
     return AccuracyResult(
         metrics=_metrics_from_eval_records(eval_records, id_match_rate=id_match_rate),
         calibration=_build_calibration(all_results),
         question_results=all_results,
-        prompt_versions={
-            "extraction": EXT_VERSION,
-            "correction": COR_VERSION,
-            "mark_scheme": MS_VERSION,
-        },
+        prompt_versions=prompt_versions,
+        manifest=_build_run_manifest(run_id, cases, settings, prompt_versions),
     )
 
 
