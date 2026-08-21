@@ -2,13 +2,13 @@
 
 run_pointer: run-2026-08-19-g
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: feature/accuracy-56-repair-the-fixture-renderer-and
+branch: fix/accuracy-pr-land-watch-cap-and-scratch
 last_run_label: none
 last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #56 LANDING. Tip 9b7f18b — NOTE this is PAST the swept sha 70f8f71, so the supervisor's pytest-PASS verdict does NOT cover the tip; CI on the PR is the proof. accuracy-review wf_12993fda-d2f returned merge-with-fixes: 1 surviving finding (intra-line font-run overprint — fidelity check was vertical-only; '½r²θ' overlapped 7px, shipped in golden/0606_s23_qp_12_theory_correct). Independently reproduced, then fixed in 9b7f18b (_lay_out_font_runs + _assert_no_run_overprint, _measure_run_widths routed through same layout so wrap==render; corpus regenerated, all 20 ground-truth files verified byte-identical, only 10 scan.pdf changed). 23/23 synth tests, check.sh --fast green. IN FLIGHT: accuracy-pr-land run wf_1ea02187-f53, journal /home/sico/.claude/projects/-home-sico-Lemely-worktrees-accuracy/f60e90fa-c7c0-4894-89a4-f054c05230e1/subagents/workflows/wf_1ea02187-f53/journal.jsonl — poll it, do NOT relaunch and do NOT open a second PR. Still-red web gates (impeccable-detect, playwright-e2e, ui-thresholds) are in BLOCKERS.md, none run in CI, none from #56.
+in_the_middle_of: #56 (M0.0) IS LANDED: PR #65 merged (squash) to develop as 4853f3a on 2026-08-21, CI green on all 5 checks (test 3.12/3.13/3.14 + pre-commit + web), board marked Done. Overprint fix + RunInkOverprintTests verified present in develop's tree post-squash. M0.0 no longer blocks baseline runs (spec §7). NOW: small tooling branch fix/accuracy-pr-land-watch-cap-and-scratch (2 commits, off develop, UNPUSHED, no PR yet) carrying two pr-land defects found while landing #56: 5fe9ce9 gitignores .pr-body-*.md (pr-land leaves it untracked and the supervisor auto-commits dirty trees), 4f3c8a4 makes the Watch cap literal 2700s with a 1800s floor (agent had chosen 600s vs ~17min test jobs). Next: PR that branch, then board 'next' = #26 (M0.2). Red web gates unchanged and unrelated: impeccable-detect, playwright-e2e (0625 mastery 88%), ui-thresholds (lighthouse student-profile 56 is the real one; the 79s vary run-to-run — 4 routes one sweep, 3 the next — so treat those as noise near the 80 floor). All in BLOCKERS.md; none run in CI.
 
 ---
 
