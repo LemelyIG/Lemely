@@ -341,3 +341,146 @@ class MeasureAccuracyTests(unittest.TestCase):
         mock_extract.assert_called_once()
         self.assertEqual(result.metrics.id_match_rate, 1.0)
         self.assertEqual(len(result.question_results), 3)
+
+
+class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
+    """M0.1 acceptance line (spec §4): AccuracyMetrics reproduced bit-identically
+    from ``list[EvalRecord]``.
+
+    No literal saved 2026-08-04 JSON exists in the repo (checked), so this
+    compares the legacy ``_compute_metrics(question_results)`` path against
+    the new ``EvalRecord``-derived path over equivalent inputs, per the
+    accepted risk-mitigation reading of that acceptance line.
+    """
+
+    def _qr(
+        self, qid: str, predicted: int, truth: int, confidence: float, review: bool, is_mcq: bool
+    ) -> object:
+        from lemely.accuracy.harness import QuestionResult
+
+        return QuestionResult(
+            question_id=qid,
+            question_type="mcq" if is_mcq else "theory",
+            predicted_marks=predicted,
+            truth_marks=truth,
+            confidence_score=confidence,
+            needs_teacher_review=review,
+        )
+
+    def test_synthetic_mixed_results_reproduce_bit_identically(self):
+        from lemely.accuracy.harness import (
+            _compute_metrics,
+            _metrics_from_eval_records,
+            question_result_to_eval_record,
+        )
+
+        results = [
+            self._qr("1", 2, 2, 0.95, False, is_mcq=True),  # mcq, correct, confident
+            self._qr("2", 0, 2, 0.55, True, is_mcq=False),  # theory, under, flagged
+            self._qr("3", 3, 1, 0.91, False, is_mcq=False),  # theory, over, confident+wrong
+            self._qr("4", 1, 1, 0.88, False, is_mcq=True),  # mcq, correct
+        ]
+        id_match_rate = 0.75
+
+        legacy = _compute_metrics(results, id_match_rate=id_match_rate)
+
+        eval_records = [
+            question_result_to_eval_record(
+                r, run_id="test-run", paper_id="paper-1", arm="extract+mark"
+            )
+            for r in results
+        ]
+        derived = _metrics_from_eval_records(eval_records, id_match_rate=id_match_rate)
+
+        self.assertEqual(legacy, derived)
+
+    def test_empty_results_reproduce_bit_identically(self):
+        from lemely.accuracy.harness import _compute_metrics, _metrics_from_eval_records
+
+        legacy = _compute_metrics([], id_match_rate=None)
+        derived = _metrics_from_eval_records([], id_match_rate=None)
+        self.assertEqual(legacy, derived)
+
+    def test_all_correct_reproduces_bit_identically(self):
+        from lemely.accuracy.harness import (
+            _compute_metrics,
+            _metrics_from_eval_records,
+            question_result_to_eval_record,
+        )
+
+        results = [self._qr("1", 1, 1, 0.99, False, is_mcq=False)]
+        legacy = _compute_metrics(results, id_match_rate=1.0)
+        eval_records = [
+            question_result_to_eval_record(
+                r, run_id="test-run", paper_id="paper-1", arm="oracle+mark"
+            )
+            for r in results
+        ]
+        derived = _metrics_from_eval_records(eval_records, id_match_rate=1.0)
+        self.assertEqual(legacy, derived)
+
+    def test_measure_accuracy_pipeline_matches_legacy_compute_metrics(self):
+        """Runs the real measure_accuracy() pipeline (both arms) and checks its
+        reported AccuracyMetrics — now internally EvalRecord-derived — equal
+        what _compute_metrics(question_results) would have computed for the
+        same question_results, proving no behavioural drift end-to-end."""
+        from lemely.accuracy.harness import (
+            GoldenAnswer,
+            GoldenCase,
+            _compute_metrics,
+            measure_accuracy,
+        )
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
+        case_scan = GoldenCase(
+            paper_id="p1",
+            mark_scheme=self._mark_scheme(["1", "2"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+            },
+            scan_path=Path("/nonexistent/scan.pdf"),
+        )
+        case_bypass = GoldenCase(
+            paper_id="p2",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+        fake_extracted = ExtractedAnswers(
+            paper_id="p1",
+            source_scan="fake",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(question_id="2", answer="B", confidence=0.9),  # wrong
+            ],
+        )
+
+        with patch("lemely.web.services.grading.extract_answers", return_value=fake_extracted):
+            result = measure_accuracy([case_scan, case_bypass], gemini_client=None, settings=None)
+
+        expected = _compute_metrics(
+            result.question_results, id_match_rate=result.metrics.id_match_rate
+        )
+        self.assertEqual(result.metrics, expected)
+
+    def _mark_scheme(self, question_ids: list[str]) -> object:
+        from lemely.core.loose_schemas import MarkScheme
+
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": len(question_ids),
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": qid, "marks": 1, "type": "mcq", "mcq_answer": "A"} for qid in question_ids
+            ],
+        }
+        return MarkScheme.model_validate(ms)

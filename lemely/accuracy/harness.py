@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -13,6 +13,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from lemely.core.loose_schemas import MarkScheme
+from lemely.eval.records import Arm, EvalRecord
 
 log = structlog.get_logger()
 
@@ -195,6 +196,110 @@ def _compute_metrics(
     )
 
 
+def question_result_to_eval_record(
+    result: QuestionResult,
+    *,
+    run_id: str,
+    paper_id: str,
+    arm: Arm,
+) -> EvalRecord:
+    """Adapt one legacy :class:`QuestionResult` into an :class:`EvalRecord` (M0.1, spec §3.3).
+
+    ``arm`` follows the terminology table (spec §1): ``"extract+mark"`` when
+    real vision extraction ran (``GoldenCase.scan_path`` set), ``"oracle+mark"``
+    when ground-truth answer text was injected directly (the harness's
+    correction-only bypass).
+
+    ``parse_path`` is a known gap: spec §1 defines it as the *mark scheme's*
+    parsing path (``det`` = deterministic pdfplumber parser, ``gemini`` = AI
+    fallback), a per-paper property `load_golden_cases` does not observe (it
+    deserializes an already-parsed `mark_scheme.json` directly). Lacking that
+    signal, this adapter reuses the same two-value type for the closest
+    per-question signal the harness *does* have — ``result.question_type``,
+    i.e. which marker handled this question (``"mcq"`` → deterministic →
+    ``"det"``; ``"theory"`` → Gemini → ``"gemini"``) — so `mark_accuracy_theory`
+    is derivable from `list[EvalRecord]` alone. This is documented here rather
+    than invented silently; wiring the real per-paper parse path through
+    `GoldenCase` is out of scope for M0.1 (candidate for M0.2/M0.8).
+
+    ``id_match`` is always ``"exact"`` here because `measure_accuracy` already
+    drops any question the extractor did not return an answer for before a
+    `QuestionResult` is built (see the ``continue`` in the loop below) — there
+    is no "fuzzy" or genuinely "unmatched" case reachable from a
+    `QuestionResult`. `extraction_conf` is `None`: extraction-side confidence
+    is not threaded into `QuestionResult` today.
+    """
+    if result.predicted_marks == result.truth_marks:
+        outcome: Literal["correct", "over", "under"] = "correct"
+    elif result.predicted_marks > result.truth_marks:
+        outcome = "over"
+    else:
+        outcome = "under"
+
+    parse_path: Literal["det", "gemini"] = "det" if result.question_type == "mcq" else "gemini"
+
+    return EvalRecord(
+        run_id=run_id,
+        arm=arm,
+        paper_id=paper_id,
+        fixture_variant=None,
+        question_id=result.question_id,
+        mark_point_id=None,
+        parse_path=parse_path,
+        predicted_marks=result.predicted_marks,
+        truth_marks=result.truth_marks,
+        outcome=outcome,
+        extraction_conf=None,
+        marker_conf=result.confidence_score,
+        id_match="exact",
+        triggers=["needs_teacher_review"] if result.needs_teacher_review else [],
+    )
+
+
+def _metrics_from_eval_records(
+    records: list[EvalRecord], id_match_rate: float | None = None
+) -> AccuracyMetrics:
+    """Derive :class:`AccuracyMetrics` from ``list[EvalRecord]`` (spec §4 M0.1).
+
+    Mirrors :func:`_compute_metrics` exactly, reading the same information
+    back out of the record fields instead of the legacy `QuestionResult`
+    attributes — `outcome == "correct"` for `is_correct`, `triggers` non-empty
+    for `needs_teacher_review`, `parse_path == "gemini"` for the theory-only
+    subset (see :func:`question_result_to_eval_record`'s docstring for why).
+    """
+    qlevel = [r for r in records if r.mark_point_id is None]
+    total = len(qlevel)
+    if total == 0:
+        return AccuracyMetrics(0.0, 0.0, id_match_rate, 0.0, 1.0)
+
+    def _is_correct(r: EvalRecord) -> bool:
+        return r.outcome == "correct"
+
+    def _needs_review(r: EvalRecord) -> bool:
+        return bool(r.triggers)
+
+    theory = [r for r in qlevel if r.parse_path == "gemini"]
+
+    mark_accuracy = sum(1 for r in qlevel if _is_correct(r)) / total
+    mark_accuracy_theory = sum(1 for r in theory if _is_correct(r)) / len(theory) if theory else 0.0
+
+    confident = [r for r in qlevel if not _needs_review(r)]
+    flag_precision_high = (
+        sum(1 for r in confident if _is_correct(r)) / len(confident) if confident else 0.0
+    )
+
+    wrong = [r for r in qlevel if not _is_correct(r)]
+    flag_recall = sum(1 for r in wrong if _needs_review(r)) / len(wrong) if wrong else 1.0
+
+    return AccuracyMetrics(
+        mark_accuracy=mark_accuracy,
+        mark_accuracy_theory=mark_accuracy_theory,
+        id_match_rate=id_match_rate,
+        flag_precision_high=flag_precision_high,
+        flag_recall=flag_recall,
+    )
+
+
 def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]:
     """Build calibration buckets from theory-question results only (AI-marked)."""
     buckets = _make_calibration_buckets()
@@ -232,11 +337,18 @@ def measure_accuracy(
     from lemely.web.services.grading import extract_answers
 
     all_results: list[QuestionResult] = []
+    eval_records: list[EvalRecord] = []
     ran_extraction = False
     matched_extraction_ids = 0
     total_extraction_questions = 0
 
     for case in cases:
+        # Terminology (spec §1): real vision extraction is "extract+mark"; the
+        # correction-only bypass injects ground-truth text and marks only,
+        # i.e. "oracle+mark".
+        arm: Literal["extract+mark", "oracle+mark"] = (
+            "extract+mark" if case.scan_path is not None else "oracle+mark"
+        )
         extracted_ids: set[str]
         if case.scan_path is not None:
             ran_extraction = True
@@ -278,14 +390,21 @@ def measure_accuracy(
             if gt is None:
                 continue
             q_type = "mcq" if cq.marker_source == "deterministic" else "theory"
-            all_results.append(
-                QuestionResult(
-                    question_id=cq.question_id,
-                    question_type=q_type,
-                    predicted_marks=cq.awarded_marks,
-                    truth_marks=gt.awarded_marks,
-                    confidence_score=cq.confidence_score,
-                    needs_teacher_review=cq.needs_teacher_review,
+            question_result = QuestionResult(
+                question_id=cq.question_id,
+                question_type=q_type,
+                predicted_marks=cq.awarded_marks,
+                truth_marks=gt.awarded_marks,
+                confidence_score=cq.confidence_score,
+                needs_teacher_review=cq.needs_teacher_review,
+            )
+            all_results.append(question_result)
+            eval_records.append(
+                question_result_to_eval_record(
+                    question_result,
+                    run_id="measure_accuracy",
+                    paper_id=case.paper_id,
+                    arm=arm,
                 )
             )
 
@@ -296,7 +415,7 @@ def measure_accuracy(
     )
 
     return AccuracyResult(
-        metrics=_compute_metrics(all_results, id_match_rate=id_match_rate),
+        metrics=_metrics_from_eval_records(eval_records, id_match_rate=id_match_rate),
         calibration=_build_calibration(all_results),
         question_results=all_results,
         prompt_versions={

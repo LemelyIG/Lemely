@@ -229,6 +229,7 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
   "lemely.eval.manifest",
+  "lemely.eval.records",
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
   "lemely.core.question_papers",
@@ -331,6 +332,12 @@ name = "Runtime must not depend on domain layers"
 type = "forbidden"
 source_modules = ["lemely.runtime"]
 forbidden_modules = ["lemely.core", "lemely.io", "lemely.app"]
+
+[[tool.importlinter.contracts]]
+name = "Evaluation analyses must stay pure — no IO, no app"
+type = "forbidden"
+source_modules = ["lemely.eval"]
+forbidden_modules = ["lemely.io", "lemely.app"]
 
 [tool.pyright]
 venvPath = '.'
