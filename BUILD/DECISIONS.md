@@ -10531,3 +10531,32 @@ exactly like `wilson` and `review_rate`, so it needs no change.
 
 Flagged to the human on #25 and the accuracy topic, alongside DA6, because it corrects a
 claim in that same record.
+
+## DA6b — Amendment: DA6's corpus counts (68 rows / 28 leaves) are pre-#32 (#32, M0.8)
+
+**What changed.** DA6 above records "the 10 golden case dirs hold 68 answer rows, and
+stripping the `_correct`/`_partial`/`_wrong` suffix yields exactly 7+6+8+7 = **28**
+distinct `(paper, question)` leaves". That was verified and true when written. M0.8
+(#32) added an 11th case dir, `tests/golden/0625_w21_qp_32_theory_nested`, which carries
+three leaves (`1a_i`, `1a_ii`, `1b`) and has no `_correct`/`_partial`/`_wrong` variants
+to collapse. DA6's sentence is **not** rewritten — it stays as the historical record;
+this amendment supersedes only its two numbers.
+
+**The current counts, re-verified against the corpus this run:** 11 case dirs hold
+**71** answer rows, collapsing to 7+6+8+7+3 = **31** distinct `(paper, question)`
+leaves. Anything citing 68/28 as *current* is stale; 68/28 remains correct as the
+pre-#32 baseline.
+
+**Why this is bookkeeping, not a change of rule.** The unanimity collapse rule DA6
+decides is untouched — only the corpus it runs over grew. The numbers are load-bearing
+anyway, because `n=31` is the denominator every Wilson interval and power calculation
+in M0.6 is quoted on, and the `review_rate` denominator moves with it. The two asserts
+that pin these counts live in `tests/eval/test_analyses.py`
+(`test_wilson_n_is_31_distinct_leaves` and
+`test_exclusion_funnel_scored_count_matches_wilson_n`), so a future fixture addition
+that moves them again fails the suite by name rather than drifting silently.
+
+**Note on `review_rate`.** The 19.1% figure in `BUILD/ACCURACY-STATE.md` was measured on
+the pre-#32 corpus and is therefore quoted on the old denominator. It is left as-is here
+rather than recomputed, because M0.9's ratchet (#33) is unarmed and §2 forbids any
+baseline run until M0.8 merges — the first post-#32 measurement re-establishes it.
