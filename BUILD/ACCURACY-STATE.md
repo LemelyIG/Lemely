@@ -43,6 +43,20 @@ supervisor is running** — a manual edit racing a `state set` write can be
 clobbered, and any edit that breaks the `key: value` shape at column zero
 breaks the supervisor's `grep -m1` reads and its 50%/80% spend alarms with it.
 
+## Live workflow run — review of #73 (added 2026-08-22)
+
+`accuracy-review` for **#73** is running as **`wf_2f56d604-60b`** (transcript
+under `…/subagents/workflows/wf_2f56d604-60b/journal.jsonl`), over
+`head=feature/accuracy-73-build-run-manifest-hardcodes-cache-mode`,
+`base=origin/develop`, tip `ea83ffb`. Read that journal before launching
+another review for #73. It only reads the diff — it does not implement — so it
+will not collide with anything on the worktree.
+
+On a clean verdict (`recommendation != block`, no `blocker`-severity finding),
+go straight to `accuracy-pr-land {issue:73, branch:…, base:'develop'}`.
+
+### Superseded — the #73 implementation runs
+
 ## Live workflow run (added 2026-08-22)
 
 `accuracy-issue-execute` for **#73** was relaunched as run **`wf_ff14f7e7-9a0`**
