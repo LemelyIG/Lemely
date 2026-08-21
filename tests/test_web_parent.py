@@ -25,6 +25,7 @@ history side. Proves:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -232,11 +233,23 @@ def _record(
     )
 
 
+def _recent(*, days_ago: int) -> str:
+    """A ``recorded_at`` anchored to the wall clock, not a fixed date.
+
+    At-risk rule 3 compares ``recorded_at`` against ``now`` with a 14-day
+    window, so a hardcoded date silently ages into "inactive" and appends
+    an at-risk clause to ``statusLine`` — breaking tests that never meant to
+    exercise that rule. Tests that *do* want the inactivity flag pass their
+    own long-past date explicitly.
+    """
+    return (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
+
+
 def _paper(**kwargs: object) -> PaperRecord:
     defaults: dict[str, object] = {
         "percentage": 80.0,
         "grade": "B",
-        "recorded_at": "2026-08-04T10:00:00+00:00",
+        "recorded_at": _recent(days_ago=3),
     }
     defaults.update(kwargs)
     return _record(**defaults)  # type: ignore[arg-type]
@@ -250,7 +263,7 @@ def _quiz(**kwargs: object) -> PaperRecord:
         "paper_number": 1,
         "paper_variant": 1,
         "maximum": 10,
-        "recorded_at": "2026-08-05T10:00:00+00:00",
+        "recorded_at": _recent(days_ago=2),
     }
     defaults.update(kwargs)
     return _record(**defaults)  # type: ignore[arg-type]
@@ -587,9 +600,7 @@ def test_child_overview_surfaces_a_real_below_target_flag_when_a_target_is_set(
     profile_service.upsert_enrolment(student, "0625", target_grade="A")
     history_store.append(
         str(student),
-        _paper(
-            student_id=student, percentage=40.0, grade="D", recorded_at="2026-08-04T10:00:00+00:00"
-        ),
+        _paper(student_id=student, percentage=40.0, grade="D"),
     )
 
     _auth_as(client, parent, Role.parent)
@@ -618,9 +629,7 @@ def test_child_overview_includes_qualification_level_per_subject(
     profile_service.upsert_enrolment(student, "0625", qualification_level="igcse")
     history_store.append(
         str(student),
-        _paper(
-            student_id=student, percentage=80.0, grade="B", recorded_at="2026-08-04T10:00:00+00:00"
-        ),
+        _paper(student_id=student, percentage=80.0, grade="B"),
     )
 
     _auth_as(client, parent, Role.parent)
