@@ -116,7 +116,13 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
         if case_marker_path.exists():
             try:
                 marker: dict[str, object] = json.loads(case_marker_path.read_text(encoding="utf-8"))
-                is_excerpt = bool(marker.get("is_excerpt", False))
+                raw_flag = marker.get("is_excerpt", False)
+                if not isinstance(raw_flag, bool):
+                    raise TypeError(
+                        f"is_excerpt must be a JSON boolean, got {raw_flag!r} "
+                        f"({type(raw_flag).__name__})"
+                    )
+                is_excerpt = raw_flag
             except Exception as exc:
                 log.warning("golden_case_marker_load_error", case_dir=str(case_dir), error=str(exc))
         cases.append(

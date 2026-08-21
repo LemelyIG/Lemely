@@ -147,6 +147,21 @@ class LoadGoldenCasesTests(unittest.TestCase):
             cases = load_golden_cases(Path(tmp))
         self.assertTrue(cases[0].is_excerpt)
 
+    def test_is_excerpt_string_false_does_not_coerce_to_true(self):
+        """#32/#69: ``bool("false")`` is ``True`` in Python, so a JSON string
+        value for ``is_excerpt`` must not be coerced with ``bool()`` -- that
+        would silently flip a falsy-looking string into a truthy flag. A
+        non-bool marker value falls into the existing fail-open handler
+        (logged and defaulted to False), the same as any other malformed
+        case.json, rather than being miscoerced."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = self._make_case_dir(Path(tmp))
+            (case_dir / "case.json").write_text(json.dumps({"is_excerpt": "false"}))
+            cases = load_golden_cases(Path(tmp))
+        self.assertFalse(cases[0].is_excerpt)
+
 
 class MetricComputationTests(unittest.TestCase):
     def _qr(
