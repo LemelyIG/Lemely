@@ -528,8 +528,20 @@ class MeasureAccuracyTests(unittest.TestCase):
             measure_accuracy,
         )
 
-        # Leaf "99" is not a mark-scheme leaf, so it is never extracted but
-        # is still a ground-truth leaf: the case that drove extracted < matched.
+        # Leaf "99" is a ground-truth leaf with no corresponding mark-scheme
+        # leaf, so `correct_paper` produces no CorrectedQuestion for it and it
+        # is recorded `excluded`. This fixture yields
+        # FunnelCounts(leaves=3, extracted=3, matched=2, marked=2) — note
+        # extracted > matched here, because `scan_path=None` is oracle mode and
+        # harness.py sets `extracted_ids = set(case.ground_truth)`.
+        #
+        # So this fixture does NOT reproduce the extracted < matched case that
+        # motivated removing `extracted` from the chain; that needs a
+        # scan_path-backed run where extraction genuinely misses an id. The
+        # assertions below are therefore deliberately structural (exact stage
+        # list, `extracted` absent from the chain) rather than relying on this
+        # fixture to produce a rise — an earlier monotonicity-only version of
+        # this test passed against the un-fixed code for exactly that reason.
         case = GoldenCase(
             paper_id="pFunnel",
             mark_scheme=self._mark_scheme(["1", "2"]),
