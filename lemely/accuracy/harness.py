@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 import structlog
 from pydantic import BaseModel, Field
 
-from lemely.core.loose_schemas import MarkScheme
+from lemely.core.loose_schemas import MarkScheme, QuestionType
+from lemely.eval.analyses import exclusion_funnel
 from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
 from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
@@ -201,6 +202,28 @@ class AccuracyMetrics:
 
 
 @dataclass
+class FunnelCounts:
+    """Intermediate counts behind the exclusion funnel (spec §4 M0.5).
+
+    Tracked per ground-truth leaf while ``measure_accuracy`` runs, in
+    pipeline order: ``leaves`` (every ground-truth leaf visited) ->
+    ``extracted`` (leaf's id was present in the extractor's/bypass's output)
+    -> ``matched`` (``correct_paper`` produced a `CorrectedQuestion` for this
+    leaf, independent of extraction) -> ``marked`` (both were true, i.e. a
+    `QuestionResult`/scored `EvalRecord` was actually built this run). The
+    fifth stage, ``scored``, is deliberately NOT stored here: it is the
+    DA6a-aware count from :func:`lemely.eval.analyses.exclusion_funnel`,
+    computed from the final ``eval_records`` list so it can never disagree
+    with the denominator it exists to explain.
+    """
+
+    leaves: int = 0
+    extracted: int = 0
+    matched: int = 0
+    marked: int = 0
+
+
+@dataclass
 class AccuracyResult:
     metrics: AccuracyMetrics
     calibration: list[CalibrationBucket]
@@ -208,6 +231,7 @@ class AccuracyResult:
     prompt_versions: dict[str, str]  # {"extraction": "5", "correction": "4", "mark_scheme": "3"}
     manifest: RunManifest  # spec §3.3: the run this result's EvalRecords join to
     eval_records: list[EvalRecord]  # spec §3.3: the rows manifest.run_id joins to
+    funnel: FunnelCounts  # spec §4 M0.5: leaves -> extracted -> matched -> marked (-> scored)
 
 
 # ---------------------------------------------------------------------------
@@ -292,12 +316,15 @@ def question_result_to_eval_record(
     than invented silently; wiring the real per-paper parse path through
     `GoldenCase` is out of scope for M0.1 (candidate for M0.2/M0.8).
 
-    ``id_match`` is always ``"exact"`` here because `measure_accuracy` already
-    drops any question the extractor did not return an answer for before a
-    `QuestionResult` is built (see the ``continue`` in the loop below) — there
-    is no "fuzzy" or genuinely "unmatched" case reachable from a
-    `QuestionResult`. `extraction_conf` is `None`: extraction-side confidence
-    is not threaded into `QuestionResult` today.
+    ``id_match`` is ``"exact"`` here because `measure_accuracy` (spec §4
+    M0.5, #29) only calls this adapter for a leaf it has already confirmed
+    the extractor DID return an answer for — the "unmatched" (extractor
+    never returned this id) and "excluded" (`correct_paper` produced no
+    `CorrectedQuestion` for this leaf at all) cases are built directly as
+    `EvalRecord`s by `measure_accuracy` itself, bypassing this adapter
+    entirely, since a `QuestionResult` has no "excluded"/"unmatched" concept
+    to hold them. `extraction_conf` is `None`: extraction-side confidence is
+    not threaded into `QuestionResult` today.
     """
     if result.predicted_marks == result.truth_marks:
         outcome: Literal["correct", "over", "under"] = "correct"
@@ -324,6 +351,26 @@ def question_result_to_eval_record(
         id_match="exact",
         triggers=["needs_teacher_review"] if result.needs_teacher_review else [],
     )
+
+
+def _parse_path_for_leaf(case: GoldenCase, question_id: str) -> Literal["det", "gemini"]:
+    """Best-effort ``parse_path`` for an ``excluded`` leaf (spec §4 M0.5, #29).
+
+    ``correct_paper`` produced no `CorrectedQuestion` for this ground-truth
+    leaf, so there is no ``marker_source`` to read (contrast
+    :func:`question_result_to_eval_record`'s mapping). Falls back to the mark
+    scheme's own declared `QuestionType` for *question_id* when the id
+    resolves to a real entry there (mirrors the marker_source mapping: MCQ ->
+    ``"det"``, everything else -> ``"gemini"``); when *question_id* has no
+    matching entry in the mark scheme at all — a stray ground-truth key with
+    nothing to look up, the only case reachable in today's fixtures per the
+    accepted #29 risk note — defaults to ``"gemini"``, documented here rather
+    than left unexplained.
+    """
+    for q in case.mark_scheme.all_questions_flat():
+        if q.id == question_id:
+            return "det" if q.type == QuestionType.MCQ else "gemini"
+    return "gemini"
 
 
 def _metrics_from_eval_records(
@@ -550,6 +597,7 @@ def measure_accuracy(
     ran_extraction = False
     matched_extraction_ids = 0
     total_extraction_questions = 0
+    funnel = FunnelCounts()
 
     for case in cases:
         # Terminology (spec §1): real vision extraction is "extract+mark"; the
@@ -589,16 +637,77 @@ def measure_accuracy(
             extracted,
             gemini_client=gemini_client,  # type: ignore[arg-type]
         )
+        cq_by_id = {cq.question_id: cq for cq in correction.questions}
 
-        for cq in correction.questions:
-            # A question the extractor never returned an answer for has nothing
-            # to compare against; it only shows up via id_match_rate below.
-            if cq.question_id not in extracted_ids:
+        # Iterate the ground-truth leaves, not correction.questions (D18,
+        # #29): correction.questions only covers leaves correct_paper could
+        # mark, and the old loop additionally dropped any leaf the extractor
+        # never returned an answer for via a silent `continue` — shrinking
+        # the denominator instead of recording the miss, which let a run
+        # with FEWER extracted answers score HIGHER than one with more. Every
+        # ground-truth leaf this case attempted now produces exactly one
+        # EvalRecord (spec §3.3 outcome table).
+        for qid, gt in case.ground_truth.items():
+            funnel.leaves += 1
+            extracted_this_leaf = qid in extracted_ids
+            if extracted_this_leaf:
+                funnel.extracted += 1
+
+            cq = cq_by_id.get(qid)
+            if cq is None:
+                # correct_paper produced no CorrectedQuestion for this leaf at
+                # all (not a marked leaf in the mark scheme) — never
+                # attempted, not silently dropped.
+                eval_records.append(
+                    EvalRecord(
+                        run_id=run_id,
+                        arm=arm,
+                        paper_id=case.paper_id,
+                        fixture_variant=case.fixture_variant,
+                        question_id=qid,
+                        mark_point_id=None,
+                        parse_path=_parse_path_for_leaf(case, qid),
+                        predicted_marks=None,
+                        truth_marks=gt.awarded_marks,
+                        outcome="excluded",
+                        extraction_conf=None,
+                        marker_conf=None,
+                        id_match="unmatched",
+                        triggers=[],
+                    )
+                )
                 continue
-            gt = case.ground_truth.get(cq.question_id)
-            if gt is None:
-                continue
+            funnel.matched += 1
+
             q_type = "mcq" if cq.marker_source == "deterministic" else "theory"
+            parse_path: Literal["det", "gemini"] = "det" if q_type == "mcq" else "gemini"
+
+            if not extracted_this_leaf:
+                # Attempted (correct_paper marked it, typically
+                # marker_source="missing") but the extractor never returned
+                # an answer for it — stays in the denominator as unmatched,
+                # never counted as correct.
+                eval_records.append(
+                    EvalRecord(
+                        run_id=run_id,
+                        arm=arm,
+                        paper_id=case.paper_id,
+                        fixture_variant=case.fixture_variant,
+                        question_id=qid,
+                        mark_point_id=None,
+                        parse_path=parse_path,
+                        predicted_marks=None,
+                        truth_marks=gt.awarded_marks,
+                        outcome="unmatched",
+                        extraction_conf=None,
+                        marker_conf=cq.confidence_score,
+                        id_match="unmatched",
+                        triggers=["needs_teacher_review"] if cq.needs_teacher_review else [],
+                    )
+                )
+                continue
+            funnel.marked += 1
+
             question_result = QuestionResult(
                 question_id=cq.question_id,
                 question_type=q_type,
@@ -644,6 +753,7 @@ def measure_accuracy(
             split=split,
         ),
         eval_records=eval_records,
+        funnel=funnel,
     )
 
 
@@ -724,6 +834,18 @@ def format_report(result: AccuracyResult, targets: object) -> str:
         f"Prompt versions — extraction: {result.prompt_versions.get('extraction', '?')}, "
         f"correction: {result.prompt_versions.get('correction', '?')}, "
         f"mark_scheme: {result.prompt_versions.get('mark_scheme', '?')}"
+    )
+
+    # Exclusion funnel (spec §4 M0.5): how many ground-truth leaves survived
+    # each stage. `scored` comes from analyses.exclusion_funnel() — the
+    # single, DA6a-aware source of truth for the mark_accuracy/wilson/
+    # review_rate denominator — not recomputed here.
+    f = result.funnel
+    scored = exclusion_funnel(result.eval_records)["scored"]
+    lines.append("")
+    lines.append(
+        f"Exclusion funnel: leaves={f.leaves} -> extracted={f.extracted} -> "
+        f"matched={f.matched} -> marked={f.marked} -> scored={scored}"
     )
     return "\n".join(lines)
 
