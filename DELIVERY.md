@@ -139,7 +139,9 @@ readable rather than quietly rewritten.
   **83.8% against a ≥95% target** (historical — 10-fixture corpus, n=68 rows;
   see BUILD/DECISIONS.md DA7 for the current, honest baseline: 90.1% raw
   n=71 / 77.4% DA6-collapsed n=31, `run_id=run-ef443fc2931e`), and flag recall
-  is **27.3%** against a target of flagging 100% of disagreements. Threshold
+  is **27.3%** (historical, same 10-fixture corpus; the current honest baseline
+is **14.29%**, n=71, `run_id=run-ef443fc2931e` — the honest figure is worse,
+not better) against a target of flagging 100% of disagreements. Threshold
   tuning (D2.2/D2.3) and deterministic calculated-answer verification (D2.4)
   are both exhausted; the remaining gap is free-form algebraic method
   verification, which is materially harder and was never in scope. This

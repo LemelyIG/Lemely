@@ -849,9 +849,17 @@ def format_report(result: AccuracyResult, targets: object) -> str:
     scored = exclusion_funnel(result.eval_records)["scored"]
     lines.append("")
     lines.append(
-        f"Exclusion funnel: leaves={f.leaves} -> extracted={f.extracted} -> "
-        f"matched={f.matched} -> marked={f.marked} -> scored={scored}"
+        f"Exclusion funnel: leaves={f.leaves} -> matched={f.matched} -> "
+        f"marked={f.marked} -> scored={scored}"
     )
+    # `extracted` is NOT a nested stage of this chain: it counts leaves the
+    # extractor returned an id for, while `matched` counts leaves
+    # correct_paper produced a CorrectedQuestion for. Neither implies the
+    # other, so a leaf can be matched without being extracted and the two
+    # rise independently. Printing it inside the arrow chain produced a
+    # sequence that could increase (e.g. extracted=2 -> matched=3), which
+    # reads as a denominator growing mid-funnel. Reported separately instead.
+    lines.append(f"  (extracted={f.extracted} — independent count, not a stage of the chain above)")
     return "\n".join(lines)
 
 

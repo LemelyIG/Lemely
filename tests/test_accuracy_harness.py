@@ -507,6 +507,72 @@ class MeasureAccuracyTests(unittest.TestCase):
         # baseline of 1.0 (no wrong records at all -> vacuous 1.0).
         self.assertEqual(result.metrics.flag_recall, 1.0)
 
+    def test_printed_funnel_chain_never_rises(self):
+        """The printed exclusion funnel must be monotonically non-increasing.
+
+        A funnel that rises mid-chain reads as a denominator *growing*, which
+        is the opposite of what an exclusion funnel documents and exactly the
+        confusion M0.5 exists to remove. `extracted` is deliberately NOT a
+        stage of the chain: it counts leaves the extractor returned an id
+        for, while `matched` counts leaves `correct_paper` produced a
+        CorrectedQuestion for — neither implies the other, so putting them in
+        sequence could print `extracted=2 -> matched=3`.
+        """
+        import itertools
+        import re
+
+        from lemely.accuracy.harness import (
+            GoldenAnswer,
+            GoldenCase,
+            format_report,
+            measure_accuracy,
+        )
+
+        # Leaf "99" is not a mark-scheme leaf, so it is never extracted but
+        # is still a ground-truth leaf: the case that drove extracted < matched.
+        case = GoldenCase(
+            paper_id="pFunnel",
+            mark_scheme=self._mark_scheme(["1", "2"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "99": GoldenAnswer(student_answer="A", awarded_marks=1),
+            },
+            scan_path=None,
+        )
+
+        from lemely.runtime.config import Settings
+
+        report = format_report(
+            measure_accuracy([case], gemini_client=None, settings=None),
+            Settings().accuracy_eval,
+        )
+
+        chain_line = next(line for line in report.splitlines() if "Exclusion funnel:" in line)
+
+        # `extracted` must not appear in the chain at all. This is the
+        # load-bearing assertion: it is the only one that fails
+        # deterministically if `extracted` is put back between `leaves` and
+        # `matched`, regardless of whether this particular fixture happens
+        # to produce extracted < matched.
+        self.assertNotIn(
+            "extracted", chain_line, f"`extracted` is not a funnel stage: {chain_line!r}"
+        )
+        self.assertEqual(
+            [n for n, _ in re.findall(r"(\w+)=(\d+)", chain_line)],
+            ["leaves", "matched", "marked", "scored"],
+            f"unexpected funnel stages in {chain_line!r}",
+        )
+
+        stages = [int(n) for n in re.findall(r"=(\d+)", chain_line)]
+        for earlier, later in itertools.pairwise(stages):
+            self.assertGreaterEqual(
+                earlier, later, f"funnel chain rises: {chain_line!r} -> {stages}"
+            )
+
+        # …and it is still reported, just not as a stage.
+        self.assertIn("extracted=", report)
+
     def test_mixed_batch_id_match_rate_only_from_extraction_case(self):
         from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers

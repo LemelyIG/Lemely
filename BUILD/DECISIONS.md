@@ -10630,3 +10630,43 @@ assuming the ledger's cumulative figure at some other point in time is this run'
 which it is not shown to be — that number is not adopted here. The correct statement is:
 this run's `spend_usd` is **unmeasured**. A future fix should add a per-run cost field to
 `RunManifest` (populated from the ledger delta around the run) so this stops recurring.
+
+**The other two headline metrics moved too, and downward.** The first #29 pass
+qualified `mark_accuracy`'s legacy 83.8% as historical and published the honest
+90.1% beside it — but left `flag_recall` (27.3%) and `flag_precision_high`
+(91.7%) stated in the present tense, unqualified, in `DELIVERY.md`,
+`CHANGELOG.md` and `docs/ACCURACY-STRATEGIES.md`. The same honest run
+(`run-ef443fc2931e`) reports **`flag_recall` 14.29%** and
+**`flag_precision_high` 89.8%**.
+
+So the only metric that received the "historical, superseded" treatment was the
+one that moved in the *flattering* direction, while the two that moved
+unfavourably kept their better-looking legacy numbers. That is selective
+disclosure, and it is the same family of defect as D18 — the failure this very
+issue exists to fix — so it is recorded here rather than quietly corrected. All
+three metrics now carry the qualifier and the honest figure in all three files.
+
+**Open, non-blocking risk: two funnel implementations.** `FunnelCounts` in
+`lemely/accuracy/harness.py` was added rather than extending
+`lemely/eval/analyses.py::exclusion_funnel()`, contrary to this issue's
+binding note. They do not currently disagree (`scored` is read from
+`analyses.exclusion_funnel()`), but nothing enforces that, and `funnel` is not
+serialised by `save_result()`, so `extracted` is **not recoverable from a saved
+run**. Unify them before the funnel is used as published evidence.
+
+`extracted` is also **not a nested stage** of the funnel: it counts leaves the
+extractor returned an id for, while `matched` counts leaves `correct_paper`
+produced a `CorrectedQuestion` for. Neither implies the other, so printing them
+in sequence could emit a chain that *rises* (e.g. `extracted=2 -> matched=3`),
+reading as a denominator growing mid-funnel. The printed chain is now
+`leaves -> matched -> marked -> scored`, with `extracted` reported separately
+and pinned by `test_printed_funnel_chain_never_rises`.
+
+**Provenance correction.** DA7 describes the honest-baseline artifact as
+produced "with the D18 fix in place", but its manifest records
+`git_sha=79f5fa8`, which is the **pre-fix** commit (the fix landed in
+`761231c`). The figures reproduce exactly (`mark_accuracy` 0.90140845; Wilson
+n=31, 77.4% [60.2%, 88.6%]) because this corpus contains no `unmatched` or
+`excluded` rows at all — the D18 path is simply never exercised by it. The
+number is therefore correct, but it is **not evidence that the fix works**;
+the behavioural tests are.

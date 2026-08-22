@@ -57,7 +57,8 @@ line here.
   synthetic accuracy target is **not met** — 83.8% mark-level agreement
   (historical; see BUILD/DECISIONS.md DA7 for the current honest baseline:
   90.1% raw n=71 / 77.4% DA6-collapsed n=31) against a ≥95% goal, with flag
-  recall 27.3%. Both real papers landed inside the stated
+  recall 27.3% (historical; the current honest baseline is 14.29%, n=71 —
+  worse, not better). Both real papers landed inside the stated
   tolerance, but one of them was confidently wrong (all 40 marks at confidence
   1.0, zero flags, three marks of pure transcription error), because MCQ
   confidence measures the marker while the error happens in the extractor.
