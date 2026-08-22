@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 29.03% signal/total, 83.33% per_paper_p95 (n=31, 9/31 flagged leaves, dev split, 2026-08-22, leaf-union numerator, DA-M0.9)
 ratchet: unarmed; last_merged_review_rate=0.2903 (recomputed 2026-08-22 with the leaf-union numerator fix; supersedes the pre-fix representative-only 0.0323 figure — see DA-M0.9)
 spend_usd: 0.4668
-in_the_middle_of: #33: fixed review_rate's leaf-union numerator bug (Blocker B); baseline recomputed to 0.2903; running full check.sh before commit
+in_the_middle_of:
 ---
 
 ## Contract — keep this file THIN
