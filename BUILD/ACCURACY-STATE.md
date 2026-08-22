@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: implementing #72
+in_the_middle_of: 
 ---
 
 ## Contract — keep this file THIN
