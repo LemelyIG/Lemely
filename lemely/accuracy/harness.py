@@ -207,6 +207,7 @@ class AccuracyResult:
     question_results: list[QuestionResult]
     prompt_versions: dict[str, str]  # {"extraction": "5", "correction": "4", "mark_scheme": "3"}
     manifest: RunManifest  # spec §3.3: the run this result's EvalRecords join to
+    eval_records: list[EvalRecord]  # spec §3.3: the rows manifest.run_id joins to
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +643,7 @@ def measure_accuracy(
             gemini_client=gemini_client,
             split=split,
         ),
+        eval_records=eval_records,
     )
 
 
@@ -776,6 +778,8 @@ def save_result(result: AccuracyResult, output_dir: Path) -> Path:
             }
             for r in result.question_results
         ],
+        "manifest": result.manifest.model_dump(mode="json"),
+        "eval_records": [r.model_dump(mode="json") for r in result.eval_records],
     }
     out_path.write_text(_json.dumps(data, indent=2), encoding="utf-8")
     return out_path

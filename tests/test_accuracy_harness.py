@@ -589,6 +589,23 @@ class RunManifestTests(unittest.TestCase):
             [self._case()], gemini_client=None, settings=None, run_id="run-explicit-1"
         )
         self.assertEqual(result.manifest.run_id, "run-explicit-1")
+        self.assertTrue(result.eval_records)
+        self.assertTrue(all(r.run_id == "run-explicit-1" for r in result.eval_records))
+
+    def test_measure_accuracy_populates_eval_records(self):
+        """AccuracyResult.eval_records must expose the records already built
+        inside measure_accuracy (#72): before this fix they fell out of scope
+        and were unobservable outside the function."""
+        from lemely.accuracy.harness import measure_accuracy
+        from lemely.eval.records import EvalRecord
+
+        result = measure_accuracy([self._case()], gemini_client=None, settings=None)
+
+        self.assertIsInstance(result.eval_records, list)
+        self.assertTrue(result.eval_records)
+        for record in result.eval_records:
+            self.assertIsInstance(record, EvalRecord)
+        self.assertEqual(len(result.eval_records), len(result.question_results))
 
     def _settings_with_models(self, **models):
         """Minimal stand-in for Settings.gemini with controllable per-task models."""
@@ -773,3 +790,81 @@ class RunManifestTests(unittest.TestCase):
                         test_split_token=None,
                     )
                 correct_spy.assert_not_called()
+
+
+class SaveResultRoundTripTests(unittest.TestCase):
+    """#72: save_result must persist manifest and eval_records, not just the
+    legacy metrics/calibration/question_results keys -- both were computed
+    inside measure_accuracy but discarded before this fix, making the
+    run_id -> RunManifest join unobservable outside the function."""
+
+    def _mark_scheme(self, question_ids: list[str]) -> object:
+        from lemely.core.loose_schemas import MarkScheme
+
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": len(question_ids),
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": qid, "marks": 1, "type": "mcq", "mcq_answer": "A"} for qid in question_ids
+            ],
+        }
+        return MarkScheme.model_validate(ms)
+
+    def _case(self) -> object:
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase
+
+        return GoldenCase(
+            paper_id="p1",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+
+    def test_save_result_round_trips_manifest_and_eval_records(self):
+        from lemely.accuracy.harness import measure_accuracy, save_result
+        from lemely.eval.analyses import review_rate
+        from lemely.eval.manifest import RunManifest
+        from lemely.eval.records import EvalRecord
+
+        result = measure_accuracy(
+            [self._case()], gemini_client=None, settings=None, run_id="run-round-trip-1"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = save_result(result, Path(tmp))
+            data = json.loads(out_path.read_text(encoding="utf-8"))
+
+        self.assertIn("manifest", data)
+        self.assertIn("eval_records", data)
+
+        manifest = RunManifest.model_validate(data["manifest"])
+        self.assertEqual(manifest, result.manifest)
+
+        records = [EvalRecord.model_validate(r) for r in data["eval_records"]]
+        self.assertEqual(records, result.eval_records)
+        self.assertTrue(all(r.run_id == "run-round-trip-1" for r in records))
+
+        # Point the instrument at something real: a pure analysis over the
+        # records reconstructed from disk, not the in-memory objects.
+        #
+        # The assertions below are deliberately exact rather than bounds.
+        # ``0.0 <= review_rate_total <= 1.0`` holds *by construction* and
+        # passes on an EMPTY record list — as does ``all(...)`` above — so a
+        # regression that made ``save_result`` write ``"eval_records": []``
+        # would sail straight through a bounds check while destroying the very
+        # thing #72 exists to deliver. Pinning ``n`` to the record count is
+        # what makes this test fail if the records stop arriving.
+        self.assertTrue(records, "eval_records round-tripped empty — #72's whole point")
+        rate = review_rate(records)
+        self.assertEqual(rate["n"], len(records))
+        self.assertEqual(rate["review_rate_total"], 0.0)
+        self.assertEqual(rate["review_rate_signal"], 0.0)
