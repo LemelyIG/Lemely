@@ -10617,3 +10617,16 @@ Both numbers are published, not just the flattering one — hiding the DA6-colla
 about. **The honest baseline going forward is the pair (90.1% raw n=71 /
 77.4% DA6-collapsed n=31), not the legacy 83.8%**; no code path in this change presents
 83.8% as current.
+
+**Open governance item: spend for `run-ef443fc2931e` is unmeasured, not zero.**
+The re-run used `manifest.cache_mode="read_write"` (a real, billable sweep, not a
+cache-only replay), but the saved manifest (`tests/golden/results/2026-08-22-79f5fa8.json`,
+gitignored) carries no cost field — `RunManifest` does not record spend at all. Checking
+`lemely/io/cost_ledger.py`: `CostLedger` persists only a single cumulative-USD counter
+across the whole process/machine lifetime (no per-run breakdown, no ledger JSON file
+present on this checkout), so there is no before/after snapshot to diff and recover this
+run's actual cost from. Recording it as **0.4026** (per this issue's plan text) would be
+assuming the ledger's cumulative figure at some other point in time is this run's cost,
+which it is not shown to be — that number is not adopted here. The correct statement is:
+this run's `spend_usd` is **unmeasured**. A future fix should add a per-run cost field to
+`RunManifest` (populated from the ledger delta around the run) so this stops recurring.

@@ -54,8 +54,10 @@ line here.
 - Plagiarism and AI-detection advisory flags (signals, never verdicts).
 - Accuracy harness with ten golden fixtures across 0580 / 0606 / 0625, plus an
   end-to-end measurement against two real solved scripts *(limited)*: the
-  synthetic accuracy target is **not met** — 83.8% mark-level agreement against
-  a ≥95% goal, with flag recall 27.3%. Both real papers landed inside the stated
+  synthetic accuracy target is **not met** — 83.8% mark-level agreement
+  (historical; see BUILD/DECISIONS.md DA7 for the current honest baseline:
+  90.1% raw n=71 / 77.4% DA6-collapsed n=31) against a ≥95% goal, with flag
+  recall 27.3%. Both real papers landed inside the stated
   tolerance, but one of them was confidently wrong (all 40 marks at confidence
   1.0, zero flags, three marks of pure transcription error), because MCQ
   confidence measures the marker while the error happens in the extractor.

@@ -493,6 +493,20 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertEqual(funnel["excluded"], 1)
         self.assertEqual(funnel["scored"], 1)
 
+        # D18/Blocker 1: the excluded leaf "99" must not enter the
+        # mark_accuracy denominator or be scored as wrong. Only the one
+        # attempted+correct leaf "1" is scored, so mark_accuracy is 1.0 —
+        # not 0.5, which is what you get if the excluded row is counted as
+        # a wrong answer alongside the correct one.
+        self.assertEqual(result.metrics.mark_accuracy, 1.0)
+
+        # The excluded row must also not collapse flag_recall: flag_recall
+        # is computed over `wrong` records, and if "99" (excluded, treated
+        # as id_match="unmatched", not flagged for review) were counted as
+        # wrong, flag_recall would be 0/1 = 0.0 instead of the excluded-free
+        # baseline of 1.0 (no wrong records at all -> vacuous 1.0).
+        self.assertEqual(result.metrics.flag_recall, 1.0)
+
     def test_mixed_batch_id_match_rate_only_from_extraction_case(self):
         from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers

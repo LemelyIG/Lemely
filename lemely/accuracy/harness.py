@@ -383,8 +383,13 @@ def _metrics_from_eval_records(
     attributes — `outcome == "correct"` for `is_correct`, `triggers` non-empty
     for `needs_teacher_review`, `parse_path == "gemini"` for the theory-only
     subset (see :func:`question_result_to_eval_record`'s docstring for why).
+
+    ``excluded`` rows (never attempted — no scan region, or a ground-truth id
+    that isn't a leaf in the mark scheme) are dropped from the denominator,
+    mirroring :func:`lemely.eval.analyses._scored`: they carry no marking
+    evidence and must not be scored as wrong.
     """
-    qlevel = [r for r in records if r.mark_point_id is None]
+    qlevel = [r for r in records if r.mark_point_id is None and r.outcome != "excluded"]
     total = len(qlevel)
     if total == 0:
         return AccuracyMetrics(0.0, 0.0, id_match_rate, 0.0, 1.0)
