@@ -79,9 +79,14 @@ opening `reports/.scratch/lighthouse/*.json` directly instead of trusting the
 sweep's summary text; they matched it exactly (56 / 79 / 78).
 `student-correct` and `student-standings` sit at 76-79, within a point or two
 of the §11 floor, and rotate in and out of failure between sweeps — that is
-noise. `student-profile` does not: 56, 57, 58 in the three sweeps directly
+noise. `student-profile` does not: 56, 57, 58, 57 in the four sweeps directly
 observed and 54-58 across the earlier record, i.e. never once near 80. It is a
-stable ~24pp deficit that will fail every future sweep. Whoever owns this
+stable ~24pp deficit that will fail every future sweep. The two-phenomena model
+then made a prediction and it held: the 2026-08-22T22:34 sweep brought a
+*previously unseen* route into the noisy band (`student-study-plan-session`,
+77) while `student-profile` stayed put at 57. Membership of the noisy set is
+not fixed — expect further new names at 76-79 — and that churn is the
+signature of routes sitting on the floor, not of a regression. Whoever owns this
 should know a floor nudge or a re-run silences the first two and does nothing
 for the third. Still not ours; recorded so it is not misdiagnosed as flakiness.
 
