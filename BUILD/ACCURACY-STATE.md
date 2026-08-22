@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 3.23% signal/total, 16.67% per_paper_p95 (n=31, dev split, 2026-08-22, DA-M0.9)
 ratchet: unarmed; last_merged_review_rate=0.0323 (recomputed 2026-08-22, supersedes stale pre-#32 figure — see DA-M0.9)
 spend_usd: 0.4668
-in_the_middle_of: implementing #33
+in_the_middle_of: 
 ---
 
 ## Contract — keep this file THIN
