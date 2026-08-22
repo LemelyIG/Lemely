@@ -726,3 +726,16 @@ The sweep still does not persist per-gate logs. Its verdict reaches the next
 session as prose with the tail truncated — which is why `impeccable-detect` has
 been unknown for six sweeps, and why diagnosing a `pytest` failure meant
 re-deriving it locally. `reports/.scratch/sweep/<gate>.log` remains the fix.
+
+### 2026-08-22 — #30 is now also queued behind this block
+
+`feature/accuracy-30-paired-statistics-mcnemar-wilson` (tip `d32bba7`) is
+complete, gate-green under `scripts/check.sh --fast tests/eval`, adversarially
+reviewed `mergeable`, and **unpushed with no PR**. It is the second item waiting
+on the org billing fix, after #77/PR #78.
+
+No PR was opened deliberately: §7.1 makes `accuracy-pr-land` the mandatory owner
+of the PR lifecycle, but it watches CI to conclusion and routes a red run into
+`accuracy-gate-triage`, which the standing order forbids for this block. Opening
+by hand would bypass a mandatory workflow. When billing is resolved, merge PR #78
+first, then run `accuracy-pr-land` for #30, then #27 (M0.3) is unblocked.
