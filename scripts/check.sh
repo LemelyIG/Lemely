@@ -123,7 +123,7 @@ run "import-linter" lint-imports
 # BUILD/review-rate-baseline.json when no fresh dev-split golden run exists
 # under the gitignored tests/golden/results/, so this is always runnable —
 # never SKIPped — in both modes.
-run "review-rate-gate" .venv/bin/python scripts/check_review_rate_gate.py
+run "review-rate-gate" python scripts/check_review_rate_gate.py
 if [ "$FAST" -eq 1 ]; then
   # -n auto: one worker per core. --no-cov overrides the --cov addopts from
   # pyproject.toml (coverage under xdist needs combining and roughly doubles

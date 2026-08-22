@@ -1052,9 +1052,18 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
         failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
 
     # M0.9 (#33): the review-rate two-part ratchet gate. review_rate() must be
-    # fed only a dev-split run's records (spec §5) — measure_accuracy() always
+    # fed only a dev-split run's records (spec §5). measure_accuracy() always
     # builds a dev-split manifest by default and this command never overrides
-    # split, so result.eval_records is safe to pass directly here.
+    # split, but that is a convention, not a guarantee this function can see
+    # for itself — assert it explicitly rather than silently computing a
+    # wrong-split rate if that convention ever drifts (matches the explicit
+    # check in scripts/check_review_rate_gate.py).
+    if result.manifest.split != "dev":
+        raise click.ClickException(
+            "measure-accuracy: refusing to compute review_rate over a "
+            f"'{result.manifest.split}'-split run — review_rate is only defined "
+            "over the golden dev split (spec §5)."
+        )
     rr = review_rate(result.eval_records)
     gate = evaluate_review_rate_gate(
         rr,

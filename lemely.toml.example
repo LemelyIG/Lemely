@@ -60,7 +60,7 @@ review_rate_total_target = 0.1
 review_rate_p95_target = 0.15
 # Unarmed at M0 — a breach is recorded but does not fail the gate.
 review_rate_ratchet_armed = false
-review_rate_last_merged = 0.0323
+review_rate_last_merged = 0.2903
 
 [database]
 # Full SQLAlchemy URL. Default targets the local Supabase Postgres

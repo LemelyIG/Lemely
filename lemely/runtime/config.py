@@ -154,12 +154,18 @@ class AccuracyEvalSettings(BaseModel):
     review_rate_ratchet_armed: bool = Field(default=False)
     # The last-merged review_rate_total the ratchet compares against — the
     # ceiling is min(review_rate_total_target, review_rate_last_merged), so
-    # this can only tighten the effective cap, never loosen it. 0.0323
-    # (~3.23%, 1/31) is the real dev-split baseline measured 2026-08-22 over
-    # the current 31-distinct-leaf golden corpus — see BUILD/DECISIONS.md for
-    # the full recomputation and its divergence from the pre-#32 figure it
-    # supersedes.
-    review_rate_last_merged: float = Field(default=0.0323, ge=0.0, le=1.0)
+    # this can only tighten the effective cap, never loosen it. 0.2903
+    # (~29.03%, 9/31 flagged leaves) is the real dev-split baseline measured
+    # 2026-08-22 over the current 31-distinct-leaf golden corpus, computed
+    # with review_rate()'s corrected trigger-UNION numerator (a leaf counts
+    # as reviewed iff ANY of its raw fixture-variant records carries a
+    # qualifying trigger, not just the single DA6-collapsed representative
+    # row). This supersedes the earlier 0.0323 figure, which undercounted by
+    # reading `triggers` off the collapsed representative only — see
+    # BUILD/DECISIONS.md DA-M0.9 for the full recomputation. Rounded DOWN
+    # (truncated, not rounded-to-nearest) from 0.29032258... so the ratchet
+    # ceiling only ever tightens, never loosens.
+    review_rate_last_merged: float = Field(default=0.2903, ge=0.0, le=1.0)
 
 
 class DetParserSettings(BaseModel):

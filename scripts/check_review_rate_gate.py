@@ -26,8 +26,31 @@ BASELINE_ARTIFACT = REPO_ROOT / "BUILD" / "review-rate-baseline.json"
 GOLDEN_RESULTS_DIR = REPO_ROOT / "tests" / "golden" / "results"
 
 
-def _load_review_rate_result() -> tuple[dict[str, object], str]:
-    """Return (ReviewRateResult-shaped dict, source description)."""
+def _baseline_provenance() -> tuple[str | None, str | None]:
+    """Return (run_id, corpus_digest) recorded on the committed baseline, if any.
+
+    Used only to WARN when a preferred fresh local run diverges from the
+    corpus the committed baseline (and therefore CI, which never has a fresh
+    golden run — that directory is gitignored) was computed against, so a
+    local/CI data divergence is visible instead of silent.
+    """
+    if not BASELINE_ARTIFACT.is_file():
+        return None, None
+    artifact = json.loads(BASELINE_ARTIFACT.read_text(encoding="utf-8"))
+    return artifact.get("run_id"), artifact.get("corpus_digest")
+
+
+def _load_review_rate_result() -> tuple[dict[str, object], str, list[str]]:
+    """Return (ReviewRateResult-shaped dict, source description, warnings).
+
+    CI never has a fresh ``tests/golden/results/*.json`` (that directory is
+    gitignored), so it deterministically falls through to the committed
+    baseline artifact below. A fresh local run is only ever preferred
+    outside CI, and even then its ``corpus_digest``/``run_id`` are compared
+    against the committed baseline's so a silent local/CI data divergence
+    surfaces as a printed warning rather than an invisible difference in
+    gated numbers.
+    """
     from lemely.eval.analyses import review_rate
     from lemely.eval.records import EvalRecord
 
@@ -43,7 +66,20 @@ def _load_review_rate_result() -> tuple[dict[str, object], str]:
             )
         records = [EvalRecord.model_validate(r) for r in data["eval_records"]]
         result = dict(review_rate(records))
-        return result, str(latest.relative_to(REPO_ROOT))
+        warnings: list[str] = []
+        baseline_run_id, baseline_digest = _baseline_provenance()
+        fresh_digest = manifest.get("corpus_digest")
+        known_digests = baseline_digest is not None and fresh_digest is not None
+        digests_diverge = known_digests and fresh_digest != baseline_digest
+        if digests_diverge:
+            warnings.append(
+                f"preferred local run {latest.name} (corpus_digest={fresh_digest}, "
+                f"run_id={manifest.get('run_id')}) diverges from the committed baseline "
+                f"{BASELINE_ARTIFACT.name} (corpus_digest={baseline_digest}, "
+                f"run_id={baseline_run_id}) — CI, which always uses the committed baseline, "
+                "may gate on different data than this local run."
+            )
+        return result, str(latest.relative_to(REPO_ROOT)), warnings
 
     if not BASELINE_ARTIFACT.is_file():
         raise SystemExit(
@@ -54,7 +90,7 @@ def _load_review_rate_result() -> tuple[dict[str, object], str]:
     artifact = json.loads(BASELINE_ARTIFACT.read_text(encoding="utf-8"))
     if artifact.get("split") != "dev":
         raise SystemExit(f"check_review_rate_gate: {BASELINE_ARTIFACT} is not marked split='dev'.")
-    return dict(artifact["review_rate"]), str(BASELINE_ARTIFACT.relative_to(REPO_ROOT))
+    return dict(artifact["review_rate"]), str(BASELINE_ARTIFACT.relative_to(REPO_ROOT)), []
 
 
 def main() -> int:
@@ -64,7 +100,7 @@ def main() -> int:
     settings = load_settings()
     t = settings.accuracy_eval
 
-    rate, source = _load_review_rate_result()
+    rate, source, provenance_warnings = _load_review_rate_result()
     gate = evaluate_review_rate_gate(
         rate,  # type: ignore[arg-type]
         last_merged_review_rate=t.review_rate_last_merged,
@@ -75,6 +111,8 @@ def main() -> int:
     )
 
     print(f"review-rate-gate: source={source} n={rate['n']}")
+    for w in provenance_warnings:
+        print(f"  WARN: {w}")
     print(
         f"  signal={rate['review_rate_signal']:.4f} (target <= {t.review_rate_signal_target}) "
         f"{'PASS' if gate['signal_ok'] else 'FAIL'}"

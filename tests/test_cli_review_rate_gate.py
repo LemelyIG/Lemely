@@ -42,10 +42,18 @@ def _rec(question_id: str, *, triggers: list[str]) -> EvalRecord:
     )
 
 
-def _fake_result(*, n_reviewed: int, n_total: int = 10) -> AccuracyResult:
-    """A dev-split AccuracyResult with every metric target met and a
-    controllable review rate: ``n_reviewed`` of ``n_total`` records carry a
-    non-empty ``triggers`` list.
+def _fake_result(
+    *,
+    n_reviewed: int,
+    n_total: int = 10,
+    mark_accuracy: float = 1.0,
+    split: str = "dev",
+) -> AccuracyResult:
+    """An ``AccuracyResult`` with a controllable review rate (``n_reviewed``
+    of ``n_total`` records carry a non-empty ``triggers`` list), a
+    controllable ``mark_accuracy`` (defaults to a clean 1.0), and a
+    controllable manifest ``split`` (defaults to the real "dev" split
+    ``measure-accuracy`` always uses).
     """
     records = [
         _rec(str(i), triggers=["low_confidence"] if i < n_reviewed else []) for i in range(n_total)
@@ -58,13 +66,13 @@ def _fake_result(*, n_reviewed: int, n_total: int = 10) -> AccuracyResult:
         params_fingerprint="fp",
         models_by_task={},
         cache_mode="bypass",
-        split="dev",
+        split=split,
         corpus_digest="digest",
     )
     return AccuracyResult(
         metrics=AccuracyMetrics(
-            mark_accuracy=1.0,
-            mark_accuracy_theory=1.0,
+            mark_accuracy=mark_accuracy,
+            mark_accuracy_theory=mark_accuracy,
             id_match_rate=1.0,
             flag_precision_high=1.0,
             flag_recall=1.0,
@@ -77,10 +85,17 @@ def _fake_result(*, n_reviewed: int, n_total: int = 10) -> AccuracyResult:
     )
 
 
-def _run_cli(tmp_path: object, *, armed: bool, n_reviewed: int) -> object:
+def _run_cli(
+    tmp_path: object,
+    *,
+    armed: bool,
+    n_reviewed: int,
+    mark_accuracy: float = 1.0,
+    split: str = "dev",
+) -> object:
     from lemely.app.cli import cli
 
-    breaching_result = _fake_result(n_reviewed=n_reviewed)
+    breaching_result = _fake_result(n_reviewed=n_reviewed, mark_accuracy=mark_accuracy, split=split)
 
     runner = CliRunner()
     with (
@@ -108,9 +123,42 @@ class TestReviewRateGateDrivesExitCode:
         result = _run_cli(tmp_path, armed=False, n_reviewed=3)
         assert result.exit_code == 0, result.output
         assert "Review rate" in result.output
-        assert "review_rate_gate" not in "\n".join(
-            line for line in result.output.splitlines() if "Targets missed" in result.output
-        )
+        # Filters on the per-line `line` variable, not (vacuously) on whether
+        # "Targets missed" appears anywhere in `result.output` — with a clean
+        # run (no metric failures) and an unarmed, non-blocking review-rate
+        # breach, the "Targets missed:" section must never print at all.
+        targets_missed_lines = [
+            line for line in result.output.splitlines() if "Targets missed" in line
+        ]
+        assert targets_missed_lines == [], result.output
+
+    def test_armed_false_breach_does_not_leak_into_targets_missed_section(self, tmp_path) -> None:
+        # A genuine metric failure (mark_accuracy below target) makes the
+        # "Targets missed:" section print at all; the review-rate breach
+        # text — which legitimately appears elsewhere, in the unconditional
+        # "Review-rate gate breaches:" block — must NOT leak into that
+        # section while the ratchet is unarmed. A filter that checks
+        # membership in the whole `result.output` (the pre-fix bug) cannot
+        # tell "printed somewhere" apart from "printed in the missed-targets
+        # list": once ANY line makes the header appear, that buggy filter
+        # selects every line of output, so it would incorrectly flag this
+        # non-blocking review-rate breach as if it were a missed target.
+        result = _run_cli(tmp_path, armed=False, n_reviewed=3, mark_accuracy=0.5)
+        assert result.exit_code != 0, result.output  # mark_accuracy alone blocks
+        assert "review_rate_total" in result.output  # the breach IS printed somewhere
+
+        missed_lines: list[str] = []
+        in_missed_section = False
+        for line in result.output.splitlines():
+            if "Targets missed" in line:
+                in_missed_section = True
+                continue
+            if in_missed_section:
+                missed_lines.append(line)
+
+        assert any("mark_accuracy" in line for line in missed_lines), result.output
+        assert not any("review_rate_total" in line for line in missed_lines), result.output
+        assert not any("review_rate_gate" in line for line in missed_lines), result.output
 
     def test_armed_true_breaching_review_rate_exits_nonzero_naming_the_gate(self, tmp_path) -> None:
         result = _run_cli(tmp_path, armed=True, n_reviewed=3)
@@ -122,3 +170,20 @@ class TestReviewRateGateDrivesExitCode:
         # genuinely clean run (no false positive).
         result = _run_cli(tmp_path, armed=True, n_reviewed=0)
         assert result.exit_code == 0, result.output
+
+
+class TestMeasureAccuracyRefusesNonDevSplit:
+    def test_non_dev_split_manifest_fails_loudly_instead_of_computing_review_rate(
+        self, tmp_path
+    ) -> None:
+        # Forces measure_accuracy() to return a "train"-split manifest —
+        # something the real command never does today, but this must not be
+        # relied on as an implicit guarantee. The CLI must refuse loudly
+        # rather than silently compute review_rate over the wrong split
+        # (spec §5: review_rate is only defined over the golden dev split).
+        result = _run_cli(tmp_path, armed=False, n_reviewed=0, split="train")
+        assert result.exit_code != 0, result.output
+        assert "dev" in result.output
+        assert "train" in result.output
+        # And it must fail BEFORE computing/printing a review rate line.
+        assert "Review rate" not in result.output
