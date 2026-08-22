@@ -70,6 +70,21 @@ The earlier run `wf_dba29fea-8af` returned `implementation-blocked` with no
 commits. Its **Scope** phase succeeded and its plan is worth recovering; its
 **Implement** phase refused, so resuming it replays that refusal from cache.
 
+## Review run for #72 (added 2026-08-22)
+
+`accuracy-review` for **#72** is running as **`wf_95facc24-239`** (transcript
+under `…/subagents/workflows/wf_95facc24-239/journal.jsonl`), over
+`head=feature/accuracy-72-evalrecords-are-discarded-the-run-id`,
+`base=origin/develop`, tip `91e9aa5`. It only reads the diff — it does not
+implement — so it cannot collide with the worktree.
+
+On a clean verdict (`recommendation != block`, no `blocker` finding), go to
+`accuracy-pr-land {issue:72, branch:…, base:'develop'}`. Expect its CI watch to
+time out (4 of 5 uses so far): a timeout is neither pass nor fail — poll
+`gh pr checks <pr>` and merge by hand with `--squash`.
+
+### Superseded — the #72 implementation run
+
 ## Implementation run for #72 (added 2026-08-22)
 
 `accuracy-issue-execute` for **#72** is running as **`wf_f73ff647-3f0`**
