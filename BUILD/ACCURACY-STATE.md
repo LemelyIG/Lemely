@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: implementing #30 (M0.6 paired stats) — fixing the 5 blockers from the prior rejected pass: rename MCNEMAR_N_FLOOR->MCNEMAR_IMPROVEMENT_N_FLOOR, mcnemar() always returns numeric chi2/p_value, new mcnemar_improvement_p_value reporting-layer refusal, fixed paired_proportion_min_n formula (pins 155), AC1 signature test, reworked/removed vacuous tests, TestWilson divergence-from-normal case
+in_the_middle_of:
 ---
 
 ## Contract — keep this file THIN
