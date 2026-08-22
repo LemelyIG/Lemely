@@ -90,6 +90,23 @@ def _collapse_leaf_group(group: list[EvalRecord]) -> EvalRecord:
     return min(candidates, key=_leaf_sort_key)
 
 
+def _group_by_leaf(records: list[EvalRecord]) -> dict[tuple[str, str], list[EvalRecord]]:
+    """Group records by ``(paper_id, question_id)`` leaf, preserving raw rows.
+
+    Shared by every analysis that needs to reason about a leaf's full set of
+    raw (pre-collapse) records — e.g. :func:`_distinct_leaves`, which then
+    collapses each group to one representative row, and :func:`review_rate`,
+    which unions a property (``triggers``) across a group WITHOUT collapsing
+    it to a single representative first (collapsing before checking
+    ``triggers`` would silently discard sibling records' trigger info — see
+    :func:`review_rate`'s docstring).
+    """
+    groups: dict[tuple[str, str], list[EvalRecord]] = {}
+    for r in records:
+        groups.setdefault((r.paper_id, r.question_id), []).append(r)
+    return groups
+
+
 def _distinct_leaves(records: list[EvalRecord]) -> list[EvalRecord]:
     """Collapse to one row per ``(paper_id, question_id)`` leaf (DA6).
 
@@ -98,10 +115,7 @@ def _distinct_leaves(records: list[EvalRecord]) -> list[EvalRecord]:
     genuine DA6 fixture-variant duplicates). See :func:`_collapse_leaf_group`
     for how a leaf's collapsed outcome is derived.
     """
-    groups: dict[tuple[str, str], list[EvalRecord]] = {}
-    for r in records:
-        groups.setdefault((r.paper_id, r.question_id), []).append(r)
-    return [_collapse_leaf_group(group) for group in groups.values()]
+    return [_collapse_leaf_group(group) for group in _group_by_leaf(records).values()]
 
 
 def _collapse_leaf_group_scored_aware(group: list[EvalRecord]) -> EvalRecord:
@@ -394,10 +408,21 @@ class ReviewRateResult(TypedDict):
 def review_rate(records: list[EvalRecord]) -> ReviewRateResult:
     """Two-part review-rate gate (spec §5): signal vs total, plus per-paper p95.
 
-    ``review_rate_total`` counts any non-empty ``triggers`` list as reviewed.
-    ``review_rate_signal`` counts everything except the ``random_audit``
-    trigger (until T1.10/M4 ships that trigger, the two are equal). Computed
-    over the scored, question-level, distinct-leaf subset.
+    ``review_rate_total`` counts a leaf as reviewed iff ANY of its raw
+    (pre-DA6-collapse) records carries a non-empty ``triggers`` list —
+    a UNION over the leaf's fixture-variant/duplicate records, not a
+    property read off the single DA6-collapsed representative row.
+    ``review_rate_signal`` is the same union restricted to triggers other
+    than ``random_audit`` (until T1.10/M4 ships that trigger, the two are
+    equal). This matters because DA6's representative-picker
+    (:func:`_collapse_leaf_group`) is free to choose ANY record among a set
+    of unanimously-``correct`` variants — if a leaf's variants are all
+    ``correct`` but only one of them was flagged for review, reading
+    ``triggers`` off the (possibly different) collapsed representative would
+    silently drop that flag. The leaf-count denominator (``n``) still comes
+    from the DA6-collapsed distinct-leaf count, matching every other
+    analysis's leaf discipline — only the reviewed/not-reviewed numerator is
+    computed from the raw, uncollapsed group.
 
     **Callers MUST pass only records from a dev-split run** (``RunManifest.split
     == "dev"``) — spec §5's review-rate budget is defined over the golden dev
@@ -408,20 +433,23 @@ def review_rate(records: list[EvalRecord]) -> ReviewRateResult:
     ``measure-accuracy`` CLI, ``scripts/check_review_rate_gate.py``) make it
     explicit by only ever invoking this against a dev-split run's records.
     """
-    leaves = _distinct_leaves(_scored(_question_level(records)))
-    n = len(leaves)
+    scored_qlevel = _scored(_question_level(records))
+    leaf_groups = _group_by_leaf(scored_qlevel)
+    n = len(leaf_groups)
     if n == 0:
         return {"n": 0, "review_rate_signal": 0.0, "review_rate_total": 0.0, "per_paper_p95": 0.0}
 
-    total_reviewed = sum(1 for r in leaves if r.triggers)
-    signal_reviewed = sum(1 for r in leaves if [t for t in r.triggers if t != "random_audit"])
+    total_reviewed = 0
+    signal_reviewed = 0
+    by_paper: dict[str, list[bool]] = {}
+    for (paper_id, _question_id), group in leaf_groups.items():
+        leaf_total = any(r.triggers for r in group)
+        leaf_signal = any(t != "random_audit" for r in group for t in r.triggers)
+        total_reviewed += leaf_total
+        signal_reviewed += leaf_signal
+        by_paper.setdefault(paper_id, []).append(leaf_total)
 
-    by_paper: dict[str, list[EvalRecord]] = {}
-    for r in leaves:
-        by_paper.setdefault(r.paper_id, []).append(r)
-    per_paper_rates = sorted(
-        sum(1 for r in rows if r.triggers) / len(rows) for rows in by_paper.values()
-    )
+    per_paper_rates = sorted(sum(flags) / len(flags) for flags in by_paper.values())
     per_paper_p95 = _percentile(per_paper_rates, 0.95)
 
     return {
