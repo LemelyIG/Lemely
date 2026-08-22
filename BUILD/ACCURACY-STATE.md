@@ -99,6 +99,29 @@ It does **not** open the PR. When it returns, verify its claims yourself
 `git cat-file commit <sha> | grep -c gpgsig`), then `accuracy-review` with
 `head`/`base` passed explicitly, then `accuracy-pr-land`.
 
+## Landing run for #77 (added 2026-08-22)
+
+`accuracy-pr-land` for **#77** is running as **`wf_f4d77849-0bd`** (transcript
+under `…/subagents/workflows/wf_f4d77849-0bd/journal.jsonl`), base `develop`.
+
+**Before launching anything for #77, run
+`gh pr list --head feature/accuracy-77-no-entrypoint-can-set-cache-mode-an-a-a`
+— do not open a second PR.** If its CI watch times out (4 of its first 5 uses
+did), that is neither pass nor fail: poll `gh pr checks <pr>` and merge by hand
+with `--squash`. Merge feature → `develop` only, never `main`.
+
+`accuracy-review` `wf_d2272bef-33f` returned **`merge`**, zero findings, zero
+unreviewed dimensions — and independently proved the two new tests fail on
+de-wired code in detached worktrees (`KeyError: 'default_cache_mode'`,
+`RunManifest cache_mode=None`), which answers the circularity worry about
+patching `GeminiClient` with a MagicMock. Only CI green remains.
+
+**After #77 merges, #27 (M0.3) can finally run** — with `--cache-mode bypass`.
+It spends real money: use `accuracy-measure`'s costed preflight, and remember
+"not reportable, with reason" is a successful outcome.
+
+### Superseded — the #77 review run
+
 ## Review run for #77 (added 2026-08-22)
 
 `accuracy-review` for **#77** is running as **`wf_d2272bef-33f`** (transcript
