@@ -10561,7 +10561,7 @@ the pre-#32 corpus and is therefore quoted on the old denominator. It is left as
 rather than recomputed, because M0.9's ratchet (#33) is unarmed and §2 forbids any
 baseline run until M0.8 merges — the first post-#32 measurement re-establishes it.
 
-## DA7 — The McNemar n-floor: why `MCNEMAR_N_FLOOR = 219` is quoted, not recomputed (#30, M0.6)
+## DA7 — The McNemar n-floor: why `MCNEMAR_IMPROVEMENT_N_FLOOR = 219` is quoted, not recomputed (#30, M0.6)
 
 **The requirement.** Spec §6: "paired McNemar can prove an improvement to 88.8% with
 n=219 where unpaired needs 741 per arm" — the sample size to detect an improvement from
@@ -10579,35 +10579,77 @@ measurement of it yet (the golden corpus is 31 leaves, nowhere near paired-McNem
 Reverse-engineering a discordant-pair-rate parameter that makes the formula spit out
 exactly 219 would be curve-fitting a number to match a target, which is precisely the kind
 of invented measurement the programme forbids elsewhere (§2, D18-adjacent). So
-`MCNEMAR_N_FLOOR = 219` in `lemely/eval/analyses.py` is taken **directly from spec §6**,
-not computed.
+`MCNEMAR_IMPROVEMENT_N_FLOOR = 219` in `lemely/eval/analyses.py` is taken **directly from
+spec §6**, not computed. The constant is named `..._IMPROVEMENT_N_FLOOR`, not `..._N_FLOOR`
+— see the orchestrator's adjudication below for why that distinction is load-bearing.
 
 **What is computed: an independently-checkable lower bound.** `paired_proportion_min_n`
-implements the standard formula's most favourable-for-power limit — the case where every
-discordant pair moves in the `p1 -> p2` direction and none reverse (the smallest paired
-sample any real correlation structure could need for this effect size). Evaluated at
-`paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.80)`, this returns a value
-`<= MCNEMAR_N_FLOOR`. That inequality is the checkable relationship: if the lower bound
-ever exceeded 219, `MCNEMAR_N_FLOOR` would not actually be power-respecting for this
-effect size and the constant would need to move. `_inverse_normal_cdf` (Acklam's rational
-approximation) turns `alpha`/`power` into z-scores without a scipy dependency, matching
-`mcnemar`'s own no-scipy p-value calculation.
+implements the Connor/Fleiss favourable-case bound — the discordant-pair proportion `psi`
+set to its minimum possible value `psi = d = |p2 - p1|` (the case where every discordant
+pair moves in the `p1 -> p2` direction and none reverse, the smallest paired sample any
+real correlation structure could need for this effect size):
 
-**Decision.** `mcnemar()`'s return type gains `underpowered: bool` plus `chi2: float |
-None` / `p_value: float | None` (both `None` iff `underpowered`), so a caller that
-prints the result is forced to special-case the underpowered state rather than printing a
-statistic computed on too few pairs. `n_pairs < MCNEMAR_N_FLOOR` is the sole trigger — it
-reads the same `_distinct_leaves_by_arm`-derived `n_pairs` the function already computes,
-never a separate/hardcoded leaf count. `wilson()` is untouched: spec §3.3 says Wilson
+```
+n = ceil((z_alpha*sqrt(d) + z_beta*sqrt(d*(1-d)))**2 / d**2)
+```
+
+Evaluated at `paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.80)`, this returns
+`155`, which is `<= MCNEMAR_IMPROVEMENT_N_FLOOR` (219). That inequality is the checkable
+relationship: if the lower bound ever exceeded 219, `MCNEMAR_IMPROVEMENT_N_FLOOR` would not
+actually be power-respecting for this effect size and the constant would need to move.
+`_inverse_normal_cdf` (Acklam's rational approximation) turns `alpha`/`power` into z-scores
+without a scipy dependency, matching `mcnemar`'s own no-scipy p-value calculation.
+
+*(Correction, this pass.)* The formula previously implemented here divided by `d`, not
+`d**2`, and dropped the `sqrt(psi)`/`sqrt(psi - d**2)` weighting entirely — it was not
+actually the Connor/Fleiss bound its docstring claimed, just a number that happened to
+land under 219 (157, by coincidence of the missing terms roughly cancelling at this `d`).
+That has been fixed to the formula above (now pinned at 155 by
+`test_paired_proportion_min_n_pinned_value_and_monotonicity`, plus a monotonicity check:
+larger effect size -> smaller n, higher power -> larger n), so the docstring's "lower
+bound" claim is now true rather than merely plausible.
+
+**Orchestrator adjudication: `chi2`/`p_value` are always computed, never `None`.** The
+first pass of this issue made `mcnemar()` return `chi2: float | None` / `p_value: float |
+None`, both `None` whenever `underpowered` — i.e. the floor gated the *computation*, not
+just the *presentation*, of the statistic. That conflates two different things: (1) whether
+a paired comparison has enough pairs to trust as an IMPROVEMENT CLAIM against the spec §6
+target (83.8% -> 88.8%), which is what `MCNEMAR_IMPROVEMENT_N_FLOOR` actually measures, and
+(2) whether the chi-square/p-value arithmetic is well-defined, which it is at any `n_pairs
+>= 1` (and trivially at `b + c == 0`, where `chi2 = 0.0`, `p_value = 1.0`). Nulling the
+numeric fields below the floor makes `mcnemar()` unusable for anything BUT the one
+spec-§6-shaped improvement claim — a caller doing its own ablation breakdown, or plotting
+the discordant-pair counts, gets `None` for no statistical reason. The fix: `mcnemar()`
+always returns real floats for `chi2`/`p_value`; `underpowered` stays exactly as before
+(`n_pairs < MCNEMAR_IMPROVEMENT_N_FLOOR`, reading the same `_distinct_leaves_by_arm`-derived
+`n_pairs`, never a hardcoded leaf count). The refusal to present the number as an
+improvement claim now lives in exactly one place — the new, pure reporting-layer function
+`mcnemar_improvement_p_value(result) -> float | Literal["underpowered"]` — rather than
+inside the statistic's own computation. `wilson()` is untouched: spec §3.3 says Wilson
 intervals are reported on every rate, and its own width is the honesty signal — Wilson has
-no refusal behaviour, only McNemar does.
+no refusal behaviour, only the McNemar improvement claim does.
 
 **Tests.** `tests/eval/test_analyses.py::TestNFloor` — the real ~31-leaf golden corpus
-(well under 219) reports `underpowered`; synthetic paired data at exactly
-`MCNEMAR_N_FLOOR` returns a numeric result (proving the branch is real, not vacuous); a
-raw-rows-vs-leaves test proves `n_pairs` is the collapsed leaf count, not a literal; and a
-lower-bound test pins the `paired_proportion_min_n(...) <= MCNEMAR_N_FLOOR` relationship
-above. Two pre-existing `TestMcnemar` tests (`test_discordant_pairs_produce_nonzero_
-statistic`, `test_no_discordant_pairs_gives_zero_statistic`) were padded with concordant
-filler pairs to reach the floor, since they exist to test the chi2/p-value math and would
-otherwise now report `underpowered` on their original 1-3 pairs.
+(well under 219) is asserted `underpowered` AND to carry real `chi2`/`p_value` floats, with
+`b`/`c` pinned to their actual golden-corpus values (`b=31`, `c=0`); synthetic paired data
+at exactly `MCNEMAR_IMPROVEMENT_N_FLOOR` returns a numeric, non-underpowered result (proving
+the branch is real, not vacuous); a pinned-value-plus-monotonicity test proves
+`paired_proportion_min_n` actually implements the bound its docstring claims, not just
+`0 < n <= 219`. `TestReportingLayer` exercises `mcnemar_improvement_p_value` directly, one
+test per branch (underpowered -> `"underpowered"`; powered -> the numeric `p_value`
+unchanged). `test_mcnemar_signature_rejects_unpaired_rate_summaries` uses
+`inspect.signature(mcnemar)` to pin the sole parameter as `records: list[EvalRecord]` (AC1
+— no code path accepts two independent rate summaries and returns a p-value).
+`TestWilson::test_diverges_from_clamped_normal_approximation` pins Wilson's bound at n=10,
+100% correct (lower=0.7225) against a clamped normal approximation that degenerates to
+`[1.0, 1.0]` at the same input, so the suite actually falsifies "clamped normal
+approximation" rather than merely being satisfiable by one. The pre-existing
+`test_leaf_count_is_derived_not_hardcoded` (raw-rows-vs-leaves) was removed: it duplicated
+`TestMcnemar::test_collapses_duplicate_question_level_rows_to_one_leaf` and the DA6/DA6b
+golden-corpus tests below with no content specific to the n-floor, and it only ever failed
+pre-fix via the module-level `ImportError` from the renamed constant, not a real behavioural
+difference. Two pre-existing `TestMcnemar` tests
+(`test_discordant_pairs_produce_nonzero_statistic`,
+`test_no_discordant_pairs_gives_zero_statistic`) remain padded with concordant filler pairs
+to reach the floor, since they exist to test the chi2/p-value math on a non-underpowered
+result.

@@ -9,10 +9,11 @@ labeller process cannot reach pipeline code (spec §6).
 from __future__ import annotations
 
 from lemely.eval.analyses import (
-    MCNEMAR_N_FLOOR,
+    MCNEMAR_IMPROVEMENT_N_FLOOR,
     ablation_2x2,
     exclusion_funnel,
     mcnemar,
+    mcnemar_improvement_p_value,
     paired_proportion_min_n,
     review_rate,
     risk_coverage,
@@ -22,13 +23,14 @@ from lemely.eval.manifest import LabelManifest, RunManifest
 from lemely.eval.records import EvalRecord
 
 __all__ = [
-    "MCNEMAR_N_FLOOR",
+    "MCNEMAR_IMPROVEMENT_N_FLOOR",
     "EvalRecord",
     "LabelManifest",
     "RunManifest",
     "ablation_2x2",
     "exclusion_funnel",
     "mcnemar",
+    "mcnemar_improvement_p_value",
     "paired_proportion_min_n",
     "review_rate",
     "risk_coverage",
