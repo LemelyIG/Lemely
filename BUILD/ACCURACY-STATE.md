@@ -99,6 +99,28 @@ It does **not** open the PR. When it returns, verify its claims yourself
 `git cat-file commit <sha> | grep -c gpgsig`), then `accuracy-review` with
 `head`/`base` passed explicitly, then `accuracy-pr-land`.
 
+## Review run for #77 (added 2026-08-22)
+
+`accuracy-review` for **#77** is running as **`wf_d2272bef-33f`** (transcript
+under `…/subagents/workflows/wf_d2272bef-33f/journal.jsonl`), over
+`head=feature/accuracy-77-no-entrypoint-can-set-cache-mode-an-a-a`,
+`base=origin/develop`, tip `372e483`. It only reads the diff, so it cannot
+collide with the worktree. On a clean verdict go to `accuracy-pr-land`.
+
+### Settled while it ran: #27 must use `--cache-mode bypass`, not `refresh`
+
+Read at source in `lemely/io/gemini.py:350-356` and `:425`:
+
+- `bypass` — skips the cache **read** and also skips the **write**, so the run
+  is "fully side-effect-free with respect to the shared cache". The source
+  comment names churn measurement as its purpose.
+- `refresh` — skips the read but **does** write, overwriting the entry.
+
+So the A/A floor (#27) uses **`bypass`**. `refresh` would give equally
+independent API calls but would rewrite the shared cache on all ~10 repeats,
+leaving the last run's responses behind for every later `read_write` caller —
+a measurement silently mutating the thing later runs read.
+
 ## Current state (seeded 2026-08-18)
 
 Nothing has been started. Five tracker issues are closed, all by the human or
