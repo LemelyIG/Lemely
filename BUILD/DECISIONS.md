@@ -10560,3 +10560,54 @@ that moves them again fails the suite by name rather than drifting silently.
 the pre-#32 corpus and is therefore quoted on the old denominator. It is left as-is here
 rather than recomputed, because M0.9's ratchet (#33) is unarmed and §2 forbids any
 baseline run until M0.8 merges — the first post-#32 measurement re-establishes it.
+
+## DA7 — The McNemar n-floor: why `MCNEMAR_N_FLOOR = 219` is quoted, not recomputed (#30, M0.6)
+
+**The requirement.** Spec §6: "paired McNemar can prove an improvement to 88.8% with
+n=219 where unpaired needs 741 per arm" — the sample size to detect an improvement from
+the 83.8% legacy baseline to an 88.8% target at alpha=0.05, power=0.80. Spec §4 M0.6: "a
+metric below its n-floor prints as underpowered rather than as a number." Neither passage
+states the formula or the discordant-pair-rate assumption behind 219; it is given as a
+fact, not derived in the spec text.
+
+**Why 219 is quoted, not recomputed from first principles.** The paired-proportion
+(McNemar) sample-size formula (Connor 1987 / Fleiss) needs the *discordant-pair
+proportion* between the two arms — how often `oracle+mark` and `extract+mark` disagree on
+the same leaf — not just the two marginal accuracy rates (83.8%, 88.8%). That rate is an
+empirical property of how correlated the two arms' scoring is; this codebase has no
+measurement of it yet (the golden corpus is 31 leaves, nowhere near paired-McNemar scale).
+Reverse-engineering a discordant-pair-rate parameter that makes the formula spit out
+exactly 219 would be curve-fitting a number to match a target, which is precisely the kind
+of invented measurement the programme forbids elsewhere (§2, D18-adjacent). So
+`MCNEMAR_N_FLOOR = 219` in `lemely/eval/analyses.py` is taken **directly from spec §6**,
+not computed.
+
+**What is computed: an independently-checkable lower bound.** `paired_proportion_min_n`
+implements the standard formula's most favourable-for-power limit — the case where every
+discordant pair moves in the `p1 -> p2` direction and none reverse (the smallest paired
+sample any real correlation structure could need for this effect size). Evaluated at
+`paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.80)`, this returns a value
+`<= MCNEMAR_N_FLOOR`. That inequality is the checkable relationship: if the lower bound
+ever exceeded 219, `MCNEMAR_N_FLOOR` would not actually be power-respecting for this
+effect size and the constant would need to move. `_inverse_normal_cdf` (Acklam's rational
+approximation) turns `alpha`/`power` into z-scores without a scipy dependency, matching
+`mcnemar`'s own no-scipy p-value calculation.
+
+**Decision.** `mcnemar()`'s return type gains `underpowered: bool` plus `chi2: float |
+None` / `p_value: float | None` (both `None` iff `underpowered`), so a caller that
+prints the result is forced to special-case the underpowered state rather than printing a
+statistic computed on too few pairs. `n_pairs < MCNEMAR_N_FLOOR` is the sole trigger — it
+reads the same `_distinct_leaves_by_arm`-derived `n_pairs` the function already computes,
+never a separate/hardcoded leaf count. `wilson()` is untouched: spec §3.3 says Wilson
+intervals are reported on every rate, and its own width is the honesty signal — Wilson has
+no refusal behaviour, only McNemar does.
+
+**Tests.** `tests/eval/test_analyses.py::TestNFloor` — the real ~31-leaf golden corpus
+(well under 219) reports `underpowered`; synthetic paired data at exactly
+`MCNEMAR_N_FLOOR` returns a numeric result (proving the branch is real, not vacuous); a
+raw-rows-vs-leaves test proves `n_pairs` is the collapsed leaf count, not a literal; and a
+lower-bound test pins the `paired_proportion_min_n(...) <= MCNEMAR_N_FLOOR` relationship
+above. Two pre-existing `TestMcnemar` tests (`test_discordant_pairs_produce_nonzero_
+statistic`, `test_no_discordant_pairs_gives_zero_statistic`) were padded with concordant
+filler pairs to reach the floor, since they exist to test the chi2/p-value math and would
+otherwise now report `underpowered` on their original 1-3 pairs.

@@ -6,9 +6,11 @@ import random
 from pathlib import Path
 
 from lemely.eval.analyses import (
+    MCNEMAR_N_FLOOR,
     ablation_2x2,
     exclusion_funnel,
     mcnemar,
+    paired_proportion_min_n,
     review_rate,
     risk_coverage,
     wilson,
@@ -82,9 +84,23 @@ class TestAblation2x2:
         assert result["both_correct"] == 1
 
 
+def _concordant_filler_pairs(n: int) -> list[EvalRecord]:
+    """``n`` extra concordant (both-correct) leaf pairs, to push ``n_pairs``
+    at/above :data:`MCNEMAR_N_FLOOR` without disturbing ``b``/``c``."""
+    records: list[EvalRecord] = []
+    for i in range(n):
+        qid = f"filler-{i}"
+        records.append(_rec(arm="oracle+mark", question_id=qid, outcome="correct"))
+        records.append(_rec(arm="extract+mark", question_id=qid, outcome="correct"))
+    return records
+
+
 class TestMcnemar:
     def test_discordant_pairs_produce_nonzero_statistic(self) -> None:
+        # Padded to n_pairs >= MCNEMAR_N_FLOOR with concordant filler so this
+        # exercises the numeric (non-underpowered) branch's chi2/p_value math.
         records = [
+            *_concordant_filler_pairs(MCNEMAR_N_FLOOR),
             _rec(arm="oracle+mark", question_id="1", outcome="correct"),
             _rec(arm="extract+mark", question_id="1", outcome="under"),
             _rec(arm="oracle+mark", question_id="2", outcome="correct"),
@@ -93,17 +109,20 @@ class TestMcnemar:
             _rec(arm="extract+mark", question_id="3", outcome="correct"),
         ]
         result = mcnemar(records)
+        assert result["underpowered"] is False
         assert result["b"] == 2
         assert result["c"] == 0
-        assert result["chi2"] > 0
-        assert 0.0 <= result["p_value"] <= 1.0
+        assert result["chi2"] is not None and result["chi2"] > 0
+        assert result["p_value"] is not None and 0.0 <= result["p_value"] <= 1.0
 
     def test_no_discordant_pairs_gives_zero_statistic(self) -> None:
         records = [
+            *_concordant_filler_pairs(MCNEMAR_N_FLOOR),
             _rec(arm="oracle+mark", question_id="1", outcome="correct"),
             _rec(arm="extract+mark", question_id="1", outcome="correct"),
         ]
         result = mcnemar(records)
+        assert result["underpowered"] is False
         assert result["b"] == 0
         assert result["c"] == 0
         assert result["chi2"] == 0.0
@@ -124,6 +143,100 @@ class TestMcnemar:
         ]
         result = mcnemar(records)
         assert result["n_pairs"] == 1
+
+
+class TestNFloor:
+    """M0.6 (#30): a McNemar result below the paired-comparison n-floor must
+    report ``underpowered`` rather than a numeric p-value/statistic (spec
+    §6: n=219 to detect 83.8%->88.8% at alpha=0.05/power=0.80)."""
+
+    def test_below_floor_reports_underpowered_not_a_number(self) -> None:
+        """Real ~31-leaf golden corpus, replayed as paired oracle/extract
+        arms — an order of magnitude below MCNEMAR_N_FLOOR (spec §6's own
+        example of exactly this population). Must refuse to print a
+        p-value computed on too few pairs."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        golden_dir = Path(__file__).resolve().parents[1] / "golden"
+        cases = load_golden_cases(golden_dir)
+        assert cases, "expected golden fixtures under tests/golden"
+
+        records = [
+            _rec(
+                arm=arm,
+                paper_id=case.paper_id,
+                fixture_variant=case.fixture_variant,
+                question_id=qid,
+                outcome="correct" if arm == "oracle+mark" else "under",
+            )
+            for case in cases
+            for qid in case.ground_truth
+            for arm in ("oracle+mark", "extract+mark")
+        ]
+        result = mcnemar(records)
+        assert result["n_pairs"] < MCNEMAR_N_FLOOR
+        assert result["underpowered"] is True
+        assert result["chi2"] is None
+        assert result["p_value"] is None
+
+    def test_at_or_above_floor_returns_numeric_result(self) -> None:
+        """Synthetic paired data with n_pairs >= MCNEMAR_N_FLOOR — no real
+        corpus reaches this yet — proves the underpowered branch is a real
+        branch, not vacuously always-true."""
+        records = []
+        for i in range(MCNEMAR_N_FLOOR):
+            qid = f"q{i}"
+            oracle_outcome = "correct"
+            extract_outcome = "under" if i % 5 == 0 else "correct"
+            records.append(_rec(arm="oracle+mark", question_id=qid, outcome=oracle_outcome))
+            records.append(_rec(arm="extract+mark", question_id=qid, outcome=extract_outcome))
+
+        result = mcnemar(records)
+        assert result["n_pairs"] == MCNEMAR_N_FLOOR
+        assert result["underpowered"] is False
+        assert isinstance(result["chi2"], float)
+        assert isinstance(result["p_value"], float)
+        assert 0.0 <= result["p_value"] <= 1.0
+
+    def test_leaf_count_is_derived_not_hardcoded(self) -> None:
+        """Raw rows (with duplicate fixture-variant rows per leaf) outnumber
+        distinct leaves; the n used against the floor must equal the
+        computed leaf count, never a hardcoded literal."""
+        raw_records = []
+        n_leaves = 5
+        for i in range(n_leaves):
+            qid = f"q{i}"
+            for variant in ("correct", "partial", "wrong"):
+                raw_records.append(
+                    _rec(
+                        arm="oracle+mark",
+                        question_id=qid,
+                        fixture_variant=variant,
+                        outcome="correct",
+                    )
+                )
+                raw_records.append(
+                    _rec(
+                        arm="extract+mark",
+                        question_id=qid,
+                        fixture_variant=variant,
+                        outcome="under",
+                    )
+                )
+        assert len(raw_records) == n_leaves * 3 * 2  # 30 raw rows
+
+        result = mcnemar(raw_records)
+        assert result["n_pairs"] == n_leaves  # derived from the data, not a literal
+        assert result["n_pairs"] != len(raw_records)
+
+    def test_paired_proportion_min_n_is_a_real_lower_bound_under_the_floor(self) -> None:
+        """`paired_proportion_min_n` independently derives a conservative
+        (one-directional-change) lower bound on the paired sample size for
+        the spec §6 effect size (83.8% -> 88.8%, alpha=0.05, power=0.80).
+        It must not exceed MCNEMAR_N_FLOOR — if it did, MCNEMAR_N_FLOOR
+        would not actually be power-respecting for this effect size."""
+        lower_bound = paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.80)
+        assert 0 < lower_bound <= MCNEMAR_N_FLOOR
 
 
 class TestWilson:

@@ -220,16 +220,104 @@ def _distinct_leaves_by_arm(
 
 
 # ---------------------------------------------------------------------------
-# mcnemar
+# mcnemar / n-floor
 # ---------------------------------------------------------------------------
+
+#: Paired-McNemar sample-size floor (spec §6): the n needed to detect an
+#: improvement from 83.8% to 88.8% at alpha=0.05, power=0.80 (vs. n=741
+#: unpaired, per arm). Below this floor, a McNemar result is reported as
+#: **underpowered** rather than as a numeric statistic/p-value — see
+#: BUILD/DECISIONS.md for the derivation and why this constant (not a
+#: recomputed value) is the source of truth.
+MCNEMAR_N_FLOOR = 219
+
+
+def _inverse_normal_cdf(p: float) -> float:
+    """Standard-normal quantile function (Peter Acklam's rational approximation).
+
+    Max error ~1.15e-9; used only to turn ``alpha``/``power`` into z-scores
+    for :func:`paired_proportion_min_n` — no scipy dependency, matching the
+    rest of this module.
+    """
+    a = (
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    )
+    b = (
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    )
+    c = (
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    )
+    d = (
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e00,
+        3.754408661907416e00,
+    )
+    p_low = 0.02425
+    p_high = 1 - p_low
+
+    if p < p_low:
+        q = math.sqrt(-2 * math.log(p))
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+        )
+    if p <= p_high:
+        q = p - 0.5
+        r = q * q
+        return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (
+            ((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1
+        )
+    q = math.sqrt(-2 * math.log(1 - p))
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+        (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+    )
+
+
+def paired_proportion_min_n(p1: float, p2: float, *, alpha: float, power: float) -> int:
+    """Conservative lower bound on the paired (McNemar) sample size needed to detect ``p1 -> p2``.
+
+    Evaluated at the most favourable case for power — all discordant pairs
+    moving in the ``p1 -> p2`` direction, none reversing. Any real
+    correlation structure between the two arms needs *at least* this many
+    pairs, so this is an independently-checkable floor under
+    :data:`MCNEMAR_N_FLOOR`, not its exact derivation: the actual
+    discordant-pair rate between ``oracle+mark`` and ``extract+mark`` is an
+    empirical quantity this module has no measurement of yet, so
+    ``MCNEMAR_N_FLOOR`` is taken directly from spec §6 rather than
+    recomputed here (see BUILD/DECISIONS.md).
+    """
+    if not 0.0 < p1 < 1.0 or not 0.0 < p2 < 1.0:
+        raise ValueError("p1 and p2 must be in (0, 1)")
+    d = abs(p2 - p1)
+    if d <= 0.0:
+        raise ValueError("p1 and p2 must differ to have a detectable effect")
+    z_alpha = _inverse_normal_cdf(1 - alpha / 2)
+    z_beta = _inverse_normal_cdf(power)
+    return math.ceil((z_alpha + z_beta) ** 2 / d)
 
 
 class McNemarResult(TypedDict):
     b: int
     c: int
     n_pairs: int
-    chi2: float
-    p_value: float
+    underpowered: bool
+    chi2: float | None
+    p_value: float | None
 
 
 def mcnemar(records: list[EvalRecord]) -> McNemarResult:
@@ -240,6 +328,10 @@ def mcnemar(records: list[EvalRecord]) -> McNemarResult:
     correct. Uses the continuity-corrected chi-square statistic with 1
     degree of freedom; the p-value is exact for 1 df via the complementary
     error function (no scipy dependency).
+
+    Below :data:`MCNEMAR_N_FLOOR` paired leaves, the result is reported as
+    ``underpowered`` — ``chi2``/``p_value`` are ``None`` rather than a
+    number computed on too few pairs to be meaningful (spec §6/M0.6).
     """
     qlevel = _distinct_leaves_by_arm(_question_level(records))
     oracle = qlevel["oracle+mark"]
@@ -258,12 +350,36 @@ def mcnemar(records: list[EvalRecord]) -> McNemarResult:
         elif not o_correct and e_correct:
             c += 1
 
+    if n_pairs < MCNEMAR_N_FLOOR:
+        return {
+            "b": b,
+            "c": c,
+            "n_pairs": n_pairs,
+            "underpowered": True,
+            "chi2": None,
+            "p_value": None,
+        }
+
     if b + c == 0:
-        return {"b": b, "c": c, "n_pairs": n_pairs, "chi2": 0.0, "p_value": 1.0}
+        return {
+            "b": b,
+            "c": c,
+            "n_pairs": n_pairs,
+            "underpowered": False,
+            "chi2": 0.0,
+            "p_value": 1.0,
+        }
 
     chi2 = ((abs(b - c) - 1) ** 2) / (b + c)
     p_value = math.erfc(math.sqrt(chi2 / 2))
-    return {"b": b, "c": c, "n_pairs": n_pairs, "chi2": chi2, "p_value": p_value}
+    return {
+        "b": b,
+        "c": c,
+        "n_pairs": n_pairs,
+        "underpowered": False,
+        "chi2": chi2,
+        "p_value": p_value,
+    }
 
 
 # ---------------------------------------------------------------------------
