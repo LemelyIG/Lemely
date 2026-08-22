@@ -1,0 +1,13 @@
+{
+  "_comment": "M0.9 (#33) committed review_rate baseline artifact. tests/golden/results/*.json is gitignored, so scripts/check_review_rate_gate.py and CI read this committed summary instead. Regenerate by running `lemely measure-accuracy` against a dev-split sweep and re-deriving these numbers with lemely.eval.analyses.review_rate over the saved eval_records.",
+  "computed_at": "2026-08-22",
+  "git_sha": "f7be062",
+  "source_run": "tests/golden/results/2026-08-22-f7be062.json",
+  "split": "dev",
+  "review_rate": {
+    "n": 31,
+    "review_rate_signal": 0.03225806451612903,
+    "review_rate_total": 0.03225806451612903,
+    "per_paper_p95": 0.16666666666666666
+  }
+}

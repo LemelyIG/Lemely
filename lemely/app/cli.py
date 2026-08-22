@@ -1009,6 +1009,8 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
         measure_accuracy,
         save_result,
     )
+    from lemely.eval.analyses import review_rate
+    from lemely.eval.review_gate import evaluate_review_rate_gate
     from lemely.io.gemini import GeminiClient
 
     settings = _get_settings(ctx)
@@ -1048,6 +1050,35 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
         )
     if m.flag_recall < t.flag_recall_target:
         failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
+
+    # M0.9 (#33): the review-rate two-part ratchet gate. review_rate() must be
+    # fed only a dev-split run's records (spec §5) — measure_accuracy() always
+    # builds a dev-split manifest by default and this command never overrides
+    # split, so result.eval_records is safe to pass directly here.
+    rr = review_rate(result.eval_records)
+    gate = evaluate_review_rate_gate(
+        rr,
+        last_merged_review_rate=t.review_rate_last_merged,
+        armed=t.review_rate_ratchet_armed,
+        signal_target=t.review_rate_signal_target,
+        total_target=t.review_rate_total_target,
+        p95_target=t.review_rate_p95_target,
+    )
+    click.echo(
+        "\nReview rate: "
+        f"signal={rr['review_rate_signal']:.3f} total={rr['review_rate_total']:.3f} "
+        f"per_paper_p95={rr['per_paper_p95']:.3f} "
+        f"ratchet_ceiling={gate['ratchet_ceiling']:.3f} "
+        f"armed={gate['armed']} (n={rr['n']})"
+    )
+    if gate["breaches"]:
+        click.echo("Review-rate gate breaches:", err=True)
+        for b in gate["breaches"]:
+            click.echo(f"  ! {b}", err=True)
+        if not gate["armed"]:
+            click.echo("  (ratchet unarmed — recorded, not blocking)", err=True)
+    if gate["blocking_failure"]:
+        failed.append("review_rate_gate: " + "; ".join(gate["breaches"]))
 
     if failed:
         click.echo("\nTargets missed:", err=True)

@@ -10560,3 +10560,64 @@ that moves them again fails the suite by name rather than drifting silently.
 the pre-#32 corpus and is therefore quoted on the old denominator. It is left as-is here
 rather than recomputed, because M0.9's ratchet (#33) is unarmed and §2 forbids any
 baseline run until M0.8 merges — the first post-#32 measurement re-establishes it.
+
+## DA-M0.9 — #33's real `review_rate` baseline diverges hugely from the pre-#32 figure DA6b left in place
+
+**What was measured.** A single `lemely measure-accuracy` dev-split sweep (default split,
+`gemini-2.5-flash`, prompt versions extraction=5/correction=4/mark_scheme=3) was run against
+the current 11-case-dir / 31-distinct-leaf golden corpus (DA6b), through the accuracy-measure
+costed-preflight workflow, at commit `f7be062`. Cost: **$0.0642** (74 Gemini calls, summed
+from the run's `gemini_call` log events), well under both the per-run token ceiling
+(2,000,000) and the `$25` total USD ceiling already configured. Result saved to
+`tests/golden/results/2026-08-22-f7be062.json` (gitignored; a summary is committed at
+`BUILD/review-rate-baseline.json` since the gate and CI need something durable to read).
+
+`lemely.eval.analyses.review_rate()` over that run's 31 question-level, distinct-leaf,
+`split="dev"` `EvalRecord` rows:
+
+| metric | value | M0.9 target | verdict |
+|---|---|---|---|
+| `review_rate_signal` | **3.23%** (1/31) | <= 8% | pass |
+| `review_rate_total` | **3.23%** (1/31) | <= 10% | pass |
+| `per_paper_p95` | **16.67%** | <= 15% | **breach** |
+
+**The divergence from the stale figure.** `BUILD/ACCURACY-STATE.md` and the #33 issue body
+both quoted **19.1%** (13 of 68 rows, Wilson [11.5%, 30.0%]) as the "starting" review rate.
+That number was never a `review_rate_signal`/`review_rate_total` in the current sense — it
+predates #25/M0.1's `review_rate()` implementation entirely, was computed on the pre-#32
+68-row/28-leaf corpus (DA6b), and most likely counted something closer to "any flagged
+row" over a denominator that included non-question-level and non-distinct-leaf rows. The
+real, current, correctly-denominatored number is **6x smaller** (3.23% vs 19.1%) on the
+signal/total limbs — the stale figure was not a lower bound anyone was straining against; it
+was simply wrong for what M0.9 actually gates. Anything citing 19.1%/13-of-68/Wilson-
+[11.5%, 30.0%] as the *current* baseline is stale as of this decision.
+
+**What was NOT expected, and matters more than the headline pass.** `per_paper_p95` (16.67%)
+*breaches* the 15% target even though both denominators pass comfortably — one paper in the
+11-case corpus has a single reviewed row out of a small per-paper leaf count, which is enough
+to push that paper's own rate over 15%. This is exactly the shape the two-part-plus-p95 design
+exists to catch: an aggregate rate can look fine while one paper's students see a much higher
+review burden. The gate (`lemely/eval/review_gate.py`) records this breach in `breaches` on
+every run; because the ratchet starts **unarmed** (`review_rate_ratchet_armed=false`), it does
+not fail `measure-accuracy` or CI today, but it is not silently dropped — it prints, and
+`scripts/check_review_rate_gate.py`'s `PASS` output still lists it as a named breach.
+
+**Storage location.** `last_merged_review_rate` lives on `AccuracyEvalSettings` (mirroring
+every other accuracy-eval target: `mark_accuracy_target` et al.), not a dedicated JSON file or
+an overload of `BUILD/ACCURACY-STATE.md`'s free-text `ratchet` field — that field is updated
+too, but only as the human-readable mirror `scripts/accuracy_board.py` already treats
+`ACCURACY-STATE.md`'s header as (see that file's own "Contract" section: GitHub-adjacent
+tracker state does not duplicate there, but this is measurement state the supervisor's grep
+needs at a glance). The gate's actual source of truth is `lemely.toml`
+(`[accuracy_eval] review_rate_last_merged = 0.0323`, default baked into
+`AccuracyEvalSettings.review_rate_last_merged`) and the committed
+`BUILD/review-rate-baseline.json` artifact `scripts/check_review_rate_gate.py`/CI fall back to
+when no fresh `tests/golden/results/*.json` exists (that directory is gitignored).
+
+**M0-unarmed / M1-armed semantics.** `review_rate_ratchet_armed` defaults to `false`. Unarmed,
+`evaluate_review_rate_gate()` still computes and reports every limb's pass/fail and the
+ratchet direction, but `blocking_failure` is forced `False` regardless of breaches — the run
+is observed, not gated, which is why this real (breaching-on-p95) baseline can be recorded and
+merged today without contradicting "never weaken a gate to get green." Arming
+(`review_rate_ratchet_armed = true`) is spec §7's M1 acceptance step, gated on M0.9 landing
+first (`M0.9 | M1.1`), and is out of scope for #33 itself.

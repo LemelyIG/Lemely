@@ -398,6 +398,15 @@ def review_rate(records: list[EvalRecord]) -> ReviewRateResult:
     ``review_rate_signal`` counts everything except the ``random_audit``
     trigger (until T1.10/M4 ships that trigger, the two are equal). Computed
     over the scored, question-level, distinct-leaf subset.
+
+    **Callers MUST pass only records from a dev-split run** (``RunManifest.split
+    == "dev"``) — spec §5's review-rate budget is defined over the golden dev
+    split, and ``EvalRecord`` itself carries no ``split`` field (split lives on
+    the run's ``RunManifest``, one level up), so this function cannot check the
+    restriction itself. This was previously implicit-by-caller-convention; the
+    M0.9 gate (:mod:`lemely.eval.review_gate`) and its callers (the
+    ``measure-accuracy`` CLI, ``scripts/check_review_rate_gate.py``) make it
+    explicit by only ever invoking this against a dev-split run's records.
     """
     leaves = _distinct_leaves(_scored(_question_level(records)))
     n = len(leaves)

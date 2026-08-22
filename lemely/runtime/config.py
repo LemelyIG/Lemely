@@ -144,6 +144,23 @@ class AccuracyEvalSettings(BaseModel):
     flag_precision_target: float = Field(default=0.99, ge=0.0, le=1.0)
     flag_recall_target: float = Field(default=0.85, ge=0.0, le=1.0)
 
+    # M0.9 (#33): the review-rate two-part ratchet gate (spec §4 M0.9, §5).
+    # See lemely.eval.review_gate.evaluate_review_rate_gate.
+    review_rate_signal_target: float = Field(default=0.08, ge=0.0, le=1.0)
+    review_rate_total_target: float = Field(default=0.10, ge=0.0, le=1.0)
+    review_rate_p95_target: float = Field(default=0.15, ge=0.0, le=1.0)
+    # Unarmed at M0: a breach is recorded but does not fail the gate. Armed at
+    # M1 acceptance (spec §7: M0.9 -> M1.1/#36).
+    review_rate_ratchet_armed: bool = Field(default=False)
+    # The last-merged review_rate_total the ratchet compares against — the
+    # ceiling is min(review_rate_total_target, review_rate_last_merged), so
+    # this can only tighten the effective cap, never loosen it. 0.0323
+    # (~3.23%, 1/31) is the real dev-split baseline measured 2026-08-22 over
+    # the current 31-distinct-leaf golden corpus — see BUILD/DECISIONS.md for
+    # the full recomputation and its divergence from the pre-#32 figure it
+    # supersedes.
+    review_rate_last_merged: float = Field(default=0.0323, ge=0.0, le=1.0)
+
 
 class DetParserSettings(BaseModel):
     """Tuning knobs for ``DeterministicMarkSchemeParser``.
