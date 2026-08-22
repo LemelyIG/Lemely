@@ -855,6 +855,16 @@ class SaveResultRoundTripTests(unittest.TestCase):
 
         # Point the instrument at something real: a pure analysis over the
         # records reconstructed from disk, not the in-memory objects.
+        #
+        # The assertions below are deliberately exact rather than bounds.
+        # ``0.0 <= review_rate_total <= 1.0`` holds *by construction* and
+        # passes on an EMPTY record list — as does ``all(...)`` above — so a
+        # regression that made ``save_result`` write ``"eval_records": []``
+        # would sail straight through a bounds check while destroying the very
+        # thing #72 exists to deliver. Pinning ``n`` to the record count is
+        # what makes this test fail if the records stop arriving.
+        self.assertTrue(records, "eval_records round-tripped empty — #72's whole point")
         rate = review_rate(records)
-        self.assertGreaterEqual(rate["review_rate_total"], 0.0)
-        self.assertLessEqual(rate["review_rate_total"], 1.0)
+        self.assertEqual(rate["n"], len(records))
+        self.assertEqual(rate["review_rate_total"], 0.0)
+        self.assertEqual(rate["review_rate_signal"], 0.0)
