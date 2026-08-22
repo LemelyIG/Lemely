@@ -70,6 +70,20 @@ The earlier run `wf_dba29fea-8af` returned `implementation-blocked` with no
 commits. Its **Scope** phase succeeded and its plan is worth recovering; its
 **Implement** phase refused, so resuming it replays that refusal from cache.
 
+## Implementation run for #72 (added 2026-08-22)
+
+`accuracy-issue-execute` for **#72** is running as **`wf_f73ff647-3f0`**
+(transcript under `…/subagents/workflows/wf_f73ff647-3f0/journal.jsonl`).
+Read that journal and `git log --oneline origin/develop..HEAD` before
+launching anything else for #72 — but see the header's self-deadlock note
+first: **if you are the implementer this run dispatched, that entry describes
+you, not a rival.**
+
+It does **not** open the PR. When it returns, verify its claims yourself
+(re-run the gates, confirm a clean tree, confirm signing with
+`git cat-file commit <sha> | grep -c gpgsig`), then `accuracy-review` with
+`head`/`base` passed explicitly, then `accuracy-pr-land`.
+
 ## Current state (seeded 2026-08-18)
 
 Nothing has been started. Five tracker issues are closed, all by the human or
