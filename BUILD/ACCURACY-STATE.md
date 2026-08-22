@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 29.03% (9/31 leaves, union numerator, on the #33 branch; NOT yet merged)
 ratchet: unarmed; 29.03% recorded as a non-blocking M0 breach (#33 branch, unmerged)
 spend_usd: 0.4026
-in_the_middle_of: implementing #29
+in_the_middle_of:
 ---
 
 ## Contract — keep this file THIN
