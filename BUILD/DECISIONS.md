@@ -10957,8 +10957,28 @@ p95 target 15% against an observed ~82%), so the breach itself is not in doubt
 and stays recorded-not-blocking while the ratchet is unarmed at M0.
 
 **Not fixed here.** This entry does not touch `config.py`,
-`BUILD/review-rate-baseline.json`, or `scripts/check_review_rate_gate.py`
-(which still has zero test coverage and re-reads a saved golden run rather than
-recomputing). #27 is a measurement issue; changing the gate's constant is #36's
-work, and doing it inside a measurement commit would make "did the instrument
-change between runs?" unanswerable later. The numbers are handed over on #36.
+`BUILD/review-rate-baseline.json`, or `scripts/check_review_rate_gate.py`.
+#27 is a measurement issue; changing the gate's constant is #36's work, and
+doing it inside a measurement commit would make "did the instrument change
+between runs?" unanswerable later. The numbers are handed over on #36.
+
+**Correcting the standing "the gate has zero test coverage" note while we are
+here.** That claim, carried in the resume pointer and posted as part of the
+M0.9 constraint on #36, is imprecise and overstates the risk:
+
+- The gate's **decision logic**, `lemely.eval.review_gate.
+  evaluate_review_rate_gate`, is well covered — 13 tests in
+  `tests/eval/test_review_gate.py`, over synthetic `ReviewRateResult` dicts,
+  covering both limbs armed and unarmed.
+- What is genuinely untested is the **script wrapper**,
+  `scripts/check_review_rate_gate.py` — its `main`, `_baseline_provenance` and
+  `_load_review_rate_result`. Nothing in `tests/` references it (checked by
+  symbol search, not grep over prose).
+
+So the exposure is not "an untested gate". It is that the wrapper reads
+`BUILD/review-rate-baseline.json` and a **saved** golden run rather than
+recomputing from a live sweep — confirmed by observation, not inference: on
+this branch the gate still prints `review_rate 0.2903` while this run's live
+records give 29.03%–41.94%. The number the gate judges cannot respond to a code
+change. That is the thing #36 must fix before arming, and it is a wiring
+problem, not a missing-tests problem.
