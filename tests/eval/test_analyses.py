@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
+import math
 import random
 from pathlib import Path
 
 from lemely.eval.analyses import (
+    MCNEMAR_IMPROVEMENT_N_FLOOR,
     ablation_2x2,
     exclusion_funnel,
     mcnemar,
+    mcnemar_improvement_p_value,
+    paired_proportion_min_n,
     review_rate,
     risk_coverage,
     wilson,
@@ -82,9 +87,23 @@ class TestAblation2x2:
         assert result["both_correct"] == 1
 
 
+def _concordant_filler_pairs(n: int) -> list[EvalRecord]:
+    """``n`` extra concordant (both-correct) leaf pairs, to push ``n_pairs``
+    at/above :data:`MCNEMAR_IMPROVEMENT_N_FLOOR` without disturbing ``b``/``c``."""
+    records: list[EvalRecord] = []
+    for i in range(n):
+        qid = f"filler-{i}"
+        records.append(_rec(arm="oracle+mark", question_id=qid, outcome="correct"))
+        records.append(_rec(arm="extract+mark", question_id=qid, outcome="correct"))
+    return records
+
+
 class TestMcnemar:
     def test_discordant_pairs_produce_nonzero_statistic(self) -> None:
+        # Padded to n_pairs >= MCNEMAR_IMPROVEMENT_N_FLOOR with concordant filler so this
+        # exercises the numeric (non-underpowered) branch's chi2/p_value math.
         records = [
+            *_concordant_filler_pairs(MCNEMAR_IMPROVEMENT_N_FLOOR),
             _rec(arm="oracle+mark", question_id="1", outcome="correct"),
             _rec(arm="extract+mark", question_id="1", outcome="under"),
             _rec(arm="oracle+mark", question_id="2", outcome="correct"),
@@ -93,17 +112,20 @@ class TestMcnemar:
             _rec(arm="extract+mark", question_id="3", outcome="correct"),
         ]
         result = mcnemar(records)
+        assert result["underpowered"] is False
         assert result["b"] == 2
         assert result["c"] == 0
-        assert result["chi2"] > 0
-        assert 0.0 <= result["p_value"] <= 1.0
+        assert result["chi2"] is not None and result["chi2"] > 0
+        assert result["p_value"] is not None and 0.0 <= result["p_value"] <= 1.0
 
     def test_no_discordant_pairs_gives_zero_statistic(self) -> None:
         records = [
+            *_concordant_filler_pairs(MCNEMAR_IMPROVEMENT_N_FLOOR),
             _rec(arm="oracle+mark", question_id="1", outcome="correct"),
             _rec(arm="extract+mark", question_id="1", outcome="correct"),
         ]
         result = mcnemar(records)
+        assert result["underpowered"] is False
         assert result["b"] == 0
         assert result["c"] == 0
         assert result["chi2"] == 0.0
@@ -124,6 +146,139 @@ class TestMcnemar:
         ]
         result = mcnemar(records)
         assert result["n_pairs"] == 1
+
+
+class TestNFloor:
+    """M0.6 (#30): a McNemar result below the paired-comparison n-floor must
+    report ``underpowered`` rather than a numeric p-value/statistic (spec
+    §6: n=219 to detect 83.8%->88.8% at alpha=0.05/power=0.80)."""
+
+    def test_below_floor_still_returns_numeric_statistic(self) -> None:
+        """Real ~31-leaf golden corpus, replayed as paired oracle/extract
+        arms — an order of magnitude below MCNEMAR_IMPROVEMENT_N_FLOOR (spec
+        §6's own example of exactly this population). The floor governs
+        whether the result may be PRESENTED as an improvement claim (see
+        TestReportingLayer below), not whether the statistic gets computed
+        at all: ``chi2``/``p_value`` must be real floats even here."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        golden_dir = Path(__file__).resolve().parents[1] / "golden"
+        cases = load_golden_cases(golden_dir)
+        assert cases, "expected golden fixtures under tests/golden"
+
+        records = [
+            _rec(
+                arm=arm,
+                paper_id=case.paper_id,
+                fixture_variant=case.fixture_variant,
+                question_id=qid,
+                outcome="correct" if arm == "oracle+mark" else "under",
+            )
+            for case in cases
+            for qid in case.ground_truth
+            for arm in ("oracle+mark", "extract+mark")
+        ]
+        result = mcnemar(records)
+        assert result["n_pairs"] < MCNEMAR_IMPROVEMENT_N_FLOOR
+        assert result["underpowered"] is True
+        assert result["b"] == 31
+        assert result["c"] == 0
+        assert isinstance(result["chi2"], float)
+        assert isinstance(result["p_value"], float)
+        assert result["chi2"] is not None
+        assert result["p_value"] is not None
+
+    def test_at_or_above_floor_returns_numeric_result(self) -> None:
+        """Synthetic paired data with n_pairs >= MCNEMAR_IMPROVEMENT_N_FLOOR — no real
+        corpus reaches this yet — proves the underpowered branch is a real
+        branch, not vacuously always-true."""
+        records = []
+        for i in range(MCNEMAR_IMPROVEMENT_N_FLOOR):
+            qid = f"q{i}"
+            oracle_outcome = "correct"
+            extract_outcome = "under" if i % 5 == 0 else "correct"
+            records.append(_rec(arm="oracle+mark", question_id=qid, outcome=oracle_outcome))
+            records.append(_rec(arm="extract+mark", question_id=qid, outcome=extract_outcome))
+
+        result = mcnemar(records)
+        assert result["n_pairs"] == MCNEMAR_IMPROVEMENT_N_FLOOR
+        assert result["underpowered"] is False
+        assert isinstance(result["chi2"], float)
+        assert isinstance(result["p_value"], float)
+        assert 0.0 <= result["p_value"] <= 1.0
+
+    def test_paired_proportion_min_n_pinned_value_and_monotonicity(self) -> None:
+        """`paired_proportion_min_n` implements the Connor/Fleiss
+        favourable-case bound: the discordant-pair proportion is set to its
+        minimum possible value (psi = d = |p2 - p1|, i.e. every discordant
+        pair moves p1->p2 and none reverse), giving
+
+            n = ceil((z_a*sqrt(d) + z_b*sqrt(d*(1-d)))**2 / d**2)
+
+        This pins the exact value for spec §6's effect size (83.8% ->
+        88.8%, alpha=0.05, power=0.80), recomputed independently here from
+        the module's own ``_inverse_normal_cdf`` rather than asserting a
+        bare literal, plus the monotonicity any real bound must have:
+        a bigger effect size needs fewer pairs, and more power needs more."""
+        from lemely.eval.analyses import _inverse_normal_cdf
+
+        def expected(p1: float, p2: float, alpha: float, power: float) -> int:
+            z_alpha = _inverse_normal_cdf(1 - alpha / 2)
+            z_beta = _inverse_normal_cdf(power)
+            d = abs(p2 - p1)
+            return math.ceil((z_alpha * math.sqrt(d) + z_beta * math.sqrt(d * (1 - d))) ** 2 / d**2)
+
+        pinned = expected(0.838, 0.888, alpha=0.05, power=0.80)
+        assert paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.80) == pinned
+        assert 0 < pinned <= MCNEMAR_IMPROVEMENT_N_FLOOR
+
+        # Larger effect size -> strictly smaller n.
+        bigger_effect = paired_proportion_min_n(0.75, 0.888, alpha=0.05, power=0.80)
+        assert bigger_effect < pinned
+
+        # Higher power -> strictly larger n.
+        higher_power = paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.90)
+        assert higher_power > pinned
+
+
+class TestReportingLayer:
+    """M0.6 (#30): the refusal to present a bare p-value as an improvement
+    claim below the n-floor lives ONLY in this reporting-layer function —
+    ``mcnemar()`` itself always returns the numeric statistic (see
+    TestNFloor.test_below_floor_still_returns_numeric_statistic)."""
+
+    def test_underpowered_result_returns_the_sentinel(self) -> None:
+        result = mcnemar(
+            [
+                _rec(arm="oracle+mark", question_id="1", outcome="correct"),
+                _rec(arm="extract+mark", question_id="1", outcome="under"),
+            ]
+        )
+        assert result["underpowered"] is True
+        reported = mcnemar_improvement_p_value(result)
+        assert reported == "underpowered"
+
+    def test_powered_result_returns_the_numeric_p_value(self) -> None:
+        records = [
+            *_concordant_filler_pairs(MCNEMAR_IMPROVEMENT_N_FLOOR),
+            _rec(arm="oracle+mark", question_id="1", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", outcome="under"),
+        ]
+        result = mcnemar(records)
+        assert result["underpowered"] is False
+        reported = mcnemar_improvement_p_value(result)
+        assert reported == result["p_value"]
+        assert isinstance(reported, float)
+
+
+def test_mcnemar_signature_rejects_unpaired_rate_summaries() -> None:
+    """AC1: the sole parameter of ``mcnemar`` is ``records: list[EvalRecord]``
+    — there is no code path that accepts two independent rate summaries
+    (e.g. two bare proportions/counts) and returns a p-value."""
+    sig = inspect.signature(mcnemar)
+    assert list(sig.parameters) == ["records"]
+    (param,) = sig.parameters.values()
+    assert param.annotation in ("list[EvalRecord]", list[EvalRecord])
 
 
 class TestWilson:
@@ -150,6 +305,29 @@ class TestWilson:
         ]
         result = wilson(records)
         assert result["n"] == 1
+
+    def test_diverges_from_clamped_normal_approximation(self) -> None:
+        """AC2: small n (10) at an extreme point estimate (100% correct) is
+        exactly the case where a clamped normal approximation degenerates —
+        ``se = sqrt(p*(1-p)/n) == 0`` at p=1, so the clamped-normal interval
+        collapses to the point estimate ``[1.0, 1.0]`` and would falsely
+        report zero uncertainty. Wilson does not degenerate here: its lower
+        bound is pinned at the independently-computed value below, proving
+        this is the score interval, not a normal approximation with the
+        endpoints clamped into range."""
+        records = [_rec(question_id=str(i), outcome="correct") for i in range(10)]
+        result = wilson(records)
+        assert result["n"] == 10
+        assert result["point"] == 1.0
+
+        # A clamped normal approximation at p=1.0 degenerates to [1.0, 1.0].
+        normal_lower = max(0.0, 1.0 - 1.96 * math.sqrt(1.0 * (1.0 - 1.0) / 10))
+        assert normal_lower == 1.0
+
+        # Wilson must not degenerate: its lower bound is pinned well below 1.0.
+        assert result["lower"] == 0.7224598312333834
+        assert result["upper"] == 1.0
+        assert result["lower"] < normal_lower
 
 
 class TestRiskCoverage:

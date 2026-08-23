@@ -727,6 +727,27 @@ session as prose with the tail truncated — which is why `impeccable-detect` ha
 been unknown for six sweeps, and why diagnosing a `pytest` failure meant
 re-deriving it locally. `reports/.scratch/sweep/<gate>.log` remains the fix.
 
+### 2026-08-22 — #30 is now also queued behind this block
+
+`feature/accuracy-30-paired-statistics-mcnemar-wilson` (tip `d32bba7`) is
+complete, gate-green under `scripts/check.sh --fast tests/eval`, adversarially
+reviewed `mergeable`, and **unpushed with no PR**. It is the second item waiting
+on the org billing fix, after #77/PR #78.
+
+No PR was opened deliberately: §7.1 makes `accuracy-pr-land` the mandatory owner
+of the PR lifecycle, but it watches CI to conclusion and routes a red run into
+`accuracy-gate-triage`, which the standing order forbids for this block. Opening
+by hand would bypass a mandatory workflow. When billing is resolved, merge PR #78
+first, then run `accuracy-pr-land` for #30, then #27 (M0.3) is unblocked.
+
+**RESOLVED 2026-08-23, but not by a billing fix.** The human added an explicit,
+recorded CI waiver to `accuracy-pr-land` (commit `1289d8b`,
+`allow_merge_without_ci: "<reason>"`), so the queue drains on local gates alone
+while Actions still cannot provision a runner. #77/PR #78 merged first
+(develop `c66ef5b`); #30 followed under the same waiver. The billing block
+itself is **still open** — see the section below, and drop the waiver the
+moment Actions can run.
+
 ---
 
 ## OPEN — 2026-08-22 — GitHub Actions is billing-blocked: no PR can merge

@@ -220,14 +220,120 @@ def _distinct_leaves_by_arm(
 
 
 # ---------------------------------------------------------------------------
-# mcnemar
+# mcnemar / n-floor
 # ---------------------------------------------------------------------------
+
+#: Paired-McNemar sample-size floor for IMPROVEMENT CLAIMS (spec §6): the n
+#: needed to detect an improvement from 83.8% to 88.8% at alpha=0.05,
+#: power=0.80 (vs. n=741 unpaired, per arm). This floor governs whether a
+#: McNemar result may be PRESENTED as evidence of improvement — see
+#: :func:`mcnemar_improvement_p_value`, the sole place that refusal happens.
+#: ``mcnemar()`` itself always computes and returns the numeric chi2/p_value
+#: regardless of ``n_pairs`` vs. this floor; it does not gate the underlying
+#: computation, only the ``underpowered`` flag callers must check before
+#: treating the statistic as an improvement claim. See BUILD/DECISIONS.md
+#: DA7 for the derivation and why this constant (not a recomputed value) is
+#: the source of truth.
+MCNEMAR_IMPROVEMENT_N_FLOOR = 219
+
+
+def _inverse_normal_cdf(p: float) -> float:
+    """Standard-normal quantile function (Peter Acklam's rational approximation).
+
+    Max error ~1.15e-9; used only to turn ``alpha``/``power`` into z-scores
+    for :func:`paired_proportion_min_n` — no scipy dependency, matching the
+    rest of this module.
+    """
+    a = (
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    )
+    b = (
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    )
+    c = (
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    )
+    d = (
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e00,
+        3.754408661907416e00,
+    )
+    p_low = 0.02425
+    p_high = 1 - p_low
+
+    if p < p_low:
+        q = math.sqrt(-2 * math.log(p))
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+        )
+    if p <= p_high:
+        q = p - 0.5
+        r = q * q
+        return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (
+            ((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1
+        )
+    q = math.sqrt(-2 * math.log(1 - p))
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+        (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+    )
+
+
+def paired_proportion_min_n(p1: float, p2: float, *, alpha: float, power: float) -> int:
+    """Conservative lower bound on the paired (McNemar) sample size needed to detect ``p1 -> p2``.
+
+    Implements the Connor (1987) / Fleiss favourable-case bound: the
+    discordant-pair proportion ``psi`` (how often the two arms disagree on
+    the same leaf) is set to its *minimum possible* value, ``psi = d =
+    |p2 - p1|`` — the case where every discordant pair moves in the
+    ``p1 -> p2`` direction and none reverse. Substituting ``psi = d`` into
+    the general paired-proportion sample-size formula
+
+        n = ceil((z_a*sqrt(psi) + z_b*sqrt(psi - d**2))**2 / d**2)
+
+    gives ``psi - d**2 = d*(1 - d)`` and so
+
+        n = ceil((z_a*sqrt(d) + z_b*sqrt(d*(1 - d)))**2 / d**2)
+
+    Any real correlation structure between the two arms needs *at least*
+    this many pairs (a smaller discordant-pair proportion than ``d`` is
+    impossible, since the marginal difference IS the minimum discordance),
+    so this is a genuine, independently-checkable lower bound — but it is
+    still not :data:`MCNEMAR_IMPROVEMENT_N_FLOOR`'s exact derivation: the
+    actual discordant-pair rate between ``oracle+mark`` and ``extract+mark``
+    is an empirical quantity this module has no measurement of yet, so
+    ``MCNEMAR_IMPROVEMENT_N_FLOOR`` is taken directly from spec §6 rather
+    than recomputed here (see BUILD/DECISIONS.md).
+    """
+    if not 0.0 < p1 < 1.0 or not 0.0 < p2 < 1.0:
+        raise ValueError("p1 and p2 must be in (0, 1)")
+    d = abs(p2 - p1)
+    if d <= 0.0:
+        raise ValueError("p1 and p2 must differ to have a detectable effect")
+    z_alpha = _inverse_normal_cdf(1 - alpha / 2)
+    z_beta = _inverse_normal_cdf(power)
+    return math.ceil((z_alpha * math.sqrt(d) + z_beta * math.sqrt(d * (1 - d))) ** 2 / d**2)
 
 
 class McNemarResult(TypedDict):
     b: int
     c: int
     n_pairs: int
+    underpowered: bool
     chi2: float
     p_value: float
 
@@ -240,6 +346,15 @@ def mcnemar(records: list[EvalRecord]) -> McNemarResult:
     correct. Uses the continuity-corrected chi-square statistic with 1
     degree of freedom; the p-value is exact for 1 df via the complementary
     error function (no scipy dependency).
+
+    ``chi2``/``p_value`` are ALWAYS computed and returned as real numbers,
+    regardless of ``n_pairs`` vs. :data:`MCNEMAR_IMPROVEMENT_N_FLOOR` — a
+    below-floor sample size makes the statistic unfit to present as an
+    IMPROVEMENT CLAIM (that refusal lives solely in
+    :func:`mcnemar_improvement_p_value`), but the number itself is real and
+    a caller doing its own analysis (e.g. plotting, an ablation breakdown)
+    must not be handed ``None`` for it. ``underpowered`` is ``True`` iff
+    ``n_pairs < MCNEMAR_IMPROVEMENT_N_FLOOR`` (spec §6/M0.6).
     """
     qlevel = _distinct_leaves_by_arm(_question_level(records))
     oracle = qlevel["oracle+mark"]
@@ -258,12 +373,37 @@ def mcnemar(records: list[EvalRecord]) -> McNemarResult:
         elif not o_correct and e_correct:
             c += 1
 
-    if b + c == 0:
-        return {"b": b, "c": c, "n_pairs": n_pairs, "chi2": 0.0, "p_value": 1.0}
+    underpowered = n_pairs < MCNEMAR_IMPROVEMENT_N_FLOOR
 
-    chi2 = ((abs(b - c) - 1) ** 2) / (b + c)
-    p_value = math.erfc(math.sqrt(chi2 / 2))
-    return {"b": b, "c": c, "n_pairs": n_pairs, "chi2": chi2, "p_value": p_value}
+    if b + c == 0:
+        chi2 = 0.0
+        p_value = 1.0
+    else:
+        chi2 = ((abs(b - c) - 1) ** 2) / (b + c)
+        p_value = math.erfc(math.sqrt(chi2 / 2))
+
+    return {
+        "b": b,
+        "c": c,
+        "n_pairs": n_pairs,
+        "underpowered": underpowered,
+        "chi2": chi2,
+        "p_value": p_value,
+    }
+
+
+def mcnemar_improvement_p_value(result: McNemarResult) -> float | str:
+    """Refuse to present a bare p-value as an improvement claim when underpowered.
+
+    This is the ONLY place that refusal happens (spec §6/M0.6) — ``mcnemar``
+    itself always computes and returns the numeric statistic (see its
+    docstring). Returns the literal ``"underpowered"`` when
+    ``result["underpowered"]`` is ``True``; otherwise returns
+    ``result["p_value"]`` unchanged.
+    """
+    if result["underpowered"]:
+        return "underpowered"
+    return result["p_value"]
 
 
 # ---------------------------------------------------------------------------
