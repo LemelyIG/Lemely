@@ -46,6 +46,8 @@ def render_pass1_page(context: dict[str, object]) -> str:
 {images_html}
   </div>
   <form method="post" action="/pass1?paper_id={paper_id_html}">
+    <label for="question_id">Question ID:</label>
+    <input id="question_id" name="question_id"><br>
     <label for="text">Transcription (exact, no correction):</label><br>
     <textarea id="text" name="text" rows="12" cols="90"></textarea><br>
     <button type="submit">Submit transcription</button>

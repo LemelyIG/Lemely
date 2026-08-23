@@ -8,6 +8,7 @@ reports the first break.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from lemely.labelling.paths import marking_path, transcription_path
@@ -60,6 +61,49 @@ def test_untampered_chain_verifies_clean(tmp_path: Path) -> None:
     result = verify_chain(path)
     assert result.ok
     assert result.broken_index is None
+
+
+def test_concurrent_appends_to_the_same_file_do_not_fork_the_chain(tmp_path: Path) -> None:
+    """ALSO-FIX (accuracy-review, #46 repair pass 2): server is ThreadingHTTPServer.
+
+    Two concurrent POSTs to the same file (e.g. a human double-clicking
+    Submit) must not both read the same ``prev_hash`` and fork the chain —
+    that would make verify_chain report an honest double-submit as
+    tampering. append_record now serialises the read-then-append with a
+    lock; this drives many concurrent writers at one file and asserts the
+    resulting chain is valid with no duplicate prev_hash values (the
+    fingerprint of a fork).
+    """
+    path = transcription_path("0580_s23_qp_22", "labeller-A", eval_root=tmp_path)
+    n_writers = 40
+    barrier = threading.Barrier(n_writers)
+
+    def _write(index: int) -> None:
+        barrier.wait()
+        append_record(path, {"question_id": f"q{index}", "text": f"answer {index}"})
+
+    threads = [threading.Thread(target=_write, args=(i,)) for i in range(n_writers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == n_writers
+
+    records = [json.loads(line) for line in lines]
+    prev_hashes = [r["prev_hash"] for r in records]
+    # Exactly one record may legitimately have prev_hash=None (the first);
+    # any other duplicate prev_hash means two threads read the chain tail
+    # at the same moment and forked it.
+    non_null_prev_hashes = [h for h in prev_hashes if h is not None]
+    assert len(non_null_prev_hashes) == len(set(non_null_prev_hashes)), (
+        "duplicate prev_hash: two writers forked the chain"
+    )
+    assert prev_hashes.count(None) == 1
+
+    result = verify_chain(path)
+    assert result.ok, result.reason
 
 
 def test_two_labellers_on_the_same_paper_do_not_overwrite_each_other(

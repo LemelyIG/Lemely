@@ -11,12 +11,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from typing import TYPE_CHECKING
 
 from lemely.labelling.paths import DEFAULT_EVAL_ROOT, marking_path, transcription_path
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# The labeller server is a ThreadingHTTPServer: two concurrent POSTs to the
+# same file (e.g. a human double-clicking Submit) could otherwise both read
+# the same prev_hash and fork the chain. verify_chain would then report that
+# as tampering — precisely the wrong failure for a tamper-evidence mechanism
+# to present on an honest double-submit. One global lock serialises the
+# read-then-append critical section; the labeller is a single-operator local
+# tool, so a single lock across all paths costs nothing observable and needs
+# no per-path bookkeeping.
+_APPEND_LOCK = threading.Lock()
 
 
 def record_hash(prev_hash: str | None, payload: dict[str, object]) -> str:
@@ -43,16 +54,22 @@ def _last_hash(path: Path) -> str | None:
 
 
 def append_record(path: Path, payload: dict[str, object]) -> dict[str, object]:
-    """Append one hash-chained record to ``path``, creating parents as needed."""
+    """Append one hash-chained record to ``path``, creating parents as needed.
+
+    The read-then-append is serialised by ``_APPEND_LOCK`` (see module
+    docstring above) so two threads can never both read the same
+    ``prev_hash`` and fork the chain.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    prev_hash = _last_hash(path)
-    record: dict[str, object] = {
-        "prev_hash": prev_hash,
-        "hash": record_hash(prev_hash, payload),
-        "payload": payload,
-    }
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record) + "\n")
+    with _APPEND_LOCK:
+        prev_hash = _last_hash(path)
+        record: dict[str, object] = {
+            "prev_hash": prev_hash,
+            "hash": record_hash(prev_hash, payload),
+            "payload": payload,
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
     return record
 
 

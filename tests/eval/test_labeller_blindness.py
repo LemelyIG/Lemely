@@ -14,7 +14,9 @@ import subprocess
 import sys
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -53,6 +55,37 @@ def _seed_real_paper(eval_root: Path, paper_id: str) -> None:
     schemes_dir = eval_root / "mark_schemes"
     schemes_dir.mkdir(parents=True)
     shutil.copyfile(_GOLDEN_MARK_SCHEME, schemes_dir / f"{paper_id}.json")
+
+
+class _RenderedFormFields(HTMLParser):
+    """Extract a rendered page's ``<form action=...>`` and its field names.
+
+    Used so tests exercise the *actual* field names ``pages.py`` emits
+    (derived from the served HTML) rather than a hand-typed guess that could
+    silently drift out of sync with the real markup.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.action: str | None = None
+        self.field_names: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = dict(attrs)
+        if tag == "form":
+            self.action = attr_map.get("action")
+        elif tag in {"input", "textarea"} and attr_map.get("name"):
+            name = attr_map["name"]
+            assert name is not None
+            self.field_names.append(name)
+
+
+def _parse_rendered_form(html: str) -> _RenderedFormFields:
+    parser = _RenderedFormFields()
+    parser.feed(html)
+    assert parser.action, "rendered page has no <form action=...>"
+    assert parser.field_names, "rendered page's <form> has no named fields"
+    return parser
 
 
 def test_pass1_context_carries_no_mark_scheme_data(tmp_path: Path) -> None:
@@ -158,6 +191,7 @@ def test_smoke_labeller_server_writes_valid_hash_chain_and_stays_pipeline_free(
         req = urllib.request.Request(
             f"{base}/pass1?paper_id=SMOKE01",
             data=json.dumps({"question_id": "q0", "text": "smoke transcription"}).encode(),
+            headers={"Content-Type": "application/json"},
             method="POST",
         )
         urllib.request.urlopen(req, timeout=5)
@@ -170,6 +204,7 @@ def test_smoke_labeller_server_writes_valid_hash_chain_and_stays_pipeline_free(
         req2 = urllib.request.Request(
             f"{base}/pass2?paper_id=SMOKE01",
             data=json.dumps({"question_id": "q0", "awarded_marks": 1}).encode(),
+            headers={"Content-Type": "application/json"},
             method="POST",
         )
         urllib.request.urlopen(req2, timeout=5)
@@ -227,6 +262,7 @@ def test_labeller_rejects_path_traversal_in_paper_id(
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/pass1?paper_id=../../../../etc/evil",
             data=json.dumps({"question_id": "q0", "text": "malicious"}).encode(),
+            headers={"Content-Type": "application/json"},
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_info:
@@ -235,6 +271,176 @@ def test_labeller_rejects_path_traversal_in_paper_id(
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_labeller_pass1_and_pass2_forms_submit_as_real_browsers_do(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MUST-FIX (accuracy-review, #46 repair pass 2): the human path.
+
+    A real browser posts ``application/x-www-form-urlencoded`` with exactly
+    the field names the rendered ``<form>`` declares, not hand-built JSON.
+    Before this fix the server unconditionally did
+    ``json.loads(raw_body)``, so this exact request crashed with an
+    unhandled ``JSONDecodeError`` and dropped the connection with zero
+    bytes written — the whole point of shipping a browser-served labeller.
+
+    Field names are parsed out of the actually-rendered HTML rather than
+    hand-typed, so this test cannot silently drift out of sync with
+    ``pages.py``.
+    """
+    monkeypatch.chdir(tmp_path)
+    _seed_real_paper(Path("eval"), "FORM01")
+
+    from lemely.labelling.server import create_server
+
+    server = create_server(port=0, labeller_id="A", split="train")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_port
+        base = f"http://127.0.0.1:{port}"
+
+        # --- pass 1: transcription, as a browser's form submit would send it ---
+        pass1_resp = urllib.request.urlopen(f"{base}/pass1?paper_id=FORM01", timeout=5)
+        pass1_form = _parse_rendered_form(pass1_resp.read().decode("utf-8"))
+        assert pass1_form.action is not None
+
+        pass1_values = {name: f"real browser value for {name}" for name in pass1_form.field_names}
+        pass1_body = urllib.parse.urlencode(pass1_values).encode("ascii")
+        pass1_action_url = urllib.parse.urljoin(f"{base}/pass1", pass1_form.action)
+        req1 = urllib.request.Request(
+            pass1_action_url,
+            data=pass1_body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        resp1 = urllib.request.urlopen(req1, timeout=5)
+        assert resp1.status == 201
+
+        # --- pass 2: marking, same real-form-submit shape ---
+        pass2_resp = urllib.request.urlopen(f"{base}/pass2?paper_id=FORM01", timeout=5)
+        pass2_form = _parse_rendered_form(pass2_resp.read().decode("utf-8"))
+        assert pass2_form.action is not None
+        assert "awarded_marks" in pass2_form.field_names
+
+        pass2_values: dict[str, str] = {}
+        for name in pass2_form.field_names:
+            pass2_values[name] = "3" if name == "awarded_marks" else "q0"
+        pass2_body = urllib.parse.urlencode(pass2_values).encode("ascii")
+        pass2_action_url = urllib.parse.urljoin(f"{base}/pass2", pass2_form.action)
+        req2 = urllib.request.Request(
+            pass2_action_url,
+            data=pass2_body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        resp2 = urllib.request.urlopen(req2, timeout=5)
+        assert resp2.status == 201
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    trans_path = Path("eval") / "labels" / "FORM01" / "A" / "transcription.jsonl"
+    mark_path = Path("eval") / "labels" / "FORM01" / "A" / "marking.jsonl"
+    assert trans_path.is_file()
+    assert mark_path.is_file()
+    assert verify_chain(trans_path).ok
+    assert verify_chain(mark_path).ok
+
+    trans_records = [
+        json.loads(line) for line in trans_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert trans_records[0]["payload"]["text"] == "real browser value for text"
+
+    mark_records = [json.loads(line) for line in mark_path.read_text(encoding="utf-8").splitlines()]
+    # awarded_marks must be coerced to an int — the marking record schema
+    # downstream expects a number, not the string a raw form field yields.
+    assert mark_records[0]["payload"]["awarded_marks"] == 3
+    assert isinstance(mark_records[0]["payload"]["awarded_marks"], int)
+
+
+def test_labeller_malformed_json_body_returns_400_not_a_dropped_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MUST-FIX: a malformed body must produce an HTTP response, never a dropped socket."""
+    monkeypatch.chdir(tmp_path)
+    _seed_real_paper(Path("eval"), "BAD01")
+
+    from lemely.labelling.server import create_server
+
+    server = create_server(port=0, labeller_id="A", split="train")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_port
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/pass1?paper_id=BAD01",
+            data=b"{not valid json",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req, timeout=5)
+        assert exc_info.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    # And nothing was appended.
+    trans_path = Path("eval") / "labels" / "BAD01" / "A" / "transcription.jsonl"
+    assert not trans_path.exists()
+
+
+def test_labeller_rejects_unknown_or_missing_content_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MUST-FIX: an unrecognised/absent Content-Type is rejected, not guessed at."""
+    monkeypatch.chdir(tmp_path)
+    _seed_real_paper(Path("eval"), "CT01")
+
+    from lemely.labelling.server import create_server
+
+    server = create_server(port=0, labeller_id="A", split="train")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_port
+
+        # No Content-Type header at all. ``urllib.request`` helpfully
+        # defaults to form-urlencoded whenever ``data=`` is set and no
+        # Content-Type is given, so a raw ``http.client`` connection is used
+        # here to genuinely send zero Content-Type header — the case a
+        # non-browser, non-urllib client (e.g. a bare ``nc``/curl
+        # ``--header`` omission) can actually produce.
+        import http.client
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        body = b"question_id=q0&text=hi"
+        conn.putrequest("POST", "/pass1?paper_id=CT01")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.endheaders()
+        conn.send(body)
+        missing_ct_resp = conn.getresponse()
+        assert missing_ct_resp.status == 400
+        conn.close()
+
+        # An unrecognised Content-Type.
+        req_unknown = urllib.request.Request(
+            f"http://127.0.0.1:{port}/pass1?paper_id=CT01",
+            data=b"whatever",
+            headers={"Content-Type": "text/plain"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req_unknown, timeout=5)
+        assert exc_info.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    trans_path = Path("eval") / "labels" / "CT01" / "A" / "transcription.jsonl"
+    assert not trans_path.exists()
 
 
 def test_labelling_source_does_not_import_test_split_authorisation() -> None:
