@@ -11177,3 +11177,34 @@ a `gemini.py` change adding a cache-hit-only replay mode (a separate,
 reviewable piece of work) or plumbing `matched_point_ids` through to
 `EvalRecord` going forward so future sweeps carry the linkage from the
 start — neither was in scope for this repair pass.
+
+**CORRECTION (2026-08-23): the historical-cache limitation above is real but
+was not the whole story, and the orchestrator's characterisation of this
+gap — "the machinery is delivered and wired, only the number awaits a
+sweep" — was wrong.** `coherence_trigger_rate` (`lemely/eval/analyses.py:613`)
+had **zero callers anywhere in the tree**: not in `lemely/app/cli.py`, not in
+any script. `measure-accuracy`'s report path imported and called only
+`review_rate`, so even a fresh, fully-authorised, zero-cache-hit sweep run
+today would never compute or print this function's result — the gap was not
+purely retrospective (stale cache, no question-identity linkage), it was also
+prospective (no call site). A missing call is a smaller and different defect
+than a data-linkage problem, and conflating the two understated what was
+wrong: "awaiting a sweep" implies the wiring was ready and only the
+measurement act was outstanding, when in fact the report path itself was not
+exercised by any code path.
+
+This has now been fixed: `measure-accuracy` (`lemely/app/cli.py`) imports
+`coherence_trigger_rate` alongside `review_rate` and calls it on
+`result.eval_records`, printing its own `Coherence trigger rate: <rate>
+(n=<n>)` line — separate from the `Review rate: ...` line, matching bullet
+4's "measured and reported separately" — and not fed into `failed`, the
+review-rate gate, or the M0.9 ratchet. `tests/test_cli_coherence_trigger_rate.py`
+proves this line is genuinely emitted (and fails if the call is removed).
+
+Bullet 4's status is therefore now: **the reporting path is delivered and
+exercised by a passing test; no corpus number has been produced.** The
+historical-cache obstacle above still blocks retro-measurement of the
+existing 181 cached `AIMarkResponse` payloads — that part of this entry
+stands uncorrected. But any future authorised sweep over fresh (or newly
+question-identity-linked) data will now compute and print the number, which
+was not true before this correction.
