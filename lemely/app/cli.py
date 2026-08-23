@@ -1126,6 +1126,43 @@ def measure_accuracy_cmd(
         raise click.exceptions.Exit(1)
 
 
+@cli.command("label")
+@click.argument("paper_id")
+@click.option(
+    "--split",
+    type=click.Choice(["train", "dev", "test"]),
+    default="train",
+    show_default=True,
+    help="Split this paper belongs to, recorded in the label manifest (spec §6).",
+)
+@click.option(
+    "--labeller-id",
+    default=None,
+    help="Labeller identity, recorded in the label manifest. Defaults to $USER.",
+)
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", type=int, default=8765, show_default=True)
+def label_cmd(paper_id: str, split: str, labeller_id: str | None, host: str, port: int) -> None:
+    """Start the two-pass blind labeller server for PAPER_ID (spec §6, M2.3/#46).
+
+    Delegates entirely into :mod:`lemely.labelling` — this command must not
+    inline labeller logic here, so the "labeller stays blind to the
+    correction pipeline" import-linter contract can target that module
+    narrowly rather than this file (which imports the correction pipeline
+    for other commands).
+    """
+    from lemely.labelling.server import run_labeller
+
+    resolved_labeller_id = labeller_id or os.environ.get("USER", "anonymous")
+    run_labeller(
+        paper_id,
+        split=cast("Literal['train', 'dev', 'test']", split),
+        labeller_id=resolved_labeller_id,
+        host=host,
+        port=port,
+    )
+
+
 @cli.command("ui")
 @click.option("--host", default=None)
 @click.option("--port", default=None, type=int)

@@ -346,6 +346,15 @@ type = "forbidden"
 source_modules = ["lemely.eval"]
 forbidden_modules = ["lemely.io", "lemely.app"]
 
+[[tool.importlinter.contracts]]
+name = "The blind labeller must not depend on the correction pipeline"
+type = "forbidden"
+source_modules = ["lemely.labelling"]
+forbidden_modules = [
+  "lemely.core.correction",
+  "lemely.io.correction_ai",
+]
+
 [tool.pyright]
 venvPath = '.'
 venv = '.venv'
