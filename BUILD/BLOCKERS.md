@@ -726,3 +726,83 @@ The sweep still does not persist per-gate logs. Its verdict reaches the next
 session as prose with the tail truncated — which is why `impeccable-detect` has
 been unknown for six sweeps, and why diagnosing a `pytest` failure meant
 re-deriving it locally. `reports/.scratch/sweep/<gate>.log` remains the fix.
+
+---
+
+## OPEN — 2026-08-22 — GitHub Actions is billing-blocked: no PR can merge
+
+**Raised:** 2026-08-22 · **Status:** **OPEN — needs a human with org billing
+access.** Nothing in this repository can resolve it.
+
+### What is broken
+
+GitHub Actions refuses to allocate runners for the `LemelyIG` org. Every job on
+PR #78 (run `32547620531`) failed, with this annotation attached to all five:
+
+> The job was not started because recent account payments have failed or your
+> spending limit needs to be increased. Please check the 'Billing & plans'
+> section in your settings
+
+### Why this is not a code failure — verified directly, not inferred
+
+1. **No compute was consumed.**
+   `gh api repos/LemelyIG/Lemely/actions/runs/32547620531/timing` reports
+   `duration_ms: 0` for all five `job_runs`, `total_ms: 0`.
+2. **No step ever ran.** All five jobs report `steps=0` and completed in 1–5s.
+   No checkout, no `setup-python`, no install.
+3. **It hit heterogeneous jobs identically.** Three Python versions *and* the
+   Node/npm `web` job, which shares no deps, fixtures or caches with them,
+   failed the same way in the same second. No dependency drift, version skew,
+   or stale hook cache can do that.
+4. **The change under test was refuted by experiment**, not assumed innocent:
+   at PR head `03639fa`, in a clean detached worktree with a fresh venv and a
+   fresh `PRE_COMMIT_HOME`, `pre-commit run --all-files` passed all 10 hooks.
+
+`failing_job` is reported as `pre-commit` only because it is listed first; it
+is collateral, not the cause.
+
+### Scope: this halts the whole programme, not just #77
+
+No feature → `develop` PR can satisfy §7.1's "CI green" precondition while this
+stands. **PR #78 (#77) is open, reviewed clean, and deliberately NOT merged.**
+
+The accuracy work itself is unaffected and continues to be verifiable: the
+supervisor's full-suite sweep at 2026-08-22T05:47 covered `372e483`, which sits
+on top of #77's implementation commit, with pytest absent from its failures.
+
+### When it started
+
+**This is new, and it is not the recurrence the triage suggested.** Run
+`32200705566` (2026-08-19), which the triage cited as a prior block, in fact
+ran with 5 jobs carrying real step lists — a genuine failure, a different
+thing. The six runs before this one, all on 2026-08-21, succeeded normally with
+real billable minutes. The block therefore began between `32541604166`
+(2026-08-22T00:50, success) and `32547620531` (2026-08-22T02:56, blocked).
+
+### What a human needs to do
+
+Resolve billing in the `LemelyIG` org's **Settings → Billing & plans** — either
+a failed payment method or a spending limit that needs raising. Whether the
+org's monthly consumption is also near its cap is **unmeasurable from here**:
+it needs `admin:org` scope, which requires interactive human consent, so it is
+recorded as an open question rather than guessed at.
+
+### What was deliberately NOT done
+
+- **Did not merge PR #78.** §7.1 requires CI green; a billing block is not
+  green, and merging on a "the supervisor sweep covered it" argument would set
+  the precedent that CI is optional whenever it is inconvenient.
+- **Did not re-run the workflow.** Zero billable minutes means a re-run
+  produces the identical rejection; re-running would be hoping for a different
+  answer from an unchanged cause.
+- **Did not touch `.github/workflows/` to reduce the CI matrix.** Shrinking the
+  gate to fit a billing constraint would be weakening a gate for a reason that
+  has nothing to do with correctness.
+
+---
+
+## #77 — No entrypoint can set cache_mode: an A/A floor run today would measure the cache and publish 0.0
+
+**Raised:** 2026-08-22 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on GitHub Actions org billing block — CI cannot run, see BUILD/BLOCKERS.md (2026-08-22). Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
