@@ -20,6 +20,7 @@ from lemely.eval.analyses import exclusion_funnel
 from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
 from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
+from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
 
 log = structlog.get_logger()
@@ -155,6 +156,7 @@ class QuestionResult:
     truth_marks: int
     confidence_score: float
     needs_teacher_review: bool
+    review_reason: str | None = None
 
     @property
     def is_correct(self) -> bool:
@@ -289,6 +291,47 @@ def _compute_metrics(
     )
 
 
+def _review_triggers(needs_teacher_review: bool, review_reason: str | None) -> list[str]:
+    """Build one leaf's ``EvalRecord.triggers`` list (spec §9 review-trigger discipline).
+
+    ``"needs_teacher_review"`` is the generic trigger any review reason sets.
+    ``"coherence_mismatch"`` (M1.5, #40) is a second, distinct trigger emitted
+    additionally whenever the review reason came from the coherence gate —
+    every message :func:`lemely.io.correction_ai._check_coherence` returns
+    contains :data:`lemely.io.correction_ai.COHERENCE_TRIGGER_MARKER`, which
+    is how this detects it without a second parallel boolean threaded through
+    ``CorrectedQuestion``/``QuestionResult``. Importing the shared constant
+    (rather than re-typing the literal here) means a reworded coherence
+    message cannot silently desync the two sides — see
+    ``tests/test_accuracy_harness.py::CoherenceTriggerWiringTests`` for the
+    end-to-end regression guard. This keeps the coherence gate's contribution
+    to ``review_rate`` separable downstream — see
+    :func:`lemely.eval.analyses.coherence_trigger_rate` — without arming or
+    re-tuning the M0.9 ratchet (``review_rate_ratchet_armed`` stays False;
+    this function does not touch ``lemely/runtime/config.py`` or
+    ``BUILD/review-rate-baseline.json``).
+
+    **Separable is not free.** ``"coherence_mismatch"`` is appended *alongside*
+    the generic ``"needs_teacher_review"`` trigger, never instead of it, and
+    :func:`lemely.eval.analyses.review_rate` counts a leaf as reviewed on any
+    non-``random_audit`` trigger. Because ``_check_coherence`` is a fourth
+    OR-branch of ``needs_teacher_review`` in
+    :func:`lemely.io.correction_ai._build_ai_corrected`, the coherence gate
+    creates review flags that would not otherwise exist and so **raises**
+    ``review_rate_signal`` and ``review_rate_total`` by an amount that has
+    NOT been measured on any corpus (#40 acceptance bullet 4 — see
+    BUILD/BLOCKERS.md and BUILD/DECISIONS.md DA10). Do not read the
+    separate-reporting design as evidence the trigger is review-budget
+    neutral; it is not.
+    """
+    if not needs_teacher_review:
+        return []
+    triggers = ["needs_teacher_review"]
+    if review_reason and COHERENCE_TRIGGER_MARKER in review_reason:
+        triggers.append("coherence_mismatch")
+    return triggers
+
+
 def question_result_to_eval_record(
     result: QuestionResult,
     *,
@@ -349,7 +392,7 @@ def question_result_to_eval_record(
         extraction_conf=None,
         marker_conf=result.confidence_score,
         id_match="exact",
-        triggers=["needs_teacher_review"] if result.needs_teacher_review else [],
+        triggers=_review_triggers(result.needs_teacher_review, result.review_reason),
     )
 
 
@@ -707,7 +750,7 @@ def measure_accuracy(
                         extraction_conf=None,
                         marker_conf=cq.confidence_score,
                         id_match="unmatched",
-                        triggers=["needs_teacher_review"] if cq.needs_teacher_review else [],
+                        triggers=_review_triggers(cq.needs_teacher_review, cq.review_reason),
                     )
                 )
                 continue
@@ -720,6 +763,7 @@ def measure_accuracy(
                 truth_marks=gt.awarded_marks,
                 confidence_score=cq.confidence_score,
                 needs_teacher_review=cq.needs_teacher_review,
+                review_reason=cq.review_reason,
             )
             all_results.append(question_result)
             eval_records.append(

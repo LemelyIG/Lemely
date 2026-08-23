@@ -600,6 +600,47 @@ def review_rate(records: list[EvalRecord]) -> ReviewRateResult:
     }
 
 
+# ---------------------------------------------------------------------------
+# coherence_trigger_rate
+# ---------------------------------------------------------------------------
+
+
+class CoherenceTriggerRateResult(TypedDict):
+    n: int
+    coherence_trigger_rate: float
+
+
+def coherence_trigger_rate(records: list[EvalRecord]) -> CoherenceTriggerRateResult:
+    """M1.5 (#40): the coherence gate's own contribution to review volume.
+
+    Reported as its OWN number, distinct from and never folded into
+    ``review_rate_signal``/``review_rate_total`` (spec §9 review-trigger
+    discipline for a newly-added trigger) — this function does not touch,
+    arm, or re-tune the M0.9 ratchet (``review_rate_ratchet_armed`` stays
+    False; see ``lemely/eval/review_gate.py`` and
+    ``lemely/runtime/config.py``, neither of which this touches).
+
+    Same leaf discipline as :func:`review_rate`: ``n`` is the DA6-collapse-
+    aware distinct-leaf count over ``_scored`` question-level rows, and a
+    leaf counts as coherence-flagged via a UNION over its RAW (pre-collapse)
+    group's ``triggers`` — not a property read off a single collapsed
+    representative row, for the same reason :func:`review_rate` uses a union
+    (see its docstring).
+    """
+    scored_qlevel = _scored(_question_level(records))
+    leaf_groups = _group_by_leaf(scored_qlevel)
+    n = len(leaf_groups)
+    if n == 0:
+        return {"n": 0, "coherence_trigger_rate": 0.0}
+
+    flagged = sum(
+        1
+        for group in leaf_groups.values()
+        if any("coherence_mismatch" in r.triggers for r in group)
+    )
+    return {"n": n, "coherence_trigger_rate": flagged / n}
+
+
 def _percentile(sorted_values: list[float], p: float) -> float:
     """Nearest-rank percentile over an already-sorted list; 0.0 when empty."""
     if not sorted_values:
