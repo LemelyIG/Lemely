@@ -119,6 +119,11 @@ run "ruff-check" ruff check .
 run "ruff-format" ruff format --check .
 run "mypy" mypy lemely
 run "import-linter" lint-imports
+# M0.9 (#33): review-rate two-part ratchet gate. Falls back to the committed
+# BUILD/review-rate-baseline.json when no fresh dev-split golden run exists
+# under the gitignored tests/golden/results/, so this is always runnable —
+# never SKIPped — in both modes.
+run "review-rate-gate" python scripts/check_review_rate_gate.py
 if [ "$FAST" -eq 1 ]; then
   # -n auto: one worker per core. --no-cov overrides the --cov addopts from
   # pyproject.toml (coverage under xdist needs combining and roughly doubles

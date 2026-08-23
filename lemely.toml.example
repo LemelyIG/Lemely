@@ -54,6 +54,13 @@ mark_accuracy_target = 0.95
 id_match_rate_target = 0.99
 flag_precision_target = 0.99
 flag_recall_target = 0.85
+# M0.9 (#33) review-rate two-part ratchet gate (spec §4 M0.9, §5).
+review_rate_signal_target = 0.08
+review_rate_total_target = 0.1
+review_rate_p95_target = 0.15
+# Unarmed at M0 — a breach is recorded but does not fail the gate.
+review_rate_ratchet_armed = false
+review_rate_last_merged = 0.2903
 
 [database]
 # Full SQLAlchemy URL. Default targets the local Supabase Postgres

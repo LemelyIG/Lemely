@@ -408,6 +408,57 @@ class TestReviewRate:
         assert result["review_rate_total"] == 0.0
         assert result["per_paper_p95"] == 0.0
 
+    def test_counts_leaf_via_trigger_union_not_representative(self) -> None:
+        # Two fixture-variant records for the SAME leaf, both outcome="correct"
+        # (so DA6's unanimity rule makes both eligible candidates for the
+        # min()-picked representative), but only one carries a trigger. The
+        # leaf must be counted as reviewed regardless of which record
+        # _collapse_leaf_group's min() would have picked as representative.
+        records = [
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="a",
+                outcome="correct",
+                triggers=[],
+            ),
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="b",
+                outcome="correct",
+                triggers=["low_confidence"],
+            ),
+        ]
+        result = review_rate(records)
+        assert result["n"] == 1
+        assert result["review_rate_total"] == 1.0
+        assert result["review_rate_signal"] == 1.0
+
+    def test_leaf_with_no_triggered_variants_is_not_reviewed(self) -> None:
+        # Companion case: both variant records triggerless — the union fix
+        # must not manufacture a false positive.
+        records = [
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="a",
+                outcome="correct",
+                triggers=[],
+            ),
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="b",
+                outcome="correct",
+                triggers=[],
+            ),
+        ]
+        result = review_rate(records)
+        assert result["n"] == 1
+        assert result["review_rate_total"] == 0.0
+        assert result["review_rate_signal"] == 0.0
+
     def test_per_paper_p95_reflects_worst_paper(self) -> None:
         records = [
             _rec(question_id="1", paper_id="p1", triggers=["low_confidence"]),

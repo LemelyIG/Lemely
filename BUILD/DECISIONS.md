@@ -10561,6 +10561,98 @@ the pre-#32 corpus and is therefore quoted on the old denominator. It is left as
 rather than recomputed, because M0.9's ratchet (#33) is unarmed and §2 forbids any
 baseline run until M0.8 merges — the first post-#32 measurement re-establishes it.
 
+## DA-M0.9 — #33's real `review_rate` baseline diverges hugely from the pre-#32 figure DA6b left in place
+
+**What was measured.** A single `lemely measure-accuracy` dev-split sweep (default split,
+`gemini-2.5-flash`, prompt versions extraction=5/correction=4/mark_scheme=3) was run against
+the current 11-case-dir / 31-distinct-leaf golden corpus (DA6b), through the accuracy-measure
+costed-preflight workflow, at commit `f7be062`. Cost: **$0.0642** (74 Gemini calls, summed
+from the run's `gemini_call` log events), well under both the per-run token ceiling
+(2,000,000) and the `$25` total USD ceiling already configured. Result saved to
+`tests/golden/results/2026-08-22-f7be062.json` (gitignored; a summary is committed at
+`BUILD/review-rate-baseline.json` since the gate and CI need something durable to read).
+
+**The funnel (do not skip a stage).** 71 raw question-level answer rows collapse (DA6) to 31
+distinct `(paper_id, question_id)` leaves. Of the 71 raw rows, 12 carry a non-empty `triggers`
+list. Those 12 flagged rows land on only 9 distinct leaves (some leaves have more than one
+flagged fixture-variant record). That gives three legitimately different candidate numbers,
+and none of them is unambiguously "the" review rate for a corpus that mixes synthetic
+correct/partial/wrong fixture variants per leaf — this decision states which was chosen and
+why, not that it is uniquely correct:
+
+| candidate | formula | value | what it answers |
+|---|---|---|---|
+| row-level | 12 flagged rows / 71 rows | **16.9%** | "of every row we ever wrote a mark against, how many were flagged" — inflated by leaves with multiple fixture-variant rows, and not what `review_rate()`'s contract (question-level, distinct-leaf) promises |
+| leaf-union (**chosen**) | 9 flagged leaves / 31 leaves | **29.03%** | "of every distinct question a student answered, was ANY record of it flagged" — matches `review_rate()`'s stated denominator (DA6 distinct leaves) with a numerator that doesn't silently drop trigger evidence living on a sibling fixture-variant record |
+| representative-only (superseded, was the pre-fix bug) | 1 flagged representative leaf / 31 leaves | **3.23%** | an artifact of reading `triggers` off the single DA6-collapsed representative row `min()` happens to pick — see below |
+
+**Why representative-only (3.23%) was wrong, not just different.** The original #33 landing
+(`f7be062`) computed `review_rate()`'s numerator by reading `triggers` off the same
+DA6-collapsed representative row `_distinct_leaves()` already produces for the denominator.
+DA6's representative-picker is free to choose ANY record among a leaf's unanimously-`correct`
+fixture variants — so whenever a leaf's variants were all `correct`, whichever variant `min()`
+happened to pick decided whether that leaf's trigger was visible to the gate at all. 8 of the
+9 actually-flagged leaves in this corpus were invisible to `review_rate()` under that logic —
+not a rounding difference, a **~9x undercount** (3.23% vs the real 29.03%) that was previously,
+and wrongly, described here as "the real, current, correctly-denominatored number" and "6x
+smaller than the stale 19.1% figure." Both of those claims are retracted: the 3.23% figure was
+never correctly denominatored, and comparing it favourably to the pre-#32 19.1% row-level
+figure compared a broken numerator to a different corpus on a different basis — neither
+comparison told us anything about review burden. `review_rate()` (`lemely/eval/analyses.py`)
+now unions `triggers` across a leaf's raw records before collapsing, so the numerator can no
+longer depend on which record the DA6 collapse happens to keep as representative; see
+`test_counts_leaf_via_trigger_union_not_representative` in `tests/eval/test_analyses.py`.
+
+**The pre-#32 19.1% figure is separately stale.** `BUILD/ACCURACY-STATE.md` and the #33 issue
+body both quoted 19.1% (13 of 68 rows, Wilson [11.5%, 30.0%]) as the "starting" review rate.
+That number predates #25/M0.1's `review_rate()` implementation entirely and was computed on
+the pre-#32 68-row/28-leaf corpus — it is not comparable to any of the three candidates above,
+which all use the current 71-row/31-leaf corpus. Anything citing 19.1%/13-of-68/Wilson-[11.5%,
+30.0%] as the *current* baseline is stale as of this decision, independent of the
+representative-vs-union numerator question.
+
+**What was chosen and why.** `review_rate_last_merged = 0.2903` (leaf-union, truncated down
+from 0.29032258... so the ratchet ceiling only ever tightens) — because it is the number
+`review_rate()`'s own documented contract (question-level, distinct-leaf) actually produces
+once the numerator bug is fixed, and because using row-level (16.9%) would double-count leaves
+with multiple flagged fixture variants against a denominator that has already collapsed them.
+The **honest caveat**: this corpus mixes synthetic correct/partial/wrong fixture variants per
+leaf specifically to exercise DA6's collapse logic, so its flagged-leaf rate is a property of
+the fixture design as much as of the underlying marking behaviour — treat 29.03% as this
+golden corpus's *measured* baseline for the ratchet to tighten from, not as a claim about the
+review burden of a real deployment.
+
+**`per_paper_p95` moves too.** Under the union numerator, `per_paper_p95` is **83.33%**
+(up from the representative-only run's 16.67%), because several papers now correctly show more
+than one reviewed leaf once sibling fixture-variant triggers are counted. It breaches the 15%
+target by a wide margin. Exactly as before, the gate (`lemely/eval/review_gate.py`) records
+this breach in `breaches` on every run; because the ratchet starts **unarmed**
+(`review_rate_ratchet_armed=false`), it does not fail `measure-accuracy` or CI today, but it is
+not silently dropped — it prints, and `scripts/check_review_rate_gate.py`'s output still lists
+it as a named breach.
+
+**Storage location.** `last_merged_review_rate` lives on `AccuracyEvalSettings` (mirroring
+every other accuracy-eval target: `mark_accuracy_target` et al.), not a dedicated JSON file or
+an overload of `BUILD/ACCURACY-STATE.md`'s free-text `ratchet` field — that field is updated
+too, but only as the human-readable mirror `scripts/accuracy_board.py` already treats
+`ACCURACY-STATE.md`'s header as (see that file's own "Contract" section: GitHub-adjacent
+tracker state does not duplicate there, but this is measurement state the supervisor's grep
+needs at a glance). The gate's actual source of truth is `lemely.toml`
+(`[accuracy_eval] review_rate_last_merged = 0.2903`, default baked into
+`AccuracyEvalSettings.review_rate_last_merged`) and the committed
+`BUILD/review-rate-baseline.json` artifact `scripts/check_review_rate_gate.py`/CI fall back to
+when no fresh `tests/golden/results/*.json` exists (that directory is gitignored); that
+artifact now also carries `run_id`/`corpus_digest` provenance so a locally-preferred fresh run
+that diverges from the committed baseline's corpus prints a warning instead of silently gating
+on different data (`scripts/check_review_rate_gate.py`'s `_baseline_provenance`).
+
+**M0-unarmed / M1-armed semantics.** `review_rate_ratchet_armed` defaults to `false`. Unarmed,
+`evaluate_review_rate_gate()` still computes and reports every limb's pass/fail and the
+ratchet direction, but `blocking_failure` is forced `False` regardless of breaches — the run
+is observed, not gated, which is why this real (breaching-on-p95) baseline can be recorded and
+merged today without contradicting "never weaken a gate to get green." Arming
+(`review_rate_ratchet_armed = true`) is spec §7's M1 acceptance step, gated on M0.9 landing
+first (`M0.9 | M1.1`), and is out of scope for #33 itself.
 ## DA7 — The McNemar n-floor: why `MCNEMAR_IMPROVEMENT_N_FLOOR = 219` is quoted, not recomputed (#30, M0.6)
 
 **The requirement.** Spec §6: "paired McNemar can prove an improvement to 88.8% with
