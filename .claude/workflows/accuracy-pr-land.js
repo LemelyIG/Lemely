@@ -66,9 +66,39 @@ if (base !== 'develop') {
   return { ok: false, error: 'base-must-be-develop', detail: `base='${base}' is not allowed here; only 'develop' is automated` }
 }
 
+// ------------------------------------------------- CI-required override (human-authorised)
+// Normally ci_green is a hard merge precondition. It can be waived ONLY by passing a
+// non-empty reason string, e.g.
+//   { issue: 77, branch: '...', allow_merge_without_ci: 'Actions billing-blocked since
+//     2026-08-22T02:56Z; org on free plan, minutes exhausted against a $0 spending limit' }
+//
+// Deliberately a REASON, not a boolean. A boolean can be flipped absent-mindedly and leaves
+// no trace of why; a mandatory sentence has to be written by someone who knows the answer,
+// and it propagates into the log, the returned report and a PR comment.
+//
+// This is NOT the "weaken a gate to get green" move the standing rules forbid. That rule is
+// about altering a gate so a red result reads as green — loosening a threshold, deleting an
+// assertion, re-running until it flakes. This waives a check that CANNOT EXECUTE AT ALL, and
+// records that it was waived rather than reporting it as passed. ci_green stays false in the
+// report; it is never laundered into a true.
+//
+// It is still a real loss and the reason field should not pretend otherwise: CI is the only
+// verification of these branches that does not run on the machine that wrote them. Waiving it
+// means the merge rests on local gates alone. Remove the argument the moment CI can run.
+const CI_WAIVER = (args && args.allow_merge_without_ci) ? String(args.allow_merge_without_ci).trim() : ''
+const CI_WAIVED = CI_WAIVER.length > 0
+if (CI_WAIVED && CI_WAIVER.length < 20) {
+  log(`accuracy-pr-land: REFUSING. allow_merge_without_ci must be a real explanation, got ${CI_WAIVER.length} chars: '${CI_WAIVER}'. State why CI cannot run, with dates/evidence — this string is the only record of the deviation.`)
+  return { ok: false, error: 'ci-waiver-reason-too-short', detail: `allow_merge_without_ci='${CI_WAIVER}' is not an explanation` }
+}
+
 const ROOT = (args && args.root) ? String(args.root) : '/home/sico/Lemely-worktrees/accuracy'
 
 log(`accuracy-pr-land: landing #${issue} from ${branch} into ${base} at ${ROOT}`)
+if (CI_WAIVED) {
+  log(`accuracy-pr-land: *** CI-GREEN PRECONDITION WAIVED *** reason: ${CI_WAIVER}`)
+  log('accuracy-pr-land: the Watch and Triage phases are SKIPPED (there is no CI to watch). This merge rests on local gates only.')
+}
 
 // ---------------------------------------------------------------- shared ground
 const GROUND = `
@@ -86,6 +116,7 @@ BOARD: scripts/accuracy_board.py is the ONLY sanctioned interface to GitHub issu
 STANDING RULES (non-negotiable):
 - Never push to or merge into main. Never force-push. Never delete the base branch.
 - Never weaken a gate to get green: no loosened thresholds, no deleted assertions, no skip/xfail, no widened tolerances, no narrowed denominators, and never re-run a red check hoping it flakes green without understanding why it was red.
+- A CI waiver (allow_merge_without_ci) is NOT an exception to the rule above. It waives a check that cannot execute; it never turns a red check into a green one. If CI runs and fails, the waiver does not apply — fix the failure.${CI_WAIVED ? `\n- THIS RUN IS OPERATING UNDER A CI WAIVER: ${CI_WAIVER}` : ''}
 - H-numbered issues (#34 #48 #49 #50 #51 #52 #55 #60) are human-only: if 'accuracy_board.py done' refuses one (exit 2), that is correct — do not retry it, do not close the issue another way.
 - GEMINI_API_KEY lives in the environment only — never print it, never put it in a PR body or comment.
 - CI is four jobs (.github/workflows/ci.yml): 'test' on Python 3.12, 3.13 and 3.14 (matrix — three separate checks), 'pre-commit', and 'web'. All must be green.
@@ -139,7 +170,8 @@ const LAND_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    ci_green: { type: 'boolean', description: 'true only if every one of the 5 expected checks (test x3, pre-commit, web) concluded success — re-verify with gh pr checks, do not trust the Watch phase blindly' },
+    ci_green: { type: 'boolean', description: 'true only if every one of the 5 expected checks (test x3, pre-commit, web) concluded success — re-verify with gh pr checks, do not trust the Watch phase blindly. Under a CI waiver this will be false and MUST still be reported false: the waiver is tracked in ci_waiver_comment_posted, never by falsifying this' },
+    ci_waiver_comment_posted: { type: 'boolean', description: 'only meaningful when the caller passed allow_merge_without_ci: true if the deviation was successfully posted to the PR with gh pr comment before merging. false otherwise, including when no waiver is in play' },
     review_verdict_clean: { type: 'boolean', description: 'true only if the accuracy-review verdict handed to this workflow (or re-checked via accuracy_board.py / PR comments) is "mergeable" with no MUST-FIX findings' },
     base_is_develop: { type: 'boolean', description: 'true only if the PR base is literally "develop" — verify with gh pr view, do not assume' },
     preconditions_met: { type: 'boolean', description: 'must equal (ci_green AND review_verdict_clean AND base_is_develop) — computed, not vibes' },
@@ -178,9 +210,14 @@ if (!open.opened || !open.pr_number) {
 log(`accuracy-pr-land: PR #${open.pr_number} opened (${open.pr_url}) for issue #${issue}`)
 
 // ---------------------------------------------------------------- Watch
-phase('Watch')
-
-const watch = await agent(`${GROUND}
+// Skipped entirely under a CI waiver: with no runs being created, `gh pr checks --watch`
+// would sit out its full 2700s cap and then report a timeout, costing 45 minutes to learn
+// what the waiver already states. The synthetic record below carries conclusion='waived',
+// which is neither 'success' nor 'failure' — so Triage does not fire and nothing downstream
+// can mistake it for a pass.
+const watch = CI_WAIVED
+  ? { conclusion: 'waived', jobs: [], all_required_jobs_seen: false, failing_job: '', log_tail: '', log_path: '', wait_seconds: 0, waiver_reason: CI_WAIVER }
+  : await agent(`${GROUND}
 TASK: Watch CI to conclusion for PR #${open.pr_number} (${open.pr_url}), branch ${branch}. Read-only: never edit, never push, never re-run a job to "try again" without understanding why it failed.
 1. Poll with EXACTLY this, cap included: timeout 2700 gh pr checks ${open.pr_number} --repo LemelyIG/Lemely --watch --interval 30
    The 2700s cap is NOT a suggestion to tune down. Measured on this repo 2026-08-21, PR #65: test (3.12) 16m46s, test (3.13) 16m14s, test (3.14) 14m16s — pre-commit and web finish in under 2 minutes, so a short cap sees those two go green while all three test jobs are still pending, and reports a timeout on a PR that was heading for a clean pass. A run that capped at 600s did exactly that, and #56 sat unmerged for an extra cycle for no reason. NEVER cap below 1800s; raise it, never lower it. Do not wait unboundedly either.
@@ -217,7 +254,7 @@ if (watch && watch.conclusion === 'failure') {
   log(`accuracy-pr-land: CI conclusion is '${watch.conclusion}' (not success, not failure) — skipping triage, this run will not merge.`)
 }
 
-if (watch && watch.conclusion !== 'success') {
+if (watch && watch.conclusion !== 'success' && !CI_WAIVED) {
   // CI is not green: never proceed to a merge decision. Report and stop.
   return {
     ok: true,
@@ -247,9 +284,20 @@ CALLER CONTEXT (may carry the accuracy-review verdict from accuracy-issue-execut
 
 Steps:
 1. Re-verify CI yourself: gh pr checks ${open.pr_number} --repo LemelyIG/Lemely. Set ci_green=true only if every one of the 5 checks (test x3, pre-commit, web) shows success right now.
+${CI_WAIVED ? `   *** CI-GREEN PRECONDITION WAIVED FOR THIS RUN ***
+   Reason supplied by the caller: ${CI_WAIVER}
+   Report ci_green HONESTLY anyway — it will be false, and that is correct. Do NOT set it true
+   to make the arithmetic work; the waiver is tracked separately and step 4 accounts for it.
+   Still RUN the 'gh pr checks' command and record what it actually says in your reason: if it
+   now shows 5 green checks, say so loudly, because that means CI is working again and this
+   waiver should be dropped rather than used.
+   Before merging you MUST post the deviation to the PR so it survives in the record:
+     gh pr comment ${open.pr_number} --repo LemelyIG/Lemely --body "Merged without CI. Reason: ${CI_WAIVER}"
+   Set ci_waiver_comment_posted=true only if that command exited 0. If it fails, DO NOT MERGE —
+   an unrecorded deviation is the thing this waiver exists to prevent.` : ''}
 2. Determine the accuracy-review verdict: prefer the one in CALLER CONTEXT if present (verdict must be exactly "mergeable" with zero MUST-FIX findings); otherwise look for it on the PR (gh pr view ${open.pr_number} --repo LemelyIG/Lemely --json comments,reviews) or state plainly that none was supplied. If no clean review verdict can be established, review_verdict_clean=false.
 3. Verify the PR base is exactly 'develop': gh pr view ${open.pr_number} --repo LemelyIG/Lemely --json baseRefName. base_is_develop=true only if that value is literally "develop". If it is anything else (especially "main"), set base_is_develop=false and DO NOT merge under any circumstance — this workflow may only merge feature -> develop.
-4. Compute preconditions_met = ci_green AND review_verdict_clean AND base_is_develop. This is arithmetic, not judgment — do not set it true unless all three booleans are true.
+4. Compute preconditions_met = ${CI_WAIVED ? '(ci_green OR the CI waiver above, AND ci_waiver_comment_posted)' : 'ci_green'} AND review_verdict_clean AND base_is_develop. This is arithmetic, not judgment — do not set it true unless every term is true. ${CI_WAIVED ? 'The waiver substitutes for ci_green ONLY; review_verdict_clean and base_is_develop are untouched by it and remain hard requirements.' : ''}
 5. If and only if preconditions_met: gh pr merge ${open.pr_number} --repo LemelyIG/Lemely --squash --delete-branch. Capture its literal output. Set merged=true only if the command exited 0.
 6. If merged: from ${ROOT}, run 'python scripts/accuracy_board.py done ${issue}'. If it exits 0, board_done_exit_code=0. If it exits 2, that means the board correctly refused an H-numbered issue — report board_done_exit_code=2 and board_done_refused_human_issue=true; this is a CORRECT outcome, not a failure, but it means the issue did NOT actually get marked Done and you should say so in reason (this should not happen for a normal issue that reached this point; flag it prominently if it does). Then 'python scripts/accuracy_board.py state set in_the_middle_of ""' and set state_cleared=true only if that exited 0.
 7. If preconditions_met is false: do NOT merge, do NOT call accuracy_board.py done. Leave board_done_attempted=false, board_done_exit_code=-1.
@@ -263,10 +311,17 @@ if (!land) {
 
 // Defensive cross-check: never trust an agent-reported merged=true that contradicts its own
 // reported preconditions — this is the "cannot merge on vibes" guarantee enforced twice.
-const preconditionsActuallyMet = land.ci_green === true && land.review_verdict_clean === true && land.base_is_develop === true
+// Under a waiver, ci_green is satisfied by the waiver instead — but ONLY if the deviation was
+// actually recorded on the PR. That keeps the escape hatch from being silent: an unrecorded
+// merge-without-CI is exactly the outcome this is built to prevent.
+const ciSatisfied = land.ci_green === true || (CI_WAIVED && land.ci_waiver_comment_posted === true)
+const preconditionsActuallyMet = ciSatisfied && land.review_verdict_clean === true && land.base_is_develop === true
 const merged = land.merged === true && preconditionsActuallyMet
 if (land.merged === true && !preconditionsActuallyMet) {
-  log(`accuracy-pr-land: INCONSISTENCY — land agent reported merged=true but preconditions were not all true (ci_green=${land.ci_green}, review_verdict_clean=${land.review_verdict_clean}, base_is_develop=${land.base_is_develop}). Overriding merged to false in the report; investigate PR #${open.pr_number} by hand.`)
+  log(`accuracy-pr-land: INCONSISTENCY — land agent reported merged=true but preconditions were not all true (ci_green=${land.ci_green}, ci_waived=${CI_WAIVED}, ci_waiver_comment_posted=${land.ci_waiver_comment_posted}, review_verdict_clean=${land.review_verdict_clean}, base_is_develop=${land.base_is_develop}). Overriding merged to false in the report; investigate PR #${open.pr_number} by hand.`)
+}
+if (merged && CI_WAIVED) {
+  log(`accuracy-pr-land: #${issue} merged WITHOUT CI verification. ci_green=${land.ci_green}. Waiver: ${CI_WAIVER}`)
 }
 
 log(`accuracy-pr-land: #${issue} PR #${open.pr_number} — merged=${merged}. ${land.reason}`)
