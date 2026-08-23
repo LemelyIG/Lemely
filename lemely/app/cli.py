@@ -997,11 +997,38 @@ def aggregate_subject_cmd(
     show_default=True,
     help="Directory to write timestamped result JSON.",
 )
+@click.option(
+    "--cache-mode",
+    "cache_mode",
+    default="read_write",
+    type=click.Choice(["read_write", "bypass", "refresh"]),
+    show_default=True,
+    help=(
+        "Gemini response-cache behaviour for this run. Use 'bypass' for "
+        "repeat-run churn measurement (M0.3): without it every repeat after "
+        "the first is served from cache and the measured churn is 0 by "
+        "construction."
+    ),
+)
 @click.pass_context
-def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) -> None:
+def measure_accuracy_cmd(
+    ctx: click.Context, golden_dir: str, results_dir: str, cache_mode: str
+) -> None:
     """Measure correction accuracy against the golden dataset.
 
     Exits non-zero if any metric falls below its configured target.
+
+    ``--cache-mode`` exists because the bypass seam (M0.2/#26) was reachable
+    only from library code: no CLI flag, no settings field, no env var, so the
+    single ``default_cache_mode=`` call site in the repo was a unit test.
+    An A/A churn floor (M0.3/#27) measured through the default read-write cache
+    would report **exactly 0.0 disagreement** — every repeat after the first
+    replays the first one's cached responses — and a 0.0 floor makes every
+    later A/B delta look "above noise" no matter how small it is (#77).
+
+    The chosen mode is recorded in ``RunManifest.cache_mode`` (#73), which
+    reads it back off the client, so the saved run states which cache
+    behaviour actually produced it rather than assuming the default.
     """
     from lemely.accuracy.harness import (
         format_report,
@@ -1025,7 +1052,10 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
 
     click.echo(f"Loaded {len(cases)} golden case(s). Running accuracy measurement…")
 
-    client = GeminiClient(settings)
+    client = GeminiClient(
+        settings,
+        default_cache_mode=cast("Literal['read_write', 'bypass', 'refresh']", cache_mode),
+    )
     result = measure_accuracy(cases, client, settings)
     click.echo(format_report(result, settings.accuracy_eval))
 
