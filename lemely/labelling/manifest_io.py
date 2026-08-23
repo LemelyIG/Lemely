@@ -7,10 +7,15 @@ and ``labeller_id``, the spec §6 manifest fields.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from lemely.eval.manifest import LabelManifest, Split
+from lemely.eval.manifest import LabelManifest
 from lemely.labelling.paths import DEFAULT_EVAL_ROOT, manifest_path
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from lemely.eval.manifest import Split
 
 
 def write_label_manifest(

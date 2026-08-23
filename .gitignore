@@ -134,3 +134,15 @@ web/dist-previews/
 # log of authorised test-split evaluation joins, accumulated at runtime.
 # It is evidence produced by running the programme, not a source artefact.
 reports/accuracy/test-touch-ledger.jsonl
+
+# Two-pass blind labeller output (#46, spec §6) — generated filesystem state
+# from a labelling session, not source. Repository hygiene, not a privacy
+# rule: student PDFs are not treated as sensitive in this project, but
+# hash-chained JSONL and multi-MB scan images do not belong in git, and the
+# unattended supervisor auto-commits a dirty tree — so an operator running
+# `lemely label` from the repo root (DEFAULT_EVAL_ROOT is CWD-relative)
+# would otherwise land this in history on the very first session.
+/eval/labels/
+/eval/scans/
+/eval/mark_schemes/
+!eval/labels/.gitkeep

@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from lemely.labelling.paths import DEFAULT_EVAL_ROOT, marking_path, transcription_path
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def record_hash(prev_hash: str | None, payload: dict[str, object]) -> str:
@@ -34,7 +37,8 @@ def _last_hash(path: Path) -> str | None:
         return None
     parsed: dict[str, object] = json.loads(last_line)
     stored_hash = parsed["hash"]
-    assert isinstance(stored_hash, str)
+    if not isinstance(stored_hash, str):
+        raise TypeError(f"corrupt record chain in {path}: 'hash' is not a string")
     return stored_hash
 
 

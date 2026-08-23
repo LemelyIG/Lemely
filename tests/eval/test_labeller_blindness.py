@@ -9,9 +9,11 @@ whole module imports zero correction-pipeline modules.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -22,11 +24,39 @@ from lemely.labelling.paths import transcription_path
 from lemely.labelling.records import append_record
 from lemely.labelling.verify import verify_chain
 
+_GOLDEN_MARK_SCHEME = (
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "golden"
+    / "0580_s23_qp_22_theory_correct"
+    / "mark_scheme.json"
+)
+_GOLDEN_SCAN = (
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "golden"
+    / "0580_s23_qp_22_theory_correct"
+    / "scan.pdf"
+)
+
+
+def _seed_real_paper(eval_root: Path, paper_id: str) -> None:
+    """Set up a real scan dir + mark scheme for ``paper_id`` under ``eval_root``.
+
+    Uses the golden corpus fixture (real, already-parsed mark scheme data)
+    rather than an invented paper_id with nothing on disk — a smoke test
+    against an empty corpus "passes" over an empty corpus.
+    """
+    scan_dir = eval_root / "scans" / paper_id
+    scan_dir.mkdir(parents=True)
+    shutil.copyfile(_GOLDEN_SCAN, scan_dir / "scan.pdf")
+    schemes_dir = eval_root / "mark_schemes"
+    schemes_dir.mkdir(parents=True)
+    shutil.copyfile(_GOLDEN_MARK_SCHEME, schemes_dir / f"{paper_id}.json")
+
 
 def test_pass1_context_carries_no_mark_scheme_data(tmp_path: Path) -> None:
-    scan_dir = tmp_path / "scans" / "0580_s23_qp_22"
-    scan_dir.mkdir(parents=True)
-    (scan_dir / "page-01.png").write_bytes(b"fake-image-bytes")
+    _seed_real_paper(tmp_path, "0580_s23_qp_22")
 
     context = load_pass1_context("0580_s23_qp_22", eval_root=tmp_path)
 
@@ -36,6 +66,7 @@ def test_pass1_context_carries_no_mark_scheme_data(tmp_path: Path) -> None:
 
 
 def test_pass2_context_has_mark_scheme_and_own_transcription_only(tmp_path: Path) -> None:
+    _seed_real_paper(tmp_path, "0580_s23_qp_22")
     # Own pass-1 transcription, already written.
     trans_path = transcription_path("0580_s23_qp_22", "labeller-A", eval_root=tmp_path)
     append_record(trans_path, {"question_id": "q0", "text": "my transcription"})
@@ -44,15 +75,27 @@ def test_pass2_context_has_mark_scheme_and_own_transcription_only(tmp_path: Path
 
     assert context["paper_id"] == "0580_s23_qp_22"
     assert context["own_transcription"][0]["payload"]["text"] == "my transcription"
-    # No CorrectedQuestion or pipeline-output type anywhere in the context.
+    # A real mark scheme is on disk for this test (unlike a vacuous "nothing
+    # to leak" fixture) — this genuinely exercises that no CorrectedQuestion
+    # or other pipeline-output type is anywhere in the context.
+    mark_scheme = context["mark_scheme"]
+    assert isinstance(mark_scheme, dict)
+    assert mark_scheme["questions"]
     for value in context.values():
         assert type(value).__module__ != "lemely.core.schemas"
 
 
-def test_pass2_context_for_a_different_labeller_does_not_see_labeller_a() -> None:
-    from lemely.labelling.paper_data import load_pass2_context as _load
+def test_pass2_context_for_a_different_labeller_does_not_see_labeller_a(tmp_path: Path) -> None:
+    _seed_real_paper(tmp_path, "0580_s23_qp_22")
+    path_a = transcription_path("0580_s23_qp_22", "labeller-A", eval_root=tmp_path)
+    append_record(path_a, {"question_id": "q0", "text": "A's answer"})
 
-    assert _load is load_pass2_context  # sanity: same symbol, no shadowing
+    context_b = load_pass2_context("0580_s23_qp_22", "labeller-B", eval_root=tmp_path)
+
+    # Labeller B has written nothing yet, and must not see A's transcription
+    # even though A labelled the same paper.
+    assert context_b["own_transcription"] == []
+    assert "A's answer" not in json.dumps(context_b)
 
 
 def test_labelling_module_never_imports_the_correction_pipeline() -> None:
@@ -77,20 +120,23 @@ def test_labelling_module_never_imports_the_correction_pipeline() -> None:
 def test_smoke_labeller_server_writes_valid_hash_chain_and_stays_pipeline_free(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec M2.3 acceptance: hash-chained JSONL.
+    """Spec M2.3 acceptance: hash-chained JSONL, and a real page is served.
 
-    The "zero pipeline imports" half of the M2.3 acceptance is asserted in a
-    fresh subprocess by
+    Uses the golden corpus's real mark scheme + scan, not an invented
+    paper_id with nothing on disk (an empty-corpus "pass" here would be
+    vacuous). The "zero pipeline imports" half of the M2.3 acceptance is
+    asserted in a fresh subprocess by
     ``test_labelling_module_never_imports_the_correction_pipeline`` above —
     an in-process check here would be unreliable, since another test module
     in this same pytest run may have already imported the correction
     pipeline for unrelated reasons.
     """
     monkeypatch.chdir(tmp_path)
+    _seed_real_paper(Path("eval"), "SMOKE01")
 
     from lemely.labelling.server import create_server
 
-    server = create_server(port=0)
+    server = create_server(port=0, labeller_id="A", split="train")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -98,18 +144,31 @@ def test_smoke_labeller_server_writes_valid_hash_chain_and_stays_pipeline_free(
         base = f"http://127.0.0.1:{port}"
 
         resp = urllib.request.urlopen(f"{base}/pass1?paper_id=SMOKE01", timeout=5)
-        pass1_payload = json.loads(resp.read())
-        assert "mark_scheme" not in pass1_payload
+        assert resp.headers.get("Content-Type", "").startswith("text/html")
+        pass1_html = resp.read().decode("utf-8")
+        assert pass1_html.startswith("<!DOCTYPE html")
+        assert "<html" in pass1_html
+        assert "mark_scheme" not in pass1_html
+        assert "/scan?paper_id=SMOKE01&amp;name=scan.pdf" in pass1_html
+
+        scan_resp = urllib.request.urlopen(f"{base}/scan?paper_id=SMOKE01&name=scan.pdf", timeout=5)
+        assert scan_resp.headers.get("Content-Type") == "application/pdf"
+        assert scan_resp.read()
 
         req = urllib.request.Request(
-            f"{base}/pass1?paper_id=SMOKE01&labeller_id=A",
+            f"{base}/pass1?paper_id=SMOKE01",
             data=json.dumps({"question_id": "q0", "text": "smoke transcription"}).encode(),
             method="POST",
         )
         urllib.request.urlopen(req, timeout=5)
 
+        pass2_resp = urllib.request.urlopen(f"{base}/pass2?paper_id=SMOKE01", timeout=5)
+        pass2_html = pass2_resp.read().decode("utf-8")
+        assert pass2_html.startswith("<!DOCTYPE html")
+        assert "smoke transcription" in pass2_html
+
         req2 = urllib.request.Request(
-            f"{base}/pass2?paper_id=SMOKE01&labeller_id=A",
+            f"{base}/pass2?paper_id=SMOKE01",
             data=json.dumps({"question_id": "q0", "awarded_marks": 1}).encode(),
             method="POST",
         )
@@ -118,12 +177,64 @@ def test_smoke_labeller_server_writes_valid_hash_chain_and_stays_pipeline_free(
         server.shutdown()
         server.server_close()
 
+    # Records must land under the server's bound identity ("A"), never under
+    # a client-supplied query-string value the server no longer reads.
     trans_path = Path("eval") / "labels" / "SMOKE01" / "A" / "transcription.jsonl"
     mark_path = Path("eval") / "labels" / "SMOKE01" / "A" / "marking.jsonl"
     assert trans_path.is_file()
     assert mark_path.is_file()
     assert verify_chain(trans_path).ok
     assert verify_chain(mark_path).ok
+
+
+def test_labeller_rejects_a_cross_origin_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _seed_real_paper(Path("eval"), "SMOKE02")
+
+    from lemely.labelling.server import create_server
+
+    server = create_server(port=0, labeller_id="A", split="train")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_port
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/pass1?paper_id=SMOKE02",
+            headers={"Origin": "http://evil.example.com"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req, timeout=5)
+        assert exc_info.value.code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_labeller_rejects_path_traversal_in_paper_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    from lemely.labelling.server import create_server
+
+    server = create_server(port=0, labeller_id="A", split="train")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_port
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/pass1?paper_id=../../../../etc/evil",
+            data=json.dumps({"question_id": "q0", "text": "malicious"}).encode(),
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req, timeout=5)
+        assert exc_info.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_labelling_source_does_not_import_test_split_authorisation() -> None:
@@ -133,4 +244,20 @@ def test_labelling_source_does_not_import_test_split_authorisation() -> None:
         assert "authorize_test_split_join(" not in text
         assert "import lemely.eval.test_touch" not in text
         assert "from lemely.eval.test_touch" not in text
-    assert "lemely.eval.test_touch" not in sys.modules
+
+    # Run in a fresh interpreter: another test module already imported in
+    # this same pytest session may have pulled in lemely.eval.test_touch for
+    # unrelated reasons, which would make an in-process sys.modules check
+    # pass or fail order-dependently rather than on this package's own merit.
+    script = (
+        "import sys\n"
+        "import lemely.labelling.paper_data\n"
+        "import lemely.labelling.records\n"
+        "import lemely.labelling.server\n"
+        "import lemely.labelling.verify\n"
+        "assert 'lemely.eval.test_touch' not in sys.modules\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"

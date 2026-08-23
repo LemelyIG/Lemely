@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from lemely.labelling.records import read_records, record_hash
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -21,19 +24,25 @@ def verify_chain(path: Path) -> ChainVerification:
     prev_hash: str | None = None
     for index, record in enumerate(records):
         record_prev_hash = record.get("prev_hash")
-        assert record_prev_hash is None or isinstance(record_prev_hash, str)
+        if not (record_prev_hash is None or isinstance(record_prev_hash, str)):
+            raise TypeError(
+                f"record {index}: 'prev_hash' must be a string or null, "
+                f"got {type(record_prev_hash)!r}"
+            )
         if record_prev_hash != prev_hash:
             return ChainVerification(
                 ok=False, broken_index=index, reason="prev_hash does not match prior record"
             )
         payload = record.get("payload", {})
-        assert isinstance(payload, dict)
+        if not isinstance(payload, dict):
+            raise TypeError(f"record {index}: 'payload' must be an object, got {type(payload)!r}")
         expected_hash = record_hash(record_prev_hash, payload)
         stored_hash = record.get("hash")
+        if not isinstance(stored_hash, str):
+            raise TypeError(f"record {index}: 'hash' must be a string, got {type(stored_hash)!r}")
         if stored_hash != expected_hash:
             return ChainVerification(
                 ok=False, broken_index=index, reason="stored hash does not match payload"
             )
-        assert isinstance(stored_hash, str)
         prev_hash = stored_hash
     return ChainVerification(ok=True)
