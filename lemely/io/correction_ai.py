@@ -296,6 +296,65 @@ def _verify_calculated_answers(
     return awarded, matched, rejections
 
 
+def _check_coherence(
+    question: Question, matched_point_ids: list[str], awarded_marks: int
+) -> str | None:
+    """Coherence check (M1.5, #40).
+
+    The marker's claimed ``matched_point_ids`` must exist in the mark scheme
+    and must reconcile with ``awarded_marks``.
+
+    Two independent failure modes, either one is a coherence violation. Every
+    message this returns contains the literal substring ``"matched_point_ids"``
+    so downstream (``harness.py``) can attribute the trigger without a second,
+    parallel signal:
+
+    1. A dangling point id: ``matched_point_ids`` references an id that does
+       not exist in ``question.answer_points``. Previously silently accepted
+       (``_verify_calculated_answers`` still tolerates it for its own,
+       narrower purpose — rejecting unverifiable calculated-answer values —
+       but does not itself flag the dangling reference); here it is a
+       structural inconsistency in its own right and must not reach a student
+       unreviewed.
+    2. ``awarded_marks`` disagrees with the marks implied by
+       ``matched_point_ids``. ``is_alternative``/``is_optional`` points are
+       non-additive (mirrors the filtered-sum convention in
+       ``Question.validate_mark_point_sum``): they contribute at most the
+       single highest-value matched point among them, never their sum.
+
+    Computed on the marker's RAW claim (``mark.matched_point_ids`` and the
+    range-clamped ``mark.awarded_marks``), before the separate
+    ``_verify_calculated_answers`` backstop — this check is about the
+    marker's own self-consistency, orthogonal to whether a later numeric
+    backstop revises the awarded marks.
+
+    See BUILD/DECISIONS.md for the empty/absent ``matched_point_ids`` rule
+    and the ``is_alternative``/``is_optional`` reconciliation rule.
+    """
+    if not question.answer_points:
+        # Nothing to reconcile against (levels-based/indicative-content
+        # marking, or a scheme that has not been decomposed into points).
+        return None
+
+    points_by_id = {p.id: p for p in question.answer_points}
+    dangling = [pid for pid in matched_point_ids if pid not in points_by_id]
+    if dangling:
+        return "matched_point_ids references unknown mark point id(s): " + ", ".join(dangling)
+
+    if not matched_point_ids:
+        if awarded_marks > 0:
+            return f"{awarded_marks} mark(s) awarded but matched_point_ids is empty"
+        return None
+
+    matched_points = [points_by_id[pid] for pid in matched_point_ids]
+    primary = [p for p in matched_points if not p.is_alternative and not p.is_optional]
+    non_additive = [p for p in matched_points if p.is_alternative or p.is_optional]
+    implied = sum(p.marks for p in primary) + max((p.marks for p in non_additive), default=0)
+    if awarded_marks != implied:
+        return f"awarded {awarded_marks} mark(s) but matched_point_ids implies {implied} mark(s)"
+    return None
+
+
 def _build_ai_corrected(
     question: Question,
     student_answer: str,
@@ -304,7 +363,7 @@ def _build_ai_corrected(
 ) -> CorrectedQuestion:
     """Convert AIMarkResponse + question metadata into a CorrectedQuestion.
 
-    Three independent reasons flag a question for human review (D2.2, D2.3 for #3):
+    Four independent reasons flag a question for human review (D2.2, D2.3 for #3, M1.5 for #40):
 
     1. ``confidence < REVIEW_CONFIDENCE_THRESHOLD`` — the marker itself is unsure.
     2. The marker returned a mark outside ``[0, question.marks]``. The value is
@@ -318,9 +377,16 @@ def _build_ai_corrected(
        ``_verify_calculated_answers``. This directly targets the D2.3 finding
        that stated confidence does not separate correct from wrong on this
        failure mode, so it must not depend on confidence at all.
+    4. ``matched_point_ids`` is incoherent with ``awarded_marks`` (a dangling
+       id, or a sum mismatch) — see ``_check_coherence``. Also independent of
+       confidence: a marker can be fully confident about an internally
+       inconsistent result.
     """
     clamped = max(0, min(mark.awarded_marks, question.marks))
     out_of_range = mark.awarded_marks != clamped
+
+    coherence_reason = _check_coherence(question, list(mark.matched_point_ids), clamped)
+    coherence_mismatch = coherence_reason is not None
 
     awarded, matched_point_ids, rejections = _verify_calculated_answers(
         question, student_answer, student_working, list(mark.matched_point_ids), clamped
@@ -334,6 +400,8 @@ def _build_ai_corrected(
             f"marker returned {mark.awarded_marks} marks for a "
             f"{question.marks}-mark question (clamped to {clamped})"
         )
+    if coherence_mismatch:
+        reasons.append(coherence_reason or "")
     if value_mismatch:
         reasons.append("unverified accuracy mark(s): " + "; ".join(rejections))
     if not reasons and low_confidence:
@@ -349,7 +417,7 @@ def _build_ai_corrected(
         maximum_marks=question.marks,
         confidence=confidence_band_for_score(mark.confidence),
         confidence_score=mark.confidence,
-        needs_teacher_review=low_confidence or out_of_range or value_mismatch,
+        needs_teacher_review=low_confidence or out_of_range or value_mismatch or coherence_mismatch,
         review_reason=review_reason,
         student_answer=student_answer or None,
         expected_answer=None,

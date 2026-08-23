@@ -155,6 +155,7 @@ class QuestionResult:
     truth_marks: int
     confidence_score: float
     needs_teacher_review: bool
+    review_reason: str | None = None
 
     @property
     def is_correct(self) -> bool:
@@ -289,6 +290,30 @@ def _compute_metrics(
     )
 
 
+def _review_triggers(needs_teacher_review: bool, review_reason: str | None) -> list[str]:
+    """Build one leaf's ``EvalRecord.triggers`` list (spec §9 review-trigger discipline).
+
+    ``"needs_teacher_review"`` is the generic trigger any review reason sets.
+    ``"coherence_mismatch"`` (M1.5, #40) is a second, distinct trigger emitted
+    additionally whenever the review reason came from the coherence gate —
+    every message :func:`lemely.io.correction_ai._check_coherence` returns
+    contains the literal substring ``"matched_point_ids"``, which is how this
+    detects it without a second parallel boolean threaded through
+    ``CorrectedQuestion``/``QuestionResult``. This keeps the coherence gate's
+    contribution to ``review_rate`` separable downstream — see
+    :func:`lemely.eval.analyses.coherence_trigger_rate` — without arming or
+    re-tuning the M0.9 ratchet (``review_rate_ratchet_armed`` stays False;
+    this function does not touch ``lemely/runtime/config.py`` or
+    ``BUILD/review-rate-baseline.json``).
+    """
+    if not needs_teacher_review:
+        return []
+    triggers = ["needs_teacher_review"]
+    if review_reason and "matched_point_ids" in review_reason:
+        triggers.append("coherence_mismatch")
+    return triggers
+
+
 def question_result_to_eval_record(
     result: QuestionResult,
     *,
@@ -349,7 +374,7 @@ def question_result_to_eval_record(
         extraction_conf=None,
         marker_conf=result.confidence_score,
         id_match="exact",
-        triggers=["needs_teacher_review"] if result.needs_teacher_review else [],
+        triggers=_review_triggers(result.needs_teacher_review, result.review_reason),
     )
 
 
@@ -707,7 +732,7 @@ def measure_accuracy(
                         extraction_conf=None,
                         marker_conf=cq.confidence_score,
                         id_match="unmatched",
-                        triggers=["needs_teacher_review"] if cq.needs_teacher_review else [],
+                        triggers=_review_triggers(cq.needs_teacher_review, cq.review_reason),
                     )
                 )
                 continue
@@ -720,6 +745,7 @@ def measure_accuracy(
                 truth_marks=gt.awarded_marks,
                 confidence_score=cq.confidence_score,
                 needs_teacher_review=cq.needs_teacher_review,
+                review_reason=cq.review_reason,
             )
             all_results.append(question_result)
             eval_records.append(

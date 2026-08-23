@@ -642,7 +642,14 @@ class CalculatedAnswerVerificationTests(unittest.TestCase):
         self.assertEqual(cq.awarded_marks, 1)  # p2 correctly rejected
         self.assertTrue(cq.needs_teacher_review)
 
-    def test_unmatched_point_id_is_ignored_not_crashed(self):
+    def test_unmatched_point_id_is_flagged_for_review(self):
+        """M1.5 (#40) strengthening: a dangling point id used to be silently
+        accepted (pre-#40 this test was named
+        ``test_unmatched_point_id_is_ignored_not_crashed`` and asserted
+        exactly the opposite of ``needs_teacher_review`` below). It no longer
+        crashes, but it is now a coherence violation that must reach a human,
+        not a silent pass-through — see BUILD/DECISIONS.md for the reconcile
+        semantics."""
         from lemely.io.correction_ai import _build_ai_corrected
 
         cq = _build_ai_corrected(
@@ -652,6 +659,122 @@ class CalculatedAnswerVerificationTests(unittest.TestCase):
         )
         self.assertEqual(cq.matched_point_ids, ["p_unknown"])
         self.assertEqual(cq.awarded_marks, 1)
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("matched_point_ids", cq.review_reason or "")
+        self.assertIn("p_unknown", cq.review_reason or "")
+
+
+class CoherenceGateTests(unittest.TestCase):
+    """M1.5 (#40): awarded_marks must reconcile with matched_point_ids,
+    and every matched_point_id must resolve in the mark scheme — a fourth
+    independent review reason, computed before (and never gated by) the
+    confidence check. See BUILD/DECISIONS.md for the empty/absent
+    matched_point_ids and is_alternative/is_optional reconciliation rules.
+    """
+
+    def _make_question(self, answer_points=None):
+        from lemely.core.loose_schemas import Question, QuestionType
+
+        return Question.model_construct(
+            id="2",
+            marks=2,
+            type=QuestionType.EXPLANATION,
+            answer_points=answer_points if answer_points is not None else [],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def _points(self):
+        from lemely.core.loose_schemas import AnswerPoint
+
+        return [
+            AnswerPoint(id="p1", point="method", marks=1),
+            AnswerPoint(id="p2", point="final answer", marks=1),
+        ]
+
+    def _make_mark(self, awarded_marks: int, matched: list[str], confidence: float = 1.0):
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=awarded_marks,
+            confidence=confidence,
+            matched_point_ids=matched,
+            feedback="test",
+        )
+
+    def test_reconciliation_mismatch_flags_despite_full_confidence(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        # matched_point_ids implies 1 mark (p1 only); awarded_marks claims 2.
+        cq = _build_ai_corrected(
+            self._make_question(self._points()),
+            "answer",
+            self._make_mark(2, ["p1"], confidence=1.0),
+        )
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("matched_point_ids", cq.review_reason or "")
+
+    def test_dangling_point_id_flags_review(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(self._points()),
+            "answer",
+            self._make_mark(1, ["p_nonexistent"], confidence=1.0),
+        )
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("p_nonexistent", cq.review_reason or "")
+
+    def test_empty_matched_point_ids_reconciliation(self):
+        """Documents the chosen semantics (BUILD/DECISIONS.md): marks awarded
+        with no matched_point_ids to justify them is incoherent; zero marks
+        with an empty list is coherent (nothing was matched, nothing was
+        awarded)."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        incoherent = _build_ai_corrected(
+            self._make_question(self._points()),
+            "answer",
+            self._make_mark(1, [], confidence=1.0),
+        )
+        self.assertTrue(incoherent.needs_teacher_review)
+        self.assertIn("matched_point_ids", incoherent.review_reason or "")
+
+        coherent = _build_ai_corrected(
+            self._make_question(self._points()),
+            "no attempt",
+            self._make_mark(0, [], confidence=1.0),
+        )
+        self.assertFalse(coherent.needs_teacher_review)
+
+    def test_high_confidence_incoherent_still_fires(self):
+        """Binding constraint 5: the trigger fires independently of stated
+        confidence, at or above REVIEW_CONFIDENCE_THRESHOLD."""
+        from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(self._points()),
+            "answer",
+            self._make_mark(2, ["p1"], confidence=REVIEW_CONFIDENCE_THRESHOLD),
+        )
+        self.assertTrue(cq.needs_teacher_review)
+
+    def test_coherent_match_with_no_answer_points_is_untouched(self):
+        """A mark scheme with no discrete answer_points (levels-based, or a
+        model_construct fixture like ThresholdTests') has nothing to
+        reconcile matched_point_ids against, so the coherence check must not
+        fire — preserves ThresholdTests' pre-#40 behaviour."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(answer_points=[]),
+            "answer",
+            self._make_mark(1, [], confidence=1.0),
+        )
+        self.assertFalse(cq.needs_teacher_review)
 
 
 class ThinkingRetryTests(unittest.TestCase):

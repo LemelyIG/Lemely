@@ -10982,3 +10982,79 @@ this branch the gate still prints `review_rate 0.2903` while this run's live
 records give 29.03%–41.94%. The number the gate judges cannot respond to a code
 change. That is the thing #36 must fix before arming, and it is a wiring
 problem, not a missing-tests problem.
+
+## DA10 — M1.5: the coherence gate's "reconcile" semantics for empty matched_point_ids and is_alternative/is_optional groups (#40)
+
+M1.5 adds a fourth, confidence-independent review reason to
+`_build_ai_corrected` (`lemely/io/correction_ai.py`): the marker's claimed
+`matched_point_ids` must (a) all resolve in `question.answer_points` and (b)
+reconcile with `awarded_marks`. Two sub-decisions were left unspecified by
+the issue and had to be made explicitly rather than defaulted, per binding
+constraint #6 on the board comment.
+
+**Decision 1 — no `answer_points` at all.** When `question.answer_points` is
+empty (levels-based/indicative-content marking, or a `Question.model_construct`
+fixture that never populated points), the coherence check is skipped
+entirely, regardless of `awarded_marks` or `matched_point_ids`. There is
+nothing to reconcile against — the mark scheme has not been decomposed into
+discrete points for this question — so treating an empty-points question as
+"incoherent" would be inventing a signal the mark scheme's own shape doesn't
+support. This also matches `Question.validate_mark_point_sum`'s own
+guard, which exempts `LEVELS_BASED`/`INDICATIVE_CONTENT` questions outright.
+
+**Decision 2 — `matched_point_ids` empty/absent, but `question.answer_points`
+is non-empty.**
+
+- `awarded_marks == 0` and `matched_point_ids == []`: **coherent.** Nothing
+  was matched, nothing was awarded — this is the ordinary "no credit given"
+  case and must not be flagged.
+- `awarded_marks > 0` and `matched_point_ids == []`: **incoherent.** Marks
+  were awarded with nothing cited to justify them. This is exactly the gap
+  the issue exists to close — silently accepting an unjustified award here
+  would reopen it in a different shape (an empty list instead of a dangling
+  id) rather than close it. Flagged with a message containing
+  `"matched_point_ids is empty"`.
+
+**Decision 3 — `is_alternative`/`is_optional` reconciliation.** Points
+flagged `is_alternative` (OR/EITHER…OR) or `is_optional` (a "any N from" pool)
+are non-additive by construction (`AnswerPoint` docstrings, `loose_schemas.py`).
+Mirroring the filtered-sum convention `Question.validate_mark_point_sum`
+already uses (primary points summed additively; alternative/optional points
+excluded from that sum and reasoned about separately), the implied-marks
+computation for a set of *matched* points is:
+
+```
+implied = sum(marks of matched points where NOT is_alternative and NOT is_optional)
+        + max(marks of matched points where is_alternative OR is_optional, default 0)
+```
+
+i.e. non-alternative/non-optional matched points are summed normally;
+alternative/optional matched points contribute at most the single
+highest-value one among them, never their sum — even if the marker lists
+several. `awarded_marks` (post-out-of-range-clamp) must equal `implied`
+exactly, or the leaf is flagged with a message containing
+`"matched_point_ids implies"`.
+
+**Detection convention for the separate trigger (bullet 4).** Rather than
+threading a second boolean through `CorrectedQuestion`/`QuestionResult`
+end-to-end, every message `_check_coherence` returns contains the literal
+substring `"matched_point_ids"` (no other review reason in
+`_build_ai_corrected` — `out_of_range`, `value_mismatch`, `low_confidence` —
+uses that phrase), and `lemely.accuracy.harness._review_triggers` detects it
+by substring to append the distinct `"coherence_mismatch"` trigger alongside
+the generic `"needs_teacher_review"` one. `lemely.eval.analyses
+.coherence_trigger_rate` then reports that trigger's own DA6-collapse-aware
+leaf rate, separately from `review_rate_signal`/`review_rate_total` — it does
+not touch, arm, or feed into the M0.9 ratchet
+(`review_rate_ratchet_armed` stays `False`; `lemely/runtime/config.py` and
+`scripts/check_review_rate_gate.py` are untouched by this issue).
+
+**Not measured here.** The plan's risk note holds: the saved
+`BUILD/accuracy-runs/aa-floor-2026-08-23-a/` `EvalRecord` JSONL does not carry
+`matched_point_ids` (only downstream `predicted_marks`/`truth_marks`/
+`outcome`), so this gate's real-corpus contribution to review volume cannot
+be measured from on-disk data without a fresh (cache-hit-only) sweep that
+retains `matched_point_ids` through to `CorrectedQuestion`. No such sweep was
+run as part of this issue — `coherence_trigger_rate` is implemented and unit
+tested, but its number against the real dev-split corpus is an open
+measurement gap, not a claimed result.
