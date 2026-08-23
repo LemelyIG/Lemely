@@ -11044,6 +11044,16 @@ right (an `explanation`/`list`/`multi_step` leaf with empty points no longer
 gets a free pass); its measured reach on today's corpus is small, and saying so
 is the point of this record.
 
+*Baseline note, because this was misread once during review:* "the diff" above
+means `develop..feature/accuracy-40-…`, i.e. issue #40's gate as a whole.
+`_check_coherence` — the dangling-id check included — **does not exist on
+`develop` at all** (`git show develop:lemely/io/correction_ai.py | grep -c
+_check_coherence` → 0), so all of it is new work here. A reviewer comparing the
+*repair commit* against its own parent instead saw the dangling-id check
+already present and read it as pre-existing; it is pre-existing only relative
+to the earlier commit on this same branch. Attribution is to the branch, not to
+the last commit on it.
+
 The corpus also has 7 leaf questions with ≥1 `is_alternative`/`is_optional`
 matched point and 6 with >1 (relevant to Decision 3 below).
 
