@@ -750,10 +750,12 @@ moment Actions can run.
 
 ---
 
-## OPEN — 2026-08-22 — GitHub Actions is billing-blocked: no PR can merge
+## RESOLVED — 2026-08-22 — GitHub Actions is billing-blocked: no PR can merge
 
-**Raised:** 2026-08-22 · **Status:** **OPEN — needs a human with org billing
-access.** Nothing in this repository can resolve it.
+**Raised:** 2026-08-22 · **Status:** **RESOLVED 2026-08-23**, by the human
+making the repository **public** — see the resolution note at the end of this
+section. It did need a human with org billing access, exactly as this section
+said; nothing in the repository could have resolved it.
 
 ### What is broken
 
@@ -821,6 +823,38 @@ recorded as an open question rather than guessed at.
   has nothing to do with correctness.
 
 ### RESOLVED — 2026-08-23. Actions provisions runners again; the waiver is void
+
+**How it was fixed: the human made the repository public.** Recorded because
+the mechanism is not interchangeable with the other routes this section
+proposed. The diagnosis was exhausted free-tier minutes against a $0 spending
+limit on a private repo — GitHub's annotation covers both that and a failed
+payment, and the discriminating endpoints (`orgs/.../settings/billing/actions`,
+`orgs/.../actions/permissions`) returned `410` and `403` respectively, so the
+run that raised this could not tell the two apart. The human confirmed it was
+minute exhaustion. Public repositories get unlimited Actions minutes, so the
+constraint is now structurally gone rather than reset — it will not recur next
+billing cycle, and no spending limit needs watching.
+
+Three consequences that outlive the blocker, none of them CI:
+
+1. **Branch protection and rulesets are now available.** Both previously
+   returned `403 "Upgrade to GitHub Pro or make this repository public"`, which
+   is precisely why four PRs could merge with `mergeStateStatus: UNSTABLE` and
+   zero CI. Required status checks on `develop` would make the
+   `allow_merge_without_ci` waiver structurally unnecessary rather than merely
+   lapsed. **Not enabled as of this writing.**
+2. **Secret scanning and push protection are free here and are `disabled`.**
+   Push protection blocks a credential at `git push` rather than reporting it
+   afterwards. A history scan found nothing to rotate — `.env` was never
+   committed (`.gitignore:42`), no `AIza…` or `GEMINI_API_KEY=<value>` hits
+   across all refs, and every `service_role` hit is a variable name or a
+   `"..."` placeholder — but that is a point-in-time result, not a control.
+3. **A self-hosted runner is now the unsafe option, and earlier advice in this
+   programme said the opposite.** That advice was correct for a private repo:
+   the standard warning is about untrusted fork PRs, which a private repo does
+   not receive. A public repo does, and a self-hosted runner would execute
+   fork-PR code on the host. Moot as well as unsafe now that minutes are free —
+   but the reversal is recorded so the old reasoning is not found and reused.
 
 Confirmed by the `steps` test this file itself prescribed as the only valid one,
 re-run against the API rather than taken from the state file: run
@@ -1191,3 +1225,28 @@ through an implementation.
 **Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on PREREQUISITE GAP: #44 restored 1488 PDFs but ZERO parsed mark schemes; this issue's strata need tariff band + parse path, which only a parsed scheme supplies. 71 golden leaves available vs a ~300 target. Freezing over 71 would be irreversible under the drop-only rule. Needs a human call on parsing spend — BUILD/BLOCKERS.md section E.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## SUPERSEDED — §D is retired by the 2026-08-24 gate-9 scoping directive
+
+`## D: M1 as a whole is gated on measurement authorisation, not on engineering`
+above recorded the **strict per-item** reading of MISSION §9 gate 9. The human
+retired that reading on **2026-08-24T01:14:03**:
+
+> gate 9 applies per item **only to mark-changing items**. #38 (M1.3), #39
+> (M1.4) and #41 (M1.6) change awarded marks and each need their own
+> before/after measurement before merge. Items that change confidence, review
+> routing or reporting **without** changing awarded marks land on engineering
+> grounds and fold into a single milestone-close sweep at M1 completion.
+
+The test is **what the code does, not which milestone the issue sits in**: if a
+diff can change the mark a student receives, it needs its number first.
+
+§D is left in place rather than deleted — it is the reasoning that produced two
+complete-but-unmergeable branches on 2026-08-23, and the directive names that
+outcome as the thing it is correcting. Read §D as history, not as policy.
+
+**Consequently resolved:** §B (#36) and §C (#40) are both decided — see the
+2026-08-24 inbox entries. §E (#57) is unblocked via option A, with a
+mark-scheme parsing pass authorised.
