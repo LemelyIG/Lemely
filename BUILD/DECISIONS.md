@@ -11015,17 +11015,37 @@ list, multi_step, …) with an empty `answer_points` list therefore accepted
 wholly fabricated `matched_point_ids` plus a non-zero `awarded_marks` with
 `needs_teacher_review=False`, silently defeating acceptance bullet 2 ("every
 referenced point id must exist in the mark scheme"). *Prevalence, reproduced
-against this tree's own corpus* (13 `mark_scheme.json` files, 152 leaf
-questions — NOT the review's unreproducible 799/1410 over 35 schemes, which
-this repair pass could not confirm and does not repeat): **53/152 (34.9%)**
-leaf questions have empty `answer_points`, and every one of those 53 is a
-non-exempt type — none of them is LEVELS_BASED/INDICATIVE_CONTENT/MCQ — which
-is exactly why the type-scoped exemption tightens the gate rather than
-narrowing it: the old blanket exemption covered all 53 (plus any exempt-type
-leaves); the new one covers 0 of these 53 and defers to the exempt-type set
-only, which on this corpus's leaf questions is disjoint from the empty-points
-set. The corpus also has 7 leaf questions with ≥1 `is_alternative`/
-`is_optional` matched point and 6 with >1 (relevant to Decision 3 below).
+against this tree's own corpus* (13 scheme files — 11 `tests/golden/**/
+mark_scheme.json` plus 2 `Sources/**/*_ms_*.json` — 152 leaf questions; NOT
+the review's unreproducible 799/1410 over 35 schemes, which this repair pass
+could not confirm and does not repeat): **53/152 (34.9%)** leaf questions have
+empty `answer_points`.
+
+**CORRECTION (2026-08-23).** An earlier revision of this entry claimed "every
+one of those 53 is a non-exempt type" and that the exempt set is "disjoint from
+the empty-points set", and billed it as reproduced ground truth. **That was
+false, and the error originated with the orchestrator, not with the
+implementer** — it was asserted from a type histogram taken over *all* leaves
+rather than over the empty-`answer_points` subset, and then passed downstream
+as if it had been computed. The actual breakdown of the 53, recomputed
+directly over that subset: **48 `mcq`, 3 `explanation`, 1 `list`,
+1 `multi_step`**. `QuestionType.MCQ` **is** in `_COHERENCE_EXEMPT_TYPES`, so
+**48 of the 53 remain exempt** after the repair. The type-scoped exemption
+newly covers **5 of 152 leaves (3.3%)**, not 53/152 — the earlier text
+overstated the closed gap by roughly 10x.
+
+Narrower still on the evaluation corpus proper: over the 11 golden
+`mark_scheme.json` files alone (71 leaves) there are **8** empty-`answer_points`
+leaves and **all 8 are `mcq`**, so on that corpus the type-scoped exemption
+changes the empty-points population by **nothing**. Its value there is the
+dangling-id check on questions that *do* carry `answer_points`, plus the range
+rule below — not the empty-points path. The direction of the fix is still
+right (an `explanation`/`list`/`multi_step` leaf with empty points no longer
+gets a free pass); its measured reach on today's corpus is small, and saying so
+is the point of this record.
+
+The corpus also has 7 leaf questions with ≥1 `is_alternative`/`is_optional`
+matched point and 6 with >1 (relevant to Decision 3 below).
 
 Also corrects a false citation in the original text: it claimed this
 decision "matches `Question.validate_mark_point_sum`'s own guard, which
