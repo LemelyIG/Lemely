@@ -75,7 +75,14 @@ test("the corrected-paper student sees their real dashboard data and the parents
   const subjectRow = ledger.getByRole("link", { name: /0625/ })
   await expect(subjectRow).toBeVisible()
   await expect(subjectRow).toContainText("1 paper")
-  await expect(page.getByRole("progressbar", { name: "0625 mastery: 88%" })).toBeVisible()
+  // Subject NAME, not the syllabus code: `e3d5afd` ("lead the student Overview
+  // ledger row with the subject name") made `Overview.tsx` build this label
+  // from `row.name`, so the accessible name became "Physics mastery: 88%". The
+  // assertion kept asserting "0625" and had failed every sweep since. The
+  // mastery figure itself is unchanged and still asserted — only the identifier
+  // moved. The row locator above still matches on /0625/, which is correct:
+  // the code remains in the row's own text, just not in this label.
+  await expect(page.getByRole("progressbar", { name: "Physics mastery: 88%" })).toBeVisible()
   await expect(
     page.getByRole("img", { name: /^Predicted grade [A-Z*]+$/ }).first(),
   ).toBeVisible()
