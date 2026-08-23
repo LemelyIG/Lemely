@@ -997,3 +997,47 @@ reviewed and complete at `2cae804` (signed, gates green); it is **not
 abandoned**, it is waiting on a choice between options A/B/C. Do not restart #36
 from scratch. Board Status set back to Backlog. Resolve the blocker, append a
 RESOLVED line here, and move the item back to Ready.
+
+---
+
+## D: M1 as a whole is gated on measurement authorisation, not on engineering
+
+**Status: OPEN — a note for the human, not a separate defect.** Raised
+2026-08-23 after #36 and #40 both parked on human decisions in the same run.
+
+Two M1 items were taken start-to-finish this run. Both are engineering-complete
+with green gates, and **both stopped for the same underlying reason**: a number
+is required before merge, and producing it needs a sweep nobody has authorised.
+
+- **#36 (M1.1)** — bullet 7 (`review_rate_signal <= 8%`) sits against a
+  measured 32.58%, and bullets 1/2/7 are mutually unsatisfiable as written
+  (§B).
+- **#40 (M1.5)** — bullet 4 requires the coherence trigger's contribution to
+  `review_rate` measured *before* merge, per MISSION §9 gate 8 (§C).
+
+This is not a coincidence of two issues. **MISSION §9 gate 9** states the M1
+milestone gates apply *"on every M1 item: non-regression on the signed
+over/under split (α=0.05) is the blocking condition; McNemar reported, not
+gated; flag recall not below the M0 baseline."* Every one of those is a
+measurement over a corpus. So on the current reading, **no M1 item can merge
+without a sweep**, and the remaining unstarted items look the same:
+
+| Item | Why it needs a number |
+|---|---|
+| #37 M1.2 | co-commit requires "the metric's CI-target re-derivation" |
+| #38 M1.3 | mark-lowering; §9 gate 9 over/under non-regression |
+| #39 M1.4 | mark-lowering; same |
+| #41 M1.6 | mark-raising **and** bumps a prompt `VERSION` (invalidates cache) |
+| #58 M1.8 | acceptance bullet 4 mandates `cache_mode=bypass` — a live sweep |
+
+**The practical consequence.** Authorising one sweep does not just unblock one
+issue — it is the thing standing between the programme and the whole of M1.
+Conversely, continuing to take M1 items one at a time will keep producing
+complete-but-unmergeable branches, which is what happened twice today.
+
+**Not claimed here:** that §9 gate 9 *must* be read per-item rather than
+once at milestone close. That reading is the strict one and is what this run
+followed; a human may reasonably rule it applies at M1 completion instead,
+which would let several items land now and be measured together. **That
+re-reading is itself a decision worth making explicitly**, and it is cheaper
+than authorising five separate sweeps.
