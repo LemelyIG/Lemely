@@ -120,10 +120,17 @@ checked and is not the argument. The cost is churn and re-write debt only, and
 the benefit of restating an unchanged fact is zero.
 
 **What a halt run does instead:** re-read the inbox; re-verify the block from
-the API (`gh api 'repos/LemelyIG/Lemely/actions/runs?per_page=3'` — a run
-newer than `32547620531`, or jobs with non-zero `steps`, means it is FIXED);
-re-read the queue with `git ls-remote`; then **report in prose and stop with a
-clean tree.** No commit, no `state set`, no notify. The header is already
+the API (`gh api 'repos/LemelyIG/Lemely/actions/runs?per_page=3'`, then
+`gh api 'repos/LemelyIG/Lemely/actions/runs/<id>/jobs'` — **only** jobs with
+non-zero `steps` mean it is FIXED); re-read the queue with `git ls-remote`;
+then **report in prose and stop with a clean tree.**
+
+The "newer run id" half of that test was **falsified on 2026-08-23**: runs
+`32631458524` (09:36Z), `32631767807` (09:42Z) and `32632548137` (10:00Z) are
+all newer than `32547620531`, and every job in them still returned
+`conclusion=failure` with `steps=0` in 2-4s. A newer run id proves only that
+the queue accepted a trigger, not that a runner was provisioned. Use the
+`steps` count and nothing else. No commit, no `state set`, no notify. The header is already
 correct and complete; leaving it untouched is the accurate signal that nothing
 happened. Resume committing the moment there is real work — i.e. the moment
 billing is fixed and the five-step landing order in the header begins.
