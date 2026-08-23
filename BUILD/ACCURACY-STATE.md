@@ -2,13 +2,13 @@
 
 run_pointer: run-2026-08-21-a
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: feature/accuracy-33-review-rate-as-a-two-part-ratchet-ci
+branch: feature/accuracy-29-honest-denominators-fix-d18-exclusion
 last_run_label: none
 last_run_headline: none
-review_rate: 29.03% (9/31 leaves, union numerator, recomputed 2026-08-22; supersedes the stale pre-#32 19.1%)
+review_rate: 29.03% (9/31 leaves, union numerator, measured 2026-08-22 on the PRE-#29 denominator — see the caveat in in_the_middle_of)
 ratchet: unarmed; starting value 29.03% recorded as a non-blocking M0 breach
 spend_usd: 0.4668
-in_the_middle_of: QUEUE DRAINING UNDER THE HUMAN'S CI WAIVER — the billing block is NOT fixed, it is being routed around. Commit 1289d8b (2026-08-23T11:20+03:00) added allow_merge_without_ci to .claude/workflows/accuracy-pr-land.js, so a reviewed branch may merge on LOCAL gates alone while Actions cannot provision a runner; ci_green is still reported FALSE and the deviation is posted to the PR first. RE-VERIFIED FROM THE API 2026-08-23: newest run repo-wide 32631458524, all five jobs failure in 1-3s with steps=0 — no runner ever provisioned. LANDED SO FAR under the waiver: #77 (PR #78, develop c66ef5b) and #30 (PR #79, develop 199841b). REMAINING: #33 (this branch), then #29 79fd9934. RE-CHECK merge-tree against the REAL develop tip before EACH land — develop moves on every land and #77's landing already turned all three remaining branches from clean into doc conflicts. THE #29 x #33 SEMANTIC CONFLICT IS NOW LIVE AND MERGE-TREE IS BLIND TO IT: #29 puts abstain/unmatched INTO the mark_accuracy denominator, which invalidates the 29.03% review_rate baseline recorded in THIS file and in BUILD/review-rate-baseline.json and lemely/runtime/config.py review_rate_last_merged=0.2903, WITHOUT touching a line #33 wrote. #33 lands first, so #29 must be rebased onto it and RE-GATED, never merged blind. AFTER THE QUEUE DRAINS: (a) recomputing review_rate is a MEASUREMENT item belonging after #27 — it needs human SPEND authorisation and #27's A/A churn floor first; re-deriving it offline from the saved golden run returns the SAME 0.2903 out of the OLD denominator, a fake recompute (Evidence log E1) — DO NOT DO IT; (b) the local-only commits on the #29 branch must be re-written onto develop as their own chore commit (Evidence log E4), and that pile now ALSO holds the human's two tooling commits c08460f (diff-scoped gates + persisted gate logs in scripts/check.sh) and 1289d8b (the CI waiver itself) — both LOCAL ONLY, and #29's PR squashes from ORIGIN's tip, so they reach develop by NO other route; the waiver is consequently ABSENT from every checkout except the #29 branch, which is why these lands invoke accuracy-pr-land through the persisted script snapshot rather than by name. #33's own OPEN FOLLOW-UP, unchanged by landing: scripts/check_review_rate_gate.py has ZERO test coverage and on the CI path gates a COMMITTED CONSTANT, so it cannot detect a review-rate regression from a code change — MUST be resolved before the ratchet is armed at M1. DROP THE WAIVER the moment a run provisions a runner. ENV: jq NOT installed (use gh --jq); pre-commit needs .venv/bin on PATH; verify signing with 'git cat-file commit <sha> | grep -c gpgsig', NEVER %G?.
+in_the_middle_of: THE M0 QUEUE HAS DRAINED. All four branches landed 2026-08-23 under the human's CI waiver (commit 1289d8b added allow_merge_without_ci to accuracy-pr-land): #77 PR #78, #30 PR #79, #33 PR #80, #29 PR #81. THE BILLING BLOCK WAS NEVER FIXED — it was routed around. Every one of those merges rests on LOCAL gates plus the supervisor's out-of-session sweep; NOT ONE CI STEP HAS EVER EXECUTED against any of them (all runs conclude in 1-3s with steps=0, no runner provisioned). DROP THE WAIVER the moment a run provisions a runner, and treat the first real CI run on develop as genuinely new information. TWO DEBTS THIS QUEUE CREATED, both real work, neither optional: (1) THE 29.03% review_rate ABOVE IS NOW STALE IN PRINCIPLE. #29 changed which records enter the denominators (abstain/unmatched now count), and the number in this header, in BUILD/review-rate-baseline.json and in lemely/runtime/config.py review_rate_last_merged=0.2903 was measured BEFORE that change. The review-rate gate still PASSES because it compares against a COMMITTED CONSTANT rather than recomputing — which is exactly #33's own open follow-up (scripts/check_review_rate_gate.py has ZERO test coverage and cannot detect a review-rate regression from a code change; MUST be resolved before the ratchet is armed at M1). Recomputing is a MEASUREMENT item belonging AFTER #27: it needs human SPEND authorisation and #27's A/A churn floor first. Re-deriving offline from the saved golden run returns the SAME 0.2903 out of the OLD denominator — a fake recompute, the narrowed-denominator failure mode itself (Evidence log E1). DO NOT DO IT. (2) THE HUMAN'S TWO TOOLING COMMITS ARE STILL NOT ON DEVELOP: c08460f (diff-scoped gates + persisted gate logs, scripts/check.sh) and 1289d8b (the CI waiver in .claude/workflows/accuracy-pr-land.js) exist ONLY as local commits on the feature/accuracy-29 branch ref (local tip e4953f8), and #29's PR squashed from ORIGIN's tip, so they reached develop by NO route. CONSEQUENCE, verified this run: every checkout other than that branch has the PRE-WAIVER pr-land, which is why these four lands had to invoke it through a persisted script snapshot instead of by name. They deserve their OWN branch and PR, not a graft onto a reviewed one (Evidence log E4). A DECISION NUMBERING COLLISION was resolved at merge time: #29 and #30 both authored a 'DA7'; #30 landed first and keeps it, #29's became DA8, and CHANGELOG.md / DELIVERY.md / docs/ACCURACY-STRATEGIES.md were updated — the DA7 citation in lemely/eval/analyses.py points at #30's entry and is correct as-is. NEXT: #27 (M0.3 A/A churn floor) is now unblocked and MUST use '--cache-mode bypass', NEVER 'refresh' — refresh writes and would overwrite the shared cache on all ~10 repeats, while bypass skips the read AND the write (Evidence log E2). It SPENDS REAL MONEY: tell the human before spending. ENV: jq NOT installed (use gh --jq); pre-commit needs .venv/bin on PATH; verify signing with 'git cat-file commit <sha> | grep -c gpgsig', NEVER %G?.
 ---
 
 ## Contract — keep this file THIN
@@ -43,61 +43,115 @@ supervisor is running** — a manual edit racing a `state set` write can be
 clobbered, and any edit that breaks the `key: value` shape at column zero
 breaks the supervisor's `grep -m1` reads and its 50%/80% spend alarms with it.
 
-## Live workflow run — review of #73 (added 2026-08-22)
+## Evidence log — halt runs, 2026-08-22
 
-`accuracy-review` for **#73** is running as **`wf_2f56d604-60b`** (transcript
-under `…/subagents/workflows/wf_2f56d604-60b/journal.jsonl`), over
-`head=feature/accuracy-73-build-run-manifest-hardcodes-cache-mode`,
-`base=origin/develop`, tip `ea83ffb`. Read that journal before launching
-another review for #73. It only reads the diff — it does not implement — so it
-will not collide with anything on the worktree.
+Proofs behind the header's `E1`-`E4` references. These are **experiments that
+were actually run**, not reasoning. Read this before re-deriving any of them;
+repeating them costs a run and changes nothing.
 
-On a clean verdict (`recommendation != block`, no `blocker`-severity finding),
-go straight to `accuracy-pr-land {issue:73, branch:…, base:'develop'}`.
+**E1 — the #29 review_rate recompute cannot be done offline.** I opened the
+exact artifact the committed baseline names as `source_run`
+(`tests/golden/results/2026-08-22-f7be062.json`, untracked + gitignored but
+still present locally). It holds 71 `eval_records` over 22 distinct
+`question_id`s; `outcome` takes only `{correct:64, under:6, over:1}`, and
+`id_match` is `exact` for all 71. There is **not one `abstain` and not one
+`unmatched` record**, because the file predates #29's semantics. So
+re-deriving `review_rate` from it returns the same 0.2903 — the old
+denominator laundered through a new function. That is a fake recompute. The
+real one needs a fresh live sweep; see the header for its three prerequisites.
 
-### Superseded — the #73 implementation runs
+**E2 — `--cache-mode bypass` is safe and sufficient; `refresh` is not.**
+Verified in code end to end rather than trusted: #77 adds
+`click.Choice(['read_write','bypass','refresh'])` wired to `default_cache_mode=`
+on `GeminiClient` (`lemely/app/cli.py:1055`); `generate()` falls back to
+`self.default_cache_mode` when the call site passes nothing
+(`lemely/io/gemini.py:316-319`); **no production call site passes an explicit
+`cache_mode`**, so nothing silently overrides the flag — the lone `cache_mode=`
+in `lemely/accuracy/harness.py:486` only *reads* it off the client to stamp
+`RunManifest` (#73's work). `bypass` then skips the cache read
+(`gemini.py:357`, guard is `cache_mode == 'read_write'`) **and** the write
+(`gemini.py:425`, guard is `cache_mode in ('read_write','refresh')`). So a
+bypass sweep is genuinely side-effect-free on the shared cache, while `refresh`
+would overwrite it on every one of #27's ~10 repeats.
 
-## Live workflow run (added 2026-08-22)
+**E3 — the lighthouse failures are two phenomena, not one.** Grounded by
+opening `reports/.scratch/lighthouse/*.json` directly instead of trusting the
+sweep's summary text; they matched it exactly (56 / 79 / 78).
+`student-correct` and `student-standings` sit at 76-79, within a point or two
+of the §11 floor, and rotate in and out of failure between sweeps — that is
+noise. `student-profile` does not: 56, 57, 58, 57 in the four sweeps directly
+observed and 54-58 across the earlier record, i.e. never once near 80. It is a
+stable ~24pp deficit that will fail every future sweep. The two-phenomena model
+then made a prediction and it held: the 2026-08-22T22:34 sweep brought a
+*previously unseen* route into the noisy band (`student-study-plan-session`,
+77) while `student-profile` stayed put at 57. Membership of the noisy set is
+not fixed — expect further new names at 76-79 — and that churn is the
+signature of routes sitting on the floor, not of a regression. Whoever owns this
+should know a floor nudge or a re-run silences the first two and does nothing
+for the third. Still not ours; recorded so it is not misdiagnosed as flakiness.
 
-`accuracy-issue-execute` for **#73** was relaunched as run **`wf_ff14f7e7-9a0`**
-(transcript under
-`.claude/projects/-home-sico-Lemely-worktrees-accuracy/9685e88a-9272-47a1-b3d3-3a2cbeb96c5c/subagents/workflows/wf_ff14f7e7-9a0/journal.jsonl`).
-Read that journal before launching anything for #73 — but see the header's
-self-deadlock note first: if you are the implementer this run dispatched, that
-entry describes **you**, not a rival, and you should proceed.
+**E4 — signing is clean, and a bookkeeping-loss hazard exists.** Walked every
+commit in `develop..<branch>` for all four queued branches with
+`git cat-file commit <sha> | grep -c gpgsig` (never `%G?`): 0 unsigned out of
+3 (#77), 7 (#30), 8 (#33) and 11 (#29). No signing surprise waits at land time.
+Separately: this worktree's HEAD runs ahead of origin's #29 tip by the halt-run
+chore commits, all signed, all touching only the `in_the_middle_of` line. #29's
+PR squashes from **origin's** tip, so everything those commits recorded will
+not reach develop when #29 lands. The fix is *not* to push them onto the
+reviewed branch — it is to re-write the surviving content onto develop as its
+own chore commit once the queue drains.
 
-The earlier run `wf_dba29fea-8af` returned `implementation-blocked` with no
-commits. Its **Scope** phase succeeded and its plan is worth recovering; its
-**Implement** phase refused, so resuming it replays that refusal from cache.
+**E5 — halt runs must now go QUIESCENT: make NO commit while the block holds.**
+This is the rule, not a suggestion, and this entry is the last halt commit that
+should exist until billing is fixed.
 
-## Review run for #72 (added 2026-08-22)
+The record: ten consecutive runs each found the identical external block and
+each answered it with a bookkeeping commit to `BUILD/ACCURACY-STATE.md`. Every
+one of those commits is on the **#29 branch**, and E4 already established that
+#29's PR squashes from **origin's** tip — so none of them reaches `develop`.
+They are not saved work; they are additions to the pile that E4 schedules for a
+hand-re-write onto develop once the queue drains. Each new one makes that
+re-write bigger and buys nothing.
 
-`accuracy-review` for **#72** is running as **`wf_95facc24-239`** (transcript
-under `…/subagents/workflows/wf_95facc24-239/journal.jsonl`), over
-`head=feature/accuracy-72-evalrecords-are-discarded-the-run-id`,
-`base=origin/develop`, tip `91e9aa5`. It only reads the diff — it does not
-implement — so it cannot collide with the worktree.
+The two verdicts on 2026-08-23 (00:00:16 over `e3fdf3c`, 00:43:19 over
+`0aa8438`, 39m each, 43m apart) show the supervisor sweeping back-to-back and
+continuously. So a halt commit does **not** cost extra sweep time — that was
+checked and is not the argument. The cost is churn and re-write debt only, and
+the benefit of restating an unchanged fact is zero.
 
-On a clean verdict (`recommendation != block`, no `blocker` finding), go to
-`accuracy-pr-land {issue:72, branch:…, base:'develop'}`. Expect its CI watch to
-time out (4 of 5 uses so far): a timeout is neither pass nor fail — poll
-`gh pr checks <pr>` and merge by hand with `--squash`.
+**What a halt run does instead:** re-read the inbox; re-verify the block from
+the API (`gh api 'repos/LemelyIG/Lemely/actions/runs?per_page=3'` — a run
+newer than `32547620531`, or jobs with non-zero `steps`, means it is FIXED);
+re-read the queue with `git ls-remote`; then **report in prose and stop with a
+clean tree.** No commit, no `state set`, no notify. The header is already
+correct and complete; leaving it untouched is the accurate signal that nothing
+happened. Resume committing the moment there is real work — i.e. the moment
+billing is fixed and the five-step landing order in the header begins.
 
-### Superseded — the #72 implementation run
+**Merge-conflict matrix** (measured with `git merge-tree`, all four branches ×
+every pair, read-only): all four merge cleanly into develop; no production-code
+conflict anywhere — `lemely/eval/analyses.py` (#30 × #33),
+`lemely/accuracy/harness.py` (#29) and `lemely/app/cli.py` (#77 × #33) all
+auto-merge. The earlier "both touch analyses.py" worry does not materialise
+textually. Only `BUILD/ACCURACY-STATE.md` and `BUILD/DECISIONS.md` conflict.
+Caveats are in the header: it is a pairwise proxy for squash-onto-moving-develop,
+and it is blind to the #29/#33 semantic conflict.
 
-## Implementation run for #72 (added 2026-08-22)
+## Current state (rewritten 2026-08-23, replacing the 2026-08-18 seed)
 
-`accuracy-issue-execute` for **#72** is running as **`wf_f73ff647-3f0`**
-(transcript under `…/subagents/workflows/wf_f73ff647-3f0/journal.jsonl`).
-Read that journal and `git log --oneline origin/develop..HEAD` before
-launching anything else for #72 — but see the header's self-deadlock note
-first: **if you are the implementer this run dispatched, that entry describes
-you, not a rival.**
+No live workflow runs. The four "Live workflow run" sections that stood here
+for #72 and #73 were **deleted on 2026-08-23**: both issues are CLOSED and both
+PRs merged (**#75** for #73 on 2026-08-21T23:20Z, **#76** for #72 on
+2026-08-22T01:11Z). They had become actionable-but-wrong — each still told the
+reader to "go straight to `accuracy-pr-land {issue:73…}`" for work that had
+already landed. If a future run needs those transcripts they are still on disk
+under `…/subagents/workflows/`; nothing about them belongs in the resume
+pointer. **Do not re-add a workflow-run section unless the run is actually in
+flight, and delete it the moment it is not.**
 
-It does **not** open the PR. When it returns, verify its claims yourself
-(re-run the gates, confirm a clean tree, confirm signing with
-`git cat-file commit <sha> | grep -c gpgsig`), then `accuracy-review` with
-`head`/`base` passed explicitly, then `accuracy-pr-land`.
+Everything the queue, the halt and the prohibitions require is in the
+`in_the_middle_of` header line; the proofs are in the Evidence log above. This
+section carries only what neither of those does:
 
 ## Landing run for #77 (added 2026-08-22)
 
@@ -154,11 +208,16 @@ fixture-renderer repair).
 
 `spend_usd` is what the ledger recorded (0.4026) under the stale
 `_DEFAULT_PRICING` table, which understates real spend by 2-4x and never
-counted thinking tokens; M0.2 (#26) corrects the table. Treat the number as a
-lower bound until then, and keep recording the ledger's figure here so the
-series stays consistent with itself.
+counted thinking tokens; M0.2 (#26) corrects the table. Treat it as a **lower
+bound**, and keep recording the ledger's own figure here so the series stays
+consistent with itself rather than mixing two pricing bases.
 
-`review_rate` is the 19.1% baseline against the 10% budget. The M0.9 ratchet
-(#33) is not built yet; once it lands, `ratchet` becomes the
-`min(10%, last_merged_review_rate)` value CI enforces, seeded at 19.1% as a
-recorded-but-non-blocking breach.
+`review_rate` is 29.03% (9/31, union numerator) measured on the **unmerged**
+#33 branch, against a 10% budget. The M0.9 ratchet becomes
+`min(10%, last_merged_review_rate)` once #33 lands. The header explains why
+this number cannot honestly be recomputed offline once #29 lands (E1) — it is a
+measurement item, not a bookkeeping chore.
+
+Five tracker issues are closed by the human or with human verification: #34
+(H1), #42 (M1.7), #48 (H2), #50 (H5), #60 (H10). Live board state is GitHub's
+job, not this file's — read it with `scripts/accuracy_board.py`.

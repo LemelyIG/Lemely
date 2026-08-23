@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from lemely.accuracy.harness import AccuracyMetrics, AccuracyResult
+from lemely.accuracy.harness import AccuracyMetrics, AccuracyResult, FunnelCounts
 from lemely.eval.manifest import RunManifest
 from lemely.eval.records import EvalRecord
 
@@ -82,6 +82,16 @@ def _fake_result(
         prompt_versions={"extraction": "1", "correction": "1", "mark_scheme": "1"},
         manifest=manifest,
         eval_records=records,
+        # #29 (M0.5) made ``funnel`` a required field. Every record this
+        # fixture builds is a fully-marked leaf, so all four pipeline stages
+        # equal the record count — keyed off ``records`` rather than a literal
+        # so the funnel cannot drift out of step with ``n_total``.
+        funnel=FunnelCounts(
+            leaves=len(records),
+            extracted=len(records),
+            matched=len(records),
+            marked=len(records),
+        ),
     )
 
 

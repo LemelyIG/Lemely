@@ -68,7 +68,7 @@ cell, and the fuller version is in §5.
 | File upload | 2 | Delivered | `lemely/io/storage.py`, `lemely/web/routers/student.py` | `tests/test_storage.py`, `tests/test_web_student.py` |
 | Metadata detection | 2 | Delivered | `lemely/io/scan_metadata.py`, `lemely/io/metadata.py` | `tests/test_scan_metadata.py` |
 | Mark-scheme fetch / parse / store (32 of 72 papers parse for 0625) | 2 | Delivered (limited) | `lemely/io/mark_schemes.py`, `lemely/io/det/` | `tests/test_mark_schemes.py`, `tests/test_parsers_det.py` |
-| Method-mark marking + confidence (83.8% agreement vs a ≥95% target — §5.1) | 2 | Delivered (limited) | `lemely/core/correction.py`, `lemely/io/correction_ai.py` | `tests/test_correction.py`, `tests/test_accuracy_synth.py`, `tests/test_accuracy_real_papers.py` |
+| Method-mark marking + confidence (83.8% agreement vs a ≥95% target, historical — §5.1) | 2 | Delivered (limited) | `lemely/core/correction.py`, `lemely/io/correction_ai.py` | `tests/test_correction.py`, `tests/test_accuracy_synth.py`, `tests/test_accuracy_real_papers.py` |
 | Plagiarism flag (advisory signal, never modifies a mark) | 2 | Delivered | `lemely/core/plagiarism.py`, `lemely/io/integrity.py` | `tests/test_integrity.py` |
 | AI-detection flag (advisory signal, never modifies a mark) | 2 | Delivered | `lemely/io/integrity.py`, `lemely/core/integrity_schemas.py` | `tests/test_integrity.py` |
 | Letter / numerical / total grade | 2 | Delivered | `lemely/core/analytics.py` (`grade_for_percentage`) | `tests/test_grade_boundaries.py` |
@@ -136,12 +136,17 @@ readable rather than quietly rewritten.
 ### 5.1 Marking accuracy — the most important limitation in this document
 
 - **The synthetic accuracy gate is NOT met (D2.5).** Mark-level agreement is
-  **83.8% against a ≥95% target**, and flag recall is **27.3%** against a target
-  of flagging 100% of disagreements. Threshold tuning (D2.2/D2.3) and
-  deterministic calculated-answer verification (D2.4) are both exhausted; the
-  remaining gap is free-form algebraic method verification, which is materially
-  harder and was never in scope. This number did not move in Phases 3, 4 or 5,
-  and this build does not claim examiner-level accuracy.
+  **83.8% against a ≥95% target** (historical — 10-fixture corpus, n=68 rows;
+  see BUILD/DECISIONS.md DA8 for the current, honest baseline: 90.1% raw
+  n=71 / 77.4% DA6-collapsed n=31, `run_id=run-ef443fc2931e`), and flag recall
+  is **27.3%** (historical, same 10-fixture corpus; the current honest baseline
+is **14.29%**, n=71, `run_id=run-ef443fc2931e` — the honest figure is worse,
+not better) against a target of flagging 100% of disagreements. Threshold
+  tuning (D2.2/D2.3) and deterministic calculated-answer verification (D2.4)
+  are both exhausted; the remaining gap is free-form algebraic method
+  verification, which is materially harder and was never in scope. This
+  number did not move in Phases 3, 4 or 5, and this build does not claim
+  examiner-level accuracy.
 - **Real past-paper measurement (D3.21), reported separately and never
   averaged:** paper 22 predicted **37 vs 34** actual, paper 41 predicted
   **63 vs 66**. Both landed inside the stated ±10%-of-max tolerance, which was

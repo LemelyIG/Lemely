@@ -358,9 +358,232 @@ class MeasureAccuracyTests(unittest.TestCase):
             result = measure_accuracy([case], gemini_client=None, settings=None)
 
         self.assertAlmostEqual(result.metrics.id_match_rate, 2 / 3)
-        # No QuestionResult for "3" — nothing to compare, no crash.
+        # No QuestionResult for "3" — QuestionResult stays matched-rows-only.
         self.assertEqual(len(result.question_results), 2)
         self.assertNotIn("3", {r.question_id for r in result.question_results})
+        # But it is NOT silently dropped (D18): an EvalRecord for "3" exists,
+        # recorded honestly as unmatched rather than vanishing from the
+        # denominator.
+        records_by_qid = {r.question_id: r for r in result.eval_records}
+        self.assertIn("3", records_by_qid)
+        self.assertEqual(records_by_qid["3"].outcome, "unmatched")
+        self.assertEqual(records_by_qid["3"].id_match, "unmatched")
+        self.assertIsNone(records_by_qid["3"].predicted_marks)
+
+    def test_fewer_extracted_questions_cannot_score_higher(self):
+        """D18 regression (#29): a run whose extractor returns FEWER answers
+        must never score HIGHER than a run whose extractor returned more —
+        answers it never returns cannot be silently dropped from the
+        denominator, only the previously reachable id_match_rate.
+
+        Run A gets all three ids back, one of them (``"2"``) wrong. Run B
+        gets a strict subset — only ``"1"``, identical to run A's ``"1"`` and
+        correct. Under the pre-fix `harness.py:596` ``continue``, run B's
+        denominator shrinks to just the one id it got right, scoring 1.0 —
+        strictly higher than run A's 2/3, even though B did no better work.
+        """
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
+        def make_case() -> GoldenCase:
+            return GoldenCase(
+                paper_id="pD18",
+                mark_scheme=self._mark_scheme(["1", "2", "3"]),
+                ground_truth={
+                    "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                    "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+                    "3": GoldenAnswer(student_answer="A", awarded_marks=1),
+                },
+                scan_path=Path("/nonexistent/scanD18.pdf"),
+            )
+
+        extracted_full = ExtractedAnswers(
+            paper_id="pD18",
+            source_scan="fake",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),  # correct
+                ExtractedAnswer(question_id="2", answer="B", confidence=0.9),  # wrong
+                ExtractedAnswer(question_id="3", answer="A", confidence=0.9),  # correct
+            ],
+        )
+        extracted_subset = ExtractedAnswers(
+            paper_id="pD18",
+            source_scan="fake",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),  # correct
+            ],
+        )
+
+        with patch("lemely.web.services.grading.extract_answers", return_value=extracted_full):
+            result_a = measure_accuracy([make_case()], gemini_client=None, settings=None)
+        with patch("lemely.web.services.grading.extract_answers", return_value=extracted_subset):
+            result_b = measure_accuracy([make_case()], gemini_client=None, settings=None)
+
+        self.assertLessEqual(result_b.metrics.mark_accuracy, result_a.metrics.mark_accuracy)
+
+    def test_unmatched_question_id_stays_in_denominator(self):
+        """A leaf the extractor never returned an answer for must produce an
+        EvalRecord (outcome='unmatched', id_match='unmatched',
+        predicted_marks=None) and must stay in the mark_accuracy denominator
+        — never silently dropped (D18, spec §3.3 outcome table)."""
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+
+        case = GoldenCase(
+            paper_id="pUnmatched",
+            mark_scheme=self._mark_scheme(["1", "2", "3"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "3": GoldenAnswer(student_answer="A", awarded_marks=1),
+            },
+            scan_path=Path("/nonexistent/scanUnmatched.pdf"),
+        )
+        fake_extracted = ExtractedAnswers(
+            paper_id="pUnmatched",
+            source_scan="fake",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(question_id="2", answer="A", confidence=0.9),
+                # "3" never returned by extraction.
+            ],
+        )
+
+        with patch("lemely.web.services.grading.extract_answers", return_value=fake_extracted):
+            result = measure_accuracy([case], gemini_client=None, settings=None)
+
+        records_by_qid = {r.question_id: r for r in result.eval_records}
+        self.assertIn("3", records_by_qid)
+        rec3 = records_by_qid["3"]
+        self.assertEqual(rec3.outcome, "unmatched")
+        self.assertEqual(rec3.id_match, "unmatched")
+        self.assertIsNone(rec3.predicted_marks)
+
+        # Denominator includes all three leaves; "3" counts as not-correct.
+        self.assertEqual(len(result.eval_records), 3)
+        self.assertAlmostEqual(result.metrics.mark_accuracy, 2 / 3)
+
+    def test_never_attempted_leaf_is_excluded_not_unmatched(self):
+        """A ground-truth leaf with no corresponding correct_paper output at
+        all (not a marked leaf in the mark scheme) is recorded
+        outcome='excluded' and is absent from the scored denominator —
+        distinct from 'unmatched', which is an attempted-but-not-returned
+        leaf (spec §3.3 outcome table)."""
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.eval.analyses import exclusion_funnel
+
+        case = GoldenCase(
+            paper_id="pExcluded",
+            mark_scheme=self._mark_scheme(["1"]),  # mark scheme has only leaf "1"
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "99": GoldenAnswer(student_answer="A", awarded_marks=1),  # not a scheme leaf
+            },
+            scan_path=None,
+        )
+
+        result = measure_accuracy([case], gemini_client=None, settings=None)
+
+        records_by_qid = {r.question_id: r for r in result.eval_records}
+        self.assertIn("99", records_by_qid)
+        self.assertEqual(records_by_qid["99"].outcome, "excluded")
+        self.assertNotEqual(records_by_qid["1"].outcome, "excluded")
+
+        funnel = exclusion_funnel(result.eval_records)
+        self.assertEqual(funnel["excluded"], 1)
+        self.assertEqual(funnel["scored"], 1)
+
+        # D18/Blocker 1: the excluded leaf "99" must not enter the
+        # mark_accuracy denominator or be scored as wrong. Only the one
+        # attempted+correct leaf "1" is scored, so mark_accuracy is 1.0 —
+        # not 0.5, which is what you get if the excluded row is counted as
+        # a wrong answer alongside the correct one.
+        self.assertEqual(result.metrics.mark_accuracy, 1.0)
+
+        # The excluded row must also not collapse flag_recall: flag_recall
+        # is computed over `wrong` records, and if "99" (excluded, treated
+        # as id_match="unmatched", not flagged for review) were counted as
+        # wrong, flag_recall would be 0/1 = 0.0 instead of the excluded-free
+        # baseline of 1.0 (no wrong records at all -> vacuous 1.0).
+        self.assertEqual(result.metrics.flag_recall, 1.0)
+
+    def test_printed_funnel_chain_never_rises(self):
+        """The printed exclusion funnel must be monotonically non-increasing.
+
+        A funnel that rises mid-chain reads as a denominator *growing*, which
+        is the opposite of what an exclusion funnel documents and exactly the
+        confusion M0.5 exists to remove. `extracted` is deliberately NOT a
+        stage of the chain: it counts leaves the extractor returned an id
+        for, while `matched` counts leaves `correct_paper` produced a
+        CorrectedQuestion for — neither implies the other, so putting them in
+        sequence could print `extracted=2 -> matched=3`.
+        """
+        import itertools
+        import re
+
+        from lemely.accuracy.harness import (
+            GoldenAnswer,
+            GoldenCase,
+            format_report,
+            measure_accuracy,
+        )
+
+        # Leaf "99" is a ground-truth leaf with no corresponding mark-scheme
+        # leaf, so `correct_paper` produces no CorrectedQuestion for it and it
+        # is recorded `excluded`. This fixture yields
+        # FunnelCounts(leaves=3, extracted=3, matched=2, marked=2) — note
+        # extracted > matched here, because `scan_path=None` is oracle mode and
+        # harness.py sets `extracted_ids = set(case.ground_truth)`.
+        #
+        # So this fixture does NOT reproduce the extracted < matched case that
+        # motivated removing `extracted` from the chain; that needs a
+        # scan_path-backed run where extraction genuinely misses an id. The
+        # assertions below are therefore deliberately structural (exact stage
+        # list, `extracted` absent from the chain) rather than relying on this
+        # fixture to produce a rise — an earlier monotonicity-only version of
+        # this test passed against the un-fixed code for exactly that reason.
+        case = GoldenCase(
+            paper_id="pFunnel",
+            mark_scheme=self._mark_scheme(["1", "2"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "99": GoldenAnswer(student_answer="A", awarded_marks=1),
+            },
+            scan_path=None,
+        )
+
+        from lemely.runtime.config import Settings
+
+        report = format_report(
+            measure_accuracy([case], gemini_client=None, settings=None),
+            Settings().accuracy_eval,
+        )
+
+        chain_line = next(line for line in report.splitlines() if "Exclusion funnel:" in line)
+
+        # `extracted` must not appear in the chain at all. This is the
+        # load-bearing assertion: it is the only one that fails
+        # deterministically if `extracted` is put back between `leaves` and
+        # `matched`, regardless of whether this particular fixture happens
+        # to produce extracted < matched.
+        self.assertNotIn(
+            "extracted", chain_line, f"`extracted` is not a funnel stage: {chain_line!r}"
+        )
+        self.assertEqual(
+            [n for n, _ in re.findall(r"(\w+)=(\d+)", chain_line)],
+            ["leaves", "matched", "marked", "scored"],
+            f"unexpected funnel stages in {chain_line!r}",
+        )
+
+        stages = [int(n) for n in re.findall(r"=(\d+)", chain_line)]
+        for earlier, later in itertools.pairwise(stages):
+            self.assertGreaterEqual(
+                earlier, later, f"funnel chain rises: {chain_line!r} -> {stages}"
+            )
+
+        # …and it is still reported, just not as a stage.
+        self.assertIn("extracted=", report)
 
     def test_mixed_batch_id_match_rate_only_from_extraction_case(self):
         from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy

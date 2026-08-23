@@ -10745,3 +10745,119 @@ difference. Two pre-existing `TestMcnemar` tests
 `test_no_discordant_pairs_gives_zero_statistic`) remain padded with concordant filler pairs
 to reach the floor, since they exist to test the chi2/p-value math on a non-underpowered
 result.
+## DA8 — M0.5: D18 fixed (honest denominators), and the two figures this supersedes (#29)
+
+**The bug (D18).** `measure_accuracy()`'s per-case loop iterated
+`correction.questions` and `continue`d past any question the extractor never returned
+an answer for (`harness.py:596`, pre-#29). That question was dropped from the run
+entirely — no `EvalRecord`, no denominator entry, nothing but a footnote in
+`id_match_rate`. A run that extracted FEWER answers therefore scored on a SMALLER,
+self-selected denominator, and could score *higher* than a run that extracted more —
+the fewer-answers-cannot-score-higher regression test
+(`test_fewer_extracted_questions_cannot_score_higher`,
+`tests/test_accuracy_harness.py`) reproduces this: pre-fix, a run returning one correct
+answer out of three scored 1.0, strictly above a run returning all three (one wrong)
+scoring 0.667.
+
+**The fix.** The loop now iterates `case.ground_truth` — every ground-truth leaf the
+case attempted — not `correction.questions`. Each leaf produces exactly one
+`EvalRecord`: `correct`/`over`/`under` when `correct_paper` marked it and the extractor
+returned an id for it; `unmatched` (`predicted_marks=None`, stays in the denominator,
+never counted as correct) when `correct_paper` marked it but the extractor did not
+return it; `excluded` (dropped from `_scored()`/`wilson`/`review_rate` via the existing
+DA6a-aware machinery in `lemely/eval/analyses.py` — no change there was needed) only
+when `correct_paper` produced no `CorrectedQuestion` for the leaf at all, e.g. a
+ground-truth id that names no leaf in the mark scheme. A five-stage exclusion funnel
+(`leaves -> extracted -> matched -> marked -> scored`) is now tracked in
+`measure_accuracy()` (`FunnelCounts`) and printed by `format_report()`, with `scored`
+read from `analyses.exclusion_funnel()` — the single source of truth — rather than
+recomputed.
+
+**Two figures, not one.** The historical **83.8%** (`docs/ACCURACY-STRATEGIES.md`,
+D2.5, 10-fixture corpus, n=68 rows) predates this fix and multiple corpus additions
+(DA6b); it is recorded here as **legacy** and is the number §6's paired-McNemar floor
+(n=219, DA1) is quoted on — that floor is *not* recomputed here, per the accepted
+#29 risk note; recomputing it against a new baseline is separate work.
+
+The **honest baseline**, re-run over the current 11-case, 71-row / 31-leaf golden
+corpus (DA6b) with the D18 fix in place (`run_id=run-ef443fc2931e`,
+`corpus_digest=e982c884f7f30cd7`, saved to
+`tests/golden/results/2026-08-22-79f5fa8.json`):
+
+- `measure_accuracy()`'s own `AccuracyMetrics.mark_accuracy` (raw per-row, no DA6
+  fixture-variant collapse): **90.1%** (64/71 rows correct — unchanged in value from
+  the pre-#29 run recorded the same day, because this corpus's `id_match_rate` is
+  100%: no leaf in it currently exercises the `unmatched` or `excluded` path, per the
+  #29 risk note. D18 protects future runs where extraction misses ids; it is not a
+  retroactive correction of this corpus's number).
+- `analyses.wilson()` over the same `eval_records`, DA6-collapsed to distinct
+  `(paper_id, question_id)` leaves: **77.4%** (24/31 leaves; 95% Wilson
+  [60.2%, 88.6%]). This is materially lower than the raw 90.1% because DA6 unanimity
+  requires every fixture variant of a leaf to be correct for the leaf to count as
+  correct, and several leaves in this corpus have a `wrong`-variant miss.
+
+Both numbers are published, not just the flattering one — hiding the DA6-collapsed
+77.4% behind the raw 90.1% would recreate exactly the denominator-shell-game D18 was
+about. **The honest baseline going forward is the pair (90.1% raw n=71 /
+77.4% DA6-collapsed n=31), not the legacy 83.8%**; no code path in this change presents
+83.8% as current.
+
+**Open governance item: spend for `run-ef443fc2931e` is unmeasured, not zero.**
+The re-run used `manifest.cache_mode="read_write"` (a real, billable sweep, not a
+cache-only replay), but the saved manifest (`tests/golden/results/2026-08-22-79f5fa8.json`,
+gitignored) carries no cost field — `RunManifest` does not record spend at all. Checking
+`lemely/io/cost_ledger.py`: `CostLedger` persists only a single cumulative-USD counter
+across the whole process/machine lifetime (no per-run breakdown, no ledger JSON file
+present on this checkout), so there is no before/after snapshot to diff and recover this
+run's actual cost from. Recording it as **0.4026** (per this issue's plan text) would be
+assuming the ledger's cumulative figure at some other point in time is this run's cost,
+which it is not shown to be — that number is not adopted here. The correct statement is:
+this run's `spend_usd` is **unmeasured**. A future fix should add a per-run cost field to
+`RunManifest` (populated from the ledger delta around the run) so this stops recurring.
+
+**The other two headline metrics moved too, and downward.** The first #29 pass
+qualified `mark_accuracy`'s legacy 83.8% as historical and published the honest
+90.1% beside it — but left `flag_recall` (27.3%) and `flag_precision_high`
+(91.7%) stated in the present tense, unqualified, in `DELIVERY.md`,
+`CHANGELOG.md` and `docs/ACCURACY-STRATEGIES.md`. The same honest run
+(`run-ef443fc2931e`) reports **`flag_recall` 14.29%** and
+**`flag_precision_high` 89.8%**.
+
+So the only metric that received the "historical, superseded" treatment was the
+one that moved in the *flattering* direction, while the two that moved
+unfavourably kept their better-looking legacy numbers. That is selective
+disclosure, and it is the same family of defect as D18 — the failure this very
+issue exists to fix — so it is recorded here rather than quietly corrected. All
+three metrics now carry the qualifier and the honest figure in all three files.
+
+**Open, non-blocking risk: two funnel implementations.** `FunnelCounts` in
+`lemely/accuracy/harness.py` was added rather than extending
+`lemely/eval/analyses.py::exclusion_funnel()`, contrary to this issue's
+binding note. They do not currently disagree (`scored` is read from
+`analyses.exclusion_funnel()`), but nothing enforces that, and `funnel` is not
+serialised by `save_result()`, so `extracted` is **not recoverable from a saved
+run**. Unify them before the funnel is used as published evidence.
+
+`extracted` is also **not a nested stage** of the funnel: it counts leaves the
+extractor returned an id for, while `matched` counts leaves `correct_paper`
+produced a `CorrectedQuestion` for. Neither implies the other, so printing them
+in sequence could emit a chain that *rises* (e.g. `extracted=2 -> matched=3`),
+reading as a denominator growing mid-funnel. The printed chain is now
+`leaves -> matched -> marked -> scored`, with `extracted` reported separately
+and pinned by `test_printed_funnel_chain_never_rises`.
+
+**Provenance correction.** DA8 describes the honest-baseline artifact as
+produced "with the D18 fix in place", but its manifest records
+`git_sha=79f5fa8`, which is the **pre-fix** commit (the fix landed in
+`761231c`). The figures reproduce exactly (`mark_accuracy` 0.90140845; Wilson
+n=31, 77.4% [60.2%, 88.6%]) because this corpus contains no `unmatched` or
+`excluded` rows at all — the D18 path is simply never exercised by it. The
+number is therefore correct, but it is **not evidence that the fix works**;
+the behavioural tests are.
+
+**Numbering note (2026-08-23).** This entry was authored as `DA7` on the #29
+branch while #30 independently authored a different `DA7` (the McNemar n-floor)
+on a branch cut in parallel. #30 landed first, so it keeps `DA7` and this entry
+was renumbered to `DA8` at merge time. References in `CHANGELOG.md`,
+`DELIVERY.md` and `docs/ACCURACY-STRATEGIES.md` were updated with it; the `DA7`
+citation in `lemely/eval/analyses.py` points at #30's entry and is unchanged.
