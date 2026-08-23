@@ -248,9 +248,11 @@ def test_build_manifest_computes_expected_shape(tmp_path: Path) -> None:
     assert manifest["failed_documents"][0]["filename"] == "Broken.pdf"
     assert manifest["topics_0625"] == [{"unit": 1, "slug": "motion", "count": 1}]
 
-    verify_conn = mod._connect_readonly(db_path)
-    try:
-        expected_digest = mod.compute_corpus_digest(mod._done_rows(verify_conn))
-    finally:
-        verify_conn.close()
-    assert manifest["corpus_digest"] == expected_digest
+    # Pinned literal, deliberately NOT re-derived by calling the production
+    # digest path again: an "expected" value computed via
+    # compute_corpus_digest(_done_rows(conn)) is the same sequence
+    # build_manifest() already ran, so it can only catch a wiring change and
+    # would happily pass on a wrong algorithm or a wrong row selection. This
+    # literal pins the algorithm itself. If it fails, the digest definition
+    # changed — confirm that was intended, then update the literal.
+    assert manifest["corpus_digest"] == "1c658467bac18a2b"
