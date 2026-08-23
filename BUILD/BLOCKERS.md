@@ -820,10 +820,224 @@ recorded as an open question rather than guessed at.
   gate to fit a billing constraint would be weakening a gate for a reason that
   has nothing to do with correctness.
 
+### RESOLVED — 2026-08-23. Actions provisions runners again; the waiver is void
+
+Confirmed by the `steps` test this file itself prescribed as the only valid one,
+re-run against the API rather than taken from the state file: run
+**32642107118** (head_sha `6349545`, PR #82 for #27) returned
+`conclusion=success` on **all five** jobs with real step lists — `web` 10,
+`pre-commit` 8, `test (3.12)/(3.13)/(3.14)` 16 each. A blocked job reports
+`steps=0`; none of these does. The two runs before it (`32640877782`,
+`32640843306`) are also post-fix.
+
+So #27's PR #82 is the **first merge in this programme to land on genuinely
+green CI**. Every earlier merge (#77/#30/#33/#29) rested on local gates plus the
+supervisor's sweep alone — see the 12:33 and 15:27 notes in
+`BUILD/ACCURACY-INBOX.md` for what that bought and cost.
+
+**The `allow_merge_without_ci` waiver lapsed by its own terms** ("the moment
+Actions can provision a runner"). It must never be passed to `accuracy-pr-land`
+again unless `steps=0` returns and is re-verified by the test above.
+
+Worth keeping: the first honest CI run immediately caught something local gates
+had missed — 12 evidence JSONs under `BUILD/accuracy-runs/` without trailing
+newlines, because `pre-commit` had been run on selected files rather than
+`--all-files`. That is the gate doing its job on its first opportunity.
+
 ---
 
 ## #77 — No entrypoint can set cache_mode: an A/A floor run today would measure the cache and publish 0.0
 
-**Raised:** 2026-08-22 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+**Raised:** 2026-08-22 · **Status:** **RESOLVED 2026-08-22** · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on GitHub Actions org billing block — CI cannot run, see BUILD/BLOCKERS.md (2026-08-22). Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+### RESOLVED — 2026-08-22, by PR #78 merging under the recorded CI waiver
+
+Issue #77 is **closed** and PR #78 merged to `develop` (`c66ef5b`) under the
+human's explicit `allow_merge_without_ci` waiver (commit `1289d8b`), while the
+billing block above still stood. `--cache-mode` is wired end to end, which is
+what unblocked #27's A/A floor run — and that run used `bypass`, so the shared
+cache was never written (evidence E2 in `BUILD/ACCURACY-STATE.md`).
+
+This section was left reading `OPEN` for a day after the fact; it is corrected
+here rather than deleted, per this file's own never-delete rule.
+
+---
+
+## OPEN — 2026-08-23 — #28 (M0.4 ablation) is halted awaiting human spend authorisation
+
+**Raised:** 2026-08-23 · **Status:** **OPEN — needs the human, and only the
+human.** This is not a puzzle to solve from inside a run.
+
+### What is blocked
+
+**#28 — M0.4, the oracle-transcription 2×2 ablation.** It is the last
+agent-shaped item in M0 (the other M0 Backlog entry is the epic #24 itself,
+which closes when its children do). M1 (#36–#41) is gated behind M0 by spec
+§3.2's ordering, and #57/#59 wait on #44. So with #28 held, **the board has
+nothing Ready and nothing startable** — `accuracy_board.py next` returns
+"nothing ready", correctly.
+
+### Why it is held
+
+#28 is a **separate live sweep that spends real Gemini budget**. The 15:27
+inbox directive authorising #27 said in terms: *"No further spend is authorised
+for #27 beyond that"* — and the 12:33 note before it had already carved #28's
+class out explicitly. #28 therefore **does not inherit** #27's after-the-fact
+authorisation.
+
+### The rule this section exists to hold
+
+Recorded because it was broken once today, on #27, and the human rebuked it:
+
+> **An inbox item naming an issue as needing its own authorisation is a hard
+> stop until the human answers.** While waiting, pick independent work or end
+> the run. Never re-derive the gate away.
+
+The specific failure to not repeat: arguing from MISSION §3.2 ("you maintain the
+Ready column yourself") and §10 (costed preflight, 80%-of-ceiling stop-and-ask)
+that the item was eligible anyway. Those readings of the mission are correct in
+isolation, which is exactly why they are not the point — **the inbox outranks
+the mission**, and a §3.2 argument cannot retire an inbox carve-out.
+
+### What unblocks it
+
+One line in `BUILD/ACCURACY-INBOX.md` (or a publish to the control topic)
+authorising #28's spend, ideally with a preflight ceiling in the shape #27's
+directive used. Remaining headroom is **$25.00 ceiling − ~$3.83 corrected**
+(ledger `spend_usd: 1.425511` × the pre-M0.2 understatement factor), so cost is
+not the constraint — authorisation is.
+
+### What was deliberately NOT done
+
+- **Did not start the #28 preflight.** A costed preflight is cheap, but running
+  one is the first step of the sweep and would prejudge the answer.
+- **Did not re-run or extend the #27 A/A floor.** It is published and ratified;
+  MISSION §12.9 forbids re-running at higher `n` to chase significance.
+- **Did not move any board item to Ready** to manufacture startable work.
+
+---
+
+## B: #36 (M1.1) — two of the issue's own acceptance bullets conflict once the third is implemented
+
+**Status: OPEN. Blocked on a human decision, not on engineering.** Opened
+2026-08-23. Branch `feature/accuracy-36-the-confidence-unit-must-ship-as-one`
+exists, one signed commit `2cae804`, tree clean, all local gates green, **no PR
+opened**. Board item stays *In progress*.
+
+### The conflict
+
+- **Bullet 1** requires extraction confidence to actually drive per-question
+  confidence. It is currently unmet: `_build_mcq_corrected`'s success branch
+  (`lemely/io/correction_ai.py:182-194`) still hardcodes
+  `confidence_score=1.0 / HIGH / needs_teacher_review=False`, so the new
+  `extraction_confidence` field is threaded but read by no decision path.
+- **Bullet 2** as written asks that "a raw-0.90 single-letter answer with
+  `source_region` set ends at ≤0.20, **not 0.23 or 1.00**". Those two rejected
+  values come from **two different inputs** on `develop`, not one: a clean
+  single letter took an uncapped `+0.1` (→1.00), while an MCQ *hint* whose
+  answer is not A/B/C/D took `min(conf, 0.2)` and leaked to 0.23. Satisfying
+  the bullet literally means capping clean single letters at 0.2 — a **new**
+  ceiling, not the "cap ordering fixed" the bullet's own title describes.
+- **Bullet 7** requires `review_rate_signal ≤ 8%`. Implementing 1 and 2-as-
+  written makes every correctly-extracted MCQ read LOW / needs-review — the
+  whole det path, 8 of 31 golden leaves (~26%) — on top of a `review_rate_signal`
+  already measured at **32.58%**. §9 gate 8 judges the ratchet on that number.
+
+### Why this was escalated instead of decided
+
+The engineering-clean reading is (A): delete only the bonus, leave the 0.2 cap
+on the mcq-hint-non-letter case where `develop` had it, so a clean letter keeps
+its raw confidence (0.90 + 0.03 = 0.93, which **violates** bullet 2's "≤0.20").
+That reading was **not** taken unilaterally for one reason: **it is the option
+that makes the gated metric easier.** Lowering MCQ review volume is exactly the
+narrowed-denominator / moved-goalpost shape `accuracy-reviewer` exists to catch,
+and an agent picking it on its own judgement is indistinguishable from that
+failure mode even when the argument is good. Structurally this is the **DA1**
+situation — a spec sentence unsatisfiable as written — and DA1's precedent is to
+propose the amendment and leave the spec alone until the human says.
+
+### What unblocks it
+
+A choice on #36 between **(A)** cap scoped to the non-letter case, bullet 2
+amended to name that input; **(B)** cap all MCQ-shaped answers at 0.2 as bullet 2
+literally reads, accept every correct MCQ becoming needs-review, and formally
+retire bullet 7 for M1.1 (it is already unmet at 32.58%, and gate 8 keeps the M0
+breach recorded-not-blocking, so this may be the honest answer); or **(C)**
+something else. Full evidence is in the 2026-08-23 comment on issue #36.
+
+### Resolved in this cycle, recorded so it is not re-litigated
+
+`paper_grade_confidence` originally weighted by `truth_marks`, which is marks
+**earned**, not the tariff — 23 of 71 baseline rows dropped, including the
+corpus minima `marker_conf` 0.55 and 0.65, biasing every band upward and making
+an all-zero paper vanish. Fixed by weighting on the tariff via a new
+`EvalRecord.maximum_marks: int | None = None`; the default is load-bearing
+(`StrictModel` is `extra="forbid"`, which rejects unknown keys but accepts a
+missing key with a default), so the published `aa-floor-2026-08-23-a` evidence
+still parses — verified, all 71 rows load. Rows weighted 48/71 → 71/71.
+
+**Bullet 6 is unmet and the fix did not rescue it.** The hypothesis that the
+`truth_marks` bias caused the all-HIGH degeneracy was **wrong**: the
+distribution is all-HIGH before and after (0.947 / 0.9197 / 1.0 / 0.9362 /
+0.982). Recorded as measured. It is structurally guaranteed while `marker_conf`
+is pinned at 1.0 for every correct MCQ, so re-read it once bullet 1 lands.
+
+---
+
+## #36 — M1.1 — The confidence unit (must ship as one commit)
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on HUMAN DECISION: acceptance bullets 1, 2 and 7 conflict — full write-up
+in **section B above**, and in the 2026-08-23 comment on #36. Branch
+`feature/accuracy-36-the-confidence-unit-must-ship-as-one` is implemented,
+reviewed and complete at `2cae804` (signed, gates green); it is **not
+abandoned**, it is waiting on a choice between options A/B/C. Do not restart #36
+from scratch. Board Status set back to Backlog. Resolve the blocker, append a
+RESOLVED line here, and move the item back to Ready.
+
+---
+
+## D: M1 as a whole is gated on measurement authorisation, not on engineering
+
+**Status: OPEN — a note for the human, not a separate defect.** Raised
+2026-08-23 after #36 and #40 both parked on human decisions in the same run.
+
+Two M1 items were taken start-to-finish this run. Both are engineering-complete
+with green gates, and **both stopped for the same underlying reason**: a number
+is required before merge, and producing it needs a sweep nobody has authorised.
+
+- **#36 (M1.1)** — bullet 7 (`review_rate_signal <= 8%`) sits against a
+  measured 32.58%, and bullets 1/2/7 are mutually unsatisfiable as written
+  (§B).
+- **#40 (M1.5)** — bullet 4 requires the coherence trigger's contribution to
+  `review_rate` measured *before* merge, per MISSION §9 gate 8 (§C).
+
+This is not a coincidence of two issues. **MISSION §9 gate 9** states the M1
+milestone gates apply *"on every M1 item: non-regression on the signed
+over/under split (α=0.05) is the blocking condition; McNemar reported, not
+gated; flag recall not below the M0 baseline."* Every one of those is a
+measurement over a corpus. So on the current reading, **no M1 item can merge
+without a sweep**, and the remaining unstarted items look the same:
+
+| Item | Why it needs a number |
+|---|---|
+| #37 M1.2 | co-commit requires "the metric's CI-target re-derivation" |
+| #38 M1.3 | mark-lowering; §9 gate 9 over/under non-regression |
+| #39 M1.4 | mark-lowering; same |
+| #41 M1.6 | mark-raising **and** bumps a prompt `VERSION` (invalidates cache) |
+| #58 M1.8 | acceptance bullet 4 mandates `cache_mode=bypass` — a live sweep |
+
+**The practical consequence.** Authorising one sweep does not just unblock one
+issue — it is the thing standing between the programme and the whole of M1.
+Conversely, continuing to take M1 items one at a time will keep producing
+complete-but-unmergeable branches, which is what happened twice today.
+
+**Not claimed here:** that §9 gate 9 *must* be read per-item rather than
+once at milestone close. That reading is the strict one and is what this run
+followed; a human may reasonably rule it applies at M1 completion instead,
+which would let several items land now and be measured together. **That
+re-reading is itself a decision worth making explicitly**, and it is cheaper
+than authorising five separate sweeps.

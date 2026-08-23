@@ -1,0 +1,151 @@
+{
+  "corpus_digest": "1412967477156232",
+  "counts_by_subject_doctype": [
+    {
+      "count": 45,
+      "doc_type": "gt",
+      "subject_code": "0580"
+    },
+    {
+      "count": 160,
+      "doc_type": "ms",
+      "subject_code": "0580"
+    },
+    {
+      "count": 160,
+      "doc_type": "qp",
+      "subject_code": "0580"
+    },
+    {
+      "count": 4,
+      "doc_type": "sm",
+      "subject_code": "0580"
+    },
+    {
+      "count": 4,
+      "doc_type": "sp",
+      "subject_code": "0580"
+    },
+    {
+      "count": 45,
+      "doc_type": "gt",
+      "subject_code": "0606"
+    },
+    {
+      "count": 80,
+      "doc_type": "ms",
+      "subject_code": "0606"
+    },
+    {
+      "count": 80,
+      "doc_type": "qp",
+      "subject_code": "0606"
+    },
+    {
+      "count": 2,
+      "doc_type": "sm",
+      "subject_code": "0606"
+    },
+    {
+      "count": 2,
+      "doc_type": "sp",
+      "subject_code": "0606"
+    },
+    {
+      "count": 45,
+      "doc_type": "gt",
+      "subject_code": "0625"
+    },
+    {
+      "count": 418,
+      "doc_type": "ms",
+      "subject_code": "0625"
+    },
+    {
+      "count": 1,
+      "doc_type": "other",
+      "subject_code": "0625"
+    },
+    {
+      "count": 418,
+      "doc_type": "qp",
+      "subject_code": "0625"
+    },
+    {
+      "count": 12,
+      "doc_type": "sm",
+      "subject_code": "0625"
+    },
+    {
+      "count": 12,
+      "doc_type": "sp",
+      "subject_code": "0625"
+    }
+  ],
+  "coverage_check": {
+    "passed": true,
+    "qp_without_matching_ms": 0
+  },
+  "failed_documents": [
+    {
+      "attempts": 2,
+      "doc_type": "qp",
+      "error": "not a valid PDF (starts with b'\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00')",
+      "filename": "Motion 5 QP.pdf",
+      "key": "caie:0625:nosession:qp:0:pdf:44963a551b39",
+      "source": "pmt",
+      "subject_code": "0625"
+    }
+  ],
+  "generated_at": "2026-08-23T19:52:10.548418+00:00",
+  "provenance": {
+    "approval": "#48 (closed, human-approved scope for #44 M2.1)",
+    "approved_fetch_commands": [
+      "paperscraper fetch -s 0580 -s 0606 -s 0625 --qual IGCSE --only-papers --from 2019",
+      "paperscraper fetch -s 0580 -s 0606 -s 0625 --qual IGCSE -t gt",
+      "paperscraper fetch --source pmt -s 0625 --only-topical"
+    ],
+    "catalogue_path": "/home/sico/PaperScraper/papers/index.db",
+    "note": "Fetch already complete at time of manifest generation; this script only reads the catalogue, it never invokes `paperscraper fetch`."
+  },
+  "session_topical_split": {
+    "session": 1129,
+    "topical": 359
+  },
+  "topics_0625": [
+    {
+      "count": 113,
+      "slug": "motion-forces-and-energy",
+      "unit": 1
+    },
+    {
+      "count": 56,
+      "slug": "thermal-physics",
+      "unit": 2
+    },
+    {
+      "count": 60,
+      "slug": "waves",
+      "unit": 3
+    },
+    {
+      "count": 92,
+      "slug": "electricity-and-magnetism",
+      "unit": 4
+    },
+    {
+      "count": 30,
+      "slug": "nuclear-physics",
+      "unit": 5
+    },
+    {
+      "count": 8,
+      "slug": "space-physics",
+      "unit": 6
+    }
+  ],
+  "totals": {
+    "done": 1488,
+    "failed": 1
+  }
+}
