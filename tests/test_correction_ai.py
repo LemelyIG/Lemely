@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from lemely.core.loose_schemas import MarkScheme
+from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
     ExtractedAnswer,
     ExtractedAnswers,
 )
-from lemely.io.correction_ai import correct_paper
+from lemely.io.correction_ai import _build_mcq_corrected, correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ConfigError
@@ -158,6 +158,75 @@ class HybridCorrectPaperTests(unittest.TestCase):
         )
         q2 = next(q for q in result.questions if q.question_id == "2")
         self.assertEqual(q2.awarded_marks, 2)  # clamped
+
+    def test_extraction_confidence_propagates_through_mcq_path(self) -> None:
+        """CorrectedQuestion.extraction_confidence carries the extractor's confidence (#36/M1.1)."""
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.77),
+                ExtractedAnswer(question_id="2", answer="because gravity", confidence=0.42),
+            ],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=None,
+            mcq_only=True,
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.extraction_confidence, 0.77)
+
+    def test_extraction_confidence_propagates_through_ai_marked_path(self) -> None:
+        """extraction_confidence flows into the AI-marked (non-MCQ) CorrectedQuestion too."""
+        client = _client_with_seq(self.tmp, [_mock_marker_response(2, ["p1", "p2"], "ok")])
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.99),
+                ExtractedAnswer(question_id="2", answer="because gravity", confidence=0.42),
+            ],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.extraction_confidence, 0.42)
+
+
+class MCQAbstainHardeningTests(unittest.TestCase):
+    """Defensive hardening for a latent, unreachable branch (D15, spec §2.2(ii)).
+
+    ``Question`` itself forbids ``mcq_answer=None`` for an MCQ-typed question
+    (see the model validator raising in ``loose_schemas.py``), so this branch
+    cannot be reached through any real parsing path today — this is NOT a
+    regression test for a live defect, it documents the defensive hardening
+    added to ``_build_mcq_corrected`` in case that invariant is ever violated
+    (e.g. a future relaxed parser, a hand-built fixture). Before this change,
+    a Question with ``mcq_answer=None`` silently fell through to
+    ``awarded_marks=0, confidence_score=1.0, HIGH, needs_teacher_review=False``
+    — a wrong mark reported with full, unflagged confidence.
+    """
+
+    def test_mcq_answer_none_abstains_with_low_confidence_and_review_flag(self) -> None:
+        question = Question.model_construct(
+            id="1",
+            parent_id=None,
+            marks=1,
+            type=QuestionType.MCQ,
+            mcq_answer=None,
+            parts=[],
+            topic_hint=None,
+        )
+        result = _build_mcq_corrected(question, "A")
+        self.assertEqual(result.confidence_score, 0.0)
+        self.assertTrue(result.needs_teacher_review)
+        self.assertIsNotNone(result.review_reason)
 
 
 class ECFContextTests(unittest.TestCase):

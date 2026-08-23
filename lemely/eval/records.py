@@ -41,3 +41,14 @@ class EvalRecord(StrictModel):
     marker_conf: float | None
     id_match: IdMatch
     triggers: list[str]
+    maximum_marks: int | None = None
+    """The question's tariff (``CorrectedQuestion.maximum_marks``), i.e. marks
+    available -- NOT marks earned (that is ``truth_marks``). Used to weight
+    :func:`lemely.eval.analyses.paper_grade_confidence` so a wrongly-answered
+    high-tariff question still carries its full weight instead of vanishing.
+    Defaults to ``None`` (load-bearing: keeps rows written before this field
+    existed -- e.g. ``BUILD/accuracy-runs/aa-floor-2026-08-23-a/*.jsonl`` --
+    parseable under ``StrictModel``'s ``extra="forbid"``, since a missing key
+    with a default is accepted even though an unknown key is rejected). Is
+    ``None`` for the "excluded" outcome (no ``CorrectedQuestion`` was ever
+    produced for that leaf, so no tariff is known)."""

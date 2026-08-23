@@ -95,12 +95,23 @@ def _calibrate_confidence(
     answer_stripped = answer.answer.strip()
     looks_like_mcq_answer = answer_stripped.upper() in {"A", "B", "C", "D"}
 
+    # D14/D19 (spec §2.1): the old heuristic added an unconditional +0.1 bonus
+    # to any single-letter answer and applied the MCQ/short-answer caps BEFORE
+    # the source_region/working_out bonuses, letting a capped value leak past
+    # its cap -- e.g. an MCQ hint with source_region set could leak
+    # 0.20 + 0.03 = 0.23, and a short non-MCQ answer with both working_out and
+    # source_region set could leak 0.30 + 0.05 + 0.03 = 0.38. There is no MCQ
+    # confidence bonus any more — Gemini's self-reported confidence on a clean
+    # single-letter answer is not something this heuristic layer should
+    # inflate. Every bonus is added first; any cap is computed and applied as
+    # the LAST step, so a capped value can never leak past 0.2/0.3.
+    cap: float | None = None
     if is_mcq_hint or looks_like_mcq_answer:
-        conf = min(1.0, conf + 0.1) if looks_like_mcq_answer else min(conf, 0.2)
+        cap = 0.2
     else:
         # Non-MCQ: check answer completeness
         if len(answer_stripped) < 2:
-            conf = min(conf, 0.3)
+            cap = 0.3
 
         # Working out present → slight boost (extractor found method, more reliable)
         if answer.working_out:
@@ -109,6 +120,9 @@ def _calibrate_confidence(
     # Source region present → slight boost (extractor located answer spatially)
     if answer.source_region:
         conf = min(1.0, conf + 0.03)
+
+    if cap is not None:
+        conf = min(conf, cap)
 
     return conf
 

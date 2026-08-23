@@ -130,6 +130,11 @@ class CorrectedQuestion(StrictModel):
     matched_point_ids: list[str] = Field(default_factory=list)
     plagiarism_flagged: bool = False
     ai_detection_flagged: bool = False
+    extraction_confidence: float | None = None
+    """Extraction-side confidence (``ExtractedAnswer.confidence``) for the answer
+    this question was built from, distinct from ``confidence_score`` which is the
+    marking-stage confidence. ``None`` when no answer was extracted for this
+    question (spec §4 M1.1)."""
 
     @model_validator(mode="after")
     def validate_awarded_marks(self) -> CorrectedQuestion:

@@ -1,5 +1,8 @@
 """Pure statistical analyses over ``list[EvalRecord]`` (spec §3.3).
 
+Includes ``paper_grade_confidence`` (spec §4 M1.1), the paper-level
+grade-confidence rule added alongside the M1.1 confidence-propagation unit.
+
 No I/O, no Gemini calls, no filesystem access — every function here is a
 plain function of its input list. Every analysis filters to question-level
 rows (``mark_point_id is None``) before aggregating, unless the analysis is
@@ -11,10 +14,12 @@ spec §3.3.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 if TYPE_CHECKING:
     from lemely.eval.records import EvalRecord
+
+ConfidenceBandLabel = Literal["HIGH", "MEDIUM", "LOW"]
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -609,3 +614,72 @@ def _percentile(sorted_values: list[float], p: float) -> float:
     idx = math.ceil(p * len(sorted_values)) - 1
     idx = max(0, min(idx, len(sorted_values) - 1))
     return sorted_values[idx]
+
+
+# ---------------------------------------------------------------------------
+# paper_grade_confidence
+# ---------------------------------------------------------------------------
+
+
+def _band_for_score(score: float) -> ConfidenceBandLabel:
+    if score >= 0.85:
+        return "HIGH"
+    if score >= 0.65:
+        return "MEDIUM"
+    return "LOW"
+
+
+def paper_grade_confidence(
+    records: list[EvalRecord],
+) -> dict[str, tuple[float, ConfidenceBandLabel]]:
+    """Paper-level grade-confidence rule (spec §4 M1.1).
+
+    Per paper, the marks-weighted mean of each question's marking-stage
+    confidence (``marker_conf`` -- the confidence used everywhere else in the
+    codebase for the marker's own certainty, distinct from ``extraction_conf``
+    which is extraction-side), weighted by the question's TARIFF
+    (``maximum_marks``, marks available), banded HIGH >= 0.85 / MEDIUM >= 0.65
+    / LOW below. Deliberately NOT a min-over-questions rule: a single
+    low-confidence, low-weight question must not by itself sink an
+    otherwise-confident paper's band.
+
+    Weighting is deliberately NOT ``truth_marks`` (marks EARNED): weighting by
+    what the student happened to score would make a high-tariff question
+    answered wrong weigh less than the same question answered right, biasing
+    the band upward and toward dropping exactly the low-confidence rows a
+    grade-confidence signal should be most sensitive to. The weight is
+    ``r.maximum_marks or r.truth_marks or 1`` -- the tariff when known,
+    falling back to earned marks for rows written before ``maximum_marks``
+    existed (never both zero/unknown, in which case the row still counts with
+    unit weight rather than being dropped).
+
+    Funnel: filters to question-level rows (``mark_point_id is None``) per
+    spec §3.3's convention (the "considered" set). Of those, a row with
+    ``marker_conf is None`` (no marking-stage confidence was ever produced --
+    e.g. an "excluded"/"unmatched" outcome) carries no weight and is skipped
+    entirely; every other row is weighted and counted, even one with
+    ``truth_marks == 0`` (a paper scored zero throughout still gets a real
+    band -- it is not omitted). A paper is omitted from the result only if
+    every one of its question-level rows had ``marker_conf is None``, leaving
+    nothing to average.
+    """
+    by_paper: dict[str, list[EvalRecord]] = {}
+    for r in _question_level(records):
+        by_paper.setdefault(r.paper_id, []).append(r)
+
+    result: dict[str, tuple[float, ConfidenceBandLabel]] = {}
+    for paper_id, group in by_paper.items():
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for r in group:
+            if r.marker_conf is None:
+                continue
+            weight = float(r.maximum_marks or r.truth_marks or 1)
+            weighted_sum += r.marker_conf * weight
+            total_weight += weight
+        if total_weight <= 0:
+            continue
+        score = weighted_sum / total_weight
+        result[paper_id] = (score, _band_for_score(score))
+
+    return result
