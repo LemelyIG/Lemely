@@ -998,6 +998,88 @@ abandoned**, it is waiting on a choice between options A/B/C. Do not restart #36
 from scratch. Board Status set back to Backlog. Resolve the blocker, append a
 RESOLVED line here, and move the item back to Ready.
 
+## C: #40 (M1.5) — a live review-escalation trigger is shipping unmeasured
+
+**Status: OPEN. Blocked on a human decision (authorise a sweep, or accept the
+gap explicitly).** Opened 2026-08-23. Branch
+`feature/accuracy-40-coherence-gate-awarded-marks-must`, **PR #83 OPEN and NOT
+merged**, CI green, six review dimensions clean. Board item moved off *In
+review*.
+
+### The blocker
+
+Acceptance bullet 4 of #40 — *"contribution to `review_rate` measured and
+reported separately"* — is **unmet**, and the thing it guards is real:
+
+- `_check_coherence` is a **fourth OR-branch** of `needs_teacher_review`
+  (`lemely/io/correction_ai.py:464`:
+  `low_confidence or out_of_range or value_mismatch or coherence_mismatch`),
+  so the gate creates review flags that would not otherwise exist.
+- `_review_triggers` (`lemely/accuracy/harness.py`) appends
+  `"coherence_mismatch"` **alongside** the generic `"needs_teacher_review"`,
+  never instead of it, and `review_rate` counts a leaf as reviewed on any
+  non-`random_audit` trigger. So the gate **raises** `review_rate_signal` and
+  `review_rate_total`.
+- **MISSION §9 gate 8:** *"Any change that could raise review volume is
+  measured against the ratchet **before** merge, not after."* No before/after
+  corpus number exists.
+
+The measured `review_rate_signal` is already **32.58%** against an 8% target,
+so this trigger consumes headroom that is already gone.
+
+### Why the measurement could not simply be taken
+
+- The historical route is barred: the 181 cached `AIMarkResponse` payloads
+  under `.lemely-cache/gemini/` carry `matched_point_ids` but **no
+  question-identity linkage** and no manifest, and `gemini.py` exposes no
+  zero-spend cache-hit-only replay mode (only `read_write`/`bypass`/`refresh`).
+- The forward route is barred by authorisation, not by capability: a live
+  sweep spends money and none is authorised.
+
+### Corrections this blocker also records
+
+1. **"#40 landed" is false.** Commit `a7b99e3`'s message says
+   *"#40 landed; clear in-progress marker"*. It never landed. The message
+   cannot be rewritten (pushed, and CI ran on it), so it is corrected here and
+   in the state pointer rather than silently left standing.
+2. **The orchestrator's "the machinery is delivered and wired, only the number
+   awaits a sweep" was wrong** — `coherence_trigger_rate()` had *zero* call
+   sites until `4a9e216`. The reporting path is now wired and test-covered;
+   still no corpus number.
+3. **"Reported separately" was being read as "review-budget neutral."** It is
+   not. The *metric* is kept out of the gate; the *trigger* still moves
+   `review_rate`. The comment in `cli.py` and the `_review_triggers` docstring
+   both implied otherwise and have been corrected.
+
+### What unblocks it
+
+Either **(a)** authorise the sweep that produces `coherence_trigger_rate` and
+the before/after delta to `review_rate_signal`/`review_rate_total` on the
+corpus (record it in DECISIONS.md, then #40 lands); or **(b)** decide
+explicitly that a live review-escalation trigger may ship unmeasured ahead of
+the M0.9 ratchet being armed, and say so on #40 — at which point the bullet is
+formally retired rather than quietly skipped. A third option, **(c)**, is to
+add a cache-hit-only replay mode to `gemini.py` (zero spend by construction)
+and measure that way, but that is new scope and belongs in its own issue.
+
+---
+
+## #40 — M1.5 — Coherence gate: awarded marks must reconcile with matched point ids
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on HUMAN DECISION: acceptance bullet 4 unmet — the coherence trigger raises review_rate by an unmeasured amount, and MISSION 9 gate 8 requires that measured BEFORE merge. Options A/B/C in BUILD/BLOCKERS.md section C and the 2026-08-23 comment on #40. PR #83 is OPEN, green, complete at 80bed91 — do NOT restart #40 from scratch.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## #40 — M1.5 — Coherence gate: awarded marks must reconcile with matched point ids
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on HUMAN DECISION: acceptance bullet 4 unmet — the coherence trigger raises review_rate by an unmeasured amount, and MISSION 9 gate 8 requires that measured BEFORE merge. Options A/B/C in BUILD/BLOCKERS.md section C and the 2026-08-23 comment on #40. PR #83 is OPEN, green, complete at 80bed91 — do NOT restart #40 from scratch.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
 ---
 
 ## D: M1 as a whole is gated on measurement authorisation, not on engineering
