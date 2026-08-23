@@ -1063,3 +1063,11 @@ the M0.9 ratchet being armed, and say so on #40 — at which point the bullet is
 formally retired rather than quietly skipped. A third option, **(c)**, is to
 add a cache-hit-only replay mode to `gemini.py` (zero spend by construction)
 and measure that way, but that is new scope and belongs in its own issue.
+
+---
+
+## #40 — M1.5 — Coherence gate: awarded marks must reconcile with matched point ids
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on HUMAN DECISION: acceptance bullet 4 unmet — the coherence trigger raises review_rate by an unmeasured amount, and MISSION 9 gate 8 requires that measured BEFORE merge. Options A/B/C in BUILD/BLOCKERS.md section C and the 2026-08-23 comment on #40. PR #83 is OPEN, green, complete at 80bed91 — do NOT restart #40 from scratch.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
