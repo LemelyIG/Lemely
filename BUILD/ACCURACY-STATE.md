@@ -2,7 +2,7 @@
 
 run_pointer: run-2026-08-21-a
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: feature/accuracy-40-coherence-gate-awarded-marks-must
+branch: feature/accuracy-46-build-the-two-pass-blind-labeller
 last_run_label: aa-floor-2026-08-23-a
 last_run_headline: A/A churn floor candidate (M0.3/#27): 11.6% of leaf outcomes flip between two identical-config repeats (162/1395 pair-leaf comparisons over C(10,2)=45 pairs; per-pair range 0.0-19.4%); 9 of 31 distinct leaves ever churned, Wilson [16.1%, 46.6%]. All churn is gemini-path (15.7%, 162/1035); det path is exactly 0.0 (0/360). Pooled leaf accuracy 75.8% (235/310 leaf-repeats), 0 excluded, 0 abstentions. Does NOT show any A/B effect: single-arm, cache bypassed, n=31 leaves vs the 219-leaf McNemar floor, split=dev (pre-M0.7a). Separately reportable: review_rate_total 32.6% (per-repeat 29.0-41.9%) and per-paper p95 82.1% breach the min(10%, 29.03%) ceiling and 15% p95 target in every repeat (ratchet unarmed at M0).
 review_rate: 32.58% MEASURED MEAN of 10 live repeats (aa-floor-2026-08-23-a, range 29.03-41.94%, n=31, post-#29) — NOT THE RATCHET CONSTANT. last_merged_review_rate is still 29.03% (BUILD/review-rate-baseline.json, lemely/runtime/config.py:168) and 29.03% is the BOTTOM of the measured range, so arming min(10%, last_merged) against it gates on a figure unchanged code exceeds 7 times in 10 (DA9a; binding on #36).
