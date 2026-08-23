@@ -1036,7 +1036,7 @@ def measure_accuracy_cmd(
         measure_accuracy,
         save_result,
     )
-    from lemely.eval.analyses import review_rate
+    from lemely.eval.analyses import coherence_trigger_rate, review_rate
     from lemely.eval.review_gate import evaluate_review_rate_gate
     from lemely.io.gemini import GeminiClient
 
@@ -1118,6 +1118,21 @@ def measure_accuracy_cmd(
             click.echo("  (ratchet unarmed — recorded, not blocking)", err=True)
     if gate["blocking_failure"]:
         failed.append("review_rate_gate: " + "; ".join(gate["breaches"]))
+
+    # M1.5 (#40) bullet 4: the coherence gate's own contribution to review
+    # volume, measured and reported SEPARATELY from review_rate above —
+    # never folded into it, and never fed into the review-rate gate/ratchet.
+    # This is reporting only: it does not affect `failed` or the exit code.
+    #
+    # Read that precisely: it is the coherence_trigger_rate METRIC that is
+    # kept out of the gate. The coherence TRIGGER itself is NOT neutral —
+    # `_check_coherence` is a fourth OR-branch of `needs_teacher_review`
+    # (`correction_ai.py`), so a coherence-flagged leaf also carries the
+    # generic "needs_teacher_review" trigger and therefore DOES raise
+    # `review_rate_signal` and `review_rate_total`. This line exists to make
+    # that cost visible; it does not make the cost zero.
+    ctr = coherence_trigger_rate(result.eval_records)
+    click.echo(f"Coherence trigger rate: {ctr['coherence_trigger_rate']:.3f} (n={ctr['n']})")
 
     if failed:
         click.echo("\nTargets missed:", err=True)

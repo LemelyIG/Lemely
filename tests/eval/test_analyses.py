@@ -10,6 +10,7 @@ from pathlib import Path
 from lemely.eval.analyses import (
     MCNEMAR_IMPROVEMENT_N_FLOOR,
     ablation_2x2,
+    coherence_trigger_rate,
     exclusion_funnel,
     mcnemar,
     mcnemar_improvement_p_value,
@@ -470,6 +471,69 @@ class TestReviewRate:
         # p1: 1/2 = 0.5, p2: 0/2 = 0.0 — p95 across two papers is dominated by
         # the worst one.
         assert result["per_paper_p95"] == 0.5
+
+
+class TestCoherenceTriggerRate:
+    """M1.5 (#40): coherence_mismatch's own leaf-level rate, reported
+    separately from review_rate_signal/review_rate_total — NOT double-counted
+    into either."""
+
+    def test_coherence_trigger_rate_is_reported_separately_from_review_rate(self) -> None:
+        records = [
+            _rec(question_id="1", paper_id="p1", triggers=["coherence_mismatch"]),
+            _rec(question_id="2", paper_id="p1", triggers=["needs_teacher_review"]),
+            _rec(question_id="3", paper_id="p1", triggers=[]),
+            _rec(question_id="4", paper_id="p1", triggers=[]),
+        ]
+        rr = review_rate(records)
+        ctr = coherence_trigger_rate(records)
+        assert ctr["n"] == 4
+        assert ctr["coherence_trigger_rate"] == 0.25
+        # Distinct from review_rate: 2/4 leaves carry SOME trigger, only 1/4
+        # carries the coherence one specifically. Not double-counted into
+        # either denominator: review_rate itself is unaffected by whether the
+        # trigger token spells "coherence_mismatch" or something else.
+        assert rr["review_rate_total"] == 0.5
+        assert ctr["coherence_trigger_rate"] != rr["review_rate_total"]
+        assert ctr["coherence_trigger_rate"] != rr["review_rate_signal"]
+
+    def test_empty_input_reports_zero_with_zero_n(self) -> None:
+        result = coherence_trigger_rate([])
+        assert result["n"] == 0
+        assert result["coherence_trigger_rate"] == 0.0
+
+    def test_counts_leaf_via_trigger_union_not_representative(self) -> None:
+        # Two fixture-variant records for the same leaf, both correct (DA6
+        # unanimity), but only one carries the coherence trigger — the leaf
+        # must be counted regardless of which record DA6 would collapse to.
+        records = [
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="a",
+                outcome="correct",
+                triggers=[],
+            ),
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="b",
+                outcome="correct",
+                triggers=["coherence_mismatch"],
+            ),
+        ]
+        result = coherence_trigger_rate(records)
+        assert result["n"] == 1
+        assert result["coherence_trigger_rate"] == 1.0
+
+    def test_excluded_leaves_are_not_counted_in_denominator(self) -> None:
+        records = [
+            _rec(question_id="1", paper_id="p1", outcome="excluded", triggers=[]),
+            _rec(question_id="2", paper_id="p1", triggers=["coherence_mismatch"]),
+        ]
+        result = coherence_trigger_rate(records)
+        assert result["n"] == 1
+        assert result["coherence_trigger_rate"] == 1.0
 
 
 class TestDistinctLeafDA6:
