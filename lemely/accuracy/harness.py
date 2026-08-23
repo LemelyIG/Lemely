@@ -310,6 +310,19 @@ def _review_triggers(needs_teacher_review: bool, review_reason: str | None) -> l
     re-tuning the M0.9 ratchet (``review_rate_ratchet_armed`` stays False;
     this function does not touch ``lemely/runtime/config.py`` or
     ``BUILD/review-rate-baseline.json``).
+
+    **Separable is not free.** ``"coherence_mismatch"`` is appended *alongside*
+    the generic ``"needs_teacher_review"`` trigger, never instead of it, and
+    :func:`lemely.eval.analyses.review_rate` counts a leaf as reviewed on any
+    non-``random_audit`` trigger. Because ``_check_coherence`` is a fourth
+    OR-branch of ``needs_teacher_review`` in
+    :func:`lemely.io.correction_ai._build_ai_corrected`, the coherence gate
+    creates review flags that would not otherwise exist and so **raises**
+    ``review_rate_signal`` and ``review_rate_total`` by an amount that has
+    NOT been measured on any corpus (#40 acceptance bullet 4 — see
+    BUILD/BLOCKERS.md and BUILD/DECISIONS.md DA10). Do not read the
+    separate-reporting design as evidence the trigger is review-budget
+    neutral; it is not.
     """
     if not needs_teacher_review:
         return []
