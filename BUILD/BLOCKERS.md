@@ -983,3 +983,17 @@ still parses — verified, all 71 rows load. Rows weighted 48/71 → 71/71.
 distribution is all-HIGH before and after (0.947 / 0.9197 / 1.0 / 0.9362 /
 0.982). Recorded as measured. It is structurally guaranteed while `marker_conf`
 is pinned at 1.0 for every correct MCQ, so re-read it once bullet 1 lands.
+
+---
+
+## #36 — M1.1 — The confidence unit (must ship as one commit)
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on HUMAN DECISION: acceptance bullets 1, 2 and 7 conflict — full write-up
+in **section B above**, and in the 2026-08-23 comment on #36. Branch
+`feature/accuracy-36-the-confidence-unit-must-ship-as-one` is implemented,
+reviewed and complete at `2cae804` (signed, gates green); it is **not
+abandoned**, it is waiting on a choice between options A/B/C. Do not restart #36
+from scratch. Board Status set back to Backlog. Resolve the blocker, append a
+RESOLVED line here, and move the item back to Ready.
