@@ -916,3 +916,70 @@ not the constraint — authorisation is.
 - **Did not re-run or extend the #27 A/A floor.** It is published and ratified;
   MISSION §12.9 forbids re-running at higher `n` to chase significance.
 - **Did not move any board item to Ready** to manufacture startable work.
+
+---
+
+## B: #36 (M1.1) — two of the issue's own acceptance bullets conflict once the third is implemented
+
+**Status: OPEN. Blocked on a human decision, not on engineering.** Opened
+2026-08-23. Branch `feature/accuracy-36-the-confidence-unit-must-ship-as-one`
+exists, one signed commit `2cae804`, tree clean, all local gates green, **no PR
+opened**. Board item stays *In progress*.
+
+### The conflict
+
+- **Bullet 1** requires extraction confidence to actually drive per-question
+  confidence. It is currently unmet: `_build_mcq_corrected`'s success branch
+  (`lemely/io/correction_ai.py:182-194`) still hardcodes
+  `confidence_score=1.0 / HIGH / needs_teacher_review=False`, so the new
+  `extraction_confidence` field is threaded but read by no decision path.
+- **Bullet 2** as written asks that "a raw-0.90 single-letter answer with
+  `source_region` set ends at ≤0.20, **not 0.23 or 1.00**". Those two rejected
+  values come from **two different inputs** on `develop`, not one: a clean
+  single letter took an uncapped `+0.1` (→1.00), while an MCQ *hint* whose
+  answer is not A/B/C/D took `min(conf, 0.2)` and leaked to 0.23. Satisfying
+  the bullet literally means capping clean single letters at 0.2 — a **new**
+  ceiling, not the "cap ordering fixed" the bullet's own title describes.
+- **Bullet 7** requires `review_rate_signal ≤ 8%`. Implementing 1 and 2-as-
+  written makes every correctly-extracted MCQ read LOW / needs-review — the
+  whole det path, 8 of 31 golden leaves (~26%) — on top of a `review_rate_signal`
+  already measured at **32.58%**. §9 gate 8 judges the ratchet on that number.
+
+### Why this was escalated instead of decided
+
+The engineering-clean reading is (A): delete only the bonus, leave the 0.2 cap
+on the mcq-hint-non-letter case where `develop` had it, so a clean letter keeps
+its raw confidence (0.90 + 0.03 = 0.93, which **violates** bullet 2's "≤0.20").
+That reading was **not** taken unilaterally for one reason: **it is the option
+that makes the gated metric easier.** Lowering MCQ review volume is exactly the
+narrowed-denominator / moved-goalpost shape `accuracy-reviewer` exists to catch,
+and an agent picking it on its own judgement is indistinguishable from that
+failure mode even when the argument is good. Structurally this is the **DA1**
+situation — a spec sentence unsatisfiable as written — and DA1's precedent is to
+propose the amendment and leave the spec alone until the human says.
+
+### What unblocks it
+
+A choice on #36 between **(A)** cap scoped to the non-letter case, bullet 2
+amended to name that input; **(B)** cap all MCQ-shaped answers at 0.2 as bullet 2
+literally reads, accept every correct MCQ becoming needs-review, and formally
+retire bullet 7 for M1.1 (it is already unmet at 32.58%, and gate 8 keeps the M0
+breach recorded-not-blocking, so this may be the honest answer); or **(C)**
+something else. Full evidence is in the 2026-08-23 comment on issue #36.
+
+### Resolved in this cycle, recorded so it is not re-litigated
+
+`paper_grade_confidence` originally weighted by `truth_marks`, which is marks
+**earned**, not the tariff — 23 of 71 baseline rows dropped, including the
+corpus minima `marker_conf` 0.55 and 0.65, biasing every band upward and making
+an all-zero paper vanish. Fixed by weighting on the tariff via a new
+`EvalRecord.maximum_marks: int | None = None`; the default is load-bearing
+(`StrictModel` is `extra="forbid"`, which rejects unknown keys but accepts a
+missing key with a default), so the published `aa-floor-2026-08-23-a` evidence
+still parses — verified, all 71 rows load. Rows weighted 48/71 → 71/71.
+
+**Bullet 6 is unmet and the fix did not rescue it.** The hypothesis that the
+`truth_marks` bias caused the all-HIGH degeneracy was **wrong**: the
+distribution is all-HIGH before and after (0.947 / 0.9197 / 1.0 / 0.9362 /
+0.982). Recorded as measured. It is structurally guaranteed while `marker_conf`
+is pinned at 1.0 for every correct MCQ, so re-read it once bullet 1 lands.
