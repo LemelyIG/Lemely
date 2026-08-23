@@ -10861,3 +10861,104 @@ on a branch cut in parallel. #30 landed first, so it keeps `DA7` and this entry
 was renumbered to `DA8` at merge time. References in `CHANGELOG.md`,
 `DELIVERY.md` and `docs/ACCURACY-STRATEGIES.md` were updated with it; the `DA7`
 citation in `lemely/eval/analyses.py` points at #30's entry and is unchanged.
+
+---
+
+## DA9 — The A/A churn floor: 11.6% of leaf outcomes flip at constant configuration (#27, M0.3)
+
+**The measurement.** Ten repeats of the full golden set at byte-identical
+configuration, cache bypassed (`--cache-mode bypass`, the #77 seam), run
+2026-08-23 as `aa-floor-2026-08-23-a` over git sha `b364bf76`, model
+`gemini-2.5-flash`, split `dev (pre-M0.7a)`. Raw evidence is committed under
+`BUILD/accuracy-runs/aa-floor-2026-08-23-a/` — ten `records-repeat-NN.jsonl`
+files of 71 `EvalRecord` rows each (710 rows), ten per-repeat manifests, and a
+run manifest recording `cache_hit_detected=false` on every repeat across ~740
+real API calls. Cost $0.958711 at corrected GA pricing (1,186,229 in /
+241,137 out; `thoughts_token_count` was 0 on every call), against a $1.58
+preflight estimate.
+
+**The floor.** Collapsing each repeat to distinct `(paper_id, question_id)`
+leaves with the production DA6 rule (`_group_by_leaf` /
+`_collapse_leaf_group`) gives 31 leaves per repeat, an identical leaf set
+every time. Over all C(10,2) = 45 repeat-pairs:
+
+| figure | value |
+|---|---|
+| **pairwise leaf-outcome churn** | **11.61%** (162 / 1395 pair-leaf comparisons) |
+| per-pair spread | 0.0% – 19.35% |
+| leaves that ever churned | 9 of 31, 95% Wilson **[16.1%, 46.6%]** |
+| `det` parse path | **0.0%** (0 / 360) |
+| `gemini` parse path | **15.65%** (162 / 1035) |
+
+**No Wilson interval is quoted on 162/1395.** The 45 pairs re-use the same 10
+runs, so those comparisons are not independent and a binomial interval over
+them would be fiction. The honest spread on that statistic is the per-pair
+range, 0.0%–19.35%. The Wilson interval above is quoted on the one figure that
+*is* a clean binomial: 9 of 31 independent leaves ever churning.
+
+**All churn is on the gemini path; the det path is exactly deterministic.**
+0 of 360 det pair-leaf comparisons differed. That is a floor of 0.0 on the det
+path measured at n=360, not an assumption — and it means an A/B that moves only
+det-path behaviour is not subject to this floor. Quote the path-specific floor,
+not the pooled 11.6%, whenever an arm touches only one path.
+
+**The rule this establishes (acceptance box 4).** Any A/B delta on the gemini
+path smaller than **11.6 percentage points** is **within noise** and must be
+reported as noise — not as a small improvement, not as a trend, not as
+directionally encouraging. The det-path floor is 0.0%. This applies to every
+later comparison in the programme, and it is the floor §2 of the mission
+requires exist before any A/B claim is interpretable.
+
+**What this run is NOT.** Single-arm, so it shows no A/B effect of any kind.
+n=31 leaves against the n=219 paired-McNemar floor (DA7), so it could not carry
+an improvement claim even if it had two arms. Split is `dev (pre-M0.7a)`, i.e.
+the membership is not yet frozen (#57 waits on #44). Nothing here licenses an
+accuracy claim.
+
+### DA9a — Two published single-run figures are now shown to be draws from a wide distribution
+
+This run re-measures, ten times, two numbers the programme had published from a
+**single run each**. Both survive, but neither is as sharp as one run made it look.
+
+**DA8's honest baseline (77.4%, 24/31 leaves).** Pooled over ten repeats the
+leaf accuracy is **75.8%** (235/310), per-repeat range **67.7% – 80.6%**,
+stdev 3.5pp. DA8's 24/31 is the *modal* draw — it came up 5 times in 10 — so it
+is representative rather than lucky, and DA8 is **not** retracted. But a single
+run of this corpus reports a number carrying roughly a 13pp spread, and the
+per-repeat Wilson intervals at n=31 are ~0.50–0.91 wide. **This corpus cannot
+resolve anything finer than about 10pp**, before the churn floor is even applied.
+Quote 75.8% (235/310) as the better-estimated figure from here on, and cite DA8's
+24/31 as the single-run draw it is.
+
+**DA-M0.9's `review_rate` (29.03%).** Recomputed live with the production
+`lemely.eval.analyses.review_rate` on all ten records files: mean
+`review_rate_total` = **32.58%**, per-repeat **29.03% – 41.94%**; `signal` and
+`total` are identical here because no `random_audit` trigger fired. Per-paper
+p95 averages 82.1% (range 66.7%–85.7%).
+
+**This is the fresh live sweep on post-#29 denominators that the resume pointer
+said M0.9 needed, and it changes the picture materially.** The committed
+constant is 29.03% (`lemely/runtime/config.py:168`,
+`BUILD/review-rate-baseline.json`) — and 29.03% is **the bottom of the observed
+range**, the value that came up on the 3 luckiest of 10 repeats. It is not a
+central estimate; it is a best case.
+
+**Consequence for arming the M0.9 ratchet (binding on #36).** Arming
+`min(10%, last_merged_review_rate)` against 29.03% would gate the build on a
+figure that identical-config re-runs exceed **7 times in 10**, with no code
+change whatsoever. That is a gate that fails on noise, and the failure would be
+blamed on whatever diff happened to be in flight. Before the ratchet is armed,
+`last_merged_review_rate` must be restated as a distribution-aware figure — the
+mean 32.58%, or an upper bound over the observed range — not the single lucky
+draw. This *raises* the recorded number, which looks like weakening the gate and
+is the opposite: it stops the gate firing at random. Both limbs are breached in
+every one of the ten repeats regardless (ceiling is `min(10%, 29.03%)` = 10%;
+p95 target 15% against an observed ~82%), so the breach itself is not in doubt
+and stays recorded-not-blocking while the ratchet is unarmed at M0.
+
+**Not fixed here.** This entry does not touch `config.py`,
+`BUILD/review-rate-baseline.json`, or `scripts/check_review_rate_gate.py`
+(which still has zero test coverage and re-reads a saved golden run rather than
+recomputing). #27 is a measurement issue; changing the gate's constant is #36's
+work, and doing it inside a measurement commit would make "did the instrument
+change between runs?" unanswerable later. The numbers are handed over on #36.

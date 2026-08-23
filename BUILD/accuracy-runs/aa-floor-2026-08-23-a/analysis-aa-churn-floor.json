@@ -1,0 +1,451 @@
+{
+  "run_label": "aa-floor-2026-08-23-a",
+  "arm": "aa-repeats",
+  "purpose": "M0.3/#27 -- publish the A/A churn floor",
+  "n_repeats": 10,
+  "identical_fingerprint_confirmed": true,
+  "params_fingerprint": "8a08cb821f60",
+  "corpus_digest": "e982c884f7f30cd7",
+  "cache_mode": "bypass",
+  "cache_hits_detected": 0,
+  "split": "dev (pre-M0.7a)",
+  "n_distinct_leaves": 31,
+  "n_det_leaves": 8,
+  "n_gemini_leaves": 23,
+  "abstain_outcomes_observed": 0,
+  "abstain_denominator_note": "0/710 raw rows (31 leaves x 10 repeats x ~2.29 records/leaf on avg -- actually 71 question-level rows/repeat) carried outcome=='abstain'; abstention as a distinct outcome column was checked for and is genuinely absent in this corpus/run, not folded into another bucket.",
+  "churn_floor": {
+    "definition": "mean fraction of distinct leaves whose collapsed outcome differs, averaged over all C(10,2)=45 unordered pairs of the 10 identical-config repeats",
+    "overall_mean_pairwise_churn": 0.11612903225806451,
+    "overall_min_max_pairwise_churn": [
+      0.0,
+      0.1935483870967742
+    ],
+    "det_only_mean_pairwise_churn": 0.0,
+    "det_only_min_max": [
+      0.0,
+      0.0
+    ],
+    "gemini_only_mean_pairwise_churn": 0.1565217391304348,
+    "gemini_only_min_max": [
+      0.0,
+      0.2608695652173913
+    ],
+    "leaves_with_any_disagreement_across_10_repeats": [
+      [
+        [
+          "0580_s23_qp_22_theory",
+          "14"
+        ],
+        [
+          "under",
+          "correct",
+          "under",
+          "under",
+          "under",
+          "under",
+          "under",
+          "correct",
+          "under",
+          "correct"
+        ]
+      ],
+      [
+        [
+          "0580_s23_qp_22_theory",
+          "4"
+        ],
+        [
+          "under",
+          "over",
+          "under",
+          "under",
+          "over",
+          "over",
+          "over",
+          "under",
+          "over",
+          "under"
+        ]
+      ],
+      [
+        [
+          "0606_s23_qp_12_theory",
+          "2"
+        ],
+        [
+          "correct",
+          "under",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct"
+        ]
+      ],
+      [
+        [
+          "0606_s23_qp_12_theory",
+          "3b"
+        ],
+        [
+          "under",
+          "under",
+          "over",
+          "under",
+          "under",
+          "under",
+          "over",
+          "under",
+          "under",
+          "under"
+        ]
+      ],
+      [
+        [
+          "0606_s23_qp_12_theory",
+          "4b"
+        ],
+        [
+          "correct",
+          "under",
+          "under",
+          "under",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct"
+        ]
+      ],
+      [
+        [
+          "0625_s20_qp_31_theory",
+          "1a_i"
+        ],
+        [
+          "correct",
+          "correct",
+          "correct",
+          "under",
+          "correct",
+          "under",
+          "correct",
+          "correct",
+          "correct",
+          "correct"
+        ]
+      ],
+      [
+        [
+          "0625_s20_qp_31_theory",
+          "1b"
+        ],
+        [
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "correct",
+          "over"
+        ]
+      ],
+      [
+        [
+          "0625_s20_qp_31_theory",
+          "4a"
+        ],
+        [
+          "unmatched",
+          "correct",
+          "correct",
+          "unmatched",
+          "unmatched",
+          "unmatched",
+          "correct",
+          "unmatched",
+          "unmatched",
+          "unmatched"
+        ]
+      ],
+      [
+        [
+          "0625_w21_qp_32_theory_nested",
+          "1a_i"
+        ],
+        [
+          "under",
+          "correct",
+          "correct",
+          "under",
+          "correct",
+          "correct",
+          "under",
+          "correct",
+          "correct",
+          "under"
+        ]
+      ]
+    ],
+    "n_leaves_ever_churned": 9
+  },
+  "wilson_mark_accuracy_per_repeat": {
+    "repeat-01": {
+      "n": 31,
+      "successes": 23,
+      "point": 0.7419354838709677,
+      "lower": 0.567535275722849,
+      "upper": 0.8629845626313023
+    },
+    "repeat-02": {
+      "n": 31,
+      "successes": 24,
+      "point": 0.7741935483870968,
+      "lower": 0.6018723994130262,
+      "upper": 0.886050084055012
+    },
+    "repeat-03": {
+      "n": 31,
+      "successes": 24,
+      "point": 0.7741935483870968,
+      "lower": 0.6018723994130262,
+      "upper": 0.886050084055012
+    },
+    "repeat-04": {
+      "n": 31,
+      "successes": 21,
+      "point": 0.6774193548387096,
+      "lower": 0.501406855599508,
+      "upper": 0.8143076925268695
+    },
+    "repeat-05": {
+      "n": 31,
+      "successes": 24,
+      "point": 0.7741935483870968,
+      "lower": 0.6018723994130262,
+      "upper": 0.886050084055012
+    },
+    "repeat-06": {
+      "n": 31,
+      "successes": 23,
+      "point": 0.7419354838709677,
+      "lower": 0.567535275722849,
+      "upper": 0.8629845626313023
+    },
+    "repeat-07": {
+      "n": 31,
+      "successes": 24,
+      "point": 0.7741935483870968,
+      "lower": 0.6018723994130262,
+      "upper": 0.886050084055012
+    },
+    "repeat-08": {
+      "n": 31,
+      "successes": 25,
+      "point": 0.8064516129032258,
+      "lower": 0.6371939644454012,
+      "upper": 0.9081311641365236
+    },
+    "repeat-09": {
+      "n": 31,
+      "successes": 24,
+      "point": 0.7741935483870968,
+      "lower": 0.6018723994130262,
+      "upper": 0.886050084055012
+    },
+    "repeat-10": {
+      "n": 31,
+      "successes": 23,
+      "point": 0.7419354838709677,
+      "lower": 0.567535275722849,
+      "upper": 0.8629845626313023
+    }
+  },
+  "exclusion_funnel_per_repeat": {
+    "repeat-01": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 23,
+        "under": 7,
+        "unmatched": 1
+      }
+    },
+    "repeat-02": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 24,
+        "under": 6,
+        "over": 1
+      }
+    },
+    "repeat-03": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 24,
+        "under": 6,
+        "over": 1
+      }
+    },
+    "repeat-04": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 21,
+        "under": 9,
+        "unmatched": 1
+      }
+    },
+    "repeat-05": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 24,
+        "under": 5,
+        "over": 1,
+        "unmatched": 1
+      }
+    },
+    "repeat-06": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 23,
+        "under": 6,
+        "over": 1,
+        "unmatched": 1
+      }
+    },
+    "repeat-07": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 24,
+        "under": 5,
+        "over": 2
+      }
+    },
+    "repeat-08": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 25,
+        "under": 5,
+        "unmatched": 1
+      }
+    },
+    "repeat-09": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 24,
+        "under": 5,
+        "over": 1,
+        "unmatched": 1
+      }
+    },
+    "repeat-10": {
+      "total": 31,
+      "scored": 31,
+      "excluded": 0,
+      "by_outcome": {
+        "correct": 23,
+        "under": 6,
+        "over": 1,
+        "unmatched": 1
+      }
+    }
+  },
+  "review_rate_per_repeat": {
+    "repeat-01": {
+      "n": 31,
+      "review_rate_signal": 0.3548387096774194,
+      "review_rate_total": 0.3548387096774194,
+      "per_paper_p95": 0.8333333333333334
+    },
+    "repeat-02": {
+      "n": 31,
+      "review_rate_signal": 0.2903225806451613,
+      "review_rate_total": 0.2903225806451613,
+      "per_paper_p95": 0.8333333333333334
+    },
+    "repeat-03": {
+      "n": 31,
+      "review_rate_signal": 0.2903225806451613,
+      "review_rate_total": 0.2903225806451613,
+      "per_paper_p95": 0.6666666666666666
+    },
+    "repeat-04": {
+      "n": 31,
+      "review_rate_signal": 0.3225806451612903,
+      "review_rate_total": 0.3225806451612903,
+      "per_paper_p95": 0.8333333333333334
+    },
+    "repeat-05": {
+      "n": 31,
+      "review_rate_signal": 0.3225806451612903,
+      "review_rate_total": 0.3225806451612903,
+      "per_paper_p95": 0.8333333333333334
+    },
+    "repeat-06": {
+      "n": 31,
+      "review_rate_signal": 0.2903225806451613,
+      "review_rate_total": 0.2903225806451613,
+      "per_paper_p95": 0.8333333333333334
+    },
+    "repeat-07": {
+      "n": 31,
+      "review_rate_signal": 0.3548387096774194,
+      "review_rate_total": 0.3548387096774194,
+      "per_paper_p95": 0.8571428571428571
+    },
+    "repeat-08": {
+      "n": 31,
+      "review_rate_signal": 0.41935483870967744,
+      "review_rate_total": 0.41935483870967744,
+      "per_paper_p95": 0.8571428571428571
+    },
+    "repeat-09": {
+      "n": 31,
+      "review_rate_signal": 0.2903225806451613,
+      "review_rate_total": 0.2903225806451613,
+      "per_paper_p95": 0.8333333333333334
+    },
+    "repeat-10": {
+      "n": 31,
+      "review_rate_signal": 0.3225806451612903,
+      "review_rate_total": 0.3225806451612903,
+      "per_paper_p95": 0.8333333333333334
+    }
+  },
+  "mcnemar_n_floor_for_future_ab_claims": 219,
+  "current_corpus_n_leaves_vs_ab_floor": "31 leaves available vs 219 required for an improvement claim at 83.8%->88.8% -- any future A/B claim on this corpus is UNDERPOWERED by this floor, independent of the churn-floor question this run answers",
+  "cost": {
+    "total_input_tokens": 1186229,
+    "total_output_tokens_incl_thoughts": 241137,
+    "total_thoughts_tokens": 0,
+    "actual_recosted_usd_corrected_pricing": 0.958711,
+    "preflight_estimate_usd": 1.58,
+    "stop_threshold_usd_150pct": 2.37,
+    "preflight_call_count_assumption_vs_actual": "preflight assumed 22 Gemini calls per full-corpus repeat (2/case x 11 cases); actual was 74 calls/repeat (~6.7/case) -- mark_scheme parsing + per-sub-question correction calls were not itemised in the preflight basis. Actual spend nonetheless came in at ~61% of the preflight estimate because per-call output tokens (and thoughts, which were 0 throughout) were much lower than the preflight's conservative per-call assumption."
+  }
+}

@@ -3,11 +3,11 @@
 run_pointer: run-2026-08-21-a
 worktree: /home/sico/Lemely-worktrees/accuracy
 branch: feature/accuracy-27-publish-the-a-a-churn-floor
-last_run_label: none
-last_run_headline: none
-review_rate: 29.03% (9/31 leaves, union numerator, measured 2026-08-22 on the PRE-#29 denominator — see the caveat in in_the_middle_of)
+last_run_label: aa-floor-2026-08-23-a
+last_run_headline: A/A churn floor candidate (M0.3/#27): 11.6% of leaf outcomes flip between two identical-config repeats (162/1395 pair-leaf comparisons over C(10,2)=45 pairs; per-pair range 0.0-19.4%); 9 of 31 distinct leaves ever churned, Wilson [16.1%, 46.6%]. All churn is gemini-path (15.7%, 162/1035); det path is exactly 0.0 (0/360). Pooled leaf accuracy 75.8% (235/310 leaf-repeats), 0 excluded, 0 abstentions. Does NOT show any A/B effect: single-arm, cache bypassed, n=31 leaves vs the 219-leaf McNemar floor, split=dev (pre-M0.7a). Separately reportable: review_rate_total 32.6% (per-repeat 29.0-41.9%) and per-paper p95 82.1% breach the min(10%, 29.03%) ceiling and 15% p95 target in every repeat (ratchet unarmed at M0).
+review_rate: 0.3258064516129032
 ratchet: unarmed; starting value 29.03% recorded as a non-blocking M0 breach
-spend_usd: 0.4668
+spend_usd: 1.425511
 in_the_middle_of: #27 (M0.3 A/A churn floor) IN FLIGHT — accuracy-measure workflow wf_cc2ebfb5-180 (task wt86aqn91), launched 2026-08-23, mode=aa-floor n=10 cache_bypass=true run_label=aa-floor-2026-08-23-a. POLL ITS TRANSCRIPT, DO NOT LAUNCH A SECOND COPY: /home/sico/.claude/projects/-home-sico-Lemely-worktrees-accuracy/976edbed-b4e6-4102-ac9a-397a3ea97d07/subagents/workflows/wf_cc2ebfb5-180/journal.jsonl (script at .../workflows/scripts/accuracy-measure-wf_cc2ebfb5-180.js; resume with Workflow({scriptPath, resumeFromRunId: 'wf_cc2ebfb5-180'})). Raw records land under BUILD/accuracy-runs/aa-floor-2026-08-23-a/. Branch feature/accuracy-27-publish-the-a-a-churn-floor, board item In progress, start comment posted. WHY THIS RUN STARTED IT AT ALL — the prior verdict 'human-gated, nothing agent-startable' is RETRACTED as wrong on the mission's own text: #27's fifth blocker #77 landed as PR #78 this morning so all five are closed; Owner is 'agent'; MISSION 3.2 says 'You maintain the Ready column yourself' so Backlog is NOT a human gate; MISSION 10 gates spend on a costed preflight plus an 80%-of-ceiling stop-and-ask (0.80*25=20.00) and spend-to-date is 0.4668 (~1.87 corrected), nowhere near. The workflow's own phase 1 costs the run before any spend and returns early if unsafe. MUST stay '--cache-mode bypass', NEVER 'refresh' (E2). 'NOT REPORTABLE, with reason' is a SUCCESS here (MISSION 12.9) — record it and move on, never re-run at higher n to chase significance. Billing block UNCHANGED: run 32632548137 at 10:00Z still steps=0 in 2-4s, so the human's standing CI waiver still applies at land time. Branch carries the 3 unpushed E4 chore commits by design.
 ---
 
