@@ -96,7 +96,14 @@ line-length = 100
 # excludes it for (BUILD/DECISIONS.md D2.11); `ruff check .`/`ruff format
 # --check .` need the same exclusion or they pick up 300+ pre-existing
 # findings in code we don't own and never see in a normal package-scoped run.
-extend-exclude = ["lemely/db/migrations/versions", ".claude"]
+# BUILD/accuracy-runs holds frozen measurement evidence: the raw EvalRecord
+# JSONL, the manifests, and the ad-hoc driver script each sweep was actually
+# run with (M0.3/#27 onward). These are the record of how a published figure
+# was produced, so they must never be reformatted or "fixed" after the fact —
+# a later `ruff format` pass rewriting a sweep driver would silently change
+# the artifact that a number in BUILD/ACCURACY-REPORT.md is evidenced by.
+# Excluded from lint deliberately; nothing here is imported by the package.
+extend-exclude = ["lemely/db/migrations/versions", ".claude", "BUILD/accuracy-runs"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "TCH", "RUF", "ANN", "D", "T20", "S"]
