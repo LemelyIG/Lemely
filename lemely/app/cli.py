@@ -997,11 +997,38 @@ def aggregate_subject_cmd(
     show_default=True,
     help="Directory to write timestamped result JSON.",
 )
+@click.option(
+    "--cache-mode",
+    "cache_mode",
+    default="read_write",
+    type=click.Choice(["read_write", "bypass", "refresh"]),
+    show_default=True,
+    help=(
+        "Gemini response-cache behaviour for this run. Use 'bypass' for "
+        "repeat-run churn measurement (M0.3): without it every repeat after "
+        "the first is served from cache and the measured churn is 0 by "
+        "construction."
+    ),
+)
 @click.pass_context
-def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) -> None:
+def measure_accuracy_cmd(
+    ctx: click.Context, golden_dir: str, results_dir: str, cache_mode: str
+) -> None:
     """Measure correction accuracy against the golden dataset.
 
     Exits non-zero if any metric falls below its configured target.
+
+    ``--cache-mode`` exists because the bypass seam (M0.2/#26) was reachable
+    only from library code: no CLI flag, no settings field, no env var, so the
+    single ``default_cache_mode=`` call site in the repo was a unit test.
+    An A/A churn floor (M0.3/#27) measured through the default read-write cache
+    would report **exactly 0.0 disagreement** — every repeat after the first
+    replays the first one's cached responses — and a 0.0 floor makes every
+    later A/B delta look "above noise" no matter how small it is (#77).
+
+    The chosen mode is recorded in ``RunManifest.cache_mode`` (#73), which
+    reads it back off the client, so the saved run states which cache
+    behaviour actually produced it rather than assuming the default.
     """
     from lemely.accuracy.harness import (
         format_report,
@@ -1009,6 +1036,8 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
         measure_accuracy,
         save_result,
     )
+    from lemely.eval.analyses import review_rate
+    from lemely.eval.review_gate import evaluate_review_rate_gate
     from lemely.io.gemini import GeminiClient
 
     settings = _get_settings(ctx)
@@ -1023,7 +1052,10 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
 
     click.echo(f"Loaded {len(cases)} golden case(s). Running accuracy measurement…")
 
-    client = GeminiClient(settings)
+    client = GeminiClient(
+        settings,
+        default_cache_mode=cast("Literal['read_write', 'bypass', 'refresh']", cache_mode),
+    )
     result = measure_accuracy(cases, client, settings)
     click.echo(format_report(result, settings.accuracy_eval))
 
@@ -1048,6 +1080,44 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
         )
     if m.flag_recall < t.flag_recall_target:
         failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
+
+    # M0.9 (#33): the review-rate two-part ratchet gate. review_rate() must be
+    # fed only a dev-split run's records (spec §5). measure_accuracy() always
+    # builds a dev-split manifest by default and this command never overrides
+    # split, but that is a convention, not a guarantee this function can see
+    # for itself — assert it explicitly rather than silently computing a
+    # wrong-split rate if that convention ever drifts (matches the explicit
+    # check in scripts/check_review_rate_gate.py).
+    if result.manifest.split != "dev":
+        raise click.ClickException(
+            "measure-accuracy: refusing to compute review_rate over a "
+            f"'{result.manifest.split}'-split run — review_rate is only defined "
+            "over the golden dev split (spec §5)."
+        )
+    rr = review_rate(result.eval_records)
+    gate = evaluate_review_rate_gate(
+        rr,
+        last_merged_review_rate=t.review_rate_last_merged,
+        armed=t.review_rate_ratchet_armed,
+        signal_target=t.review_rate_signal_target,
+        total_target=t.review_rate_total_target,
+        p95_target=t.review_rate_p95_target,
+    )
+    click.echo(
+        "\nReview rate: "
+        f"signal={rr['review_rate_signal']:.3f} total={rr['review_rate_total']:.3f} "
+        f"per_paper_p95={rr['per_paper_p95']:.3f} "
+        f"ratchet_ceiling={gate['ratchet_ceiling']:.3f} "
+        f"armed={gate['armed']} (n={rr['n']})"
+    )
+    if gate["breaches"]:
+        click.echo("Review-rate gate breaches:", err=True)
+        for b in gate["breaches"]:
+            click.echo(f"  ! {b}", err=True)
+        if not gate["armed"]:
+            click.echo("  (ratchet unarmed — recorded, not blocking)", err=True)
+    if gate["blocking_failure"]:
+        failed.append("review_rate_gate: " + "; ".join(gate["breaches"]))
 
     if failed:
         click.echo("\nTargets missed:", err=True)

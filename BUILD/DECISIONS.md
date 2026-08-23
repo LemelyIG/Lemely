@@ -10561,7 +10561,191 @@ the pre-#32 corpus and is therefore quoted on the old denominator. It is left as
 rather than recomputed, because M0.9's ratchet (#33) is unarmed and §2 forbids any
 baseline run until M0.8 merges — the first post-#32 measurement re-establishes it.
 
-## DA7 — M0.5: D18 fixed (honest denominators), and the two figures this supersedes (#29)
+## DA-M0.9 — #33's real `review_rate` baseline diverges hugely from the pre-#32 figure DA6b left in place
+
+**What was measured.** A single `lemely measure-accuracy` dev-split sweep (default split,
+`gemini-2.5-flash`, prompt versions extraction=5/correction=4/mark_scheme=3) was run against
+the current 11-case-dir / 31-distinct-leaf golden corpus (DA6b), through the accuracy-measure
+costed-preflight workflow, at commit `f7be062`. Cost: **$0.0642** (74 Gemini calls, summed
+from the run's `gemini_call` log events), well under both the per-run token ceiling
+(2,000,000) and the `$25` total USD ceiling already configured. Result saved to
+`tests/golden/results/2026-08-22-f7be062.json` (gitignored; a summary is committed at
+`BUILD/review-rate-baseline.json` since the gate and CI need something durable to read).
+
+**The funnel (do not skip a stage).** 71 raw question-level answer rows collapse (DA6) to 31
+distinct `(paper_id, question_id)` leaves. Of the 71 raw rows, 12 carry a non-empty `triggers`
+list. Those 12 flagged rows land on only 9 distinct leaves (some leaves have more than one
+flagged fixture-variant record). That gives three legitimately different candidate numbers,
+and none of them is unambiguously "the" review rate for a corpus that mixes synthetic
+correct/partial/wrong fixture variants per leaf — this decision states which was chosen and
+why, not that it is uniquely correct:
+
+| candidate | formula | value | what it answers |
+|---|---|---|---|
+| row-level | 12 flagged rows / 71 rows | **16.9%** | "of every row we ever wrote a mark against, how many were flagged" — inflated by leaves with multiple fixture-variant rows, and not what `review_rate()`'s contract (question-level, distinct-leaf) promises |
+| leaf-union (**chosen**) | 9 flagged leaves / 31 leaves | **29.03%** | "of every distinct question a student answered, was ANY record of it flagged" — matches `review_rate()`'s stated denominator (DA6 distinct leaves) with a numerator that doesn't silently drop trigger evidence living on a sibling fixture-variant record |
+| representative-only (superseded, was the pre-fix bug) | 1 flagged representative leaf / 31 leaves | **3.23%** | an artifact of reading `triggers` off the single DA6-collapsed representative row `min()` happens to pick — see below |
+
+**Why representative-only (3.23%) was wrong, not just different.** The original #33 landing
+(`f7be062`) computed `review_rate()`'s numerator by reading `triggers` off the same
+DA6-collapsed representative row `_distinct_leaves()` already produces for the denominator.
+DA6's representative-picker is free to choose ANY record among a leaf's unanimously-`correct`
+fixture variants — so whenever a leaf's variants were all `correct`, whichever variant `min()`
+happened to pick decided whether that leaf's trigger was visible to the gate at all. 8 of the
+9 actually-flagged leaves in this corpus were invisible to `review_rate()` under that logic —
+not a rounding difference, a **~9x undercount** (3.23% vs the real 29.03%) that was previously,
+and wrongly, described here as "the real, current, correctly-denominatored number" and "6x
+smaller than the stale 19.1% figure." Both of those claims are retracted: the 3.23% figure was
+never correctly denominatored, and comparing it favourably to the pre-#32 19.1% row-level
+figure compared a broken numerator to a different corpus on a different basis — neither
+comparison told us anything about review burden. `review_rate()` (`lemely/eval/analyses.py`)
+now unions `triggers` across a leaf's raw records before collapsing, so the numerator can no
+longer depend on which record the DA6 collapse happens to keep as representative; see
+`test_counts_leaf_via_trigger_union_not_representative` in `tests/eval/test_analyses.py`.
+
+**The pre-#32 19.1% figure is separately stale.** `BUILD/ACCURACY-STATE.md` and the #33 issue
+body both quoted 19.1% (13 of 68 rows, Wilson [11.5%, 30.0%]) as the "starting" review rate.
+That number predates #25/M0.1's `review_rate()` implementation entirely and was computed on
+the pre-#32 68-row/28-leaf corpus — it is not comparable to any of the three candidates above,
+which all use the current 71-row/31-leaf corpus. Anything citing 19.1%/13-of-68/Wilson-[11.5%,
+30.0%] as the *current* baseline is stale as of this decision, independent of the
+representative-vs-union numerator question.
+
+**What was chosen and why.** `review_rate_last_merged = 0.2903` (leaf-union, truncated down
+from 0.29032258... so the ratchet ceiling only ever tightens) — because it is the number
+`review_rate()`'s own documented contract (question-level, distinct-leaf) actually produces
+once the numerator bug is fixed, and because using row-level (16.9%) would double-count leaves
+with multiple flagged fixture variants against a denominator that has already collapsed them.
+The **honest caveat**: this corpus mixes synthetic correct/partial/wrong fixture variants per
+leaf specifically to exercise DA6's collapse logic, so its flagged-leaf rate is a property of
+the fixture design as much as of the underlying marking behaviour — treat 29.03% as this
+golden corpus's *measured* baseline for the ratchet to tighten from, not as a claim about the
+review burden of a real deployment.
+
+**`per_paper_p95` moves too.** Under the union numerator, `per_paper_p95` is **83.33%**
+(up from the representative-only run's 16.67%), because several papers now correctly show more
+than one reviewed leaf once sibling fixture-variant triggers are counted. It breaches the 15%
+target by a wide margin. Exactly as before, the gate (`lemely/eval/review_gate.py`) records
+this breach in `breaches` on every run; because the ratchet starts **unarmed**
+(`review_rate_ratchet_armed=false`), it does not fail `measure-accuracy` or CI today, but it is
+not silently dropped — it prints, and `scripts/check_review_rate_gate.py`'s output still lists
+it as a named breach.
+
+**Storage location.** `last_merged_review_rate` lives on `AccuracyEvalSettings` (mirroring
+every other accuracy-eval target: `mark_accuracy_target` et al.), not a dedicated JSON file or
+an overload of `BUILD/ACCURACY-STATE.md`'s free-text `ratchet` field — that field is updated
+too, but only as the human-readable mirror `scripts/accuracy_board.py` already treats
+`ACCURACY-STATE.md`'s header as (see that file's own "Contract" section: GitHub-adjacent
+tracker state does not duplicate there, but this is measurement state the supervisor's grep
+needs at a glance). The gate's actual source of truth is `lemely.toml`
+(`[accuracy_eval] review_rate_last_merged = 0.2903`, default baked into
+`AccuracyEvalSettings.review_rate_last_merged`) and the committed
+`BUILD/review-rate-baseline.json` artifact `scripts/check_review_rate_gate.py`/CI fall back to
+when no fresh `tests/golden/results/*.json` exists (that directory is gitignored); that
+artifact now also carries `run_id`/`corpus_digest` provenance so a locally-preferred fresh run
+that diverges from the committed baseline's corpus prints a warning instead of silently gating
+on different data (`scripts/check_review_rate_gate.py`'s `_baseline_provenance`).
+
+**M0-unarmed / M1-armed semantics.** `review_rate_ratchet_armed` defaults to `false`. Unarmed,
+`evaluate_review_rate_gate()` still computes and reports every limb's pass/fail and the
+ratchet direction, but `blocking_failure` is forced `False` regardless of breaches — the run
+is observed, not gated, which is why this real (breaching-on-p95) baseline can be recorded and
+merged today without contradicting "never weaken a gate to get green." Arming
+(`review_rate_ratchet_armed = true`) is spec §7's M1 acceptance step, gated on M0.9 landing
+first (`M0.9 | M1.1`), and is out of scope for #33 itself.
+## DA7 — The McNemar n-floor: why `MCNEMAR_IMPROVEMENT_N_FLOOR = 219` is quoted, not recomputed (#30, M0.6)
+
+**The requirement.** Spec §6: "paired McNemar can prove an improvement to 88.8% with
+n=219 where unpaired needs 741 per arm" — the sample size to detect an improvement from
+the 83.8% legacy baseline to an 88.8% target at alpha=0.05, power=0.80. Spec §4 M0.6: "a
+metric below its n-floor prints as underpowered rather than as a number." Neither passage
+states the formula or the discordant-pair-rate assumption behind 219; it is given as a
+fact, not derived in the spec text.
+
+**Why 219 is quoted, not recomputed from first principles.** The paired-proportion
+(McNemar) sample-size formula (Connor 1987 / Fleiss) needs the *discordant-pair
+proportion* between the two arms — how often `oracle+mark` and `extract+mark` disagree on
+the same leaf — not just the two marginal accuracy rates (83.8%, 88.8%). That rate is an
+empirical property of how correlated the two arms' scoring is; this codebase has no
+measurement of it yet (the golden corpus is 31 leaves, nowhere near paired-McNemar scale).
+Reverse-engineering a discordant-pair-rate parameter that makes the formula spit out
+exactly 219 would be curve-fitting a number to match a target, which is precisely the kind
+of invented measurement the programme forbids elsewhere (§2, D18-adjacent). So
+`MCNEMAR_IMPROVEMENT_N_FLOOR = 219` in `lemely/eval/analyses.py` is taken **directly from
+spec §6**, not computed. The constant is named `..._IMPROVEMENT_N_FLOOR`, not `..._N_FLOOR`
+— see the orchestrator's adjudication below for why that distinction is load-bearing.
+
+**What is computed: an independently-checkable lower bound.** `paired_proportion_min_n`
+implements the Connor/Fleiss favourable-case bound — the discordant-pair proportion `psi`
+set to its minimum possible value `psi = d = |p2 - p1|` (the case where every discordant
+pair moves in the `p1 -> p2` direction and none reverse, the smallest paired sample any
+real correlation structure could need for this effect size):
+
+```
+n = ceil((z_alpha*sqrt(d) + z_beta*sqrt(d*(1-d)))**2 / d**2)
+```
+
+Evaluated at `paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.80)`, this returns
+`155`, which is `<= MCNEMAR_IMPROVEMENT_N_FLOOR` (219). That inequality is the checkable
+relationship: if the lower bound ever exceeded 219, `MCNEMAR_IMPROVEMENT_N_FLOOR` would not
+actually be power-respecting for this effect size and the constant would need to move.
+`_inverse_normal_cdf` (Acklam's rational approximation) turns `alpha`/`power` into z-scores
+without a scipy dependency, matching `mcnemar`'s own no-scipy p-value calculation.
+
+*(Correction, this pass.)* The formula previously implemented here divided by `d`, not
+`d**2`, and dropped the `sqrt(psi)`/`sqrt(psi - d**2)` weighting entirely — it was not
+actually the Connor/Fleiss bound its docstring claimed, just a number that happened to
+land under 219 (157, by coincidence of the missing terms roughly cancelling at this `d`).
+That has been fixed to the formula above (now pinned at 155 by
+`test_paired_proportion_min_n_pinned_value_and_monotonicity`, plus a monotonicity check:
+larger effect size -> smaller n, higher power -> larger n), so the docstring's "lower
+bound" claim is now true rather than merely plausible.
+
+**Orchestrator adjudication: `chi2`/`p_value` are always computed, never `None`.** The
+first pass of this issue made `mcnemar()` return `chi2: float | None` / `p_value: float |
+None`, both `None` whenever `underpowered` — i.e. the floor gated the *computation*, not
+just the *presentation*, of the statistic. That conflates two different things: (1) whether
+a paired comparison has enough pairs to trust as an IMPROVEMENT CLAIM against the spec §6
+target (83.8% -> 88.8%), which is what `MCNEMAR_IMPROVEMENT_N_FLOOR` actually measures, and
+(2) whether the chi-square/p-value arithmetic is well-defined, which it is at any `n_pairs
+>= 1` (and trivially at `b + c == 0`, where `chi2 = 0.0`, `p_value = 1.0`). Nulling the
+numeric fields below the floor makes `mcnemar()` unusable for anything BUT the one
+spec-§6-shaped improvement claim — a caller doing its own ablation breakdown, or plotting
+the discordant-pair counts, gets `None` for no statistical reason. The fix: `mcnemar()`
+always returns real floats for `chi2`/`p_value`; `underpowered` stays exactly as before
+(`n_pairs < MCNEMAR_IMPROVEMENT_N_FLOOR`, reading the same `_distinct_leaves_by_arm`-derived
+`n_pairs`, never a hardcoded leaf count). The refusal to present the number as an
+improvement claim now lives in exactly one place — the new, pure reporting-layer function
+`mcnemar_improvement_p_value(result) -> float | Literal["underpowered"]` — rather than
+inside the statistic's own computation. `wilson()` is untouched: spec §3.3 says Wilson
+intervals are reported on every rate, and its own width is the honesty signal — Wilson has
+no refusal behaviour, only the McNemar improvement claim does.
+
+**Tests.** `tests/eval/test_analyses.py::TestNFloor` — the real ~31-leaf golden corpus
+(well under 219) is asserted `underpowered` AND to carry real `chi2`/`p_value` floats, with
+`b`/`c` pinned to their actual golden-corpus values (`b=31`, `c=0`); synthetic paired data
+at exactly `MCNEMAR_IMPROVEMENT_N_FLOOR` returns a numeric, non-underpowered result (proving
+the branch is real, not vacuous); a pinned-value-plus-monotonicity test proves
+`paired_proportion_min_n` actually implements the bound its docstring claims, not just
+`0 < n <= 219`. `TestReportingLayer` exercises `mcnemar_improvement_p_value` directly, one
+test per branch (underpowered -> `"underpowered"`; powered -> the numeric `p_value`
+unchanged). `test_mcnemar_signature_rejects_unpaired_rate_summaries` uses
+`inspect.signature(mcnemar)` to pin the sole parameter as `records: list[EvalRecord]` (AC1
+— no code path accepts two independent rate summaries and returns a p-value).
+`TestWilson::test_diverges_from_clamped_normal_approximation` pins Wilson's bound at n=10,
+100% correct (lower=0.7225) against a clamped normal approximation that degenerates to
+`[1.0, 1.0]` at the same input, so the suite actually falsifies "clamped normal
+approximation" rather than merely being satisfiable by one. The pre-existing
+`test_leaf_count_is_derived_not_hardcoded` (raw-rows-vs-leaves) was removed: it duplicated
+`TestMcnemar::test_collapses_duplicate_question_level_rows_to_one_leaf` and the DA6/DA6b
+golden-corpus tests below with no content specific to the n-floor, and it only ever failed
+pre-fix via the module-level `ImportError` from the renamed constant, not a real behavioural
+difference. Two pre-existing `TestMcnemar` tests
+(`test_discordant_pairs_produce_nonzero_statistic`,
+`test_no_discordant_pairs_gives_zero_statistic`) remain padded with concordant filler pairs
+to reach the floor, since they exist to test the chi2/p-value math on a non-underpowered
+result.
+## DA8 — M0.5: D18 fixed (honest denominators), and the two figures this supersedes (#29)
 
 **The bug (D18).** `measure_accuracy()`'s per-case loop iterated
 `correction.questions` and `continue`d past any question the extractor never returned
@@ -10662,7 +10846,7 @@ reading as a denominator growing mid-funnel. The printed chain is now
 `leaves -> matched -> marked -> scored`, with `extracted` reported separately
 and pinned by `test_printed_funnel_chain_never_rises`.
 
-**Provenance correction.** DA7 describes the honest-baseline artifact as
+**Provenance correction.** DA8 describes the honest-baseline artifact as
 produced "with the D18 fix in place", but its manifest records
 `git_sha=79f5fa8`, which is the **pre-fix** commit (the fix landed in
 `761231c`). The figures reproduce exactly (`mark_accuracy` 0.90140845; Wilson
@@ -10670,3 +10854,10 @@ n=31, 77.4% [60.2%, 88.6%]) because this corpus contains no `unmatched` or
 `excluded` rows at all — the D18 path is simply never exercised by it. The
 number is therefore correct, but it is **not evidence that the fix works**;
 the behavioural tests are.
+
+**Numbering note (2026-08-23).** This entry was authored as `DA7` on the #29
+branch while #30 independently authored a different `DA7` (the McNemar n-floor)
+on a branch cut in parallel. #30 landed first, so it keeps `DA7` and this entry
+was renumbered to `DA8` at merge time. References in `CHANGELOG.md`,
+`DELIVERY.md` and `docs/ACCURACY-STRATEGIES.md` were updated with it; the `DA7`
+citation in `lemely/eval/analyses.py` points at #30's entry and is unchanged.

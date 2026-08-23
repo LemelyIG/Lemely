@@ -468,3 +468,138 @@ def test_generate_quiz_use_ai_with_mocked_client() -> None:
         payload = json.loads(result.output)
         assert "questions" in payload
         assert len(payload["questions"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# measure-accuracy --cache-mode reaches the client AND the manifest (#77)
+# ---------------------------------------------------------------------------
+
+
+def test_measure_accuracy_cache_mode_bypass_reaches_the_saved_manifest() -> None:
+    """``--cache-mode bypass`` must configure the client AND be recorded in the
+    saved run's manifest — not merely be accepted by click (#77).
+
+    Asserting on the manifest written to disk, rather than on the constructor
+    call alone, is deliberate: the manifest is what a later reader uses to
+    decide what a saved run *was*, and #73 wires it to the client's real
+    default. A flag click accepts but never threads through would leave an A/A
+    churn run (M0.3/#27) served entirely from cache — measured churn 0.0 by
+    construction — while the manifest still claimed ``read_write``. This test
+    fails if either half of that path breaks.
+    """
+    captured: dict[str, object] = {}
+
+    def _fake_client(settings, *args, **kwargs):
+        mode = kwargs.get("default_cache_mode")
+        captured["default_cache_mode"] = mode
+        client = MagicMock()
+        client.default_cache_mode = mode
+        return client
+
+    with tempfile.TemporaryDirectory() as tmp:
+        golden = Path(tmp) / "golden"
+        case_dir = golden / "0625_m20_qp_12_mcq"
+        case_dir.mkdir(parents=True)
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": 1,
+                "scheme_format": "mcq",
+            },
+            "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}],
+        }
+        (case_dir / "mark_scheme.json").write_text(json.dumps(ms))
+        (case_dir / "answers.json").write_text(
+            json.dumps({"1": {"student_answer": "A", "awarded_marks": 1}})
+        )
+        results_dir = Path(tmp) / "results"
+
+        with patch("lemely.io.gemini.GeminiClient", side_effect=_fake_client):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "measure-accuracy",
+                    "--golden",
+                    str(golden),
+                    "--results-dir",
+                    str(results_dir),
+                    "--cache-mode",
+                    "bypass",
+                ],
+            )
+
+        # NB: exit code is deliberately NOT asserted to be 0. This command
+        # exits non-zero when any metric misses its configured target, which a
+        # one-question fixture always does. That is orthogonal to the flag
+        # plumbing under test, so asserting on it would couple this test to
+        # the accuracy thresholds. What must hold is that no exception escaped.
+        assert not isinstance(result.exception, Exception) or isinstance(
+            result.exception, SystemExit
+        ), result.output
+        assert captured["default_cache_mode"] == "bypass", (
+            f"--cache-mode never reached GeminiClient; got {captured!r}"
+        )
+
+        saved = list(results_dir.glob("*.json"))
+        assert len(saved) == 1, f"expected one saved result, got {saved}"
+        payload = json.loads(saved[0].read_text(encoding="utf-8"))
+        assert payload["manifest"]["cache_mode"] == "bypass"
+
+
+def test_measure_accuracy_defaults_to_read_write_cache_mode() -> None:
+    """Omitting the flag must leave existing behaviour exactly as it was (#77)."""
+    captured: dict[str, object] = {}
+
+    def _fake_client(settings, *args, **kwargs):
+        captured["default_cache_mode"] = kwargs.get("default_cache_mode")
+        client = MagicMock()
+        client.default_cache_mode = kwargs.get("default_cache_mode")
+        return client
+
+    with tempfile.TemporaryDirectory() as tmp:
+        golden = Path(tmp) / "golden"
+        case_dir = golden / "0625_m20_qp_12_mcq"
+        case_dir.mkdir(parents=True)
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": 1,
+                "scheme_format": "mcq",
+            },
+            "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}],
+        }
+        (case_dir / "mark_scheme.json").write_text(json.dumps(ms))
+        (case_dir / "answers.json").write_text(
+            json.dumps({"1": {"student_answer": "A", "awarded_marks": 1}})
+        )
+
+        with patch("lemely.io.gemini.GeminiClient", side_effect=_fake_client):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "measure-accuracy",
+                    "--golden",
+                    str(golden),
+                    "--results-dir",
+                    str(Path(tmp) / "results"),
+                ],
+            )
+
+    assert not isinstance(result.exception, Exception) or isinstance(
+        result.exception, SystemExit
+    ), result.output
+    assert captured["default_cache_mode"] == "read_write"

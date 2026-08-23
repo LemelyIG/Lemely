@@ -71,6 +71,17 @@ jobs:
       - name: Pytest
         run: pytest
 
+      # M0.9 (#33): review-rate two-part ratchet gate (spec §4 M0.9, §5).
+      # Written and reviewable only — GitHub Actions is org-wide
+      # billing-blocked at the time this step was added, so it has not been
+      # executed in CI and must not be claimed as CI-verified. Falls back to
+      # the committed BUILD/review-rate-baseline.json (tests/golden/results/
+      # is gitignored and will not exist on a fresh CI checkout). Unarmed at
+      # M0 (review_rate_ratchet_armed=false), so a breach here is non-blocking
+      # until M1 acceptance arms the ratchet.
+      - name: Review-rate gate
+        run: python scripts/check_review_rate_gate.py
+
   pre-commit:
     runs-on: ubuntu-latest
     steps:

@@ -48,21 +48,21 @@ the argument is unchanged, and the honest figure is worse, not better).
 | metric | measured | target | source |
 |---|---|---|---|
 | `mark_accuracy` (synthetic golden set) | **83.8%** — historical, superseded (see below) | ≥95% | D2.5 |
-| `mark_accuracy` (post-D18-fix honest baseline) | **90.1%** raw (n=71 rows) / **77.4%** DA6-collapsed (n=31 leaves) | ≥95% | BUILD/DECISIONS.md DA7 |
+| `mark_accuracy` (post-D18-fix honest baseline) | **90.1%** raw (n=71 rows) / **77.4%** DA6-collapsed (n=31 leaves) | ≥95% | BUILD/DECISIONS.md DA8 |
 | `flag_recall` (synthetic golden set) | **27.3%** — historical, superseded (see below) | 100% | D2.5 |
-| `flag_recall` (post-D18-fix honest baseline) | **14.29%** (n=71 rows) | 100% | BUILD/DECISIONS.md DA7 |
+| `flag_recall` (post-D18-fix honest baseline) | **14.29%** (n=71 rows) | 100% | BUILD/DECISIONS.md DA8 |
 | `flag_precision_high` (synthetic golden set) | 91.7% — historical, superseded (see below) | — | D2.2 |
-| `flag_precision_high` (post-D18-fix honest baseline) | **89.8%** (n=71 rows) | — | BUILD/DECISIONS.md DA7 |
+| `flag_precision_high` (post-D18-fix honest baseline) | **89.8%** (n=71 rows) | — | BUILD/DECISIONS.md DA8 |
 | real paper 22 (MCQ, 40) | 37 vs 34 → **+3**, **zero flags** | — | D3.21 |
 | real paper 41 (theory, 80) | 63 vs 66 → **−3**, 20/80 flagged | — | D3.21 |
 | mark-scheme parse coverage (0625) | **32/72** | — | D4.1 |
 
-**M0.5/#29 update (BUILD/DECISIONS.md DA7):** the 83.8% row above predates the D18 fix
+**M0.5/#29 update (BUILD/DECISIONS.md DA8):** the 83.8% row above predates the D18 fix
 (`measure_accuracy` silently dropped any ground-truth leaf the extractor never returned
 an answer for, shrinking the denominator instead of scoring it as wrong or excluding it
 honestly) and predates two rounds of corpus growth (10 → 11 fixtures, 68 → 71 rows,
 28 → 31 distinct leaves, DA6b). It is retained here as the historical figure only. The
-honest baseline going forward is the pair recorded in the row above and in DA7: no code
+honest baseline going forward is the pair recorded in the row above and in DA8: no code
 path in this repo presents 83.8% as the current measurement. The n=219 paired-McNemar
 floor in §6/DA1 is quoted on the legacy 83.8%→88.8% comparison and is **not**
 recomputed against the new baseline by this change.

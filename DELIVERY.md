@@ -137,7 +137,7 @@ readable rather than quietly rewritten.
 
 - **The synthetic accuracy gate is NOT met (D2.5).** Mark-level agreement is
   **83.8% against a ≥95% target** (historical — 10-fixture corpus, n=68 rows;
-  see BUILD/DECISIONS.md DA7 for the current, honest baseline: 90.1% raw
+  see BUILD/DECISIONS.md DA8 for the current, honest baseline: 90.1% raw
   n=71 / 77.4% DA6-collapsed n=31, `run_id=run-ef443fc2931e`), and flag recall
   is **27.3%** (historical, same 10-fixture corpus; the current honest baseline
 is **14.29%**, n=71, `run_id=run-ef443fc2931e` — the honest figure is worse,

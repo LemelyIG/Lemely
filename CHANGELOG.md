@@ -55,7 +55,7 @@ line here.
 - Accuracy harness with ten golden fixtures across 0580 / 0606 / 0625, plus an
   end-to-end measurement against two real solved scripts *(limited)*: the
   synthetic accuracy target is **not met** — 83.8% mark-level agreement
-  (historical; see BUILD/DECISIONS.md DA7 for the current honest baseline:
+  (historical; see BUILD/DECISIONS.md DA8 for the current honest baseline:
   90.1% raw n=71 / 77.4% DA6-collapsed n=31) against a ≥95% goal, with flag
   recall 27.3% (historical; the current honest baseline is 14.29%, n=71 —
   worse, not better). Both real papers landed inside the stated
