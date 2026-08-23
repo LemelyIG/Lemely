@@ -90,6 +90,23 @@ def _collapse_leaf_group(group: list[EvalRecord]) -> EvalRecord:
     return min(candidates, key=_leaf_sort_key)
 
 
+def _group_by_leaf(records: list[EvalRecord]) -> dict[tuple[str, str], list[EvalRecord]]:
+    """Group records by ``(paper_id, question_id)`` leaf, preserving raw rows.
+
+    Shared by every analysis that needs to reason about a leaf's full set of
+    raw (pre-collapse) records — e.g. :func:`_distinct_leaves`, which then
+    collapses each group to one representative row, and :func:`review_rate`,
+    which unions a property (``triggers``) across a group WITHOUT collapsing
+    it to a single representative first (collapsing before checking
+    ``triggers`` would silently discard sibling records' trigger info — see
+    :func:`review_rate`'s docstring).
+    """
+    groups: dict[tuple[str, str], list[EvalRecord]] = {}
+    for r in records:
+        groups.setdefault((r.paper_id, r.question_id), []).append(r)
+    return groups
+
+
 def _distinct_leaves(records: list[EvalRecord]) -> list[EvalRecord]:
     """Collapse to one row per ``(paper_id, question_id)`` leaf (DA6).
 
@@ -98,10 +115,7 @@ def _distinct_leaves(records: list[EvalRecord]) -> list[EvalRecord]:
     genuine DA6 fixture-variant duplicates). See :func:`_collapse_leaf_group`
     for how a leaf's collapsed outcome is derived.
     """
-    groups: dict[tuple[str, str], list[EvalRecord]] = {}
-    for r in records:
-        groups.setdefault((r.paper_id, r.question_id), []).append(r)
-    return [_collapse_leaf_group(group) for group in groups.values()]
+    return [_collapse_leaf_group(group) for group in _group_by_leaf(records).values()]
 
 
 def _collapse_leaf_group_scored_aware(group: list[EvalRecord]) -> EvalRecord:
@@ -220,14 +234,120 @@ def _distinct_leaves_by_arm(
 
 
 # ---------------------------------------------------------------------------
-# mcnemar
+# mcnemar / n-floor
 # ---------------------------------------------------------------------------
+
+#: Paired-McNemar sample-size floor for IMPROVEMENT CLAIMS (spec §6): the n
+#: needed to detect an improvement from 83.8% to 88.8% at alpha=0.05,
+#: power=0.80 (vs. n=741 unpaired, per arm). This floor governs whether a
+#: McNemar result may be PRESENTED as evidence of improvement — see
+#: :func:`mcnemar_improvement_p_value`, the sole place that refusal happens.
+#: ``mcnemar()`` itself always computes and returns the numeric chi2/p_value
+#: regardless of ``n_pairs`` vs. this floor; it does not gate the underlying
+#: computation, only the ``underpowered`` flag callers must check before
+#: treating the statistic as an improvement claim. See BUILD/DECISIONS.md
+#: DA7 for the derivation and why this constant (not a recomputed value) is
+#: the source of truth.
+MCNEMAR_IMPROVEMENT_N_FLOOR = 219
+
+
+def _inverse_normal_cdf(p: float) -> float:
+    """Standard-normal quantile function (Peter Acklam's rational approximation).
+
+    Max error ~1.15e-9; used only to turn ``alpha``/``power`` into z-scores
+    for :func:`paired_proportion_min_n` — no scipy dependency, matching the
+    rest of this module.
+    """
+    a = (
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    )
+    b = (
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    )
+    c = (
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    )
+    d = (
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e00,
+        3.754408661907416e00,
+    )
+    p_low = 0.02425
+    p_high = 1 - p_low
+
+    if p < p_low:
+        q = math.sqrt(-2 * math.log(p))
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+        )
+    if p <= p_high:
+        q = p - 0.5
+        r = q * q
+        return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (
+            ((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1
+        )
+    q = math.sqrt(-2 * math.log(1 - p))
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+        (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+    )
+
+
+def paired_proportion_min_n(p1: float, p2: float, *, alpha: float, power: float) -> int:
+    """Conservative lower bound on the paired (McNemar) sample size needed to detect ``p1 -> p2``.
+
+    Implements the Connor (1987) / Fleiss favourable-case bound: the
+    discordant-pair proportion ``psi`` (how often the two arms disagree on
+    the same leaf) is set to its *minimum possible* value, ``psi = d =
+    |p2 - p1|`` — the case where every discordant pair moves in the
+    ``p1 -> p2`` direction and none reverse. Substituting ``psi = d`` into
+    the general paired-proportion sample-size formula
+
+        n = ceil((z_a*sqrt(psi) + z_b*sqrt(psi - d**2))**2 / d**2)
+
+    gives ``psi - d**2 = d*(1 - d)`` and so
+
+        n = ceil((z_a*sqrt(d) + z_b*sqrt(d*(1 - d)))**2 / d**2)
+
+    Any real correlation structure between the two arms needs *at least*
+    this many pairs (a smaller discordant-pair proportion than ``d`` is
+    impossible, since the marginal difference IS the minimum discordance),
+    so this is a genuine, independently-checkable lower bound — but it is
+    still not :data:`MCNEMAR_IMPROVEMENT_N_FLOOR`'s exact derivation: the
+    actual discordant-pair rate between ``oracle+mark`` and ``extract+mark``
+    is an empirical quantity this module has no measurement of yet, so
+    ``MCNEMAR_IMPROVEMENT_N_FLOOR`` is taken directly from spec §6 rather
+    than recomputed here (see BUILD/DECISIONS.md).
+    """
+    if not 0.0 < p1 < 1.0 or not 0.0 < p2 < 1.0:
+        raise ValueError("p1 and p2 must be in (0, 1)")
+    d = abs(p2 - p1)
+    if d <= 0.0:
+        raise ValueError("p1 and p2 must differ to have a detectable effect")
+    z_alpha = _inverse_normal_cdf(1 - alpha / 2)
+    z_beta = _inverse_normal_cdf(power)
+    return math.ceil((z_alpha * math.sqrt(d) + z_beta * math.sqrt(d * (1 - d))) ** 2 / d**2)
 
 
 class McNemarResult(TypedDict):
     b: int
     c: int
     n_pairs: int
+    underpowered: bool
     chi2: float
     p_value: float
 
@@ -240,6 +360,15 @@ def mcnemar(records: list[EvalRecord]) -> McNemarResult:
     correct. Uses the continuity-corrected chi-square statistic with 1
     degree of freedom; the p-value is exact for 1 df via the complementary
     error function (no scipy dependency).
+
+    ``chi2``/``p_value`` are ALWAYS computed and returned as real numbers,
+    regardless of ``n_pairs`` vs. :data:`MCNEMAR_IMPROVEMENT_N_FLOOR` — a
+    below-floor sample size makes the statistic unfit to present as an
+    IMPROVEMENT CLAIM (that refusal lives solely in
+    :func:`mcnemar_improvement_p_value`), but the number itself is real and
+    a caller doing its own analysis (e.g. plotting, an ablation breakdown)
+    must not be handed ``None`` for it. ``underpowered`` is ``True`` iff
+    ``n_pairs < MCNEMAR_IMPROVEMENT_N_FLOOR`` (spec §6/M0.6).
     """
     qlevel = _distinct_leaves_by_arm(_question_level(records))
     oracle = qlevel["oracle+mark"]
@@ -258,12 +387,37 @@ def mcnemar(records: list[EvalRecord]) -> McNemarResult:
         elif not o_correct and e_correct:
             c += 1
 
-    if b + c == 0:
-        return {"b": b, "c": c, "n_pairs": n_pairs, "chi2": 0.0, "p_value": 1.0}
+    underpowered = n_pairs < MCNEMAR_IMPROVEMENT_N_FLOOR
 
-    chi2 = ((abs(b - c) - 1) ** 2) / (b + c)
-    p_value = math.erfc(math.sqrt(chi2 / 2))
-    return {"b": b, "c": c, "n_pairs": n_pairs, "chi2": chi2, "p_value": p_value}
+    if b + c == 0:
+        chi2 = 0.0
+        p_value = 1.0
+    else:
+        chi2 = ((abs(b - c) - 1) ** 2) / (b + c)
+        p_value = math.erfc(math.sqrt(chi2 / 2))
+
+    return {
+        "b": b,
+        "c": c,
+        "n_pairs": n_pairs,
+        "underpowered": underpowered,
+        "chi2": chi2,
+        "p_value": p_value,
+    }
+
+
+def mcnemar_improvement_p_value(result: McNemarResult) -> float | str:
+    """Refuse to present a bare p-value as an improvement claim when underpowered.
+
+    This is the ONLY place that refusal happens (spec §6/M0.6) — ``mcnemar``
+    itself always computes and returns the numeric statistic (see its
+    docstring). Returns the literal ``"underpowered"`` when
+    ``result["underpowered"]`` is ``True``; otherwise returns
+    ``result["p_value"]`` unchanged.
+    """
+    if result["underpowered"]:
+        return "underpowered"
+    return result["p_value"]
 
 
 # ---------------------------------------------------------------------------
@@ -394,25 +548,48 @@ class ReviewRateResult(TypedDict):
 def review_rate(records: list[EvalRecord]) -> ReviewRateResult:
     """Two-part review-rate gate (spec §5): signal vs total, plus per-paper p95.
 
-    ``review_rate_total`` counts any non-empty ``triggers`` list as reviewed.
-    ``review_rate_signal`` counts everything except the ``random_audit``
-    trigger (until T1.10/M4 ships that trigger, the two are equal). Computed
-    over the scored, question-level, distinct-leaf subset.
+    ``review_rate_total`` counts a leaf as reviewed iff ANY of its raw
+    (pre-DA6-collapse) records carries a non-empty ``triggers`` list —
+    a UNION over the leaf's fixture-variant/duplicate records, not a
+    property read off the single DA6-collapsed representative row.
+    ``review_rate_signal`` is the same union restricted to triggers other
+    than ``random_audit`` (until T1.10/M4 ships that trigger, the two are
+    equal). This matters because DA6's representative-picker
+    (:func:`_collapse_leaf_group`) is free to choose ANY record among a set
+    of unanimously-``correct`` variants — if a leaf's variants are all
+    ``correct`` but only one of them was flagged for review, reading
+    ``triggers`` off the (possibly different) collapsed representative would
+    silently drop that flag. The leaf-count denominator (``n``) still comes
+    from the DA6-collapsed distinct-leaf count, matching every other
+    analysis's leaf discipline — only the reviewed/not-reviewed numerator is
+    computed from the raw, uncollapsed group.
+
+    **Callers MUST pass only records from a dev-split run** (``RunManifest.split
+    == "dev"``) — spec §5's review-rate budget is defined over the golden dev
+    split, and ``EvalRecord`` itself carries no ``split`` field (split lives on
+    the run's ``RunManifest``, one level up), so this function cannot check the
+    restriction itself. This was previously implicit-by-caller-convention; the
+    M0.9 gate (:mod:`lemely.eval.review_gate`) and its callers (the
+    ``measure-accuracy`` CLI, ``scripts/check_review_rate_gate.py``) make it
+    explicit by only ever invoking this against a dev-split run's records.
     """
-    leaves = _distinct_leaves(_scored(_question_level(records)))
-    n = len(leaves)
+    scored_qlevel = _scored(_question_level(records))
+    leaf_groups = _group_by_leaf(scored_qlevel)
+    n = len(leaf_groups)
     if n == 0:
         return {"n": 0, "review_rate_signal": 0.0, "review_rate_total": 0.0, "per_paper_p95": 0.0}
 
-    total_reviewed = sum(1 for r in leaves if r.triggers)
-    signal_reviewed = sum(1 for r in leaves if [t for t in r.triggers if t != "random_audit"])
+    total_reviewed = 0
+    signal_reviewed = 0
+    by_paper: dict[str, list[bool]] = {}
+    for (paper_id, _question_id), group in leaf_groups.items():
+        leaf_total = any(r.triggers for r in group)
+        leaf_signal = any(t != "random_audit" for r in group for t in r.triggers)
+        total_reviewed += leaf_total
+        signal_reviewed += leaf_signal
+        by_paper.setdefault(paper_id, []).append(leaf_total)
 
-    by_paper: dict[str, list[EvalRecord]] = {}
-    for r in leaves:
-        by_paper.setdefault(r.paper_id, []).append(r)
-    per_paper_rates = sorted(
-        sum(1 for r in rows if r.triggers) / len(rows) for rows in by_paper.values()
-    )
+    per_paper_rates = sorted(sum(flags) / len(flags) for flags in by_paper.values())
     per_paper_p95 = _percentile(per_paper_rates, 0.95)
 
     return {
