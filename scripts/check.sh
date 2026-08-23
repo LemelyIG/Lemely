@@ -5,12 +5,21 @@
 # output, and prints only failures plus a one-line PASS/FAIL/SKIP per tool.
 # Never invoke ruff/mypy/pytest/tsc/oxlint/etc individually — run this.
 #
-# Backend and web gates always run. The live-stack UI gates (Playwright E2E,
-# the Puppeteer audit runner, and the axe/Lighthouse threshold check) need
-# the local Supabase stack (`supabase start`) plus a reachable backend they
-# boot themselves; when the stack isn't up they SKIP (not FAIL) with an
-# explanation, mirroring the existing pytest DB-integration-test skip
+# Backend and web build/test gates always run. The live-stack UI gates
+# (Playwright E2E, the Puppeteer audit runner, and the axe/Lighthouse threshold
+# check) need the local Supabase stack (`supabase start`) plus a reachable
+# backend they boot themselves; when the stack isn't up they SKIP (not FAIL)
+# with an explanation, mirroring the existing pytest DB-integration-test skip
 # pattern, rather than blocking gates that don't need it.
+#
+# Those three plus `impeccable-detect` are additionally SCOPED TO THE DIFF: they
+# read only web/, so a change touching no web/ file skips them with that as the
+# stated reason. The scope is computed from the diff and never chosen by the
+# caller — `--all-gates` forces them on, nothing forces them off, and an
+# uncomputable diff runs them. See the long comment at the scoping block.
+#
+# Every gate's full output is written to reports/.scratch/sweep/<gate>.log and
+# left there. Failures print the first 60 lines and always name the log path.
 #
 # Those UI gates write screenshots and axe/Lighthouse JSON to the gitignored
 # scratch dir reports/.scratch (LEMELY_REPORT_DIR's default). They deliberately
@@ -54,10 +63,12 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 FAST=0
+ALL_GATES=0
 PYTEST_PATHS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --fast) FAST=1; shift ;;
+    --all-gates) ALL_GATES=1; shift ;;
     -h|--help) sed -n '2,60p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
     --) shift; PYTEST_PATHS+=("$@"); break ;;
     -*) echo "check.sh: unknown option '$1'" >&2; exit 2 ;;
@@ -78,8 +89,69 @@ fi
 # this sandbox's non-interactive shells otherwise lack (P3.7).
 export PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH"
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# Per-gate logs are PERSISTED, not scratched. They used to go to a `mktemp -d`
+# removed by an EXIT trap, and only the first 60 lines were ever echoed — then
+# the supervisor truncated check.sh's *combined* output to 60 lines again on the
+# way to the next run's prompt. Two truncations and a delete: `impeccable-detect`
+# was recorded as "unknown, no evidence" across six consecutive sweeps
+# (BUILD/BLOCKERS.md, "The gap underneath all three") when in fact it had been
+# printing three specific findings the whole time. A gate whose evidence does
+# not outlive the process is a gate nobody can act on.
+LOG_DIR="reports/.scratch/sweep"
+rm -rf "$LOG_DIR"
+mkdir -p "$LOG_DIR"
+
+# ── Gate scoping: the design and live-stack UI gates read only web/ ─────────
+#
+# `impeccable-detect`, `playwright-e2e`, `puppeteer-audit` and `ui-thresholds`
+# scan `web/src` or drive the built frontend. A change that touches no file
+# under `web/` cannot move any of them, so running them on such a change yields
+# a verdict about somebody else's code. When that verdict is red for an
+# unrelated reason — which it has been since the live gates first became
+# runnable (BUILD/BLOCKERS.md, "the same three web gates, six sweeps running") —
+# every backend run opens with a FAIL header, and a permanently-red gate trains
+# its reader to skim. That has already nearly cost something real: when a
+# genuine pytest regression joined the standing list, the only thing separating
+# it from the noise was reading the failure list item by item.
+#
+# This is NOT a weaker gate, and the distinction is the whole point:
+#
+#   * The scope is computed from the DIFF, not chosen by the caller. There is
+#     no flag that switches a gate off for a change it covers.
+#   * Any change touching web/ runs all four, exactly as before.
+#   * `--all-gates` forces them on; nothing forces them off.
+#   * If the diff cannot be computed, the gates RUN. Failing safe means
+#     running the gate, never skipping it.
+#
+# What this does not fix: these four now run only when someone edits web/, so a
+# standing red there can sit unnoticed for longer. They still have no CI home
+# (`ci.yml`'s web job stops at `npm run build`), which BLOCKERS.md already flags
+# as "a gate that only ever runs on one machine is a gate nobody is accountable
+# to". Scoping makes the backend signal readable; it does not give these an
+# owner. That is still open.
+web_touched() {
+  [ "$ALL_GATES" -eq 1 ] && return 0
+  local base
+  base="$(git merge-base HEAD origin/develop 2>/dev/null \
+       || git merge-base HEAD develop 2>/dev/null)" || return 0
+  [ -n "$base" ] || return 0
+  # `git diff <base>` (one commit, no --cached) compares base against the
+  # WORKING TREE, so committed and uncommitted edits are both covered in one
+  # call — check.sh gates the working tree, not HEAD. Untracked files are not
+  # in a diff at all, hence the second command.
+  {
+    git diff --name-only "$base" -- web/ 2>/dev/null
+    git ls-files --others --exclude-standard -- web/ 2>/dev/null
+  } | grep -q .
+}
+
+WEB_SCOPE_REASON=""
+if web_touched; then
+  WEB_GATES=1
+else
+  WEB_GATES=0
+  WEB_SCOPE_REASON="diff touches no web/ file (--all-gates overrides)"
+fi
 
 FAILED=()
 SKIPPED=()
@@ -87,12 +159,20 @@ SKIPPED=()
 run() {
   local name="$1"
   shift
-  local log="$TMP/$name.log"
+  local log="$LOG_DIR/$name.log"
   if ( "$@" ) >"$log" 2>&1; then
     echo "PASS   $name"
   else
     echo "FAIL   $name"
     sed -n '1,60p' "$log" | sed 's/^/       /'
+    local lines
+    lines=$(wc -l <"$log")
+    if [ "$lines" -gt 60 ]; then
+      echo "       … $((lines - 60)) more lines"
+    fi
+    # Named on every failure, so a truncated hand-off still says where the
+    # evidence is rather than losing it.
+    echo "       full log: $LOG_DIR/$name.log"
     FAILED+=("$name")
   fi
 }
@@ -144,12 +224,14 @@ if [ "$FAST" -eq 1 ]; then
   # this gate's verdict depends on connectivity rather than on the tree. That
   # is tolerable for the authoritative gate and not for a per-run check.
   skip "impeccable-detect" "fast mode (network-dependent npx resolve)"
+elif [ "$WEB_GATES" -eq 0 ]; then
+  skip "impeccable-detect" "$WEB_SCOPE_REASON"
 else
   run "impeccable-detect" bash -c 'cd web && npx --yes impeccable detect src/'
 fi
 
 STACK_UP=0
-if [ "$FAST" -eq 0 ] && supabase status -o json >/dev/null 2>&1; then
+if [ "$FAST" -eq 0 ] && [ "$WEB_GATES" -eq 1 ] && supabase status -o json >/dev/null 2>&1; then
   STACK_UP=1
 fi
 
@@ -167,6 +249,10 @@ elif [ "$FAST" -eq 1 ]; then
   skip "playwright-e2e" "fast mode (browser E2E — run the full gate before merge)"
   skip "puppeteer-audit" "fast mode (browser audit — run the full gate before merge)"
   skip "ui-thresholds" "fast mode (no fresh audit output — puppeteer-audit skipped)"
+elif [ "$WEB_GATES" -eq 0 ]; then
+  skip "playwright-e2e" "$WEB_SCOPE_REASON"
+  skip "puppeteer-audit" "$WEB_SCOPE_REASON"
+  skip "ui-thresholds" "$WEB_SCOPE_REASON"
 else
   skip "playwright-e2e" "local Supabase stack not running (supabase status failed)"
   skip "puppeteer-audit" "local Supabase stack not running"
@@ -185,6 +271,7 @@ if [ "${#FAILED[@]}" -eq 0 ]; then
   fi
 else
   echo "FAILED (${#FAILED[@]}): ${FAILED[*]}"
+  echo "Full per-gate logs: $LOG_DIR/<gate>.log"
 fi
 
 [ "${#FAILED[@]}" -eq 0 ]
