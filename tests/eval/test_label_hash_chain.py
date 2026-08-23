@@ -17,7 +17,7 @@ from lemely.labelling.verify import verify_chain
 
 
 def test_writing_records_builds_a_valid_chain(tmp_path: Path) -> None:
-    path = transcription_path("0580_s23_qp_22", "labeller-A", eval_root=tmp_path)
+    path = transcription_path("0580_s23_qp_22", eval_root=tmp_path)
 
     for index in range(3):
         append_record(path, {"question_id": f"q{index}", "text": f"answer {index}"})
@@ -36,7 +36,7 @@ def test_writing_records_builds_a_valid_chain(tmp_path: Path) -> None:
 
 
 def test_verify_detects_a_tampered_middle_record(tmp_path: Path) -> None:
-    path = transcription_path("0580_s23_qp_22", "labeller-A", eval_root=tmp_path)
+    path = transcription_path("0580_s23_qp_22", eval_root=tmp_path)
     for index in range(4):
         append_record(path, {"question_id": f"q{index}", "text": f"answer {index}"})
 
@@ -54,7 +54,7 @@ def test_verify_detects_a_tampered_middle_record(tmp_path: Path) -> None:
 
 
 def test_untampered_chain_verifies_clean(tmp_path: Path) -> None:
-    path = marking_path("0580_s23_qp_22", "labeller-A", eval_root=tmp_path)
+    path = marking_path("0580_s23_qp_22", eval_root=tmp_path)
     for index in range(5):
         append_record(path, {"question_id": f"q{index}", "awarded_marks": index})
 
@@ -74,7 +74,7 @@ def test_concurrent_appends_to_the_same_file_do_not_fork_the_chain(tmp_path: Pat
     resulting chain is valid with no duplicate prev_hash values (the
     fingerprint of a fork).
     """
-    path = transcription_path("0580_s23_qp_22", "labeller-A", eval_root=tmp_path)
+    path = transcription_path("0580_s23_qp_22", eval_root=tmp_path)
     n_writers = 40
     barrier = threading.Barrier(n_writers)
 
@@ -106,25 +106,36 @@ def test_concurrent_appends_to_the_same_file_do_not_fork_the_chain(tmp_path: Pat
     assert result.ok, result.reason
 
 
-def test_two_labellers_on_the_same_paper_do_not_overwrite_each_other(
+def test_two_labellers_on_the_same_paper_interleave_in_one_tamper_evident_chain(
     tmp_path: Path,
 ) -> None:
-    path_a = transcription_path("0580_s23_qp_22", "labeller-A", eval_root=tmp_path)
-    path_b = transcription_path("0580_s23_qp_22", "labeller-B", eval_root=tmp_path)
+    """SHOULD-FIX (accuracy-review, #46 repair pass 3): spec §6 storage path.
 
-    append_record(path_a, {"question_id": "q0", "text": "A's answer"})
-    append_record(path_b, {"question_id": "q0", "text": "B's answer"})
-    append_record(path_a, {"question_id": "q1", "text": "A's second answer"})
+    ``eval/labels/<paper_id>/{transcription,marking}.jsonl`` — one file per
+    ``(paper_id, pass)``, not per labeller. DA2's "two labellers must not
+    overwrite each other" is satisfied by carrying ``labeller_id`` on every
+    record and letting two labellers interleave in the same append-only
+    chain, rather than by giving each labeller a private file.
+    """
+    path = transcription_path("0580_s23_qp_22", eval_root=tmp_path)
 
-    assert path_a != path_b
+    append_record(path, {"question_id": "q0", "text": "A's answer", "labeller_id": "labeller-A"})
+    append_record(path, {"question_id": "q0", "text": "B's answer", "labeller_id": "labeller-B"})
+    append_record(
+        path, {"question_id": "q1", "text": "A's second answer", "labeller_id": "labeller-A"}
+    )
 
-    records_a = [json.loads(line) for line in path_a.read_text(encoding="utf-8").splitlines()]
-    records_b = [json.loads(line) for line in path_b.read_text(encoding="utf-8").splitlines()]
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 3
 
+    records_a = [r for r in records if r["payload"]["labeller_id"] == "labeller-A"]
+    records_b = [r for r in records if r["payload"]["labeller_id"] == "labeller-B"]
     assert len(records_a) == 2
     assert len(records_b) == 1
     assert records_a[0]["payload"]["text"] == "A's answer"
     assert records_b[0]["payload"]["text"] == "B's answer"
 
-    assert verify_chain(path_a).ok
-    assert verify_chain(path_b).ok
+    # One chain, tamper-evident across both labellers' interleaved records.
+    assert verify_chain(path).ok
+    assert records[1]["prev_hash"] == records[0]["hash"]
+    assert records[2]["prev_hash"] == records[1]["hash"]

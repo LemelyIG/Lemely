@@ -30,9 +30,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
+from pydantic import ValidationError
+
 from lemely.labelling.manifest_io import write_label_manifest
 from lemely.labelling.pages import render_pass1_page, render_pass2_page
-from lemely.labelling.paper_data import load_pass1_context, load_pass2_context, read_scan_image
+from lemely.labelling.paper_data import (
+    load_pass1_context,
+    load_pass2_context,
+    question_mark_point_ids,
+    read_scan_image,
+)
 from lemely.labelling.paths import InvalidIdentifierError
 from lemely.labelling.records import append_marking_record, append_transcription_record
 
@@ -46,6 +53,16 @@ _LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
 # EvalRecord/analyses.py's ``predicted_marks``-style fields, and the golden
 # JSON payloads used throughout this test suite) treat this as a number.
 _INT_FIELDS = {"awarded_marks"}
+
+# Rendered as several ``<input type="checkbox" name="mark_point_id"
+# value="...">`` sharing one name (the spec §6 pass-2 mark-point checkboxes,
+# see pages.py) — a real browser submits these as repeated
+# ``mark_point_id=p1&mark_point_id=p3`` pairs, which ``parse_qs`` already
+# groups into a list. Every other form field is collapsed to its first value
+# (``_parse_request_body``'s form branch); this one must not be, or only the
+# first checked mark point would ever survive.
+_MARK_POINT_ID_FIELD = "mark_point_id"
+_MULTI_VALUE_FIELDS = {_MARK_POINT_ID_FIELD}
 
 
 class _BadRequestError(ValueError):
@@ -137,6 +154,10 @@ class LabellerRequestHandler(BaseHTTPRequestHandler):
         name = qs.get("name", [None])[0]
         return parsed.path, paper_id, name
 
+    def _query_param(self, key: str) -> str | None:
+        qs = parse_qs(urlparse(self.path).query)
+        return qs.get(key, [None])[0]
+
     def _read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0"))
         return self.rfile.read(length) if length else b""
@@ -169,7 +190,10 @@ class LabellerRequestHandler(BaseHTTPRequestHandler):
 
         if media_type == "application/x-www-form-urlencoded":
             parsed = parse_qs(raw_body.decode("utf-8"), keep_blank_values=True)
-            form_payload: dict[str, object] = {name: values[0] for name, values in parsed.items()}
+            form_payload: dict[str, object] = {
+                name: (values if name in _MULTI_VALUE_FIELDS else values[0])
+                for name, values in parsed.items()
+            }
             for field in _INT_FIELDS & form_payload.keys():
                 try:
                     form_payload[field] = int(str(form_payload[field]))
@@ -178,6 +202,43 @@ class LabellerRequestHandler(BaseHTTPRequestHandler):
             return form_payload
 
         raise _BadRequestError(f"unsupported or missing Content-Type: {content_type!r}")
+
+    def _build_marking_payload(
+        self, paper_id: str, payload: dict[str, object]
+    ) -> dict[str, object]:
+        """Turn the raw pass-2 POST payload into the spec §6 output contract.
+
+        Checkbox presence (repeated ``mark_point_id`` values) becomes an
+        explicit True/False verdict for every mark point the mark scheme
+        actually has for this question — the full set of point ids is
+        loaded from the mark scheme itself (never trusted from the client),
+        so an unticked box is recorded as an explicit False rather than a
+        silently missing key. A checked id that is not one of the
+        question's real mark points is rejected rather than silently kept
+        or dropped.
+        """
+        question_id = payload.get("question_id")
+        if not isinstance(question_id, str) or not question_id:
+            raise _BadRequestError("question_id is required")
+
+        point_ids = question_mark_point_ids(paper_id, question_id)
+
+        checked_raw = payload.pop(_MARK_POINT_ID_FIELD, [])
+        if isinstance(checked_raw, str):
+            checked = [checked_raw]
+        elif isinstance(checked_raw, list):
+            checked = [str(item) for item in checked_raw]
+        else:
+            raise _BadRequestError(f"{_MARK_POINT_ID_FIELD!r} must be a string or list of strings")
+
+        unknown = set(checked) - set(point_ids)
+        if unknown:
+            raise _BadRequestError(
+                f"checked mark point(s) {sorted(unknown)} are not part of question {question_id!r}"
+            )
+
+        payload["mark_point_verdicts"] = {point_id: point_id in checked for point_id in point_ids}
+        return payload
 
     def do_GET(self) -> None:
         if not self._request_is_local():
@@ -193,7 +254,10 @@ class LabellerRequestHandler(BaseHTTPRequestHandler):
                 self._send_html(200, render_pass1_page(context))
                 return
             if route == "/pass2":
-                context = load_pass2_context(paper_id, self.server.labeller_id)
+                question_id = self._query_param("question_id")
+                context = load_pass2_context(
+                    paper_id, self.server.labeller_id, question_id=question_id
+                )
                 self._send_html(200, render_pass2_page(context))
                 return
             if route == "/scan":
@@ -230,11 +294,21 @@ class LabellerRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(201, record)
                 return
             if route == "/pass2":
+                payload = self._build_marking_payload(paper_id, payload)
                 record = append_marking_record(paper_id, self.server.labeller_id, payload)
                 self._send_json(201, record)
                 return
         except InvalidIdentifierError as exc:
             self._send_json(400, {"error": str(exc)})
+            return
+        except _BadRequestError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        except ValidationError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        except FileNotFoundError as exc:
+            self._send_json(404, {"error": str(exc)})
             return
         self._send_json(404, {"error": "not found"})
 

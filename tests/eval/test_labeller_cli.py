@@ -87,7 +87,7 @@ def test_run_labeller_writes_the_manifest_before_serving(
     server_thread.start()
 
     try:
-        manifest_file = Path("eval") / "labels" / "RUN01" / "labeller-R" / "manifest.json"
+        manifest_file = Path("eval") / "labels" / "RUN01" / "manifest.labeller-R.json"
         for _ in range(200):
             if manifest_file.is_file():
                 break
@@ -103,3 +103,55 @@ def test_run_labeller_writes_the_manifest_before_serving(
         for server in created:
             server.shutdown()
         server_thread.join(timeout=5)
+
+
+def test_label_verify_help_is_registered() -> None:
+    """NIT (accuracy-review, #46 repair pass 3): verify_chain had no production caller."""
+    result = CliRunner().invoke(cli, ["label-verify", "--help"])
+    assert result.exit_code == 0
+    assert "PAPER_ID" in result.output
+
+
+def test_label_verify_passes_on_a_clean_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    from lemely.labelling.records import append_marking_record, append_transcription_record
+
+    append_transcription_record("VERIFY01", "labeller-A", {"question_id": "1", "text": "hi"})
+    append_marking_record(
+        "VERIFY01",
+        "labeller-A",
+        {
+            "question_id": "1",
+            "awarded_marks": 1,
+            "mark_point_verdicts": {"p1": True},
+            "question_type_judgement": "recall",
+        },
+    )
+
+    result = CliRunner().invoke(cli, ["label-verify", "VERIFY01"])
+    assert result.exit_code == 0, result.output
+    assert "transcription: OK" in result.output
+    assert "marking: OK" in result.output
+
+
+def test_label_verify_fails_on_a_hand_tampered_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    from lemely.labelling.paths import transcription_path
+    from lemely.labelling.records import append_transcription_record
+
+    append_transcription_record("VERIFY02", "labeller-A", {"question_id": "1", "text": "hi"})
+    append_transcription_record("VERIFY02", "labeller-A", {"question_id": "2", "text": "there"})
+
+    path = transcription_path("VERIFY02")
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    records = [json.loads(line) for line in lines]
+    records[0]["payload"]["text"] = "TAMPERED"
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+    result = CliRunner().invoke(cli, ["label-verify", "VERIFY02"])
+    assert result.exit_code == 1
+    assert "transcription: BROKEN at record 0" in result.output

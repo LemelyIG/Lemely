@@ -1,10 +1,18 @@
-"""Hash-chain verifier for the labeller's JSONL records (spec §6)."""
+"""Hash-chain verifier for the labeller's JSONL records (spec §6).
+
+``verify_chain`` on its own has no production caller — only tests invoked
+it (NIT, accuracy-review #46 repair pass 3) — so a human auditing the label
+corpus had no way to actually run the tamper check the spec calls for.
+``verify_paper_labels`` plus ``lemely label-verify`` (see
+:mod:`lemely.app.cli`) close that gap.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from lemely.labelling.paths import DEFAULT_EVAL_ROOT, marking_path, transcription_path
 from lemely.labelling.records import read_records, record_hash
 
 if TYPE_CHECKING:
@@ -46,3 +54,36 @@ def verify_chain(path: Path) -> ChainVerification:
             )
         prev_hash = stored_hash
     return ChainVerification(ok=True)
+
+
+@dataclass(frozen=True)
+class PaperVerification:
+    """Chain-verification results for one paper's ``transcription.jsonl`` / ``marking.jsonl``."""
+
+    paper_id: str
+    ok: bool
+    files: dict[str, ChainVerification | None]  # None means the file does not exist yet
+
+
+def verify_paper_labels(paper_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> PaperVerification:
+    """Verify both of ``paper_id``'s hash chains (spec §6 storage: one pair per paper).
+
+    A file that does not exist yet (e.g. only pass 1 has been done so far)
+    is reported as missing, not as broken — nothing to verify is not
+    tampering.
+    """
+    targets = {
+        "transcription": transcription_path(paper_id, eval_root),
+        "marking": marking_path(paper_id, eval_root),
+    }
+    files: dict[str, ChainVerification | None] = {}
+    ok = True
+    for name, path in targets.items():
+        if not path.is_file():
+            files[name] = None
+            continue
+        result = verify_chain(path)
+        files[name] = result
+        if not result.ok:
+            ok = False
+    return PaperVerification(paper_id=paper_id, ok=ok, files=files)

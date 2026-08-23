@@ -1,8 +1,15 @@
 """Filesystem layout for one paper's labels (spec §6).
 
-Every path is keyed by both ``paper_id`` and ``labeller_id`` so that two
-distinct labellers labelling the same paper never overwrite each other
-(spec §6; anticipates DA2/#51's 10% re-mark by a second labeller).
+Spec §6 storage: ``eval/labels/<paper_id>/{transcription,marking}.jsonl`` —
+one append-only hash-chained file per ``(paper_id, pass)``, not per
+labeller. Two distinct labellers labelling the same paper (DA2/#51's 10%
+re-mark) interleave records in that *same* chain rather than getting
+separate files; ``lemely.labelling.records`` stamps ``labeller_id`` onto
+every record so callers can still tell whose record is whose. Only the
+per-labeller manifest keeps labeller identity in its filename
+(``manifest.<labeller_id>.json``) — the manifest is a single JSON snapshot,
+not append-only, so a second labeller writing at the same paper must not be
+able to clobber the first labeller's manifest.
 
 ``paper_id`` / ``labeller_id`` / scan-image ``name`` values reach these
 functions straight from an HTTP query string (see
@@ -41,25 +48,30 @@ def _require_within(candidate: Path, root: Path) -> Path:
     return resolved
 
 
-def label_dir(paper_id: str, labeller_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> Path:
+def label_dir(paper_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> Path:
     _validate_identifier(paper_id, kind="paper_id")
-    _validate_identifier(labeller_id, kind="labeller_id")
     labels_root = eval_root / "labels"
-    return _require_within(labels_root / paper_id / labeller_id, labels_root)
+    return _require_within(labels_root / paper_id, labels_root)
 
 
-def transcription_path(
-    paper_id: str, labeller_id: str, eval_root: Path = DEFAULT_EVAL_ROOT
-) -> Path:
-    return label_dir(paper_id, labeller_id, eval_root) / "transcription.jsonl"
+def transcription_path(paper_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> Path:
+    return label_dir(paper_id, eval_root) / "transcription.jsonl"
 
 
-def marking_path(paper_id: str, labeller_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> Path:
-    return label_dir(paper_id, labeller_id, eval_root) / "marking.jsonl"
+def marking_path(paper_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> Path:
+    return label_dir(paper_id, eval_root) / "marking.jsonl"
 
 
 def manifest_path(paper_id: str, labeller_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> Path:
-    return label_dir(paper_id, labeller_id, eval_root) / "manifest.json"
+    """One manifest per ``(paper_id, labeller_id)`` — filename-scoped, not dir-scoped.
+
+    A second labeller re-marking the same paper (DA2/#51) must not clobber
+    the first labeller's manifest; keeping ``labeller_id`` in the filename
+    rather than a subdirectory keeps the paper's ``transcription.jsonl`` /
+    ``marking.jsonl`` at exactly the spec §6 path with no extra segment.
+    """
+    _validate_identifier(labeller_id, kind="labeller_id")
+    return label_dir(paper_id, eval_root) / f"manifest.{labeller_id}.json"
 
 
 def scan_dir(paper_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> Path:

@@ -241,6 +241,7 @@ ignore_errors = true
 module = [
   "lemely.eval.manifest",
   "lemely.eval.records",
+  "lemely.labelling.records",
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
   "lemely.core.question_papers",

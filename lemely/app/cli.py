@@ -1178,6 +1178,55 @@ def label_cmd(paper_id: str, split: str, labeller_id: str | None, host: str, por
     )
 
 
+@cli.command("label-verify")
+@click.argument("paper_id")
+@click.pass_context
+def label_verify_cmd(ctx: click.Context, paper_id: str) -> None:
+    """Verify PAPER_ID's tamper-evident label hash chains (spec §6, #46 repair pass 3).
+
+    Exits non-zero if either ``transcription.jsonl`` or ``marking.jsonl`` is
+    broken. Without this command, ``verify_chain`` had no production
+    caller — a human auditing the label corpus had no way to actually run
+    the tamper-evidence check the spec calls for; this just delegates into
+    :func:`lemely.labelling.verify.verify_paper_labels`.
+    """
+    from lemely.labelling.verify import verify_paper_labels
+
+    verification = verify_paper_labels(paper_id)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "paperId": verification.paper_id,
+                "ok": verification.ok,
+                "files": {
+                    name: (
+                        None
+                        if result is None
+                        else {
+                            "ok": result.ok,
+                            "brokenIndex": result.broken_index,
+                            "reason": result.reason,
+                        }
+                    )
+                    for name, result in verification.files.items()
+                },
+            }
+        )
+    else:
+        click.echo(f"Label chain verification for {paper_id}:")
+        for name, result in verification.files.items():
+            if result is None:
+                click.echo(f"  {name}: no file (skipped)")
+            elif result.ok:
+                click.echo(f"  {name}: OK")
+            else:
+                click.echo(f"  {name}: BROKEN at record {result.broken_index} — {result.reason}")
+
+    if not verification.ok:
+        raise click.exceptions.Exit(1)
+
+
 @cli.command("ui")
 @click.option("--host", default=None)
 @click.option("--port", default=None, type=int)
