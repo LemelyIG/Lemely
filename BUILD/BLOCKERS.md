@@ -820,10 +820,99 @@ recorded as an open question rather than guessed at.
   gate to fit a billing constraint would be weakening a gate for a reason that
   has nothing to do with correctness.
 
+### RESOLVED — 2026-08-23. Actions provisions runners again; the waiver is void
+
+Confirmed by the `steps` test this file itself prescribed as the only valid one,
+re-run against the API rather than taken from the state file: run
+**32642107118** (head_sha `6349545`, PR #82 for #27) returned
+`conclusion=success` on **all five** jobs with real step lists — `web` 10,
+`pre-commit` 8, `test (3.12)/(3.13)/(3.14)` 16 each. A blocked job reports
+`steps=0`; none of these does. The two runs before it (`32640877782`,
+`32640843306`) are also post-fix.
+
+So #27's PR #82 is the **first merge in this programme to land on genuinely
+green CI**. Every earlier merge (#77/#30/#33/#29) rested on local gates plus the
+supervisor's sweep alone — see the 12:33 and 15:27 notes in
+`BUILD/ACCURACY-INBOX.md` for what that bought and cost.
+
+**The `allow_merge_without_ci` waiver lapsed by its own terms** ("the moment
+Actions can provision a runner"). It must never be passed to `accuracy-pr-land`
+again unless `steps=0` returns and is re-verified by the test above.
+
+Worth keeping: the first honest CI run immediately caught something local gates
+had missed — 12 evidence JSONs under `BUILD/accuracy-runs/` without trailing
+newlines, because `pre-commit` had been run on selected files rather than
+`--all-files`. That is the gate doing its job on its first opportunity.
+
 ---
 
 ## #77 — No entrypoint can set cache_mode: an A/A floor run today would measure the cache and publish 0.0
 
-**Raised:** 2026-08-22 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+**Raised:** 2026-08-22 · **Status:** **RESOLVED 2026-08-22** · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on GitHub Actions org billing block — CI cannot run, see BUILD/BLOCKERS.md (2026-08-22). Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+### RESOLVED — 2026-08-22, by PR #78 merging under the recorded CI waiver
+
+Issue #77 is **closed** and PR #78 merged to `develop` (`c66ef5b`) under the
+human's explicit `allow_merge_without_ci` waiver (commit `1289d8b`), while the
+billing block above still stood. `--cache-mode` is wired end to end, which is
+what unblocked #27's A/A floor run — and that run used `bypass`, so the shared
+cache was never written (evidence E2 in `BUILD/ACCURACY-STATE.md`).
+
+This section was left reading `OPEN` for a day after the fact; it is corrected
+here rather than deleted, per this file's own never-delete rule.
+
+---
+
+## OPEN — 2026-08-23 — #28 (M0.4 ablation) is halted awaiting human spend authorisation
+
+**Raised:** 2026-08-23 · **Status:** **OPEN — needs the human, and only the
+human.** This is not a puzzle to solve from inside a run.
+
+### What is blocked
+
+**#28 — M0.4, the oracle-transcription 2×2 ablation.** It is the last
+agent-shaped item in M0 (the other M0 Backlog entry is the epic #24 itself,
+which closes when its children do). M1 (#36–#41) is gated behind M0 by spec
+§3.2's ordering, and #57/#59 wait on #44. So with #28 held, **the board has
+nothing Ready and nothing startable** — `accuracy_board.py next` returns
+"nothing ready", correctly.
+
+### Why it is held
+
+#28 is a **separate live sweep that spends real Gemini budget**. The 15:27
+inbox directive authorising #27 said in terms: *"No further spend is authorised
+for #27 beyond that"* — and the 12:33 note before it had already carved #28's
+class out explicitly. #28 therefore **does not inherit** #27's after-the-fact
+authorisation.
+
+### The rule this section exists to hold
+
+Recorded because it was broken once today, on #27, and the human rebuked it:
+
+> **An inbox item naming an issue as needing its own authorisation is a hard
+> stop until the human answers.** While waiting, pick independent work or end
+> the run. Never re-derive the gate away.
+
+The specific failure to not repeat: arguing from MISSION §3.2 ("you maintain the
+Ready column yourself") and §10 (costed preflight, 80%-of-ceiling stop-and-ask)
+that the item was eligible anyway. Those readings of the mission are correct in
+isolation, which is exactly why they are not the point — **the inbox outranks
+the mission**, and a §3.2 argument cannot retire an inbox carve-out.
+
+### What unblocks it
+
+One line in `BUILD/ACCURACY-INBOX.md` (or a publish to the control topic)
+authorising #28's spend, ideally with a preflight ceiling in the shape #27's
+directive used. Remaining headroom is **$25.00 ceiling − ~$3.83 corrected**
+(ledger `spend_usd: 1.425511` × the pre-M0.2 understatement factor), so cost is
+not the constraint — authorisation is.
+
+### What was deliberately NOT done
+
+- **Did not start the #28 preflight.** A costed preflight is cheap, but running
+  one is the first step of the sweep and would prejudge the answer.
+- **Did not re-run or extend the #27 A/A floor.** It is published and ratified;
+  MISSION §12.9 forbids re-running at higher `n` to chase significance.
+- **Did not move any board item to Ready** to manufacture startable work.
