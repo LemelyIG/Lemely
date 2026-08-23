@@ -8,7 +8,7 @@ last_run_headline: none
 review_rate: 19.1%
 ratchet: unarmed (M0.9 / #33 open; starting value will be 19.1%)
 spend_usd: 0.4026
-in_the_middle_of: #30 (M0.6 paired stats) is COMPLETE AND PR-READY on feature/accuracy-30-paired-statistics-mcnemar-wilson (tip d32bba7, 5 signed commits above origin/develop) but is DELIBERATELY NOT PUSHED AND HAS NO PR, because Actions is billing-blocked. DO NOT re-implement it — verify with 'git log --oneline origin/develop..HEAD' before touching anything. WHAT TO DO WHEN BILLING IS FIXED, in this order: (a) 'gh pr checks 78'; if green, 'gh pr merge 78 --squash --delete-branch' then 'accuracy_board.py done 77' (#77's review wf_d2272bef-33f is already clean and does NOT need re-running); (b) run accuracy-pr-land {issue:30, branch:'feature/accuracy-30-paired-statistics-mcnemar-wilson', base:'develop'}; (c) then #27 (M0.3 A/A floor) is unblocked and MUST use '--cache-mode bypass', never 'refresh' (lemely/io/gemini.py:350-356 and :425 — bypass skips the cache read AND the write; refresh writes and would overwrite the shared cache on all ~10 repeats). WHY NO PR WAS OPENED THIS RUN: mission section 7.1 makes accuracy-pr-land the mandatory owner of the PR lifecycle, but it watches CI to conclusion and routes a red run into accuracy-gate-triage — and the standing order forbids re-triaging the billing block. Opening the PR by hand instead would bypass a mandatory workflow; running pr-land would force a forbidden re-triage. So the branch waits. This is a deliberate choice, not an omission. WHAT I VERIFIED MYSELF rather than trusting the workflow (wf_c44daa3d-c42 returned ready_for_pr=true, review=mergeable, but this programme has a false-green history): tree clean; all 5 commits gpgsig=1; 'grep -rn MCNEMAR_N_FLOOR' outside git history = 0 hits so the rename is complete; paired_proportion_min_n(0.838,0.888,alpha=0.05,power=0.80) now returns 155, exactly the Connor/Fleiss favourable limit it claims (it returned 157 last pass, and DA7's 'lower bound' wording is now true); monotonicity holds both ways (bigger effect 0.70->0.90 gives 37; power 0.95 gives 254); inspect.signature(mcnemar) is (records: list[EvalRecord]) so AC1's no-two-rate-summaries property is structurally enforced; mcnemar_improvement_p_value exists as the sole refusal point; 32/32 tests in tests/eval/test_analyses.py pass; and 'scripts/check.sh --fast tests/eval' ran TO COMPLETION green (ruff-check, ruff-format, mypy, import-linter, pytest, web-typecheck, web-lint, web-build, web-test all PASS; 4 skips are fast-mode browser/network gates). MUTATION-TESTED THE TESTS, since two were vacuous last pass: reverting the formula to 157 fails test_paired_proportion_min_n_pinned_value_and_monotonicity; removing the reporting refusal fails TestReportingLayer::test_underpowered_result_returns_the_sentinel; forcing underpowered=False fails test_below_floor_still_returns_numeric_statistic. All three bite; analyses.py restored byte-identical afterwards. THE DESIGN ADJUDICATION I MADE AND WHY IT MATTERS DOWNSTREAM: the first pass nulled chi2/p_value below the floor; I reversed that. Spec line 504 calls n=219 the floor for detecting IMPROVEMENT, line 450 says such a metric PRINTS as underpowered, and lines 506-508 make M1's BLOCKING gate non-regression at alpha=0.05 over a dev split the spec itself calls 'an order of magnitude below the n-floor'. Nulling at the computation layer would have made M1's own gate uncomputable. mcnemar() now always returns numbers, carries underpowered: bool, and the refusal lives in mcnemar_improvement_p_value. OPEN FOLLOW-UPS to carry into the PR body (all non-blocking, none weaken a gate): the refusal function currently has NO callers, so it becomes MUST-FIX the moment a reporting caller of mcnemar() lands — add a guard then; the 60-line hand-rolled Acklam _inverse_normal_cdf duplicates statistics.NormalDist().inv_cdf and has two untested tail branches; TestWilson may still be satisfiable by a clamped normal approximation, so AC2 is not fully enforced; the reporting fn is annotated '-> float | str' where DA7 documents Literal['underpowered']. STILL HALTED, RE-VERIFIED THIS RUN: no workflow run exists after 32547620531 (2026-08-22T02:56Z) and 'gh pr checks 78' shows all five jobs failing in 1-4s. GitHub Actions is billing-blocked for LemelyIG — a human must fix Settings > Billing & plans. Do NOT re-triage it, do NOT re-run that workflow, do NOT trim the CI matrix. FIRST MEASUREMENT MUST RECOMPUTE review_rate: 19.1% is on the PRE-#32 denominator (28 leaves; corpus is now 31 distinct leaves / 71 rows, DA6b). spend_usd 0.4026 is a LOWER BOUND (stale _DEFAULT_PRICING, no thinking tokens). NO BUDGET SPENT this run. Precondition re-checked: origin/develop..origin/main = 0. Local develop is 1 ahead of origin/develop (2096e77, state bookkeeping), left unpushed. WORKFLOW HAZARD, NOW SEEN FOUR TIMES AND IT COMMITS THE DAMAGE: accuracy-issue-execute blanked this key again and committed it as d32bba7 'clear in_the_middle_of', after overwriting it as 'implementing #30' in c42f78b — it did this DESPITE this very key warning about it. Assume it will happen again; re-read and re-write this header after every accuracy-issue-execute run. STANDING RED GATE, not accuracy-caused, do NOT re-triage: impeccable-detect, playwright-e2e, ui-thresholds (BUILD/BLOCKERS.md:666). ENV: jq NOT installed (use gh --jq); pre-commit needs .venv/bin on PATH; verify signing with 'git cat-file commit <sha> | grep -c gpgsig', NEVER %G?.
+in_the_middle_of: QUEUE DRAINING UNDER THE HUMAN'S CI WAIVER — the billing block is NOT fixed, it is being routed around. Commit 1289d8b (2026-08-23T11:20+03:00) added allow_merge_without_ci to .claude/workflows/accuracy-pr-land.js, so a reviewed branch may merge on LOCAL gates alone while Actions cannot provision a runner; ci_green is still reported FALSE and the deviation is posted to the PR before the merge. RE-VERIFIED 2026-08-23 FROM THE API: the newest run repo-wide is now 32630968212 (2026-08-23T09:25Z, NEWER than the 32547620531 cited in earlier notes) but it carries the IDENTICAL signature — all five jobs conclude failure in 1-4s with steps=0, i.e. no runner ever provisioned. That is the block, not a red gate; a waiver covers a check that CANNOT EXECUTE and never one that executed and said no. LANDED SO FAR: #77 via PR #78 under the waiver, develop is now c66ef5b. REMAINING, in order, one at a time: #30 (this branch), then #33 693d76ec, then #29 79fd9934. RE-CHECK merge-tree against the REAL develop tip before EACH land — #77's landing already turned all three from clean into BUILD/ACCURACY-STATE.md + BUILD/BLOCKERS.md conflicts, and develop moves again on every land. STILL BINDING, and merge-tree is BLIND to it: #29 x #33 is a SEMANTIC conflict — #29 puts abstain/unmatched INTO the mark_accuracy denominator, invalidating #33's recorded baseline WITHOUT touching a line #33 wrote. Rebase and RE-GATE whichever lands later; never merge blind. AFTER THE QUEUE DRAINS: (a) the review_rate recompute is a MEASUREMENT item belonging after #27, needing human SPEND authorisation and #27's A/A floor first — re-deriving it offline from the saved golden run returns the SAME 0.2903 out of the OLD denominator, a fake recompute (Evidence log E1); (b) the local-only commits on the #29 branch must be re-written onto develop as their own chore commit (Evidence log E4), and that pile now ALSO holds the human's two tooling commits c08460f (diff-scoped gates + persisted gate logs in scripts/check.sh) and 1289d8b (the waiver itself) — both LOCAL ONLY, and #29's PR squashes from ORIGIN's tip, so they reach develop by NO other route. DROP THE WAIVER the moment a run provisions a runner. ENV: jq NOT installed (use gh --jq); pre-commit needs .venv/bin on PATH; verify signing with 'git cat-file commit <sha> | grep -c gpgsig', NEVER %G?.
 ---
 
 ## Contract — keep this file THIN
@@ -98,6 +98,51 @@ It does **not** open the PR. When it returns, verify its claims yourself
 (re-run the gates, confirm a clean tree, confirm signing with
 `git cat-file commit <sha> | grep -c gpgsig`), then `accuracy-review` with
 `head`/`base` passed explicitly, then `accuracy-pr-land`.
+
+## Landing run for #77 (added 2026-08-22)
+
+`accuracy-pr-land` for **#77** is running as **`wf_f4d77849-0bd`** (transcript
+under `…/subagents/workflows/wf_f4d77849-0bd/journal.jsonl`), base `develop`.
+
+**Before launching anything for #77, run
+`gh pr list --head feature/accuracy-77-no-entrypoint-can-set-cache-mode-an-a-a`
+— do not open a second PR.** If its CI watch times out (4 of its first 5 uses
+did), that is neither pass nor fail: poll `gh pr checks <pr>` and merge by hand
+with `--squash`. Merge feature → `develop` only, never `main`.
+
+`accuracy-review` `wf_d2272bef-33f` returned **`merge`**, zero findings, zero
+unreviewed dimensions — and independently proved the two new tests fail on
+de-wired code in detached worktrees (`KeyError: 'default_cache_mode'`,
+`RunManifest cache_mode=None`), which answers the circularity worry about
+patching `GeminiClient` with a MagicMock. Only CI green remains.
+
+**After #77 merges, #27 (M0.3) can finally run** — with `--cache-mode bypass`.
+It spends real money: use `accuracy-measure`'s costed preflight, and remember
+"not reportable, with reason" is a successful outcome.
+
+### Superseded — the #77 review run
+
+## Review run for #77 (added 2026-08-22)
+
+`accuracy-review` for **#77** is running as **`wf_d2272bef-33f`** (transcript
+under `…/subagents/workflows/wf_d2272bef-33f/journal.jsonl`), over
+`head=feature/accuracy-77-no-entrypoint-can-set-cache-mode-an-a-a`,
+`base=origin/develop`, tip `372e483`. It only reads the diff, so it cannot
+collide with the worktree. On a clean verdict go to `accuracy-pr-land`.
+
+### Settled while it ran: #27 must use `--cache-mode bypass`, not `refresh`
+
+Read at source in `lemely/io/gemini.py:350-356` and `:425`:
+
+- `bypass` — skips the cache **read** and also skips the **write**, so the run
+  is "fully side-effect-free with respect to the shared cache". The source
+  comment names churn measurement as its purpose.
+- `refresh` — skips the read but **does** write, overwriting the entry.
+
+So the A/A floor (#27) uses **`bypass`**. `refresh` would give equally
+independent API calls but would rewrite the shared cache on all ~10 repeats,
+leaving the last run's responses behind for every later `read_write` caller —
+a measurement silently mutating the thing later runs read.
 
 ## Current state (seeded 2026-08-18)
 
