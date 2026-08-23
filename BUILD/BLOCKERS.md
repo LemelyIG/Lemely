@@ -1123,3 +1123,71 @@ followed; a human may reasonably rule it applies at M1 completion instead,
 which would let several items land now and be measured together. **That
 re-reading is itself a decision worth making explicitly**, and it is cheaper
 than authorising five separate sweeps.
+
+---
+
+## E: #57 (M0.7b) is blocked — the restored corpus is PDFs, and the split needs PARSED schemes
+
+**Status: OPEN. Blocked on a human decision about spend.** Raised 2026-08-23,
+immediately after #44 merged.
+
+### What #44 actually delivered, and what it did not
+
+#44 restored **1488 PDFs** and a committed digest manifest. It did **not**
+produce structured mark schemes: `find /home/sico/PaperScraper/papers -name
+'*.json'` (excluding the catalogue) returns **0**. The only parsed schemes in
+the tree are the **11** `tests/golden/*/mark_scheme.json` files — **71 leaf
+questions** — plus 2 JSONs under `Sources/`.
+
+### Why that blocks #57
+
+#57's binding constraints (posted on the issue, from DA1) require strata of
+**syllabus code × parse path (det/Gemini) × tariff band (1 / 2 / 3+ marks)**.
+Tariff band and parse path are properties of a *parsed* scheme. A PDF supplies
+neither. So the "restored corpus" #57 is supposed to stratify over cannot be
+enumerated into leaf questions at all in its current form.
+
+The target is ~300 leaves (10/60/30 → ≈30/180/90). Available: 71.
+
+### Why freezing over the 71 golden leaves would be a mistake, not a shortcut
+
+The constraints do say *"Splits land under target n; M0.5's exclusion funnel
+publishes the shortfall"*, so under-target is anticipated — but they also say
+**"Amendments — drop-only … never draw a backfill"** and the membership is
+**frozen**. Freezing over 71 leaves while 1488 unparsed papers sit on disk
+would be **irreversible by rule**, would discard most of what #44 was run to
+obtain, and would permanently cap the labelling corpus at roughly a quarter of
+its intended size. The drop-only rule exists to stop backfilling *after* a
+principled freeze — not to license freezing early and calling the gap a
+shortfall.
+
+### The missing step nobody scoped
+
+Between #44 (fetch PDFs) and #57 (split leaf questions) there is an unlisted
+prerequisite: **parse the restored corpus into structured mark schemes.** The
+det parser handles MCQ schemes at zero cost, but theory schemes go through the
+Gemini mark-scheme parser, which **spends money**. No authorisation exists for
+that, and #28's standing rule is that spend waits for the human.
+
+### What unblocks it
+
+- **(A)** Authorise a mark-scheme parsing pass over enough of the restored
+  corpus to reach ~300 leaves, with a costed preflight first; then #57 runs as
+  specified.
+- **(B)** Rule that #57 may freeze over a smaller corpus, stating explicitly
+  that the resulting n is accepted and permanent under the drop-only rule.
+- **(C)** Scope the parsing step as its own issue (it plausibly overlaps #45,
+  M2.2's failure-reason census over failing mark schemes, which also needs
+  parsed schemes).
+
+**Not started, deliberately.** #57 was read, its constraints were read, and the
+prerequisite gap was found before any branch was cut — not discovered halfway
+through an implementation.
+
+---
+
+## #57 — M0.7b — Freeze the split membership over the restored corpus
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on PREREQUISITE GAP: #44 restored 1488 PDFs but ZERO parsed mark schemes; this issue's strata need tariff band + parse path, which only a parsed scheme supplies. 71 golden leaves available vs a ~300 target. Freezing over 71 would be irreversible under the drop-only rule. Needs a human call on parsing spend — BUILD/BLOCKERS.md section E.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
