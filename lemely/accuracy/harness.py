@@ -20,6 +20,7 @@ from lemely.eval.analyses import exclusion_funnel
 from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
 from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
+from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
 
 log = structlog.get_logger()
@@ -297,10 +298,14 @@ def _review_triggers(needs_teacher_review: bool, review_reason: str | None) -> l
     ``"coherence_mismatch"`` (M1.5, #40) is a second, distinct trigger emitted
     additionally whenever the review reason came from the coherence gate —
     every message :func:`lemely.io.correction_ai._check_coherence` returns
-    contains the literal substring ``"matched_point_ids"``, which is how this
-    detects it without a second parallel boolean threaded through
-    ``CorrectedQuestion``/``QuestionResult``. This keeps the coherence gate's
-    contribution to ``review_rate`` separable downstream — see
+    contains :data:`lemely.io.correction_ai.COHERENCE_TRIGGER_MARKER`, which
+    is how this detects it without a second parallel boolean threaded through
+    ``CorrectedQuestion``/``QuestionResult``. Importing the shared constant
+    (rather than re-typing the literal here) means a reworded coherence
+    message cannot silently desync the two sides — see
+    ``tests/test_accuracy_harness.py::CoherenceTriggerWiringTests`` for the
+    end-to-end regression guard. This keeps the coherence gate's contribution
+    to ``review_rate`` separable downstream — see
     :func:`lemely.eval.analyses.coherence_trigger_rate` — without arming or
     re-tuning the M0.9 ratchet (``review_rate_ratchet_armed`` stays False;
     this function does not touch ``lemely/runtime/config.py`` or
@@ -309,7 +314,7 @@ def _review_triggers(needs_teacher_review: bool, review_reason: str | None) -> l
     if not needs_teacher_review:
         return []
     triggers = ["needs_teacher_review"]
-    if review_reason and "matched_point_ids" in review_reason:
+    if review_reason and COHERENCE_TRIGGER_MARKER in review_reason:
         triggers.append("coherence_mismatch")
     return triggers
 

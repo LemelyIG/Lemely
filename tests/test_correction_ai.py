@@ -424,13 +424,24 @@ class ECFContextTests(unittest.TestCase):
 
 
 class ThresholdTests(unittest.TestCase):
+    """Confidence-threshold behaviour, isolated from the M1.5 (#40) coherence
+    gate: the fixture uses ``LEVELS_BASED`` (a type exempt from the coherence
+    check when ``answer_points`` is empty — see ``_COHERENCE_EXEMPT_TYPES`` in
+    ``lemely/io/correction_ai.py``) precisely so these tests exercise only the
+    confidence mechanism, not coherence. Any other type here would now also
+    trip the coherence gate (empty ``answer_points`` + ``awarded_marks > 0``
+    + empty ``matched_point_ids`` is incoherent for non-exempt types since
+    #40's MUST-FIX 2), conflating two independent review reasons in tests
+    that are meant to isolate one.
+    """
+
     def _make_question(self):
         from lemely.core.loose_schemas import Question, QuestionType
 
         return Question.model_construct(
             id="2",
             marks=2,
-            type=QuestionType.EXPLANATION,
+            type=QuestionType.LEVELS_BASED,
             answer_points=[],
             parts=[],
             assessment_objectives=[],
@@ -762,11 +773,39 @@ class CoherenceGateTests(unittest.TestCase):
         )
         self.assertTrue(cq.needs_teacher_review)
 
-    def test_coherent_match_with_no_answer_points_is_untouched(self):
-        """A mark scheme with no discrete answer_points (levels-based, or a
-        model_construct fixture like ThresholdTests') has nothing to
-        reconcile matched_point_ids against, so the coherence check must not
-        fire — preserves ThresholdTests' pre-#40 behaviour."""
+    def test_exempt_type_with_no_answer_points_is_untouched(self):
+        """A LEVELS_BASED/INDICATIVE_CONTENT/MCQ question with no discrete
+        answer_points has nothing to reconcile matched_point_ids against by
+        design, so the coherence check must not fire regardless of
+        awarded_marks. Scoped to the exempt TYPES, not to empty-ness of
+        answer_points in general — see MUST-FIX 2 (#40 repair pass)."""
+        from lemely.core.loose_schemas import Question, QuestionType
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        exempt_question = Question.model_construct(
+            id="2",
+            marks=2,
+            type=QuestionType.LEVELS_BASED,
+            answer_points=[],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+        cq = _build_ai_corrected(
+            exempt_question,
+            "answer",
+            self._make_mark(1, [], confidence=1.0),
+        )
+        self.assertFalse(cq.needs_teacher_review)
+
+    def test_non_exempt_type_with_empty_answer_points_and_award_flags(self):
+        """A non-exempt type (e.g. EXPLANATION) with empty answer_points is a
+        data gap, not an intentional shape — an award with nothing to justify
+        it is still incoherent, same rule as the non-empty-points case
+        (MUST-FIX 2, #40 repair pass). Previously this returned None before
+        ever reaching the dangling/award checks, silently accepting a
+        fabricated award."""
         from lemely.io.correction_ai import _build_ai_corrected
 
         cq = _build_ai_corrected(
@@ -774,7 +813,87 @@ class CoherenceGateTests(unittest.TestCase):
             "answer",
             self._make_mark(1, [], confidence=1.0),
         )
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("matched_point_ids", cq.review_reason or "")
+
+    def test_empty_answer_points_with_nonempty_matched_point_ids_flags(self):
+        """Empty answer_points + non-empty matched_point_ids: every claimed id
+        is dangling by definition (there is nothing to resolve it against).
+        This was the acceptance-bullet-2 gap the review found: the old
+        ``if not question.answer_points: return None`` short-circuit ran
+        BEFORE the dangling-id check, so a wholly fabricated
+        matched_point_ids list on an empty-answer_points question was
+        silently accepted (MUST-FIX 2, #40 repair pass)."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        cq = _build_ai_corrected(
+            self._make_question(answer_points=[]),
+            "answer",
+            self._make_mark(1, ["p_fabricated"], confidence=1.0),
+        )
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("matched_point_ids", cq.review_reason or "")
+        self.assertIn("p_fabricated", cq.review_reason or "")
+
+    def test_any_3_from_5_optional_award_is_coherent(self):
+        """MUST-FIX 1: a legitimate 'any 3 from 5' award over an is_optional
+        pool must NOT be capped by a single global max(). The awarded marks
+        must fall within [implied_min, implied_max] = [1, 5] for 3 matched
+        1-mark optional points out of a 5-point pool; 3 is within range."""
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        pool = [
+            AnswerPoint(id=f"p{i}", point=f"item {i}", marks=1, is_optional=True)
+            for i in range(1, 6)
+        ]
+        question = Question.model_construct(
+            id="2",
+            marks=5,
+            type=QuestionType.LIST,
+            answer_points=pool,
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+        cq = _build_ai_corrected(
+            question,
+            "answer",
+            self._make_mark(3, ["p1", "p2", "p3"], confidence=1.0),
+        )
         self.assertFalse(cq.needs_teacher_review)
+        self.assertEqual(cq.awarded_marks, 3)
+
+    def test_award_outside_the_implied_range_still_flags(self):
+        """MUST-FIX 1: the range replaces the point estimate, it does not
+        remove the gate — an award outside [implied_min, implied_max] is
+        still incoherent. 3 optional 1-mark points matched, implied range is
+        [1, 3]; awarding 5 is outside it."""
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        pool = [
+            AnswerPoint(id=f"p{i}", point=f"item {i}", marks=1, is_optional=True)
+            for i in range(1, 4)
+        ]
+        question = Question.model_construct(
+            id="2",
+            marks=5,
+            type=QuestionType.LIST,
+            answer_points=pool,
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+        cq = _build_ai_corrected(
+            question,
+            "answer",
+            self._make_mark(5, ["p1", "p2", "p3"], confidence=1.0),
+        )
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("matched_point_ids", cq.review_reason or "")
 
 
 class ThinkingRetryTests(unittest.TestCase):

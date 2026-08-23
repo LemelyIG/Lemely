@@ -296,6 +296,27 @@ def _verify_calculated_answers(
     return awarded, matched, rejections
 
 
+#: Literal substring every message :func:`_check_coherence` returns contains.
+#: ``lemely.accuracy.harness._review_triggers`` imports this constant (rather
+#: than hard-coding the string) to detect the coherence trigger and append the
+#: distinct ``"coherence_mismatch"`` trigger alongside the generic
+#: ``"needs_teacher_review"`` one. Keeping this a shared constant means a
+#: reworded message cannot silently desync the two sides and make
+#: ``coherence_trigger_rate`` read 0.0 with tests still green — see
+#: ``tests/test_accuracy_harness.py::CoherenceTriggerWiringTests``.
+COHERENCE_TRIGGER_MARKER = "matched_point_ids"
+
+#: Question types whose marking is not decomposed into discrete
+#: ``AnswerPoint``s (levels-based, indicative-content, MCQ handled by the
+#: deterministic marker). For these, an empty ``question.answer_points`` is
+#: expected shape, not a data gap, so the coherence check is skipped
+#: entirely. Every other type with empty ``answer_points`` is NOT exempt —
+#: see ``_check_coherence`` and BUILD/DECISIONS.md DA10.
+_COHERENCE_EXEMPT_TYPES = frozenset(
+    {QuestionType.LEVELS_BASED, QuestionType.INDICATIVE_CONTENT, QuestionType.MCQ}
+)
+
+
 def _check_coherence(
     question: Question, matched_point_ids: list[str], awarded_marks: int
 ) -> str | None:
@@ -305,8 +326,8 @@ def _check_coherence(
     and must reconcile with ``awarded_marks``.
 
     Two independent failure modes, either one is a coherence violation. Every
-    message this returns contains the literal substring ``"matched_point_ids"``
-    so downstream (``harness.py``) can attribute the trigger without a second,
+    message this returns contains :data:`COHERENCE_TRIGGER_MARKER` so
+    downstream (``harness.py``) can attribute the trigger without a second,
     parallel signal:
 
     1. A dangling point id: ``matched_point_ids`` references an id that does
@@ -315,12 +336,26 @@ def _check_coherence(
        narrower purpose — rejecting unverifiable calculated-answer values —
        but does not itself flag the dangling reference); here it is a
        structural inconsistency in its own right and must not reach a student
-       unreviewed.
-    2. ``awarded_marks`` disagrees with the marks implied by
-       ``matched_point_ids``. ``is_alternative``/``is_optional`` points are
-       non-additive (mirrors the filtered-sum convention in
-       ``Question.validate_mark_point_sum``): they contribute at most the
-       single highest-value matched point among them, never their sum.
+       unreviewed. When ``question.answer_points`` is empty and the question
+       type is not in :data:`_COHERENCE_EXEMPT_TYPES`, EVERY id in
+       ``matched_point_ids`` is dangling by definition (there is nothing to
+       resolve against), so this falls out of the same code path rather than
+       needing a separate branch.
+    2. ``awarded_marks`` falls outside the RANGE of marks the matched points
+       can imply. ``is_alternative``/``is_optional`` points are non-additive:
+       a matched OR-group contributes at least its single highest-value
+       member and at most the sum of all matched members of that group.
+       ``AnswerPoint`` carries no group identifier, so the number of distinct
+       OR-groups among the matched non-additive points is unknowable from the
+       data alone — a global point estimate (e.g. "the max of all of them")
+       would wrongly cap a legitimate "any 3 from 5" award or two independent
+       OR-groups down to one point's marks. Instead:
+
+       ``implied_min = sum(primary marks) + max(non-additive marks, default 0)``
+       ``implied_max = sum(primary marks) + sum(non-additive marks)``
+
+       Only ``awarded_marks`` OUTSIDE ``[implied_min, implied_max]`` is
+       flagged; the message names the interval, not a single number.
 
     Computed on the marker's RAW claim (``mark.matched_point_ids`` and the
     range-clamped ``mark.awarded_marks``), before the separate
@@ -328,30 +363,39 @@ def _check_coherence(
     marker's own self-consistency, orthogonal to whether a later numeric
     backstop revises the awarded marks.
 
-    See BUILD/DECISIONS.md for the empty/absent ``matched_point_ids`` rule
-    and the ``is_alternative``/``is_optional`` reconciliation rule.
+    See BUILD/DECISIONS.md DA10 for the empty/absent ``matched_point_ids``
+    rule, the type-scoped exemption, and the ``is_alternative``/
+    ``is_optional`` range-reconciliation rule.
     """
-    if not question.answer_points:
-        # Nothing to reconcile against (levels-based/indicative-content
-        # marking, or a scheme that has not been decomposed into points).
+    if not question.answer_points and question.type in _COHERENCE_EXEMPT_TYPES:
+        # Nothing to reconcile against — this type's mark scheme is not
+        # decomposed into discrete points by design (levels-based/
+        # indicative-content marking, or the deterministic MCQ marker).
         return None
 
     points_by_id = {p.id: p for p in question.answer_points}
     dangling = [pid for pid in matched_point_ids if pid not in points_by_id]
     if dangling:
-        return "matched_point_ids references unknown mark point id(s): " + ", ".join(dangling)
+        return f"{COHERENCE_TRIGGER_MARKER} references unknown mark point id(s): " + ", ".join(
+            dangling
+        )
 
     if not matched_point_ids:
         if awarded_marks > 0:
-            return f"{awarded_marks} mark(s) awarded but matched_point_ids is empty"
+            return f"{awarded_marks} mark(s) awarded but {COHERENCE_TRIGGER_MARKER} is empty"
         return None
 
     matched_points = [points_by_id[pid] for pid in matched_point_ids]
     primary = [p for p in matched_points if not p.is_alternative and not p.is_optional]
     non_additive = [p for p in matched_points if p.is_alternative or p.is_optional]
-    implied = sum(p.marks for p in primary) + max((p.marks for p in non_additive), default=0)
-    if awarded_marks != implied:
-        return f"awarded {awarded_marks} mark(s) but matched_point_ids implies {implied} mark(s)"
+    primary_sum = sum(p.marks for p in primary)
+    implied_min = primary_sum + max((p.marks for p in non_additive), default=0)
+    implied_max = primary_sum + sum(p.marks for p in non_additive)
+    if not (implied_min <= awarded_marks <= implied_max):
+        return (
+            f"awarded {awarded_marks} mark(s) but {COHERENCE_TRIGGER_MARKER} implies "
+            f"between {implied_min} and {implied_max} mark(s)"
+        )
     return None
 
 

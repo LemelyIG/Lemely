@@ -10988,73 +10988,162 @@ problem, not a missing-tests problem.
 M1.5 adds a fourth, confidence-independent review reason to
 `_build_ai_corrected` (`lemely/io/correction_ai.py`): the marker's claimed
 `matched_point_ids` must (a) all resolve in `question.answer_points` and (b)
-reconcile with `awarded_marks`. Two sub-decisions were left unspecified by
-the issue and had to be made explicitly rather than defaulted, per binding
-constraint #6 on the board comment.
+reconcile with `awarded_marks`. Several sub-decisions were left unspecified
+by the issue and had to be made explicitly rather than defaulted, per
+binding constraint #6 on the board comment. **This entry was corrected in a
+repair pass** (three review MUST-FIXes) after the original version of
+Decision 1 and Decision 3 shipped with defects; both the original text and
+the correction are recorded below so the history is honest.
 
-**Decision 1 — no `answer_points` at all.** When `question.answer_points` is
-empty (levels-based/indicative-content marking, or a `Question.model_construct`
-fixture that never populated points), the coherence check is skipped
-entirely, regardless of `awarded_marks` or `matched_point_ids`. There is
-nothing to reconcile against — the mark scheme has not been decomposed into
-discrete points for this question — so treating an empty-points question as
-"incoherent" would be inventing a signal the mark scheme's own shape doesn't
-support. This also matches `Question.validate_mark_point_sum`'s own
-guard, which exempts `LEVELS_BASED`/`INDICATIVE_CONTENT` questions outright.
+**Decision 1 — no `answer_points` at all, scoped to question TYPE, not to
+list emptiness.** The coherence check is skipped entirely — regardless of
+`awarded_marks` or `matched_point_ids` — only when
+`question.type in {QuestionType.LEVELS_BASED, QuestionType.INDICATIVE_CONTENT,
+QuestionType.MCQ}` AND `question.answer_points` is empty. These three types'
+marking is not decomposed into discrete points by design, so there is
+genuinely nothing to reconcile against. **Every other type** with empty
+`answer_points` is a data gap, not an intentional shape, and falls through
+to the ordinary dangling-id / empty-matched-list rules below (an empty
+`points_by_id` map makes every id in `matched_point_ids` dangling by
+definition, so this needs no separate branch in the implementation).
+
+*Original defect (MUST-FIX 2 of the repair pass):* the shipped version
+tested `if not question.answer_points: return None` — unconditionally, for
+ANY question type — and this check ran BEFORE the dangling-id check. A
+question of a non-exempt type (recall, calculation, explanation, diagram,
+list, multi_step, …) with an empty `answer_points` list therefore accepted
+wholly fabricated `matched_point_ids` plus a non-zero `awarded_marks` with
+`needs_teacher_review=False`, silently defeating acceptance bullet 2 ("every
+referenced point id must exist in the mark scheme"). *Prevalence, reproduced
+against this tree's own corpus* (13 `mark_scheme.json` files, 152 leaf
+questions — NOT the review's unreproducible 799/1410 over 35 schemes, which
+this repair pass could not confirm and does not repeat): **53/152 (34.9%)**
+leaf questions have empty `answer_points`, and every one of those 53 is a
+non-exempt type — none of them is LEVELS_BASED/INDICATIVE_CONTENT/MCQ — which
+is exactly why the type-scoped exemption tightens the gate rather than
+narrowing it: the old blanket exemption covered all 53 (plus any exempt-type
+leaves); the new one covers 0 of these 53 and defers to the exempt-type set
+only, which on this corpus's leaf questions is disjoint from the empty-points
+set. The corpus also has 7 leaf questions with ≥1 `is_alternative`/
+`is_optional` matched point and 6 with >1 (relevant to Decision 3 below).
+
+Also corrects a false citation in the original text: it claimed this
+decision "matches `Question.validate_mark_point_sum`'s own guard, which
+exempts `LEVELS_BASED`/`INDICATIVE_CONTENT` questions outright." That
+function (`lemely/core/loose_schemas.py`) is an INEQUALITY check over
+primary (non-alternative/non-optional) points only — it never computes a
+`max()` and was never the provenance for a max-based rule; see the
+correction to Decision 3 below for the actual defect this false citation
+was propping up.
 
 **Decision 2 — `matched_point_ids` empty/absent, but `question.answer_points`
-is non-empty.**
+is non-empty (unchanged by the repair pass).**
 
 - `awarded_marks == 0` and `matched_point_ids == []`: **coherent.** Nothing
   was matched, nothing was awarded — this is the ordinary "no credit given"
   case and must not be flagged.
 - `awarded_marks > 0` and `matched_point_ids == []`: **incoherent.** Marks
-  were awarded with nothing cited to justify them. This is exactly the gap
-  the issue exists to close — silently accepting an unjustified award here
-  would reopen it in a different shape (an empty list instead of a dangling
-  id) rather than close it. Flagged with a message containing
-  `"matched_point_ids is empty"`.
+  were awarded with nothing cited to justify them. Flagged with a message
+  containing `"matched_point_ids is empty"`. Decision 1's type-scoped
+  exemption now extends this same rule to non-exempt types whose
+  `answer_points` is ALSO empty — see Decision 1.
 
-**Decision 3 — `is_alternative`/`is_optional` reconciliation.** Points
-flagged `is_alternative` (OR/EITHER…OR) or `is_optional` (a "any N from" pool)
-are non-additive by construction (`AnswerPoint` docstrings, `loose_schemas.py`).
-Mirroring the filtered-sum convention `Question.validate_mark_point_sum`
-already uses (primary points summed additively; alternative/optional points
-excluded from that sum and reasoned about separately), the implied-marks
-computation for a set of *matched* points is:
+**Decision 3 — `is_alternative`/`is_optional` reconciliation is a RANGE, not
+a point estimate.** Points flagged `is_alternative` (OR/EITHER…OR) or
+`is_optional` (a "any N from" pool) are non-additive by construction
+(`AnswerPoint` docstrings, `loose_schemas.py`). `AnswerPoint` carries no
+group identifier, so the number of distinct OR-groups among a set of
+*matched* non-additive points is unknowable from the data alone:
 
 ```
-implied = sum(marks of matched points where NOT is_alternative and NOT is_optional)
-        + max(marks of matched points where is_alternative OR is_optional, default 0)
+implied_min = sum(marks of matched points where NOT is_alternative and NOT is_optional)
+            + max(marks of matched points where is_alternative OR is_optional, default 0)
+implied_max = sum(marks of matched points where NOT is_alternative and NOT is_optional)
+            + sum(marks of matched points where is_alternative OR is_optional)
 ```
 
-i.e. non-alternative/non-optional matched points are summed normally;
-alternative/optional matched points contribute at most the single
-highest-value one among them, never their sum — even if the marker lists
-several. `awarded_marks` (post-out-of-range-clamp) must equal `implied`
-exactly, or the leaf is flagged with a message containing
-`"matched_point_ids implies"`.
+`awarded_marks` (post-out-of-range-clamp) is coherent iff
+`implied_min <= awarded_marks <= implied_max`; only a value OUTSIDE that
+interval is flagged, with a message that names the interval (e.g.
+`"matched_point_ids implies between 1 and 3 mark(s)"`), never a single
+number.
 
-**Detection convention for the separate trigger (bullet 4).** Rather than
-threading a second boolean through `CorrectedQuestion`/`QuestionResult`
-end-to-end, every message `_check_coherence` returns contains the literal
-substring `"matched_point_ids"` (no other review reason in
-`_build_ai_corrected` — `out_of_range`, `value_mismatch`, `low_confidence` —
-uses that phrase), and `lemely.accuracy.harness._review_triggers` detects it
-by substring to append the distinct `"coherence_mismatch"` trigger alongside
-the generic `"needs_teacher_review"` one. `lemely.eval.analyses
-.coherence_trigger_rate` then reports that trigger's own DA6-collapse-aware
-leaf rate, separately from `review_rate_signal`/`review_rate_total` — it does
-not touch, arm, or feed into the M0.9 ratchet
-(`review_rate_ratchet_armed` stays `False`; `lemely/runtime/config.py` and
-`scripts/check_review_rate_gate.py` are untouched by this issue).
+*Original defect (MUST-FIX 1 of the repair pass):* the shipped version used
+`implied = sum(primary marks) + max(non_additive marks, default 0)` — a
+single GLOBAL `max()` over every matched alternative/optional point,
+compared to `awarded_marks` for exact equality. Because a global max cannot
+distinguish one OR-group from several (no group id exists), this collapsed
+any legitimate "any 3 from 5" award, or two independent OR-groups matched
+together, down to "implies 1 mark(s)" and forced `needs_teacher_review` on
+correctly-marked questions — a false-positive machine, not a coherence gate.
+The false `validate_mark_point_sum` citation in the original Decision 1 text
+was covering for this: that function really is an inequality
+(`sum(primary) <= question.marks`, no max, no equality requirement), so it
+was never evidence that a global-max/exact-equality rule was the right
+shape.
 
-**Not measured here.** The plan's risk note holds: the saved
-`BUILD/accuracy-runs/aa-floor-2026-08-23-a/` `EvalRecord` JSONL does not carry
-`matched_point_ids` (only downstream `predicted_marks`/`truth_marks`/
-`outcome`), so this gate's real-corpus contribution to review volume cannot
-be measured from on-disk data without a fresh (cache-hit-only) sweep that
-retains `matched_point_ids` through to `CorrectedQuestion`. No such sweep was
-run as part of this issue — `coherence_trigger_rate` is implemented and unit
-tested, but its number against the real dev-split corpus is an open
-measurement gap, not a claimed result.
+**Detection convention for the separate trigger (bullet 4, unchanged by the
+repair pass).** Rather than threading a second boolean through
+`CorrectedQuestion`/`QuestionResult` end-to-end, every message
+`_check_coherence` returns contains the shared constant
+`lemely.io.correction_ai.COHERENCE_TRIGGER_MARKER` (`"matched_point_ids"`; no
+other review reason in `_build_ai_corrected` — `out_of_range`,
+`value_mismatch`, `low_confidence` — uses that phrase), and
+`lemely.accuracy.harness._review_triggers` imports that same constant
+(repair-pass SHOULD-FIX: previously a bare literal duplicated on the harness
+side, so a reworded message could desync the two sides with every test still
+green) to append the distinct `"coherence_mismatch"` trigger alongside the
+generic `"needs_teacher_review"` one, end-to-end-tested in
+`tests/test_accuracy_harness.py::CoherenceTriggerWiringTests`.
+`lemely.eval.analyses.coherence_trigger_rate` then reports that trigger's own
+DA6-collapse-aware leaf rate, separately from
+`review_rate_signal`/`review_rate_total` — it does not touch, arm, or feed
+into the M0.9 ratchet (`review_rate_ratchet_armed` stays `False`;
+`lemely/runtime/config.py` and `scripts/check_review_rate_gate.py` are
+untouched by this issue or its repair pass).
+
+**Bullet 4 (the coherence trigger's own contribution to `review_rate`,
+measured and reported separately): UNMET, and the original excuse for
+skipping it was false.** The original text claimed "the saved ... EvalRecord
+JSONL does not carry `matched_point_ids`... so this gate's real-corpus
+contribution to review volume cannot be measured from on-disk data" and
+implied no cached data existed to try. That is false: `.lemely-cache/gemini/`
+holds 212 cached Gemini payloads, of which **181 are `AIMarkResponse`-shaped
+(carry `matched_point_ids` and `awarded_marks`)** — verified by inspecting
+every file's keys in this repair pass, not assumed. The repair pass
+genuinely attempted the join. It fails for a different, real reason:
+
+- Every cached payload is bare — the 181 `AIMarkResponse` files' only keys
+  are `matched_point_ids`, `awarded_marks`, `feedback`, `confidence`. There
+  is no `question_id`, paper id, or any other field linking a cached mark
+  back to the `Question`/`answer_points` it was computed against.
+- The cache filename is the hex digest of `_cache_key()`
+  (`lemely/io/gemini.py`), a hash of the model, full system+user prompt
+  text, prompt version, file paths, and a params fingerprint — opaque and
+  not reversible to a question id without reconstructing the exact prompt
+  that produced it.
+- There is no manifest or index file anywhere under `.lemely-cache/`
+  mapping cache keys back to question/paper identity (checked: none
+  present).
+- The only way to recover the linkage is to recompute `_cache_key()` for
+  every candidate `(question, extracted answer, prompt version, model,
+  params)` in the corpus and check which hashes exist on disk — i.e. replay
+  the correction step across the dev-split corpus. `generate_structured`
+  (`lemely/io/gemini.py:305-365`) has exactly three `cache_mode` values —
+  `"read_write"`, `"bypass"`, `"refresh"` — and NONE of them is a
+  cache-hit-only mode that skips or errors cleanly on a miss instead of
+  falling through to `_check_cost_ceiling()` and a live paid call. Building
+  and running such a replay would either require a production code change
+  to `gemini.py` (out of scope for #40 and its repair pass, and itself a
+  change that would need its own review) or risk exactly the live spend this
+  repair pass is barred from (hard constraint: "No live sweep, no spend").
+
+So the true obstacle is not "the data is absent" — 181 relevant cache
+entries exist — it is that **the cache carries no question-identity linkage,
+and the client offers no zero-spend way to recover one.** `coherence_trigger_rate`
+remains implemented and unit-tested; its number against the real dev-split
+corpus remains an open measurement gap. Closing it for real requires either
+a `gemini.py` change adding a cache-hit-only replay mode (a separate,
+reviewable piece of work) or plumbing `matched_point_ids` through to
+`EvalRecord` going forward so future sweeps carry the linkage from the
+start — neither was in scope for this repair pass.
