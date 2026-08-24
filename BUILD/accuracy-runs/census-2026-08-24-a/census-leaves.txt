@@ -1,0 +1,42 @@
+parsed schemes loaded : 250
+unloadable JSON       : 0
+root questions        : 4339
+LEAF questions        : 12358
+
+leaves by syllabus:
+  0580: 7792
+  0606: 546
+  0625: 4020
+
+leaves by syllabus x paper:
+  0580p1: 1410
+  0580p2: 1205
+  0580p3: 2791
+  0580p4: 2386
+  0606p1: 160
+  0606p2: 386
+  0625p1: 1600
+  0625p3: 324
+  0625p4: 534
+  0625p5: 788
+  0625p6: 774
+
+leaves by tariff band:
+  0/unknown: 2894
+  1: 4559
+  2: 2742
+  3+: 2163
+
+DA1 strata populated  : 12 (of 3 syll x 2 path x 3 band = 18)
+  0580 x det x 0/unknown: 2055
+  0580 x det x 1: 1992
+  0580 x det x 2: 2110
+  0580 x det x 3+: 1635
+  0606 x det x 0/unknown: 154
+  0606 x det x 1: 46
+  0606 x det x 2: 107
+  0606 x det x 3+: 239
+  0625 x det x 0/unknown: 685
+  0625 x det x 1: 2521
+  0625 x det x 2: 525
+  0625 x det x 3+: 289

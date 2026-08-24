@@ -2510,3 +2510,29 @@ them whether or not Phase 6 fixes them.
   three states before any CI target is re-derived. Recorded on #37.
 - **Spend unchanged:** no Gemini calls this run; ledger still 1.488057.
 - **Next:** whatever the human answers on #88. Nothing else can legitimately start before it.
+
+## run-2026-08-24-c — the #88 census made durable; still human-gated
+
+- **Nothing had changed.** No new inbox directive, no answers on #88's three questions, board
+  `next` still empty, tree clean. Verified rather than assumed.
+- **The one thing worth doing was free and on the in-flight item.** #88's census existed only in
+  `/tmp/acc57-full`, which the state pointer itself flagged as non-durable and which would have
+  cost a 40-minute re-parse to recover. `/tmp` had survived, so the window was open.
+- **Every published number reproduced exactly** before anything was written down: 479 PDFs, 250
+  det-parsed, 229 failed (52.2%), 12,358 leaves over 4,339 roots, 2,894 unbanded (23.4%), strata
+  0580 1992/2110/1635 · 0606 46/107/239 · 0625 2521/525/289, and all 229 failures logging
+  `mark_total_mismatch_escalating`. Persisted as `BUILD/accuracy-runs/census-2026-08-24-a/`.
+- **The parsed corpus was deliberately left out.** The 250 `MarkScheme` JSONs (~18MB) and
+  `parse.log` carry CAIE mark-scheme text verbatim, and publishing real-paper content is a human
+  decision (§12.7). Only derived counts and public PDF filenames went in; `manifest.json` records
+  what was withheld, why, and the free steps to regenerate it.
+- **A reading trap recorded rather than smoothed over.** `census-leaves.txt` prints "DA1 strata
+  populated: 12" because the script counts its own `0/unknown` catch-all as a band. DA1 defines
+  three bands, so the honest figure is 9 of 18, with the 2,894 unbanded leaves held out. The
+  manifest says not to cite the 12.
+- **Still nothing else startable.** §3.2 allows one issue in flight and #88 holds the slot, which
+  keeps #45 shut even though this census is precisely its input. #37 (reclassified last run),
+  #38, #39 and #41 are all mark-changing and need a sweep; #58 needs a golden-set bypass run.
+  Every one is unauthorised spend.
+- **Spend unchanged:** no Gemini calls; ledger still 1.488057.
+- **Next:** the human's answers on #88. Nothing else can legitimately start before them.
