@@ -105,9 +105,21 @@ def _calibrate_confidence(
     # single-letter answer is not something this heuristic layer should
     # inflate. Every bonus is added first; any cap is computed and applied as
     # the LAST step, so a capped value can never leak past 0.2/0.3.
+    #
+    # #36 bullet 2 (amended): the 0.2 cap applies ONLY to the mcq-hint-with-
+    # a-non-letter-answer case -- i.e. the question is MCQ but the extractor
+    # did not return a clean A/B/C/D letter, which is a sign of a bad
+    # extraction. A clean single letter (looks_like_mcq_answer) is a GOOD
+    # extraction and keeps its raw (bonus-adjusted) confidence uncapped; this
+    # is NOT a blanket ceiling on anything MCQ-shaped.
     cap: float | None = None
     if is_mcq_hint or looks_like_mcq_answer:
-        cap = 0.2
+        # MCQ-shaped: only cap the bad-extraction case (mcq hint, non-letter
+        # answer). A clean single letter is a good extraction — no cap, and
+        # it does not fall through to the non-MCQ short-answer/working_out
+        # logic below (a single letter would otherwise trip the len<2 cap).
+        if is_mcq_hint and not looks_like_mcq_answer:
+            cap = 0.2
     else:
         # Non-MCQ: check answer completeness
         if len(answer_stripped) < 2:

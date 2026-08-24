@@ -345,20 +345,29 @@ class CalibrateConfidenceTests(unittest.TestCase):
     """
 
     def test_raw_high_confidence_single_letter_answer_is_not_boosted_toward_one(self) -> None:
-        """A raw 0.90 MCQ-looking answer must be capped to <=0.20, never boosted to 1.00."""
+        """A raw 0.90 clean single-letter answer keeps its raw confidence.
+
+        Not boosted to 1.00 by the deleted +0.1 bonus, and -- #36 bullet 2
+        (amended) -- NOT slammed to <=0.20 either: the 0.2 cap only applies
+        to the mcq-hint-with-a-non-letter-answer case (a bad extraction), and
+        a clean A/B/C/D letter is a good extraction.
+        """
         answer = ExtractedAnswer(
             question_id="1", answer="A", confidence=0.90, source_region=None, working_out=None
         )
         result = _calibrate_confidence(answer)
-        self.assertLessEqual(result, 0.20)
+        self.assertEqual(result, 0.90)
 
-    def test_source_region_bonus_cannot_leak_the_mcq_cap_past_point_two(self) -> None:
-        """With source_region set, the result must still land at <=0.20, not 0.23.
+    def test_clean_single_letter_with_source_region_keeps_raw_confidence(self) -> None:
+        """A clean single-letter answer is a GOOD extraction and must not be capped.
 
-        Before the fix, the +0.03 source_region bonus was applied AFTER the
-        min(conf, 0.2) cap, so 0.20 + 0.03 = 0.23 leaked past the cap. The
-        rebuilt function applies the cap as the last step, so the bonus is
-        folded in before capping and cannot leak past 0.20.
+        #36 bullet 2 (amended): the old bullet conflated two different
+        inputs under one "MCQ-shaped" cap -- on develop a clean single
+        letter produced 1.00 (via the deleted +0.1 bonus) while an
+        mcq-hint-non-letter produced 0.23 (via the cap leak). The rebuilt
+        heuristic scopes the 0.2 cap to the mcq-hint-non-letter case only, so
+        a clean letter with source_region set gets just the +0.03 bonus:
+        0.90 + 0.03 = 0.93, never capped to 0.20.
         """
         answer = ExtractedAnswer(
             question_id="1",
@@ -368,7 +377,7 @@ class CalibrateConfidenceTests(unittest.TestCase):
             working_out=None,
         )
         result = _calibrate_confidence(answer)
-        self.assertLessEqual(result, 0.20)
+        self.assertEqual(result, 0.93)
 
     def test_mcq_hint_with_non_single_letter_answer_and_source_region_caps_at_point_two(
         self,
