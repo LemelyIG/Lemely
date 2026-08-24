@@ -1010,9 +1010,27 @@ def aggregate_subject_cmd(
         "construction."
     ),
 )
+@click.option(
+    "--arm",
+    "arm",
+    default=None,
+    type=click.Choice(["extract+mark", "oracle+mark"]),
+    show_default=True,
+    help=(
+        "Force every case in this run onto one ablation arm (#28/M0.4), "
+        "overriding the default per-case selection by scan_path presence. "
+        "'oracle+mark' ignores each case's scan and marks from injected "
+        "ground-truth text; 'extract+mark' requires every case to carry a "
+        "scan_path and errors otherwise (no silent fallback)."
+    ),
+)
 @click.pass_context
 def measure_accuracy_cmd(
-    ctx: click.Context, golden_dir: str, results_dir: str, cache_mode: str
+    ctx: click.Context,
+    golden_dir: str,
+    results_dir: str,
+    cache_mode: str,
+    arm: str | None,
 ) -> None:
     """Measure correction accuracy against the golden dataset.
 
@@ -1056,7 +1074,12 @@ def measure_accuracy_cmd(
         settings,
         default_cache_mode=cast("Literal['read_write', 'bypass', 'refresh']", cache_mode),
     )
-    result = measure_accuracy(cases, client, settings)
+    result = measure_accuracy(
+        cases,
+        client,
+        settings,
+        arm=cast("Literal['extract+mark', 'oracle+mark'] | None", arm),
+    )
     click.echo(format_report(result, settings.accuracy_eval))
 
     saved = save_result(result, Path(results_dir))

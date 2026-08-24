@@ -187,6 +187,20 @@ def ablation_2x2(records: list[EvalRecord]) -> Ablation2x2Result:
     Per question (spec M0.4 acceptance): both-correct; extraction-attributable
     (oracle correct, extract wrong); marking-attributable (both wrong);
     masked (oracle wrong, extract correct).
+
+    Two caveats govern how a result from this function may be interpreted
+    (#28/M0.4):
+
+    - The ``extraction_attributable`` share is a LOWER BOUND ONLY. The
+      fixture renderer (``synth.py``) cannot render superscripts or
+      crossings-out, so synthetic golden fixtures understate real
+      extraction difficulty relative to genuine student scripts — this is
+      licensed by M0.0/#56 (closed; see git log for confirmation).
+    - The golden corpus currently has 31 distinct leaves, far below
+      :data:`MCNEMAR_IMPROVEMENT_N_FLOOR` (219). Any single 2x2 result
+      produced from this corpus is therefore a bounded no-detection
+      statement, never a directional claim about whether extraction or
+      marking dominates error.
     """
     qlevel = _distinct_leaves_by_arm(_question_level(records))
     oracle = qlevel["oracle+mark"]

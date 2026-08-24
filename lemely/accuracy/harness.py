@@ -609,6 +609,7 @@ def measure_accuracy(
     split: Split = "dev",
     test_split_token: str | None = None,
     ledger_path: Path = DEFAULT_LEDGER_PATH,
+    arm: Literal["extract+mark", "oracle+mark"] | None = None,
 ) -> AccuracyResult:
     """Run correction over all golden cases; compute metrics.
 
@@ -619,6 +620,17 @@ def measure_accuracy(
     bypass: ground-truth answer text is wrapped in a synthetic, full-confidence
     ``ExtractedAnswers`` and fed straight into correction, useful for testing
     marking logic without needing a rendered scan.
+
+    ``arm`` (#28/M0.4) overrides the default per-case arm selection (which
+    arm a case runs is otherwise decided purely by whether it has a
+    ``scan_path``): pass ``"oracle+mark"`` to force every case onto the
+    ground-truth bypass regardless of ``scan_path``, or ``"extract+mark"`` to
+    force real extraction on every case (raising ``ValueError`` up front if
+    any case lacks a ``scan_path``). This is what lets the same golden corpus
+    be run through both arms for the extraction-attributable-error ablation;
+    see :func:`lemely.eval.analyses.ablation_2x2` for how the resulting
+    records are cross-tabulated and for caveats about interpreting the
+    result.
 
     ``run_id`` (spec §3.3) is the join key between the `EvalRecord`s this run
     produces and its `RunManifest`. It defaults to a fresh id per call (never
@@ -649,6 +661,13 @@ def measure_accuracy(
         caller="lemely.accuracy.harness.measure_accuracy",
         ledger_path=ledger_path,
     )
+    if arm == "extract+mark":
+        missing = [c.paper_id for c in cases if c.scan_path is None]
+        if missing:
+            raise ValueError(
+                f"measure_accuracy(arm='extract+mark') requires every case to have "
+                f"a scan_path; missing for: {missing}"
+            )
     from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
     from lemely.io.correction_ai import correct_paper
     from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
@@ -666,15 +685,31 @@ def measure_accuracy(
     for case in cases:
         # Terminology (spec §1): real vision extraction is "extract+mark"; the
         # correction-only bypass injects ground-truth text and marks only,
-        # i.e. "oracle+mark".
-        arm: Literal["extract+mark", "oracle+mark"] = (
-            "extract+mark" if case.scan_path is not None else "oracle+mark"
-        )
+        # i.e. "oracle+mark". Default per-case selection is by scan_path
+        # presence; ``arm`` (#28/M0.4) overrides that selection uniformly
+        # across every case when set.
+        if arm is None:
+            case_arm: Literal["extract+mark", "oracle+mark"] = (
+                "extract+mark" if case.scan_path is not None else "oracle+mark"
+            )
+        else:
+            case_arm = arm
         extracted_ids: set[str]
-        if case.scan_path is not None:
+        if case_arm == "extract+mark":
+            # Guaranteed non-None here: either scan_path is not None (the
+            # arm=None auto-selection branch above only picks "extract+mark"
+            # when that holds), or arm="extract+mark" was forced explicitly,
+            # in which case the pre-loop validation above already raised for
+            # any case lacking a scan_path.
+            scan_path = case.scan_path
+            if scan_path is None:  # pragma: no cover - invariant, see comment above
+                raise RuntimeError(
+                    f"unreachable: case_arm='extract+mark' but {case.paper_id} has no "
+                    "scan_path; the pre-loop validation should have caught this"
+                )
             ran_extraction = True
             extracted = extract_answers(
-                case.scan_path,
+                scan_path,
                 case.mark_scheme,
                 gemini_client=gemini_client,  # type: ignore[arg-type]
             )
@@ -725,7 +760,7 @@ def measure_accuracy(
                 eval_records.append(
                     EvalRecord(
                         run_id=run_id,
-                        arm=arm,
+                        arm=case_arm,
                         paper_id=case.paper_id,
                         fixture_variant=case.fixture_variant,
                         question_id=qid,
@@ -754,7 +789,7 @@ def measure_accuracy(
                 eval_records.append(
                     EvalRecord(
                         run_id=run_id,
-                        arm=arm,
+                        arm=case_arm,
                         paper_id=case.paper_id,
                         fixture_variant=case.fixture_variant,
                         question_id=qid,
@@ -786,7 +821,9 @@ def measure_accuracy(
                 # (ground-truth text has no genuine extraction confidence),
                 # so it must not flow into the measured `extraction_conf`
                 # field as if it were a real signal.
-                extraction_confidence=cq.extraction_confidence if arm == "extract+mark" else None,
+                extraction_confidence=(
+                    cq.extraction_confidence if case_arm == "extract+mark" else None
+                ),
                 maximum_marks=cq.maximum_marks,
                 review_reason=cq.review_reason,
             )
@@ -796,7 +833,7 @@ def measure_accuracy(
                     question_result,
                     run_id=run_id,
                     paper_id=case.paper_id,
-                    arm=arm,
+                    arm=case_arm,
                     fixture_variant=case.fixture_variant,
                 )
             )

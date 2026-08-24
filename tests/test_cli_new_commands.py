@@ -603,3 +603,91 @@ def test_measure_accuracy_defaults_to_read_write_cache_mode() -> None:
         result.exception, SystemExit
     ), result.output
     assert captured["default_cache_mode"] == "read_write"
+
+
+def test_measure_accuracy_arm_flag_is_threaded_to_measure_accuracy() -> None:
+    """``--arm oracle+mark`` (#28/M0.4) must be accepted by click and passed
+    through, as the ``arm`` keyword, to ``measure_accuracy`` — mocked at the
+    CLI layer so this test never runs real correction/extraction.
+    """
+    from lemely.accuracy.harness import AccuracyMetrics, AccuracyResult, FunnelCounts
+    from lemely.eval.manifest import RunManifest
+
+    captured: dict[str, object] = {}
+
+    def _fake_measure_accuracy(cases, client, settings, *, arm=None, **kwargs):
+        captured["arm"] = arm
+        metrics = AccuracyMetrics(
+            mark_accuracy=1.0,
+            mark_accuracy_theory=1.0,
+            id_match_rate=None,
+            flag_precision_high=1.0,
+            flag_recall=1.0,
+        )
+        manifest = RunManifest(
+            run_id="run-fake",
+            git_sha="deadbeef",
+            timestamp=datetime.datetime.now(datetime.UTC),
+            prompt_versions={},
+            params_fingerprint="fp",
+            models_by_task={},
+            cache_mode="read_write",
+            split="dev",
+            corpus_digest="digest",
+        )
+        return AccuracyResult(
+            metrics=metrics,
+            question_results=[],
+            eval_records=[],
+            calibration=[],
+            prompt_versions={},
+            manifest=manifest,
+            funnel=FunnelCounts(),
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        golden = Path(tmp) / "golden"
+        case_dir = golden / "0625_m20_qp_12_mcq"
+        case_dir.mkdir(parents=True)
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": 1,
+                "scheme_format": "mcq",
+            },
+            "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}],
+        }
+        (case_dir / "mark_scheme.json").write_text(json.dumps(ms))
+        (case_dir / "answers.json").write_text(
+            json.dumps({"1": {"student_answer": "A", "awarded_marks": 1}})
+        )
+        results_dir = Path(tmp) / "results"
+
+        with (
+            patch("lemely.io.gemini.GeminiClient", return_value=MagicMock()),
+            patch("lemely.accuracy.harness.measure_accuracy", side_effect=_fake_measure_accuracy),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "measure-accuracy",
+                    "--golden",
+                    str(golden),
+                    "--results-dir",
+                    str(results_dir),
+                    "--arm",
+                    "oracle+mark",
+                ],
+            )
+
+    assert not isinstance(result.exception, Exception) or isinstance(
+        result.exception, SystemExit
+    ), result.output
+    assert captured["arm"] == "oracle+mark"

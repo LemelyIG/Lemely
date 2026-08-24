@@ -309,6 +309,91 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertEqual(len(result.question_results), 1)
         self.assertTrue(result.question_results[0].is_correct)
 
+    def test_arm_override_forces_oracle_mark_even_with_scan_path(self):
+        """#28/M0.4: passing arm="oracle+mark" explicitly must bypass
+        extraction and use ground-truth text even when the case carries a
+        scan_path — the arm parameter, not scan_path presence, decides.
+        """
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+
+        case = GoldenCase(
+            paper_id="p-oracle-override",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=Path("/nonexistent/scan.pdf"),
+        )
+
+        with patch("lemely.web.services.grading.extract_answers") as mock_extract:
+            result = measure_accuracy([case], gemini_client=None, settings=None, arm="oracle+mark")
+
+        mock_extract.assert_not_called()
+        self.assertEqual(len(result.eval_records), 1)
+        self.assertEqual(result.eval_records[0].arm, "oracle+mark")
+
+    def test_arm_override_extract_mark_without_scan_path_raises(self):
+        """#28/M0.4: forcing arm="extract+mark" on a case with no scan_path
+        must fail fast, before any Gemini spend, rather than silently
+        falling back to the oracle bypass.
+        """
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+
+        case = GoldenCase(
+            paper_id="p-no-scan",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            measure_accuracy([case], gemini_client=None, settings=None, arm="extract+mark")
+
+        self.assertIn("p-no-scan", str(ctx.exception))
+
+    def test_both_arms_over_same_cases_produce_ablation_2x2_nonzero(self):
+        """#28/M0.4: running both arms over the same case and feeding the
+        concatenated records into ablation_2x2() must yield a non-degenerate
+        (not-all-zero) cross-tabulation.
+        """
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.eval.analyses import ablation_2x2
+
+        case = GoldenCase(
+            paper_id="p-ablation",
+            mark_scheme=self._mark_scheme(["1", "2"]),
+            ground_truth={
+                "1": GoldenAnswer(student_answer="A", awarded_marks=1),
+                "2": GoldenAnswer(student_answer="A", awarded_marks=1),
+            },
+            scan_path=Path("/nonexistent/scan.pdf"),
+        )
+
+        oracle_result = measure_accuracy(
+            [case], gemini_client=None, settings=None, arm="oracle+mark"
+        )
+
+        # Extraction gets "1" right and "2" wrong.
+        fake_extracted = ExtractedAnswers(
+            paper_id="p-ablation",
+            source_scan="fake",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.9),
+                ExtractedAnswer(question_id="2", answer="B", confidence=0.9),
+            ],
+        )
+        with patch("lemely.web.services.grading.extract_answers", return_value=fake_extracted):
+            extract_result = measure_accuracy(
+                [case], gemini_client=None, settings=None, arm="extract+mark"
+            )
+
+        combined = oracle_result.eval_records + extract_result.eval_records
+        table = ablation_2x2(combined)
+
+        total = sum(table.values())
+        self.assertEqual(total, 2)
+        self.assertGreater(total, 0)
+        self.assertFalse(all(v == 0 for v in table.values()))
+
     def test_scan_path_case_uses_extracted_answers_not_ground_truth(self):
         from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
@@ -632,6 +717,57 @@ class MeasureAccuracyTests(unittest.TestCase):
         mock_extract.assert_called_once()
         self.assertEqual(result.metrics.id_match_rate, 1.0)
         self.assertEqual(len(result.question_results), 3)
+
+    def test_leaf_key_sets_identical_between_arms_over_golden_corpus(self):
+        """#28/M0.4: the set of (paper_id, question_id) leaves the harness
+        iterates over must be identical between arms — a structural property
+        of the harness's leaf loop (it always iterates ``case.ground_truth``,
+        regardless of ``case_arm``), independent of what extraction/marking
+        actually return. Both extraction and marking are mocked so no live
+        Gemini calls are ever made, and to sidestep correct_paper's
+        ConfigError for non-MCQ leaves when gemini_client=None.
+        """
+        from lemely.accuracy.harness import load_golden_cases, measure_accuracy
+        from lemely.core.schemas import CorrectionResult, ExamMetadata, ExtractedAnswers
+
+        golden_dir = Path(__file__).resolve().parent / "golden"
+        cases = load_golden_cases(golden_dir)
+        self.assertGreater(len(cases), 0)
+
+        def _fake_correct_paper(mark_scheme, extracted_answers, *, gemini_client=None, **kwargs):
+            md = mark_scheme.metadata
+            return CorrectionResult(
+                metadata=ExamMetadata(
+                    subject_code=md.subject_code,
+                    paper_number=md.paper_number,
+                    paper_variant=md.paper_variant,
+                    session_month=md.session_month,
+                    session_year=md.session_year,
+                ),
+                questions=[],
+            )
+
+        def _fake_extract_answers(scan_path, mark_scheme, *, gemini_client=None):
+            return ExtractedAnswers(paper_id="fake", source_scan="fake", answers=[])
+
+        with (
+            patch("lemely.io.correction_ai.correct_paper", side_effect=_fake_correct_paper),
+            patch(
+                "lemely.web.services.grading.extract_answers",
+                side_effect=_fake_extract_answers,
+            ),
+        ):
+            oracle_result = measure_accuracy(
+                cases, gemini_client=None, settings=None, arm="oracle+mark"
+            )
+            extract_result = measure_accuracy(
+                cases, gemini_client=None, settings=None, arm="extract+mark"
+            )
+
+        oracle_keys = {(r.paper_id, r.question_id) for r in oracle_result.eval_records}
+        extract_keys = {(r.paper_id, r.question_id) for r in extract_result.eval_records}
+        self.assertTrue(oracle_keys)
+        self.assertEqual(oracle_keys, extract_keys)
 
 
 class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
