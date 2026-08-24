@@ -186,10 +186,14 @@ def _build_mcq_corrected(
     # extraction_confidence into confidence_score instead of hardcoding 1.0
     # (D13) -- the old code threaded extraction_confidence through as inert
     # metadata that nothing read. Fall back to 1.0 only when there is
-    # genuinely no extraction signal at all (e.g. the oracle path, or the
-    # `Mapping[str, str]` fallback in `_flatten_answers`, both of which pass
-    # `None`) -- there is no basis to invent uncertainty that was never
-    # measured. Band and review-flag are DERIVED from that score via the
+    # genuinely no extraction signal at all -- there is no basis to invent
+    # uncertainty that was never measured. Two call paths reach that same
+    # 1.0 by different routes, and the distinction matters if either is ever
+    # changed: the oracle path passes `extraction_confidence=None` and is
+    # caught by the fallback here, whereas `_flatten_answers`' plain
+    # `Mapping[str, str]` branch supplies a literal `1.0` in its tuple
+    # (`(str(v), None, 1.0)`) and so never reaches the fallback at all.
+    # Band and review-flag are DERIVED from that score via the
     # module's one calibrated cut-offs, not hand-rolled: a clean single
     # letter (option A's ~0.90-0.93 steady state) still lands HIGH and
     # unflagged, so correct MCQs do not flood the review queue; a letter the
