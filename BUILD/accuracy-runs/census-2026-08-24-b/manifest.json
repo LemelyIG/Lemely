@@ -1,0 +1,48 @@
+{
+  "label": "census-2026-08-24-b",
+  "issue": 45,
+  "milestone": "M2.2",
+  "kind": "failure-reason census over the 229 det-parser failures (#88's output set)",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "input": {
+    "source": "../census-2026-08-24-a/det-failures.txt",
+    "n": 229
+  },
+  "cause_counts_ranked": {
+    "marks_cell_notation_not_parsed": 108,
+    "paper_profile_misconfiguration": 74,
+    "genuine_mark_total_mismatch": 27,
+    "marks_column_detection_failure": 20
+  },
+  "counts_sum_to_229": true,
+  "d7_hypothesis": {
+    "statement": "D7 hypothesised that parse_marks_cell/is_marks_column failures (marks_column_detection_failure + marks_cell_notation_not_parsed) explain the det-parser failure set.",
+    "n_explained": 128,
+    "n_total": 229,
+    "share": 0.559,
+    "falsifiable": true,
+    "note": "This count is measured from re-running the pipeline's own column/cell detectors over each failing PDF, not assumed from the hypothesis by construction -- other causes (paper_profile_misconfiguration, table_layout_extraction_failure, genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever their evidence is more specific."
+  },
+  "known_bug_classified_not_fixed": {
+    "file": "lemely/io/det/profiles.py:50",
+    "count_in_this_bucket": 74,
+    "breakdown_by_subject_and_paper": {
+      "0625 p2": 40,
+      "0625 p3": 34
+    },
+    "detail": "0625 p2 maps to THEORY_CORE via paper_type_by_number even though its cover text reads 'Paper 2 Multiple Choice (Extended)' -- this is #88's documented bug. Classified under paper_profile_misconfiguration by this census. NOT repaired here: question 2 on #88 is an unanswered human decision, and fixing it would move ~40 schemes between DA1 strata and invalidate #88's preflight denominator. git diff against lemely/io/det/profiles.py is empty.",
+    "new_finding_not_in_88s_manifest": "This census's rule also fires on 0625 p3 (34 schemes, see breakdown_by_subject_and_paper): profiles.py maps paper 3 to THEORY_EXTENDED, but every sampled p3 cover page reads 'Paper 3 Core Theory' (e.g. 0625_m19_ms_32.pdf, 0625_s21_ms_32.pdf). This looks like a SECOND, previously-undocumented instance of the same profiles.py class of bug, not a classifier false positive -- flagged for the human alongside question 2 on #88, and equally NOT repaired here."
+  },
+  "reproduce": {
+    "cost": "free, zero network, ~229 PDFs re-parsed with pdfplumber",
+    "steps": [
+      "1. .venv/bin/python BUILD/accuracy-runs/census-2026-08-24-b/classify_failures.py",
+      "(reads ../census-2026-08-24-a/det-failures.txt, writes classified-failures.txt + this manifest in place)"
+    ]
+  },
+  "not_committed": {
+    "what": "no PDF text or mark-scheme content is committed",
+    "why": "MISSION 12.7: never commit CAIE mark-scheme text verbatim -- only derived counts, PDF filenames/stems, and classification labels are in classified-failures.txt."
+  }
+}

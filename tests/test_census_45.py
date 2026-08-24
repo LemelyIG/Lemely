@@ -1,0 +1,130 @@
+"""#45 (M2.2): failure-reason census over the 229 det-parser failures.
+
+Two things are tested:
+
+1. The pure classifier helper that flags a "paper-profile misconfiguration"
+   (the 0625 p2 class, see BUILD/accuracy-runs/census-2026-08-24-a/manifest.json's
+   ``known_bug_not_fixed_here``) — this requires no I/O, matching
+   ``BUILD/accuracy-runs/census-2026-08-24-b/classify_failures.py``'s claim that
+   its classification rules are pure functions of captured signals. Mirrors
+   ``tests/test_parsers_det.py``'s ``IsMarksColumnTests`` style.
+
+2. A mechanical, cheap (no PDF re-parsing) check that the committed census
+   artifact never narrowed the denominator: every one of the 229 stems in
+   ``det-failures.txt`` appears exactly once in ``classified-failures.txt``
+   with a non-empty cause label. This is the acceptance criterion "the
+   denominator (229) is never narrowed" made falsifiable by a test rather
+   than trusted by construction.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+
+from lemely.io.det.profiles import get_profile
+
+_CENSUS_A = Path(__file__).resolve().parents[1] / "BUILD" / "accuracy-runs" / "census-2026-08-24-a"
+_CENSUS_B = Path(__file__).resolve().parents[1] / "BUILD" / "accuracy-runs" / "census-2026-08-24-b"
+_SCRIPT = _CENSUS_B / "classify_failures.py"
+
+
+def _load_module():
+    spec = importlib.util.spec_from_file_location("classify_failures_under_test", _SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+mod = _load_module()
+
+
+class ClassifyProfileMisconfigurationTests(unittest.TestCase):
+    def test_0625_p2_cover_says_mcq_but_number_map_says_theory_core(self) -> None:
+        profile = get_profile("0625")
+        cover_text = (
+            "UNIVERSITY OF CAMBRIDGE INTERNATIONAL EXAMINATIONS\n"
+            "Cambridge IGCSE\n"
+            "MARK SCHEME for the May/June 2021 series\n"
+            "0625 PHYSICS\n"
+            "0625/21\n"
+            "Paper 2 Multiple Choice (Extended)\n"
+            "Maximum Mark: 40\n"
+        )
+        evidence = mod.classify_profile_misconfiguration(2, cover_text, profile)
+        self.assertIsNotNone(evidence)
+        self.assertIn("mcq", evidence.lower())
+
+    def test_matching_paper_is_not_flagged(self) -> None:
+        profile = get_profile("0625")
+        cover_text = "Paper 1 Multiple Choice (Core)\nMaximum Mark: 40\n"
+        evidence = mod.classify_profile_misconfiguration(1, cover_text, profile)
+        self.assertIsNone(evidence)
+
+    def test_ambiguous_cover_text_is_not_flagged(self) -> None:
+        profile = get_profile("0580")
+        # Cover text carries none of the recognised keywords -> no signal either way.
+        evidence = mod.classify_profile_misconfiguration(1, "no keywords here", profile)
+        self.assertIsNone(evidence)
+
+    def test_paper_not_in_number_map_is_not_flagged(self) -> None:
+        # 0625 paper 61/62 are not in paper_type_by_number's small-int keys used
+        # by the misconfiguration check's own paper_number param range here;
+        # use a code with an empty map instead to exercise the "not consulted" path.
+        profile = get_profile("9999")  # falls back to _DEFAULT_PROFILE
+        evidence = mod.classify_profile_misconfiguration(99, "Paper 99 Multiple Choice", profile)
+        self.assertIsNone(evidence)
+
+
+# ---------------------------------------------------------------------------
+# Denominator-never-narrowed: mechanical, artifact-only (no PDF re-parsing).
+# ---------------------------------------------------------------------------
+
+
+def _read_stems(path: Path) -> list[str]:
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+class DenominatorNeverNarrowedTests(unittest.TestCase):
+    def test_every_det_failure_stem_is_classified_exactly_once(self) -> None:
+        classified_path = _CENSUS_B / "classified-failures.txt"
+        if not classified_path.exists():
+            self.skipTest("classify_failures.py has not been run yet")
+
+        input_stems = _read_stems(_CENSUS_A / "det-failures.txt")
+        rows = _read_stems(classified_path)
+
+        classified_stems: list[str] = []
+        labels_by_stem: dict[str, str] = {}
+        for row in rows:
+            parts = row.split("\t")
+            self.assertGreaterEqual(
+                len(parts), 2, f"malformed row (expected 'stem<TAB>label<TAB>evidence'): {row!r}"
+            )
+            stem, label = parts[0], parts[1]
+            classified_stems.append(stem)
+            labels_by_stem[stem] = label
+
+        self.assertEqual(
+            len(input_stems), 229, f"det-failures.txt denominator drifted: {len(input_stems)}"
+        )
+        self.assertEqual(
+            len(classified_stems),
+            len(input_stems),
+            "the denominator was narrowed: "
+            f"{len(classified_stems)} classified rows vs {len(input_stems)} input stems",
+        )
+        self.assertEqual(
+            set(classified_stems), set(input_stems), "classified stems do not match input"
+        )
+        self.assertEqual(len(classified_stems), len(set(classified_stems)), "duplicate stem rows")
+        for stem, label in labels_by_stem.items():
+            self.assertTrue(label.strip(), f"empty cause label for {stem}")
+
+
+if __name__ == "__main__":
+    unittest.main()

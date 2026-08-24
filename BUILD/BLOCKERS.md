@@ -1426,3 +1426,58 @@ is a **symptom, not a classification** — one uniform symptom across 229 scheme
 is consistent with several distinct causes, and classifying them is #45's job.
 The failure set is #45's census input; #45 has been commented to take it rather
 than re-run the parse, which would pay the Gemini cost twice.
+
+## G — #45 (M2.2) census complete: the 229 det-failures are classified, ranked, $0 spend
+
+**Raised:** 2026-08-24 · **Status:** artifact committed, not a blocker — recorded
+here so M3 can cite it without re-deriving. Zero Gemini calls, zero network:
+the 229 PDFs already restored to `/home/sico/PaperScraper/papers` were
+re-parsed offline through `lemely.io.det.*`'s own stages a second time, this
+run with `escalate_on_mark_mismatch` effectively disabled so each pipeline
+could reach a structural state instead of aborting at the first
+`mark_total_mismatch_escalating`.
+
+**Where the evidence lives:** `BUILD/accuracy-runs/census-2026-08-24-b/` —
+`classify_failures.py` (the diagnostic script; also the source of the two pure
+helpers unit-tested in `tests/test_census_45.py`), `manifest.json` (ranked
+counts, the D7 hypothesis's measured share, the profile-misconfiguration
+breakdown), and `classified-failures.txt` (one `stem<TAB>cause<TAB>evidence`
+row per of the 229 stems — the ranked work-list for M3's D7 repairs).
+
+**Ranked cause counts (sum to 229, denominator never narrowed):**
+
+| cause | n | share |
+|---|---|---|
+| `marks_cell_notation_not_parsed` | 108 | 47.2% |
+| `paper_profile_misconfiguration` | 74 | 32.3% |
+| `genuine_mark_total_mismatch` | 27 | 11.8% |
+| `marks_column_detection_failure` | 20 | 8.7% |
+| `table_layout_extraction_failure` | 0 | 0.0% |
+| `UNCLASSIFIED` | 0 | 0.0% |
+
+**D7 turned from a hypothesis into a measurement.** D7 hypothesised that
+`parse_marks_cell`/`is_marks_column` failures explain the det-parser failure
+set. Measured (not assumed by construction): `marks_column_detection_failure`
++ `marks_cell_notation_not_parsed` = **128/229 (55.9%)**. The other **101/229
+(44.1%)** are NOT explained by D7 — 74 are the profile-misconfiguration class
+below, and 27 are structurally clean parses whose total still does not
+reconcile (`genuine_mark_total_mismatch`), i.e. D7 was a real but partial
+explanation, not the whole failure set.
+
+**A second, previously-undocumented instance of #88's `profiles.py:50` bug
+class was found, NOT fixed.** #88 documented only 0625 p2 (cover text "Paper 2
+Multiple Choice (Extended)" vs. `paper_type_by_number[2] = THEORY_CORE`, 40
+schemes). This census's rule — cover-text keyword scan vs. the profile's
+number-map override, checked for every failing scheme, not just p2 — also
+fires on **0625 p3, 34 schemes**: `paper_type_by_number[3] = THEORY_EXTENDED`,
+but every sampled p3 cover page reads *"Paper 3 Core Theory"* (verified in
+`0625_m19_ms_32.pdf`, `0625_s21_ms_32.pdf`). Together p2+p3 account for all 74
+`paper_profile_misconfiguration` rows. **Neither is repaired here** —
+`git diff` against `lemely/io/det/profiles.py` is empty after this issue —
+per the explicit instruction not to move DA1 strata out from under #88's
+pending human decision (question 2, still open). This p3 finding should be
+folded into that same human question rather than answered independently.
+
+**Not mark-changing:** no marking-engine or `lemely/eval` code changed; per
+the 2026-08-24 gate-9 scope decision this issue needed no before/after A/B
+sweep, and none was run.
