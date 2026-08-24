@@ -1488,7 +1488,21 @@ improvement, not a full fix. Both rows stay correctly in the denominator and
 labelled; the manifest states the caveat rather than claiming a tight bound
 that doesn't exist.
 
-**Round 4: the sufficiency condition on `marks_cell_notation_not_parsed` is
+**SUPERSEDED BY ROUND 5 — the premise below is FALSE as implemented, and the
+"genuine TWO-SIDED bound" claim is RETRACTED.** `count_empty_marks_cells`
+counted **raw table rows**, while `computed_total` sums **`AnswerPoint`s after
+`build_questions` merges rows** — two different populations. So "every empty
+cell contributes 1, therefore `computed_total` can never fall below
+`empty_count`" does not hold, and every magnitude bound derived from comparing
+the two compared incommensurable quantities. The artifact said so on its face:
+`0625_w21_ms_43` reported `empty_count=119` for a scheme whose `maximum_mark`
+is 80 — it cannot have 119 points at all. The orchestrator endorsed this
+premise in the round-4 brief without checking how `empty_count` was measured;
+that is why round 4 produced a "bound" that was not one. Left in place
+unedited below, per the never-delete rule, as the record of what was believed.
+
+**Round 4 (SUPERSEDED, see above): the sufficiency condition on
+`marks_cell_notation_not_parsed` is
 now a genuine TWO-SIDED bound.** Round 3 fixed only the excess direction
 (`computed_total - maximum_mark <= empty_count`); its deficit disjunct,
 `computed_total <= maximum_mark`, applied no magnitude check at all. Empty
@@ -1578,16 +1592,25 @@ classifier) fall through to `mismatch_cause`, landing in
 is `true`: this share is a ceiling on what the column/cell-detection
 hypothesis explains, not a fully-enforced count, because the surviving
 sufficiency check (excess-side only) is a necessary, not sufficient,
-condition. The other **157/229 (68.6%)** are NOT explained by D7 — 70 are
-structurally clean parses whose total still comes up short with no more
-specific explanation available (`genuine_mark_total_mismatch`, up sharply
-from round 4's 14 now that the deficit-shaped notation-bucket rows are
-correctly reclassified into it), 47 are positively-evidenced overcounts
+condition. The other **157/229 (68.6%)** are NOT explained by D7 — 70 show a mark-total
+deficit, **of which 55 (79%) have defaulted `AnswerPoint`s and an unresolved
+empty-cell explanation**, 47 are positively-evidenced overcounts
 (`mark_aggregation_overcount`, unchanged since round 3), and 40 are the
-profile-misconfiguration class below. D7 is no longer the largest single
-explanation — `genuine_mark_total_mismatch` now is — and this downward
-revision is the census working as designed, not a defect to be argued away;
-no bucket was loosened in prose to preserve a prior headline.
+profile-misconfiguration class below.
+
+**CORRECTED 2026-08-24 — the previous wording here was falsified by the very
+artifact it summarised.** It described those 70 rows as "structurally clean
+parses whose total still comes up short with no more specific explanation
+available". A recount of `classified-failures.txt` shows 55 of the 70 carry the
+evidence note *"this count neither confirms nor rules out empty-cell defaulting
+as a cause here"* — the opposite of "no more specific explanation available".
+The dependent headline **"D7 is no longer the largest single explanation —
+`genuine_mark_total_mismatch` now is" is WITHDRAWN**: that bucket is the
+*least*-evidenced one in the taxonomy, it enforces direction only with no
+magnitude bound in code, and it grew 14 → 70 purely by absorbing rows retired
+from other buckets. A ranking cannot be led by a bucket that means "we do not
+know". This is the same falsified-record failure that this branch's own
+ancestor commit `3f50781` was written to correct.
 
 **The residual mismatch bucket is split, not a single "totals don't match"
 catch-all.** Round 1 put every `computed_total != maximum_mark` residual
@@ -1639,3 +1662,67 @@ finding).
 **Not mark-changing:** no marking-engine or `lemely/eval` code changed; per
 the 2026-08-24 gate-9 scope decision this issue needed no before/after A/B
 sweep, and none was run.
+
+### ESCALATED 2026-08-24 — #45 needs a HUMAN DESIGN DECISION; agent rounds are STOPPED
+
+**Status: #45 is NOT landable and no round 6 will be attempted.** A stopping
+rule was pre-committed in commit `d2131a6`, *before* round 5 ran, precisely so
+this call could not be made after seeing a result: *if round 5 blocks on the
+same defect class a fifth time, stop delegating and escalate.* It did. It is.
+
+**The defect class, stated once:** a cause bucket assigned without positive,
+checked evidence that the named mechanism can produce the observed magnitude.
+
+| round | what blocked | D7 headline |
+|---|---|---|
+| 1 | `genuine_mark_total_mismatch` a residual dumping ground; an inert cause (0625 p3) counted; false escalation to the human | 55.9% |
+| 2 | `marks_cell_notation_not_parsed` claimed a mechanism that cannot produce the magnitude | 69.4% (false) |
+| 3 | the fix applied to the excess side only; docstring claimed enforcement that did not exist | 57.6% |
+| 4 | the "two-sided bound" bounded the total, not the magnitude; premise applied to 4 rows, waived on 2 identical ones | 55.9% |
+| 5 | deficit rows retired *into* `genuine_mark_total_mismatch`, which has no magnitude bound at all — the evidence-free bucket **grew 14 → 70** | withdrawn |
+
+Five rounds, and the headline oscillated 55.9 → 69.4 → 57.6 → 55.9 → withdrawn.
+Round 5 did fix the root cause the orchestrator found (`empty_count` re-derived
+over the `AnswerPoint` population, `is_upper_bound: true` published honestly),
+and it still blocked — because the rows have to go *somewhere*, and every
+"somewhere" available is a bucket whose criterion cannot be checked.
+
+**Why this is a design question and not another patch.** The classifier infers
+causes from aggregate arithmetic — `computed_total` vs `maximum_mark` vs a
+count of defaulted points — without re-running the parse and observing the
+mechanism. Every sufficiency condition built on that is a proxy, and each round
+falsified the previous proxy. Two structural facts make this concrete:
+
+- **117/229 (51%)** sit in buckets 5+6 with **no coded magnitude bound**.
+- **`UNCLASSIFIED = 0` is structurally unreachable** for exactly the rows that
+  need it: `classify_theory_residual` only returns it when
+  `computed_total == maximum_mark`. The "honest unknown bucket" guarantee that
+  rounds 3-5 were briefed to rely on **cannot fire**.
+
+So the census cannot honestly say "we don't know" for a mark-total mismatch,
+which is why every round had to put those rows in a bucket that claims to know.
+
+**The question for the human.** *Can aggregate-arithmetic cause inference yield
+a sound bound at all — or must a real classification re-run the parse and
+observe the mechanism directly?* Depending on the answer, the 55 indeterminate
+rows go to one of:
+
+1. **`UNCLASSIFIED`** — make it reachable for mismatch rows. Honest; leaves 55
+   of 229 (24%) unranked, and M3 gets a smaller but trustworthy work-list.
+2. **A new, explicitly-named `cause_indeterminate` bucket** — separates "no
+   cause found" from "not investigable by arithmetic". Same information, but it
+   names *why* it is unknown.
+3. **Instrument the parser** — re-run each failing scheme with tracing and
+   record the observed mechanism. Costs a free re-parse and real implementation
+   work, and is the only option that produces a genuinely evidenced ranking.
+
+**What is already sound and should survive whatever is chosen:** the denominator
+is honestly held at 229 across all five rounds; the artifacts are byte-reproduced
+from live zero-cost re-runs; `lemely/io/det/profiles.py` has zero diff throughout;
+`spend_usd` never moved from **1.488057** — the entire five-round census cost
+**$0.00**; and no gate, threshold or assertion was ever weakened. The
+`paper_profile_misconfiguration` (40) and `mark_aggregation_overcount` (47)
+buckets are positively evidenced and are usable by M3 today.
+
+**Do not** resolve this by relaxing a criterion in prose, and **do not** let the
+next run start a round 6. It waits for the human.
