@@ -1218,6 +1218,51 @@ that, and #28's standing rule is that spend waits for the human.
 prerequisite gap was found before any branch was cut — not discovered halfway
 through an implementation.
 
+### UNBLOCKED 2026-08-24 by route (A) + (C) — the parsing pass is now #88
+
+The human took **route (A)** on `BUILD/ACCURACY-INBOX.md` (2026-08-24T01:14:03+03:00):
+a mark-scheme parsing pass over the restored corpus **is authorised**, with a
+costed preflight first, deterministic MCQ parsing first at zero cost, and
+MISSION §10's $20.00-of-$25.00 stop-and-ask governing. Freezing over the 71
+golden leaves — route (B) — was **considered and explicitly rejected**, because
+the drop-only rule would make it irreversible and it would discard most of what
+#44 fetched.
+
+The **structuring half of route (C) was left to the orchestrator** and is now
+decided: the parsing pass is **its own issue, #88 (M2.1b)**, not work buried
+inside #57. The deciding fact is spend, not tidiness — #45 (M2.2) requires
+*"every failing scheme's failure cause classified"*, and that failing set is
+exactly what the det parser emits when run over the corpus, which is the same
+run #57 needs for its strata. One run, two consumers; two runs would pay the
+Gemini theory-scheme cost twice.
+
+**#57 stays blocked, now on #88 rather than on a human decision.**
+
+### The finding that changes the shape of the problem
+
+The gap was framed above as *"the target is ~300 leaves; available: 71"* — a
+**volume** problem. Measured at zero cost, that framing is wrong.
+
+The 40 restored 0625 paper-1 (MCQ) schemes parse deterministically **40/40 in
+12 seconds** and yield **1600 leaf questions** — more than five times the ~300
+target. But every one of them is 0625, det-path, tariff band 1, so they
+populate **1 of DA1's 18 strata** (3 syllabus × 2 parse path × 3 tariff band).
+
+So the binding constraint on #57 is **stratum coverage, not leaf count**. Two
+consequences follow, and neither was visible before the parse ran:
+
+1. Tariff bands 2 and 3+, and syllabi 0580/0606, exist only on **theory**
+   papers — the schemes that are expensive to parse.
+2. Production parses with `ChainedMarkSchemeParser(primary=det, fallback=gemini)`,
+   so a scheme's parse path is **det if det succeeded and Gemini if det
+   failed**. A det-only corpus therefore leaves **every Gemini-path stratum
+   empty by construction**, and #57 could not be stratified as its own binding
+   constraints require. Populating that half is not optional enrichment.
+
+The silver lining is that the population needing paid parsing is *exactly* the
+det failure set, so #88's preflight denominator is a **measured count rather
+than an estimate**.
+
 ---
 
 ## #57 — M0.7b — Freeze the split membership over the restored corpus
