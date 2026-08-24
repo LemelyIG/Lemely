@@ -951,6 +951,28 @@ not the constraint — authorisation is.
   MISSION §12.9 forbids re-running at higher `n` to chase significance.
 - **Did not move any board item to Ready** to manufacture startable work.
 
+### RESOLVED — 2026-08-24. Authorised, run, and the result was NOT REPORTABLE
+
+The header above still read "OPEN — needs the human, and only the human" three
+runs after it stopped being true; corrected here rather than left to mislead.
+
+The human authorised #28's spend on `BUILD/ACCURACY-INBOX.md`
+(2026-08-24T01:14:03+03:00) with **no per-item cap**, MISSION §10's
+$20.00-of-$25.00 stop-and-ask as the only ceiling, `--cache-mode bypass`
+binding, and "NOT REPORTABLE, with reason" pre-accepted as a success. The
+sweep ran as `ablation-2026-08-24-a`, **#28 is CLOSED**, and PR #87 merged.
+
+The verdict was **NOT REPORTABLE as an ablation**, and that is the recorded
+outcome, not a failure to retry: the `oracle+mark` arm produced **zero**
+records, because `measure_accuracy()` picks the arm from `case.scan_path` and
+all 11 golden cases ship a `scan.pdf`, so the oracle branch is dead code. With
+one arm empty there is no A/B delta to test and `same_denominator_both_arms`
+is false. It was **not** re-run at higher `n` — MISSION §12.9 forbids that.
+
+What the run does support, descriptively and single-arm only, is in the state
+pointer's `last_run_headline`: extract+mark leaf accuracy 77.4% (24/31, Wilson
+[60.2%, 88.6%]) and a real review-budget ratchet breach at 29.03%.
+
 ---
 
 ## B: #36 (M1.1) — two of the issue's own acceptance bullets conflict once the third is implemented
@@ -1162,8 +1184,13 @@ than authorising five separate sweeps.
 
 ## E: #57 (M0.7b) is blocked — the restored corpus is PDFs, and the split needs PARSED schemes
 
-**Status: OPEN. Blocked on a human decision about spend.** Raised 2026-08-23,
-immediately after #44 merged.
+**Status: OPEN, but NOT on what this header originally said.** Raised
+2026-08-23 immediately after #44 merged, when it *was* blocked on a human
+decision about spend. That was answered on 2026-08-24 — see "UNBLOCKED
+2026-08-24 by route (A) + (C)" below. **#57 is now blocked on #88**, and the
+"volume problem" framing in the next two sections was **measured wrong**; read
+"The finding that changes the shape of the problem" at the end before citing
+anything above it.
 
 ### What #44 actually delivered, and what it did not
 
@@ -1218,6 +1245,51 @@ that, and #28's standing rule is that spend waits for the human.
 prerequisite gap was found before any branch was cut — not discovered halfway
 through an implementation.
 
+### UNBLOCKED 2026-08-24 by route (A) + (C) — the parsing pass is now #88
+
+The human took **route (A)** on `BUILD/ACCURACY-INBOX.md` (2026-08-24T01:14:03+03:00):
+a mark-scheme parsing pass over the restored corpus **is authorised**, with a
+costed preflight first, deterministic MCQ parsing first at zero cost, and
+MISSION §10's $20.00-of-$25.00 stop-and-ask governing. Freezing over the 71
+golden leaves — route (B) — was **considered and explicitly rejected**, because
+the drop-only rule would make it irreversible and it would discard most of what
+#44 fetched.
+
+The **structuring half of route (C) was left to the orchestrator** and is now
+decided: the parsing pass is **its own issue, #88 (M2.1b)**, not work buried
+inside #57. The deciding fact is spend, not tidiness — #45 (M2.2) requires
+*"every failing scheme's failure cause classified"*, and that failing set is
+exactly what the det parser emits when run over the corpus, which is the same
+run #57 needs for its strata. One run, two consumers; two runs would pay the
+Gemini theory-scheme cost twice.
+
+**#57 stays blocked, now on #88 rather than on a human decision.**
+
+### The finding that changes the shape of the problem
+
+The gap was framed above as *"the target is ~300 leaves; available: 71"* — a
+**volume** problem. Measured at zero cost, that framing is wrong.
+
+The 40 restored 0625 paper-1 (MCQ) schemes parse deterministically **40/40 in
+12 seconds** and yield **1600 leaf questions** — more than five times the ~300
+target. But every one of them is 0625, det-path, tariff band 1, so they
+populate **1 of DA1's 18 strata** (3 syllabus × 2 parse path × 3 tariff band).
+
+So the binding constraint on #57 is **stratum coverage, not leaf count**. Two
+consequences follow, and neither was visible before the parse ran:
+
+1. Tariff bands 2 and 3+, and syllabi 0580/0606, exist only on **theory**
+   papers — the schemes that are expensive to parse.
+2. Production parses with `ChainedMarkSchemeParser(primary=det, fallback=gemini)`,
+   so a scheme's parse path is **det if det succeeded and Gemini if det
+   failed**. A det-only corpus therefore leaves **every Gemini-path stratum
+   empty by construction**, and #57 could not be stratified as its own binding
+   constraints require. Populating that half is not optional enrichment.
+
+The silver lining is that the population needing paid parsing is *exactly* the
+det failure set, so #88's preflight denominator is a **measured count rather
+than an estimate**.
+
 ---
 
 ## #57 — M0.7b — Freeze the split membership over the restored corpus
@@ -1225,6 +1297,22 @@ through an implementation.
 **Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on PREREQUISITE GAP: #44 restored 1488 PDFs but ZERO parsed mark schemes; this issue's strata need tariff band + parse path, which only a parsed scheme supplies. 71 golden leaves available vs a ~300 target. Freezing over 71 would be irreversible under the drop-only rule. Needs a human call on parsing spend — BUILD/BLOCKERS.md section E.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+**CORRECTED 2026-08-24 (the RESOLVED line this block asks for).** Two factual
+claims above are now falsified by measurement and must not be cited:
+
+- *"ZERO parsed mark schemes"* — the det parser produced **250 parsed schemes
+  (52.2% of 479)** at **$0.00**. Evidence:
+  `BUILD/accuracy-runs/census-2026-08-24-a/`.
+- *"71 golden leaves available vs a ~300 target"* — the det path alone yields
+  **12,358 leaf questions**, roughly **41× the ~300 target**. Leaf volume was
+  never the binding constraint.
+
+**#57 stays blocked**, but on the real constraint, which is **stratum
+coverage**: 9 of DA1's 18 strata are populated (all det-path); the 9
+Gemini-path strata are empty *by construction* and can only be filled by paying
+to parse the 229-scheme det failure set. That is question 1 on **#88**, which
+is what #57 now waits on. Board Status stays Backlog until #88 resolves.
 
 ---
 
@@ -1258,3 +1346,83 @@ mark-scheme parsing pass authorised.
 **Raised:** 2026-08-24 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on IMPLEMENTATION REQUIRED FIRST, not more spend: the oracle+mark arm is dead code (harness.py:670-671 picks the arm from case.scan_path and all 11 fixtures ship scan.pdf), so run ablation-2026-08-24-a produced ONE arm and NO 2x2. Acceptance bullet 1 ('Both arms run over all fixtures') is implementation work. Do NOT re-run the sweep until a mechanism exists to force oracle+mark over cases that already have a scan_path. See the 2026-08-24 comment on #28.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## F — #88 (M2.1b) awaits three human decisions; the parse itself is done and free
+
+**Raised:** 2026-08-24 · **Status:** OPEN — waiting on the human, not on
+infrastructure. **No spend has occurred.**
+
+The zero-cost half of #88 is **complete**: the deterministic parser ran over
+all 479 restored mark schemes and produced **250 parsed (52.2%)**, **229
+failures**, and **12,358 leaf questions** — at $0.00. The costed preflight is
+posted on #88 as the authorisation required.
+
+**Where the evidence lives (added 2026-08-24).** The census originally existed
+only in `/tmp/acc57-full`, which is not durable. It has been re-verified — every
+figure above reproduced exactly — and persisted to
+**`BUILD/accuracy-runs/census-2026-08-24-a/`**: `manifest.json` (counts, the
+DA1 strata table, the `profiles.py:50` bug, reproduction steps),
+`census-leaves.txt`, `census-failures.txt`, `det-failures.txt` (the 229-stem
+failure set #45 consumes) and the two scripts.
+
+Two cautions for whoever reads it. The **250 parsed `MarkScheme` JSONs (~18MB)
+and `parse.log` are deliberately NOT committed** — they carry CAIE mark-scheme
+text verbatim and publishing real-paper content is a human decision (MISSION
+§12.7); regenerate them free in ~40min via the manifest's `reproduce` steps.
+And `census-leaves.txt` prints *"DA1 strata populated: 12"* because the script
+counts its own `0/unknown` catch-all as a band — **do not cite the 12**; DA1
+defines three bands, so the honest figure is **9 populated of 18**, with the
+2894 unbanded leaves held out as question 3's subject.
+
+### Why this is a blocker rather than "just spend the money"
+
+`BUILD/ACCURACY-INBOX.md` (2026-08-24T01:14:03+03:00) authorised the parsing
+pass *"enough to reach the ~300-leaf target"*. **That target is already met
+about 41× over, at zero cost.** Every condition attached to the authorisation
+was satisfied — det first, preflight posted — but the *goal it was granted for*
+turned out to require no spend at all.
+
+The only remaining reason to spend is a finding this run discovered and the
+human could not have known when writing the directive: DA1's **parse-path**
+stratum is `det`-if-det-succeeded / `Gemini`-if-det-failed, so the nine
+Gemini-path strata are **empty by construction** and can only be filled by
+paying to parse the det failure set. That is a **different justification** from
+the authorised one. Per the #27 precedent recorded in the inbox, a changed
+premise is stopped on and asked about, never re-reasoned into still applying.
+
+### The three questions
+
+1. **Spend $4.88–$6.83 to populate the Gemini-path strata?** If no, #57 must
+   either drop the parse-path axis or freeze over det-only leaves — both are
+   amendments to DA1, which is **H4 (#49) human territory**, not the
+   orchestrator's.
+2. **Fix `lemely/io/det/profiles.py:50` first?** `_PHYSICS_PROFILE` maps
+   `2: PaperType.THEORY_CORE`, but the cover text reads **`Paper 2 Multiple
+   Choice (Extended)`** (verified in `0625_m19_ms_22.pdf`, `0625_s19_ms_21.pdf`).
+   `paper_type()` (`profiles.py:23`) consults the number map **first**, so the
+   correct cover-text evidence is never reached. All 40 of `0625` p2 fail,
+   while correctly-mapped p1 parses 40/40. The fix is free, is a real bug on
+   its own merits, cuts the paid set by 40 schemes and the bill by ~15% — and
+   it **moves 40 schemes between strata**, so it must land *before* any
+   preflight is acted on or the denominator is wrong.
+3. **What becomes of the 2894 unbanded leaves?** 23.4% of all leaves carry
+   `marks = 0/unknown` and fit **none** of DA1's `1 / 2 / 3+` bands. Under the
+   drop-only rule, excluding them is permanent. Recorded on no issue before now.
+
+### One operational fact that binds whatever is decided
+
+`per_run_token_ceiling` is **2,000,000** (`lemely.toml:19`), and every preflight
+scenario totals **2.65M–3.51M tokens**. The parse **cannot run as a single
+job**; it must be batched, or the ceiling raised deliberately. `_check_cost_ceiling`
+is a pre-flight check that cannot stop a call already in flight, so batching is
+the control, not the ceiling.
+
+### For #45 (M2.2)
+
+All 229 failures logged the same event, `mark_total_mismatch_escalating`. That
+is a **symptom, not a classification** — one uniform symptom across 229 schemes
+is consistent with several distinct causes, and classifying them is #45's job.
+The failure set is #45's census input; #45 has been commented to take it rather
+than re-run the parse, which would pay the Gemini cost twice.

@@ -2484,3 +2484,85 @@ them whether or not Phase 6 fixes them.
 - **Spend unchanged:** no Gemini calls this run; ledger still $0.4026.
 - **Next:** #32 (M0.8). No baseline run before it lands — §2 forbids it and #32 is the last
   fixture prerequisite.
+
+## run-2026-08-24-b — human-gated; one free finding on #37
+
+- **The run had nothing it was allowed to start.** `accuracy_board.py next` returns nothing
+  Ready. #88 (M2.1b) holds the single in-flight slot MISSION §3.2 permits, and it is parked on
+  three questions the human has not answered. That also keeps #45 shut, even though #88's census
+  already handed it the 229-scheme failure set for free.
+- **The open M1 set is spend-gated, not free.** #38/#39/#41 are mark-changing and need their own
+  before/after number under the gate-9 directive; #58 requires a golden-set run at
+  `cache_mode=bypass`. No spend is authorised for any of them, so none was started.
+- **#37 is MARK-CHANGING, and that reclassifies it.** The 2026-08-24 inbox directive listed it as
+  probably routing-only "unless one of them turns out to move marks". It does.
+  `normalize_extracted_answers` rewrites `question_id` (`answer_extraction.py:78`), and its only
+  production caller is `GeminiAnswerExtractor.__call__` (`:187`) — so a reassigned answer is
+  marked against the wrong question's scheme. Removing the fallback moves `awarded_marks`
+  wherever it fires. Said so rather than taking the cheaper branch, as the directive asked.
+- **The fallback's firing rate is unmeasured, not zero — and the metric is blind by
+  construction.** `question_result_to_eval_record` (`harness.py:337`) hardcodes
+  `id_match="exact"` for every leaf that has an answer, so a fallback rewrite records as `exact`.
+  The 773 `exact` / 8 `unmatched` rows across `BUILD/accuracy-runs/` therefore prove nothing
+  about it, and no structured logs are persisted in either run directory, so the
+  `id_positional_fallback` warning at `:73` is lost. Consequence for #37: acceptance bullet 3 is
+  not a rename — `id_match` has no path that can emit `fuzzy` at all, and must be made to measure
+  three states before any CI target is re-derived. Recorded on #37.
+- **Spend unchanged:** no Gemini calls this run; ledger still 1.488057.
+- **Next:** whatever the human answers on #88. Nothing else can legitimately start before it.
+
+## run-2026-08-24-c — the #88 census made durable; still human-gated
+
+- **Nothing had changed.** No new inbox directive, no answers on #88's three questions, board
+  `next` still empty, tree clean. Verified rather than assumed.
+- **The one thing worth doing was free and on the in-flight item.** #88's census existed only in
+  `/tmp/acc57-full`, which the state pointer itself flagged as non-durable and which would have
+  cost a 40-minute re-parse to recover. `/tmp` had survived, so the window was open.
+- **Every published number reproduced exactly** before anything was written down: 479 PDFs, 250
+  det-parsed, 229 failed (52.2%), 12,358 leaves over 4,339 roots, 2,894 unbanded (23.4%), strata
+  0580 1992/2110/1635 · 0606 46/107/239 · 0625 2521/525/289, and all 229 failures logging
+  `mark_total_mismatch_escalating`. Persisted as `BUILD/accuracy-runs/census-2026-08-24-a/`.
+- **The parsed corpus was deliberately left out.** The 250 `MarkScheme` JSONs (~18MB) and
+  `parse.log` carry CAIE mark-scheme text verbatim, and publishing real-paper content is a human
+  decision (§12.7). Only derived counts and public PDF filenames went in; `manifest.json` records
+  what was withheld, why, and the free steps to regenerate it.
+- **A reading trap recorded rather than smoothed over.** `census-leaves.txt` prints "DA1 strata
+  populated: 12" because the script counts its own `0/unknown` catch-all as a band. DA1 defines
+  three bands, so the honest figure is 9 of 18, with the 2,894 unbanded leaves held out. The
+  manifest says not to cite the 12.
+- **Still nothing else startable.** §3.2 allows one issue in flight and #88 holds the slot, which
+  keeps #45 shut even though this census is precisely its input. #37 (reclassified last run),
+  #38, #39 and #41 are all mark-changing and need a sweep; #58 needs a golden-set bypass run.
+  Every one is unauthorised spend.
+- **Spend unchanged:** no Gemini calls; ledger still 1.488057.
+- **Next:** the human's answers on #88. Nothing else can legitimately start before them.
+
+## run-2026-08-24-d — three falsified records in BLOCKERS.md, corrected in place
+
+- **Nothing external changed again.** No inbox directive, no answers on #88's three questions,
+  board `next` still empty, tree clean. Third consecutive run.
+- **The free work was the record itself.** `BUILD/BLOCKERS.md` is read by every future run, and it
+  was carrying three claims that measurement or the human had already falsified. A stale blocker
+  is not inert — it actively misleads. All three were corrected **in place**, never deleted.
+- **#28's section still said "OPEN — needs the human, and only the human"** three runs after the
+  inbox authorised the spend with no per-item cap. #28 is CLOSED, PR #87 merged, the sweep ran as
+  `ablation-2026-08-24-a`. Appended a RESOLVED note recording the real outcome: **NOT REPORTABLE
+  as an ablation**, because the `oracle+mark` arm produced zero records — `measure_accuracy()`
+  picks the arm from `case.scan_path` and all 11 golden cases ship a `scan.pdf`, so the oracle
+  branch is dead code. Recorded as the outcome, not as a failure to retry; §12.9 forbids re-running
+  at higher `n`.
+- **§E's header still said "blocked on a human decision about spend."** That was answered on
+  2026-08-24; #57 is now blocked on #88. The header says so, and now tells the reader to read the
+  measured finding at the *end* of the section before citing the volume framing above it.
+- **The machine-written `## #57` block still asserted "ZERO parsed mark schemes" and "71 golden
+  leaves vs a ~300 target."** Both measured false: 250 parsed at $0.00, and 12,358 leaves — about
+  41× the target. That block asks for a RESOLVED line; it now has one, restating the real
+  constraint as **stratum coverage** (9 of 18 populated, the 9 Gemini-path strata empty by
+  construction) rather than volume.
+- **§F gained the durable-evidence pointer** to `BUILD/accuracy-runs/census-2026-08-24-a/`, with
+  both cautions attached: the 250 parsed JSONs (~18MB) stay out of the repo as real-paper content
+  (§12.7), and `census-leaves.txt`'s "DA1 strata populated: 12" must not be cited.
+- **Spend unchanged:** no Gemini calls; ledger still 1.488057.
+- **Next:** the human's answers on #88. If they have still not arrived, the honest next run is a
+  quiescent one per E5 — re-verify, report in prose, commit nothing. The record is now correct;
+  restating it again would buy nothing.
