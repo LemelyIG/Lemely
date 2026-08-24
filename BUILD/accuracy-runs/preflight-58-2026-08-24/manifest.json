@@ -1,0 +1,163 @@
+{
+  "label": "preflight-58-2026-08-24",
+  "issue": 58,
+  "milestone": "M1.8",
+  "kind": "costed preflight (MISSION \u00a710) \u2014 projection only, spends nothing",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "instrument_sha": "fef41ad",
+  "command": ".venv/bin/python BUILD/accuracy-runs/preflight-58-2026-08-24/preflight_58.py",
+  "authorisation": "NOT AUTHORISED. No inbox item covers #58. Per the 2026-08-24T15:27 directive this is a hard stop pending the human; no sweep was run.",
+  "per_case": [
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "correct",
+      "ai_leaves": 7,
+      "runs": 2,
+      "calls": 14,
+      "properties_applied": [
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "partial",
+      "ai_leaves": 7,
+      "runs": 2,
+      "calls": 14,
+      "properties_applied": [
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "wrong",
+      "ai_leaves": 7,
+      "runs": 2,
+      "calls": 14,
+      "properties_applied": [
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "correct",
+      "ai_leaves": 6,
+      "runs": 3,
+      "calls": 18,
+      "properties_applied": [
+        "reorder_mark_points",
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "partial",
+      "ai_leaves": 6,
+      "runs": 3,
+      "calls": 18,
+      "properties_applied": [
+        "reorder_mark_points",
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "wrong",
+      "ai_leaves": 6,
+      "runs": 3,
+      "calls": 18,
+      "properties_applied": [
+        "reorder_mark_points",
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0625_m20_qp_12_mcq",
+      "calls": 0,
+      "note": "MCQ-only: deterministic, no Gemini"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "fixture_variant": "correct",
+      "ai_leaves": 7,
+      "runs": 3,
+      "calls": 21,
+      "properties_applied": [
+        "reorder_mark_points",
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "fixture_variant": "partial",
+      "ai_leaves": 7,
+      "runs": 3,
+      "calls": 21,
+      "properties_applied": [
+        "reorder_mark_points",
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "fixture_variant": "wrong",
+      "ai_leaves": 7,
+      "runs": 3,
+      "calls": 21,
+      "properties_applied": [
+        "reorder_mark_points",
+        "rename_mark_point_ids"
+      ]
+    },
+    {
+      "paper_id": "0625_w21_qp_32_theory_nested",
+      "fixture_variant": null,
+      "ai_leaves": 3,
+      "runs": 3,
+      "calls": 9,
+      "properties_applied": [
+        "reorder_mark_points",
+        "rename_mark_point_ids"
+      ]
+    }
+  ],
+  "total_marking_calls": 168,
+  "per_call_usd": {
+    "source_repeats": 10,
+    "source_calls": 742,
+    "source_usd": 0.958711,
+    "min": 0.000838,
+    "median": 0.000857,
+    "max_observed": 0.003044
+  },
+  "projection_usd": {
+    "central": 0.144,
+    "worst_observed_rate": 0.5114,
+    "proposed_stop_and_ask": 0.216,
+    "basis": "Per-call rate is BLENDED over extract+mark runs; bullet 4 is marking-only, so the true rate may sit either side. Call count is exact, which is where the A/A preflight actually went wrong (it assumed 22 calls/repeat against an actual 74)."
+  },
+  "coverage": {
+    "reorder_mark_points": {
+      "leaf_checks": 31,
+      "distinct_leaves": 11
+    },
+    "rename_mark_point_ids": {
+      "leaf_checks": 57,
+      "distinct_leaves": 21
+    },
+    "normalise_answer_whitespace": {
+      "leaf_checks": 0,
+      "distinct_leaves": 0
+    }
+  },
+  "whitespace_gap": {
+    "golden_answers": 71,
+    "answers_changed_by_normalisation": 0,
+    "finding": "Every golden answer is already whitespace-normal, so the transform is a strict no-op corpus-wide and no spend can buy evidence for this property. Fixing it means editing the golden fixtures, which would change the corpus digest and invalidate comparability \u2014 an M0.8 decision for the human, not taken here."
+  },
+  "interpretation": {
+    "a_violation": "Existence proof \u2014 one leaf whose marks move under a meaning-preserving perturbation is a real defect at any n.",
+    "no_violation": "Weak. At 11 and 21 distinct leaves this licenses only 'no instability detected at this n', never 'the marker is stable'."
+  }
+}
