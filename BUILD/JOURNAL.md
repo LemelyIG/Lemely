@@ -2484,3 +2484,29 @@ them whether or not Phase 6 fixes them.
 - **Spend unchanged:** no Gemini calls this run; ledger still $0.4026.
 - **Next:** #32 (M0.8). No baseline run before it lands — §2 forbids it and #32 is the last
   fixture prerequisite.
+
+## run-2026-08-24-b — human-gated; one free finding on #37
+
+- **The run had nothing it was allowed to start.** `accuracy_board.py next` returns nothing
+  Ready. #88 (M2.1b) holds the single in-flight slot MISSION §3.2 permits, and it is parked on
+  three questions the human has not answered. That also keeps #45 shut, even though #88's census
+  already handed it the 229-scheme failure set for free.
+- **The open M1 set is spend-gated, not free.** #38/#39/#41 are mark-changing and need their own
+  before/after number under the gate-9 directive; #58 requires a golden-set run at
+  `cache_mode=bypass`. No spend is authorised for any of them, so none was started.
+- **#37 is MARK-CHANGING, and that reclassifies it.** The 2026-08-24 inbox directive listed it as
+  probably routing-only "unless one of them turns out to move marks". It does.
+  `normalize_extracted_answers` rewrites `question_id` (`answer_extraction.py:78`), and its only
+  production caller is `GeminiAnswerExtractor.__call__` (`:187`) — so a reassigned answer is
+  marked against the wrong question's scheme. Removing the fallback moves `awarded_marks`
+  wherever it fires. Said so rather than taking the cheaper branch, as the directive asked.
+- **The fallback's firing rate is unmeasured, not zero — and the metric is blind by
+  construction.** `question_result_to_eval_record` (`harness.py:337`) hardcodes
+  `id_match="exact"` for every leaf that has an answer, so a fallback rewrite records as `exact`.
+  The 773 `exact` / 8 `unmatched` rows across `BUILD/accuracy-runs/` therefore prove nothing
+  about it, and no structured logs are persisted in either run directory, so the
+  `id_positional_fallback` warning at `:73` is lost. Consequence for #37: acceptance bullet 3 is
+  not a rename — `id_match` has no path that can emit `fuzzy` at all, and must be made to measure
+  three states before any CI target is re-derived. Recorded on #37.
+- **Spend unchanged:** no Gemini calls this run; ledger still 1.488057.
+- **Next:** whatever the human answers on #88. Nothing else can legitimately start before it.
