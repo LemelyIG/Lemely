@@ -2566,3 +2566,69 @@ them whether or not Phase 6 fixes them.
 - **Next:** the human's answers on #88. If they have still not arrived, the honest next run is a
   quiescent one per E5 — re-verify, report in prose, commit nothing. The record is now correct;
   restating it again would buy nothing.
+
+## run-2026-08-24-e — the #58 review moved to where the merge happens
+
+- **Nothing external changed.** Fourth consecutive run with no inbox directive, no answer on any
+  of the three asks, board `next` empty, tree clean.
+- **The one thing done: attached the #58 review to PR #90 itself** (`gh pr review --comment`). It
+  had existed only as an issue comment, so the PR read `reviews=0` and the MISSION §9 merge
+  evidence was not sitting where the merge happens. Now `reviews=1`. Deliberately **not**
+  approved: it is my own branch, and a self-approval would not be independent review.
+- **A better CI fact than the previous run had recorded.** PR #90 is green on **all 5 jobs at its
+  actual tip `605df52`** — run `32758424509`: pre-commit 1m19s, web 1m40s, test 3.12 15m42s,
+  3.13 27m26s, 3.14 13m6s. The prior record only established green at `10b5ec5`, an earlier
+  commit, which is weaker evidence than the merge gate needs. State/mergeable verified
+  OPEN/MERGEABLE.
+- **Deliberately NOT done, and the reason is the point.** No further #45 rows were instrumented.
+  #45 pre-committed a stopping rule ("if round 5 blocks on the same defect class a fifth time,
+  stop delegating and escalate — no round 6 will be attempted"), and systematically instrumenting
+  more rows **is option 3**, one of the three choices the human must make. The previous run's
+  single-row investigation was justified as evidence *about* the choice; continuing would decide
+  it by doing it.
+- **Also not done:** no BLOCKERS.md section added. Section `G` exists only on the #45 branch, so a
+  new section cut from develop manufactures a tail conflict. That hazard is still live.
+- **Spend unchanged:** ledger still 1.488057.
+
+## run-2026-08-24-f — quiescent, exactly as run-d prescribed
+
+- **Fifth consecutive run with no human input.** Re-verified rather than assumed: inbox has no
+  unhandled item (last directive 2026-08-24T01:14, all `[x]`), `accuracy_board.py next` returns
+  `nothing ready`, `origin/develop` unchanged at `1092d8f`, PR #90 still OPEN/MERGEABLE at
+  `605df52` with `reviews=1`, tree clean.
+- **The supervisor sweep covered the actual branch tip this time** — PASS over `38f66e6`, which
+  *is* the #45 branch tip, so §9.3's pytest-green is genuinely satisfied rather than covering an
+  ancestor.
+- **Committed nothing**, per E5: restating an unchanged fact buys nothing and adds re-write debt.
+- **One action taken:** a consolidated notify to the accuracy topic naming all three pending
+  decisions, since the outbound steering channel is the only thing that can unstick the queue.
+- **Why nothing was started, checked item by item rather than assumed:** #58/PR #90 needs the
+  bullet-4 spend call (~USD 0.144) or a formal retirement; #88 q1/q3 are DA1/H4 (#49) and §3.5
+  forbids working around them; #45 is the 3-option design question whose stopping rule already
+  fired; #37/#38/#39/#41 are all mark-changing under the gate-9 test and need a sweep that is
+  unauthorised spend. `lemely/io/det/mcq.py` and `lemely/config/profiles.py:50` are both known
+  real bugs with measured blast radius, both left **zero-diff**, because both change awarded marks.
+- **Spend unchanged:** ledger still 1.488057.
+
+## run-2026-08-24-g — closing the record gap the volatile header was hiding
+
+- **Sixth consecutive run with no human input.** Verified rather than remembered: no new inbox
+  directive, board `next` still empty, `origin/develop` still `1092d8f`, both live branches fully
+  pushed (nothing unpushed on either), tree clean. Checked the **issues** as well as the inbox, in
+  case the human had answered there instead — the newest comment on #58, #88 or #45 is still my
+  own from 18:53Z. Nothing changed.
+- **The free work was a genuine record gap, not a restatement.** Runs `e` and `f` had never been
+  journaled, and MISSION §11 requires a per-run narrative. Run `e`'s substantive facts — the
+  `reviews=0 → 1` fix and the all-5-jobs-green-at-`605df52` evidence — existed **only** in
+  `ACCURACY-STATE.md`'s `in_the_middle_of` header, which is a resume pointer that every run
+  overwrites. They would have been destroyed by the next `state set`, and a future run would have
+  paid to re-verify CI that had already been verified. That is the difference between this commit
+  and the ones E5 forbids: E5 bars restating an unchanged fact, not recording an unrecorded one.
+- **Routed to avoid the live tail-conflict hazard.** `BUILD/JOURNAL.md` is **byte-identical on
+  `origin/develop` and on both live branches** (`git diff origin/develop..HEAD -- BUILD/JOURNAL.md`
+  is empty), so this entry was written on a chore branch cut straight from `develop` and cannot
+  conflict with #45 or #58 — unlike a BLOCKERS.md section, which run `e` correctly declined to add
+  for exactly that reason. This is the fix E4 prescribed: re-write surviving content onto develop
+  as its own chore commit, rather than pile it onto a branch that squashes from origin's tip.
+- **Spend unchanged:** no Gemini calls; ledger still 1.488057.
+- **Next:** still the human's three decisions. Nothing else can legitimately start before them.
