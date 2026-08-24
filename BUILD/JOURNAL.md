@@ -2536,3 +2536,33 @@ them whether or not Phase 6 fixes them.
   Every one is unauthorised spend.
 - **Spend unchanged:** no Gemini calls; ledger still 1.488057.
 - **Next:** the human's answers on #88. Nothing else can legitimately start before them.
+
+## run-2026-08-24-d — three falsified records in BLOCKERS.md, corrected in place
+
+- **Nothing external changed again.** No inbox directive, no answers on #88's three questions,
+  board `next` still empty, tree clean. Third consecutive run.
+- **The free work was the record itself.** `BUILD/BLOCKERS.md` is read by every future run, and it
+  was carrying three claims that measurement or the human had already falsified. A stale blocker
+  is not inert — it actively misleads. All three were corrected **in place**, never deleted.
+- **#28's section still said "OPEN — needs the human, and only the human"** three runs after the
+  inbox authorised the spend with no per-item cap. #28 is CLOSED, PR #87 merged, the sweep ran as
+  `ablation-2026-08-24-a`. Appended a RESOLVED note recording the real outcome: **NOT REPORTABLE
+  as an ablation**, because the `oracle+mark` arm produced zero records — `measure_accuracy()`
+  picks the arm from `case.scan_path` and all 11 golden cases ship a `scan.pdf`, so the oracle
+  branch is dead code. Recorded as the outcome, not as a failure to retry; §12.9 forbids re-running
+  at higher `n`.
+- **§E's header still said "blocked on a human decision about spend."** That was answered on
+  2026-08-24; #57 is now blocked on #88. The header says so, and now tells the reader to read the
+  measured finding at the *end* of the section before citing the volume framing above it.
+- **The machine-written `## #57` block still asserted "ZERO parsed mark schemes" and "71 golden
+  leaves vs a ~300 target."** Both measured false: 250 parsed at $0.00, and 12,358 leaves — about
+  41× the target. That block asks for a RESOLVED line; it now has one, restating the real
+  constraint as **stratum coverage** (9 of 18 populated, the 9 Gemini-path strata empty by
+  construction) rather than volume.
+- **§F gained the durable-evidence pointer** to `BUILD/accuracy-runs/census-2026-08-24-a/`, with
+  both cautions attached: the 250 parsed JSONs (~18MB) stay out of the repo as real-paper content
+  (§12.7), and `census-leaves.txt`'s "DA1 strata populated: 12" must not be cited.
+- **Spend unchanged:** no Gemini calls; ledger still 1.488057.
+- **Next:** the human's answers on #88. If they have still not arrived, the honest next run is a
+  quiescent one per E5 — re-verify, report in prose, commit nothing. The record is now correct;
+  restating it again would buy nothing.

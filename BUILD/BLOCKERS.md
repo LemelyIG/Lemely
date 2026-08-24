@@ -951,6 +951,28 @@ not the constraint — authorisation is.
   MISSION §12.9 forbids re-running at higher `n` to chase significance.
 - **Did not move any board item to Ready** to manufacture startable work.
 
+### RESOLVED — 2026-08-24. Authorised, run, and the result was NOT REPORTABLE
+
+The header above still read "OPEN — needs the human, and only the human" three
+runs after it stopped being true; corrected here rather than left to mislead.
+
+The human authorised #28's spend on `BUILD/ACCURACY-INBOX.md`
+(2026-08-24T01:14:03+03:00) with **no per-item cap**, MISSION §10's
+$20.00-of-$25.00 stop-and-ask as the only ceiling, `--cache-mode bypass`
+binding, and "NOT REPORTABLE, with reason" pre-accepted as a success. The
+sweep ran as `ablation-2026-08-24-a`, **#28 is CLOSED**, and PR #87 merged.
+
+The verdict was **NOT REPORTABLE as an ablation**, and that is the recorded
+outcome, not a failure to retry: the `oracle+mark` arm produced **zero**
+records, because `measure_accuracy()` picks the arm from `case.scan_path` and
+all 11 golden cases ship a `scan.pdf`, so the oracle branch is dead code. With
+one arm empty there is no A/B delta to test and `same_denominator_both_arms`
+is false. It was **not** re-run at higher `n` — MISSION §12.9 forbids that.
+
+What the run does support, descriptively and single-arm only, is in the state
+pointer's `last_run_headline`: extract+mark leaf accuracy 77.4% (24/31, Wilson
+[60.2%, 88.6%]) and a real review-budget ratchet breach at 29.03%.
+
 ---
 
 ## B: #36 (M1.1) — two of the issue's own acceptance bullets conflict once the third is implemented
@@ -1162,8 +1184,13 @@ than authorising five separate sweeps.
 
 ## E: #57 (M0.7b) is blocked — the restored corpus is PDFs, and the split needs PARSED schemes
 
-**Status: OPEN. Blocked on a human decision about spend.** Raised 2026-08-23,
-immediately after #44 merged.
+**Status: OPEN, but NOT on what this header originally said.** Raised
+2026-08-23 immediately after #44 merged, when it *was* blocked on a human
+decision about spend. That was answered on 2026-08-24 — see "UNBLOCKED
+2026-08-24 by route (A) + (C)" below. **#57 is now blocked on #88**, and the
+"volume problem" framing in the next two sections was **measured wrong**; read
+"The finding that changes the shape of the problem" at the end before citing
+anything above it.
 
 ### What #44 actually delivered, and what it did not
 
@@ -1271,6 +1298,22 @@ than an estimate**.
 
 Blocked on PREREQUISITE GAP: #44 restored 1488 PDFs but ZERO parsed mark schemes; this issue's strata need tariff band + parse path, which only a parsed scheme supplies. 71 golden leaves available vs a ~300 target. Freezing over 71 would be irreversible under the drop-only rule. Needs a human call on parsing spend — BUILD/BLOCKERS.md section E.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
 
+**CORRECTED 2026-08-24 (the RESOLVED line this block asks for).** Two factual
+claims above are now falsified by measurement and must not be cited:
+
+- *"ZERO parsed mark schemes"* — the det parser produced **250 parsed schemes
+  (52.2% of 479)** at **$0.00**. Evidence:
+  `BUILD/accuracy-runs/census-2026-08-24-a/`.
+- *"71 golden leaves available vs a ~300 target"* — the det path alone yields
+  **12,358 leaf questions**, roughly **41× the ~300 target**. Leaf volume was
+  never the binding constraint.
+
+**#57 stays blocked**, but on the real constraint, which is **stratum
+coverage**: 9 of DA1's 18 strata are populated (all det-path); the 9
+Gemini-path strata are empty *by construction* and can only be filled by paying
+to parse the 229-scheme det failure set. That is question 1 on **#88**, which
+is what #57 now waits on. Board Status stays Backlog until #88 resolves.
+
 ---
 
 ## SUPERSEDED — §D is retired by the 2026-08-24 gate-9 scoping directive
@@ -1315,6 +1358,23 @@ The zero-cost half of #88 is **complete**: the deterministic parser ran over
 all 479 restored mark schemes and produced **250 parsed (52.2%)**, **229
 failures**, and **12,358 leaf questions** — at $0.00. The costed preflight is
 posted on #88 as the authorisation required.
+
+**Where the evidence lives (added 2026-08-24).** The census originally existed
+only in `/tmp/acc57-full`, which is not durable. It has been re-verified — every
+figure above reproduced exactly — and persisted to
+**`BUILD/accuracy-runs/census-2026-08-24-a/`**: `manifest.json` (counts, the
+DA1 strata table, the `profiles.py:50` bug, reproduction steps),
+`census-leaves.txt`, `census-failures.txt`, `det-failures.txt` (the 229-stem
+failure set #45 consumes) and the two scripts.
+
+Two cautions for whoever reads it. The **250 parsed `MarkScheme` JSONs (~18MB)
+and `parse.log` are deliberately NOT committed** — they carry CAIE mark-scheme
+text verbatim and publishing real-paper content is a human decision (MISSION
+§12.7); regenerate them free in ~40min via the manifest's `reproduce` steps.
+And `census-leaves.txt` prints *"DA1 strata populated: 12"* because the script
+counts its own `0/unknown` catch-all as a band — **do not cite the 12**; DA1
+defines three bands, so the honest figure is **9 populated of 18**, with the
+2894 unbanded leaves held out as question 3's subject.
 
 ### Why this is a blocker rather than "just spend the money"
 
