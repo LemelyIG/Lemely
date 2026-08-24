@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
+    ConfidenceBand,
     ExtractedAnswer,
     ExtractedAnswers,
 )
@@ -197,6 +198,74 @@ class HybridCorrectPaperTests(unittest.TestCase):
         )
         q2 = next(q for q in result.questions if q.question_id == "2")
         self.assertEqual(q2.extraction_confidence, 0.42)
+
+    def test_mcq_confidence_score_tracks_extraction_confidence(self) -> None:
+        """MUST-FIX 1 (#36 repair): a correct MCQ's confidence_score must MOVE with
+        extraction_confidence, not stay hardcoded at 1.0 (D13). Two different
+        extraction confidences on the same correct letter must produce two
+        different confidence_score values, each equal to the extraction
+        confidence that produced it.
+        """
+        high = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.93)],
+        )
+        low = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.55)],
+        )
+        result_high = correct_paper(
+            mark_scheme=self.ms, extracted_answers=high, gemini_client=None, mcq_only=True
+        )
+        result_low = correct_paper(
+            mark_scheme=self.ms, extracted_answers=low, gemini_client=None, mcq_only=True
+        )
+        q_high = next(q for q in result_high.questions if q.question_id == "1")
+        q_low = next(q for q in result_low.questions if q.question_id == "1")
+
+        self.assertEqual(q_high.awarded_marks, q_high.maximum_marks)  # correct answer
+        self.assertEqual(q_low.awarded_marks, q_low.maximum_marks)  # correct answer
+        self.assertNotEqual(q_high.confidence_score, q_low.confidence_score)
+        self.assertEqual(q_high.confidence_score, 0.93)
+        self.assertEqual(q_low.confidence_score, 0.55)
+
+    def test_high_extraction_confidence_correct_mcq_is_not_flagged(self) -> None:
+        """Sanity check on option A: a clean single-letter extraction at ~0.93
+        (the option-A steady state) must land HIGH and unflagged -- correct
+        MCQs must not flood the review queue.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.93)],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms, extracted_answers=extracted, gemini_client=None, mcq_only=True
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.confidence, ConfidenceBand.HIGH)
+        self.assertFalse(q1.needs_teacher_review)
+
+    def test_low_extraction_confidence_correct_mcq_is_routed_to_review(self) -> None:
+        """The point of the fix: a correct MCQ whose LETTER was read with low
+        extraction confidence must be flagged for review, not auto-graded at
+        1.0/HIGH -- the deterministic comparison being certain does not mean
+        the extraction it was applied to was certain.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.55)],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms, extracted_answers=extracted, gemini_client=None, mcq_only=True
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.awarded_marks, q1.maximum_marks)  # still correct
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertNotEqual(q1.confidence, ConfidenceBand.HIGH)
 
 
 class MCQAbstainHardeningTests(unittest.TestCase):

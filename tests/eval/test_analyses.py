@@ -812,6 +812,29 @@ class TestPaperGradeConfidence:
         score, _band = paper_grade_confidence(records)["p1"]
         assert score == 0.9
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "#36 acceptance bullet 6 ('on the M0 baseline the paper-level band "
+            "distribution is not degenerate') is still UNMET after MUST-FIX 1 "
+            "(propagating extraction_confidence into the MCQ path's "
+            "confidence_score). Re-measured directly from this saved corpus: "
+            "every row's extraction_conf is None (the saved A/A-floor records "
+            "predate per-answer extraction-confidence capture), so the fix's "
+            "fallback-to-1.0 branch applies uniformly and the MCQ paper still "
+            "bands HIGH at score 1.0 -- identical to before the fix. This is "
+            "not a defect in the fix (verified directly: confidence_score DOES "
+            "track extraction_confidence when it is present -- see "
+            "tests/test_correction_ai.py::HybridCorrectPaperTests::"
+            "test_mcq_confidence_score_tracks_extraction_confidence). The "
+            "prerequisite this bullet needs is a re-run of the M0 baseline "
+            "that actually captures extraction confidence per MCQ answer; "
+            "that is a measurement task, not a code fix, and out of scope for "
+            "this repair pass (no Gemini spend permitted here). If this XPASSes "
+            "after such a re-run, remove the xfail and assert the real "
+            "distribution."
+        ),
+    )
     def test_m0_baseline_band_distribution_reported_honestly(self) -> None:
         """Re-scored from the saved M0 A/A-floor records (no new spend, per
         the sequencing constraint on #36).
@@ -892,13 +915,12 @@ class TestPaperGradeConfidence:
             assert score == pytest.approx(_independent_weighted_mean(paper_id))
             assert band == _independent_band(score)
 
-        # HONEST FINDING, not a forced pass: on this 5-paper corpus, every
-        # paper still lands in HIGH after the tariff-weighting fix -- the
-        # dropped low-confidence rows (marker_conf as low as 0.55/0.65) were
-        # not, on this corpus, enough by themselves to pull any paper's
-        # weighted mean below 0.85. The band distribution IS still
-        # degenerate here; that is reported, not spun. It would take either
-        # a larger/more heterogeneous corpus or a genuinely low-confidence
-        # paper to exercise MEDIUM/LOW, neither of which this test may
-        # invent.
-        assert bands == {"HIGH"}, f"band distribution: {result}"
+        # #36 acceptance bullet 6 asserted as MET (xfail(strict=True) above
+        # documents why it is currently not): this must NOT stay a green
+        # assertion of the degenerate distribution. On this saved corpus
+        # every extraction_conf is None, so MUST-FIX 1's propagation fix has
+        # no row to act on and the MCQ paper still bands HIGH at 1.0 -- the
+        # distribution is still degenerate. See the xfail reason for the
+        # full honest finding and the missing prerequisite (a baseline
+        # re-run that captures per-answer extraction confidence).
+        assert bands != {"HIGH"}, f"band distribution: {result}"

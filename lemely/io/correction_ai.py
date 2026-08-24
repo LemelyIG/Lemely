@@ -180,16 +180,39 @@ def _build_mcq_corrected(
             extraction_confidence=extraction_confidence,
         )
     is_correct = answer.upper() == expected
+    # #36 MUST-FIX 1 (repair pass): the deterministic letter comparison itself
+    # is certain GIVEN the extraction, so confidence in the awarded mark is
+    # confidence that the letter was read correctly. Propagate
+    # extraction_confidence into confidence_score instead of hardcoding 1.0
+    # (D13) -- the old code threaded extraction_confidence through as inert
+    # metadata that nothing read. Fall back to 1.0 only when there is
+    # genuinely no extraction signal at all (e.g. the oracle path, or the
+    # `Mapping[str, str]` fallback in `_flatten_answers`, both of which pass
+    # `None`) -- there is no basis to invent uncertainty that was never
+    # measured. Band and review-flag are DERIVED from that score via the
+    # module's one calibrated cut-offs, not hand-rolled: a clean single
+    # letter (option A's ~0.90-0.93 steady state) still lands HIGH and
+    # unflagged, so correct MCQs do not flood the review queue; a letter the
+    # extractor genuinely read with low confidence now correctly gets
+    # flagged even though the mark itself is correct.
+    mcq_confidence_score = extraction_confidence if extraction_confidence is not None else 1.0
+    mcq_needs_review = mcq_confidence_score < REVIEW_CONFIDENCE_THRESHOLD
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=question.marks if is_correct else 0,
         maximum_marks=question.marks,
-        confidence=ConfidenceBand.HIGH,
-        confidence_score=1.0,
-        needs_teacher_review=False,
+        confidence=confidence_band_for_score(mcq_confidence_score),
+        confidence_score=mcq_confidence_score,
+        needs_teacher_review=mcq_needs_review,
         student_answer=answer.upper(),
         expected_answer=expected,
         topic=question.topic_hint,
+        review_reason=(
+            f"extraction confidence {mcq_confidence_score:.2f} below review threshold "
+            f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+            if mcq_needs_review
+            else None
+        ),
         marker_source="deterministic",
         extraction_confidence=extraction_confidence,
     )
